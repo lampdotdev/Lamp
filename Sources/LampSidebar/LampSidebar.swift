@@ -251,25 +251,39 @@ private struct LineView: View {
         case .error:
             ChatLook.ErrorNote(line.text)
         case .ask:
-            if let questions = line.questions {
-                QuestionCard(id: line.id, questions: questions)
-            } else {
-                Text(line.text).font(.callout).foregroundStyle(.secondary)
-            }
+            AskLine(line: line)
         case .result:
-            VStack(alignment: .leading, spacing: 8) {
+            if let result = line.result {
+                ResultCardView(result: result, isCurrent: line.resultCurrent ?? false,
+                               picture: line.picture.flatMap(NSImage.init(data:))) { _ in link.send(.tryIt(line.id)) }
+            } else {
                 ChatLook.AgentText(line.text)
-                if let untried = line.untried {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("Not tested yet: \(untried)").font(.callout).foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Have Lamp Test It") { link.send(.tryIt(line.id)) }
-                    }
-                }
             }
         }
     }
 }
+
+/// The agent's questions as Lamp's window draws them. How far they've been answered is kept here as it changes
+/// and told to Lamp, which tells it back: begun here, an answer carries on in Lamp's window, and the other way.
+private struct AskLine: View {
+    @EnvironmentObject private var link: Link
+    let line: SidebarLine
+    @State private var progress = AskProgress()
+
+    var body: some View {
+        if let ask = line.ask {
+            AskCardView(ask: ask, isOpen: line.askOpen ?? false, progress: $progress) { answers in
+                link.send(.answer(line.id, answers))
+            }
+            .onAppear { if let given = line.progress { progress = given } }
+            .onChange(of: line.progress) { if let given = line.progress, given != progress { progress = given } }
+            .onChange(of: progress) { if progress != line.progress { link.send(.askProgress(line.id, progress)) } }
+        } else {
+            Text(line.text).font(.callout).foregroundStyle(.secondary)
+        }
+    }
+}
+
 
 private struct Thumbnail: View {
     let attachment: SidebarAttachment
@@ -372,87 +386,7 @@ private struct ComposerRow: View {
     }
 }
 
-/// The agent's questions: each answered with a click, sent once every one has its answer.
-private struct QuestionCard: View {
-    @EnvironmentObject private var link: Link
-    let id: UUID
-    let questions: [SidebarQuestion]
-    @State private var chosen: [Int: String] = [:]
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ForEach(questions.indices, id: \.self) { index in
-                let question = questions[index]
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(question.question).font(.headline)
-                    FlowRow(spacing: 6) {
-                        ForEach(question.options.indices, id: \.self) { option in
-                            let title = question.options[option]
-                            Button {
-                                chosen[index] = title
-                                if chosen.count == questions.count {
-                                    link.send(.answer(id, questions.indices.map { chosen[$0] ?? "" }))
-                                }
-                            } label: {
-                                HStack(spacing: 5) {
-                                    if let symbol = question.symbols[safe: option] ?? nil { Image(systemName: symbol) }
-                                    Text(title)
-                                }
-                                .padding(.horizontal, 10).padding(.vertical, 6)
-                                .background(chosen[index] == title ? Color.accentColor.opacity(0.3) : Color.secondary.opacity(0.14),
-                                            in: Capsule())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-}
-
-/// Chips that wrap onto the next row as the width runs out.
-private struct FlowRow: Layout {
-    var spacing: CGFloat
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let rows = arrange(subviews, width: proposal.width ?? .infinity)
-        return CGSize(width: proposal.width ?? rows.map(\.width).max() ?? 0, height: rows.last.map { $0.y + $0.height } ?? 0)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        for row in arrange(subviews, width: bounds.width) {
-            var x = bounds.minX
-            for index in row.items {
-                let size = subviews[index].sizeThatFits(.unspecified)
-                subviews[index].place(at: CGPoint(x: x, y: bounds.minY + row.y), proposal: ProposedViewSize(size))
-                x += size.width + spacing
-            }
-        }
-    }
-
-    private struct Row { var items: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0; var y: CGFloat = 0 }
-
-    private func arrange(_ subviews: Subviews, width: CGFloat) -> [Row] {
-        var rows: [Row] = [Row()]
-        for index in subviews.indices {
-            let size = subviews[index].sizeThatFits(.unspecified)
-            if !rows[rows.count - 1].items.isEmpty, rows[rows.count - 1].width + spacing + size.width > width {
-                let y = rows[rows.count - 1].y + rows[rows.count - 1].height + spacing
-                rows.append(Row(y: y))
-            }
-            var row = rows[rows.count - 1]
-            row.width += (row.items.isEmpty ? 0 : spacing) + size.width
-            row.height = max(row.height, size.height)
-            row.items.append(index)
-            rows[rows.count - 1] = row
-        }
-        return rows
-    }
-}
 
 private extension Array {
     subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }

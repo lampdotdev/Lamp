@@ -1,4 +1,5 @@
 import SwiftUI
+import LampSidebarKit
 import AppKit
 
 /// Lamp Dev's gallery: each of the chat's cards in the states it can be in, drawn from made-up values instead of

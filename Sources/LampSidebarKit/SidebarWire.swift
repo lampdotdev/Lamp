@@ -83,6 +83,15 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var questions: [SidebarQuestion]?
     /// A result's step that wasn't tried, offered as Have Lamp Test It.
     public var untried: String?
+    /// The agent's questions as Lamp's window draws them, whether they still wait for an answer, and how far
+    /// they've been answered (in either chat).
+    public var ask: TalkCard.Ask?
+    public var askOpen: Bool?
+    public var progress: AskProgress?
+    /// What a request made as Lamp's window draws it, whether its Try It still applies, and its picture.
+    public var result: TalkCard.Result?
+    public var resultCurrent: Bool?
+    public var picture: Data?
 
     public init(id: UUID, kind: Kind, text: String, gap: Double = 0, running: Bool = false, attachments: [SidebarAttachment]? = nil,
                 growing: Bool = false, questions: [SidebarQuestion]? = nil, untried: String? = nil) {
@@ -160,6 +169,8 @@ public enum SidebarCommand: Codable, Equatable {
     case tryIt(UUID)
     case draft(String)
     case removeAttachment(Int)
+    /// How far an open card has been answered, as it changes, so the other chat carries on from there.
+    case askProgress(UUID, AskProgress)
     /// Files pasted, dropped or chosen in the sidebar, which only it can read: their names and contents.
     case attach([SidebarFile])
     case stop

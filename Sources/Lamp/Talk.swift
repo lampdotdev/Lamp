@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import LampSidebarKit
 
 /// The pieces the agent talks to the person with instead of paragraphs: a card of questions answered by
 /// clicking (`ask`), and a card for what a finished request made (`show_result`). The agent
@@ -8,154 +9,18 @@ import Foundation
 /// tool returns at once, the agent ends its reply, and the answer starts the next turn. That keeps it the
 /// same for every engine, none of which would hold a tool call open for as long as a person takes.
 enum Talk {
-    /// How a set of questions is laid out. The agent picks; the person can always type instead.
-    enum Layout: String, Codable, CaseIterable {
-        case steps      // one question at a time, on a card in the chat
-        case together   // every question on one card, answers as chips
-    }
-
-    struct Option: Codable, Equatable {
-        var title: String
-        var detail: String?
-        /// An SF Symbol's name, kept only when this Mac has it.
-        var symbol: String?
-    }
-
-    struct Question: Codable, Equatable {
-        var question: String
-        var options: [Option]
-
-        init(question: String, options: [Option]) {
-            self.question = question
-            self.options = options
-        }
-
-        /// A card saved while options were plain words, some with the one the agent had `chosen`, reads too.
-        init(from decoder: Decoder) throws {
-            let values = try decoder.container(keyedBy: CodingKeys.self)
-            question = try values.decode(String.self, forKey: .question)
-            if let options = try? values.decode([Option].self, forKey: .options) {
-                self.options = options
-            } else {
-                options = try values.decode([String].self, forKey: .options).map { Option(title: $0) }
-            }
-        }
-    }
-
-    struct Ask: Codable, Equatable {
-        var layout: Layout
-        var questions: [Question]
-        /// What was chosen on the card, one for each question, once it was answered there. A typed answer
-        /// leaves this nil: the message under the card says it.
-        var answers: [String]?
-        /// Answered in the message box instead. Noted as the message is sent, since it may wait in line
-        /// behind the agent's turn: the card folds then, not when the message gets its turn.
-        var typed: Bool?
-
-        init(layout: Layout, questions: [Question], answers: [String]? = nil, typed: Bool? = nil) {
-            self.layout = layout
-            self.questions = questions
-            self.answers = answers
-            self.typed = typed
-        }
-
-        private enum Earlier: String, CodingKey { case questions, dismissed }
-        private struct Chosen: Decodable { var chosen: String? }
-
-        /// Reads the cards of an earlier shape as well: no layout, an answer that could be missing, a mark
-        /// for a card answered in words, and choices the agent had made shown on the same card. Those last
-        /// read as answered with what was chosen: what was decided stays in the chat, folded.
-        init(from decoder: Decoder) throws {
-            let values = try decoder.container(keyedBy: CodingKeys.self)
-            let earlier = try decoder.container(keyedBy: Earlier.self)
-            layout = (try? values.decode(Layout.self, forKey: .layout)) ?? .together
-            questions = try values.decode([Question].self, forKey: .questions)
-            typed = try values.decodeIfPresent(Bool.self, forKey: .typed)
-            let chosen = ((try? earlier.decode([Chosen].self, forKey: .questions)) ?? []).map(\.chosen)
-            let given = try values.decodeIfPresent([String?].self, forKey: .answers)
-            let assumed = !chosen.isEmpty && chosen.allSatisfy { $0 != nil }
-            if given != nil || assumed {
-                answers = questions.indices.map { index in
-                    (given.flatMap { $0.indices.contains(index) ? $0[index] : nil })
-                        ?? (chosen.indices.contains(index) ? chosen[index] : nil) ?? Talk.youDecide
-                }
-            } else if (try? earlier.decodeIfPresent(Bool.self, forKey: .dismissed)) == true {
-                typed = true
-            }
-        }
-
-        /// What the card says once it's folded after a click: each question with what was chosen for it, a line
-        /// each. The answers alone don't read on their own ("Both · Both"), and the card isn't there any more.
-        var folded: String? {
-            guard let answers else { return nil }
-            return questions.indices.map { index in
-                let question = questions[index].question
-                let asked = question.last.map { ".?!…:".contains($0) } == true ? question : question + "?"
-                return asked + " " + (answers.indices.contains(index) ? answers[index] : Talk.youDecide)
-            }.joined(separator: "\n")
-        }
-
-        /// The questions as plain words, for everything that reads a chat line's text.
-        var text: String {
-            questions.map { question in
-                question.question + "\n" + question.options.map { "- " + $0.title }.joined(separator: "\n")
-            }.joined(separator: "\n\n")
-        }
-    }
-
-    /// One thing the agent decided for the person, and the other way it could have gone, from cards saved while
-    /// a new app's card showed them as buttons. The agent isn't asked for them any more: beside the picture they
-    /// made the card a form to go through, when it's the app itself the person wants to try. Kept so those
-    /// chats still read, along with the idea they ended on.
-    struct Guess: Codable, Equatable {
-        var guess: String
-        /// The button: the other way, in a few words.
-        var instead: String
-        /// What the button sends, as the person would say it.
-        var request: String
-    }
-
-    struct Idea: Codable, Equatable {
-        var title: String
-        var detail: String?
-        var request: String
-    }
-
-    /// Something a change added and where it is, from cards saved while the card listed them as rows. The
-    /// agent isn't asked for them any more; the ones already in a chat are kept and shown with the summary, so
-    /// an older card still says where to find what it made.
-    struct News: Codable, Equatable {
-        var what: String
-        var place: String
-    }
-
-    struct Result: Codable, Equatable {
-        var summary: String
-        /// Only on cards saved while there were guesses and ideas (see `Guess`); empty or nil on newer ones.
-        var guesses: [Guess]
-        var idea: Idea?
-        /// Only on cards saved while there were rows of what's new (see `News`).
-        var news: [News]?
-        /// What the agent built and didn't try in the running app, offered back as something to try.
-        var untried: String?
-        /// The version this request made, for its picture.
-        var version: String?
-        /// The guesses the person turned the other way on the card, by their place in `guesses`.
-        var switched: [Int]?
-
-        var text: String {
-            // In steps: as one expression it's more than the compiler will type-check in reasonable time.
-            var lines: [String] = [summary]
-            lines += (news ?? []).map { "- \($0.what): \($0.place)" }
-            lines += guesses.map { "- \($0.guess) (or: \($0.instead))" }
-            if let idea { lines.append("- Idea: \(idea.title)") }
-            if let untried { lines.append("- Not tried: \(untried)") }
-            return lines.joined(separator: "\n")
-        }
-    }
+    // The cards' data, shared with the chat inside each app's window (LampSidebarKit), which draws them too.
+    typealias Layout = TalkCard.Layout
+    typealias Option = TalkCard.Option
+    typealias Question = TalkCard.Question
+    typealias Ask = TalkCard.Ask
+    typealias Guess = TalkCard.Guess
+    typealias Idea = TalkCard.Idea
+    typealias News = TalkCard.News
+    typealias Result = TalkCard.Result
 
     /// What the card's Have Lamp Test It button sends: the agent's own words for what it didn't try, as a request.
-    static func tryRequest(_ untried: String) -> String { "Please try this out: \(untried)" }
+    static func tryRequest(_ untried: String) -> String { TalkCard.tryRequest(untried) }
 
     static let questionLimit = 4
     static let optionLimit = 4
@@ -228,7 +93,7 @@ enum Talk {
     }
 
     /// What a question is answered with when the person leaves it to Lamp.
-    static let youDecide = "You decide"
+    static let youDecide = TalkCard.youDecide
 
     /// The message a card's answers make: one line for each question, in the order asked, each with the
     /// question it answers. An engine that reads the conversation again later, or has summed it up, has

@@ -174,7 +174,8 @@ final class SidebarServer {
     /// At launch: an app whose sidebar is open finds Lamp again.
     func start() {
         listener = Listener(server: self)
-        watching = Store.shared.objectWillChange.sink { [weak self] _ in
+        // The chat, and how far an open card has been answered in Lamp's window, which isn't the Store's.
+        watching = Store.shared.objectWillChange.merge(with: AskProgresses.shared.objectWillChange).sink { [weak self] _ in
             DispatchQueue.main.async { self?.scheduleUpdate() }
         }
     }
@@ -223,7 +224,7 @@ final class SidebarServer {
         let busy = store.busy.contains(project.id)
         // The progress line, as Lamp's window shows it: not under the agent's questions.
         let progress = busy && Talk.open(in: log) == nil ? store.progress[project.id] : nil
-        var state = SidebarState(app: project.name, lines: Self.lines(log, dir: project.dir, busy: busy, progressShown: progress != nil),
+        var state = SidebarState(app: project.name, lines: Self.lines(log, project: project, busy: busy, progressShown: progress != nil),
                                  working: progress?.activity, workingSince: progress?.started, empty: log.isEmpty, busy: busy,
                                  draft: draft.text, draftVersion: draftVersions[project.id] ?? 0,
                                  attachments: draft.attachments.map { Self.attachment($0) })
@@ -241,7 +242,8 @@ final class SidebarServer {
 
     /// The chat as Lamp's window shows it without Agent Details (`Transcript`): the same lines, gathered and
     /// spaced the same way. Cards and notes Lamp's window has and this doesn't yet are left out.
-    static func lines(_ log: [LogLine], dir: URL, busy: Bool, progressShown: Bool) -> [SidebarLine] {
+    static func lines(_ log: [LogLine], project: LampProject, busy: Bool, progressShown: Bool) -> [SidebarLine] {
+        let dir = project.dir
         let lines = LogLine.visible(log, details: false)
         let finalAnswers = Transcript.finalAnswers(in: lines, busy: busy)
         let openAsk = Talk.open(in: lines)?.id
@@ -276,17 +278,18 @@ final class SidebarServer {
                     out.append(SidebarLine(id: line.id, kind: .error, text: line.text, gap: gap))
                 case .ask:
                     guard let ask = line.ask else { continue }
-                    if line.id == openAsk {
-                        out.append(SidebarLine(id: line.id, kind: .ask, text: ask.text, gap: gap, questions: ask.questions.map {
-                            SidebarQuestion(question: $0.question, options: $0.options.map { $0.title }, symbols: $0.options.map { $0.symbol })
-                        }))
-                    } else if let folded = ask.folded {
-                        out.append(SidebarLine(id: line.id, kind: .ask, text: folded, gap: gap))
-                    }
+                    var card = SidebarLine(id: line.id, kind: .ask, text: ask.text, gap: gap)
+                    card.ask = ask
+                    card.askOpen = line.id == openAsk
+                    card.progress = AskProgresses.shared.progress(for: line.id)
+                    out.append(card)
                 case .result:
                     guard let result = line.result else { continue }
-                    let current = line.id == currentResult && !busy
-                    out.append(SidebarLine(id: line.id, kind: .result, text: result.summary, gap: gap, untried: current ? result.untried : nil))
+                    var card = SidebarLine(id: line.id, kind: .result, text: result.summary, gap: gap)
+                    card.result = result
+                    card.resultCurrent = line.id == currentResult && !busy
+                    card.picture = result.version.flatMap { picture(Versions.pictureURL(in: project, for: $0)) }
+                    out.append(card)
                 default:
                     continue
                 }
@@ -298,6 +301,20 @@ final class SidebarServer {
     /// An attachment as the sidebar shows it: its name, and a picture of it or its icon, as Lamp's window has it.
     fileprivate static func attachment(_ url: URL) -> SidebarAttachment {
         SidebarAttachment(name: url.lastPathComponent, thumbnail: thumbnail(url), isImage: Attachments.isImage(url))
+    }
+
+    /// A result's picture, small enough to send every time the chat changes.
+    private static var pictures: [URL: Data] = [:]
+    fileprivate static func picture(_ url: URL) -> Data? {
+        if let data = pictures[url] { return data }
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        let scale = min(300 / max(image.size.width, 1), 200 / max(image.size.height, 1), 1)
+        let size = NSSize(width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
+        let small = NSImage(size: size, flipped: false) { rect in image.draw(in: rect); return true }
+        guard let tiff = small.tiffRepresentation,
+              let data = NSBitmapImageRep(data: tiff)?.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else { return nil }
+        pictures[url] = data
+        return data
     }
 
     private static var thumbnails: [URL: Data] = [:]
@@ -354,6 +371,8 @@ final class SidebarServer {
                 return url
             }
             store.attach(urls, to: project)
+        case .askProgress(let id, let progress):
+            AskProgresses.shared.set(progress, for: id)
         case .removeAttachment(let index):
             var draft = store.draft(for: project)
             guard draft.attachments.indices.contains(index) else { return }
