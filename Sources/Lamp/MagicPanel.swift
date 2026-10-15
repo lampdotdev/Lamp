@@ -4,10 +4,10 @@ import Combine
 
 /// An app's chat beside the app itself, opened by the 🪄 in its title bar (`LampMagic` in LampSupport.swift), so
 /// the person can change the app while using it. It's Lamp's own chat for that app (`ProjectView`), in a panel
-/// that floats over the app without bringing Lamp's main window forward: what's said here is said in the main
-/// window too. The app tells Lamp where its window is, and the panel keeps to its side. It shows while the app,
-/// or Lamp, is in front, and stays while the app is closed for a change to go in, so the build can be followed
-/// until the app opens again.
+/// beside the app that doesn't bring Lamp's main window forward: what's said here is said in the main window too.
+/// The app tells Lamp where its window is, and the panel keeps to its side. It's an ordinary window, covered by
+/// other apps like any, and stays while the app is closed for a change to go in, so the build can be followed
+/// until the app opens again; it closes when the person quits the app.
 @MainActor
 final class MagicPanel: NSObject, NSWindowDelegate {
     static let shared = MagicPanel()
@@ -100,13 +100,14 @@ final class MagicPanel: NSObject, NSWindowDelegate {
                             styleMask: [.titled, .closable, .resizable, .nonactivatingPanel],
                             backing: .buffered, defer: false)
         panel.title = "Editing \(project.name)"
-        // A plain title bar over a solid chat: the panel floats over other windows, and what's behind it showing
-        // through the chat made it hard to read.
+        // A plain title bar over a solid chat: what's behind it showing through the chat made it hard to read.
         panel.backgroundColor = .windowBackgroundColor
         panel.isOpaque = true
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
-        panel.level = .floating
+        // An ordinary window, which another app's windows cover like any other: it stays beside the app rather
+        // than coming and going as apps take turns in front. Lamp brings it up when the app or Lamp comes forward.
+        panel.level = .normal
         panel.hidesOnDeactivate = false
         panel.becomesKeyOnlyIfNeeded = false
         panel.isReleasedWhenClosed = false
@@ -160,8 +161,7 @@ final class MagicPanel: NSObject, NSWindowDelegate {
                 if !text.isEmpty { self.revealApp() }
             }
         })
-        // Over the app and Lamp only: another app in front puts it away until one of them comes back. Looked at
-        // again when the app's turn ends too, which ends the exception for a change going in.
+        // The app or Lamp coming forward brings it up with them. Looked at again when the app's turn ends too.
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateVisibility() }
@@ -180,11 +180,17 @@ final class MagicPanel: NSObject, NSWindowDelegate {
             MainActor.assumeIsolated {
                 let ended = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.processIdentifier
                 if let ended, ended == self?.steppedAside { self?.comeBack() }
-                guard let self, let current = Store.shared.projects.first(where: { $0.id == id }), Store.shared.busy.contains(id),
+                guard let self, let current = Store.shared.projects.first(where: { $0.id == id }),
                       let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                       app.bundleIdentifier == current.bundleID
                         || app.bundleURL?.standardizedFileURL == current.installedURL.standardizedFileURL else { return }
-                self.showCover(for: current)
+                if Store.shared.busy.contains(id) { self.showCover(for: current); return }
+                // The person quit the app: the panel beside it goes with it.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    // Still this app's panel: another app's wand opened meanwhile has taken it over.
+                    guard self.appID == id, Store.shared.macCopies(of: current).isEmpty, !Store.shared.busy.contains(id) else { return }
+                    self.close()
+                }
             }
         })
         // What the person pointed at in the app (`LampMagic.Picker`), for their message.
@@ -328,10 +334,9 @@ final class MagicPanel: NSObject, NSWindowDelegate {
         let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let copies = Store.shared.macCopies(of: current)
         let ours = front == ProcessInfo.processInfo.processIdentifier || copies.contains { $0.processIdentifier == front }
-        // While the app is closed for a change, the chat is where the change is followed.
-        let updating = copies.isEmpty && Store.shared.busy.contains(appID)
         let pointing = steppedAside.map { pid in copies.contains { $0.processIdentifier == pid } } ?? false
-        if pointing { panel.orderOut(nil) } else if ours || updating { panel.orderFront(nil) } else { panel.orderOut(nil) }
+        // Always there, as a window beside the app is; another app in front simply covers it.
+        if pointing { panel.orderOut(nil) } else if ours || !panel.isVisible { panel.orderFrontRegardless() }
     }
 
     /// Beside the app's window, on whichever side has room, as tall as it; over its right edge when neither has.

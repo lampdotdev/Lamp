@@ -8,11 +8,9 @@ import CryptoKit
 /// What can't go in that way (a stored property or an enum case added, removed or changed, a file removed, the
 /// App itself, Lamp's own file, the app's assets or settings) is installed as before, by reopening the app.
 enum LiveReload {
-    /// Whether the app is built live: a Mac app, or the Mac half of an app for both while
-    /// Try On points at this Mac, with nothing built beside it (a widget or share extension, which share no
-    /// code with the open app).
+    /// Whether the app is built live: a Mac app, or the Mac half of an app for both while Try On points at this Mac.
     @MainActor static func eligible(_ project: LampProject) -> Bool {
-        project.platform.hasMac && !project.onIOS && !Template.hasWidget(project) && !Template.hasShare(project)
+        project.platform.hasMac && !project.onIOS
     }
 
     static func folder(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/live") }
@@ -34,11 +32,16 @@ enum LiveReload {
     private static func runningInputs(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-inputs.txt") }
 
     /// What else goes into the installed app besides the code, which a library can't bring: what it declares
-    /// (capabilities.json), the package and the icon. A change to any of them is installed by reopening the app.
+    /// (capabilities.json), the package, the icon, and what's built beside the app (a widget or share extension,
+    /// which run in processes of their own). A change to any of them is installed by reopening the app.
     /// Not its own files (Assets): a live build reads them from the app's folder (`LampAssets`), new ones included.
     static func inputs(_ project: LampProject) -> String {
         let fm = FileManager.default
-        return ["Package.swift", Template.Capabilities.file, "icon.json"].map { name in
+        let files = ["Package.swift", Template.Capabilities.file, "icon.json"]
+            + [Template.widgetFolder, Template.shareFolder].flatMap { folder in
+                ((try? fm.subpathsOfDirectory(atPath: project.dir.appendingPathComponent(folder).path)) ?? []).sorted().map { "\(folder)/\($0)" }
+            }
+        return files.map { name in
             let data = fm.contents(atPath: project.dir.appendingPathComponent(name).path) ?? Data()
             return name + " " + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         }.joined(separator: "\n")
@@ -91,7 +94,7 @@ enum LiveReload {
         // something the open app still uses.
         if let gone = Set(open.keys).subtracting(built.keys).sorted().first { return .reopen("\(gone) was removed") }
         if (try? String(contentsOf: runningInputs(project), encoding: .utf8)) != inputs(project) {
-            return .reopen("the package, the app's settings or its icon changed")
+            return .reopen("the package, the app's settings, its icon, or its widget or Share item changed")
         }
         var changed: [String] = []
         for (path, url) in built.sorted(by: { $0.key < $1.key }) {
@@ -160,7 +163,11 @@ enum LiveReload {
     /// macOS 14, named after the app, with SwiftUI's macros).
     private static func frontend(_ action: String, in folder: URL, primaries: [String], module: String) -> String {
         let all = swiftFiles(in: folder)
-        let others = all.filter { !primaries.contains($0.key) }.values.map(\.path).sorted()
+        // The widget's code the app shares (Widget/Shared, linked into Sources and not followed there) is read for
+        // context: a change to it reopens the app (`inputs`), but the app's code may use what it declares.
+        let shared = swiftFiles(in: folder.deletingLastPathComponent()
+            .appendingPathComponent(Template.widgetFolder).appendingPathComponent(Template.sharedWidgetFolder)).values.map(\.path)
+        let others = (all.filter { !primaries.contains($0.key) }.values.map(\.path) + shared).sorted()
         let firsts = primaries.compactMap { all[$0]?.path }.map { "-primary-file " + quoted($0) }.joined(separator: " ")
         return """
             SDK="$(xcrun --sdk macosx --show-sdk-path)"
@@ -209,6 +216,9 @@ enum LiveReload {
         for raw in dump.split(separator: "\n") {
             let line = String(raw), range = NSRange(line.startIndex..., in: line)
             let indent = line.prefix { $0 == " " }.count
+            // Only a line that opens a node says where it sits; the closing brackets of a deep node sometimes
+            // come on a line of their own at the left edge, which would otherwise end every scope.
+            guard line.dropFirst(indent).first == "(" else { continue }
             while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
             // What a member line belongs to is the nearest scope around it: a type's member when that's the type,
             // nothing when it's a function, an accessor or a closure (a local).

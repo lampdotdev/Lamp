@@ -420,8 +420,8 @@ that app's chat (`ProjectView`, the same chat as in its window) in a non-activat
 window (`MagicPanel`), which the app keeps placed by posting its window's frame as it moves. What's half done in one
 of the two chats goes on in the other: the message box's draft, and a question card's answers so far (`AskProgresses`). Lamp draws the chat,
 never the app: whatever the app's process can do, its own generated code can, so it has no way to speak to the
-agent that builds it, only to say where its window is. The panel shows while the app or Lamp is in front, and while
-the app is closed for a change to go in. A change still reopens the app; the rule (`Agent.Rules.macGenerated`) asks
+agent that builds it, only to say where its window is. The panel is an ordinary window beside the app: it comes forward with the app or Lamp, another
+app covers it like any window, and it closes when the person quits the app (not when the app closes for a change). A change still reopens the app; the rule (`Agent.Rules.macGenerated`) asks
 the agent to keep what the person was looking at in `@SceneStorage`, so it comes back as they left it. To make that
 look like the window changing in place: as the app quits it leaves a picture of its front window and where it was
 in its runtime folder (`LampMagic.leaveCover`); while the app's turn is going, Lamp shows that picture where the
@@ -435,8 +435,8 @@ says what it is; Lamp attaches that picture to the message, named after the thin
 `MagicPanel.name`), and takes a picture only from that folder.
 
 Whether the change was asked for beside the app or in Lamp's window, a change goes into the open app without a restart when it can (`LiveReload`). The
-Mac app, or the Mac half of an app for both while Try On points at this Mac, with no widget or share extension, is
-built live: build.sh with `LAMP_LIVE=1` copies Sources into `.lamp/live` with each `var body: some View` wrapped
+Mac app, or the Mac half of an app for both while Try On points at this Mac, is
+built live (a widget or share extension is built from the same copy, and a change to one reopens the app): build.sh with `LAMP_LIVE=1` copies Sources into `.lamp/live` with each `var body: some View` wrapped
 (`Template.liveCopySteps`: the body becomes `AnyView` and reads `LampLive.generation`, so its type never changes and
 every view draws again on a reload with its state kept), and builds that copy unoptimized, testable, with
 `LAMP_LIVE` and `-Xlinker -interposable` (SwiftPM for a Mac app; Xcode for an app for both, from a copy of the

@@ -90,18 +90,15 @@ enum Agent {
     the person, over whatever they're doing, whether the app may look for devices on their network. Check \
     what would be printed from the code or another screen, and say that printing itself wasn't tried.
     - A new app's first build is the user's to see first. Build it, call `look_at_app` once to be sure it \
-    opens and looks right (fix what you see), and stop there: don't `use_app` it; they're probably already \
-    clicking around in it, and your clicks would get in their way. `show_result` is how you tell them it's \
-    ready: don't also say so in your reply, and don't describe the app there. If they ask you to try it \
-    out, walk through it as below.
-    - Try a change before you say it works. After changing what the app does (a button's effect, sorting, a \
-    form, a flow between screens, saving and loading), walk through the main things the user asked for with \
-    `use_app` as they would: add an item and see it appear, fill the form and submit it, quit and reopen to \
-    see what was kept. Fix what you find and try again. Be honest about what couldn't be tried: when the \
-    change ends on `show_result` that is its `untried`, and what worked needs no words; otherwise say in one \
-    plain sentence what you tried and what happened ("I added three tasks, ticked one off and reopened the \
-    app: they were all still there"). Don't try trivial changes (a label, a color) or \
-    a change you watched work already.
+    opens and looks right (fix what you see), and stop there. `show_result` is how you tell them it's \
+    ready: don't also say so in your reply, and don't describe the app there.
+    - Don't use the app (`use_app`) unless the person asks you to try it: they're probably using it, and your \
+    clicks, keys and windows get in their way. Check a change with `look_at_app` and by reading the code, and \
+    fix what you see. Say what wasn't tried: when the change ends on `show_result` that is its `untried`; \
+    otherwise one plain sentence, only for a change to what the app does (a button's effect, a form, saving). \
+    When they ask you to try it, walk through the main things they asked for with `use_app` as they would \
+    (add an item and see it appear, fill the form and submit it, quit and reopen to see what was kept), fix \
+    what you find, and say in one plain sentence what you tried and what happened.
     """
 
     /// Every engine has these too (pi's extension, Lamp's MCP endpoint). Kept apart from the look rules only
@@ -158,7 +155,8 @@ enum Agent {
     ---
     This app is updated in place while it's open, keeping what's on screen, when a change only edits or adds code. \
     Adding or changing a stored property, an enum case or the App reopens it, so put new state in a new view with \
-    its own @State (in a new file) rather than in an existing type, when that's as clear.
+    its own @State (in a new file) rather than in an existing type, when that's as clear. \
+    A look shows the window as the person left it, with the change in it.
     """
 
     /// Short for the same reason. What AI the app has comes at the end of a request (AIStatus.brief), since it
