@@ -3398,8 +3398,15 @@ enum Template {
         /// a library's calls to functions it doesn't hold were bound to the app's first copies.
         private var latest: [String: UnsafeRawPointer] = [:]
         private var images: [String] = []
-        /// The app's own accessors of its stored globals and statics, by name.
-        private var kept: [String: UnsafeRawPointer]?
+        /// The accessors of each stored global and static, by name, from the image that first had it.
+        private var kept: [String: UnsafeRawPointer] = [:]
+
+        private func keep(_ symbols: [(String, UnsafeRawPointer)]) {
+            let stored = Self.stored(in: symbols)
+            for (name, address) in symbols where kept[name] == nil && (name.hasSuffix("vau") || Self.accesses(name, oneOf: stored)) {
+                kept[name] = address
+            }
+        }
 
         private func load(_ path: String?, signature: String?) {
             let folder = "{{APPS}}/{{SLUG}}/.lamp/live/"
@@ -3424,14 +3431,14 @@ enum Template {
             for (name, address) in defined where Self.isCode(name) && !Self.accesses(name, oneOf: Self.stored(in: defined)) {
                 latest[name] = address
             }
-            // Stored globals and statics stay the app's: the new code's own accessors for them would reach a second
-            // copy, made afresh, so its calls to them go to the app's, and only one that's new keeps its own.
-            if kept == nil, let app = _dyld_get_image_header(0) {
-                let symbols = Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0))
-                let stored = Self.stored(in: symbols)
-                kept = Dictionary(symbols.filter { $0.0.hasSuffix("vau") || Self.accesses($0.0, oneOf: stored) }) { first, _ in first }
+            // Stored globals and statics stay where they were first made: the new code's own accessors for them
+            // would reach a second copy, made afresh. So its calls to them go to the app's, or to the earlier
+            // change's that first added one, and only one that's new keeps its own.
+            if kept.isEmpty, let app = _dyld_get_image_header(0) {
+                keep(Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0)))
             }
-            let bindings = latest.merging(kept ?? [:]) { new, _ in new }
+            keep(defined)
+            let bindings = latest.merging(kept) { new, _ in new }
             images.append(path)
             var rebound = Self.rebind(image: 0, to: latest)
             for earlier in images {
