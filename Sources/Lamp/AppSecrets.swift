@@ -81,7 +81,10 @@ enum AppSecrets {
             let status = SecItemDelete(Keychain.query(service, account: app + "/" + name) as CFDictionary)
             return status == errSecSuccess || status == errSecItemNotFound
         case .file(let url):
-            guard var all = File.read(url), all[app]?[name] != nil else { return true }
+            guard FileManager.default.fileExists(atPath: url.path) else { return true }
+            // A file that's there but can't be read may still hold it: that isn't forgotten.
+            guard var all = File.read(url) else { return false }
+            guard all[app]?[name] != nil else { return true }
             all[app]?[name] = nil
             if all[app]?.isEmpty == true { all[app] = nil }
             return File.write(all, to: url)
