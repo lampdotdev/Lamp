@@ -346,7 +346,7 @@ private struct IdeaStep: View {
             .padding(.top, 18)
 
             HStack {
-                Text("Sound familiar?").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                Text("Need inspiration?").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
                 Spacer()
                 Button {
                     deck.more()

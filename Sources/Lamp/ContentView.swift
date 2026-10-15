@@ -1884,7 +1884,7 @@ struct StarterIdeas: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Sound familiar?").font(.callout).foregroundStyle(.secondary)
+                Text("Need inspiration?").font(.callout).foregroundStyle(.secondary)
                 Spacer()
                 Button(action: deck.more) {
                     HStack(spacing: 5) {
