@@ -12,22 +12,11 @@ struct AttachmentChip: View {
     var onRemove: (() -> Void)?
 
     var body: some View {
-        HStack(spacing: 6) {
+        ChatLook.Chip(onRemove: onRemove) {
             AttachmentPreview(url: url, siblings: siblings) {
-                HStack(spacing: 6) {
-                    AttachmentThumbnail(url: url, size: 28)
-                    Text(url.lastPathComponent).lineLimit(1).truncationMode(.middle).frame(maxWidth: 160, alignment: .leading)
-                }
-            }
-            if let onRemove {
-                Button(action: onRemove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                    .buttonStyle(.plain)
-                    .help("Remove")
+                ChatLook.ChipLabel(name: url.lastPathComponent) { AttachmentThumbnail(url: url, size: 28) }
             }
         }
-        .font(.caption)
-        .padding(4)
-        .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 7))
     }
 }
 

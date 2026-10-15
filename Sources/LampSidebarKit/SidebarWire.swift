@@ -41,6 +41,14 @@ public struct SidebarState: Codable, Equatable {
     /// takes it up; the words the sidebar sent itself come back with the same number and are left alone.
     public var draftVersion: Int
     public var attachments: [SidebarAttachment]
+    /// Messages waiting for the current change to finish.
+    public var queued: [SidebarQueued] = []
+    /// The first request is waiting for Apple's tools to install, not for a turn.
+    public var waitingForSetup = false
+    /// A command or file the agent is asking to use, waiting for an answer.
+    public var approval: SidebarApproval?
+    /// The app was asked to quit and isn't responding: what the notice says.
+    public var notResponding: String?
 
     public init(app: String, lines: [SidebarLine], working: String?, workingSince: Date?, empty: Bool, busy: Bool,
                 draft: String, draftVersion: Int, attachments: [SidebarAttachment]) {
@@ -100,13 +108,43 @@ public struct SidebarQuestion: Codable, Equatable {
     }
 }
 
+public struct SidebarQueued: Codable, Equatable, Identifiable {
+    public var id: UUID
+    public var text: String
+    public var attachments: [SidebarAttachment]
+
+    public init(id: UUID, text: String, attachments: [SidebarAttachment]) {
+        self.id = id
+        self.text = text
+        self.attachments = attachments
+    }
+}
+
+public struct SidebarApproval: Codable, Equatable {
+    public var id: UUID
+    public var title: String
+    public var command: String
+    public var explanation: ChatLook.Explanation?
+
+    public init(id: UUID, title: String, command: String, explanation: ChatLook.Explanation?) {
+        self.id = id
+        self.title = title
+        self.command = command
+        self.explanation = explanation
+    }
+}
+
 public struct SidebarAttachment: Codable, Equatable {
     public var name: String
+    /// A small picture: of the picture itself, or the file's icon.
     public var thumbnail: Data?
+    /// A picture, shown as itself in a request; any other file is a chip.
+    public var isImage: Bool?
 
-    public init(name: String, thumbnail: Data?) {
+    public init(name: String, thumbnail: Data?, isImage: Bool? = nil) {
         self.name = name
         self.thumbnail = thumbnail
+        self.isImage = isImage
     }
 }
 
@@ -123,6 +161,10 @@ public enum SidebarCommand: Codable, Equatable {
     /// Files pasted, dropped or chosen in the sidebar, which only it can read: their names and contents.
     case attach([SidebarFile])
     case stop
+    case unqueue(UUID)
+    /// The answer to the approval with this id.
+    case approve(UUID, allow: Bool, allowAll: Bool)
+    case forceQuit
 }
 
 public struct SidebarFile: Codable, Equatable {

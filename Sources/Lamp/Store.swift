@@ -1,4 +1,5 @@
 import SwiftUI
+import LampSidebarKit
 import CryptoKit
 import AppKit
 
@@ -356,6 +357,9 @@ final class Store: ObservableObject {
         let summary: String
         let risk: String     // "low", "medium" or "high"; empty when nothing rated it
         let why: String
+
+        /// As the approval card shows it, in Lamp's window and in an app's sidebar.
+        var look: ChatLook.Explanation { ChatLook.Explanation(summary: summary, risk: risk, why: why) }
     }
     @Published var approvals: [String: PendingApproval] = [:]   // project id → the command waiting
     private var approving: Set<String> = []                       // project ids between the queue check and the card
