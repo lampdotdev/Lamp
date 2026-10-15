@@ -35,6 +35,7 @@ final class Link: ObservableObject {
     @Published var lampAway = false
 
     private var fd: Int32 = -1
+    private var outbox: SidebarOutbox?
     private var source: DispatchSourceRead?
     private var buffer = Data()
     private var since = Date()
@@ -64,6 +65,8 @@ final class Link: ObservableObject {
         var on: Int32 = 1
         setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         fd = socket
+        outbox = SidebarOutbox(fd: socket)
+        send(.hello(SidebarWire.version))
         connected = true
         lampAway = false
         let source = DispatchSource.makeReadSource(fileDescriptor: socket, queue: .main)
@@ -75,6 +78,7 @@ final class Link: ObservableObject {
     private func read() {
         var chunk = [UInt8](repeating: 0, count: 65536)
         let count = Darwin.read(fd, &chunk, chunk.count)
+        if count < 0, errno == EAGAIN || errno == EINTR { return }
         guard count > 0 else { return drop() }
         buffer.append(contentsOf: chunk[0..<count])
         for line in SidebarWire.lines(from: &buffer) {
@@ -83,6 +87,8 @@ final class Link: ObservableObject {
     }
 
     private func drop() {
+        outbox?.close()
+        outbox = nil
         source?.cancel()
         source = nil
         if fd >= 0 { close(fd) }
@@ -93,15 +99,8 @@ final class Link: ObservableObject {
     }
 
     func send(_ command: SidebarCommand) {
-        guard fd >= 0, let data = SidebarWire.encode(command) else { return }
-        data.withUnsafeBytes { bytes in
-            var offset = 0
-            while offset < bytes.count {
-                let written = Darwin.write(fd, bytes.baseAddress! + offset, bytes.count - offset)
-                if written <= 0 { break }
-                offset += written
-            }
-        }
+        guard let outbox, let data = SidebarWire.encode(command) else { return }
+        outbox.send(data)
     }
 
     /// Starts Lamp when it isn't open, by its link, without bringing it in front.

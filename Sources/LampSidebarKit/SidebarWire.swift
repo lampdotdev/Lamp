@@ -5,6 +5,9 @@ import Foundation
 /// the extension sends what the person did. Lamp draws nothing here and the extension decides nothing: it shows
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
+    /// What this side reads and writes; see `SidebarCommand.hello`.
+    public static let version = 2
+
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
         data.append(0x0A)
@@ -109,6 +112,9 @@ public struct SidebarAttachment: Codable, Equatable {
 
 /// What the person did in the sidebar.
 public enum SidebarCommand: Codable, Equatable {
+    /// The first thing a sidebar says: which shape of `SidebarState` it reads. One that says nothing is from
+    /// before the summary line, which it can't read.
+    case hello(Int)
     case send(String)
     case answer(UUID, [String])
     case tryIt(UUID)
@@ -126,5 +132,59 @@ public struct SidebarFile: Codable, Equatable {
     public init(name: String, data: Data) {
         self.name = name
         self.data = data
+    }
+}
+
+/// Writes to a socket without ever waiting on it: what the other side hasn't taken yet stays here and goes as
+/// it makes room. Both ends read on the main thread, so a blocking write while the other end is also writing
+/// would leave each waiting for the other.
+public final class SidebarOutbox {
+    private let fd: Int32
+    private var pending = Data()
+    private var source: DispatchSourceWrite?
+    /// Called when everything held has gone out.
+    public var onDrain: (() -> Void)?
+
+    public init(fd: Int32) {
+        self.fd = fd
+        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+    }
+
+    public var isHolding: Bool { !pending.isEmpty }
+
+    public func send(_ data: Data) {
+        pending.append(data)
+        flush()
+    }
+
+    public func close() {
+        source?.cancel()
+        source = nil
+        pending = Data()
+    }
+
+    private func flush() {
+        while !pending.isEmpty {
+            let written = pending.withUnsafeBytes { Darwin.write(fd, $0.baseAddress!, $0.count) }
+            if written > 0 {
+                pending.removeFirst(written)
+            } else if written < 0, errno == EAGAIN || errno == EINTR {
+                break
+            } else {
+                // The other end is gone: what's held won't go anywhere.
+                pending = Data()
+                break
+            }
+        }
+        if pending.isEmpty {
+            source?.cancel()
+            source = nil
+            onDrain?()
+        } else if source == nil {
+            let source = DispatchSource.makeWriteSource(fileDescriptor: fd, queue: .main)
+            source.setEventHandler { [weak self] in self?.flush() }
+            source.resume()
+            self.source = source
+        }
     }
 }

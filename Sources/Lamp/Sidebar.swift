@@ -236,7 +236,9 @@ final class SidebarServer {
         let finalAnswers = Transcript.finalAnswers(in: lines, busy: busy)
         let openAsk = Talk.open(in: lines)?.id
         let currentResult = Talk.current(in: lines)?.id
-        let shown = lines.filter { $0.fromCard != true }
+        // Only the end of a long chat, as Lamp's window opens on it; the rest is a click away in Lamp.
+        let start = LogLine.recentStart(in: lines, atLeast: LogLine.recentCount)
+        let shown = lines[start...].filter { $0.fromCard != true }
         let items = ChatItem.items(progressShown ? Transcript.withoutStepInProgress(shown) : shown)
         var out: [SidebarLine] = []
         for (index, item) in items.enumerated() {
@@ -343,6 +345,8 @@ final class SidebarServer {
             store.updateDraft(draft, for: project)
         case .stop:
             store.stop(project)
+        case .hello:
+            break   // answered by the connection
         }
     }
 
@@ -389,6 +393,11 @@ final class SidebarServer {
         private var source: DispatchSourceRead?
         private var buffer = Data()
         private var last: Data?
+        private let outbox: SidebarOutbox
+        /// A state that came while the last one was still going out: only the latest is sent once it has.
+        private var waiting = false
+        /// Which shape of the chat the sidebar reads (`SidebarCommand.hello`); 1 until it says.
+        fileprivate var version = 1
 
         init(socket: Int32, projectID: String, server: SidebarServer) {
             fd = socket
@@ -397,38 +406,50 @@ final class SidebarServer {
             // A sidebar that went away mid-write mustn't end Lamp.
             var on: Int32 = 1
             setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+            outbox = SidebarOutbox(fd: socket)
             let source = DispatchSource.makeReadSource(fileDescriptor: socket, queue: .main)
             source.setEventHandler { [weak self] in MainActor.assumeIsolated { self?.read() } }
             source.resume()
             self.source = source
+            outbox.onDrain = { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.waiting else { return }
+                    self.waiting = false
+                    self.push(force: false)
+                }
+            }
         }
 
         @MainActor private func read() {
             var chunk = [UInt8](repeating: 0, count: 65536)
             let count = Darwin.read(fd, &chunk, chunk.count)
+            if count < 0, errno == EAGAIN || errno == EINTR { return }
             guard count > 0 else { return end() }
             buffer.append(contentsOf: chunk[0..<count])
             for line in SidebarWire.lines(from: &buffer) {
-                if let command = try? JSONDecoder().decode(SidebarCommand.self, from: line) { server?.handle(command, from: projectID) }
-            }
-        }
-
-        @MainActor func push(force: Bool) {
-            guard let server, let project = Store.shared.projects.first(where: { $0.id == projectID }),
-                  let data = SidebarWire.encode(server.state(for: project)) else { return }
-            guard force || data != last else { return }
-            last = data
-            data.withUnsafeBytes { bytes in
-                var offset = 0
-                while offset < bytes.count {
-                    let written = Darwin.write(fd, bytes.baseAddress! + offset, bytes.count - offset)
-                    if written <= 0 { break }
-                    offset += written
+                guard let command = try? JSONDecoder().decode(SidebarCommand.self, from: line) else { continue }
+                if case .hello(let version) = command {
+                    self.version = version
+                    push(force: true)
+                } else {
+                    server?.handle(command, from: projectID)
                 }
             }
         }
 
+        @MainActor func push(force: Bool) {
+            guard !outbox.isHolding else { waiting = true; return }
+            guard let server, let project = Store.shared.projects.first(where: { $0.id == projectID }) else { return }
+            var state = server.state(for: project)
+            // A sidebar from before the summary line can't read one, and would drop the whole chat.
+            if version < 2 { state.lines.removeAll { $0.kind == .summary } }
+            guard let data = SidebarWire.encode(state), force || data != last else { return }
+            last = data
+            outbox.send(data)
+        }
+
         @MainActor private func end() {
+            outbox.close()
             source?.cancel()
             source = nil
             close(fd)
