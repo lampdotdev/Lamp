@@ -359,9 +359,19 @@ final class SidebarServer {
                   Talk.open(in: store.logs[project.id] ?? [])?.id == id else { return }
             store.answer(line, with: answers, in: project)
         case .progress(let id, let progress):
+            guard Talk.open(in: store.logs[project.id] ?? [])?.id == id else { return }
             AskProgresses.shared.set(progress, for: id)
         case .setup(let id, let action):
-            guard let offer = store.logs[project.id]?.first(where: { $0.id == id })?.setupOffer else { return }
+            guard let line = store.logs[project.id]?.first(where: { $0.id == id }), let offer = line.setupOffer else { return }
+            // Only what the card shows now: a button it doesn't have, or one on a card that's done or put away,
+            // does nothing, whatever the chat beside the app says was pressed.
+            let card = SetupCards.shared.content(for: offer, reason: line.text, in: project)
+            let open = !card.done && !card.declined
+            switch action {
+            case .notNow: guard open else { return }
+            case .drawIcon: guard card.drawIcon else { return }
+            case .row(let row), .key(let row, _): guard open, card.rows.contains(where: { $0.id == row }) else { return }
+            }
             switch action {
             case .drawIcon:
                 // Image Playground opens over Lamp's window: the chat beside the app can't hold it.
@@ -383,7 +393,8 @@ final class SidebarServer {
         case .undoNote(let id):
             store.undoNoteShowingProblem(id, in: project)
         case .act(let id):
-            guard let line = store.logs[project.id]?.first(where: { $0.id == id }) else { return }
+            // Only a line the chat still shows: one with nothing left to offer is gone from it.
+            guard let line = Transcript.withoutSpentOffers(store.logs[project.id] ?? [], dir: project.dir).first(where: { $0.id == id }) else { return }
             switch line.kind {
             case .drawIcon:
                 store.showChat(project.id)
