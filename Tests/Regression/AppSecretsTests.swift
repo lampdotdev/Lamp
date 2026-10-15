@@ -113,6 +113,21 @@ final class AppSecretsTests: XCTestCase {
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
     }
 
+    /// A delete says whether it's forgotten: not when the file is there but can't be read, since it may still hold it;
+    /// yes when nothing was kept at all.
+    func testADeleteThatCantReadTheFileIsntDone() throws {
+        let url = work.appendingPathComponent("unreadable.json")
+        XCTAssertTrue(AppSecrets.delete("lamp-api-readwise", app: "notes", in: .file(url)))
+        XCTAssertTrue(AppSecrets.save(Data("token".utf8), as: "lamp-api-readwise", app: "notes", in: .file(url)))
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: url.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path) }
+        XCTAssertFalse(AppSecrets.delete("lamp-api-readwise", app: "notes", in: .file(url)))
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        XCTAssertEqual(AppSecrets.read("lamp-api-readwise", app: "notes", in: .file(url)), Data("token".utf8))
+        XCTAssertTrue(AppSecrets.delete("lamp-api-readwise", app: "notes", in: .file(url)))
+        XCTAssertNil(AppSecrets.read("lamp-api-readwise", app: "notes", in: .file(url)))
+    }
+
     /// One app can't fill Lamp's store: past the limit a new name is refused, and what's kept can still change.
     func testAnAppKeepsAtMostItsLimit() throws {
         let service = "dev.lamp.test.app-secrets.\(UUID().uuidString)"

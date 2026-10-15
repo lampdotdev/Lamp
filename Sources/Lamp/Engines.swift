@@ -280,6 +280,7 @@ extension Agent {
             env["LAMP_MEMORY_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/memory"
             env["LAMP_SETUP_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/setup"
             env["LAMP_KIND_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/kind"
+            env["LAMP_CONNECTORS_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/connectors"
             env["LAMP_TALK_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/talk"
             env["LAMP_ART_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/art"
             env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve"
@@ -321,7 +322,7 @@ extension Agent {
                         "command": "curl -sf --max-time 3540 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
             }
             var permissionMode = "acceptEdits"
-            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__offer_setup,mcp__lamp__make_app_for,mcp__lamp__ask,mcp__lamp__show_result,mcp__lamp__write_wish"
+            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__offer_setup,mcp__lamp__make_app_for,mcp__lamp__connectors,mcp__lamp__ask,mcp__lamp__show_result,mcp__lamp__write_wish"
             if Memory.isOn { allowed += ",mcp__lamp__read_notes,mcp__lamp__save_notes" }
             // look_at_app and use_app come from Lamp's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
             // it the only server. The config is a file that reads the token from the environment, so the
