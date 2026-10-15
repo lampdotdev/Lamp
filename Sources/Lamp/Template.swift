@@ -8736,49 +8736,120 @@ enum Template {
         }
     }
 
+    /// The one place a token is typed. It's laid out like the Mac's own account sheets: who is asking and for what at
+    /// the top, the field in a grouped form, and under it where the token goes, so handing it over feels deliberate.
     private struct LampAPISheet: View {
         @ObservedObject var api: LampAPI
         @Environment(\.dismiss) private var dismiss
+        @Environment(\.openURL) private var openURL
         @State private var values: [String: String] = [:]
         @State private var checking = false
         @State private var problem: String?
         @State private var attempt: Task<Void, Never>?
 
+        private var ready: Bool {
+            !checking && !api.fields.contains { (values[$0.key] ?? "").trimmingCharacters(in: .whitespaces).isEmpty }
+        }
+
+        #if os(macOS)
+        private static let device = "this Mac"
+        #else
+        private static let device = "this device"
+        #endif
+
         var body: some View {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Connect \(api.name)").font(.headline)
-                Text(api.steps).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                Link("Open \(api.name)", destination: api.page)
-                ForEach(api.fields) { field in
-                    let text = Binding(get: { values[field.key] ?? "" }, set: { values[field.key] = $0 })
-                    if field.secret {
-                        SecureField(field.label, text: text).textFieldStyle(.roundedBorder)
-                    } else {
-                        TextField(field.label, text: text).textFieldStyle(.roundedBorder)
+            content
+                // Cancel, Escape or a swipe down: a check still on its way mustn't keep the token afterwards.
+                .onDisappear {
+                    if checking { api.cancelConnecting() }
+                    attempt?.cancel()
+                }
+        }
+
+        #if os(macOS)
+        private var content: some View {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .top, spacing: 14) {
+                    Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 56, height: 56)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Connect \(api.name)").font(.headline)
+                        Text(api.steps).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                if let problem { Text(problem).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
-                HStack {
-                    if checking { ProgressView().controlSize(.small) }
+                .padding([.horizontal, .top], 20)
+                Form {
+                    Section { fields } footer: { note }
+                }
+                .formStyle(.grouped)
+                .scrollDisabled(true)
+                .scrollContentBackground(.hidden)
+                .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button { openURL(api.page) } label: { Label("Open \(api.name)", systemImage: "arrow.up.forward.square") }
                     Spacer()
+                    if checking { ProgressView().controlSize(.small) }
                     Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
-                    Button("Connect") { check() }
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(checking || api.fields.contains { (values[$0.key] ?? "").trimmingCharacters(in: .whitespaces).isEmpty })
+                    Button("Connect") { check() }.keyboardShortcut(.defaultAction).disabled(!ready)
+                }
+                .padding([.horizontal, .bottom], 20)
+            }
+            .frame(width: 460)
+        }
+        #else
+        private var content: some View {
+            NavigationStack {
+                Form {
+                    Section {
+                        Text(api.steps).foregroundStyle(.secondary)
+                        Button { openURL(api.page) } label: { Label("Open \(api.name)", systemImage: "arrow.up.forward.square") }
+                    }
+                    Section { fields } footer: { note }
+                }
+                .navigationTitle("Connect \(api.name)")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Cancel", role: .cancel) { dismiss() } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        if checking { ProgressView() } else { Button("Connect") { check() }.disabled(!ready) }
+                    }
                 }
             }
-            .padding(20)
-            #if os(macOS)
-            .frame(width: 400)
-            #endif
-            // Cancel, Escape or a swipe down: a check still on its way mustn't keep the token afterwards.
-            .onDisappear {
-                if checking { api.cancelConnecting() }
-                attempt?.cancel()
+        }
+        #endif
+
+        @ViewBuilder private var fields: some View {
+            ForEach(api.fields) { field in
+                let text = Binding(get: { values[field.key] ?? "" }, set: { values[field.key] = $0; problem = nil })
+                if field.secret {
+                    SecureField(field.label, text: text, prompt: Text("Paste here"))
+                } else {
+                    TextField(field.label, text: text, prompt: Text("Paste here"))
+                }
+            }
+            .disabled(checking)
+        }
+
+        /// Under the field: what's going on, what went wrong, or where the token goes.
+        private var note: some View {
+            noteText.frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        @ViewBuilder private var noteText: some View {
+            if checking {
+                Label("Checking with \(api.name)…", systemImage: "clock")
+                    .foregroundStyle(.secondary)
+            } else if let problem {
+                Label(problem, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Label("Kept on \(Self.device) and sent only to \(api.base.host ?? api.name).", systemImage: "lock.fill")
+                    .foregroundStyle(.secondary)
             }
         }
 
         private func check() {
+            guard ready else { return }
             checking = true
             problem = nil
             attempt = Task {
