@@ -200,6 +200,12 @@ final class SidebarServer {
 
     fileprivate func closed(_ connection: Connection) {
         connections[ObjectIdentifier(connection)] = nil
+        // With no sidebar left for it, nothing shows the microphone or can stop it: dictation ends with the last.
+        let id = connection.projectID
+        if !connections.values.contains(where: { $0.projectID == id }) {
+            dictations.removeValue(forKey: id)?.cancel()
+            listening[id] = nil
+        }
     }
 
     private func scheduleUpdate() {
@@ -230,7 +236,9 @@ final class SidebarServer {
         let busy = store.busy.contains(project.id)
         // The progress line, as Lamp's window shows it: not under the agent's questions.
         let progress = busy && Talk.open(in: log) == nil ? store.progress[project.id] : nil
-        var state = SidebarState(app: project.name, lines: Self.lines(log, project: project, busy: busy, progressShown: progress != nil),
+        var state = SidebarState(app: project.name, lines: Self.lines(log, project: project, busy: busy, progressShown: progress != nil,
+                                                                                         reach: reach[project.id] ?? LogLine.recentCount,
+                                                                                         canSendAgain: !busy && !store.pendingSubmissions.contains(project.id)),
                                  working: progress?.activity, workingSince: progress?.started, empty: log.isEmpty, busy: busy,
                                  draft: draft.text, draftVersion: draftVersions[project.id] ?? 0,
                                  attachments: draft.attachments.map { Self.attachment($0) })
@@ -243,12 +251,22 @@ final class SidebarServer {
             SidebarApproval(id: $0.id, title: $0.title, command: $0.command, explanation: $0.explanation?.look)
         }
         state.notResponding = store.notResponding[project.id] != nil ? ErrorMessages.notResponding(project.name) : nil
+        state.replacing = draft.replacing != nil
+        state.hasEarlier = LogLine.recentStart(in: LogLine.visible(log, details: false), atLeast: reach[project.id] ?? LogLine.recentCount) > 0
+        state.suggestion = suggestion(for: project, log: log, busy: busy)
+        state.listening = dictations[project.id]?.isListening ?? false
+        state.canDictate = Dictation.hasMicrophone
+        state.dictationProblem = dictations[project.id]?.problem.map {
+            SidebarProblem(title: $0.title, message: $0.message, settingsButton: $0.settingsURL == nil ? nil : $0.settingsButton)
+        }
+        state.submitting = store.pendingSubmissions.contains(project.id)
         return state
     }
 
     /// The chat as Lamp's window shows it without Agent Details (`Transcript`): the same lines, gathered and
     /// spaced the same way. Cards and notes Lamp's window has and this doesn't yet are left out.
-    static func lines(_ log: [LogLine], project: LampProject, busy: Bool, progressShown: Bool) -> [SidebarLine] {
+    static func lines(_ log: [LogLine], project: LampProject, busy: Bool, progressShown: Bool,
+                      reach: Int = LogLine.recentCount, canSendAgain: Bool = false) -> [SidebarLine] {
         let dir = project.dir
         // Offers with nothing left to offer (an icon drawn, a widget gone) are left out, as in Lamp's window.
         let lines = Transcript.withoutSpentOffers(LogLine.visible(log, details: false), dir: dir)
@@ -256,7 +274,8 @@ final class SidebarServer {
         let openAsk = Talk.open(in: lines)?.id
         let currentResult = Talk.current(in: lines)?.id
         // Only the end of a long chat, as Lamp's window opens on it; the rest is a click away in Lamp.
-        let start = LogLine.recentStart(in: lines, atLeast: LogLine.recentCount)
+        let start = LogLine.recentStart(in: lines, atLeast: reach)
+        let latestRequest = lines.last { $0.kind == .user }?.id
         let shown = lines[start...].filter { $0.fromCard != true }
         let items = ChatItem.items(progressShown ? Transcript.withoutStepInProgress(shown) : shown)
         var out: [SidebarLine] = []
@@ -275,8 +294,12 @@ final class SidebarServer {
                 switch line.kind {
                 case .user:
                     let files = (line.attachments ?? []).map { dir.appendingPathComponent(Attachments.folder).appendingPathComponent($0) }
-                    out.append(SidebarLine(id: line.id, kind: .user, text: line.text, gap: gap,
-                                           attachments: files.isEmpty ? nil : files.map { attachment($0) }))
+                    var request = SidebarLine(id: line.id, kind: .user, text: line.text, gap: gap,
+                                              attachments: files.isEmpty ? nil : files.map { attachment($0) })
+                    request.canGoBack = line.version != nil
+                    request.canSendAgain = canSendAgain && line.canSendAgain
+                    request.isLatest = line.id == latestRequest
+                    out.append(request)
                 case .agent:
                     out.append(SidebarLine(id: line.id, kind: .agent, text: line.text, gap: gap, growing: busy))
                 case .summary:
@@ -360,6 +383,85 @@ final class SidebarServer {
         SidebarAttachment(name: url.lastPathComponent, thumbnail: thumbnail(url), isImage: Attachments.isImage(url))
     }
 
+    /// How much of each chat the sidebar shows, from its end, grown when it scrolls to the top (`earlier`).
+    private var reach: [String: Int] = [:]
+
+    /// The message box's suggestion, as Lamp's window offers it: one per finished turn, made once for both
+    /// (`NextStep` keeps them), and not again once dismissed.
+    private var suggestions: [String: (turn: UUID, text: String?)] = [:]
+    private var dismissedSuggestions: [String: UUID] = [:]
+
+    private func suggestion(for project: LampProject, log: [LogLine], busy: Bool) -> String? {
+        guard !busy, let turn = NextStep.turn(in: log), dismissedSuggestions[project.id] != turn,
+              Store.shared.draft(for: project).text.isEmpty else { return nil }
+        if let known = suggestions[project.id], known.turn == turn { return known.text }
+        suggestions[project.id] = (turn, nil)
+        Task { [weak self] in
+            let text = await NextStep.suggest(for: project, lines: log)
+            guard let self, self.suggestions[project.id]?.turn == turn else { return }
+            self.suggestions[project.id] = (turn, text)
+            self.scheduleUpdate()
+        }
+        return nil
+    }
+
+    /// Dictation into the sidebar's message box runs in Lamp, which has the microphone, and writes into the
+    /// draft the sidebar shows.
+    private var dictations: [String: Dictation] = [:]
+    private var listening: [String: AnyCancellable] = [:]
+
+    private func dictate(_ on: Bool, in project: LampProject) {
+        let dictation = dictations[project.id] ?? Dictation()
+        if dictations[project.id] == nil {
+            dictations[project.id] = dictation
+            // Listening starts and stops on its own too (a long pause): the sidebar's microphone follows.
+            listening[project.id] = dictation.objectWillChange.sink { [weak self] _ in
+                DispatchQueue.main.async { self?.scheduleUpdate() }
+            }
+        }
+        if !on { return dictation.stop() }
+        guard !dictation.isListening else { return }
+        let store = Store.shared
+        let typed = store.draft(for: project).text
+        let separator = typed.isEmpty || typed.last!.isWhitespace ? "" : " "
+        Task {
+            await dictation.start { heard, _ in
+                guard let current = store.current(project) else { return }
+                var draft = store.draft(for: current)
+                draft.text = typed + separator + heard
+                store.updateDraft(draft, for: current)
+            }
+            self.scheduleUpdate()
+        }
+        scheduleUpdate()
+    }
+
+    /// Sends what's in the message box the way Lamp's window does (`ProjectView.send`): held while setup is
+    /// needed, sent again in place of a request taken back, and the box left with whatever came after.
+    private func submit(_ project: LampProject) {
+        let store = Store.shared
+        let submitted = store.draft(for: project)
+        guard !submitted.text.trimmed.isEmpty || !submitted.attachments.isEmpty else { return }
+        let replaced = submitted.replacing.flatMap { id in store.logs[project.id]?.first { $0.id == id } }
+        guard replaced == nil || !store.busy.contains(project.id), let token = store.beginSubmission(project) else { return }
+        dictations[project.id]?.cancel()
+        store.endArrival(for: project.id)
+        func finish(sent: Bool) {
+            if let current = store.current(project) {
+                store.updateDraft(store.draft(for: current).afterSubmission(submitted, sent: sent), for: current)
+            }
+            store.endSubmission(token)
+        }
+        PhoneSetup.shared.perform(for: project, in: store, cancelled: { finish(sent: false) }) { current in
+            let text = submitted.text.trimmed
+            guard let replaced else {
+                store.send(text, attachments: submitted.attachments, to: current)
+                return finish(sent: true)
+            }
+            Task { finish(sent: await store.sendAgain(replaced, as: text, attachments: submitted.attachments, in: current)) }
+        }
+    }
+
     /// How far each open card has been answered, as last sent and as the sidebar last said, and the number that
     /// goes up only when it changed in Lamp's window (`SidebarLine.progressVersion`), as the draft's does.
     fileprivate static var shownProgress: [UUID: AskProgress] = [:]
@@ -417,12 +519,61 @@ final class SidebarServer {
         guard let project = store.projects.first(where: { $0.id == projectID }) else { return }
         switch command {
         case .send(let text):
-            let draft = store.draft(for: project)
-            let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !words.isEmpty || !draft.attachments.isEmpty else { return }
-            store.send(words, attachments: draft.attachments, to: project)
-            draftsFromSidebar[project.id] = ""
-            store.updateDraft(Store.Draft(), for: project)
+            // The words as the sidebar has them, in case its last edit is still on its way.
+            var draft = store.draft(for: project)
+            if draft.text != text {
+                draft.text = text
+                store.updateDraft(draft, for: project)
+            }
+            submit(project)
+        case .goBack(let id, let before):
+            guard let line = store.logs[project.id]?.first(where: { $0.id == id }), !store.busy.contains(project.id) else { return }
+            Task { await store.restore(project, toVersionOf: line, before: before) }
+        case .takeBack(let id):
+            // As Lamp's window does (`ProjectView.takeBack`): what was in the box is set aside, and comes back on Escape.
+            guard let line = store.logs[project.id]?.first(where: { $0.id == id }), line.canSendAgain,
+                  !store.busy.contains(project.id), !store.pendingSubmissions.contains(project.id) else { return }
+            var draft = store.draft(for: project)
+            if draft.replacing == nil {
+                draft.setAsideText = draft.text
+                draft.setAsideAttachments = draft.attachments
+            }
+            dictations[project.id]?.cancel()
+            // Lamp's change, not the sidebar's, even when the box held these words before: the sidebar takes it up.
+            draftsFromSidebar[project.id] = nil
+            draft.text = line.text
+            draft.attachments = Attachments.urls(line.attachments ?? [], in: project)
+            draft.replacing = line.id
+            store.updateDraft(draft, for: project)
+        case .putBack:
+            var draft = store.draft(for: project)
+            guard draft.replacing != nil, !store.pendingSubmissions.contains(project.id) else { return }
+            draft = Store.Draft(text: draft.setAsideText, attachments: draft.setAsideAttachments)
+            draftsFromSidebar[project.id] = nil
+            store.updateDraft(draft, for: project)
+        case .preview(let id, let index):
+            let files = id.flatMap { id in store.logs[project.id]?.first(where: { $0.id == id }) }
+                .map { Attachments.urls($0.attachments ?? [], in: project) } ?? store.draft(for: project).attachments
+            guard files.indices.contains(index) else { return }
+            // Quick Look's own window, over the app, without bringing Lamp forward.
+            let preview = Process()
+            preview.executableURL = URL(fileURLWithPath: "/usr/bin/qlmanage")
+            preview.arguments = ["-p", files[index].path]
+            preview.standardOutput = FileHandle.nullDevice
+            preview.standardError = FileHandle.nullDevice
+            try? preview.run()
+        case .earlier:
+            reach[project.id] = (reach[project.id] ?? LogLine.recentCount) + LogLine.recentCount
+            scheduleUpdate()
+        case .dismissSuggestion:
+            if let turn = NextStep.turn(in: store.logs[project.id] ?? []) { dismissedSuggestions[project.id] = turn }
+            scheduleUpdate()
+        case .dictate(let on):
+            dictate(on, in: project)
+        case .dictationProblem(let openSettings):
+            guard let dictation = dictations[project.id] else { return }
+            if openSettings, let url = dictation.problem?.settingsURL { NSWorkspace.shared.open(url) }
+            dictation.problem = nil
         case .answer(let id, let answers):
             guard let line = store.logs[project.id]?.first(where: { $0.id == id }) else { return }
             store.answer(line, with: answers, in: project)
