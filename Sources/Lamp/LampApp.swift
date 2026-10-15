@@ -16,8 +16,7 @@ struct LampApp: App {
             CheckForUpdatesCommand()
             LampHelpCommands()
             CommandGroup(replacing: .newItem) {
-                // A Mac app; with iOS apps on, the new app's intro offers iPhone and iPad instead.
-                Button("New App") { store.create() }
+                Button("New") { store.create() }
                     .keyboardShortcut("n")
             }
             CommandGroup(after: .newItem) {

@@ -48,11 +48,11 @@ struct ContentView: View {
                     ProjectView(project: project).id(project.id)
                 } else if store.projects.isEmpty {
                     ContentUnavailableView {
-                        Label("No apps yet", systemImage: "hammer")
+                        Label("Nothing here yet", systemImage: "lightbulb")
                     } description: {
-                        Text("Describe an app and Lamp builds it for you.")
+                        Text("Tell Lamp what would make your day easier, or more fun, and it makes it for you.")
                     } actions: {
-                        Button("New App") { store.create() }
+                        Button("New") { store.create() }
                     }
                 } else {
                     ContentUnavailableView("Select an app", systemImage: "sidebar.left")
@@ -168,7 +168,7 @@ struct AppSidebar: View {
             }
             Button { store.create() } label: {
                 Label {
-                    Text("New App")
+                    Text("New")
                 } icon: {
                     Image(systemName: "plus").frame(width: 24, height: 24)
                 }
@@ -213,7 +213,7 @@ struct AppSidebar: View {
                             .font(.title)
                             .frame(width: 56, height: 56)
                             .background(.quaternary, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-                        Text("New App").font(.callout)
+                        Text("New").font(.callout)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(6)
@@ -281,14 +281,14 @@ struct AppIcon: View {
     }
 }
 
-/// What stands for an app that has no icon yet: the lamp's light for a wish still waiting to be sent, a
-/// blueprint for everything else.
+/// What stands for an app that has no icon yet: the lamp's light for a wish still waiting to be told or sent
+/// (it isn't an app yet), a blueprint for a named one.
 struct StandInIcon: View {
     let project: LampProject
     let size: CGFloat
 
     var body: some View {
-        if project.untitled && project.fromWish {
+        if project.untitled {
             WishIcon(size: size)
         } else {
             BlueprintIcon(letter: project.untitled ? nil : project.name.first, size: size)
@@ -786,8 +786,9 @@ struct ProjectView: View {
     private var undoable: Bool { history?.undoable ?? true }
     private var made: Bool { history?.made ?? true }
     private var saved: Bool { history?.saved ?? true }
+    /// Not for a wish not yet told, whose toolbar has no toggle to close it: the choice is kept for the next app.
     private var inspectorShown: Binding<Bool> {
-        Binding(get: { showInfo || (showVersions && saved) }, set: { if !$0 { showInfo = false; showVersions = false } })
+        Binding(get: { !untold && (showInfo || (showVersions && saved)) }, set: { if !$0 { showInfo = false; showVersions = false } })
     }
 
     private func chrome(_ lines: [LogLine]) -> some View {
@@ -958,6 +959,17 @@ struct ProjectView: View {
         } else {
             ToolbarItem(placement: .navigation) { titleIcon }
         }
+        // A wish not yet told has nothing to open, undo, share or look into: only its icon, until it does.
+        // Something stays in the toolbar all the same: with nothing in it, macOS draws the title bar's line
+        // straight across the sidebar.
+        if untold { ToolbarItem { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) } } else { appTools }
+    }
+
+    /// Nothing asked yet: a new wish, with no app behind it.
+    private var untold: Bool { !project.scaffolded && (store.logs[project.id] ?? []).isEmpty && !busy }
+
+    @ToolbarContentBuilder
+    private var appTools: some ToolbarContent {
         ToolbarItem {
             // One button: Play while the app is closed, Stop while it's open, where Try On points (an app for
             // both can be open on this Mac and in a simulator at once).
@@ -1404,8 +1416,14 @@ struct NewAppIntro: View {
         VStack(spacing: 14) {
             // Catches the light once the reveal has passed it.
             AppIcon(project: project, size: 112).shine(delay: 0.4)
-            // An unnamed app says what it is where its name will be. A wish reads as a title, the plain
-            // hint as a hint; either way a name typed here is the app's, and Lamp names it otherwise.
+            if project.untitled && !project.fromWish {
+                // Nothing to name yet: what's asked is what the person wants, a chore taken off their hands or
+                // something fun, not what to make. Lamp names what it makes.
+                Text("What would make your day easier, or more fun?")
+                    .font(.title.weight(.semibold))
+                    .multilineTextAlignment(.center)
+            } else {
+            // A wish reads as a title; a name typed here is the app's, and Lamp names it otherwise.
             TextField("Name", text: $name, prompt: !project.untitled ? Text(project.name)
                       : project.fromWish ? Text("") : Text("Name it, or Lamp will"))
                 .textFieldStyle(.plain)
@@ -1425,16 +1443,17 @@ struct NewAppIntro: View {
                     }
                 }
                 .help("Rename this app")
+            }
             Text(project.untitled && project.fromWish ? "Here's your wish. Change anything you like."
                  : project.untitled
-                 ? "Describe the app you wish you had, for your Mac, iPhone or both, and Lamp will build it."
+                 ? "Say it in your own words: a chore to take off your hands, a habit to keep, a game to play. Lamp makes it for you."
                  : "Describe what \(project.name) should do. Lamp builds it and opens it for you.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 400)
             if fresh && draft.trimmed.isEmpty && !ideas.isEmpty {
-                StarterIdeas(ideas: ideas) { prompt in
-                    draft = prompt
+                StarterIdeas(ideas: ideas) { wish in
+                    draft = wish
                     store.chatFocusRequest += 1
                 }
                 .padding(.top, 18)
@@ -1850,8 +1869,10 @@ struct ApprovalCard: View {
     }
 }
 
-/// Apps to start from, under a new app's empty chat. Choosing one fills in the request (it isn't sent) so the
-/// user can make it theirs first. It opens on the six it's given; Show Me Others pages on from there.
+/// Wishes to start from, under a new app's empty chat: what someone might want, in their own words, one from
+/// each part of life (`Idea.Kind`), never an app's name. Choosing one puts the wish in the message box (it isn't sent) so the person can
+/// make it theirs; what to make of it is the agent's to ask about. It opens on the six it's given; Show Me
+/// Others pages on from there.
 struct StarterIdeas: View {
     let choose: (String) -> Void
     @StateObject private var deck: IdeaDeck
@@ -1865,7 +1886,7 @@ struct StarterIdeas: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Need an idea?").font(.callout).foregroundStyle(.secondary)
+                Text("Need inspiration?").font(.callout).foregroundStyle(.secondary)
                 Spacer()
                 Button(action: deck.more) {
                     HStack(spacing: 5) {
@@ -1880,16 +1901,13 @@ struct StarterIdeas: View {
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 8) {
                 ForEach(Array(deck.ideas.enumerated()), id: \.element.id) { index, example in
-                    Button { choose(example.prompt) } label: {
+                    Button { choose(example.blurb) } label: {
                         HStack(alignment: .top, spacing: 8) {
                             IdeaIcon(symbol: example.symbol, hue: example.hue, size: 22, lit: hovered == example.title)
-                            VStack(alignment: .leading, spacing: 1) {
-                                // Every tile keeps room for a one-line name and a three-line wish, so the grid
-                                // doesn't change height when the ideas change (another page, another kind).
-                                Text(example.title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                                Text(example.blurb).font(.caption).foregroundStyle(.secondary)
-                                    .lineLimit(3, reservesSpace: true)
-                            }
+                            // The wish alone. Every tile keeps room for three lines, so the grid doesn't change
+                            // height when the ideas change (another page, another kind).
+                            Text(example.blurb).font(.subheadline)
+                                .lineLimit(3, reservesSpace: true)
                             Spacer(minLength: 0)
                         }
                         .padding(8)
@@ -1901,7 +1919,7 @@ struct StarterIdeas: View {
                     }
                     .buttonStyle(.plain)
                     .onHover { hovered = $0 ? example.title : (hovered == example.title ? nil : hovered) }
-                    .help("Fills in the request so you can change it before sending")
+                    .help("Puts this in the message box so you can change it before sending")
                     .transition(.asymmetric(
                         insertion: .opacity.combined(with: .scale(scale: 0.94)).animation(.spring(response: 0.5, dampingFraction: 0.8).delay(Double(index) * 0.04)),
                         removal: .opacity.animation(.easeOut(duration: 0.15))))
