@@ -31,7 +31,7 @@ final class BrowserCompanions {
 
     /// What an app says about its sidebar in `browser.json` at its root, written by the builder: the sentence shown
     /// on a page that fits it, and what fits. Lamp reads it to list the app in the sidebar before it's running and
-    /// hands the fits to Chrome, which lights Lamp's icon on a matching page without the extension reading it.
+    /// hands the fits to the extension, which looks for them on a page only when Lamp is clicked there, to choose the app.
     struct Declaration: Codable, Equatable {
         struct Fit: Codable, Equatable {
             var site: String?; var path: String?; var selector: String?
@@ -88,7 +88,7 @@ final class BrowserCompanions {
         static func isSite(_ site: String) -> Bool {
             site.count <= 253 && site.range(of: #"^[a-z0-9-]+(\.[a-z0-9-]+)+$"#, options: .regularExpression) != nil
         }
-        /// Chrome matches only one compound selector per fit (no spaces, `>`, `+`, `~` or commas between parts).
+        /// The extension asks the page with `querySelector`, which takes any selector; a broken one would just never fit.
         static func selectorProblem(_ selector: String) -> String? {
             if selector.isEmpty || selector.count > 200 { return "A selector in browser.json must be under 200 characters." }
             var bracket = 0, quote: Character?
@@ -98,8 +98,6 @@ final class BrowserCompanions {
                 case "\"", "'": quote = c
                 case "[", "(": bracket += 1
                 case "]", ")": bracket -= 1
-                case _ where c.isWhitespace || ">+~,".contains(c):
-                    return "\"\(selector)\" in browser.json combines selectors; Chrome only takes one compound selector per fit, like div.recipe-card or [itemtype*=\"schema.org/Recipe\"]. Give each its own fit."
                 default: break
                 }
             }
@@ -206,13 +204,6 @@ final class BrowserCompanions {
                   let declaration = Declaration.load(project) else { return nil }
             return (project, declaration)
         }.sorted { $0.project.name.localizedStandardCompare($1.project.name) == .orderedAscending }
-    }
-
-    /// Changes whenever an app's fits do, so the extension knows when to give Chrome new ones.
-    func fitsKey(_ projects: [LampProject]) -> String {
-        let all = listed(projects).map { [$0.project.id: $0.declaration.fits.map { [$0.site ?? "", $0.path ?? "", $0.selector ?? ""] }] }
-        let data = (try? JSONSerialization.data(withJSONObject: all, options: [.sortedKeys])) ?? Data()
-        return SHA256.hash(data: data).prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
     /// The tab a request is about, as the app sees it: an opaque name, the same for one tab in one Chrome profile.

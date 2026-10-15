@@ -34,7 +34,7 @@ final class SharingBrowserTests: XCTestCase {
 
     /// A declaration Lamp's checks refuse doesn't travel, and an update without one takes the old one away.
     func testARefusedDeclarationStaysBehindAndAnUpdateWithoutOneRemovesIt() throws {
-        let sender = try project("sender", browser: #"{"offer": "Everything", "fits": [{"selector": "body a"}]}"#)
+        let sender = try project("sender", browser: #"{"offer": "Everything", "fits": [{"selector": "a[href"}]}"#)
         let package = try Sharing.open(try Sharing.export(sender))
         XCTAssertNil(package.browser)
         let mine = try project("mine", browser: #"{"offer": "Old", "fits": [{"site": "example.com"}]}"#)

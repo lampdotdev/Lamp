@@ -8,7 +8,6 @@
   "permissions": [
     "activeTab",
     "alarms",
-    "declarativeContent",
     "nativeMessaging",
     "scripting",
     "sidePanel",
@@ -17,10 +16,10 @@
   "action": {
     "default_title": "Lamp",
     "default_icon": {
-      "16": "icons/lamp-dim-16.png",
-      "32": "icons/lamp-dim-32.png",
-      "48": "icons/lamp-dim-48.png",
-      "128": "icons/lamp-dim-128.png"
+      "16": "icons/lamp-16.png",
+      "32": "icons/lamp-32.png",
+      "48": "icons/lamp-48.png",
+      "128": "icons/lamp-128.png"
     }
   },
   "background": {

@@ -414,9 +414,9 @@ enum Agent {
             - Declare it in `browser.json` at the app's root: `{"offer": "Save this recipe to Recipe Box", "fits": \
             [{"site": "allrecipes.com"}, {"selector": ".wprm-recipe-container"}]}`. `offer` is the app's own short \
             sentence, shown when a page fits. Each fit is a `site` (its subdomains count, with an optional `path` \
-            prefix), a `selector`, or both; Chrome lights Lamp's icon on a matching page without reading it, and one \
-            click opens the sidebar on this app. A selector is one compound CSS selector (no spaces, `>` or commas) for \
-            something shown on the page: script tags and hidden markup never match. Every page a fit matches gets the \
+            prefix), a `selector` (a CSS selector for something on the page), or both. A click on Lamp's icon in Chrome \
+            opens the sidebar on the app that fits the page, with its offer; on a page no app fits, the person chooses. \
+            Every page a fit matches gets the \
             offer, so fit only pages that are what it says. Name a site alone only when nearly all its pages are that \
             kind (allrecipes.com for recipes, a coffee-gear shop for espresso machines); a site with every kind of \
             thing (a department store, a marketplace, a newspaper) only with a `path` or selector that just those pages \

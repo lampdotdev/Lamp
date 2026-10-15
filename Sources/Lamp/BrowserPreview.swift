@@ -22,7 +22,7 @@ enum BrowserPreview {
         case .success(let value): declaration = value
         case .failure(let problem):
             declaration = nil
-            notes.append(problem.message + " Without it the app isn't listed in Chrome's sidebar and Lamp's icon never lights up for it.")
+            notes.append(problem.message + " Without it the app isn't listed in Chrome's sidebar.")
         }
         if let address {
             switch await PageReader.read(address, selectors: declaration?.fits.compactMap(\.selector) ?? []) {
@@ -139,23 +139,18 @@ enum BrowserPreview {
         Dictionary(uniqueKeysWithValues: surface.fields.map { ($0.id, typed[project.id]?[$0.id] ?? $0.value) })
     }
 
-    /// Chrome lights the icon for a fit whose selector matches something shown; a click on Lamp chooses the app by
-    /// whether the selector matches anything at all, so a hidden match opens the app on a page whose icon stayed dim.
+    /// A click on Lamp chooses the app by the page's address and whether a fit's selector matches anything on it.
     private static func fitNote(_ declaration: BrowserCompanions.Declaration, _ page: PageReader.Page) -> String {
         guard let url = URL(string: page.url) else { return "" }
         let address = declaration.fits.filter { $0.fitsAddress(url) }
         let how = { (fit: BrowserCompanions.Declaration.Fit) in
-            [fit.site.map { "site \($0)" }, fit.path.map { "path \($0)" }, fit.selector.map { "selector \($0) is shown on the page" }].compactMap { $0 }.joined(separator: ", ")
+            [fit.site.map { "site \($0)" }, fit.path.map { "path \($0)" }, fit.selector.map { "selector \($0) is on the page" }].compactMap { $0 }.joined(separator: ", ")
         }
-        if let fit = address.first(where: { $0.selector.map(page.shown.contains) ?? true }) {
-            return "This page fits browser.json (\(how(fit))): Lamp's icon lights up on it in Chrome, and the sidebar opens on this app with \"\(declaration.offer)\"."
+        if let fit = address.first(where: { $0.selector.map(page.present.contains) ?? true }) {
+            return "This page fits browser.json (\(how(fit))): a click on Lamp in Chrome opens the sidebar on this app with \"\(declaration.offer)\"."
         }
-        if let hidden = address.first(where: { $0.selector.map(page.present.contains) ?? false })?.selector {
-            return "This page doesn't light Lamp's icon: \(hidden) is on it but not shown, and Chrome lights the icon only for a selector that matches something shown. " +
-                "A click on Lamp still opens the sidebar on this app. If the app is for pages like this, fit them by something that's shown."
-        }
-        return "This page doesn't fit browser.json: Lamp's icon stays dim on it, and the person has to choose the app. " +
-            "If the app is for pages like this, add a fit for it (a site, or a selector that's on pages like it and shown)."
+        return "This page doesn't fit browser.json: a click on Lamp in Chrome opens the sidebar without this app's offer, and the person has to choose the app. " +
+            "If the app is for pages like this, add a fit for it (a site, or a selector that's on pages like it)."
     }
 
     /// The picture and the sidebar as text, with the notes before them.
@@ -273,9 +268,8 @@ private struct SidebarPicture: View {
 /// a time limit.
 @MainActor
 final class PageReader: NSObject, WKNavigationDelegate {
-    /// `present` are the selectors something on the page matches, as the extension asks when Lamp is clicked;
-    /// `shown`, those it matches with something laid out, which is all Chrome lights the icon for.
-    struct Page { var url: String; var title: String; var text: String; var truncated: Bool; var present: Set<String>; var shown: Set<String> }
+    /// `present` are the selectors something on the page matches, as the extension asks when Lamp is clicked.
+    struct Page { var url: String; var title: String; var text: String; var truncated: Bool; var present: Set<String> }
     private var finished: CheckedContinuation<Error?, Never>?
     private var refused: String?
 
@@ -331,8 +325,7 @@ final class PageReader: NSObject, WKNavigationDelegate {
         guard let landed = web.url, Self.isPublic(landed) else { return .failure(.init("\(url.absoluteString) went to an address that isn't a public https page.")) }
         let list = (try? JSONSerialization.data(withJSONObject: selectors)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
         let call = script + "\n;JSON.stringify({page: (() => { try { return __lampCaptureSurface('page'); } catch (e) { return {error: String(e.message)}; } })(), " +
-            "present: \(list).map(s => { try { return !!document.querySelector(s); } catch { return false; } }), " +
-            "shown: \(list).map(s => { try { return [...document.querySelectorAll(s)].some(e => e.checkVisibility()); } catch { return false; } })})"
+            "present: \(list).map(s => { try { return !!document.querySelector(s); } catch { return false; } })})"
         // In a world of the reader's own, and given ten seconds: a page that spins forever doesn't hold the builder up.
         let json: String? = await withCheckedContinuation { done in
             var answered = false
@@ -345,10 +338,9 @@ final class PageReader: NSObject, WKNavigationDelegate {
               let page = value["page"] as? [String: Any] else { return .failure(.init("Lamp opened \(url.absoluteString) but couldn't read it in time.")) }
         if let error = page["error"] as? String { return .failure(.init("Lamp couldn't read \(url.absoluteString): \(error.prefix(200))")) }
         let present = zip(selectors, value["present"] as? [Bool] ?? []).filter(\.1).map(\.0)
-        let shown = zip(selectors, value["shown"] as? [Bool] ?? []).filter(\.1).map(\.0)
         return .success(Page(url: landed.absoluteString, title: String((page["title"] as? String ?? "").prefix(300)),
                              text: String((page["text"] as? String ?? "").prefix(24000)), truncated: page["truncated"] as? Bool ?? false,
-                             present: Set(present), shown: Set(shown)))
+                             present: Set(present)))
     }
 
     private func wait(_ seconds: Double) async -> Error? {

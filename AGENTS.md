@@ -506,8 +506,9 @@ new state in new views rather than new stored properties in existing types, when
 A Mac app can also open beside a web page, in Chrome's sidebar (Lamp Dev only, an experiment: Settings →
 Experimental, `BrowserBridge.switchKey`; how it fits together is in `experiments/browser-connector/README.md`).
 One extension draws every app's sidebar from data the app publishes (`LampBrowser` in LampSupport.swift), and the
-app declares where it fits in `browser.json` (`BrowserCompanions.Declaration`), which Chrome matches without the
-extension reading the page. The builder decides from the wish (`Agent.Rules.browserCompanion`) and tries the
+app declares where it fits in `browser.json` (`BrowserCompanions.Declaration`): a click on Lamp's toolbar icon opens
+the sidebar on the app that fits the page, with its offer. The icon looks the same on every page: with many apps,
+lighting it where one fits would light it almost everywhere, so nothing reads or matches a page before that click. The builder decides from the wish (`Agent.Rules.browserCompanion`) and tries the
 sidebar with `look_at_app` and `use_app` given `sidebar` and `page`: Lamp draws it itself (`BrowserPreview`) and is
 one more tab of it, so every engine tries it the same way. Each Chrome tab has its own sidebar and its own surface
 from the app, so what one page prepared never shows on another; keep that when changing either side.

@@ -1,6 +1,6 @@
-// One generic sidebar where each Lamp app draws its own parts. Nothing here reads as the person browses: Chrome
-// itself lights the toolbar icon on pages an app says it fits (declarativeContent), and a page's text is read only
-// when a sidebar button that reads it is clicked, with the access that click on the toolbar icon gave.
+// One generic sidebar where each Lamp app draws its own parts. Nothing here reads as the person browses: the toolbar
+// icon looks the same on every page, and a page's text is read only when a sidebar button that reads it is clicked,
+// with the access that click on the toolbar icon gave.
 let port, outstanding, chain = Promise.resolve();
 // Which Chrome profile this is, and which run of Chrome: tab ids start again after a restart, so the run keeps a new
 // tab from being handed an old tab's draft.
@@ -35,70 +35,15 @@ function native(body) {
   return next;
 }
 
-// The icon is dim (the manifest's) until a page fits an app; then Chrome swaps in the lit one with a dot, for that
-// tab only. Never set an icon for every tab in code: Chrome then shows that one and ignores the declarative one.
-async function litIcon() {
-  const result = {};
-  for (const size of [16, 32]) {
-    const bitmap = await createImageBitmap(await (await fetch(chrome.runtime.getURL(`icons/lamp-${size}.png`))).blob());
-    const canvas = new OffscreenCanvas(size, size), g = canvas.getContext('2d');
-    g.drawImage(bitmap, 0, 0, size, size);
-    g.beginPath(); g.arc(size * 0.78, size * 0.22, size * 0.2, 0, 2 * Math.PI);
-    g.fillStyle = '#e8772e'; g.fill(); g.lineWidth = Math.max(1, size / 16); g.strokeStyle = 'white'; g.stroke();
-    result[size] = g.getImageData(0, 0, size, size);
-  }
-  return result;
-}
-
-// What fits an app is what it declared to Lamp: sites (and a path) and CSS selectors Chrome matches by itself.
+// What fits an app is what it declared to Lamp: sites (and a path) and CSS selectors, looked for when Lamp is clicked.
 const siteFits = (fit, url) => url.protocol === 'https:' &&
   (!fit.site || url.hostname === fit.site || url.hostname.endsWith('.' + fit.site)) &&
   (!fit.path || url.pathname.startsWith(fit.path));
-function matchers(fit) {
-  const base = {schemes: ['https'], ...(fit.path ? {pathPrefix: fit.path} : {})};
-  const make = pageUrl => new chrome.declarativeContent.PageStateMatcher(fit.selector ? {pageUrl, css: [fit.selector]} : {pageUrl});
-  return fit.site ? [make({...base, hostEquals: fit.site}), make({...base, hostSuffix: '.' + fit.site})] : [make(base)];
-}
-// Chrome 155 answers these with undefined rather than a promise, so they're asked with a callback. A rule Chrome
-// refuses comes back as lastError, read here so it's that rule's failure and not an error in the console.
-const pageRules = (method, argument) =>
-  new Promise(resolve => chrome.declarativeContent.onPageChanged[method](argument, () => resolve(chrome.runtime.lastError)));
-// One sync at a time: the hellos as the worker starts each find the fits new, and two syncs at once add the same
-// rule twice, which Chrome refuses.
-let rulesKey, syncing = Promise.resolve();
-function syncRules(apps) {
-  const next = syncing.then(() => replaceRules(apps));
-  syncing = next.catch(() => {});
-  return next;
-}
-async function replaceRules(apps) {
-  const key = JSON.stringify(apps.map(app => [app.id, app.fits || []]));
-  if (rulesKey === undefined) rulesKey = (await chrome.storage.local.get('rulesKey')).rulesKey ?? '';
-  if (key === rulesKey) return;
-  await pageRules('removeRules', undefined);
-  const imageData = await litIcon();
-  // One rule per app, so a fit Chrome refuses costs only that app its lit icon.
-  for (const app of apps) {
-    const conditions = (app.fits || []).flatMap(matchers);
-    if (!conditions.length) continue;
-    await pageRules('addRules', [{id: 'app:' + app.id, conditions, actions: [new chrome.declarativeContent.SetIcon({imageData})]}]);
-  }
-  rulesKey = key;
-  await chrome.storage.local.set({rulesKey});
-}
-async function list() {
-  const state = await native({op: 'surface-list'});
-  await syncRules(state.apps).catch(() => {});
-  return state;
-}
+const list = () => native({op: 'surface-list'});
 
-// Lamp counts the extension as connected while it hears from it. Its answer says when the apps' fits changed.
-let fitsSeen = '';
+// Lamp counts the extension as connected while it hears from it.
 async function hello() {
-  try {
-    const reply = await native({op: 'companion-hello', version: 3});
-    if (reply.fits !== fitsSeen) { await list(); fitsSeen = reply.fits; }
-  } catch {}
+  try { await native({op: 'companion-hello', version: 3}); } catch {}
 }
 
 // Which apps fit the tab the person clicked Lamp on. The click gives access to that tab until it navigates;
@@ -180,7 +125,8 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 chrome.alarms.create('hello', {periodInMinutes: 0.5});
 chrome.alarms.onAlarm.addListener(() => { void hello(); });
 chrome.runtime.onStartup.addListener(() => { void hello(); });
-chrome.runtime.onInstalled.addListener(() => { rulesKey = ''; chrome.storage.local.remove('rulesKey'); void hello(); });
+// The rules an earlier version gave Chrome would keep lighting its icon after an update, so they go.
+chrome.runtime.onInstalled.addListener(() => { chrome.storage.local.remove('rulesKey'); void hello(); });
 // A connected native port keeps the worker alive, so Lamp hears from it every two seconds while Chrome is open.
 setInterval(hello, 2000);
 void hello();

@@ -13,9 +13,10 @@ The extension never runs an app's HTML or JavaScript.
 2. Connects Chrome once: the setup card's **Install Connection**, then **Load
    unpacked** in Chrome's developer mode (until the extension is in the Chrome
    Web Store).
-3. On a page an app is for, Lamp's toolbar icon lights up (a dim icon gets its
-   colour and a dot). One click opens that tab's sidebar on the fitting app, with
-   the app's own sentence ("Save this recipe to Recipe Box").
+3. On any page, one click on Lamp's toolbar icon opens that tab's sidebar. On a
+   page an app is for, it opens on that app, with the app's own sentence ("Save
+   this recipe to Recipe Box"). The icon looks the same on every page: with many
+   apps, lighting it where one fits would light it almost everywhere.
 4. An app that isn't open is opened when it's chosen. Every installed app with a
    sidebar is listed, open or not.
 
@@ -24,10 +25,8 @@ The extension never runs an app's HTML or JavaScript.
 - **`browser.json`** at an app's root, written by the builder, says where the
   app fits: `{"offer": "…", "fits": [{"site": "…", "path": "…", "selector": "…"}]}`.
   Lamp reads it (`BrowserCompanions.Declaration`) to list the app and passes the
-  fits to the extension, which hands them to Chrome as `declarativeContent`
-  rules. Chrome matches URLs and CSS selectors itself; the extension reads
-  nothing to notice a page. A selector must be one compound selector for
-  something shown on the page (Chrome's rule).
+  fits to the extension, which uses them only when Lamp's icon is clicked (below).
+  The extension reads nothing to notice a page.
 - **The click** on Lamp's icon (`chrome.action.onClicked`) opens a side panel
   for that tab only and grants `activeTab`. With it the worker asks whether each
   declared selector is on the page (yes or no, nothing else) to choose the app.

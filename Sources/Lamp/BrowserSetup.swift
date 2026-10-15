@@ -192,7 +192,7 @@ struct BrowserSetupGuide: View {
             Text("Use your apps in Chrome").font(.title2.bold())
             if browser.connected {
                 Label("Lamp is connected to Chrome", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                Text("On a page your app is for, Lamp lights up in Chrome’s toolbar. Click it to open the app beside the page.")
+                Text("Click Lamp in Chrome’s toolbar to open an app beside the page.")
                 HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction) }
             } else if !browser.hasChrome {
                 Text("Install Chrome to use your apps beside web pages.").foregroundStyle(.secondary)

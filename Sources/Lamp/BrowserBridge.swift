@@ -89,7 +89,7 @@ final class BrowserBridge {
         let op = body["op"] as? String ?? ""
         if op == "companion-hello" {
             BrowserSetup.shared.receiveHello(version: body["version"] as? Int ?? 0)
-            return ["connected": BrowserSetup.shared.connected, "fits": BrowserCompanions.shared.fitsKey(projects)]
+            return ["connected": BrowserSetup.shared.connected]
         }
         guard op.hasPrefix("surface-") else { return ["error": "Unknown action."] }
         return BrowserCompanions.shared.native(body, tab: BrowserCompanions.tabKey(profile: profile, run: run, tab: body["tab"]), projects: projects)

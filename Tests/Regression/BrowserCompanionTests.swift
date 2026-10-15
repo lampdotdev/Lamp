@@ -136,9 +136,8 @@ final class BrowserCompanionTests: XCTestCase {
         XCTAssertEqual(click(view())["accepted"] as? Bool, true, "the tab's fresh buttons still work")
     }
 
-    // Chrome takes one compound selector per fit; any whitespace in CSS is a descendant combinator.
-    /// Chrome lights the icon for a fit with path /en-US/ on https://developer.mozilla.org/en-US/, comparing the path
-    /// with its last slash and still percent-encoded; the builder's look has to say the same.
+    /// A click on Lamp fits a path /en-US/ to https://developer.mozilla.org/en-US/, comparing the path with its last
+    /// slash and still percent-encoded, as Chrome's URL gives it; the builder's look has to say the same.
     func testAPathIsComparedAsChromeComparesIt() throws {
         let fit = BrowserCompanions.Declaration.Fit(site: "mozilla.org", path: "/en-US/", selector: nil)
         XCTAssertTrue(fit.fitsAddress(try XCTUnwrap(URL(string: "https://developer.mozilla.org/en-US/"))))
@@ -148,11 +147,12 @@ final class BrowserCompanionTests: XCTestCase {
         XCTAssertTrue(encoded.fitsAddress(try XCTUnwrap(URL(string: "https://example.com/caf%C3%A9/menu"))))
     }
 
-    func testSelectorsWithAnyCombinatorAreRefused() {
-        for selector in ["div a", "div\ta", "div\na", "div>a", "a,b", ":not(div a)"] {
+    /// The click asks the page with querySelector, which takes combinators; only a selector cut short is refused.
+    func testOnlyIncompleteSelectorsAreRefused() {
+        for selector in ["[itemtype", "a[href=\"x]", ":not(div", ""] {
             XCTAssertNotNil(BrowserCompanions.Declaration.selectorProblem(selector), selector)
         }
-        for selector in [".wprm-recipe-container", "[itemtype*=\"schema.org/Recipe\"]", "[data-x=\"a b\"]", "div.recipe-card"] {
+        for selector in [".wprm-recipe-container", "[itemtype*=\"schema.org/Recipe\"]", "[data-x=\"a b\"]", "div a", "div > a", "a,b"] {
             XCTAssertNil(BrowserCompanions.Declaration.selectorProblem(selector), selector)
         }
     }
