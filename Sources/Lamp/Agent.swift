@@ -227,7 +227,7 @@ enum Agent {
         let rules = [Rules.edit, Rules.ask, Rules.shell, Rules.universal, Rules.universalFrameworks,
                      half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks), half(onMac, BrowserBridge.enabled ? Rules.browserCompanion : ""),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
-                     Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
+                     Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.services), half(onMac, Rules.computer),
                      half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true),
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
                      Rules.icloud, Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
@@ -249,7 +249,7 @@ enum Agent {
         if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.macShare, Rules.permissions] }
         if mac && sidebar { rules.append(Rules.browserCompanion) }
         rules += [Rules.script, Rules.intents] + (mac ? [Rules.macIntents] : []) + [mac ? Rules.macAccounts : Rules.iPhoneAccounts]
-        if mac { rules.append(Rules.computer) }
+        if mac { rules += [Rules.services, Rules.computer] }
         if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.iPhoneShare, Rules.icloud] }
         rules += [Rules.store, Rules.kinds(mac: mac), mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
                   Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs]
@@ -650,6 +650,13 @@ enum Agent {
         Google Calendar") means these: never call the service's web API, never ask for a key or a sign-in, and \
         don't ask which service they use. iOS asks the person once per kind of data; each call throws a plain \
         message if refused, so show `error.localizedDescription`.
+        """
+
+        static let services = """
+        - When a wish needs the person's Notion, Linear, Todoist, Jira or Confluence, or monday.com, use `LampService` \
+        in LampSupport.swift (read it there first): after the Mac's own accounts above, before LampComputer. The person \
+        connects with `LampServiceButton` and approves on the service's own page, so never ask for a key, a token or a \
+        developer app. Connected, that button is Disconnect: keep it reachable, in the toolbar or Settings.
         """
 
         static let computer = """
