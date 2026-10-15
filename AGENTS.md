@@ -34,8 +34,10 @@ A capability given to one engine must be given to all of them that can take it, 
   engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `ask`, `show_result`, `write_wish`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **How the agent talks** (`Talk`, `TalkCards.swift`): in short sentences and in cards, not paragraphs, so building
-  feels like a short wizard: a new app starts with two or three questions as a card unless the request already
-  answers them (`Agent.Rules.ask`). Each piece of a card has a word limit (`Talk.Words`, the same numbers as the
+  feels like a short wizard. A vague wish gets a good first attempt built from sensible guesses, not questions: the
+  agent asks first only when one answer would make a different app (whether it's useful, what it needs to reach,
+  what it costs, whether it acts outside the app), then one question, its lowest-impact answer first and the one
+  taken when it's left to Lamp; an answer never grants access or approves an outside action (`Agent.Rules.ask`). Each piece of a card has a word limit (`Talk.Words`, the same numbers as the
   tools' descriptions), and a call over it is turned away for the agent to say shorter, whichever engine it is. Its
   pieces are tools: `ask` puts questions in the chat as a card answered by clicking, laid out as the agent
   chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own), and `show_result` is

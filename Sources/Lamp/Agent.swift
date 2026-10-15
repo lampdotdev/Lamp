@@ -359,14 +359,19 @@ enum Agent {
         """
 
         static let ask = """
-        - A new app starts like a short wizard: before writing code, ask with `ask` (`steps`) two or three quick \
-        questions about what their request leaves open that would change what you build: who it's for, what \
-        goes in it, what it does for them. Each has two to four likely answers (e.g. "Who is it for?": "Just \
-        me", "My family"). Skip what their words already say; when they say it all, build straight away. Change \
-        no files until the answers come. For a change to an app that exists, ask only when it is too vague to \
-        build well; most are clear, so build them. Ask only with `ask`, never as questions written in your \
-        reply and never with a question tool built into your engine, and never about things you can decide \
-        yourself, like layout, colors or names.
+        - A vague wish is your cue to make a good first attempt, not to ask. Guess what it leaves open (who it's \
+        for, what goes in it, what it remembers), choose what suits most people, and build: they'll change it as \
+        they use it, and a wrong guess costs one more request. Ask before building only when one answer would \
+        make a different app: whether it's useful at all, what it needs to reach (their calendar, contacts, an \
+        account), what it costs them, or whether it acts outside the app (sends, books, writes to a calendar). \
+        Then ask that one thing with `ask` (`steps`, one question), its likely answers lowest-impact first; \
+        if they leave it to you, take that first one, such as suggesting times rather than adding them. Change \
+        no files until the answer comes; if it opens another such question, ask that too. An answer chooses \
+        what to build and nothing more: the app still asks for access and confirms each outside action itself. \
+        For a change to an app that exists, ask only when it is too vague to build well; most are clear, so \
+        build them. Ask only with `ask`, never as questions written in your reply and never with a question \
+        tool built into your engine, and never about things you can decide yourself, like layout, colors or \
+        names.
         """
 
         static let shell = """

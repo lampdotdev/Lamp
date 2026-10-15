@@ -1,4 +1,5 @@
 import SwiftUI
+import LampSidebarKit
 
 /// What one `save_notes` changed, kept on a chat line (`LogLine.noted`) so the person sees what Lamp noted
 /// when it notes it, and can take it back there. Without it a save was silent: the notes only showed in
@@ -91,10 +92,6 @@ struct NoteCard: View {
     let dir: URL
     @ObservedObject private var store = Store.shared
     @State private var problem: String?
-    @State private var expanded = false
-
-    /// More lines than this and the rest are counted, not listed: it is a receipt, not the notes.
-    private static let shown = 4
 
     private var project: LampProject? { store.projects.first { $0.dir == dir } }
 
@@ -106,59 +103,9 @@ struct NoteCard: View {
 
     var body: some View {
         if let receipt = line.noted {
-            let undone = receipt.undone == true
-            let lines = receipt.added.map { ($0, false) } + receipt.removed.map { ($0, true) }
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Button {
-                        withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "note.text").frame(width: 16)
-                            // The title is given room before the notes beside it, and a long app name is cut
-                            // short rather than pushing Undo out of the chat.
-                            Text(Self.title(receipt, app: project?.name ?? "this app")).lineLimit(1).layoutPriority(1)
-                            // Closed, the line says what the notes are as far as it has room.
-                            if !expanded && !undone {
-                                Text((receipt.added.isEmpty ? receipt.removed : receipt.added).joined(separator: " "))
-                                    .foregroundStyle(.tertiary)
-                                    .lineLimit(1)
-                            }
-                            Image(systemName: "chevron.right")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                                .rotationEffect(.degrees(expanded ? 90 : 0))
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help(undone ? "Show what was taken back" : "Show what was noted")
-                    Spacer(minLength: 8)
-                    if !undone, let project {
-                        Button("Undo") { problem = store.undoNote(line.id, in: project) }
-                            .buttonStyle(.borderless)
-                            .fixedSize()
-                            .help("Lamp forgets this. Everything it remembers is in Settings, under Memory.")
-                    }
-                }
-                if expanded {
-                    VStack(alignment: .leading, spacing: 3) {
-                        ForEach(Array(lines.prefix(Self.shown).enumerated()), id: \.offset) { _, item in
-                            Text(item.0)
-                                .strikethrough(item.1 || undone)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        if lines.count > Self.shown { Text("and \(lines.count - Self.shown) more") }
-                    }
-                    .foregroundStyle(.tertiary)
-                    .padding(.leading, 22)
-                }
-                if let problem { Text(problem).font(.caption).foregroundStyle(.orange).padding(.leading, 22) }
-            }
-            .font(.callout)
-            .foregroundStyle(undone ? .tertiary : .secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .contain)
+            ChatLook.NoteLine(title: Self.title(receipt, app: project?.name ?? "this app"), added: receipt.added,
+                              removed: receipt.removed, undone: receipt.undone == true, problem: problem,
+                              undo: project.map { project in { problem = store.undoNote(line.id, in: project) } })
         }
     }
 }

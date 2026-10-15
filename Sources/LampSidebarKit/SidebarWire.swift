@@ -6,7 +6,7 @@ import Foundation
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
     /// What this side reads and writes; see `SidebarCommand.hello`.
-    public static let version = 2
+    public static let version = 4
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -41,6 +41,29 @@ public struct SidebarState: Codable, Equatable {
     /// takes it up; the words the sidebar sent itself come back with the same number and are left alone.
     public var draftVersion: Int
     public var attachments: [SidebarAttachment]
+    // Optional, like everything added since the first sidebar: a sidebar talking to a Lamp from before these
+    // were sent still reads its chat.
+    /// Messages waiting for the current change to finish.
+    public var queued: [SidebarQueued]?
+    /// The first request is waiting for Apple's tools to install, not for a turn.
+    public var waitingForSetup: Bool?
+    /// A command or file the agent is asking to use, waiting for an answer.
+    public var approval: SidebarApproval?
+    /// The app was asked to quit and isn't responding: what the notice says.
+    public var notResponding: String?
+    /// A request taken back into the message box to change and send again: Escape puts it back.
+    public var replacing: Bool?
+    /// Only the end of a long chat is here; more is sent when asked (`SidebarCommand.earlier`).
+    public var hasEarlier: Bool?
+    /// What the message box offers while it's empty, for Tab to take.
+    public var suggestion: String?
+    /// Lamp is listening to dictation for this chat, and whether this Mac can dictate at all.
+    public var listening: Bool?
+    public var canDictate: Bool?
+    /// Why dictation didn't start or stopped, and the button to the System Settings page that fixes it, if any.
+    public var dictationProblem: SidebarProblem?
+    /// A message is on its way in (Lamp's window or this one sent it): nothing else is sent meanwhile.
+    public var submitting: Bool?
 
     public init(app: String, lines: [SidebarLine], working: String?, workingSince: Date?, empty: Bool, busy: Bool,
                 draft: String, draftVersion: Int, attachments: [SidebarAttachment]) {
@@ -57,7 +80,7 @@ public struct SidebarState: Codable, Equatable {
 }
 
 public struct SidebarLine: Codable, Equatable, Identifiable {
-    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary }
+    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary, note, offer, action }
     public var id: UUID
     public var kind: Kind
     public var text: String
@@ -73,6 +96,36 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var questions: [SidebarQuestion]?
     /// A result's step that wasn't tried, offered as Have Lamp Test It.
     public var untried: String?
+    /// The agent's questions as Lamp's window draws them, whether they still wait for an answer, and how far
+    /// they've been answered (in either chat).
+    public var ask: TalkCard.Ask?
+    public var askOpen: Bool?
+    public var progress: AskProgress?
+    /// Goes up when the progress changed in Lamp's window, so the sidebar takes it up; its own edits come back
+    /// with the same number and are left alone, so an echo of an older one never undoes a newer one.
+    public var progressVersion: Int?
+    /// What a request made as Lamp's window draws it, whether its Try It still applies, and its picture.
+    public var result: TalkCard.Result?
+    public var resultCurrent: Bool?
+    public var picture: Data?
+    /// A receipt for a save of Lamp's notes (its title is `text`): the lines added and removed, whether it was
+    /// taken back, and what went wrong taking it back.
+    public var added: [String]?
+    public var removed: [String]?
+    public var undone: Bool?
+    public var problem: String?
+    /// An offer's card (`offer`: a setup offer, the widget card) or line (`action`: Draw Icon, iPhone setup):
+    /// its symbol, its status line (the title, or the line's words, is `text`), whether it's done, and its
+    /// button, if any, with what the button does (`SidebarCommand.offer`).
+    public var symbol: String?
+    public var status: String?
+    public var done: Bool?
+    public var button: String?
+    public var disabled: Bool?
+    /// A request's buttons: going back to how the app was around it, and taking it back to change it.
+    public var canGoBack: Bool?
+    public var canSendAgain: Bool?
+    public var isLatest: Bool?
 
     public init(id: UUID, kind: Kind, text: String, gap: Double = 0, running: Bool = false, attachments: [SidebarAttachment]? = nil,
                 growing: Bool = false, questions: [SidebarQuestion]? = nil, untried: String? = nil) {
@@ -100,29 +153,83 @@ public struct SidebarQuestion: Codable, Equatable {
     }
 }
 
+public struct SidebarQueued: Codable, Equatable, Identifiable {
+    public var id: UUID
+    public var text: String
+    public var attachments: [SidebarAttachment]
+
+    public init(id: UUID, text: String, attachments: [SidebarAttachment]) {
+        self.id = id
+        self.text = text
+        self.attachments = attachments
+    }
+}
+
+public struct SidebarApproval: Codable, Equatable {
+    public var id: UUID
+    public var title: String
+    public var command: String
+    public var explanation: ChatLook.Explanation?
+
+    public init(id: UUID, title: String, command: String, explanation: ChatLook.Explanation?) {
+        self.id = id
+        self.title = title
+        self.command = command
+        self.explanation = explanation
+    }
+}
+
 public struct SidebarAttachment: Codable, Equatable {
     public var name: String
+    /// A small picture: of the picture itself, or the file's icon.
     public var thumbnail: Data?
+    /// A picture, shown as itself in a request; any other file is a chip.
+    public var isImage: Bool?
 
-    public init(name: String, thumbnail: Data?) {
+    public init(name: String, thumbnail: Data?, isImage: Bool? = nil) {
         self.name = name
         self.thumbnail = thumbnail
+        self.isImage = isImage
     }
 }
 
 /// What the person did in the sidebar.
 public enum SidebarCommand: Codable, Equatable {
     /// The first thing a sidebar says: which shape of `SidebarState` it reads. One that says nothing is from
-    /// before the summary line, which it can't read.
+    /// before the summary line, which it can't read; one before 3, from before the notes receipt; one before 4, from before offers.
     case hello(Int)
     case send(String)
     case answer(UUID, [String])
     case tryIt(UUID)
     case draft(String)
     case removeAttachment(Int)
+    /// How far an open card has been answered, as it changes, so the other chat carries on from there.
+    case askProgress(UUID, AskProgress)
+    /// Takes back the save of Lamp's notes this receipt is for.
+    case undoNote(UUID)
+    /// The button on an offer's card or line: what it does is Lamp's to know, by the line.
+    case offer(UUID)
+    /// Back to how the app was after the request with this id, or before it.
+    case goBack(UUID, before: Bool)
+    /// The request with this id into the message box, to change and send again; and back out of it.
+    case takeBack(UUID)
+    case putBack
+    /// Shows an attachment in Quick Look: of the request with this id, or (nil) of the message box, by its place.
+    case preview(UUID?, Int)
+    /// More of the chat, from before what's shown.
+    case earlier
+    case dismissSuggestion
+    /// Starts or stops dictating into the message box, in Lamp.
+    case dictate(Bool)
+    /// The dictation problem was seen: closed, or (true) its System Settings page asked for.
+    case dictationProblem(openSettings: Bool)
     /// Files pasted, dropped or chosen in the sidebar, which only it can read: their names and contents.
     case attach([SidebarFile])
     case stop
+    case unqueue(UUID)
+    /// The answer to the approval with this id.
+    case approve(UUID, allow: Bool, allowAll: Bool)
+    case forceQuit
 }
 
 public struct SidebarFile: Codable, Equatable {
@@ -194,4 +301,18 @@ public final class SidebarOutbox {
 /// can say to it, and nothing that reaches Lamp. LampSupport.swift declares the same.
 @objc(LampSidebarPlacement) public protocol SidebarPlacement {
     func place(x: Double, y: Double)
+}
+
+/// Something the person needs to know before a thing can work, as an alert: its title, what to do, and the
+/// button that opens the fix, when there is one.
+public struct SidebarProblem: Codable, Equatable {
+    public var title: String
+    public var message: String
+    public var settingsButton: String?
+
+    public init(title: String, message: String, settingsButton: String?) {
+        self.title = title
+        self.message = message
+        self.settingsButton = settingsButton
+    }
 }

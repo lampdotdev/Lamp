@@ -1,6 +1,7 @@
 import ExtensionKit
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import LampSidebarKit
 
 /// The chat inside an app's own window: an extension Lamp puts in every Mac app it builds, which the app shows
@@ -149,35 +150,112 @@ struct SidebarView: View {
         }
         .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity)
         .background(ChatLook.paper)
+        // Files and pictures dropped on the chat go with the next message, as in Lamp's window.
+        .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
+            Dropped.load(providers) { files in if !files.isEmpty { link.send(.attach(files)) } }
+            return true
+        }
     }
+}
+
+/// Where the top of the chat lies in its scroll view, while there's more of it to load.
+private struct EarlierTop: PreferenceKey {
+    static let defaultValue: CGFloat = -.infinity
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 /// The chat as Lamp's window draws it (`Transcript`, the composer row), from the same pieces (`ChatLook`).
 private struct Chat: View {
     @EnvironmentObject private var link: Link
     let state: SidebarState
+    /// The first line when more was last asked for: the next page is asked for once that page has come.
+    @State private var askedEarlierAt: UUID?
+    /// Off until the chat has opened at its end, so the top of the chat seen while laying out asks for nothing.
+    @State private var settled = false
 
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { scroller in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
+                        // Scrolled near the top of a long chat: more of it, as Lamp's window loads it. Told by where
+                        // this lies in the scroll view, since the stack draws every line whether or not it's seen.
+                        if state.hasEarlier == true {
+                            Color.clear.frame(height: 1).background(GeometryReader { geometry in
+                                Color.clear.preference(key: EarlierTop.self, value: geometry.frame(in: .named("chat")).minY)
+                            })
+                        }
                         ForEach(state.lines) { line in
-                            LineView(line: line).padding(.top, line.gap).id(line.id)
+                            LineView(line: line, busy: state.busy).padding(.top, line.gap).id(line.id)
                         }
                         if let working = state.working, let since = state.workingSince {
                             ChatLook.ActivityLine(working, started: since).padding(.top, 12)
                         }
+                        if let notResponding = state.notResponding {
+                            ChatLook.UnresponsiveNotice(text: notResponding) { link.send(.forceQuit) }.padding(.top, 12)
+                        }
+                        ForEach(state.queued ?? []) { message in
+                            ChatLook.QueuedRow(text: message.text, waitingForSetup: state.waitingForSetup ?? false,
+                                               onRemove: { link.send(.unqueue(message.id)) }) {
+                                ForEach(message.attachments.indices, id: \.self) { index in
+                                    AttachmentChip(attachment: message.attachments[index])
+                                }
+                            }
+                            .padding(.top, state.lines.isEmpty ? 0 : 32)
+                        }
                         Color.clear.frame(height: 16).id("end")
                     }
+                    // A readable line length, as in Lamp's window; wide sidebars get margins instead.
+                    .frame(maxWidth: 640, alignment: .leading)
                     .padding(.horizontal, 20).padding(.top, 16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity)
+                }
+                .coordinateSpace(name: "chat")
+                .onPreferenceChange(EarlierTop.self) { top in
+                    guard settled, top > -200, state.hasEarlier == true, askedEarlierAt != state.lines.first?.id else { return }
+                    askedEarlierAt = state.lines.first?.id
+                    link.send(.earlier)
+                }
+                // The earlier page goes in above what was being read, which stays where it was.
+                .onChange(of: state.lines.first?.id) { old, _ in
+                    if let old, old == askedEarlierAt { scroller.scrollTo(old, anchor: .top) }
                 }
                 .onChange(of: state.lines.last?.id) { follow(scroller) }
                 .onChange(of: state.lines.last?.text) { follow(scroller) }
                 .onChange(of: state.working) { follow(scroller) }
+                .onChange(of: state.queued?.count) { follow(scroller) }
                 // Once the lines are laid out: scrolled before then, the chat opens partway up.
-                .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { follow(scroller, animated: false) } }
+                .onAppear {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        follow(scroller, animated: false)
+                        DispatchQueue.main.async { settled = true }
+                    }
+                }
+            }
+            // As Lamp's window shows it: why dictation didn't start, and the way to System Settings to fix it.
+            .alert(state.dictationProblem?.title ?? "Dictation",
+                   isPresented: Binding(get: { state.dictationProblem != nil },
+                                        set: { if !$0 { link.send(.dictationProblem(openSettings: false)) } }),
+                   presenting: state.dictationProblem) { problem in
+                if let button = problem.settingsButton {
+                    Button(button) { link.send(.dictationProblem(openSettings: true)) }
+                    Button("Not Now", role: .cancel) {}
+                } else {
+                    Button("OK") {}
+                }
+            } message: { problem in
+                Text(problem.message)
+            }
+            if let approval = state.approval {
+                ChatLook.ApprovalCard(title: approval.title, command: approval.command, explanation: approval.explanation,
+                                      onAllow: { link.send(.approve(approval.id, allow: true, allowAll: false)) },
+                                      onAllowAll: { link.send(.approve(approval.id, allow: true, allowAll: true)) },
+                                      onDeny: { link.send(.approve(approval.id, allow: false, allowAll: false)) })
+                    // Each request starts with its command hidden, even when one follows another.
+                    .id(approval.id)
+                    .frame(maxWidth: 640)
+                    .padding(.horizontal, 20).padding(.top, 8)
+                    .frame(maxWidth: .infinity)
             }
             ComposerRow(state: state)
         }
@@ -192,22 +270,28 @@ private struct Chat: View {
 private struct LineView: View {
     @EnvironmentObject private var link: Link
     let line: SidebarLine
+    let busy: Bool
 
     var body: some View {
         switch line.kind {
         case .user:
-            VStack(alignment: .trailing, spacing: 6) {
-                if let attachments = line.attachments, !attachments.isEmpty {
-                    HStack(spacing: 6) {
-                        ForEach(attachments.indices, id: \.self) { index in
+            ChatLook.UserRow(text: line.text, busy: busy,
+                             goBack: line.canGoBack == true ? { before in link.send(.goBack(line.id, before: before)) } : nil,
+                             sendAgain: line.canSendAgain == true ? { link.send(.takeBack(line.id)) } : nil,
+                             isLatest: line.isLatest ?? false) {
+                let attachments = line.attachments ?? []
+                ForEach(attachments.indices, id: \.self) { index in
+                    // A click shows it in Quick Look, as in Lamp's window.
+                    Button { link.send(.preview(line.id, index)) } label: {
+                        if attachments[index].isImage ?? (attachments[index].thumbnail != nil) {
                             Thumbnail(attachment: attachments[index], size: 72)
+                        } else {
+                            AttachmentChip(attachment: attachments[index])
                         }
                     }
+                    .buttonStyle(.plain)
                 }
-                if !line.text.isEmpty { ChatLook.UserBubble(line.text) }
             }
-            .frame(maxWidth: 480, alignment: .trailing)
-            .frame(maxWidth: .infinity, alignment: .trailing)
         case .agent:
             ChatLook.AgentText(line.text, keep: !line.growing)
         case .status:
@@ -220,26 +304,71 @@ private struct LineView: View {
             ChatLook.SummaryLine(line.text)
         case .error:
             ChatLook.ErrorNote(line.text)
-        case .ask:
-            if let questions = line.questions {
-                QuestionCard(id: line.id, questions: questions)
-            } else {
-                Text(line.text).font(.callout).foregroundStyle(.secondary)
+        case .offer:
+            ChatLook.OfferCard(symbol: line.symbol ?? "sparkles", title: line.text, status: line.status ?? "", done: line.done ?? false) {
+                if let button = line.button { Button(button) { link.send(.offer(line.id)) } }
             }
+        case .action:
+            ChatLook.ActionLine(symbol: line.symbol ?? "sparkles", text: line.text, button: line.button ?? "",
+                                disabled: line.disabled ?? false) { link.send(.offer(line.id)) }
+        case .note:
+            ChatLook.NoteLine(title: line.text, added: line.added ?? [], removed: line.removed ?? [], undone: line.undone ?? false,
+                              problem: line.problem, undo: { link.send(.undoNote(line.id)) })
+        case .ask:
+            AskLine(line: line)
         case .result:
-            VStack(alignment: .leading, spacing: 8) {
+            if let result = line.result {
+                ResultCardView(result: result, isCurrent: line.resultCurrent ?? false,
+                               picture: line.picture.flatMap(NSImage.init(data:))) { _ in link.send(.tryIt(line.id)) }
+            } else {
                 ChatLook.AgentText(line.text)
-                if let untried = line.untried {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("Not tested yet: \(untried)").font(.callout).foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Have Lamp Test It") { link.send(.tryIt(line.id)) }
-                    }
-                }
             }
         }
     }
 }
+
+/// The agent's questions as Lamp's window draws them. How far they've been answered is kept here as it changes
+/// and told to Lamp, which tells it back: begun here, an answer carries on in Lamp's window, and the other way.
+private struct AskLine: View {
+    @EnvironmentObject private var link: Link
+    let line: SidebarLine
+    @State private var progress = AskProgress()
+    @State private var version = -1
+    /// The progress just taken from Lamp, until the change it makes has been seen: that one isn't an edit made
+    /// here, so it isn't sent back, where it could undo what was typed in Lamp's window since.
+    @State private var applied: AskProgress?
+
+    var body: some View {
+        if let ask = line.ask {
+            AskCardView(ask: ask, isOpen: line.askOpen ?? false, progress: $progress) { answers in
+                link.send(.answer(line.id, answers))
+            }
+            .onAppear { take() }
+            // Only a change made in Lamp's window: an echo of this sidebar's own edit keeps its number, so an
+            // older one arriving late never undoes what was typed since.
+            .onChange(of: line.progressVersion) { take() }
+            .onChange(of: progress) {
+                // The change `take` made isn't sent back; every one after it is.
+                if let applied, progress == applied { self.applied = nil; return }
+                applied = nil
+                link.send(.askProgress(line.id, progress))
+            }
+        } else {
+            Text(line.text).font(.callout).foregroundStyle(.secondary)
+        }
+    }
+
+    private func take() {
+        let given = line.progressVersion ?? 0
+        guard given != version else { return }
+        version = given
+        if let progress = line.progress, progress != self.progress {
+            applied = progress
+            self.progress = progress
+        }
+    }
+}
+
 
 private struct Thumbnail: View {
     let attachment: SidebarAttachment
@@ -254,8 +383,59 @@ private struct Thumbnail: View {
             }
         }
         .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 5))
         .help(attachment.name)
+    }
+}
+
+/// An attachment as Lamp's window shows it in a chip.
+private struct AttachmentChip: View {
+    let attachment: SidebarAttachment
+    var preview: (() -> Void)?
+    var onRemove: (() -> Void)?
+
+    var body: some View {
+        ChatLook.Chip(onRemove: onRemove) {
+            if let preview {
+                Button(action: preview) {
+                    ChatLook.ChipLabel(name: attachment.name) { Thumbnail(attachment: attachment, size: 28) }.contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } else {
+                ChatLook.ChipLabel(name: attachment.name) { Thumbnail(attachment: attachment, size: 28) }
+            }
+        }
+    }
+}
+
+/// What's dropped on the chat, as files only this process can read: a file as it is, a picture (from a browser,
+/// Photos, a screenshot's thumbnail) as a PNG.
+private enum Dropped {
+    static func load(_ providers: [NSItemProvider], completion: @escaping @MainActor ([SidebarFile]) -> Void) {
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var files: [SidebarFile] = []
+        func add(_ file: SidebarFile) { lock.lock(); files.append(file); lock.unlock() }
+        for provider in providers {
+            group.enter()
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    if let url, let data = try? Data(contentsOf: url), data.count < 50_000_000 {
+                        add(SidebarFile(name: url.lastPathComponent, data: data))
+                    }
+                    group.leave()
+                }
+            } else {
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                    if let data, let image = NSImage(data: data), let tiff = image.tiffRepresentation,
+                       let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                        add(SidebarFile(name: "Dropped image.png", data: png))
+                    }
+                    group.leave()
+                }
+            }
+        }
+        group.notify(queue: .main) { MainActor.assumeIsolated { completion(files) } }
     }
 }
 
@@ -272,36 +452,53 @@ private struct ComposerRow: View {
         ChatLook.MessageBar(busy: state.busy, canSend: canSend, attachHelp: "Attach files. You can also paste images and files here.",
                             attach: chooseFiles, send: submit, stop: { link.send(.stop) }, focus: { focus += 1 }) {
             Composer(text: $text, height: $height, placeholder: ChatLook.placeholder(busy: state.busy, empty: state.empty),
+                     // No suggestion while a request from the chat is in the box, as in Lamp's window.
+                     suggestion: state.replacing == true ? nil : state.suggestion,
+                     onDismissSuggestion: { link.send(.dismissSuggestion) },
+                     onEscape: state.replacing == true ? { link.send(.putBack) } : nil,
                      isEnabled: true, focusRequest: focus, onSubmit: submit, onFiles: attach)
                 .frame(height: height)
         } above: {
             if !state.attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         ForEach(state.attachments.indices, id: \.self) { index in
-                            Thumbnail(attachment: state.attachments[index], size: 48)
-                                .overlay(alignment: .topTrailing) {
-                                    Button { link.send(.removeAttachment(index)) } label: {
-                                        Image(systemName: "xmark.circle.fill").symbolRenderingMode(.palette)
-                                            .foregroundStyle(.white, .black.opacity(0.6))
-                                    }
-                                    .buttonStyle(.plain)
-                                    .offset(x: 5, y: -5)
-                                }
+                            AttachmentChip(attachment: state.attachments[index], preview: { link.send(.preview(nil, index)) }) {
+                                link.send(.removeAttachment(index))
+                            }
                         }
                     }
-                    .padding(.top, 6).padding(.trailing, 6)
                 }
+                .padding(.top, 2)
+            }
+        } beside: {
+            // Dictation runs in Lamp, which has the microphone, and writes into the box as Lamp's window does.
+            if state.canDictate == true {
+                let listening = state.listening ?? false
+                Button { link.send(.dictate(!listening)) } label: {
+                    Image(systemName: listening ? "mic.fill" : "mic")
+                        .foregroundStyle(listening ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                        .symbolEffect(.pulse, isActive: listening)
+                }
+                .buttonStyle(ChatLook.Round(prominent: false))
+                .disabled(state.submitting == true)
+                .help(listening ? "Stop dictation" : "Dictate a change")
+                .accessibilityLabel(listening ? "Stop dictation" : "Dictate a change")
             }
         }
-        .padding(.horizontal, 12).padding(.top, 4).padding(.bottom, 12)
+        // Lined up with the chat above it, as in Lamp's window.
+        .frame(maxWidth: 640)
+        .padding(.horizontal, 20).padding(.top, 4).padding(.bottom, 16)
+        .frame(maxWidth: .infinity)
         .onAppear { take(state) }
         .onChange(of: state.draftVersion) { take(state) }
         .onChange(of: text) { link.send(.draft(text)) }
     }
 
+    /// As in Lamp's window: not while a message is on its way in, and a request sent again can't wait behind a turn.
     private var canSend: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !state.attachments.isEmpty
+        (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !state.attachments.isEmpty)
+            && state.submitting != true && !(state.replacing == true && state.busy)
     }
 
     /// Lamp's draft, when it was changed elsewhere.
@@ -312,10 +509,10 @@ private struct ComposerRow: View {
         focus += 1
     }
 
+    /// Lamp sends it and empties the box as its window does, keeping whatever came after (`afterSubmission`).
     private func submit() {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !state.attachments.isEmpty else { return }
+        guard canSend else { return }
         link.send(.send(text))
-        text = ""
     }
 
     /// Only this process can read what was pasted or chosen here: the files go to Lamp whole.
@@ -335,87 +532,7 @@ private struct ComposerRow: View {
     }
 }
 
-/// The agent's questions: each answered with a click, sent once every one has its answer.
-private struct QuestionCard: View {
-    @EnvironmentObject private var link: Link
-    let id: UUID
-    let questions: [SidebarQuestion]
-    @State private var chosen: [Int: String] = [:]
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ForEach(questions.indices, id: \.self) { index in
-                let question = questions[index]
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(question.question).font(.headline)
-                    FlowRow(spacing: 6) {
-                        ForEach(question.options.indices, id: \.self) { option in
-                            let title = question.options[option]
-                            Button {
-                                chosen[index] = title
-                                if chosen.count == questions.count {
-                                    link.send(.answer(id, questions.indices.map { chosen[$0] ?? "" }))
-                                }
-                            } label: {
-                                HStack(spacing: 5) {
-                                    if let symbol = question.symbols[safe: option] ?? nil { Image(systemName: symbol) }
-                                    Text(title)
-                                }
-                                .padding(.horizontal, 10).padding(.vertical, 6)
-                                .background(chosen[index] == title ? Color.accentColor.opacity(0.3) : Color.secondary.opacity(0.14),
-                                            in: Capsule())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-}
-
-/// Chips that wrap onto the next row as the width runs out.
-private struct FlowRow: Layout {
-    var spacing: CGFloat
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let rows = arrange(subviews, width: proposal.width ?? .infinity)
-        return CGSize(width: proposal.width ?? rows.map(\.width).max() ?? 0, height: rows.last.map { $0.y + $0.height } ?? 0)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        for row in arrange(subviews, width: bounds.width) {
-            var x = bounds.minX
-            for index in row.items {
-                let size = subviews[index].sizeThatFits(.unspecified)
-                subviews[index].place(at: CGPoint(x: x, y: bounds.minY + row.y), proposal: ProposedViewSize(size))
-                x += size.width + spacing
-            }
-        }
-    }
-
-    private struct Row { var items: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0; var y: CGFloat = 0 }
-
-    private func arrange(_ subviews: Subviews, width: CGFloat) -> [Row] {
-        var rows: [Row] = [Row()]
-        for index in subviews.indices {
-            let size = subviews[index].sizeThatFits(.unspecified)
-            if !rows[rows.count - 1].items.isEmpty, rows[rows.count - 1].width + spacing + size.width > width {
-                let y = rows[rows.count - 1].y + rows[rows.count - 1].height + spacing
-                rows.append(Row(y: y))
-            }
-            var row = rows[rows.count - 1]
-            row.width += (row.items.isEmpty ? 0 : spacing) + size.width
-            row.height = max(row.height, size.height)
-            row.items.append(index)
-            rows[rows.count - 1] = row
-        }
-        return rows
-    }
-}
 
 private extension Array {
     subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
