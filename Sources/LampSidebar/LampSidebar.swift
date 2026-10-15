@@ -273,8 +273,8 @@ private struct AskLine: View {
     let line: SidebarLine
     @State private var progress = AskProgress()
     @State private var version = -1
-    /// The last progress taken from Lamp: that one isn't an edit made here, so it isn't sent back, where it could
-    /// undo what was typed in Lamp's window since.
+    /// The progress just taken from Lamp, until the change it makes has been seen: that one isn't an edit made
+    /// here, so it isn't sent back, where it could undo what was typed in Lamp's window since.
     @State private var applied: AskProgress?
 
     var body: some View {
@@ -286,7 +286,12 @@ private struct AskLine: View {
             // Only a change made in Lamp's window: an echo of this sidebar's own edit keeps its number, so an
             // older one arriving late never undoes what was typed since.
             .onChange(of: line.progressVersion) { take() }
-            .onChange(of: progress) { if progress != applied { link.send(.askProgress(line.id, progress)) } }
+            .onChange(of: progress) {
+                // The change `take` made isn't sent back; every one after it is.
+                if let applied, progress == applied { self.applied = nil; return }
+                applied = nil
+                link.send(.askProgress(line.id, progress))
+            }
         } else {
             Text(line.text).font(.callout).foregroundStyle(.secondary)
         }
