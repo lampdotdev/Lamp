@@ -56,6 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             Notifier.shared.start()
             MagicPanel.start()
+            // Once the apps are read: an app whose sidebar is open finds Lamp again.
+            DispatchQueue.main.async { SidebarServer.shared.start() }
         }
     }
 
@@ -64,15 +66,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Generated apps call back with lamp://edit?app=<slug> (⇧⌘E inside the app).
     func application(_ application: NSApplication, open urls: [URL]) {
         MainActor.assumeIsolated {
-            // An app's wand started Lamp: the chat beside that app is what was asked for, so Lamp's own window
-            // stays out of the way. Opened already, it stays as it was. The Dock icon brings it back.
-            let forPanel = urls.contains { $0.scheme == Edition.urlScheme && $0.host == "magic" }
-            if forPanel, Date().timeIntervalSince(launched) < 5, Onboarding.isDone { MagicPanel.keepMainWindowHidden() }
+            // An app's sidebar started Lamp: the chat is in that app, so Lamp's own window stays out of the way.
+            // Opened already, it stays as it was. The Dock icon brings it back.
+            let forSidebar = urls.contains { $0.scheme == Edition.urlScheme && $0.host == "sidebar" }
+            if forSidebar, Date().timeIntervalSince(launched) < 5, Onboarding.isDone { MagicPanel.keepMainWindowHidden() }
             urls.forEach(Store.shared.handle(url:))
         }
     }
 
-    /// The Dock icon shows Lamp's window, also when only an app's chat panel was open.
+    /// The Dock icon shows Lamp's window, also when it was put away for an app's sidebar.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         MainActor.assumeIsolated {
             if let main = MagicPanel.mainWindow, !main.isVisible { main.makeKeyAndOrderFront(nil) }
@@ -80,10 +82,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    /// Closing Lamp's window quits it, except while an app's chat panel is open (the wand's): then Lamp's window
-    /// was put away for the panel, and Lamp is still in use.
+    /// Closing Lamp's window quits it, except while an app's sidebar is open: Lamp is still in use there.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        MainActor.assumeIsolated { !MagicPanel.shared.isOpen }
+        MainActor.assumeIsolated { !SidebarServer.shared.isInUse }
     }
 
     /// Quitting mid-turn would leave the agent and its build running on their own, and the gateway the

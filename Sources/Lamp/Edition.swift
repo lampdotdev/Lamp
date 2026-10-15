@@ -32,6 +32,8 @@ enum Edition {
     static let gatewayPort: UInt16 = isDev ? 47821 : 47811
     static let localModelPort = isDev ? 47822 : 47812
     static let mlxPort = isDev ? 47823 : 47813
+    /// Where the chat inside each app's window (`Sidebar`) reaches Lamp, on this Mac only.
+    static let sidebarPort: UInt16 = isDev ? 47824 : 47814
 
     /// lamp://edit?app=… (lamp-dev:// for the development build), registered in Info.plist by build.sh.
     static let urlScheme = isDev ? "lamp-dev" : "lamp"

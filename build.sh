@@ -113,6 +113,8 @@ if [ "$FLAVOR" = dev ]; then
   cp -R experiments/browser-connector/extension "$APP/Contents/Resources/BrowserCompanion/"
   cp experiments/browser-connector/extension-id.txt "$APP/Contents/Resources/BrowserCompanion/"
 fi
+# The chat Lamp puts inside each Mac app's window (LampSidebar), copied into every app when it's installed.
+cp "$(dirname "$BIN")/LampSidebar" "$APP/Contents/Resources/LampSidebar"
 cp Resources/THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 install -m 755 Resources/lamp-approve.sh "$APP/Contents/Resources/lamp-approve.sh"
 cp Resources/lamp-tools.ts Resources/lamp-tools.json "$APP/Contents/Resources/"   # the agent's tools: pi's extension and the registry both it and the MCP endpoint read
@@ -203,6 +205,7 @@ find "$APP/Contents/Resources/pi" -name '*.node' -print0 | while IFS= read -r -d
 find "$APP/Contents/Resources/llama" -type f \( -name '*.dylib' -o -name 'llama-server' \) -print0 |
   while IFS= read -r -d '' item; do sign "$item"; done
 sign "${PI_ENTITLEMENTS[@]}" "$APP/Contents/Resources/pi/pi"
+sign "$APP/Contents/Resources/LampSidebar"
 SPARKLE="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
 sign "$SPARKLE/Autoupdate"
 sign "$SPARKLE/Updater.app"
