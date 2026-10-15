@@ -697,7 +697,7 @@ struct ProjectView: View {
             transcript(Array(lines[...request]), busy: false, pin: pin)
             BuildCard(project: project, progress: card)
                 .padding(.top, 16).padding(.bottom, 12)
-                .background(Color(nsColor: .textBackgroundColor))
+                .background(ChatLook.paper)
                 // Pinned: once it reaches the top of the chat it stays there, over the steps going by.
                 .visualEffect { content, geometry in
                     content.offset(y: cardPinned ? max(0, -geometry.frame(in: .scrollView).minY) : 0)
@@ -819,7 +819,7 @@ struct ProjectView: View {
             Attachments.load(providers) { attach($0) }
             return true
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(ChatLook.paper)
         .inspector(isPresented: inspectorShown) {
             Group {
                 if showVersions && saved { VersionsView(project: project) } else { AppInfoView(project: project) }

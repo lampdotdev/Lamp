@@ -136,7 +136,7 @@ struct SidebarView: View {
             }
         }
         .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(ChatLook.paper)
     }
 }
 
@@ -170,7 +170,7 @@ private struct Chat: View {
             Divider()
             ComposerRow(state: state)
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(ChatLook.paper)
     }
 
     private func follow(_ scroller: ScrollViewProxy, animated: Bool = true) {

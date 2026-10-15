@@ -196,6 +196,14 @@ public enum ChatLook {
         busy ? "Working… describe the next change" : empty ? "Describe what you'd like…" : "Describe a change…"
     }
 
+    /// What the chat sits on: an off-white a touch warm, calmer than a text view's white, so the cards and the
+    /// answers to choose from (still white) stand a little above it. A warm near-black in dark mode.
+    public static let paper = Color(nsColor: NSColor(name: "LampChatPaper") { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(srgbRed: 0x1F / 255, green: 0x1E / 255, blue: 0x1C / 255, alpha: 1)
+            : NSColor(srgbRed: 0xF7 / 255, green: 0xF5 / 255, blue: 0xF1 / 255, alpha: 1)
+    })
+
     /// Parsed once per message: parsing markdown on every redraw adds up while an agent is streaming.
     @MainActor private static var proseCache: [String: AttributedString] = [:]
 
