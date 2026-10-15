@@ -36,38 +36,20 @@ extension ChatLook {
                         .font(.system(size: 9.5, weight: .semibold))
                         .tracking(0.8)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                HStack(spacing: 10) {
-                    thumbnail
-                    // The name may take a second line beside a narrow chat rather than be cut short.
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(title)
-                            .font(.callout.weight(.semibold))
-                            .foregroundStyle(.primary)
-                            .lineLimit(2)
-                        if let detail, !detail.isEmpty {
-                            Text(detail)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-                    .truncationMode(.tail)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .layoutPriority(1)
-                    if !inDraft { Spacer(minLength: 0) }
+                // Beside the picture while the name fits there on one line; in a narrow chat the picture is first
+                // made square, then goes above the name, so the name never breaks letter by letter.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) { thumbnail(wide: true); words.fixedSize() }
+                    HStack(spacing: 10) { thumbnail(wide: false); words.fixedSize() }
+                    VStack(alignment: .leading, spacing: 6) { thumbnail(wide: true); words.fixedSize(horizontal: false, vertical: true) }
                 }
                 if inDraft {
-                    HStack(spacing: 14) {
-                        if let chooseAgain {
-                            Button("Choose Something Else", action: chooseAgain)
-                                .help("Point at something else in \(app)")
-                        }
-                        if let remove {
-                            Button("Remove", action: remove)
-                                .help("Send your message without it")
-                        }
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 14) { actions }
+                        VStack(alignment: .leading, spacing: 6) { actions }
                     }
                     .buttonStyle(Link())
                 }
@@ -76,9 +58,33 @@ extension ChatLook {
             .frame(maxWidth: inDraft ? .infinity : 260, alignment: .leading)
             .background(Color.primary.opacity(0.035), in: Self.shape(inDraft))
             .overlay(Self.shape(inDraft).strokeBorder(Color(nsColor: .separatorColor)))
-            .fixedSize(horizontal: !inDraft, vertical: true)
+            .fixedSize(horizontal: false, vertical: true)
             .accessibilityElement(children: .contain)
             .accessibilityLabel(detail.map { "Selected: \(title), \($0)" } ?? "Selected: \(title)")
+        }
+
+        private var words: some View {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.primary)
+                if let detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+
+        @ViewBuilder private var actions: some View {
+            if let chooseAgain {
+                Button("Choose Something Else", action: chooseAgain)
+                    .help("Point at something else in \(app)")
+            }
+            if let remove {
+                Button("Remove", action: remove)
+                    .help("Send your message without it")
+            }
         }
 
         /// Concentric with the message box around it, which is rounded by half its one-line height.
@@ -87,11 +93,11 @@ extension ChatLook {
         }
 
         /// The thing as it looked when pointed at, near its own size: a button is wider than it's tall, so its tile
-        /// is too, up to nearly twice its height. On the page's own white, so a light control keeps its edge.
-        private var thumbnail: some View {
+        /// is too, up to nearly twice its height, unless there's no room. On the page's own white, so a light control keeps its edge.
+        private func thumbnail(wide: Bool) -> some View {
             let height: CGFloat = inDraft ? 44 : 36
             let aspect = picture.map { $0.size.width / max($0.size.height, 1) } ?? 1
-            let width = min(max(height * aspect, height), height * 1.75)
+            let width = wide ? min(max(height * aspect, height), height * 1.75) : height
             let picture = Group {
                 if let picture {
                     Image(nsImage: picture).resizable().interpolation(.high).scaledToFit().padding(4)
