@@ -960,7 +960,9 @@ struct ProjectView: View {
             ToolbarItem(placement: .navigation) { titleIcon }
         }
         // A wish not yet told has nothing to open, undo, share or look into: only its icon, until it does.
-        if !untold { appTools }
+        // Something stays in the toolbar all the same: with nothing in it, macOS draws the title bar's line
+        // straight across the sidebar.
+        if untold { ToolbarItem { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) } } else { appTools }
     }
 
     /// Nothing asked yet: a new wish, with no app behind it.
