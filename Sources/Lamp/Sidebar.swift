@@ -170,6 +170,7 @@ final class SidebarServer {
         let connection = Connection(socket: socket, projectID: project.id, server: self)
         connections[ObjectIdentifier(connection)] = connection
         MagicPanel.shared.follow(project.id)
+        Store.shared.refreshUndoOffer(project)
         connection.push(force: true)
     }
 
@@ -235,6 +236,8 @@ final class SidebarServer {
             SidebarProblem(title: $0.title, message: $0.message, settingsButton: $0.settingsURL == nil ? nil : $0.settingsButton)
         }
         state.submitting = store.pendingSubmissions.contains(project.id)
+        // As Lamp's window offers it: not while anything waits to go after the change.
+        state.undoChange = busy || !(store.queued[project.id] ?? []).isEmpty ? nil : store.undoOffers[project.id]
         return state
     }
 
@@ -560,6 +563,8 @@ final class SidebarServer {
         case .undoNote(let id):
             Self.noteProblems[id] = store.undoNote(id, in: project)
             scheduleUpdate()
+        case .undoChange(let version):
+            Task { await store.undo(project, change: version) }
         case .askProgress(let id, let progress):
             Self.progressFromSidebar[id] = progress
             AskProgresses.shared.set(progress, for: id)

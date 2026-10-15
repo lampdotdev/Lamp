@@ -162,8 +162,10 @@ enum LiveReload {
 
     /// The compiler's command line for the live copy: the files named as primaries (what's compiled, or printed)
     /// and every other one there for context, the way the live build compiles a file (unoptimized, testable,
-    /// the macOS the app is built for, named after the app, with SwiftUI's macros).
-    private static func frontend(_ action: String, in folder: URL, primaries: [String], module: String, macOS: String) -> String {
+    /// the macOS the app is built for, named after the app, with SwiftUI's macros). `ios` reads code written for the
+    /// iPhone instead, for the simulator, as it's built.
+    private static func frontend(_ action: String, in folder: URL, primaries: [String], module: String, macOS: String,
+                                 ios: Bool = false) -> String {
         let all = swiftFiles(in: folder)
         // The widget's code the app shares (Widget/Shared, linked into Sources and not followed there) is read for
         // context: a change to it reopens the app (`inputs`), but the app's code may use what it declares.
@@ -171,11 +173,15 @@ enum LiveReload {
             .appendingPathComponent(Template.widgetFolder).appendingPathComponent(Template.sharedWidgetFolder)).values.map(\.path)
         let others = (all.filter { !primaries.contains($0.key) }.values.map(\.path) + shared).sorted()
         let firsts = primaries.compactMap { all[$0]?.path }.map { "-primary-file " + quoted($0) }.joined(separator: " ")
+        // On a Mac with only the Command Line Tools, the SDK the app's own build uses (`Shell.compatibleSDK`): the
+        // newest one's `@State` is a macro whose plugin comes only with Xcode, and nothing would type-check.
+        let sdk = ios ? #"SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)""#
+            : Shell.compatibleSDK + #"SDK="${SDKROOT:-$(xcrun --sdk macosx --show-sdk-path)}""#
         return """
-            SDK="$(xcrun --sdk macosx --show-sdk-path)"
+            \(sdk)
             PLUGINS="$(dirname "$(dirname "$(xcrun -f swiftc)")")/lib/swift/host/plugins"
             xcrun swiftc -frontend \(action) \(firsts) \(others.map(quoted).joined(separator: " ")) -module-name \(quoted(module)) \\
-              -parse-as-library -Onone -enable-testing -D DEBUG -D LAMP_LIVE -target arm64-apple-macosx\(macOS) -sdk "$SDK" \\
+              -parse-as-library -Onone -enable-testing -D DEBUG -D LAMP_LIVE -target \(ios ? "arm64-apple-ios17.0-simulator" : "arm64-apple-macosx" + macOS) -sdk "$SDK" \\
               -plugin-path "$PLUGINS" -plugin-path "$SDK/../../usr/lib/swift/host/plugins"
             """
     }
@@ -191,8 +197,10 @@ enum LiveReload {
     /// actor in `files`, its stored properties with their types (inferred ones included) and its cases with what
     /// they carry, in order, from the type-checked syntax tree (`-dump-ast`). Comparing the open app's with the new
     /// code's says whether a library can go in: no reading of the text, which formatting, comments, strings and
-    /// inferred types all fool. Nil when the compiler can't say (the code doesn't type-check).
-    static func layout(of folder: URL, files: [String]?, module: String, macOS: String) async -> [String]? {
+    /// inferred types all fool. Nil when the compiler can't say (the code doesn't type-check). `rawValues` adds
+    /// each case's raw value (`= "plant_name"`), which is what a coding key or a saved enum writes.
+    static func layout(of folder: URL, files: [String]?, module: String, macOS: String, ios: Bool = false,
+                       rawValues: Bool = false) async -> [String]? {
         if files?.isEmpty == true { return [] }
         // All of the app's own files, by name: the compiler prints (and checks the bodies of) only the files it's
         // given as primaries, or just the first with none. Lamp's building blocks are read for context only: the
@@ -200,27 +208,36 @@ enum LiveReload {
         let primaries = files ?? swiftFiles(in: folder).keys.filter { ($0 as NSString).lastPathComponent != "LampSupport.swift" }.sorted()
         guard !primaries.isEmpty else { return [] }
         var output: [String] = []
-        let status = await Shell.run(frontend("-dump-ast", in: folder, primaries: primaries, module: module, macOS: macOS) + " 2>/dev/null",
+        let status = await Shell.run(frontend("-dump-ast", in: folder, primaries: primaries, module: module, macOS: macOS, ios: ios) + " 2>/dev/null",
                                      cwd: folder) { output.append($0) }
         guard status == 0 else { return nil }
-        return members(inDump: output.joined(separator: "\n"))
+        return members(inDump: output.joined(separator: "\n"), rawValues: rawValues)
     }
 
     /// The stored members of every type in a `-dump-ast` printout: each line's indent says what it's inside, so
     /// a function's locals (inside a func or closure) never count, nor a static or a computed property.
-    static func members(inDump dump: String) -> [String] {
+    static func members(inDump dump: String, rawValues: Bool = false) -> [String] {
         let typeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|actor)_decl\b[^"]*"([^"]+)""#)
         let scopeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|accessor_decl|constructor_decl|destructor_decl|closure_expr|subscript_decl|top_level_code_decl)\b"#)
         // A declaration's position (decl_context=…, range=[…]) comes before its name; neither holds a quote.
         let varDecl = try! NSRegularExpression(pattern: #"^(\s*)\(var_decl\b[^"]*"([^"]+)" interface_type="([^"]*)"(.*)$"#)
         let caseDecl = try! NSRegularExpression(pattern: #"^(\s*)\(enum_element_decl\b[^"]*"([^"]+)" interface_type="([^"]*)""#)
+        // A case's raw value is the node right under it: a string's in quotes, a number's bare.
+        let rawValue = try! NSRegularExpression(pattern: #"^\s*\(raw_value_expr=\w+\b.*? value=("(?:[^"\\]|\\.)*"|[^ )]+)"#)
         var scopes: [(indent: Int, type: String?)] = [], out: [String] = [], seen = Set<String>()
+        var lastCase: Int?
         for raw in dump.split(separator: "\n") {
             let line = String(raw), range = NSRange(line.startIndex..., in: line)
             let indent = line.prefix { $0 == " " }.count
             // Only a line that opens a node says where it sits; the closing brackets of a deep node sometimes
             // come on a line of their own at the left edge, which would otherwise end every scope.
             guard line.dropFirst(indent).first == "(" else { continue }
+            if rawValues, let index = lastCase, let m = rawValue.firstMatch(in: line, range: range) {
+                out[index] += " = " + String(line[Range(m.range(at: 1), in: line)!])
+                lastCase = nil
+                continue
+            }
+            lastCase = nil
             while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
             // What a member line belongs to is the nearest scope around it: a type's member when that's the type,
             // nothing when it's a function, an accessor or a closure (a local).
@@ -241,7 +258,10 @@ enum LiveReload {
                 }
             } else if let m = caseDecl.firstMatch(in: line, range: range), let owner {
                 let entry = owner + "\tcase " + String(line[Range(m.range(at: 2), in: line)!]) + ": " + String(line[Range(m.range(at: 3), in: line)!])
-                if seen.insert(entry).inserted { out.append(entry) }
+                if seen.insert(entry).inserted {
+                    out.append(entry)
+                    lastCase = out.count - 1
+                }
             } else if scopeDecl.firstMatch(in: line, range: range) != nil {
                 scopes.append((indent, nil))
             }
