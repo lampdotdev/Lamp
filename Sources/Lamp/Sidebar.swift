@@ -174,7 +174,8 @@ final class SidebarServer {
     /// At launch: an app whose sidebar is open finds Lamp again.
     func start() {
         listener = Listener(server: self)
-        watching = Store.shared.objectWillChange.sink { [weak self] _ in
+        // The chat, and how far an open card has been answered in Lamp's window, which isn't the Store's.
+        watching = Store.shared.objectWillChange.merge(with: AskProgresses.shared.objectWillChange).sink { [weak self] _ in
             DispatchQueue.main.async { self?.scheduleUpdate() }
         }
     }
@@ -223,7 +224,7 @@ final class SidebarServer {
         let busy = store.busy.contains(project.id)
         // The progress line, as Lamp's window shows it: not under the agent's questions.
         let progress = busy && Talk.open(in: log) == nil ? store.progress[project.id] : nil
-        var state = SidebarState(app: project.name, lines: Self.lines(log, dir: project.dir, busy: busy, progressShown: progress != nil),
+        var state = SidebarState(app: project.name, lines: Self.lines(log, project: project, busy: busy, progressShown: progress != nil),
                                  working: progress?.activity, workingSince: progress?.started, empty: log.isEmpty, busy: busy,
                                  draft: draft.text, draftVersion: draftVersions[project.id] ?? 0,
                                  attachments: draft.attachments.map { Self.attachment($0) })
@@ -241,7 +242,8 @@ final class SidebarServer {
 
     /// The chat as Lamp's window shows it without Agent Details (`Transcript`): the same lines, gathered and
     /// spaced the same way. Cards and notes Lamp's window has and this doesn't yet are left out.
-    static func lines(_ log: [LogLine], dir: URL, busy: Bool, progressShown: Bool) -> [SidebarLine] {
+    static func lines(_ log: [LogLine], project: LampProject, busy: Bool, progressShown: Bool) -> [SidebarLine] {
+        let dir = project.dir
         let lines = LogLine.visible(log, details: false)
         let finalAnswers = Transcript.finalAnswers(in: lines, busy: busy)
         let openAsk = Talk.open(in: lines)?.id
@@ -276,17 +278,38 @@ final class SidebarServer {
                     out.append(SidebarLine(id: line.id, kind: .error, text: line.text, gap: gap))
                 case .ask:
                     guard let ask = line.ask else { continue }
-                    if line.id == openAsk {
-                        out.append(SidebarLine(id: line.id, kind: .ask, text: ask.text, gap: gap, questions: ask.questions.map {
-                            SidebarQuestion(question: $0.question, options: $0.options.map { $0.title }, symbols: $0.options.map { $0.symbol })
-                        }))
-                    } else if let folded = ask.folded {
-                        out.append(SidebarLine(id: line.id, kind: .ask, text: folded, gap: gap))
-                    }
+                    let open = line.id == openAsk
+                    // What a sidebar from before the shared card reads: the questions while they wait, else what
+                    // was chosen, folded.
+                    var card = SidebarLine(id: line.id, kind: .ask, text: open ? ask.text : (ask.folded ?? ask.text), gap: gap,
+                                           questions: open ? ask.questions.map {
+                                               SidebarQuestion(question: $0.question, options: $0.options.map { $0.title },
+                                                               symbols: $0.options.map { $0.symbol })
+                                           } : nil)
+                    card.ask = ask
+                    card.askOpen = open
+                    let progress = AskProgresses.shared.progress(for: line.id)
+                    card.progress = progress
+                    card.progressVersion = progressVersion(for: line.id, progress)
+                    out.append(card)
                 case .result:
                     guard let result = line.result else { continue }
                     let current = line.id == currentResult && !busy
-                    out.append(SidebarLine(id: line.id, kind: .result, text: result.summary, gap: gap, untried: current ? result.untried : nil))
+                    // `untried` for a sidebar from before the shared card, which offers it as Try It.
+                    var card = SidebarLine(id: line.id, kind: .result, text: result.summary, gap: gap,
+                                           untried: current ? result.untried : nil)
+                    card.result = result
+                    card.resultCurrent = current
+                    card.picture = result.version.flatMap { picture(Versions.pictureURL(in: project, for: $0)) }
+                    out.append(card)
+                case .noted:
+                    guard let receipt = line.noted else { continue }
+                    var card = SidebarLine(id: line.id, kind: .note, text: NoteCard.title(receipt, app: project.name), gap: gap)
+                    card.added = receipt.added
+                    card.removed = receipt.removed
+                    card.undone = receipt.undone == true
+                    card.problem = noteProblems[line.id]
+                    out.append(card)
                 default:
                     continue
                 }
@@ -298,6 +321,39 @@ final class SidebarServer {
     /// An attachment as the sidebar shows it: its name, and a picture of it or its icon, as Lamp's window has it.
     fileprivate static func attachment(_ url: URL) -> SidebarAttachment {
         SidebarAttachment(name: url.lastPathComponent, thumbnail: thumbnail(url), isImage: Attachments.isImage(url))
+    }
+
+    /// How far each open card has been answered, as last sent and as the sidebar last said, and the number that
+    /// goes up only when it changed in Lamp's window (`SidebarLine.progressVersion`), as the draft's does.
+    fileprivate static var shownProgress: [UUID: AskProgress] = [:]
+    fileprivate static var progressFromSidebar: [UUID: AskProgress] = [:]
+    fileprivate static var progressVersions: [UUID: Int] = [:]
+
+    private static func progressVersion(for line: UUID, _ progress: AskProgress?) -> Int {
+        let value = progress ?? AskProgress()
+        if shownProgress[line] != value {
+            if progressFromSidebar[line] != value { progressVersions[line, default: 0] += 1 }
+            shownProgress[line] = value
+        }
+        return progressVersions[line] ?? 0
+    }
+
+    /// What went wrong taking back a save of the notes from the sidebar, by its receipt, as Lamp's window shows it
+    /// under the receipt.
+    fileprivate static var noteProblems: [UUID: String] = [:]
+
+    /// A result's picture, small enough to send every time the chat changes.
+    private static var pictures: [URL: Data] = [:]
+    fileprivate static func picture(_ url: URL) -> Data? {
+        if let data = pictures[url] { return data }
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        let scale = min(300 / max(image.size.width, 1), 200 / max(image.size.height, 1), 1)
+        let size = NSSize(width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
+        let small = NSImage(size: size, flipped: false) { rect in image.draw(in: rect); return true }
+        guard let tiff = small.tiffRepresentation,
+              let data = NSBitmapImageRep(data: tiff)?.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else { return nil }
+        pictures[url] = data
+        return data
     }
 
     private static var thumbnails: [URL: Data] = [:]
@@ -354,6 +410,12 @@ final class SidebarServer {
                 return url
             }
             store.attach(urls, to: project)
+        case .undoNote(let id):
+            Self.noteProblems[id] = store.undoNote(id, in: project)
+            scheduleUpdate()
+        case .askProgress(let id, let progress):
+            Self.progressFromSidebar[id] = progress
+            AskProgresses.shared.set(progress, for: id)
         case .removeAttachment(let index):
             var draft = store.draft(for: project)
             guard draft.attachments.indices.contains(index) else { return }
@@ -469,6 +531,8 @@ final class SidebarServer {
             var state = server.state(for: project)
             // A sidebar from before the summary line can't read one, and would drop the whole chat.
             if version < 2 { state.lines.removeAll { $0.kind == .summary } }
+            // Nor one from before the notes receipt a receipt.
+            if version < 3 { state.lines.removeAll { $0.kind == .note } }
             guard let data = SidebarWire.encode(state), force || data != last else { return }
             last = data
             outbox.send(data)
