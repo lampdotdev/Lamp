@@ -814,6 +814,16 @@ card), check:
 - **Same words for the same thing**, in every screen, Help and errors. Product names come from one place
   (`Engine.title`: "ChatGPT Codex"), never a literal.
 
+### The gallery
+
+Lamp Dev has a gallery (Window → Gallery, ⌥⇧⌘G; `Gallery.swift`): each of the chat's cards in every state it
+can be in, drawn from made-up values at the chat's width and the wand panel's, light and dark. A card is drawn by
+a view that takes plain values (`AskCardView`, `ResultCardView`), and the view that reads `Store` only finds those
+values and passes them in, so the gallery shows exactly what people see. Keep it that way: a new card, a new
+state of one (a layout, a shape saved by an earlier Lamp, a button that shows only sometimes) or a fix to how one
+lays out gets its entry in `Gallery.entries` in the same change, and is looked at there before the PR. A card
+that reads `Store` in its drawing can't be listed: split it first.
+
 ### Settings
 
 Each tab has one job: **Building**, how Lamp builds apps; **Apps**, what apps use while they run; **AI
