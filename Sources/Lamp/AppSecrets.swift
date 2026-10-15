@@ -25,6 +25,9 @@ enum AppSecrets {
         (1...64).contains(name.count) && name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) }
     }
 
+    /// How many names one app may keep things under: a sign-in or token for each service it connects to.
+    static let limit = 32
+
     private static let lock = NSLock()
 
     static func read(_ name: String, app: String, in place: Place = place) -> Data? {
@@ -50,6 +53,7 @@ enum AppSecrets {
             let query = Keychain.query(service, account: app + "/" + name)
             var status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
             if status == errSecItemNotFound {
+                guard Keychain.count(service, app: app) < limit else { return false }
                 var add = query
                 add[kSecValueData as String] = data
                 add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
@@ -60,6 +64,7 @@ enum AppSecrets {
             // A file that's there but can't be read isn't an empty one: writing over it would lose every app's.
             if FileManager.default.fileExists(atPath: url.path), File.read(url) == nil { return false }
             var all = File.read(url) ?? [:]
+            guard all[app]?[name] != nil || (all[app]?.count ?? 0) < limit else { return false }
             all[app, default: [:]][name] = data.base64EncodedString()
             return File.write(all, to: url)
         }
@@ -107,6 +112,14 @@ enum AppSecrets {
         static func query(_ service: String, account: String) -> [String: Any] {
             [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
         }
+
+        static func count(_ service: String, app: String) -> Int {
+            let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                                        kSecReturnAttributes as String: true, kSecMatchLimit as String: kSecMatchLimitAll]
+            var items: CFTypeRef?
+            guard SecItemCopyMatching(query as CFDictionary, &items) == errSecSuccess else { return 0 }
+            return (items as? [[String: Any]] ?? []).filter { ($0[kSecAttrAccount as String] as? String)?.hasPrefix(app + "/") == true }.count
+        }
     }
 
     /// `{app: {name: base64}}`, readable and writable only by this user.
@@ -121,11 +134,14 @@ enum AppSecrets {
             guard let data = try? JSONEncoder().encode(all) else { return false }
             let fm = FileManager.default
             try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            // Written beside it with the right permissions first, then moved over it: never readable by others,
-            // and never half written.
+            // Created readable only by this user before anything is written, then moved over the old one: never
+            // readable by others, and never half written.
             let temporary = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
-            guard fm.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else { return false }
-            guard rename(temporary.path, url.path) == 0 else { try? fm.removeItem(at: temporary); return false }
+            let fd = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+            guard fd >= 0 else { return false }
+            let written = data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
+            close(fd)
+            guard written == data.count, rename(temporary.path, url.path) == 0 else { try? fm.removeItem(at: temporary); return false }
             return true
         }
     }

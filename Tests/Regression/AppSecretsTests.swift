@@ -75,6 +75,17 @@ final class AppSecretsTests: XCTestCase {
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
     }
 
+    /// One app can't fill Lamp's store: past the limit a new name is refused, and what's kept can still change.
+    func testAnAppKeepsAtMostItsLimit() throws {
+        let service = "dev.lamp.test.app-secrets.\(UUID().uuidString)"
+        for place: AppSecrets.Place in [.file(work.appendingPathComponent("limit.json")), .keychain(service: service)] {
+            for index in 0..<AppSecrets.limit { XCTAssertTrue(AppSecrets.save(Data("x".utf8), as: "name-\(index)", app: "full", in: place)) }
+            XCTAssertFalse(AppSecrets.save(Data("x".utf8), as: "one-more", app: "full", in: place), "\(place)")
+            XCTAssertTrue(AppSecrets.save(Data("y".utf8), as: "name-0", app: "full", in: place), "\(place)")
+            AppSecrets.forget(app: "full", in: place)
+        }
+    }
+
     func testANameCantReachAnotherAppsSecrets() {
         XCTAssertTrue(AppSecrets.isName("lamp-service-linear"))
         for name in ["", "../notes/lamp-service-linear", "notes/lamp-service-linear", String(repeating: "a", count: 65), "naïve"] {
