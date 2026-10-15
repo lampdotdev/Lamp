@@ -1,4 +1,5 @@
 import SwiftUI
+import LampSidebarKit
 
 /// One line of the agent's checklist for a new app (its `plan` tool).
 struct PlanPart: Identifiable, Equatable {
@@ -413,32 +414,5 @@ private extension View {
 struct ActivityRow: View {
     let progress: TurnProgress
 
-    var body: some View {
-        HStack(spacing: 6) {
-            ProgressView().controlSize(.mini).frame(width: 16)
-            Text(progress.activity).lineLimit(1)
-            Text("·")
-            Elapsed(from: progress.started, to: nil)
-        }
-        .font(.callout)
-        .foregroundStyle(.secondary)
-    }
-}
-
-/// A running clock, "0:42", that stops at `end`.
-private struct Elapsed: View {
-    let start: Date
-    let end: Date?
-
-    init(from start: Date, to end: Date?) {
-        self.start = start
-        self.end = end
-    }
-
-    var body: some View {
-        TimelineView(.periodic(from: start, by: 1)) { context in
-            let seconds = max(0, Int((end ?? context.date).timeIntervalSince(start)))
-            Text(String(format: "%d:%02d", seconds / 60, seconds % 60)).monospacedDigit()
-        }
-    }
+    var body: some View { ChatLook.ActivityLine(progress.activity, started: progress.started) }
 }
