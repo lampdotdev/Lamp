@@ -470,8 +470,8 @@ only what the app could do anyway: open the chat in Lamp's window, and point. Th
 with the chat a full-height inspector, the window's split view lies over the title bar there and takes the clicks.
 The chat sits below the strip, on a solid background that runs up behind them. The crosshair lets the person point
 at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), outlines the smallest named
-thing under the pointer from its own accessibility tree (`LampDriver.elements`), or where nothing is named (a game's
-ball, a drawing) a box around the pointer, and a drag draws a box of the person's own; it then leaves a cropped
+thing under the pointer from its own accessibility tree (`LampDriver.elements`), a click where nothing is named (a game's
+ball, a drawing) takes the area around it, and a drag draws a box of the person's own; it then leaves a cropped
 picture in its runtime folder and says what it is (an area is named by where it is, "Top left area"); Lamp attaches that picture to the message, named after the
 thing ("Save button.png", `MagicPanel.name`), and takes a picture only from that folder.
 

@@ -3595,9 +3595,9 @@ enum Template {
             window.setFrame(frame, display: true)
         }
 
-        /// Pointing at part of the window for Lamp's chat: the named thing under the pointer is outlined, or
-        /// where nothing is named (a game's ball, a drawing) the area around it; a click sends what it is and a
-        /// picture of it to Lamp, a drag sends the box drawn, and Escape ends it.
+        /// Pointing at part of the window for Lamp's chat: the named thing under the pointer is outlined, and a
+        /// click sends what it is and a picture of it to Lamp; a click where nothing is named (a game's ball, a
+        /// drawing) sends the area around it, a drag the box drawn, and Escape ends it.
         /// Lamp is told when it ends either way: its chat may have stepped aside meanwhile.
         @MainActor private final class Picker: NSView {
             private static var current: Picker?
@@ -3670,9 +3670,8 @@ enum Template {
                     .min { rect(items[$0]).width * rect(items[$0]).height < rect(items[$1]).width * rect(items[$1]).height }
             }
 
-            /// Where nothing named is under the pointer (a game's ball, a drawing), the area around it, or the box
-            /// being dragged: anything on the screen can be pointed at.
-            private var hoverPoint: NSPoint?
+            /// The box being dragged, or where nothing named is under a click (a game's ball, a drawing) the area
+            /// around it: anything on the screen can be pointed at. Nothing is drawn for an area until it's dragged.
             private var dragStart: NSPoint?
             private var dragged: NSRect?
             private static let areaSide: CGFloat = 96
@@ -3685,9 +3684,8 @@ enum Template {
             override func mouseMoved(with event: NSEvent) {
                 NSCursor.crosshair.set()
                 let point = convert(event.locationInWindow, from: nil)
-                hovered = item(at: point)
-                hoverPoint = hovered == nil ? point : nil
-                needsDisplay = true
+                let found = item(at: point)
+                if found != hovered { hovered = found; needsDisplay = true }
             }
 
             override func mouseDown(with event: NSEvent) {
@@ -3769,11 +3767,10 @@ enum Template {
                 NSColor.black.withAlphaComponent(0.08).setFill()
                 bounds.fill()
                 drawHint()
-                // A named thing is outlined; an area, dashed, since it's only where the pointer is.
+                // A named thing is outlined; a box being dragged, dashed.
                 let box: NSRect, dashed: Bool
                 if let dragged { box = dragged; dashed = true }
                 else if let hovered { box = rect(items[hovered]).insetBy(dx: -3, dy: -3); dashed = false }
-                else if let hoverPoint { box = area(around: hoverPoint); dashed = true }
                 else { return }
                 let path = NSBezierPath(roundedRect: box, xRadius: 6, yRadius: 6)
                 NSColor.controlAccentColor.withAlphaComponent(0.15).setFill()
