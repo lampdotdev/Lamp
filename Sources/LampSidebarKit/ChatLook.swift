@@ -162,7 +162,7 @@ public enum ChatLook {
 
     /// The message box as one floating bar, in Lamp's window and beside an app alike: a round attach button,
     /// the rounded field with the text (and what's attached above it), any other round buttons beside it (such
-    /// as dictation), and one round button that sends, or stops the turn while there's nothing to send.
+    /// as dictation), and a round button that sends, with one that stops the turn beside it while one runs.
     public struct MessageBar<Field: View, Above: View, Beside: View>: View {
         let busy: Bool
         let canSend: Bool
@@ -216,19 +216,19 @@ public enum ChatLook {
                 .overlay(Self.fieldShape.strokeBorder(Color(nsColor: .separatorColor)))
                 .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
                 beside
-                // Stop while there's nothing to send; with something written, it waits for the turn instead.
-                if busy && !canSend {
+                // Stop stays for as long as the turn runs, beside Send rather than in its place: someone writing the
+                // next change can still stop this one, and what they've written stays in the box.
+                if busy {
                     Button(action: stop) { Image(systemName: "stop.fill") }
                         .buttonStyle(Round(prominent: false))
                         .help("Stop")
                         .accessibilityLabel("Stop")
-                } else {
-                    Button(action: send) { Image(systemName: "arrow.up") }
-                        .buttonStyle(Round(prominent: true))
-                        .disabled(!canSend)
-                        .help(busy ? "Queue this change. It's sent when the current one is done." : "Send")
-                        .accessibilityLabel("Send")
                 }
+                Button(action: send) { Image(systemName: "arrow.up") }
+                    .buttonStyle(Round(prominent: true))
+                    .disabled(!canSend)
+                    .help(busy ? "Queue this change. It's sent when the current one is done." : "Send")
+                    .accessibilityLabel("Send")
             }
         }
 
