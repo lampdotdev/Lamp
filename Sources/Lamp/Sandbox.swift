@@ -146,6 +146,10 @@ enum Sandbox {
             // app's secrets out of Lamp through it (PeerProcess). The app's own build is unaffected: it's
             // built in its folder, not here.
             lines.append("(deny process-exec* (subpath \(quotedPath(real(home + "/Applications/" + name + " Apps")))))")
+            // The caller check (PeerProcess.isApp) would also accept a whole bundle replaced at the installed
+            // path, signature valid by that copy's own requirement. That's safe only while this folder stays
+            // unwritable from the command's sandbox (the file denies above), so nothing the builder makes can
+            // be put there: keep it that way, or the check needs the replacement refused too.
         }
         // Lamp's shims and shell startup files may be read and run, and not changed.
         lines.append("(allow file-read* (subpath \(quotedPath(real(bin.path)))) (subpath \(quotedPath(real(zdot.path)))))")
