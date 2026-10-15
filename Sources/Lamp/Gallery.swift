@@ -74,6 +74,8 @@ enum Gallery {
                                                                     untried: "Swiping a habit away to delete it"),
                picture: true, isCurrent: false),
         result("No picture", Talk.Result(summary: "Reminders now come at the time you pick.", guesses: [])),
+        result("Latest change, with Undo", Talk.Result(summary: "Watering entries can now include an amount.", guesses: []),
+               picture: true, undo: true),
         result("Saved with what's new", Talk.Result(summary: "Added streaks and a dark look.", guesses: [], news: [
             Talk.News(what: "Streaks", place: "beside each habit"), Talk.News(what: "Dark look", place: "View menu"),
         ]), picture: true),
@@ -82,9 +84,14 @@ enum Gallery {
         ], switched: [0]), picture: true),
     ]
 
-    private static func result(_ name: String, _ result: Talk.Result, picture: Bool = false, isCurrent: Bool = true) -> Entry {
+    private static func result(_ name: String, _ result: Talk.Result, picture: Bool = false, isCurrent: Bool = true,
+                               undo: Bool = false) -> Entry {
         Entry(group: "Result card", name: name) {
-            AnyView(ResultCardView(result: result, isCurrent: isCurrent, picture: picture ? screenshot : nil) { _ in })
+            AnyView(VStack(spacing: 0) {
+                ResultCardView(result: result, isCurrent: isCurrent, picture: picture ? screenshot : nil) { _ in }
+                // Undo Last Change goes under the latest change, as the chat puts it (`UndoOffer`).
+                if undo { ChatLook.UndoChange {}.padding(.top, 12) }
+            })
         }
     }
 

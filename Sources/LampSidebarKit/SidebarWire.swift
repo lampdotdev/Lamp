@@ -64,6 +64,8 @@ public struct SidebarState: Codable, Equatable {
     public var dictationProblem: SidebarProblem?
     /// A message is on its way in (Lamp's window or this one sent it): nothing else is sent meanwhile.
     public var submitting: Bool?
+    /// The version the latest change made, when Undo Last Change is offered under it (`SidebarCommand.undoChange`).
+    public var undoChange: String?
 
     public init(app: String, lines: [SidebarLine], working: String?, workingSince: Date?, empty: Bool, busy: Bool,
                 draft: String, draftVersion: Int, attachments: [SidebarAttachment]) {
@@ -207,6 +209,8 @@ public enum SidebarCommand: Codable, Equatable {
     case askProgress(UUID, AskProgress)
     /// Takes back the save of Lamp's notes this receipt is for.
     case undoNote(UUID)
+    /// Undo Last Change, under the change that made this version.
+    case undoChange(String)
     /// The button on an offer's card or line: what it does is Lamp's to know, by the line.
     case offer(UUID)
     /// Back to how the app was after the request with this id, or before it.

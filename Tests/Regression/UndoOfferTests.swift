@@ -1,0 +1,85 @@
+import XCTest
+@testable import Lamp
+
+/// Undo Last Change in the chat is offered only for the latest change, and only when the app's code as it was
+/// before can still read what the changed app saved: Undo puts the code back, never the data. Each case is a real
+/// history and a real compile of both versions.
+final class UndoOfferTests: XCTestCase {
+    private let escape = HistoryEscapeTests()
+    override func tearDown() { escape.tearDown() }
+
+    private let before = """
+        import Foundation
+        struct Watering: Codable, Identifiable {
+            var id: UUID
+            var plant: String
+            var when: Date
+            var how: Method
+        }
+        enum Method: String, Codable { case can, hose }
+        """
+
+    /// An app at `before`, then a request that changed it to `after`, linked in the chat as Lamp links it.
+    private func changed(to after: String) async throws -> (app: HistoryEscapeTests.App, chat: [LogLine]) {
+        let app = try escape.app()
+        let file = app.project.dir.appendingPathComponent("Sources/App.swift")
+        try before.write(to: file, atomically: true, encoding: .utf8)
+        let first = await Versions.save(app.project, message: "Log watering")
+        XCTAssertTrue(first)
+        try after.write(to: file, atomically: true, encoding: .utf8)
+        let second = await Versions.save(app.project, message: "Add how much water")
+        XCTAssertTrue(second)
+        let head = await Versions.head(app.project)
+        var request = LogLine(kind: .user, text: "Let me add how much water, too.")
+        request.version = head
+        return (app, [request, LogLine(kind: .status, text: "Coin Flip is ready")])
+    }
+
+    private func offer(_ app: HistoryEscapeTests.App, _ chat: [LogLine]) async -> String? {
+        await UndoOffer.version(for: app.project, chat: chat)
+    }
+
+    func testAnOptionalFieldAddedIsOffered() async throws {
+        let (app, chat) = try await changed(to: before.replacingOccurrences(of: "var how: Method", with: "var how: Method\n    var millilitres: Int?"))
+        let offered = await offer(app, chat)
+        XCTAssertEqual(offered, chat[0].version, "the older code reads entries with an amount: it ignores the amount")
+    }
+
+    func testAFieldRenamedIsNotOffered() async throws {
+        let (app, chat) = try await changed(to: before.replacingOccurrences(of: "var plant: String", with: "var plantName: String"))
+        let offered = await offer(app, chat)
+        XCTAssertNil(offered, "entries saved without `plant` can't be read by the older code")
+    }
+
+    func testAFieldRetypedIsNotOffered() async throws {
+        let (app, chat) = try await changed(to: before.replacingOccurrences(of: "var when: Date", with: "var when: String"))
+        let offered = await offer(app, chat)
+        XCTAssertNil(offered, "a date saved as words can't be read as a date")
+    }
+
+    func testACaseAddedToASavedEnumIsNotOffered() async throws {
+        let (app, chat) = try await changed(to: before.replacingOccurrences(of: "case can, hose", with: "case can, hose, rain"))
+        let offered = await offer(app, chat)
+        XCTAssertNil(offered, "an entry watered by rain can't be read by code that knows only can and hose")
+    }
+
+    func testNotOfferedOnceTheAppHasMovedOn() async throws {
+        let (app, chat) = try await changed(to: before + "\n// darker\n")
+        let offered = await offer(app, chat)
+        XCTAssertEqual(offered, chat[0].version)
+        // Undone from the toolbar: the change in the chat is no longer the app's current version.
+        let versions = await Versions.list(app.project)
+        let (undoing, target) = try XCTUnwrap(Versions.undoTarget(in: versions))
+        let undone = await Versions.restore(app.project, to: target, message: "Undid “\(undoing.label)”", trailer: "Lamp-Undid: \(undoing.id)")
+        XCTAssertTrue(undone)
+        let after = await offer(app, chat)
+        XCTAssertNil(after)
+    }
+
+    func testNotOfferedWithUnsavedWork() async throws {
+        let (app, chat) = try await changed(to: before + "\n// darker\n")
+        try "// a stopped turn's edit\n".write(to: app.project.dir.appendingPathComponent("Sources/More.swift"), atomically: true, encoding: .utf8)
+        let offered = await offer(app, chat)
+        XCTAssertNil(offered, "the toolbar's Undo would discard the unsaved work, not this change")
+    }
+}
