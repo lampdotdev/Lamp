@@ -215,8 +215,9 @@ final class BrowserCompanionTests: XCTestCase {
 
 @MainActor
 final class BrowserLookTests: XCTestCase {
-    // Whatever colors an app picks, from pale yellow to near black, on its own background or Lamp's tint, the text
-    // the sidebar draws with them reads at 4.5:1 in light and dark.
+    // Whatever colors an app picks, from pale yellow to near black, on its own background or the window's, the text
+    // the sidebar draws with them reads at 4.5:1 in light and dark. The main button's label is bold and white on the
+    // app's color, as a Mac's prominent button is, and is held to 3:1; a dark label on a pale color to 4.5:1.
     func testEveryAppColorStaysReadable() throws {
         let accents = ["#ffd60a", "#ffffff", "#000000", "#34c759", "#5ac8fa", "#ff2d55", "#3d5736", "#8e8e93"]
         let backgrounds: [String?] = [nil, "#ffffff", "#fff8e1", "#101418", "#2b1d3a"]
@@ -224,13 +225,15 @@ final class BrowserLookTests: XCTestCase {
             for background in backgrounds {
                 let look = BrowserLook.Requested(accent: .init(light: accent, dark: accent),
                                                  background: background.map { .init(light: $0, dark: $0) })
-                let drawn = BrowserLook.drawn(look)
+                for template in [BrowserLook.Template.standard, .companion, .collection] {
+                let drawn = BrowserLook.drawn(look, template: template)
                 for palette in [drawn.light, drawn.dark] {
                     let where_ = "\(accent) on \(background ?? "tint")"
                     XCTAssertGreaterThanOrEqual(palette.ink.contrast(palette.background), 4.5, where_)
                     XCTAssertGreaterThanOrEqual(palette.muted.contrast(palette.background), 4.5, where_)
                     XCTAssertGreaterThanOrEqual(palette.accent.contrast(palette.background), 4.5, where_)
-                    XCTAssertGreaterThanOrEqual(palette.onFill.contrast(palette.fill), 4.5, where_)
+                    XCTAssertGreaterThanOrEqual(palette.onFill.contrast(palette.fill), palette.onFill == BrowserLook.white ? 3 : 4.5, where_)
+                }
                 }
             }
         }
@@ -246,5 +249,43 @@ final class BrowserLookTests: XCTestCase {
         XCTAssertEqual(publish(["accent": ["light": "#ff9500", "dark": "#ff9f0a"], "design": "rounded"]), 200)
         XCTAssertEqual(publish(["accent": ["light": "red;}body{background:url(https://x)", "dark": "#ff9f0a"]]), 400)
         XCTAssertEqual(publish(["accent": ["light": "#ff9500", "dark": "#ff9f0a"], "design": "Comic Sans\"}"]), 400)
+    }
+
+    // A section's picture is read only from the app's own sidebar folder, by a name the app's support code makes; a
+    // link placed there by the app or its builder doesn't take Lamp to a file elsewhere on the Mac.
+    func testAPictureIsReadOnlyFromTheAppsOwnFolder() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = LampProject(id: "recipes", name: "Recipes", exe: "Recipes", dir: root.appendingPathComponent("recipes"), instance: "recipes-instance")
+        let folder = root.appendingPathComponent("recipes/.lamp/runtime/sidebar")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 4, pixelsHigh: 4, bitsPerSample: 8, samplesPerPixel: 4,
+                                                    hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let jpeg = try XCTUnwrap(bitmap.representation(using: .jpeg, properties: [:]))
+        try jpeg.write(to: folder.appendingPathComponent("0123456789abcdef.jpg"))
+        let elsewhere = root.appendingPathComponent("private.jpg")
+        try jpeg.write(to: elsewhere)
+        try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("fedcba9876543210.jpg"), withDestinationURL: elsewhere)
+        XCTAssertEqual(BrowserLook.picture("0123456789abcdef", of: app)?.isArt, false)
+        XCTAssertNil(BrowserLook.picture("fedcba9876543210", of: app))
+        XCTAssertNil(BrowserLook.picture("../../../private", of: app))
+    }
+}
+
+@MainActor
+final class BrowserLookPictureTests: XCTestCase {
+    // Chrome applies a PNG's gamma value; AppKit writes one that washes a picture out there. What Lamp hands the
+    // sidebar must carry none.
+    func testPicturesReachTheSidebarWithoutAGammaValue() throws {
+        // An sRGB PNG, as an app's art is, read and written again by AppKit.
+        let space = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+        let context = try XCTUnwrap(CGContext(data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(srgbRed: 0.6, green: 0.35, blue: 0.15, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 4, height: 8))
+        let srgb = try XCTUnwrap(NSBitmapImageRep(cgImage: try XCTUnwrap(context.makeImage())).representation(using: .png, properties: [:]))
+        let appKit = try XCTUnwrap(NSBitmapImageRep(data: srgb)?.representation(using: .png, properties: [:]))
+        let drawn = try XCTUnwrap(BrowserLook.redrawn(appKit, png: true))
+        XCTAssertNil(drawn.range(of: Data("gAMA".utf8)))
     }
 }

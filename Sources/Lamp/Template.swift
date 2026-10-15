@@ -7522,13 +7522,117 @@ enum Template {
     ///
     /// Give every surface the app's `look` (its accent, its background and its type design, as the Mac window has
     /// them), so the sidebar looks like this app: `Surface(title: …, look: .init(accent: .basil, design: .rounded))`.
+    /// Give a section the picture the window shows for its item (`Section(title:, image:)`, or `imageURL:` where the
+    /// window loads it from), so an app whose window leads with pictures does in the sidebar too.
     ///
     /// A page is read only when a button with `readsPage` (the page's readable text) or `readsSelection` (only the
     /// passage the person selected) is clicked. Page text is untrusted: give it to LampAI as `data:`.
     @MainActor
     enum LampBrowser {
-        /// A heading with text under it, a list (`items`, one line each), or both.
-        struct Section: Codable { var title: String; var text: String = ""; var items: [String] = [] }
+        /// A heading with text under it, a list (`items`, one line each), or both, and a picture when the thing it's
+        /// about has one (a saved recipe's photo, a book's cover): the sidebar shows it as the window does. Give the
+        /// picture itself (`image`) or where the window loads it from (`imageURL`, a web or file address).
+        struct Section: Codable {
+            var title: String
+            var text: String = ""
+            var items: [String] = []
+            var image: NSImage? = nil
+            var imageURL: URL? = nil
+
+            init(title: String, text: String = "", items: [String] = [], image: NSImage? = nil, imageURL: URL? = nil) {
+                self.title = title; self.text = text; self.items = items; self.image = image; self.imageURL = imageURL
+            }
+            private enum Keys: String, CodingKey { case title, text, items, image }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: Keys.self)
+                title = try c.decode(String.self, forKey: .title)
+                text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+                items = try c.decodeIfPresent([String].self, forKey: .items) ?? []
+            }
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: Keys.self)
+                try c.encode(title, forKey: .title)
+                try c.encode(text, forKey: .text)
+                try c.encode(items, forKey: .items)
+                try c.encodeIfPresent(image.flatMap(Pictures.name) ?? imageURL.flatMap(Pictures.name), forKey: .image)
+            }
+        }
+        /// A section's picture goes to Lamp as a file in the app's runtime folder, named by its contents, and the surface
+        /// carries only that name: the surface is sent twice a second, a picture once. Art with a clear background (a
+        /// drawn dish, an icon) stays a PNG and is shown whole; a photo becomes a JPEG and fills its frame.
+        private enum Pictures {
+            nonisolated(unsafe) static var named: [ObjectIdentifier: (image: NSImage, name: String)] = [:]
+            /// An app may make a new NSImage for the same picture every time it draws (from its assets, say): a small
+            /// copy of it finds the name it was given before without encoding it again.
+            nonisolated(unsafe) static var byLook: [String: String] = [:]
+            static func name(_ image: NSImage) -> String? {
+                if let kept = named[ObjectIdentifier(image)], kept.image === image { return kept.name }
+                guard let look = fingerprint(image) else { return nil }
+                if let name = byLook[look] { remember(image, name); return name }
+                guard let (data, ext) = encoded(image) else { return nil }
+                let name = SHA256.hash(data: data).prefix(8).map { String(format: "%02x", $0) }.joined()
+                let folder = LampRuntime.folder.appendingPathComponent("sidebar")
+                let file = folder.appendingPathComponent(name + "." + ext)
+                if !FileManager.default.fileExists(atPath: file.path) {
+                    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                    try? data.write(to: file, options: .atomic)
+                }
+                if byLook.count > 64 { byLook.removeAll() }
+                byLook[look] = name
+                remember(image, name)
+                return name
+            }
+            static func remember(_ image: NSImage, _ name: String) {
+                if named.count > 64 { named.removeAll() }
+                named[ObjectIdentifier(image)] = (image, name)
+            }
+            static func bitmap(_ image: NSImage, side: CGFloat) -> NSBitmapImageRep? {
+                guard image.size.width > 0, image.size.height > 0 else { return nil }
+                let scale = min(1, side / max(image.size.width, image.size.height))
+                let size = NSSize(width: max(1, (image.size.width * scale).rounded()), height: max(1, (image.size.height * scale).rounded()))
+                guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width), pixelsHigh: Int(size.height),
+                                                    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                    colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+                image.draw(in: NSRect(origin: .zero, size: size))
+                NSGraphicsContext.restoreGraphicsState()
+                return bitmap
+            }
+            static func fingerprint(_ image: NSImage) -> String? {
+                guard let small = bitmap(image, side: 32), let bytes = small.bitmapData else { return nil }
+                let data = Data(bytes: bytes, count: small.bytesPerRow * small.pixelsHigh)
+                return "\(image.size.width)x\(image.size.height):" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            }
+            /// At most 640 pixels on its longer side: the sidebar is narrow.
+            static func encoded(_ image: NSImage) -> (Data, String)? {
+                guard let bitmap = bitmap(image, side: 640) else { return nil }
+                var clear = false
+                for x in stride(from: 0, to: bitmap.pixelsWide, by: 8) where !clear {
+                    for y in stride(from: 0, to: bitmap.pixelsHigh, by: 8) where (bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 1) < 0.9 {
+                        clear = true; break
+                    }
+                }
+                if clear { return bitmap.representation(using: .png, properties: [:]).map { ($0, "png") } }
+                return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.82]).map { ($0, "jpg") }
+            }
+            /// A picture from an address is fetched once, out of the way; the section shows it from the next beat on.
+            nonisolated(unsafe) static var fetched: [URL: String] = [:]
+            nonisolated(unsafe) static var fetching: Set<URL> = []
+            static func name(_ url: URL) -> String? {
+                if let name = fetched[url] { return name }
+                guard !fetching.contains(url), fetching.count < 16, ["https", "http", "file"].contains(url.scheme ?? "") else { return nil }
+                fetching.insert(url)
+                Task { @MainActor in
+                    defer { fetching.remove(url) }
+                    let data: Data?
+                    if url.isFileURL { data = try? Data(contentsOf: url) }
+                    else { data = try? await URLSession.shared.data(from: url).0 }
+                    if let data, data.count <= 20_000_000, let image = NSImage(data: data), let name = name(image) { fetched[url] = name }
+                }
+                return nil
+            }
+        }
         /// A field the person can change before clicking. `lines` above 1 makes it a box for longer text.
         struct Field: Codable { var id: String; var label: String; var value: String = ""; var lines: Int = 1 }
         /// A button. The first is drawn as the main one. Never both `readsPage` and `readsSelection`.

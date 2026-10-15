@@ -37,12 +37,20 @@ The extension never runs an app's HTML or JavaScript.
   moves to another page the grant is gone and the sidebar asks for a click on
   the icon again. Capture (`surface-capture.js`) skips fields, editable and
   hidden text and frames, and stops at 24,000 characters (`truncated`).
-- **Each app's look**: a surface carries the app's `look` (its accent, its
-  background and its type design, each color as it shows in light and dark).
+- **Each app's look**: the sidebar is drawn as a part of the app's Mac window:
+  the window's gray, Mac-sized type and controls, and the app's color only
+  where its window uses it. A surface carries the app's `look` (its accent, its
+  background and its type design, each color as it shows in light and dark);
   Lamp turns it into every color the sidebar uses, keeping text readable on
-  them (`BrowserLook`), and the extension only sets those finished colors and
-  one of four type designs. Without one, the color comes from the app's icon,
-  which is also shown beside its name.
+  them (`BrowserLook`), and picks the layout from the app's kind in APP.md
+  (`BrowserLook.Template`: a companion's palette and capsule buttons, a
+  collection's pictures, and the plain window for the rest). The extension
+  only sets those finished colors, one of four type designs and one of three
+  templates. Without a look, the color comes from the app's icon, which is
+  also shown beside its name. A section may carry the picture the window shows
+  for its item: the app leaves it in its runtime folder and Lamp hands the
+  sidebar a fresh copy, art whole on a wash of the app's color, a photo filling
+  its frame.
 - **Per tab**: Chrome keeps one sidebar per tab. What's typed is kept per tab
   (`chrome.storage.session`), and the app is told which tabs are open on it and
   draws a surface for each (`LampBrowser.start(surface: { tab in … })`), so a

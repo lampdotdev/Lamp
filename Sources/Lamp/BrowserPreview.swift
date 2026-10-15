@@ -174,8 +174,12 @@ enum BrowserPreview {
                 "`look` (the accent and background its Mac window uses, and its type design), so it looks like this app."
         }
         let icon = BrowserLook.icon(project).png.flatMap(NSImage.init(data:))
+        let pictures = Dictionary(state.surface.sections.compactMap(\.image).map { name in
+            (name, BrowserLook.picture(name, of: project))
+        }.compactMap { name, picture in picture.flatMap { p in NSImage(data: p.data).map { (name, (image: $0, isArt: p.isArt)) } } },
+            uniquingKeysWith: { first, _ in first })
         let view = SidebarPicture(app: project.name, icon: icon, offer: fits ? declaration?.offer : nil, surface: state.surface,
-                                  look: BrowserLook.drawn(state.surface.look, for: project),
+                                  look: BrowserLook.drawn(state.surface.look, for: project), pictures: pictures,
                                   values: Dictionary(uniqueKeysWithValues: shown), busy: state.busy)
         let renderer = ImageRenderer(content: view)
         renderer.scale = 2
@@ -222,13 +226,14 @@ enum BrowserPreview {
 }
 
 /// The sidebar as the extension draws it, for a picture: plain text and boxes, since ImageRenderer draws no controls.
-/// In the app's look, as it shows in light.
+/// In the app's look and template, as it shows in light.
 private struct SidebarPicture: View {
     let app: String
     let icon: NSImage?
     let offer: String?
     let surface: BrowserCompanions.Surface
     let look: BrowserLook.Drawn
+    let pictures: [String: (image: NSImage, isArt: Bool)]
     let values: [String: String]
     let busy: Bool
     private var palette: BrowserLook.Palette { look.light }
@@ -237,15 +242,32 @@ private struct SidebarPicture: View {
         ["rounded": .rounded, "serif": .serif, "monospaced": .monospaced][look.design] ?? .default
     }
     private func face(_ size: CGFloat, _ weight: Font.Weight) -> Font { .system(size: size, weight: weight, design: design) }
+    private var companion: Bool { look.template == .companion }
+    private var radius: CGFloat { companion ? 16 : look.template == .collection ? 12 : 10 }
+    private var titleSize: CGFloat { companion ? 26 : look.template == .collection ? 22 : 20 }
+    private func box<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 0, content: content)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: radius).fill(color(palette.card)))
+            .overlay(RoundedRectangle(cornerRadius: radius).stroke(color(palette.line)))
+    }
+    private func rows(_ items: [String]) -> some View {
+        ForEach(Array(items.prefix(30).enumerated()), id: \.offset) { index, item in
+            if index > 0 { Rectangle().fill(color(palette.line)).frame(height: 1) }
+            Text(item).padding(.horizontal, 12).padding(.vertical, 7)
+        }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                if let icon { Image(nsImage: icon).resizable().frame(width: 30, height: 30) }
-                Text(app).font(face(15, .semibold))
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 9) {
+                if let icon { Image(nsImage: icon).resizable().frame(width: 26, height: 26) }
+                Text(app).font(face(13, .semibold))
             }
-            if let offer { Text(offer).font(face(14, .semibold)).foregroundStyle(color(palette.accent)) }
-            Text(surface.title).font(face(26, look.design == "serif" ? .semibold : .bold)).padding(.top, 6)
+            if let offer { Text(offer).font(.system(size: 12, weight: .medium)).foregroundStyle(color(palette.accent)).padding(.leading, 35) }
+            if surface.title.trimmingCharacters(in: .whitespaces).lowercased() != app.lowercased() {
+                Text(surface.title).font(face(titleSize, look.design == "serif" ? .semibold : .bold)).padding(.top, 6)
+            }
             if !surface.detail.isEmpty { Text(surface.detail).foregroundStyle(color(palette.muted)) }
             ForEach(Array(surface.fields.enumerated()), id: \.offset) { _, field in
                 VStack(alignment: .leading, spacing: 4) {
@@ -253,32 +275,60 @@ private struct SidebarPicture: View {
                     Text((values[field.id] ?? field.value).isEmpty ? " " : values[field.id] ?? field.value)
                         .lineLimit((field.lines ?? 1) > 1 ? 12 : 1)
                         .frame(maxWidth: .infinity, minHeight: CGFloat(field.lines ?? 1) * 17, alignment: .topLeading)
-                        .padding(8)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(color(palette.card)))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(color(palette.field)))
-                }
+                        .padding(.horizontal, 8).padding(.vertical, 5)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(color(palette.card)))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(color(palette.field)))
+                }.padding(.top, 4)
             }
             ForEach(Array(surface.sections.enumerated()), id: \.offset) { _, section in
-                Text(section.title.uppercased()).font(face(12, .bold)).foregroundStyle(color(palette.accent)).padding(.top, 8)
-                if !section.text.isEmpty { Text(String(section.text.prefix(1500))) }
-                ForEach(Array((section.items ?? []).prefix(30).enumerated()), id: \.offset) { _, item in Text("•  " + item) }
+                if let name = section.image {
+                    // As the window draws an item: one card, its picture at the top (art whole on a wash of the app's
+                    // color, a photo filling the frame), its name and words under it.
+                    box {
+                        Group {
+                            if let picture = pictures[name], picture.isArt {
+                                Image(nsImage: picture.image).resizable().scaledToFit().padding(24)
+                                    .frame(width: 328, height: companion ? 328 : 246).background(color(palette.fill.mix(palette.card, 0.86)))
+                            } else if let picture = pictures[name] {
+                                Image(nsImage: picture.image).resizable().scaledToFill().frame(width: 328, height: companion ? 328 : 246).clipped()
+                            } else { color(palette.line).frame(width: 328, height: companion ? 328 : 246) }
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(section.title).font(face(15, .semibold))
+                            if !section.text.isEmpty { Text(String(section.text.prefix(1500))).foregroundStyle(color(palette.muted)) }
+                        }.padding(.horizontal, 12).padding(.vertical, 10)
+                        if !(section.items ?? []).isEmpty { Rectangle().fill(color(palette.line)).frame(height: 1); rows(section.items ?? []) }
+                    }.padding(.top, 8)
+                } else {
+                    Text(section.title).font(face(12, .semibold)).padding(.top, 10)
+                    if !section.text.isEmpty || !(section.items ?? []).isEmpty {
+                        box {
+                            if !section.text.isEmpty { Text(String(section.text.prefix(1500))).padding(.horizontal, 12).padding(.vertical, 9) }
+                            if !section.text.isEmpty && !(section.items ?? []).isEmpty { Rectangle().fill(color(palette.line)).frame(height: 1) }
+                            rows(section.items ?? [])
+                        }
+                    }
+                }
             }
             Rectangle().fill(color(palette.line)).frame(height: 1).padding(.top, 8)
             if surface.actions.contains(where: { $0.readsPage }) {
-                Text("Using this page shares its text with \(app) and its AI.").font(.caption).foregroundStyle(color(palette.muted))
+                Text("Using this page shares its text with \(app) and its AI.").font(.system(size: 11)).foregroundStyle(color(palette.muted))
             }
-            ForEach(Array(surface.actions.enumerated()), id: \.offset) { index, action in
-                Text(action.label).font(face(14, .semibold))
-                    .padding(.horizontal, 15).padding(.vertical, 9)
-                    .foregroundStyle(color(index == 0 ? palette.onFill : palette.accent))
-                    .background(RoundedRectangle(cornerRadius: 10).fill(color(index == 0 ? palette.fill : palette.card)))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(color(index == 0 ? palette.fill : palette.line)))
-                    .opacity(busy || surface.busy ? 0.55 : 1)
+            HStack(spacing: 8) {
+                ForEach(Array(surface.actions.enumerated()), id: \.offset) { index, action in
+                    let shape = RoundedRectangle(cornerRadius: companion ? 99 : 7)
+                    Text(action.label).font(face(companion ? 15 : 13, .semibold))
+                        .padding(.horizontal, companion ? 20 : 14).padding(.vertical, companion ? 9 : 6)
+                        .foregroundStyle(color(index == 0 ? palette.onFill : palette.ink))
+                        .background(shape.fill(color(index == 0 ? palette.fill : palette.card)))
+                        .overlay(shape.stroke(color(index == 0 ? palette.fill : palette.line)))
+                        .opacity(busy || surface.busy ? 0.5 : 1)
+                }
             }
         }
         .foregroundStyle(color(palette.ink))
-        .font(.system(size: 14, design: look.design == "rounded" ? .rounded : .default))
-        .padding(20)
+        .font(.system(size: 13, design: look.design == "rounded" ? .rounded : .default))
+        .padding(16)
         .frame(width: 360, alignment: .leading)
         .background(color(palette.background))
     }

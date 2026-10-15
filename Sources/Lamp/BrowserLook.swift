@@ -1,9 +1,15 @@
 import AppKit
+import ImageIO
+import UniformTypeIdentifiers
 
 /// How an app's sidebar looks, in Chrome and in Lamp's preview of it. The app says which colors and type are its own
 /// (`LampBrowser.Look`, sent as plain values with the rest of its surface); Lamp turns them into every color the
 /// sidebar draws with, keeping text readable on them, and the extension only sets those colors. An app that gives no
 /// look gets one from its icon, so no two apps' sidebars look the same, whichever Lamp built them.
+///
+/// The sidebar should read as a part of the app's Mac window, not as a web page in its colors: its background is the
+/// window's (neutral, unless the app gives one), the app's color is kept for what the window uses it for (the main
+/// button, the offer, focus), and the layout follows the kind of app (`Template`), as the window's does.
 @MainActor
 enum BrowserLook {
     /// What an app sends: each color as it shows in light and in dark, and its type design.
@@ -55,6 +61,25 @@ enum BrowserLook {
     /// Lamp's own green, for an app whose icon has no color to take.
     static let fallback = Requested(accent: .init(light: "#3d5736", dark: "#9cc48d"))
 
+    /// How the sidebar is laid out, from the kind of app it belongs to (the first line of its APP.md, which the builder
+    /// writes and keeps): a companion's palette and rounded softness, a collection's pictures first, and the plain
+    /// window of every other kind.
+    enum Template: String {
+        case standard, companion, collection
+        init(kind: String?) {
+            switch kind?.lowercased() {
+            case "companion": self = .companion
+            case "collection": self = .collection
+            default: self = .standard
+            }
+        }
+        static func of(_ project: LampProject) -> Template {
+            guard let text = try? String(contentsOf: project.dir.appendingPathComponent("APP.md"), encoding: .utf8) else { return .standard }
+            let line = text.split(separator: "\n").prefix(5).first { $0.hasPrefix("Kind:") }
+            return Template(kind: line.map { $0.dropFirst(5).trimmingCharacters(in: .whitespaces) })
+        }
+    }
+
     /// Every color the sidebar draws with, in one appearance.
     struct Palette: Equatable {
         var background, card, line, field, ink, muted, accent, fill, onFill: RGB
@@ -63,23 +88,27 @@ enum BrowserLook {
              "muted": muted.hex, "accent": accent.hex, "fill": fill.hex, "onFill": onFill.hex]
         }
 
-        init(accent chosen: RGB, background given: RGB?, dark: Bool) {
-            // Without a background of the app's own, the page is just tinted with its color.
-            let background = given ?? (dark ? RGB(0.11, 0.11, 0.12).mix(chosen, 0.08) : white.mix(chosen, 0.045))
+        /// The Mac's own window background and text, which a window without colors of its own shows.
+        static let window = (light: RGB(0.937, 0.945, 0.949), dark: RGB(0.118, 0.122, 0.125))
+
+        init(accent chosen: RGB, background given: RGB?, dark: Bool, template: Template = .standard) {
+            // A companion's window is washed with its palette; any other window is the Mac's own gray.
+            let tint = template == .companion ? (dark ? 0.1 : 0.07) : 0
+            let background = given ?? (dark ? Self.window.dark : Self.window.light).mix(chosen, tint)
             let light = background.luminance > 0.35
-            let plain = light ? RGB(0.11, 0.11, 0.12) : RGB(0.95, 0.95, 0.96)
-            let ink = plain.mix(chosen, 0.12).contrast(background) >= 7 ? plain.mix(chosen, 0.12) : plain
+            let ink = light ? RGB(0.114, 0.114, 0.122) : RGB(0.961, 0.961, 0.969)
             self.background = background
             self.ink = ink
-            card = light ? background.mix(white, 0.65) : background.mix(white, 0.07)
-            line = background.mix(ink, 0.14)
-            field = background.mix(ink, 0.32)
-            muted = ink.mix(background, 0.4).readable(on: background, ratio: 4.5, toward: ink)
-            // As text (headings, the offer, a plain button's label) the app's color reads like body text does.
+            card = light ? background.mix(white, 0.85) : background.mix(white, 0.07)
+            line = background.mix(ink, light ? 0.1 : 0.14)
+            field = background.mix(ink, light ? 0.22 : 0.28)
+            muted = (light ? RGB(0.431, 0.431, 0.451) : RGB(0.596, 0.596, 0.616)).readable(on: background, ratio: 4.5, toward: ink)
+            // As text (the offer, a link) the app's color reads like body text does.
             accent = chosen.readable(on: background, ratio: 4.5, toward: ink)
-            // The main button keeps the app's color, deepened only as far as its label needs.
-            onFill = white.contrast(chosen) >= black.mix(chosen, 0.1).contrast(chosen) ? white : black.mix(chosen, 0.1)
-            fill = chosen.readable(on: onFill, ratio: 4.5, toward: onFill == white ? black : white)
+            // The main button keeps the app's color with a white label, as a Mac's prominent button does, deepened only
+            // as far as a bold label needs (3:1); a color too pale for that (a yellow) takes a dark label instead.
+            onFill = chosen.mix(black, 0.35).contrast(white) >= 3 ? white : RGB(0.114, 0.114, 0.122)
+            fill = chosen.readable(on: onFill, ratio: onFill == white ? 3 : 4.5, toward: onFill == white ? black : white)
         }
     }
 
@@ -87,20 +116,57 @@ enum BrowserLook {
         var light: Palette
         var dark: Palette
         var design: String
-        var values: [String: Any] { ["light": light.values, "dark": dark.values, "design": design] }
+        var template: Template = .standard
+        var values: [String: Any] { ["light": light.values, "dark": dark.values, "design": design, "template": template.rawValue] }
     }
 
-    static func drawn(_ requested: Requested) -> Drawn {
+    static func drawn(_ requested: Requested, template: Template = .standard) -> Drawn {
         func palette(_ dark: Bool) -> Palette {
             let pick = { (pair: Requested.Pair) in RGB(hex: dark ? pair.dark : pair.light)! }
-            return Palette(accent: pick(requested.accent), background: requested.background.map(pick), dark: dark)
+            return Palette(accent: pick(requested.accent), background: requested.background.map(pick), dark: dark, template: template)
         }
-        return Drawn(light: palette(false), dark: palette(true), design: requested.design ?? "default")
+        return Drawn(light: palette(false), dark: palette(true), design: requested.design ?? "default", template: template)
     }
 
     /// The look an app's sidebar is drawn with: its own, else its icon's color.
     static func drawn(_ look: Requested?, for project: LampProject) -> Drawn {
-        drawn(look.flatMap { $0.valid ? $0 : nil } ?? icon(project).accent.map { Requested(accent: .init(light: $0.hex, dark: $0.hex)) } ?? fallback)
+        drawn(look.flatMap { $0.valid ? $0 : nil } ?? icon(project).accent.map { Requested(accent: .init(light: $0.hex, dark: $0.hex)) } ?? fallback,
+              template: Template.of(project))
+    }
+
+    /// A section's picture, which the app leaves in its runtime folder under a name made from its contents: a photo
+    /// as JPEG, art with a clear background as PNG. Only a plain file of that folder is read, and it's drawn afresh, so
+    /// what reaches the sidebar is only ever a picture.
+    struct Picture { var data: Data; var isArt: Bool; var dataURL: String { (isArt ? "data:image/png;base64," : "data:image/jpeg;base64,") + data.base64EncodedString() } }
+    static func picture(_ name: String, of project: LampProject) -> Picture? {
+        guard isPictureName(name) else { return nil }
+        let folder = Runtime.macFolder(project).appendingPathComponent("sidebar").resolvingSymlinksInPath()
+        for (ext, isArt) in [("jpg", false), ("png", true)] {
+            let file = folder.appendingPathComponent(name + "." + ext)
+            guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+                  values.isRegularFile == true, values.isSymbolicLink != true, (values.fileSize ?? .max) <= 4_000_000,
+                  let data = try? Data(contentsOf: file), let drawn = redrawn(data, png: isArt) else { continue }
+            return Picture(data: drawn, isArt: isArt)
+        }
+        return nil
+    }
+
+    /// A picture drawn again in sRGB and written by ImageIO. AppKit's own PNGs carry a gamma value that Chrome applies
+    /// and other viewers don't, which washes the picture out in the sidebar.
+    nonisolated static func redrawn(_ data: Data, png: Bool) -> Data? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil), let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              (1...4096).contains(image.width), (1...4096).contains(image.height), let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let out = NSMutableData()
+        guard let drawn = context.makeImage(),
+              let destination = CGImageDestinationCreateWithData(out, (png ? UTType.png : UTType.jpeg).identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, drawn, png ? nil : [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
+        return CGImageDestinationFinalize(destination) ? out as Data : nil
+    }
+    nonisolated static func isPictureName(_ name: String) -> Bool {
+        name.count == 16 && name.allSatisfy { "0123456789abcdef".contains($0) }
     }
 
     /// The app's icon as a small picture for the sidebar's top, and the color it's mostly painted in.
@@ -118,7 +184,7 @@ enum BrowserLook {
             NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
             NSWorkspace.shared.icon(forFile: path).draw(in: NSRect(x: 0, y: 0, width: 64, height: 64))
             NSGraphicsContext.restoreGraphicsState()
-            icon.png = bitmap.representation(using: .png, properties: [:])
+            icon.png = bitmap.representation(using: .png, properties: [:]).flatMap { redrawn($0, png: true) }
             icon.accent = mainColor(bitmap)
         }
         icons[project.id] = (stamp, icon)

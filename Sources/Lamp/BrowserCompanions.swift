@@ -11,7 +11,7 @@ final class BrowserCompanions {
     static let shared = BrowserCompanions()
 
     struct Surface: Codable, Equatable {
-        struct Section: Codable, Equatable { var title: String; var text: String; var items: [String]? }
+        struct Section: Codable, Equatable { var title: String; var text: String; var items: [String]?; var image: String? }
         struct Field: Codable, Equatable { var id: String; var label: String; var value: String; var lines: Int? }
         struct Action: Codable, Equatable { var id: String; var label: String; var readsPage: Bool; var readsSelection: Bool? }
         var title: String
@@ -24,7 +24,7 @@ final class BrowserCompanions {
         var look: BrowserLook.Requested?
         var valid: Bool {
             (look?.valid ?? true) && title.count <= 120 && detail.count <= 1000 && sections.count <= 20 && fields.count <= 12 && actions.count <= 8
-            && sections.allSatisfy { $0.title.count <= 120 && $0.text.count <= 16000 && ($0.items ?? []).count <= 60 && ($0.items ?? []).allSatisfy { $0.count <= 1000 } }
+            && sections.allSatisfy { ($0.image.map(BrowserLook.isPictureName) ?? true) && $0.title.count <= 120 && $0.text.count <= 16000 && ($0.items ?? []).count <= 60 && ($0.items ?? []).allSatisfy { $0.count <= 1000 } }
             && fields.allSatisfy { !$0.id.isEmpty && $0.id.count <= 60 && $0.label.count <= 120 && $0.value.count <= 4000 && (1...12).contains($0.lines ?? 1) }
             && actions.allSatisfy { !$0.id.isEmpty && $0.id.count <= 60 && $0.label.count <= 120 && !($0.readsPage && $0.readsSelection == true) }
             && Set(actions.map(\.id)).count == actions.count && Set(fields.map(\.id)).count == fields.count
@@ -245,6 +245,10 @@ final class BrowserCompanions {
         }
         if op == "surface-icon" {
             return ["icon": BrowserLook.icon(project).png.map { "data:image/png;base64," + $0.base64EncodedString() } ?? ""]
+        }
+        if op == "surface-image" {
+            guard let name = body["image"] as? String, let picture = BrowserLook.picture(name, of: project) else { return ["image": ""] }
+            return ["image": picture.dataURL]
         }
         if op == "surface-open" {
             if !isLive(project), listed([project]).count == 1 { Store.shared.openForSidebar(project) }

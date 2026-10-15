@@ -71,8 +71,23 @@ function dress(look) {
     /^#[0-9a-f]{6}$/.test(palette?.[name]) ? `--${variable}:${palette[name]};` : '').join('');
   const face = faces[look?.design] || faces.default;
   const fixed = `--face:${face};--body-face:${look?.design === 'rounded' ? face : faces.default};--title-weight:${look?.design === 'serif' ? 600 : 700};`;
+  document.body.className = ['standard', 'companion', 'collection'].includes(look?.template) ? look.template : 'standard';
   looks.replaceSync(look ? `:root{${fixed}${colors(look.light)}}@media (prefers-color-scheme:dark){:root{${colors(look.dark)}}}` : '');
 }
+// Pictures are asked of Lamp once each, by the name the app gave them, and kept while the sidebar is open.
+const pictures = new Map();
+function picture(app, name, img) {
+  if (!/^[0-9a-f]{16}$/.test(name)) return;
+  const key = app + ':' + name;
+  if (!pictures.has(key)) pictures.set(key, call({op: 'surface-image', app, image: name}).then(r => r.image).catch(() => ''));
+  // Art with a clear background (a PNG) is shown whole on a wash of the app's color; a photo fills its frame.
+  pictures.get(key).then(src => {
+    const kind = /^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/.exec(src || '');
+    if (!kind) return;
+    img.classList.toggle('art', kind[1] === 'png'); img.src = src;
+  });
+}
+
 // The app's icon beside its name, asked of Lamp once each time another app is chosen.
 let iconFor = '';
 function showIcon(app) {
@@ -89,16 +104,33 @@ function render(state) {
   dress(state.look);
   if (key === viewKey) return;
   viewKey = key;
-  $('title').textContent = s.title; $('detail').textContent = s.detail;
+  // The app's name is already at the top beside its icon; a title that only repeats it isn't drawn again.
+  const appName = apps.find(a => a.id === selected)?.name || '';
+  $('title').textContent = s.title.trim().toLowerCase() === appName.trim().toLowerCase() ? '' : s.title;
+  $('detail').textContent = s.detail;
   $('sections').replaceChildren(); $('fields').replaceChildren(); $('actions').replaceChildren();
+  const make = (tag, text, className) => { const e = document.createElement(tag); if (text) e.textContent = text; if (className) e.className = className; return e; };
   for (const section of s.sections) {
-    const h = document.createElement('h2'); h.textContent = section.title; $('sections').append(h);
-    if (section.text) { const p = document.createElement('p'); p.textContent = section.text; $('sections').append(p); }
-    if (section.items?.length) {
-      const list = document.createElement('ul');
-      for (const item of section.items) { const li = document.createElement('li'); li.textContent = item; list.append(li); }
-      $('sections').append(list);
+    const list = section.items?.length ? make('ul') : null;
+    for (const item of section.items || []) list.append(make('li', item));
+    if (section.image) {
+      // A thing with a picture is drawn as the window draws one: a card with the picture at the top, its name and
+      // words under it, then its list.
+      const card = make('div', '', 'box picture'), img = make('img'), words = make('div', '', 'words');
+      img.alt = ''; picture(selected, section.image, img);
+      words.append(make('h3', section.title));
+      if (section.text) words.append(make('p', section.text));
+      card.append(img, words);
+      if (list) card.append(list);
+      $('sections').append(card);
+      continue;
     }
+    $('sections').append(make('h2', section.title));
+    if (!section.text && !list) continue;
+    const box = make('div', '', 'box');
+    if (section.text) box.append(make('p', section.text));
+    if (list) box.append(list);
+    $('sections').append(box);
   }
   const kept = settleDrafts(drafts[selected], s.fields);
   if (JSON.stringify(kept) !== JSON.stringify(drafts[selected] || {})) {
