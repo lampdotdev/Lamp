@@ -490,17 +490,60 @@ public struct ResultCardView: View {
     private func row(_ title: String, detail: String?, button: String? = nil, action: @escaping () -> Void = {}) -> some View {
         VStack(spacing: 0) {
             Divider()
-            HStack(spacing: 12) {
+            ButtonBeside {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title).fixedSize(horizontal: false, vertical: true)
                     if let detail {
                         Text(detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                Spacer(minLength: 8)
                 if let button { Button(button, action: action) }
             }
             .padding(.horizontal, 14).padding(.vertical, 9)
+        }
+    }
+}
+
+/// A row's words with its button at the right, or the button under the words where the row is too narrow for both.
+/// Side by side in the wand's narrow panel, the button was cut to "Have Lamp Tes…" and the words squeezed to a
+/// word or two a line: the button's whole name always shows, and the words keep enough of a line to read.
+private struct ButtonBeside: Layout {
+    static let spacing: CGFloat = 12
+    static let under: CGFloat = 8
+    /// Narrower than this beside the button, the words break after every word or two.
+    static let narrowestWords: CGFloat = 160
+
+    private func beside(_ subviews: Subviews, width: CGFloat?) -> Bool {
+        guard subviews.count == 2, let width else { return true }
+        return width - subviews[1].sizeThatFits(.unspecified).width - Self.spacing >= Self.narrowestWords
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let words = subviews.first else { return .zero }
+        guard subviews.count == 2 else { return words.sizeThatFits(proposal) }
+        let button = subviews[1].sizeThatFits(.unspecified)
+        if beside(subviews, width: proposal.width) {
+            let width = proposal.width.map { $0 - button.width - Self.spacing }
+            let text = words.sizeThatFits(ProposedViewSize(width: width, height: nil))
+            return CGSize(width: proposal.width ?? text.width + Self.spacing + button.width, height: max(text.height, button.height))
+        }
+        let text = words.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        return CGSize(width: proposal.width ?? max(text.width, button.width), height: text.height + Self.under + button.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let words = subviews.first else { return }
+        guard subviews.count == 2 else { return words.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size)) }
+        let button = subviews[1].sizeThatFits(.unspecified)
+        if beside(subviews, width: bounds.width) {
+            let width = bounds.width - button.width - Self.spacing
+            words.place(at: CGPoint(x: bounds.minX, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(width: width, height: nil))
+            subviews[1].place(at: CGPoint(x: bounds.maxX, y: bounds.midY), anchor: .trailing, proposal: .unspecified)
+        } else {
+            let text = words.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+            words.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: nil))
+            subviews[1].place(at: CGPoint(x: bounds.minX, y: bounds.minY + text.height + Self.under),
+                              proposal: ProposedViewSize(width: min(button.width, bounds.width), height: nil))
         }
     }
 }
