@@ -41,10 +41,12 @@ public struct SidebarState: Codable, Equatable {
     /// takes it up; the words the sidebar sent itself come back with the same number and are left alone.
     public var draftVersion: Int
     public var attachments: [SidebarAttachment]
+    // Optional, like everything added since the first sidebar: a sidebar talking to a Lamp from before these
+    // were sent still reads its chat.
     /// Messages waiting for the current change to finish.
-    public var queued: [SidebarQueued] = []
+    public var queued: [SidebarQueued]?
     /// The first request is waiting for Apple's tools to install, not for a turn.
-    public var waitingForSetup = false
+    public var waitingForSetup: Bool?
     /// A command or file the agent is asking to use, waiting for an answer.
     public var approval: SidebarApproval?
     /// The app was asked to quit and isn't responding: what the notice says.

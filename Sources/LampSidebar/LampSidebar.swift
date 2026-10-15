@@ -171,8 +171,8 @@ private struct Chat: View {
                         if let notResponding = state.notResponding {
                             ChatLook.UnresponsiveNotice(text: notResponding) { link.send(.forceQuit) }.padding(.top, 12)
                         }
-                        ForEach(state.queued) { message in
-                            ChatLook.QueuedRow(text: message.text, waitingForSetup: state.waitingForSetup,
+                        ForEach(state.queued ?? []) { message in
+                            ChatLook.QueuedRow(text: message.text, waitingForSetup: state.waitingForSetup ?? false,
                                                onRemove: { link.send(.unqueue(message.id)) }) {
                                 ForEach(message.attachments.indices, id: \.self) { index in
                                     AttachmentChip(attachment: message.attachments[index])
@@ -190,7 +190,7 @@ private struct Chat: View {
                 .onChange(of: state.lines.last?.id) { follow(scroller) }
                 .onChange(of: state.lines.last?.text) { follow(scroller) }
                 .onChange(of: state.working) { follow(scroller) }
-                .onChange(of: state.queued.count) { follow(scroller) }
+                .onChange(of: state.queued?.count) { follow(scroller) }
                 // Once the lines are laid out: scrolled before then, the chat opens partway up.
                 .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { follow(scroller, animated: false) } }
             }
