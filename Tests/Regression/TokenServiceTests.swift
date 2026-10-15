@@ -54,6 +54,12 @@ final class TokenServiceTests: XCTestCase {
         XCTAssertTrue(printed.contains("cancelled-connect: kept false, connected false"), printed)
     }
 
+    /// A 401 that comes back for the old token after the person connected a new one leaves the new one alone.
+    func testALateRefusalLeavesANewTokenAlone() throws {
+        let printed = try runProgram(scenarios: ["late-401"])
+        XCTAssertTrue(printed.contains("late-401: kept new-token, connected true"), printed)
+    }
+
     // MARK: - The program
 
     private func runProgram(scenarios: [String]) throws -> String {
@@ -174,6 +180,17 @@ final class TokenServiceTests: XCTestCase {
                     api.cancelConnecting()
                     _ = await connecting.result
                     print("cancelled-connect: kept \(LampAPI.Saved.read(api.id) != nil), connected \(api.isConnected)")
+                    LampAPI.Saved.delete(api.id)
+                case "late-401":
+                    let api = example()
+                    Answers.table["https://api.example.test/v1/items"] = json(401)
+                    Answers.delays["https://api.example.test/v1/items"] = 1
+                    Answers.table["https://api.example.test/v1/me"] = json(200)
+                    let old = Task { @MainActor in _ = try? await api.get("items") }
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    try? await api.connect(["token": "new-token"])
+                    await old.value
+                    print("late-401: kept \(LampAPI.Saved.read(api.id)?["token"] ?? "nothing"), connected \(api.isConnected)")
                     LampAPI.Saved.delete(api.id)
                 default: print("unknown scenario \(scenario)")
                 }

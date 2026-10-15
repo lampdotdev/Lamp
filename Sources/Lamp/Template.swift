@@ -8571,6 +8571,8 @@ enum Template {
             }
             guard mine == (attempt, generation), !Task.isCancelled else { throw CancellationError() }
             guard Saved.save(cleaned, for: id) else { throw Failure(message: "Couldn't keep the connection to \(name) on this device.") }
+            // A new token: a refusal still on its way for the old one mustn't forget this one.
+            generation += 1
             isConnected = true
         }
 
