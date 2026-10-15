@@ -290,18 +290,18 @@ private struct IdeaStep: View {
             Spacer(minLength: 40)
             // The site's own sentence over the wish it wrote, so this reads as the same moment.
             // Mac, iPhone or both is worked out from what they ask for (Store.chooseKind), so nobody chooses.
-            Heading(title: wish == nil ? "What app do you wish you had?" : "Here's your wish. Change anything you like.")
+            Heading(title: wish == nil ? "What would make your day easier, or more fun?" : "Here's your wish. Change anything you like.")
 
             HStack(alignment: .top, spacing: 10) {
                 TextField("", text: box,
-                          prompt: Text("I wish I had an app that…").foregroundStyle(.tertiary), axis: .vertical)
+                          prompt: Text("Describe what you'd like…").foregroundStyle(.tertiary), axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 17))
                     .lineSpacing(3)
                     .lineLimit(3...5)
                     .focused($focused)
                     .allowsHitTesting(arrival == nil)
-                    .onChange(of: prompt) { if prompt != deck.ideas.first(where: { $0.id == chosen })?.prompt { chosen = nil } }
+                    .onChange(of: prompt) { if prompt != deck.ideas.first(where: { $0.id == chosen })?.blurb { chosen = nil } }
                     // Return continues, as in the chat; Shift-Return (`newLineOnShiftReturn`) and Option-Return
                     // start a new line.
                     .onSubmit { if !prompt.trimmed.isEmpty { done() } }
@@ -346,7 +346,7 @@ private struct IdeaStep: View {
             .padding(.top, 18)
 
             HStack {
-                Text("Need an idea?").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                Text("Sound familiar?").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
                 Spacer()
                 Button {
                     deck.more()
@@ -468,7 +468,7 @@ private struct IdeaStep: View {
 
     private func choose(_ idea: Idea) {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { chosen = idea.id }
-        prompt = idea.prompt
+        prompt = idea.blurb
         picked = true
         Analytics.capture(.welcomeIdeaPicked, ["idea": Analytics.idea(idea)])
         focused = true
