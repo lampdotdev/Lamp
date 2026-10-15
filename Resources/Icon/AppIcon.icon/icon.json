@@ -1,28 +1,113 @@
 {
-  "fill" : {
-    "solid" : "srgb:0.01961,0.03137,0.10196,1.00000"
+  "fill": {
+    "automatic-gradient": "srgb:1.00000,1.00000,1.00000,1.00000"
   },
-  "groups" : [
+  "fill-specializations": [
     {
-      "layers" : [
-        {
-          "glass" : false,
-          "image-name" : "artwork.png",
-          "name" : "artwork"
-        }
-      ],
-      "shadow" : {
-        "kind" : "none",
-        "opacity" : 0
-      },
-      "translucency" : {
-        "enabled" : false,
-        "value" : 0.40000000000000002
+      "appearance": "dark",
+      "value": {
+        "automatic-gradient": "srgb:0.10980,0.10196,0.09412,1.00000"
       }
     }
   ],
-  "supported-platforms" : {
-    "squares" : [
+  "groups": [
+    {
+      "layers": [
+        {
+          "name": "middle",
+          "image-name": "middle.svg",
+          "glass": true,
+          "fill": {
+            "automatic-gradient": "srgb:1.00000,0.83922,0.41961,1.00000"
+          },
+          "blend-mode": "normal"
+        }
+      ],
+      "shadow": {
+        "kind": "layer-color",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.4
+      },
+      "specular": true,
+      "lighting": "individual"
+    },
+    {
+      "layers": [
+        {
+          "name": "outer",
+          "image-name": "outer.svg",
+          "glass": true,
+          "fill": {
+            "automatic-gradient": "srgb:1.00000,0.54118,0.10980,1.00000"
+          },
+          "blend-mode": "normal"
+        }
+      ],
+      "shadow": {
+        "kind": "layer-color",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.5
+      },
+      "specular": true,
+      "lighting": "individual"
+    },
+    {
+      "layers": [
+        {
+          "name": "ring2",
+          "image-name": "ring2.svg",
+          "glass": true,
+          "fill": {
+            "automatic-gradient": "srgb:0.79608,0.78039,0.75686,1.00000"
+          },
+          "blend-mode": "normal",
+          "opacity": 0.9
+        }
+      ],
+      "shadow": {
+        "kind": "none",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.6
+      },
+      "specular": true,
+      "lighting": "individual"
+    },
+    {
+      "layers": [
+        {
+          "name": "ring1",
+          "image-name": "ring1.svg",
+          "glass": true,
+          "fill": {
+            "automatic-gradient": "srgb:0.87059,0.85882,0.83922,1.00000"
+          },
+          "blend-mode": "normal",
+          "opacity": 0.8
+        }
+      ],
+      "shadow": {
+        "kind": "none",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.7
+      },
+      "specular": true,
+      "lighting": "individual"
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
       "macOS"
     ]
   }
