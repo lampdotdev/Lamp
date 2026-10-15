@@ -5,8 +5,9 @@ import Foundation
 /// the extension sends what the person did. Lamp draws nothing here and the extension decides nothing: it shows
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
-    /// What this side reads and writes; see `SidebarCommand.hello`.
-    public static let version = 2
+    /// What this side reads and writes; see `SidebarCommand.hello`. 3 added the cards and lines that ask
+    /// something of the person, and the question card's own layout, words and progress.
+    public static let version = 3
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -57,7 +58,7 @@ public struct SidebarState: Codable, Equatable {
 }
 
 public struct SidebarLine: Codable, Equatable, Identifiable {
-    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary }
+    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary, setup, note, widget, action }
     public var id: UUID
     public var kind: Kind
     public var text: String
@@ -73,9 +74,26 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var questions: [SidebarQuestion]?
     /// A result's step that wasn't tried, offered as Have Lamp Test It.
     public var untried: String?
+    /// An open question card's layout: every question on one card rather than one at a time.
+    public var together: Bool?
+    /// How far the open card has been answered, and how many times that was changed in Lamp's window, so the
+    /// sidebar takes up those changes and leaves alone the ones it sent itself.
+    public var progress: AskProgress?
+    public var progressVersion: Int?
+    public var setup: SetupContent?
+    public var note: NoteContent?
+    /// A widget's card: whether it's placed (its title is `text`, what to do `detail`).
+    public var placed: Bool?
+    public var detail: String?
+    /// A line's one button, sent back as `SidebarCommand.act`: an icon to draw, iPhone setup, an error's Retry.
+    public var symbol: String?
+    public var button: String?
+    public var enabled: Bool?
 
     public init(id: UUID, kind: Kind, text: String, gap: Double = 0, running: Bool = false, attachments: [SidebarAttachment]? = nil,
-                growing: Bool = false, questions: [SidebarQuestion]? = nil, untried: String? = nil) {
+                growing: Bool = false, questions: [SidebarQuestion]? = nil, untried: String? = nil, together: Bool? = nil,
+                progress: AskProgress? = nil, progressVersion: Int? = nil, setup: SetupContent? = nil, note: NoteContent? = nil,
+                placed: Bool? = nil, detail: String? = nil, symbol: String? = nil, button: String? = nil, enabled: Bool? = nil) {
         self.id = id
         self.kind = kind
         self.text = text
@@ -85,6 +103,16 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
         self.growing = growing
         self.questions = questions
         self.untried = untried
+        self.together = together
+        self.progress = progress
+        self.progressVersion = progressVersion
+        self.setup = setup
+        self.note = note
+        self.placed = placed
+        self.detail = detail
+        self.symbol = symbol
+        self.button = button
+        self.enabled = enabled
     }
 }
 
@@ -92,11 +120,27 @@ public struct SidebarQuestion: Codable, Equatable {
     public var question: String
     public var options: [String]
     public var symbols: [String?]
+    /// Each answer's few words under its name.
+    public var details: [String?]?
 
-    public init(question: String, options: [String], symbols: [String?]) {
+    public init(question: String, options: [String], symbols: [String?], details: [String?]? = nil) {
         self.question = question
         self.options = options
         self.symbols = symbols
+        self.details = details
+    }
+
+    public init(_ question: CardQuestion) {
+        self.init(question: question.question, options: question.options.map(\.title), symbols: question.options.map(\.symbol),
+                  details: question.options.map(\.detail))
+    }
+
+    /// As the card draws it.
+    public var card: CardQuestion {
+        CardQuestion(question: question, options: options.indices.map { index in
+            CardOption(title: options[index], detail: details.flatMap { $0.indices.contains(index) ? $0[index] : nil },
+                       symbol: symbols.indices.contains(index) ? symbols[index] : nil)
+        })
     }
 }
 
@@ -117,6 +161,12 @@ public enum SidebarCommand: Codable, Equatable {
     case hello(Int)
     case send(String)
     case answer(UUID, [String])
+    /// How far the person has got on a question card, so Lamp's window carries on from there.
+    case progress(UUID, AskProgress)
+    case setup(UUID, SetupAction)
+    case undoNote(UUID)
+    /// A line's one button (`SidebarLine.button`).
+    case act(UUID)
     case tryIt(UUID)
     case draft(String)
     case removeAttachment(Int)

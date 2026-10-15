@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import LampSidebarKit
 
 /// The pieces the agent talks to the person with instead of paragraphs: a card of questions answered by
 /// clicking (`ask`), and a card for what a finished request made (`show_result`). The agent
@@ -11,7 +12,7 @@ enum Talk {
     /// How a set of questions is laid out. The agent picks; the person can always type instead.
     enum Layout: String, Codable, CaseIterable {
         case steps      // one question at a time, on a card in the chat
-        case together   // every question on one card, answers as chips
+        case together   // every question on one card, sent together
     }
 
     struct Option: Codable, Equatable {
@@ -224,7 +225,7 @@ enum Talk {
     }
 
     /// What a question is answered with when the person leaves it to Lamp.
-    static let youDecide = "You decide"
+    static let youDecide = AskProgress.youDecide
 
     /// The message a card's answers make: one line for each question, in the order asked, each with the
     /// question it answers. An engine that reads the conversation again later, or has summed it up, has

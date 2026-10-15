@@ -363,6 +363,8 @@ final class Store: ObservableObject {
     /// picked picture can arrive after that.
     @Published var playgroundIcon: LampProject?
     @Published var showingPlayground = false
+    /// Why a receipt's Undo didn't work, by its line, for both chats that show the receipt.
+    @Published var noteProblems: [UUID: String] = [:]
     /// The app whose Delete confirmation is showing.
     @Published var deleting: LampProject?
     /// The version whose Name… alert is showing.
@@ -3145,6 +3147,11 @@ final class Store: ObservableObject {
         logs[project.id]?[index].noted = receipt
         saveChat(project)
         return nil
+    }
+
+    /// Undo as the receipt's button does it, in Lamp's window or beside the app: what went wrong is shown under it.
+    func undoNoteShowingProblem(_ line: UUID, in project: LampProject) {
+        noteProblems[line] = undoNote(line, in: project)
     }
 
     /// `make_art`: a picture for the app to show, painted in its icon's style and saved in Assets/, the folder

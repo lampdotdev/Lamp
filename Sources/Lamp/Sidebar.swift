@@ -174,9 +174,15 @@ final class SidebarServer {
     /// At launch: an app whose sidebar is open finds Lamp again.
     func start() {
         listener = Listener(server: self)
-        watching = Store.shared.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async { self?.scheduleUpdate() }
-        }
+        // What the chat shows comes from the store, and its cards from what they're about: keys and downloads,
+        // an answer under way, iPhone setup.
+        watching = Store.shared.objectWillChange.map { _ in }
+            .merge(with: SetupCards.shared.objectWillChange.map { _ in },
+                   AskProgresses.shared.objectWillChange.map { _ in },
+                   IPhoneSetupLine.Asked.shared.objectWillChange.map { _ in })
+            .sink { [weak self] in
+                DispatchQueue.main.async { self?.scheduleUpdate() }
+            }
     }
 
     fileprivate func accepted(_ socket: Int32) {
@@ -223,16 +229,17 @@ final class SidebarServer {
         let busy = store.busy.contains(project.id)
         // The progress line, as Lamp's window shows it: not under the agent's questions.
         let progress = busy && Talk.open(in: log) == nil ? store.progress[project.id] : nil
-        return SidebarState(app: project.name, lines: Self.lines(log, dir: project.dir, busy: busy, progressShown: progress != nil),
+        return SidebarState(app: project.name, lines: Self.lines(log, project: project, busy: busy, progressShown: progress != nil),
                             working: progress?.activity, workingSince: progress?.started, empty: log.isEmpty, busy: busy,
                             draft: draft.text, draftVersion: draftVersions[project.id] ?? 0,
                             attachments: draft.attachments.map { SidebarAttachment(name: $0.lastPathComponent, thumbnail: Self.thumbnail($0)) })
     }
 
     /// The chat as Lamp's window shows it without Agent Details (`Transcript`): the same lines, gathered and
-    /// spaced the same way. Cards and notes Lamp's window has and this doesn't yet are left out.
-    static func lines(_ log: [LogLine], dir: URL, busy: Bool, progressShown: Bool) -> [SidebarLine] {
-        let lines = LogLine.visible(log, details: false)
+    /// spaced the same way, with the same cards, each saying what Lamp's says and doing what its buttons do.
+    static func lines(_ log: [LogLine], project: LampProject, busy: Bool, progressShown: Bool) -> [SidebarLine] {
+        let dir = project.dir
+        let lines = Transcript.withoutSpentOffers(LogLine.visible(log, details: false), dir: dir)
         let finalAnswers = Transcript.finalAnswers(in: lines, busy: busy)
         let openAsk = Talk.open(in: lines)?.id
         let currentResult = Talk.current(in: lines)?.id
@@ -263,16 +270,41 @@ final class SidebarServer {
                 case .summary:
                     out.append(SidebarLine(id: line.id, kind: .summary, text: line.text, gap: gap))
                 case .error:
-                    out.append(SidebarLine(id: line.id, kind: .error, text: line.text, gap: gap))
+                    // A phone install's Retry, as Lamp's window offers it: while the app is set to open on a phone.
+                    let retry = line.retryPhone != nil && project.device != nil
+                    out.append(SidebarLine(id: line.id, kind: .error, text: line.text, gap: gap,
+                                           button: retry ? "Retry" : nil, enabled: retry ? !busy : nil))
                 case .ask:
                     guard let ask = line.ask else { continue }
                     if line.id == openAsk {
-                        out.append(SidebarLine(id: line.id, kind: .ask, text: ask.text, gap: gap, questions: ask.questions.map {
-                            SidebarQuestion(question: $0.question, options: $0.options.map { $0.title }, symbols: $0.options.map { $0.symbol })
-                        }))
-                    } else if let folded = ask.folded {
-                        out.append(SidebarLine(id: line.id, kind: .ask, text: folded, gap: gap))
+                        let progresses = AskProgresses.shared
+                        out.append(SidebarLine(id: line.id, kind: .ask, text: ask.text, gap: gap, questions: ask.cardQuestions.map(SidebarQuestion.init),
+                                               together: ask.layout == .together, progress: progresses[line.id],
+                                               progressVersion: progresses.changed[line.id] ?? 0))
+                    } else {
+                        // Folded as Lamp's window folds it: what was chosen, or what was asked when it was answered in
+                        // words, a line each, marked as Lamp's window marks them.
+                        out.append(SidebarLine(id: line.id, kind: .ask, text: ask.folded ?? ask.questions.map(\.question).joined(separator: "\n"),
+                                               gap: gap, symbol: ask.folded == nil ? "questionmark.circle" : "checkmark.circle"))
                     }
+                case .needsKey, .offer:
+                    guard let offer = line.setupOffer else { continue }
+                    out.append(SidebarLine(id: line.id, kind: .setup, text: line.text, gap: gap,
+                                           setup: SetupCards.shared.content(for: offer, reason: line.text, in: project)))
+                case .noted:
+                    guard let receipt = line.noted else { continue }
+                    out.append(SidebarLine(id: line.id, kind: .note, text: "", gap: gap,
+                                           note: NoteCard.content(line, receipt: receipt, app: project.name)))
+                case .widget:
+                    let placed = Store.shared.placedWidgets.contains(project.id)
+                    out.append(SidebarLine(id: line.id, kind: .widget, text: WidgetCard.title(project.name), gap: gap, placed: placed,
+                                           detail: project.platform.hasIOS ? WidgetCard.phoneStatus(project.name) : WidgetCard.status(project.name, placed: placed)))
+                case .drawIcon:
+                    out.append(SidebarLine(id: line.id, kind: .action, text: DrawIconLine.text(project), gap: gap,
+                                           symbol: "paintbrush.pointed", button: "Draw Icon…", enabled: true))
+                case .iphoneSetup:
+                    out.append(SidebarLine(id: line.id, kind: .action, text: IPhoneSetupLine.text(project), gap: gap,
+                                           symbol: "iphone", button: IPhoneSetupLine.button, enabled: IPhoneSetupLine.canSetUp(project)))
                 case .result:
                     guard let result = line.result else { continue }
                     let current = line.id == currentResult && !busy
@@ -283,6 +315,13 @@ final class SidebarServer {
             }
         }
         return out
+    }
+
+    /// A button beside the app whose result opens in a window of Lamp's (Image Playground, iPhone setup, the
+    /// Chrome guide): Lamp comes in front of the app. Asked politely, macOS leaves the app in front, since the
+    /// click was in its window, and what was asked for would open out of sight behind it.
+    private static func comeForward() {
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private static var thumbnails: [URL: Data] = [:]
@@ -315,8 +354,50 @@ final class SidebarServer {
             draftsFromSidebar[project.id] = ""
             store.updateDraft(Store.Draft(), for: project)
         case .answer(let id, let answers):
-            guard let line = store.logs[project.id]?.first(where: { $0.id == id }) else { return }
+            // Only the card that still waits: a click that crossed a typed answer mustn't answer it twice.
+            guard let line = store.logs[project.id]?.first(where: { $0.id == id }),
+                  Talk.open(in: store.logs[project.id] ?? [])?.id == id else { return }
             store.answer(line, with: answers, in: project)
+        case .progress(let id, let progress):
+            AskProgresses.shared.set(progress, for: id)
+        case .setup(let id, let action):
+            guard let offer = store.logs[project.id]?.first(where: { $0.id == id })?.setupOffer else { return }
+            switch action {
+            case .drawIcon:
+                // Image Playground opens over Lamp's window: the chat beside the app can't hold it.
+                store.showChat(project.id)
+                Self.comeForward()
+                SetupCards.shared.act(action, on: offer, in: project)
+            case .row(let row) where row == Upgrade.browserExtension.id:
+                // So does the guide to setting up Chrome.
+                store.showChat(project.id)
+                Self.comeForward()
+                SetupCards.shared.guideFor = project.id
+            case .row(let row) where row.hasPrefix("signIn:"):
+                // A sign-in may ask in a window of Lamp's.
+                Self.comeForward()
+                SetupCards.shared.act(action, on: offer, in: project)
+            default:
+                SetupCards.shared.act(action, on: offer, in: project)
+            }
+        case .undoNote(let id):
+            store.undoNoteShowingProblem(id, in: project)
+        case .act(let id):
+            guard let line = store.logs[project.id]?.first(where: { $0.id == id }) else { return }
+            switch line.kind {
+            case .drawIcon:
+                store.showChat(project.id)
+                Self.comeForward()
+                store.iconFromPlayground(project)
+            case .iphoneSetup:
+                IPhoneSetupLine.setUp(project, wanted: Platform(rawValue: line.text) ?? .iphone)
+                Self.comeForward()
+            case .error:
+                guard let udid = line.retryPhone, project.device != nil, !store.busy.contains(project.id) else { return }
+                Task { await store.retryPhone(project, udid: udid) }
+            default:
+                break
+            }
         case .tryIt(let id):
             guard let untried = store.logs[project.id]?.first(where: { $0.id == id })?.result?.untried else { return }
             store.send(Talk.tryRequest(untried), to: project)
@@ -441,8 +522,10 @@ final class SidebarServer {
             guard !outbox.isHolding else { waiting = true; return }
             guard let server, let project = Store.shared.projects.first(where: { $0.id == projectID }) else { return }
             var state = server.state(for: project)
-            // A sidebar from before the summary line can't read one, and would drop the whole chat.
+            // A sidebar from before the summary line can't read one, and would drop the whole chat; the same for
+            // one from before the cards.
             if version < 2 { state.lines.removeAll { $0.kind == .summary } }
+            if version < 3 { state.lines.removeAll { [.setup, .note, .widget, .action].contains($0.kind) } }
             guard let data = SidebarWire.encode(state), force || data != last else { return }
             last = data
             outbox.send(data)

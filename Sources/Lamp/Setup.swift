@@ -452,7 +452,7 @@ struct ImageModelRow: View {
             CapabilityNote(capability: .pictures, context: context)
         } else {
             switch Icons.artMenu(models: images.map(\.id), selection: selection, drawer: pictures.answer,
-                                 byHandAvailable: forIcons && UpgradeView.isOffered(.drawIcons),
+                                 byHandAvailable: forIcons && SetupCards.isOffered(.drawIcons),
                                  byHandChosen: resolution.provider == Icons.byHand) {
             case .named(let id):
                 // One model, or Codex drawing with its own: nothing to choose, so it's named.

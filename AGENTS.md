@@ -38,7 +38,8 @@ A capability given to one engine must be given to all of them that can take it, 
   answers them (`Agent.Rules.ask`). Each piece of a card has a word limit (`Talk.Words`, the same numbers as the
   tools' descriptions), and a call over it is turned away for the agent to say shorter, whichever engine it is. Its
   pieces are tools: `ask` puts questions in the chat as a card answered by clicking, laid out as the agent
-  chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own), and `show_result` is
+  chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own; each answer
+  with its few words either way, a field for the person's own, You Decide, and Send), and `show_result` is
   the card for what a request came to: its picture and one sentence, for a new app or a big change what they
   now have, for an ordinary change that adds things to find what's new and where, and what wasn't tried as a
   Have Lamp Test It button. No rows: under the picture they read as captions of it, and a new app's guesses and idea there
@@ -62,7 +63,9 @@ A capability given to one engine must be given to all of them that can take it, 
   at once (`AskSteps`), so nothing moves under the pointer. Its questions are kept the same height, so the card
   never shows room to spare under one of them: a question's answers are one row however many there are, and its
   tiles fill whatever another question's wording needed (`TileRows`). Only where a row would break a word (the
-  wand's narrow panel) do they go two by two or one under another, with the symbol above the words (`TileFace`). Asking ends the turn: nothing is built or saved
+  chat beside the app) do they go two by two or one under another, with the symbol above the words (`TileFace`). The card
+  is one view, `QuestionCard` in Sources/LampSidebarKit, drawn by Lamp's window and the chat beside the app alike, and how far
+  it has been answered (`AskProgress`) is Lamp's (`AskProgresses`), so an answer begun in one is carried on in the other. Asking ends the turn: nothing is built or saved
   until the answer, and an agent that goes on to another step after `ask` is ended by Lamp, the way a
   runaway one is (`Store.endOnQuestions`), whichever engine it is. Once the card is answered the chat
   follows its end again (`ChatFollow.followThroughSettling`). Only the card that waits is drawn as a card: answered, it folds to a line with what was chosen, and a notes receipt is a line too, so one thing in the chat asks for attention at a time. A new piece is a tool there, its view, and a line in `talkRules`. The agent still
@@ -424,8 +427,13 @@ process of its own whose view the app hosts (`EXHostViewController`) but can't d
 the chat's content, never the app: the extension shows what Lamp sends and passes on what the person does
 (`SidebarWire`, one JSON value a line, in Sources/LampSidebarKit), so all the chat does stays in Lamp
 (`SidebarServer`: the lines as Lamp's window shows them without Agent Details, gathered and spaced as `Transcript`
-does, the draft, attachments, the open question card). Both draw the chat with the same pieces, in
-Sources/LampSidebarKit (`Composer`, the message box; `ChatLook`, the bubbles, statuses, progress line, Stop and Send),
+does, the draft, attachments, and every card and line that asks something of the person: the question card, setup
+offers, the widget's card, notes receipts with Undo, Draw Icon, iPhone setup and a phone's Retry). What needs the person
+shows in the chat they're using; a button whose result can only open over Lamp's window (Image Playground, the Chrome guide)
+brings that window forward and opens it there. A key pasted into a setup card beside the app goes from the extension
+to Lamp, as typed words do, never through the app. Both draw the chat with the same pieces, in
+Sources/LampSidebarKit (`Composer`, the message box; `ChatLook`, the bubbles, statuses, progress line, Stop and Send;
+`QuestionCard`; `CardLook`, the other cards and lines, given what to say by Lamp: `SetupCards`, `NoteCard.content`),
 so a change to how Lamp's chat looks is made there and reaches both; the sidebar program is part of `BuildStamp`, so
 apps installed with an earlier one are built again when next opened. It reaches Lamp on this Mac's own address at `Edition.sidebarPort` (macOS keeps other apps, Lamp
 included, out of an extension's folder, so a socket there can't be made), and Lamp listens to a connection only

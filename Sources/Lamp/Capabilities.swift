@@ -232,7 +232,7 @@ extension AppAI {
     /// The artwork of an app's icon. It's Lamp's own request, so no app's choices apply: whatever makes
     /// pictures by Settings' choices draws it, unless the person chose to draw icons themselves in Image
     /// Playground, which then is what answers, key or no key. Where nothing can draw, that choice is one
-    /// more way to get icons (on a Mac that has Image Playground: `UpgradeView.isOffered`).
+    /// more way to get icons (on a Mac that has Image Playground: `SetupCards.isOffered`).
     @MainActor private static func resolveIconArt() -> Resolution {
         if Icons.drawnByHand(choice: Icons.iconChoice, available: Icons.playgroundAvailable) {
             return Resolution(capability: .pictures, tier: .best, answer: Icons.byHandLabel, provider: Icons.byHand,
