@@ -10750,6 +10750,10 @@ enum Template {
         if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi
       done
       for f in "$LIVE"/Sources/**/*.swift(N); do [[ -f "${f#$LIVE/}" ]] || rm "$f"; done
+      # What's built beside the app (a widget, a share extension) is built from the copy too, as it is.
+      for d in Widget Share; do
+        if [[ -d "$d" ]]; then mkdir -p "$LIVE/$d"; rsync -a --delete "$d/" "$LIVE/$d/"; else rm -rf "$LIVE/$d"; fi
+      done
     """
 
     static let buildSh = """

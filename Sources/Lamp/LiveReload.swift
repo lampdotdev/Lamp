@@ -8,11 +8,9 @@ import CryptoKit
 /// What can't go in that way (a stored property or an enum case added, removed or changed, a file removed, the
 /// App itself, Lamp's own file, the app's assets or settings) is installed as before, by reopening the app.
 enum LiveReload {
-    /// Whether the app is built live: a Mac app, or the Mac half of an app for both while
-    /// Try On points at this Mac, with nothing built beside it (a widget or share extension, which share no
-    /// code with the open app).
+    /// Whether the app is built live: a Mac app, or the Mac half of an app for both while Try On points at this Mac.
     @MainActor static func eligible(_ project: LampProject) -> Bool {
-        project.platform.hasMac && !project.onIOS && !Template.hasWidget(project) && !Template.hasShare(project)
+        project.platform.hasMac && !project.onIOS
     }
 
     static func folder(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/live") }
@@ -34,11 +32,16 @@ enum LiveReload {
     private static func runningInputs(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-inputs.txt") }
 
     /// What else goes into the installed app besides the code, which a library can't bring: what it declares
-    /// (capabilities.json), the package and the icon. A change to any of them is installed by reopening the app.
+    /// (capabilities.json), the package, the icon, and what's built beside the app (a widget or share extension,
+    /// which run in processes of their own). A change to any of them is installed by reopening the app.
     /// Not its own files (Assets): a live build reads them from the app's folder (`LampAssets`), new ones included.
     static func inputs(_ project: LampProject) -> String {
         let fm = FileManager.default
-        return ["Package.swift", Template.Capabilities.file, "icon.json"].map { name in
+        let files = ["Package.swift", Template.Capabilities.file, "icon.json"]
+            + [Template.widgetFolder, Template.shareFolder].flatMap { folder in
+                ((try? fm.subpathsOfDirectory(atPath: project.dir.appendingPathComponent(folder).path)) ?? []).sorted().map { "\(folder)/\($0)" }
+            }
+        return files.map { name in
             let data = fm.contents(atPath: project.dir.appendingPathComponent(name).path) ?? Data()
             return name + " " + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         }.joined(separator: "\n")
@@ -91,7 +94,7 @@ enum LiveReload {
         // something the open app still uses.
         if let gone = Set(open.keys).subtracting(built.keys).sorted().first { return .reopen("\(gone) was removed") }
         if (try? String(contentsOf: runningInputs(project), encoding: .utf8)) != inputs(project) {
-            return .reopen("the package, the app's settings or its icon changed")
+            return .reopen("the package, the app's settings, its icon, or its widget or Share item changed")
         }
         var changed: [String] = []
         for (path, url) in built.sorted(by: { $0.key < $1.key }) {
