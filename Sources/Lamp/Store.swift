@@ -900,14 +900,16 @@ final class Store: ObservableObject {
         LampWindows.showChat(id)
     }
 
-    /// The wish an open chat window shows, following it to wherever its first request moved it.
+    /// The wish an open chat window shows, following it to wherever its first request moved it. Its own id
+    /// first: a new wish takes the folder name ("untitled") the last one was moved away from, and `moved` still
+    /// points that name at the earlier wish.
     func project(following id: String) -> LampProject? {
-        projects.first { $0.id == moved[id] ?? id }
+        projects.first { $0.id == id } ?? moved[id].flatMap { to in projects.first { $0.id == to } }
     }
 
     /// A wish's chat window closed: a new wish nothing was asked of goes with it.
     func closedChat(_ id: String) {
-        discardIfUnused(moved[id] ?? id)
+        if let project = project(following: id) { discardIfUnused(project.id) }
     }
 
     // MARK: - Actions

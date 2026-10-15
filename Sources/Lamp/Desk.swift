@@ -464,6 +464,10 @@ struct DeskIcon: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { store.showChat(project.id) }
         .accessibilityAction(named: "Use") { store.use(project) }
+        // With keyboard navigation on, Tab reaches it as it reached the button: Space changes it, Return uses it.
+        .focusable(interactions: .activate)
+        .onKeyPress(.space) { store.showChat(project.id); return .handled }
+        .onKeyPress(.return) { store.use(project); return .handled }
         .onHover { hovered = $0 }
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hovered)
         .background(ShareAnchor(origin: .app(project.id)))
