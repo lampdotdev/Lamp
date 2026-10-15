@@ -219,7 +219,16 @@ extension Template {
                 visit(root)
                 // The entity itself stays (the app's code holds it, and moves it); what it's made of is the new code's.
                 for old in found {
+                    // A prop whose own handlers (a press action, a change handler) may refer to it or its parts is left
+                    // as it is: they'd go on acting on what the refresh replaces. It's made anew at the next launch.
+                    func handles(_ e: Entity) -> Bool {
+                        guard let part = e.components[LampPart.self] else { return false }
+                        if case .press = part.kind { return true }
+                        return part.changed != nil
+                    }
+                    if handles(old) { continue }
                     let fresh = make()
+                    if handles(fresh) { continue }
                     for child in Array(old.children) { child.removeFromParent() }
                     for child in Array(fresh.children) { old.addChild(child, preservingWorldTransform: false) }
                     // What the prop's code sets on the entity itself goes over too: its look, its collision shape,
@@ -239,13 +248,6 @@ extension Template {
                             part.rest = was.rest
                             part.restPosition = was.restPosition
                             part.value = was.value
-                            // The new code's handlers were made for the new entity, which is never shown, and may act
-                            // on it: the visible one keeps its own, and takes the new axis and range.
-                            part.changed = was.changed
-                            switch (part.kind, was.kind) {
-                            case (.press, .press(let action)): part.kind = .press(action)
-                            default: break
-                            }
                         }
                         old.components.set(part)
                     } else {
