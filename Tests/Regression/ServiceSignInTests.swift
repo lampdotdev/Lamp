@@ -37,6 +37,18 @@ final class ServiceSignInTests: XCTestCase {
         XCTAssertTrue(line.hasSuffix("one-line"), String(line))
     }
 
+    /// Disconnect asks the service to end both keys a sign-in holds, and the app's log keeps what it answered,
+    /// without the keys themselves.
+    func testDisconnectEndsBothKeysAndLogsTheAnswer() throws {
+        let printed = try runProgram(scenarios: ["disconnect"])
+        XCTAssertTrue(printed.contains("revoked made-up-refresh"), printed)
+        XCTAssertTrue(printed.contains("revoked made-up-access"), printed)
+        let logged = printed.split(separator: "\n").filter { $0.hasPrefix("LampService:") }
+        XCTAssertTrue(logged.contains { $0.contains("renewal key") && $0.contains("200") }, printed)
+        XCTAssertTrue(logged.contains { $0.contains("access key") && $0.contains("200") }, printed)
+        XCTAssertFalse(logged.contains { $0.contains("made-up-") }, printed)
+    }
+
     // MARK: - The program
 
     private func runProgram(scenarios: [String]) throws -> String {
@@ -68,9 +80,20 @@ final class ServiceSignInTests: XCTestCase {
     private static let harness = #"""
     final class Answers: URLProtocol {
         nonisolated(unsafe) static var table: [String: (Int, [String: String], Data)] = [:]
+        nonisolated(unsafe) static var posted: [(String, String)] = []
         override class func canInit(with request: URLRequest) -> Bool { true }
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
         override func startLoading() {
+            if request.httpMethod == "POST" {
+                var body = request.httpBody ?? Data()
+                if body.isEmpty, let stream = request.httpBodyStream {
+                    stream.open()
+                    var buffer = [UInt8](repeating: 0, count: 4096)
+                    while stream.hasBytesAvailable { let read = stream.read(&buffer, maxLength: buffer.count); if read <= 0 { break }; body.append(buffer, count: read) }
+                    stream.close()
+                }
+                Answers.posted.append((request.url!.absoluteString, String(decoding: body, as: UTF8.self)))
+            }
             let answer = Answers.table[request.url!.absoluteString] ?? (404, [:], Data())
             let response = HTTPURLResponse(url: request.url!, statusCode: answer.0, httpVersion: "HTTP/1.1", headerFields: answer.1)!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -133,6 +156,26 @@ final class ServiceSignInTests: XCTestCase {
                     })
                 case "resource-mismatch":
                     load(linear { edit(&$0, description) { $0["resource"] = "https://attacker.example/mcp" } })
+                case "disconnect":
+                    // A made-up sign-in for Linear, ended by Disconnect; the token address answers as Linear's would.
+                    load(real)
+                    Answers.table["https://mcp.linear.app/token"] = (200, ["Content-Type": "application/json"], Data("{}".utf8))
+                    let id = "test-" + UUID().uuidString.prefix(8)
+                    let test = LampService(id: id, name: "Linear", url: "https://mcp.linear.app/mcp")
+                    var saved = LampService.Saved(clientID: "made-up-client", clientSecret: nil, redirectURI: "http://127.0.0.1:1/callback",
+                                                  authorizationEndpoint: "https://mcp.linear.app/authorize", tokenEndpoint: "https://mcp.linear.app/token")
+                    saved.revocationEndpoint = "https://mcp.linear.app/token"
+                    saved.accessToken = "made-up-access"
+                    saved.refreshToken = "made-up-refresh"
+                    saved.save(id)
+                    test.disconnect()
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    for (address, body) in Answers.posted where address == "https://mcp.linear.app/token" {
+                        for token in ["made-up-refresh", "made-up-access"] where body.contains("token=" + token) { print("revoked " + token) }
+                    }
+                    SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Bundle.main.bundleIdentifier ?? "lamp",
+                                   kSecAttrAccount as String: "lamp-service-" + id] as CFDictionary)
+                    continue
                 case "long-refusal":
                     // A made-up refusal, long and on several lines, from Linear's real registration address.
                     load(linear { $0["https://mcp.linear.app/register"] = ["status": 400, "body": String(decoding: try! JSONSerialization.data(withJSONObject: ["error": "invalid_client_metadata", "error_description": "one-line\nsecond " + String(repeating: "very long text ", count: 200)]), as: UTF8.self)] })

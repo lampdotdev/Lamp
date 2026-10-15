@@ -746,7 +746,8 @@ origin; anything else stops the sign-in before the browser opens, and the sign-i
 The service sends the person back to this Mac's own address (`127.0.0.1`, a listener open
 only while that sign-in waits, which ignores anything that isn't the answer to it), and the app trades the code for
 its sign-in. The registration and the sign-in are one Keychain item of the app's, this device only: never in the
-app's folder, so a shared copy arrives disconnected and is flagged in the review (`Sharing.checklist`). A service is
+app's folder, so a shared copy arrives disconnected and is flagged in the review (`Sharing.checklist`). Disconnect
+forgets the sign-in here and asks the service to end both its keys, writing each answer (never a key) to the app's log. A service is
 added only when its server lets an app register itself this way; one that needs a developer app or a pasted token
 doesn't belong here. What a service says when it refuses is cut to one short line before the app shows it (`brief`). Calls are the
 service's own MCP tools (`call`, `tools`); after a sign-in the app writes the tool

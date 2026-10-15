@@ -7568,18 +7568,21 @@ enum Template {
             if state == .connecting { state = Saved.read(id)?.accessToken == nil ? .notConnected : .connected }
         }
 
-        /// Forgets the sign-in on this Mac and asks the service to end it. The app stays registered, so
-        /// connecting again is only the approval.
+        /// Forgets the sign-in on this Mac and asks the service to end both its keys, the one that renews it
+        /// first; what the service answers goes to the app's log. The app stays registered, so connecting again
+        /// is only the approval.
         func disconnect() {
             generation += 1
             pending?.close(with: CancellationError())
             pending = nil
             session = nil
             if var saved = Saved.read(id) {
-                if let endpoint = saved.revocationEndpoint, let token = saved.refreshToken ?? saved.accessToken {
-                    var form = ["token": token, "client_id": saved.clientID]
-                    if let secret = saved.clientSecret { form["client_secret"] = secret }
-                    Task.detached { _ = try? await LampService.postForm(endpoint, form) }
+                if let endpoint = saved.revocationEndpoint {
+                    let keys = [("refresh_token", saved.refreshToken), ("access_token", saved.accessToken)].compactMap { kind, token in token.map { (kind, $0) } }
+                    let client = saved.clientID, secret = saved.clientSecret, name = name
+                    Task.detached {
+                        for (kind, token) in keys { await LampService.revoke(token, kind: kind, at: endpoint, client: client, secret: secret, service: name) }
+                    }
                 }
                 saved.accessToken = nil
                 saved.refreshToken = nil
@@ -7929,8 +7932,8 @@ enum Template {
             return json
         }
 
-        /// A form posted to the service's token address. A refusal of the grant itself means the sign-in is over.
-        fileprivate static func postForm(_ address: String, _ form: [String: String]) async throws -> [String: Any] {
+        /// A form for one of the service's sign-in addresses.
+        private static func formRequest(_ address: String, _ form: [String: String]) throws -> URLRequest {
             guard let url = URL(string: address) else { throw URLError(.badURL) }
             var request = URLRequest(url: url, timeoutInterval: 30)
             request.httpMethod = "POST"
@@ -7939,7 +7942,28 @@ enum Template {
             var allowed = CharacterSet.alphanumerics
             allowed.insert(charactersIn: "-._~")
             request.httpBody = Data(form.map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: allowed) ?? "")" }.joined(separator: "&").utf8)
-            let (data, response) = try await URLSession.shared.data(for: request, delegate: stayPut)
+            return request
+        }
+
+        /// Asks the service to end one of the sign-in's keys, and writes its answer to the app's log: the status and
+        /// what it said, never the key. Nothing waits on it, since the sign-in is already forgotten here.
+        fileprivate static func revoke(_ token: String, kind: String, at address: String, client: String, secret: String?, service: String) async {
+            var form = ["token": token, "token_type_hint": kind, "client_id": client]
+            if let secret { form["client_secret"] = secret }
+            let key = kind == "refresh_token" ? "renewal key" : "access key"
+            do {
+                let (data, response) = try await URLSession.shared.data(for: try formRequest(address, form), delegate: stayPut)
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let said = brief(String(decoding: data.prefix(300), as: UTF8.self))
+                fputs("LampService: asked \(service) to end the sign-in's \(key); it answered \(status)\(said.isEmpty ? "" : ": " + said)\n", stderr)
+            } catch {
+                fputs("LampService: couldn't ask \(service) to end the sign-in's \(key): \(brief(error.localizedDescription))\n", stderr)
+            }
+        }
+
+        /// A form posted to the service's token address. A refusal of the grant itself means the sign-in is over.
+        fileprivate static func postForm(_ address: String, _ form: [String: String]) async throws -> [String: Any] {
+            let (data, response) = try await URLSession.shared.data(for: try formRequest(address, form), delegate: stayPut)
             let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard (200..<300).contains(status) else {
