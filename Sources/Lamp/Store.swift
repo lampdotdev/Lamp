@@ -1439,19 +1439,28 @@ final class Store: ObservableObject {
     func copyAppFile(_ project: LampProject) {
         guard canShare(project) else { return }
         do {
-            let exported = try Sharing.export(project)
-            let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("Forge/Shared", isDirectory: true)
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            let file = folder.appendingPathComponent(exported.lastPathComponent)
-            try? FileManager.default.removeItem(at: file)
-            try FileManager.default.moveItem(at: exported, to: file)
+            let file = try Self.sharedFile(of: project)
             NSPasteboard.general.clearContents()
             NSPasteboard.general.writeObjects([file as NSURL])
             log(project, .status, "Copied \(file.lastPathComponent). Paste it into Slack, Messages, Mail or a Finder window.")
         } catch {
             NSAlert(error: error).runModal()
         }
+    }
+
+    /// The app's .lampapp, written where it outlives the paste or the drop that hands it on: another app may
+    /// read it after Lamp has moved on.
+    nonisolated static func sharedFile(of project: LampProject, at file: URL? = nil) throws -> URL {
+        let exported = try Sharing.export(project)
+        let file = file ?? sharedFolder.appendingPathComponent(exported.lastPathComponent)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? FileManager.default.removeItem(at: file)
+        try FileManager.default.moveItem(at: exported, to: file)
+        return file
+    }
+
+    nonisolated static var sharedFolder: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("Forge/Shared", isDirectory: true)
     }
 
     func chooseExport(_ project: LampProject) {

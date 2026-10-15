@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import AVFoundation
+import UniformTypeIdentifiers
 
 /// Lamp's home: the person's wishes laid out like a desktop, and the place to make a new one, by typing it,
 /// saying it, or finding it with the agent's help. A click on a wish uses it; changing it is what its chat is
@@ -471,6 +472,7 @@ struct DeskIcon: View {
         .onHover { hovered = $0 }
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hovered)
         .background(ShareAnchor(origin: .app(project.id)))
+        .background(WishDrag(project: project))
         .contextMenu {
             Button("Change…") { store.showChat(project.id) }
             Button("Use") { store.use(project) }
@@ -484,6 +486,264 @@ struct DeskIcon: View {
         .task(id: busy) {
             let current = project
             place = await Task.detached { WishPlace.of(current) }.value
+        }
+    }
+}
+
+/// A wish dragged off the desk. Dropped on the Trash it's deleted, as Delete… does once asked (the Trash gives it
+/// back); in the Dock or the Applications folder it's the app itself; anywhere else it's the wish's shared file,
+/// as Share… makes it. A wish being changed stays where it is. Behind the icon and never in its way, so a click,
+/// a double click and the menu stay SwiftUI's: the drag is started from the window's own mouse events.
+private struct WishDrag: NSViewRepresentable {
+    @EnvironmentObject private var store: Store
+    let project: LampProject
+
+    func makeNSView(context: Context) -> Source { Source(store: store, project: project) }
+    func updateNSView(_ view: Source, context: Context) { view.project = project }
+
+    final class Source: NSView, NSDraggingSource, NSFilePromiseProviderDelegate {
+        private let store: Store
+        var project: LampProject
+        private var monitor: Any?
+        private var pressed: NSEvent?
+        /// What one drag hands over, made once whichever way the other app asks for it.
+        private var payload: Payload?
+
+        init(store: Store, project: LampProject) {
+            self.store = store
+            self.project = project
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+                self?.handle(event) ?? event
+            }
+        }
+
+        private func handle(_ event: NSEvent) -> NSEvent? {
+            switch event.type {
+            case .leftMouseDown:
+                // Only a plain press on this icon, in a window with nothing over it: a control-click is the menu.
+                let inside = event.window === window && window?.attachedSheet == nil
+                    && bounds.contains(convert(event.locationInWindow, from: nil))
+                pressed = inside && !event.modifierFlags.contains(.control) && !store.busy.contains(project.id) ? event : nil
+            case .leftMouseDragged:
+                guard let pressed else { break }
+                let moved = hypot(event.locationInWindow.x - pressed.locationInWindow.x,
+                                  event.locationInWindow.y - pressed.locationInWindow.y)
+                guard moved > 4 else { break }
+                self.pressed = nil
+                // A turn may have begun since the press.
+                guard !store.busy.contains(project.id) else { break }
+                begin(from: pressed)
+                return nil
+            default:
+                pressed = nil
+            }
+            return event
+        }
+
+        private func begin(from event: NSEvent) {
+            let writer: NSPasteboardWriting
+            if store.canShare(project) {
+                let installed = project.platform.hasMac && FileManager.default.fileExists(atPath: project.installedURL.path)
+                    ? project.installedURL : nil
+                let payload = Payload(project: project, app: installed)
+                self.payload = payload
+                writer = Promise(payload: payload, name: "\(project.name).lampapp", delegate: self)
+            } else {
+                // A draft has nothing to share yet, but can still go to the Trash.
+                payload = nil
+                let item = NSPasteboardItem()
+                item.setString(project.id, forType: Self.wishType)
+                writer = item
+            }
+            let item = NSDraggingItem(pasteboardWriter: writer)
+            let size = CGSize(width: 76, height: 76)
+            let point = convert(event.locationInWindow, from: nil)
+            item.setDraggingFrame(CGRect(origin: CGPoint(x: point.x - size.width / 2, y: point.y - size.height / 2), size: size),
+                                  contents: store.iconImage(for: project))
+            beginDraggingSession(with: [item], event: event, source: self)
+        }
+
+        static let wishType = NSPasteboard.PasteboardType("dev.lamp.wish")
+
+        func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+            // Inside Lamp a wish's file has nowhere to go: dropped on a chat it would only be an attachment.
+            guard context == .outsideApplication else { return [] }
+            return payload == nil ? .delete : [.copy, .link, .delete]
+        }
+
+        /// Apps that take a file by its address (the Dock, Slack, most mail apps) read it from the drag as they please,
+        /// so the drag says the app while it's over the Dock and the shared file everywhere else.
+        func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
+            guard let payload, payload.app != nil else { return }
+            let overDock = Payload.dockIsUnder(screenPoint)
+            guard overDock != payload.overDock else { return }
+            payload.overDock = overDock
+            let url = payload.address as NSURL
+            if let list = url.pasteboardPropertyList(forType: .fileURL) {
+                session.draggingPasteboard.setPropertyList(list, forType: .fileURL)
+            }
+            session.draggingPasteboard.setPropertyList([url.path ?? ""], forType: NSPasteboard.PasteboardType("NSFilenamesPboardType"))
+        }
+
+        func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+            payload = nil
+            guard operation == .delete, let wish = store.projects.first(where: { $0.id == project.id }) else { return }
+            Task { await store.delete(wish) }
+        }
+
+        // The file promise, for Finder, Mail, Messages and the rest that take one: written on a queue of its own,
+        // so the drop never waits on the main thread.
+        nonisolated func filePromiseProvider(_ provider: NSFilePromiseProvider, fileNameForType fileType: String) -> String {
+            (provider as? Promise)?.name ?? "Wish.lampapp"
+        }
+
+        nonisolated func filePromiseProvider(_ provider: NSFilePromiseProvider, writePromiseTo url: URL,
+                                             completionHandler: @escaping (Error?) -> Void) {
+            guard let payload = (provider as? Promise)?.payload else { return completionHandler(CocoaError(.fileNoSuchFile)) }
+            do {
+                if let app = payload.app, Payload.isApplications(url.deletingLastPathComponent()) {
+                    try Payload.alias(to: app, in: url.deletingLastPathComponent())
+                } else {
+                    try? FileManager.default.removeItem(at: url)
+                    try FileManager.default.copyItem(at: try payload.sharedFile(), to: url)
+                }
+                completionHandler(nil)
+            } catch {
+                completionHandler(error)
+            }
+        }
+
+        nonisolated func operationQueue(for provider: NSFilePromiseProvider) -> OperationQueue { Source.queue }
+
+        nonisolated private static let queue: OperationQueue = {
+            let queue = OperationQueue()
+            queue.qualityOfService = .userInitiated
+            return queue
+        }()
+    }
+
+    /// What a drag hands over: the wish's shared file, or the app itself where an app belongs. An app that takes a
+    /// file by its address reads it from the drag as it starts, before the file can be written, so the file is begun
+    /// then, in the background, and appears at that address whole (a moment later for all but the biggest wishes).
+    final class Payload: @unchecked Sendable {
+        /// The installed Mac app, when there is one.
+        let app: URL?
+        /// Where the shared file will be: a folder of this drag's own, so nothing stale is ever there.
+        let file: URL
+        /// Whether the drag last said the app, for the Dock.
+        @MainActor var overDock = false
+        private let made = DispatchGroup()
+        private var result: Result<URL, Error>?
+
+        init(project: LampProject, app: URL?) {
+            self.app = app
+            file = Store.sharedFolder.appendingPathComponent(UUID().uuidString)
+                .appendingPathComponent("\(project.name).lampapp")
+            made.enter()
+            DispatchQueue.global(qos: .userInitiated).async { [self] in
+                let result = Result { try Store.sharedFile(of: project, at: file) }
+                if case .failure(let error) = result {
+                    DispatchQueue.main.async { NSAlert(error: error).runModal() }
+                }
+                self.result = result
+                made.leave()
+            }
+        }
+
+        @MainActor var address: URL { overDock ? app ?? file : file }
+
+        /// The .lampapp, once it's written. A failure is told once, as Share… tells it: the app it was dropped on
+        /// only gets nothing.
+        func sharedFile() throws -> URL {
+            made.wait()
+            return try result!.get()
+        }
+
+        /// Whether the Dock is under a point on screen. Nothing in a drag says where it is, and the Dock settles what
+        /// it's being given (an app among the apps, a file beside the Trash) as soon as it's reached, so this goes by
+        /// where the Dock sits rather than by its window, which a hidden Dock shows only once it's out.
+        static func dockIsUnder(_ point: NSPoint) -> Bool {
+            guard let screen = NSScreen.screens.first(where: { NSMouseInRect(point, $0.frame, false) }) else { return false }
+            let dock = UserDefaults(suiteName: "com.apple.dock")
+            let frame = screen.frame, visible = screen.visibleFrame
+            // How far in the point is from the Dock's edge, and how much of the screen a Dock that stays keeps.
+            let inset: CGFloat, depth: CGFloat
+            switch dock?.string(forKey: "orientation") {
+            case "left": (inset, depth) = (point.x - frame.minX, visible.minX - frame.minX)
+            case "right": (inset, depth) = (frame.maxX - point.x, frame.maxX - visible.maxX)
+            default: (inset, depth) = (point.y - frame.minY, visible.minY - frame.minY)
+            }
+            if depth > 4 { return inset <= depth }
+            // A Dock that hides comes out when the pointer reaches the edge, about as deep as its icons, and only while
+            // it's out is the strip beside the edge the Dock rather than the window behind it.
+            let icons = CGFloat(dock?.double(forKey: "tilesize") ?? 0)
+            return inset <= 1 || inset <= (icons > 0 ? icons : 48) + 24 && dockIsOut()
+        }
+
+        /// The Dock's window is on screen only while the Dock is.
+        private static func dockIsOut() -> Bool {
+            let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+            return windows.contains { window in
+                guard let pid = window[kCGWindowOwnerPID as String] as? pid_t else { return false }
+                return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == "com.apple.dock"
+                    && window[kCGWindowLayer as String] as? Int == Int(CGWindowLevelForKey(.dockWindow))
+            }
+        }
+
+        static func isApplications(_ folder: URL) -> Bool {
+            let folders = FileManager.default.urls(for: .applicationDirectory, in: [.localDomainMask, .userDomainMask])
+            return folders.contains { $0.standardizedFileURL.resolvingSymlinksInPath() == folder.standardizedFileURL.resolvingSymlinksInPath() }
+        }
+
+        /// An alias to the app rather than the app: Lamp keeps the app where it builds it, and a copy moved away
+        /// would be left behind by the next change.
+        static func alias(to app: URL, in folder: URL) throws {
+            let name = app.deletingPathExtension().lastPathComponent
+            var target = folder.appendingPathComponent(name)
+            var count = 2
+            while FileManager.default.fileExists(atPath: target.path) {
+                target = folder.appendingPathComponent("\(name) \(count)")
+                count += 1
+            }
+            let bookmark = try app.bookmarkData(options: .suitableForBookmarkFile, includingResourceValuesForKeys: nil, relativeTo: nil)
+            try URL.writeBookmarkData(bookmark, to: target)
+        }
+    }
+
+    /// A promise, which Finder takes, that also carries the file's address, for apps that read only that (the Dock,
+    /// Slack, most mail apps).
+    final class Promise: NSFilePromiseProvider {
+        let payload: Payload
+        let name: String
+
+        init(payload: Payload, name: String, delegate: NSFilePromiseProviderDelegate) {
+            self.payload = payload
+            self.name = name
+            super.init()
+            fileType = UTType.lampApp.identifier
+            self.delegate = delegate
+        }
+
+        override func writableTypes(for pasteboard: NSPasteboard) -> [NSPasteboard.PasteboardType] {
+            super.writableTypes(for: pasteboard) + [.fileURL]
+        }
+
+        // Asked as the drag starts: a type only promised for later is never asked for at all.
+        override func pasteboardPropertyList(forType type: NSPasteboard.PasteboardType) -> Any? {
+            guard type == .fileURL else { return super.pasteboardPropertyList(forType: type) }
+            return (payload.file as NSURL).pasteboardPropertyList(forType: .fileURL)
         }
     }
 }
