@@ -56,6 +56,44 @@ final class AppSecretsTests: XCTestCase {
         XCTAssertFalse(try accepted(from: client, checkedAgainst: app), "a program the installed copy no longer vouches for")
     }
 
+    /// What the build stamps into every app (buildSh's __RESTRICT segment): dyld ignores
+    /// DYLD_INSERT_LIBRARIES for the app, so nothing can be ridden into it to ask Lamp for its secrets as
+    /// the app. The same program built without it takes the library; with it the library never runs and the
+    /// app is still the app to Lamp.
+    func testABuiltAppTakesNoInjectedLibrary() throws {
+        let marker = work.appendingPathComponent("injected")
+        let library = work.appendingPathComponent("inj.dylib")
+        let source = work.appendingPathComponent("inj.c")
+        try """
+        #include <stdio.h>
+        __attribute__((constructor)) static void go(void) { FILE *f = fopen("\(marker.path)", "w"); if (f) fclose(f); }
+        """.write(to: source, atomically: true, encoding: .utf8)
+        let built = try shell(Shell.compatibleSDK + "xcrun clang -dynamiclib -o \"\(library.path)\" \"\(source.path)\" 2>&1")
+        XCTAssertEqual(built.status, 0, built.output)
+
+        let plain = try makeApp(named: "Plain")
+        let injected = try start(plain.appendingPathComponent("Contents/MacOS/client"),
+                                 environment: ["DYLD_INSERT_LIBRARIES": library.path])
+        XCTAssertTrue(try accepted(from: injected, checkedAgainst: plain), "the plain app, library and all, is the app")
+        waitFor(injected)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path), "without __RESTRICT the library runs in the app")
+
+        try FileManager.default.removeItem(at: marker)
+        let restricted = try makeApp(named: "Restricted", restrict: true)
+        let clean = try start(restricted.appendingPathComponent("Contents/MacOS/client"),
+                              environment: ["DYLD_INSERT_LIBRARIES": library.path])
+        XCTAssertTrue(try accepted(from: clean, checkedAgainst: restricted), "the restricted app is still the app")
+        waitFor(clean)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path), "with __RESTRICT the library never runs")
+    }
+
+    /// Waits for a process that should end on its own, and ends one that won't (the client waits 30s).
+    private func waitFor(_ process: Process) {
+        let deadline = Date().addingTimeInterval(3)
+        while process.isRunning, Date() < deadline { usleep(50_000) }
+        if process.isRunning { process.terminate() }
+    }
+
     // MARK: - Where it's kept
 
     /// What one app kept is its own, and goes when that app is deleted; another app's stays.
@@ -95,8 +133,9 @@ final class AppSecretsTests: XCTestCase {
 
     // MARK: - Helpers
 
-    /// An app bundle holding a program that connects to the test's port and waits, signed ad hoc as an app is.
-    private func makeApp(named name: String) throws -> URL {
+    /// An app bundle holding a program that connects to the test's port and waits, signed ad hoc as an app
+    /// is. `restrict` adds the __RESTRICT segment buildSh gives every app Lamp builds.
+    private func makeApp(named name: String, restrict: Bool = false) throws -> URL {
         let source = work.appendingPathComponent("client.swift")
         try """
         import Foundation
@@ -116,17 +155,24 @@ final class AppSecretsTests: XCTestCase {
         <?xml version="1.0" encoding="UTF-8"?>
         <plist version="1.0"><dict><key>CFBundleIdentifier</key><string>dev.test.app</string><key>CFBundleExecutable</key><string>client</string></dict></plist>
         """.write(to: app.appendingPathComponent("Contents/Info.plist"), atomically: true, encoding: .utf8)
-        let built = try shell(Shell.compatibleSDK + "xcrun swiftc -O -o \"\(macOS.path)/client\" \"\(source.path)\" 2>&1")
+        var restrictFlags = ""
+        if restrict {
+            let empty = work.appendingPathComponent("restrict")
+            try Data().write(to: empty)
+            restrictFlags = " -Xlinker -sectcreate -Xlinker __RESTRICT -Xlinker __restrict -Xlinker \"\(empty.path)\""
+        }
+        let built = try shell(Shell.compatibleSDK + "xcrun swiftc -O\(restrictFlags) -o \"\(macOS.path)/client\" \"\(source.path)\" 2>&1")
         XCTAssertEqual(built.status, 0, built.output)
         let signed = try shell("codesign -s - -i dev.test.app \"\(app.path)\" 2>&1")
         XCTAssertEqual(signed.status, 0, signed.output)
         return app
     }
 
-    private func start(_ program: URL, arguments: [String]? = nil) throws -> Process {
+    private func start(_ program: URL, arguments: [String]? = nil, environment: [String: String]? = nil) throws -> Process {
         let process = Process()
         process.executableURL = program
         process.arguments = arguments ?? [String(port)]
+        if let environment { process.environment = environment }
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()

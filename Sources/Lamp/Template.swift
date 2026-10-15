@@ -471,6 +471,12 @@ enum Template {
         fi
         PROJECT=.lamp/device
         LIVE_SETTINGS=()
+        # dyld ignores DYLD_INSERT_LIBRARIES and the like for a binary with a __RESTRICT segment: the agent's
+        # shell can start the installed app, so nothing may ride into it (see buildSh). Loading from inside
+        # the app (LiveReload's dlopen) is unaffected.
+        mkdir -p .build
+        : > .build/restrict
+        RESTRICT_FLAGS="-Xlinker -sectcreate -Xlinker __RESTRICT -Xlinker __restrict -Xlinker $PWD/.build/restrict"
         # A live build (LiveReload): Xcode builds a copy of the project whose sources are the live copy (its
         # ../../Sources lands on .lamp/live/Sources), unoptimized and linked so a change can go into the open app.
         if [[ "${LAMP_LIVE:-}" == 1 ]]; then
@@ -484,11 +490,11 @@ enum Template {
           # One binary: unoptimized, Xcode would put the app's code in a separate debug library (for previews),
           # and the open app's calls to it wouldn't go through the binary that's changed.
           LIVE_SETTINGS=(SWIFT_OPTIMIZATION_LEVEL=-Onone SWIFT_COMPILATION_MODE=singlefile ENABLE_TESTABILITY=YES ENABLE_DEBUG_DYLIB=NO
-            "SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG LAMP_LIVE" "OTHER_LDFLAGS=-Xlinker -interposable")
+            "SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG LAMP_LIVE" "OTHER_LDFLAGS=-Xlinker -interposable $RESTRICT_FLAGS")
         fi
         xcodebuild -project "$PROJECT/{{EXE}}.xcodeproj" -scheme "{{EXE}}" -configuration Release -destination "platform=macOS" \\
           -derivedDataPath "$PROJECT/DerivedData" -allowProvisioningUpdates -allowProvisioningDeviceRegistration \\
-          DEVELOPMENT_TEAM="$LAMP_TEAM" "${LIVE_SETTINGS[@]}" build 2>&1
+          DEVELOPMENT_TEAM="$LAMP_TEAM" "OTHER_LDFLAGS=$RESTRICT_FLAGS" "${LIVE_SETTINGS[@]}" build 2>&1
         APP="build/{{EXE}}.app"
         rm -rf "$APP"
         mkdir -p build
@@ -11801,6 +11807,12 @@ enum Template {
     set -euo pipefail
     cd "$(dirname "$0")"
     FLAGS=(-c release -Xswiftc -g)
+    # dyld ignores DYLD_INSERT_LIBRARIES and the like for a binary with a __RESTRICT segment. The agent's shell
+    # can start the installed app, and Lamp answers its secrets calls only to the app itself (PeerProcess), so
+    # nothing may ride into it this way. Loading from inside the app (LiveReload's dlopen) is unaffected.
+    mkdir -p .build
+    : > .build/restrict
+    FLAGS+=(-Xlinker -sectcreate -Xlinker __RESTRICT -Xlinker __restrict -Xlinker "$PWD/.build/restrict")
     # A live build (Lamp's changing apps while they're open): debug, linked so a change can be put into the running
     # app (LampLive), from a copy of the sources in .lamp/live with each view's body wrapped so its type stays the
     # same from one change to the next. A file is copied only when it differs, so builds stay incremental.

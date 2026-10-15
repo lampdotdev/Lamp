@@ -140,6 +140,12 @@ enum Sandbox {
         // Both Lamps' folders (keys, sign-ins, every other app) stay closed; the app's own folder opens.
         for name in ["Lamp", "Lamp Dev"] {
             lines.append("(deny file-read* file-write* (subpath \(quotedPath(support + "/" + name))))")
+            // And the apps Lamp installs are for the person to run, not the command: running one needs no
+            // read the profile closes (exec maps it), so it's refused by name. A command could otherwise
+            // start another app with a library of its own inside (DYLD_INSERT_LIBRARIES) and read that
+            // app's secrets out of Lamp through it (PeerProcess). The app's own build is unaffected: it's
+            // built in its folder, not here.
+            lines.append("(deny process-exec* (subpath \(quotedPath(real(home + "/Applications/" + name + " Apps")))))")
         }
         // Lamp's shims and shell startup files may be read and run, and not changed.
         lines.append("(allow file-read* (subpath \(quotedPath(real(bin.path)))) (subpath \(quotedPath(real(zdot.path)))))")

@@ -753,7 +753,11 @@ rebuild, while Lamp is the same program from build to build. Lamp keeps them as 
 when it is signed for a team, else a file only this user can read), each app's under its id, and forgets them when
 the app is deleted. The app's token is in its folder, where the agent can read it, so Lamp answers only the app
 itself (`PeerProcess.isApp`): the process on the other end of the connection must run from where Lamp installed the
-app and pass that installed copy's designated requirement; `AppSecretsTests` runs real processes against it. A
+app and pass that installed copy's designated requirement; `AppSecretsTests` runs real processes against it.
+Two things keep that check from being passed by a process the builder's shell starts as the app: every Mac app
+is built with a `__RESTRICT` segment (buildSh), so dyld ignores `DYLD_INSERT_LIBRARIES` and the like for it —
+LiveReload's `dlopen` from inside the app is unaffected — and the agent's sandbox refuses `process-exec` under
+the apps folder, since exec needs no read the profile closes. A
 connection therefore opens only while Lamp is open. On iPhone `LampSecrets` stays the device's Keychain, which asks
 nothing, and an app that keeps its own secrets again is one line (`LampSecrets.store`). They are never in the
 app's folder, so a shared copy arrives disconnected and is flagged in the review (`Sharing.checklist`). Disconnect
