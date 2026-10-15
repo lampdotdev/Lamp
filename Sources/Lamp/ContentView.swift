@@ -244,6 +244,8 @@ struct ProjectView: View {
     @State private var draft = ""
     @State private var hasMicrophone = true
     @State private var attachments: [URL] = []
+    /// What was pointed at in the app, on its own card in the message box.
+    @State private var pointed: PointedAt?
     @State private var composerHeight = Composer.lineHeight
     @State private var focusRequest = 0
     @State private var dropTargeted = false
@@ -320,6 +322,17 @@ struct ProjectView: View {
         guard suggestionTurn != nil, let suggestion, suggestion != dismissedSuggestion else { return nil }
         return suggestion
     }
+
+    /// What was pointed at in the app, going with the next message, as its card in the message box.
+    private func pointedCard(_ pointed: PointedAt) -> some View {
+        ChatLook.PointedCard(app: project.name, title: pointed.title, detail: pointed.detail,
+                             picture: pointed.url.flatMap { NSImage(contentsOf: $0) },
+                             preview: pointed.url == nil ? nil : { previewPointed = pointed.url },
+                             chooseAgain: store.canPoint(in: project) ? { MagicPanel.shared.pointAgain(in: project) } : nil,
+                             remove: { self.pointed = nil })
+            .quickLookPreview($previewPointed)
+    }
+    @State private var previewPointed: URL?
 
     /// The files going with the next message, above the message box.
     private var pendingAttachments: some View {
@@ -502,6 +515,9 @@ struct ProjectView: View {
         }
         ForEach(queued) { message in
             ChatLook.QueuedRow(text: message.text, waitingForSetup: !store.setup.ready, onRemove: { store.unqueue(message, from: project) }) {
+                if let pointed = message.pointed {
+                    ChatLook.PointedCard(app: "", title: pointed.title, detail: pointed.detail, picture: pointed.url.flatMap { NSImage(contentsOf: $0) })
+                }
                 ForEach(message.attachments, id: \.self) { AttachmentChip(url: $0, siblings: message.attachments) }
             }
                 .padding(.top, lines.isEmpty ? 0 : 32)
@@ -511,7 +527,7 @@ struct ProjectView: View {
     /// The message box with the buttons around it, floating at the foot of the chat in the chat's own column.
     private func composerRow(_ lines: [LogLine]) -> some View {
         // A request sent again starts from the app as it was, so it can't wait behind other work.
-        let canSend = !(submissionPending || draft.trimmed.isEmpty && attachments.isEmpty || replacing != nil && busy)
+        let canSend = !(submissionPending || draft.trimmed.isEmpty && attachments.isEmpty && pointed == nil || replacing != nil && busy)
         return ChatLook.MessageBar(busy: busy, canSend: canSend,
                                    attachHelp: "Attach files. You can also paste or drop images and files here.",
                                    attach: chooseFiles, send: send, stop: { store.stop(project) },
@@ -528,6 +544,7 @@ struct ProjectView: View {
                      onSubmit: send, onFiles: attach)
                 .frame(height: composerHeight)
         } above: {
+            if let pointed { pointedCard(pointed).padding(.top, 4) }
             if !attachments.isEmpty { pendingAttachments }
         } beside: {
             if hasMicrophone {
@@ -636,6 +653,7 @@ struct ProjectView: View {
         .onChange(of: project.platform) { PhoneSetup.shared.refreshIfVisible() }
         .onChange(of: draft) { saveDraft() }
         .onChange(of: attachments) { saveDraft() }
+        .onChange(of: pointed) { saveDraft() }
         .onChange(of: replacing) { saveDraft() }
         .onAppear { hasMicrophone = Dictation.hasMicrophone }
         // A microphone plugged in (or taken away) while the chat is open shows or hides the button.
@@ -704,26 +722,28 @@ struct ProjectView: View {
         let saved = store.draft(for: store.current(project) ?? project)
         draft = saved.text
         attachments = saved.attachments
+        pointed = saved.pointed
         replacing = saved.replacing
         setAside = saved.replacing == nil ? nil
-            : Store.Draft(text: saved.setAsideText, attachments: saved.setAsideAttachments)
+            : Store.Draft(text: saved.setAsideText, attachments: saved.setAsideAttachments, pointed: saved.setAsidePointed)
     }
 
     private func saveDraft() {
         guard let current = store.current(project) else { return }
-        store.saveDraft(Store.Draft(text: draft, attachments: attachments, replacing: replacing,
-                                    setAsideText: setAside?.text ?? "", setAsideAttachments: setAside?.attachments ?? []),
+        store.saveDraft(Store.Draft(text: draft, attachments: attachments, pointed: pointed, replacing: replacing,
+                                    setAsideText: setAside?.text ?? "", setAsideAttachments: setAside?.attachments ?? [],
+                                    setAsidePointed: setAside?.pointed),
                         for: current)
     }
 
     /// Takes a request out of the chat and into the message box, with the files it was sent with.
     private func takeBack(_ line: LogLine) {
         guard !submissionPending else { return }
-        if replacing == nil { setAside = Store.Draft(text: draft, attachments: attachments) }
+        if replacing == nil { setAside = Store.Draft(text: draft, attachments: attachments, pointed: pointed) }
         dictation.cancel()
         sendProblem = nil
         draft = line.text
-        attachments = Attachments.urls(line.attachments ?? [], in: project)
+        (attachments, pointed) = line.draftAttachments(in: project)
         replacing = line.id
         focusRequest += 1
     }
@@ -737,6 +757,7 @@ struct ProjectView: View {
         sendProblem = nil
         draft = setAside?.text ?? ""
         attachments = setAside?.attachments ?? []
+        pointed = setAside?.pointed
         setAside = nil
     }
 
@@ -874,12 +895,13 @@ struct ProjectView: View {
     }
 
     private func send() {
-        guard !submissionPending, !draft.trimmed.isEmpty || !attachments.isEmpty else { return }
+        guard !submissionPending, !draft.trimmed.isEmpty || !attachments.isEmpty || pointed != nil else { return }
         let replaced = replacing.flatMap { id in store.logs[project.id]?.first { $0.id == id } }
         guard replaced == nil || !busy else { return }
         dictation.cancel()
-        let submitted = Store.Draft(text: draft, attachments: attachments, replacing: replacing,
-                                    setAsideText: setAside?.text ?? "", setAsideAttachments: setAside?.attachments ?? [])
+        let submitted = Store.Draft(text: draft, attachments: attachments, pointed: pointed, replacing: replacing,
+                                    setAsideText: setAside?.text ?? "", setAsideAttachments: setAside?.attachments ?? [],
+                                    setAsidePointed: setAside?.pointed)
         guard let token = store.beginSubmission(project) else { return }
         store.endArrival(for: project.id)
         // Decided now: sending makes the app busy at once, so by the time the chat hears of it, it can't tell
@@ -899,7 +921,7 @@ struct ProjectView: View {
         let text = submitted.text.trimmed
         let files = submitted.attachments
         guard let replaced else {
-            store.send(text, attachments: files, to: current)
+            store.send(text, attachments: files, pointed: submitted.pointed, to: current)
             finishSubmission(token, captured: submitted, sent: true)
             return
         }
@@ -908,7 +930,7 @@ struct ProjectView: View {
         Task {
             // Nothing was sent: the words go back in the box, so they aren't lost with it, and the chat
             // keeps saying why.
-            let sent = await store.sendAgain(replaced, as: text, attachments: files, in: current)
+            let sent = await store.sendAgain(replaced, as: text, attachments: files, pointed: submitted.pointed, in: current)
             if !sent { sendProblem = store.logs[current.id]?.last { $0.kind == .error }?.id }
             sendingAgain = nil
             finishSubmission(token, captured: submitted, sent: sent)

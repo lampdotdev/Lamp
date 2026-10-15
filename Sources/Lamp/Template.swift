@@ -3754,7 +3754,7 @@ enum Template {
                 if let dragged { return pick(dragged, role: "area", label: Self.place(of: dragged, in: bounds)) }
                 if let index = item(at: point) {
                     let item = items[index]
-                    return pick(rect(item), role: item.role, label: item.label.isEmpty ? item.value : item.label)
+                    return pick(rect(item), role: item.role, label: item.label.isEmpty ? item.value : item.label, context: context(of: index))
                 }
                 let box = area(around: point)
                 pick(box, role: "area", label: Self.place(of: box, in: bounds))
@@ -3768,15 +3768,46 @@ enum Template {
                 return row == "middle" && !column.isEmpty ? column : [row, column].filter { !$0.isEmpty }.joined(separator: " ")
             }
 
+            /// What a named thing is part of, to tell it from others like it: the "Kitchen basil" of one of several
+            /// "Watered" buttons. The nearest named thing around it (a row says what's in it), else short words on
+            /// its own line to its left, else the most prominent short words just above it, in its column.
+            private func context(of index: Int) -> String {
+                let own = rect(items[index])
+                let label = items[index].label.isEmpty ? items[index].value : items[index].label
+                func short(_ text: String) -> Bool { !text.isEmpty && text.count <= 40 && text != label && !text.contains("\n") }
+                let around = items.indices.filter { other in
+                    other != index && rect(items[other]).contains(own) && rect(items[other]) != own
+                        && items[other].frame.width * items[other].frame.height < items[index].frame.width * items[index].frame.height * 40
+                        && items[other].label.components(separatedBy: " · ").contains(where: short)
+                }
+                .min { rect(items[$0]).width * rect(items[$0]).height < rect(items[$1]).width * rect(items[$1]).height }
+                if let around, let first = items[around].label.components(separatedBy: " · ").first(where: short) { return first }
+                let words = items.indices.filter { $0 != index && ["text", "heading"].contains(items[$0].role) && short(items[$0].label) }
+                let left = words.filter { rect(items[$0]).maxX <= own.minX + 2 && abs(rect(items[$0]).midY - own.midY) < own.height / 2 + 4 }
+                    .max { rect(items[$0]).maxX < rect(items[$1]).maxX }
+                if let left { return items[left].label }
+                func prominence(_ word: Int) -> (Int, CGFloat, CGFloat) {
+                    (items[word].role == "heading" ? 1 : 0, rect(items[word]).height.rounded(), rect(items[word]).maxY)
+                }
+                let above = words.filter {
+                    let text = rect(items[$0])
+                    return text.maxY <= own.minY + 2 && own.minY - text.maxY < 120
+                        && text.minX < own.maxX && text.maxX > own.minX - 24
+                }
+                // A heading is one, or taller than the lines under it; of two alike, the nearer.
+                .max { prominence($0) < prominence($1) }
+                return above.map { items[$0].label } ?? ""
+            }
+
             /// Leaves a picture of `box` (this view's points) in the runtime folder and tells Lamp what it is.
-            private func pick(_ box: NSRect, role: String, label: String) {
+            private func pick(_ box: NSRect, role: String, label: String, context: String = "") {
                 guard let window = target else { return stop() }
                 let scale = scale
                 stop(tell: false)
                 // The picture is taken once the outline is off the screen, a little wider than the thing itself.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { MainActor.assumeIsolated {
                     // What it is and what it says; Lamp names the picture with them.
-                    var info: [String: String] = ["role": role, "label": label]
+                    var info: [String: String] = ["role": role, "label": label, "context": context]
                     if let png = LampRuntime.picture(of: window), let image = NSBitmapImageRep(data: png)?.cgImage {
                         let margin = 12 * scale
                         let crop = CGRect(x: box.minX * scale, y: box.minY * scale, width: box.width * scale, height: box.height * scale)

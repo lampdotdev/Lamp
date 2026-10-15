@@ -197,6 +197,7 @@ private struct Chat: View {
                         ForEach(state.queued ?? []) { message in
                             ChatLook.QueuedRow(text: message.text, waitingForSetup: state.waitingForSetup ?? false,
                                                onRemove: { link.send(.unqueue(message.id)) }) {
+                                if let pointed = message.pointed { PointedCard(pointed: pointed) }
                                 ForEach(message.attachments.indices, id: \.self) { index in
                                     AttachmentChip(attachment: message.attachments[index])
                                 }
@@ -280,6 +281,11 @@ private struct LineView: View {
                              sendAgain: line.canSendAgain == true ? { link.send(.takeBack(line.id)) } : nil,
                              isLatest: line.isLatest ?? false) {
                 let attachments = line.attachments ?? []
+                // What was pointed at keeps its card; its picture counts after the other files.
+                if let pointed = line.pointed {
+                    Button { link.send(.preview(line.id, attachments.count)) } label: { PointedCard(pointed: pointed) }
+                        .buttonStyle(.plain)
+                }
                 ForEach(attachments.indices, id: \.self) { index in
                     // A click shows it in Quick Look, as in Lamp's window.
                     Button { link.send(.preview(line.id, index)) } label: {
@@ -387,6 +393,20 @@ private struct Thumbnail: View {
     }
 }
 
+/// What was pointed at, as Lamp's window shows it: in the message box with its buttons, else the smaller card.
+private struct PointedCard: View {
+    let pointed: SidebarPointed
+    var app = ""
+    var preview: (() -> Void)?
+    var chooseAgain: (() -> Void)?
+    var remove: (() -> Void)?
+
+    var body: some View {
+        ChatLook.PointedCard(app: app, title: pointed.title, detail: pointed.detail, picture: pointed.picture.flatMap { NSImage(data: $0) },
+                             preview: preview, chooseAgain: chooseAgain, remove: remove)
+    }
+}
+
 /// An attachment as Lamp's window shows it in a chip.
 private struct AttachmentChip: View {
     let attachment: SidebarAttachment
@@ -458,6 +478,13 @@ private struct ComposerRow: View {
                      isEnabled: true, focusRequest: focus, onSubmit: submit, onFiles: attach)
                 .frame(height: height)
         } above: {
+            if let pointed = state.pointed {
+                // Its picture counts after the other files (`SidebarState.pointed`).
+                PointedCard(pointed: pointed, app: state.app, preview: { link.send(.preview(nil, state.attachments.count)) },
+                            chooseAgain: pointed.canChooseAgain == true ? { link.send(.pointAgain) } : nil,
+                            remove: { link.send(.removeAttachment(state.attachments.count)) })
+                    .padding(.top, 4)
+            }
             if !state.attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -496,7 +523,7 @@ private struct ComposerRow: View {
 
     /// As in Lamp's window: not while a message is on its way in, and a request sent again can't wait behind a turn.
     private var canSend: Bool {
-        (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !state.attachments.isEmpty)
+        (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !state.attachments.isEmpty || state.pointed != nil)
             && state.submitting != true && !(state.replacing == true && state.busy)
     }
 

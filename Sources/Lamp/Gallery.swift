@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = askEntries + resultEntries + buildEntries
+    static let entries: [Entry] = askEntries + resultEntries + buildEntries + pointedEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -107,6 +107,65 @@ enum Gallery {
                 BlueprintIcon(letter: "T", size: 44)
             })
         }
+    }
+
+    // MARK: Pointed at
+
+    private static let pointedEntries: [Entry] = [
+        pointed("In the message box", detail: "Kitchen basil", typed: "Let me add how much water, too."),
+        pointed("In the message box, nothing typed yet", detail: "Kitchen basil", typed: ""),
+        pointed("In the message box, app closed", detail: "Kitchen basil", typed: "Let me add how much water, too.", canChooseAgain: false),
+        pointed("In the message box, a long name", detail: "Weekly watering schedule for the balcony planters",
+                typed: "Make this bigger.", title: "Mark every plant on the balcony as watered today button"),
+        pointed("An area", detail: nil, typed: "Put a photo of the plant here.", title: "Top left area"),
+        Entry(group: "Pointed at", name: "Sent") {
+            AnyView(ChatLook.UserRow(text: "Let me add how much water, too.", busy: false, goBack: nil, sendAgain: {}, isLatest: true) {
+                ChatLook.PointedCard(app: "", title: "Watered button", detail: "Kitchen basil", picture: watered)
+            })
+        },
+    ]
+
+    private static func pointed(_ name: String, detail: String?, typed: String, title: String = "Watered button",
+                                canChooseAgain: Bool = true) -> Entry {
+        Entry(group: "Pointed at", name: name) {
+            AnyView(ChatLook.MessageBar(busy: false, canSend: true, attachHelp: "", attach: {}, send: {}, stop: {}, focus: {}) {
+                Text(typed.isEmpty ? ChatLook.placeholder(busy: false, empty: false) : typed)
+                    .foregroundStyle(typed.isEmpty ? .tertiary : .primary)
+                    .frame(maxWidth: .infinity, minHeight: Composer.lineHeight, alignment: .leading)
+                    .padding(.leading, 5)
+            } above: {
+                ChatLook.PointedCard(app: "Garden Notes", title: title, detail: detail, picture: title == "Top left area" ? screenshot : watered,
+                                     preview: {}, chooseAgain: canChooseAgain ? {} : nil, remove: {})
+                    .padding(.top, 4)
+            })
+        }
+    }
+
+    /// A stand-in for what was pointed at: a small bordered button, with the margin the app leaves around it.
+    private static let watered = NSImage(size: NSSize(width: 100, height: 56), flipped: true) { rect in
+        NSColor.textBackgroundColor.setFill()
+        rect.fill()
+        let button = NSBezierPath(roundedRect: NSRect(x: 12, y: 12, width: 76, height: 32), xRadius: 6, yRadius: 6)
+        NSColor.separatorColor.setStroke()
+        button.lineWidth = 1
+        button.stroke()
+        let text = NSAttributedString(string: "Watered", attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
+        text.draw(at: NSPoint(x: 50 - text.size().width / 2, y: 28 - text.size().height / 2))
+        return true
+    }
+
+    /// A stand-in for the app's picture: a window with a sidebar, in the proportions of a real one.
+    private static let screenshot = NSImage(size: NSSize(width: 600, height: 400), flipped: true) { rect in
+        NSColor.windowBackgroundColor.setFill()
+        rect.fill()
+        NSColor.controlBackgroundColor.setFill()
+        NSRect(x: 0, y: 0, width: 160, height: rect.height).fill()
+        NSColor.controlAccentColor.withAlphaComponent(0.8).setFill()
+        for row in 0..<5 {
+            NSBezierPath(roundedRect: NSRect(x: 190, y: 40 + CGFloat(row) * 60, width: 380 - CGFloat(row % 3) * 70, height: 34),
+                         xRadius: 8, yRadius: 8).fill()
+        }
+        return true
     }
 }
 

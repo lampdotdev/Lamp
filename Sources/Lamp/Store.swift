@@ -175,6 +175,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     var fromCard: Bool? = nil         // for a request: it was clicked on the agent's card, which shows it
     var result: Talk.Result? = nil    // what a request made, as the agent put it
     var noted: NoteReceipt? = nil     // what a save of Lamp's notes changed, with Undo
+    var pointed: PointedAt? = nil     // for a request: what was pointed at in the app, one of its attachments
 
     /// The offer a setup card is about, for this line and for the older key card.
     var setupOffer: SetupOffer? {
@@ -250,6 +251,8 @@ struct QueuedMessage: Identifiable {
     var replaces: String? = nil
     /// Every request that left the chat when this one was sent, oldest first.
     var tookBack: [String] = []
+    /// What was pointed at in the app, its picture going with the message besides `attachments`.
+    var pointed: PointedAt? = nil
 }
 
 extension QueuedMessage {
@@ -705,12 +708,18 @@ final class Store: ObservableObject {
     struct Draft: Equatable {
         var text = ""
         var attachments: [URL] = []
+        /// What was pointed at in the app, shown as its own card in the box rather than among `attachments`.
+        var pointed: PointedAt?
         /// The request in the chat this takes the place of when it's sent (see `sendAgain`).
         var replacing: UUID?
         /// What was in the message box before that request was taken back into it, put back if it isn't
         /// sent again after all.
         var setAsideText = ""
         var setAsideAttachments: [URL] = []
+        var setAsidePointed: PointedAt?
+
+        /// Something to send: words, files, or what was pointed at.
+        var isEmpty: Bool { text.trimmed.isEmpty && attachments.isEmpty && pointed == nil }
 
         /// This draft with a wish from the site as its words: all of the wish at once, and everything else
         /// the draft holds (files dropped into the box) kept.
@@ -730,6 +739,7 @@ final class Store: ObservableObject {
                 kept.replacing = nil
                 kept.setAsideText = ""
                 kept.setAsideAttachments = []
+                kept.setAsidePointed = nil
             }
             return kept
         }
@@ -760,6 +770,14 @@ final class Store: ObservableObject {
         updateDraft(latest, for: current)
     }
 
+    /// What was pointed at in the app goes with the message being written, in place of anything pointed at before.
+    func point(at pointed: PointedAt, in project: LampProject) {
+        guard let current = current(project) else { return }
+        var latest = draft(for: current)
+        latest.pointed = pointed
+        updateDraft(latest, for: current)
+    }
+
     /// Each app keeps its own draft, so it's still there after switching apps. The text also survives a
     /// restart (.lamp/draft.txt), and so do the request it replaces and the text that was set aside for it;
     /// attached files are only remembered while Lamp runs, so after a restart a replaced request has the
@@ -773,8 +791,8 @@ final class Store: ObservableObject {
             return Draft(text: text ?? "")
         }
         let setAside = try? String(contentsOf: lamp.appendingPathComponent("draft-set-aside.txt"), encoding: .utf8)
-        return Draft(text: text ?? "", attachments: Attachments.urls(line.attachments ?? [], in: project), replacing: line.id,
-                     setAsideText: setAside ?? "")
+        let (attachments, pointed) = line.draftAttachments(in: project)
+        return Draft(text: text ?? "", attachments: attachments, pointed: pointed, replacing: line.id, setAsideText: setAside ?? "")
     }
 
     func saveDraft(_ draft: Draft, for project: LampProject) {
@@ -1713,9 +1731,15 @@ final class Store: ObservableObject {
 
     /// Sends a message, or queues it while the app is busy. Everything queued goes out together
     /// as the next turn, so several quick follow-ups cost one agent run and one rebuild.
-    func send(_ prompt: String, attachments: [URL] = [], answering card: UUID? = nil, to project: LampProject) {
+    func send(_ prompt: String, attachments: [URL] = [], pointed: PointedAt? = nil, answering card: UUID? = nil, to project: LampProject) {
         // Waiting for setup can outlast this run, and the files may be temporary (a pasted screenshot):
-        // keep copies, so the request still has them after a relaunch.
+        // keep copies, so the request still has them after a relaunch. What was pointed at goes as a plain
+        // picture then, since waiting requests are kept as words and files.
+        var attachments = attachments, pointed = pointed
+        if !setup.ready, let picture = pointed?.url {
+            attachments.append(picture)
+            pointed = nil
+        }
         let files = setup.ready ? attachments : keepForLater(attachments)
         // Typed while a card waits, the message is its answer, even if it has to wait behind the agent's
         // turn: the card folds as it's sent, so it can't be answered a second time by a click meanwhile.
@@ -1726,7 +1750,7 @@ final class Store: ObservableObject {
             card = open.id
             saveChat(project)
         }
-        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, card: card))
+        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, card: card, pointed: pointed))
         startQueued(project)
         saveWaiting()
     }
@@ -2056,8 +2080,21 @@ final class Store: ObservableObject {
     private func post(_ messages: [QueuedMessage], to project: LampProject) -> [String] {
         var saved: [String] = []
         for message in messages {
-            let names = message.kept + Attachments.save(message.attachments, to: project)
+            var names = message.kept + Attachments.save(message.attachments, to: project)
+            // The picture of what was pointed at is one of the request's files, and the line says which.
+            var pointed = message.pointed
+            if let picture = pointed?.url {
+                let folder = project.dir.appendingPathComponent(Attachments.folder).standardizedFileURL
+                let name = picture.standardizedFileURL.deletingLastPathComponent() == folder
+                    ? picture.lastPathComponent : Attachments.save([picture], to: project).first
+                pointed?.picture = name ?? ""
+                if let name { if !names.contains(name) { names.append(name) } } else { pointed = nil }
+            }
             log(project, .user, message.text, attachments: names.isEmpty ? nil : names)
+            if let pointed, let last = logs[project.id]?.indices.last {
+                logs[project.id]?[last].pointed = pointed
+                saveChat(project)
+            }
             if let card = message.card, Talk.shows(logs[project.id]?.first { $0.id == card }), let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].fromCard = true
                 saveChat(project)
@@ -2106,7 +2143,8 @@ final class Store: ObservableObject {
         // After a request is sent again the build on disk is still of the code that was just taken back, so
         // its picture and its crashes say nothing about the files the agent has now.
         let sentAgain = messages.contains { $0.replaces != nil || !$0.tookBack.isEmpty }
-        let notes = Attachments.note(for: saved) + Versions.note(for: project)
+        let pointed = asked.compactMap { id in logs[project.id]?.first { $0.id == id }?.pointed }
+        let notes = Attachments.note(for: saved) + PointedAt.note(for: pointed) + Versions.note(for: project)
             + (sentAgain ? "" : Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project))
         turns[project.id]?.request = prompt
         let ran = await runAgent(prompt + notes, files: files, on: project)
@@ -3464,7 +3502,7 @@ final class Store: ObservableObject {
     /// engines can't all be wound back to an earlier message, and a note works the same for each of them.
     /// `attachments` are the files to send with it: the request's own, already in the app's folder, and any added.
     /// False when the app couldn't be taken back, and nothing was sent.
-    func sendAgain(_ line: LogLine, as text: String, attachments: [URL], in project: LampProject) async -> Bool {
+    func sendAgain(_ line: LogLine, as text: String, attachments: [URL], pointed: PointedAt? = nil, in project: LampProject) async -> Bool {
         guard busy.insert(project.id).inserted else { return false }
         defer { finish(project) }   // which starts the turn queued below
         let versions = await Versions.list(project)
@@ -3486,7 +3524,8 @@ final class Store: ObservableObject {
         while first > chat.startIndex, chat[first - 1].kind == .user { first -= 1 }
         // They keep what they had taken back themselves: it's the chat's only record of it.
         var again = chat[first..<index].map {
-            QueuedMessage(text: $0.text, kept: $0.attachments ?? [], replaces: $0.replaced, tookBack: $0.tookBack ?? [])
+            QueuedMessage(text: $0.text, kept: $0.attachments ?? [], replaces: $0.replaced, tookBack: $0.tookBack ?? [],
+                          pointed: $0.pointed?.waiting(in: project))
         }
         let folder = project.dir.appendingPathComponent(Attachments.folder).standardizedFileURL
         let own = attachments.filter { $0.standardizedFileURL.deletingLastPathComponent() == folder }
@@ -3503,7 +3542,7 @@ final class Store: ObservableObject {
             (request.tookBack ?? []) + (Self.reachedAgent(request.id, in: chat) ? [Self.label(for: request)] : [])
         }.filter { $0 != text }
         again.append(QueuedMessage(text: text, attachments: attachments.filter { !own.contains($0) },
-                                   kept: own.map(\.lastPathComponent), replaces: replaces, tookBack: gone))
+                                   kept: own.map(\.lastPathComponent), replaces: replaces, tookBack: gone, pointed: pointed))
         logs[project.id] = Array(chat[..<first])
         saveChat(project)
         progress[project.id] = nil   // a new app's build card belongs to the request that's gone
