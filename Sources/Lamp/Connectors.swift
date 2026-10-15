@@ -95,7 +95,7 @@ enum Connectors {
                     "{rows: [{cells: [{column, value}]}]} adds rows (answered 202: it lands a few seconds later)."),
         Connector(id: "readwise", name: "Readwise", holds: "highlights from books and articles, and Reader's saved articles",
                   kind: .token(Token(base: "https://readwise.io/api/", page: "https://readwise.io/access_token",
-                                     steps: "Copy your access token from that page, then paste it here.",
+                                     steps: "Copy your access token from Readwise, then paste it here.",
                                      headers: ["Authorization": "Token {token}"], check: "v2/auth/",
                                      example: "get(\"v2/highlights/\", query: [\"page_size\": \"50\"])")),
                   docs: "https://readwise.io/api_deets",
