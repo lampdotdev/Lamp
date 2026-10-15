@@ -594,14 +594,20 @@ private struct WishDrag: NSViewRepresentable {
 
         /// Apps that take a file by its address (the Dock, Slack, most mail apps) read it from the drag as they please,
         /// so the drag gives one only for what exists: the app while it's over the Dock, the shared file once it's
-        /// written. The address can be added to a drag under way and changed in it; Finder's promise stays as it was.
+        /// written, and none between (off the Dock before the file is whole, or when it couldn't be made). An address
+        /// can be added to a drag under way and changed in it, but not taken out, so none is an empty one; Finder's
+        /// promise stays as it was.
         private func publish() {
-            guard let session, let payload, let url = payload.address, url != payload.published else { return }
+            guard let session, let payload, payload.address != payload.published else { return }
+            let url = payload.address
             payload.published = url
-            if let list = (url as NSURL).pasteboardPropertyList(forType: .fileURL) {
-                session.draggingPasteboard.setPropertyList(list, forType: .fileURL)
+            let pasteboard = session.draggingPasteboard
+            if let url, let list = (url as NSURL).pasteboardPropertyList(forType: .fileURL) {
+                pasteboard.setPropertyList(list, forType: .fileURL)
+            } else {
+                pasteboard.setData(Data(), forType: .fileURL)
             }
-            session.draggingPasteboard.setPropertyList([url.path], forType: NSPasteboard.PasteboardType("NSFilenamesPboardType"))
+            pasteboard.setPropertyList(url.map { [$0.path] } ?? [], forType: NSPasteboard.PasteboardType("NSFilenamesPboardType"))
         }
 
         func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
