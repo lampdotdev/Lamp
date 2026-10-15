@@ -7647,8 +7647,10 @@ enum Template {
         @discardableResult
         static func delete(_ name: String) -> Bool {
             if store == .keychain { return Keychain.delete(name) }
-            lock.lock(); cache[name] = nil; lock.unlock()
-            return ask(["op": "delete", "name": name])?["ok"] as? Bool == true
+            // Remembered only once Lamp has forgotten it: until then it's still kept, and the cache goes on saying so.
+            guard ask(["op": "delete", "name": name])?["ok"] as? Bool == true else { return false }
+            lock.lock(); cache[name] = .some(nil); lock.unlock()
+            return true
         }
 
         // Lamp is asked once for each name; what it answered, and what was kept since, is remembered here.

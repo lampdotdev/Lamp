@@ -4961,8 +4961,7 @@ final class Store: ObservableObject {
             }
             return AppSecrets.save(value, as: name, app: project.instance) ? (200, ["ok": true]) : (500, ["error": "Lamp couldn't keep it."])
         case "delete":
-            AppSecrets.delete(name, app: project.instance)
-            return (200, ["ok": true])
+            return AppSecrets.delete(name, app: project.instance) ? (200, ["ok": true]) : (500, ["error": "Lamp couldn't forget it."])
         default:
             return (400, ["error": "Unknown request."])
         }

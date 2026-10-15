@@ -61,11 +61,12 @@ final class TokenServiceTests: XCTestCase {
     }
 
     /// On a Mac the token is kept by Lamp: a Disconnect while Lamp is closed can't forget it, so the app stays
-    /// connected rather than look disconnected until the token comes back on the next read.
+    /// connected, and its calls go on working, rather than look disconnected until the token comes back.
     func testADisconnectLampCantKeepStaysConnected() throws {
         let printed = try runProgram(scenarios: ["disconnect-unkept"])
         XCTAssertTrue(printed.contains("disconnect-unkept kept by lamp: true"), printed)
         XCTAssertTrue(printed.contains("disconnect-unkept still connected: true"), printed)
+        XCTAssertTrue(printed.contains("disconnect-unkept call after: answered"), printed)
     }
 
     // MARK: - The program
@@ -247,6 +248,10 @@ final class TokenServiceTests: XCTestCase {
                     try? await Task.sleep(nanoseconds: 300_000_000)
                     api.disconnect()
                     print("disconnect-unkept still connected: \(api.isConnected)")
+                    // The token is still Lamp's, so the app still has it: a call goes on working.
+                    Answers.table["https://api.example.test/v1/items"] = json(200)
+                    do { _ = try await api.get("items"); print("disconnect-unkept call after: answered") }
+                    catch { print("disconnect-unkept call after: \(error.localizedDescription)") }
                     LampSecrets.store = .keychain
                 default: print("unknown scenario \(scenario)")
                 }

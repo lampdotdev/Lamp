@@ -71,17 +71,20 @@ enum AppSecrets {
         }
     }
 
-    static func delete(_ name: String, app: String, in place: Place = place) {
+    /// False when it's still kept (the Keychain or the file refused).
+    @discardableResult
+    static func delete(_ name: String, app: String, in place: Place = place) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         switch place {
         case .keychain(let service):
-            SecItemDelete(Keychain.query(service, account: app + "/" + name) as CFDictionary)
+            let status = SecItemDelete(Keychain.query(service, account: app + "/" + name) as CFDictionary)
+            return status == errSecSuccess || status == errSecItemNotFound
         case .file(let url):
-            guard var all = File.read(url), all[app]?[name] != nil else { return }
+            guard var all = File.read(url), all[app]?[name] != nil else { return true }
             all[app]?[name] = nil
             if all[app]?.isEmpty == true { all[app] = nil }
-            File.write(all, to: url)
+            return File.write(all, to: url)
         }
     }
 
