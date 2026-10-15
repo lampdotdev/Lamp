@@ -2923,6 +2923,7 @@ enum Template {
     @preconcurrency import Vision
     #if os(macOS)
     import AppKit
+    import ExtensionKit
     import Carbon.HIToolbox
     import Network
     import WidgetKit
@@ -3512,9 +3513,9 @@ enum Template {
     }
     #endif
 
-    /// The 🪄 in each window's title bar: it opens this app's chat in Lamp beside the window, to change the app
-    /// while using it. Lamp draws that chat, not the app, so the app's own code can't speak to the agent that
-    /// builds it. The app only says where its window is, so Lamp can keep the chat beside it.
+    /// The 🪄 in each window's title bar: it opens this app's chat beside its content (`LampSidebar`), to change
+    /// the app while using it. The app also says where its window is, for the picture Lamp shows in its place
+    /// while a change reopens it.
     enum LampMagic {
         static let start: Void = {
             MainActor.assumeIsolated {
@@ -3526,6 +3527,7 @@ enum Template {
                         putBack(window)
                         attach(to: window)
                         report(window)
+                        LampSidebar.restore(window)
                     }
                 }
                 // Opened behind the person's windows (Lamp's looks during a change), no window becomes key: the
@@ -3770,19 +3772,26 @@ enum Template {
         }
 
         /// The button as tall as the toolbar's buttons when there's a toolbar, smaller in a plain title bar, in
-        /// the middle of the title bar's height.
+        /// the middle of the title bar's height. It stays at the right of the app's own content: with the chat
+        /// open beside it, it's kept clear of the chat by the chat's width.
         @MainActor private static func fit(_ holder: NSView, in window: NSWindow) {
             guard let button = holder.subviews.first else { return }
             let titlebar = max(window.frame.height - window.contentLayoutRect.height, 28)
             let side: CGFloat = titlebar > 40 ? 34 : 22
-            holder.frame.size = NSSize(width: side + 14, height: titlebar)
+            holder.frame.size = NSSize(width: side + 14 + LampSidebar.openWidth(in: window), height: titlebar)
             button.frame = NSRect(x: 4, y: ((titlebar - side) / 2).rounded(), width: side, height: side)
         }
 
         private static let identifier = NSUserInterfaceItemIdentifier("lampMagic")
 
-        /// Where the window is, in screen coordinates, for Lamp to set its chat beside it; nothing when it's out
-        /// of sight (in the Dock, or full screen, where there's no room beside it).
+        /// The wand placed again, when the chat beside the content opens, closes or is resized.
+        @MainActor static func refit(_ window: NSWindow) {
+            guard let holder = window.titlebarAccessoryViewControllers.first(where: { $0.view.identifier == identifier })?.view else { return }
+            fit(holder, in: window)
+        }
+
+        /// Where the window is, in screen coordinates, for the picture Lamp shows in its place while a change
+        /// reopens the app; nothing when it's out of sight (in the Dock, or full screen).
         @MainActor private static var reported = false
 
         @MainActor private static func report(_ window: NSWindow) {
@@ -3796,26 +3805,136 @@ enum Template {
         @MainActor private final class Opener: NSObject {
             static let shared = Opener()
             @objc func open(_ sender: NSButton) {
-                var link = URLComponents(string: "{{SCHEME}}://magic?app={{SLUG}}")!
-                // Where the window is goes with the link, so the chat opens beside it rather than waiting to be told:
-                // the wand's own window, which isn't key or main when the app isn't in front.
-                if let window = sender.window ?? NSApp.keyWindow ?? NSApp.mainWindow, isAppWindow(window) {
-                    link.queryItems?.append(URLQueryItem(name: "frame", value: NSStringFromRect(window.frame)))
-                }
-                // The Lamp that's running is told directly: a link goes to whichever copy macOS picks, which on a
-                // Mac with more than one (a developer's) may be another one, started for it.
-                if !NSRunningApplication.runningApplications(withBundleIdentifier: "{{HOST}}").isEmpty {
-                    var info: [String: String] = ["app": "{{SLUG}}"]
-                    if let frame = link.queryItems?.first(where: { $0.name == "frame" })?.value { info["frame"] = frame }
-                    DistributedNotificationCenter.default().postNotificationName(
-                        Notification.Name("{{NOTE}}magicOpen"), object: nil, userInfo: info, deliverImmediately: true)
-                    return
-                }
-                // Without bringing Lamp in front: the chat opens beside this window, which stays where it is.
-                let configuration = NSWorkspace.OpenConfiguration()
-                configuration.activates = false
-                NSWorkspace.shared.open(link.url!, configuration: configuration)
+                guard let window = sender.window ?? NSApp.keyWindow ?? NSApp.mainWindow, isAppWindow(window) else { return }
+                LampSidebar.toggle(window)
             }
+        }
+    }
+
+    /// The app's chat inside its window, beside its content: Lamp's own extension in the app
+    /// (Contents/Extensions/LampSidebar.appex), shown here and drawn by a process of its own that only Lamp
+    /// talks to. The app shows it and can do nothing else with it: what's typed there goes to Lamp, not here.
+    enum LampSidebar {
+        private static let width: CGFloat = 360
+        private static let openKey = "LampSidebarOpen"
+        private static let identifier = NSUserInterfaceItemIdentifier("lampSidebar")
+        private static var pointID: String { (Bundle.main.bundleIdentifier ?? "") + ".lamp-sidebar" }
+        @MainActor private static var restored = false
+
+        @MainActor private static func item(in window: NSWindow) -> NSSplitViewItem? {
+            (window.contentViewController as? NSSplitViewController)?.splitViewItems.first { $0.viewController.view.identifier == identifier }
+        }
+
+        @MainActor static func isOpen(in window: NSWindow) -> Bool { item(in: window).map { !$0.isCollapsed } ?? false }
+
+        @MainActor static func openWidth(in window: NSWindow) -> CGFloat {
+            guard let item = item(in: window), !item.isCollapsed else { return 0 }
+            return item.viewController.view.frame.width
+        }
+
+        @MainActor static func toggle(_ window: NSWindow) {
+            isOpen(in: window) ? close(window) : open(window)
+        }
+
+        /// A change that reopens the app brings its sidebar back with its first window, which macOS (or Lamp,
+        /// putting it back where it was) opens at its size with the sidebar: it isn't made wider again.
+        @MainActor static func restore(_ window: NSWindow) {
+            guard !restored else { return }
+            restored = true
+            if UserDefaults.standard.bool(forKey: openKey) { open(window, grow: false) }
+        }
+
+        @MainActor static func open(_ window: NSWindow, grow: Bool = true) {
+            UserDefaults.standard.set(true, forKey: openKey)
+            tellLamp()
+            if let item = item(in: window) {
+                guard item.isCollapsed else { return }
+                if grow { resize(window, by: width) }
+                item.isCollapsed = false
+                LampMagic.refit(window)
+                return
+            }
+            Task { @MainActor in
+                var identity: AppExtensionIdentity?
+                if let found = try? AppExtensionIdentity.matching(appExtensionPointIDs: pointID) {
+                    for try await list in found { identity = list.first; break }
+                }
+                guard let identity else { return fallback() }
+                let host = EXHostViewController()
+                host.configuration = .init(appExtension: identity, sceneID: "chat")
+                host.view.identifier = identifier
+                embed(host, in: window, grow: grow)
+            }
+        }
+
+        @MainActor static func close(_ window: NSWindow) {
+            UserDefaults.standard.set(false, forKey: openKey)
+            guard let item = item(in: window), !item.isCollapsed else { return }
+            let thickness = item.viewController.view.frame.width
+            item.isCollapsed = true
+            resize(window, by: -thickness)
+            LampMagic.refit(window)
+        }
+
+        /// The app's content and the chat side by side, the chat as the window's inspector; the window grows by
+        /// the chat's width so the app keeps the room it had.
+        @MainActor private static func embed(_ host: EXHostViewController, in window: NSWindow, grow: Bool) {
+            let frame = window.frame
+            let content: NSViewController
+            if let current = window.contentViewController {
+                content = current
+            } else {
+                content = NSViewController()
+                content.view = window.contentView ?? NSView()
+            }
+            window.contentViewController = nil
+            let split = NSSplitViewController()
+            split.splitView.isVertical = true
+            split.addSplitViewItem(NSSplitViewItem(viewController: content))
+            let side = NSSplitViewItem(inspectorWithViewController: host)
+            side.minimumThickness = 300
+            side.maximumThickness = 640
+            side.canCollapse = true
+            split.addSplitViewItem(side)
+            window.contentViewController = split
+            window.setFrame(frame, display: false)
+            if grow { resize(window, by: width) }
+            NotificationCenter.default.addObserver(forName: NSSplitView.didResizeSubviewsNotification, object: split.splitView,
+                                                   queue: .main) { [weak window] _ in
+                MainActor.assumeIsolated { if let window { LampMagic.refit(window) } }
+            }
+            LampMagic.refit(window)
+        }
+
+        /// Wider or narrower on the right, kept on its screen: moved left when there's no room.
+        @MainActor private static func resize(_ window: NSWindow, by change: CGFloat) {
+            guard !window.styleMask.contains(.fullScreen) else { return }
+            var frame = window.frame
+            frame.size.width += change
+            if let screen = (window.screen ?? NSScreen.main)?.visibleFrame, frame.maxX > screen.maxX {
+                frame.origin.x = max(screen.minX, screen.maxX - frame.width)
+                frame.size.width = min(frame.width, screen.width)
+            }
+            window.setFrame(frame, display: true, animate: true)
+        }
+
+        /// Lamp listens for the chat: told directly when it's running (so this Lamp answers, not another copy),
+        /// else started by its link, without coming in front.
+        @MainActor private static func tellLamp() {
+            if !NSRunningApplication.runningApplications(withBundleIdentifier: "{{HOST}}").isEmpty {
+                DistributedNotificationCenter.default().postNotificationName(
+                    Notification.Name("{{NOTE}}sidebar"), object: nil, userInfo: ["app": "{{SLUG}}"], deliverImmediately: true)
+                return
+            }
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = false
+            NSWorkspace.shared.open(URL(string: "{{SCHEME}}://sidebar?app={{SLUG}}")!, configuration: configuration)
+        }
+
+        /// No chat in this copy of the app (installed by a Lamp from before it): the chat in Lamp's window.
+        @MainActor private static func fallback() {
+            UserDefaults.standard.set(false, forKey: openKey)
+            NSWorkspace.shared.open(URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!)
         }
     }
 

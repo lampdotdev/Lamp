@@ -414,25 +414,37 @@ is clicked at a point, pixels in the picture. Lamp tells an app built before the
 heading in its binary (`Store.screenTextMarker`): such an app is told to be rebuilt when a target is used.
 
 A Mac app can be changed while it's in use (apps show the wand while the file `MagicPanel.flag`, which Lamp writes
-at launch, is beside their folders, checked each time a window comes forward): `LampMagic` in LampSupport.swift puts a wand in each of its windows'
-title bars, which opens `<scheme>://magic?app=<slug>&frame=<its window>` without bringing Lamp forward. Lamp shows
-that app's chat (`ProjectView`, the same chat as in its window) in a non-activating floating panel beside the app's
-window (`MagicPanel`), which the app keeps placed by posting its window's frame as it moves. What's half done in one
-of the two chats goes on in the other: the message box's draft, and a question card's answers so far (`AskProgresses`). Lamp draws the chat,
-never the app: whatever the app's process can do, its own generated code can, so it has no way to speak to the
-agent that builds it, only to say where its window is. The panel is an ordinary window beside the app: it comes forward with the app or Lamp, another
-app covers it like any window, and it closes when the person quits the app (not when the app closes for a change). A change still reopens the app; the rule (`Agent.Rules.macGenerated`) asks
-the agent to keep what the person was looking at in `@SceneStorage`, so it comes back as they left it. To make that
-look like the window changing in place: as the app quits it leaves a picture of its front window and where it was
-in its runtime folder (`LampMagic.leaveCover`); while the app's turn is going, Lamp shows that picture where the
-window was (`MagicPanel.showCover`, a borderless window marked "Updating…"), the new copy opens its first window in
-the same place (`putBack`), and the picture fades out once the new copy reports its window (or goes when the turn
-ends without it). The panel's crosshair button lets the person point at part of the app: the panel steps aside
-while it lies over the app, until the app says the pointing ended (`pickEnded`) or what was picked, and the app lays
-a clear window over its own (`LampMagic.Picker`), outlines the smallest named thing under the pointer from its own
-accessibility tree (`LampDriver.elements`), and on a click leaves a cropped picture of it in its runtime folder and
-says what it is; Lamp attaches that picture to the message, named after the thing ("Save button.png",
-`MagicPanel.name`), and takes a picture only from that folder.
+at launch, is beside their folders, checked each time a window comes forward): `LampMagic` in LampSupport.swift puts a
+wand in each of its windows' title bars, which opens the app's chat inside that window, as its inspector
+(`LampSidebar`: an `NSSplitViewController` around the window's content, the window growing by the chat's width). The
+chat is an ExtensionKit extension Lamp puts in every Mac app it installs (`Sidebar.install`: Sources/LampSidebar,
+built with Lamp and copied into `Contents/Extensions/LampSidebar.appex`, with an extension point of the app's own,
+`<bundle id>.lamp-sidebar`): macOS shows an extension bundled in the app without asking the person, in a sandboxed
+process of its own whose view the app hosts (`EXHostViewController`) but can't draw, read or type into. Lamp draws
+the chat's content, never the app: the extension shows what Lamp sends and passes on what the person does
+(`SidebarWire`, one JSON value a line, in Sources/LampSidebarKit), so all the chat does stays in Lamp
+(`SidebarServer`: the lines as Lamp's window shows them without Agent Details, the draft, attachments, the open
+question card). It reaches Lamp on this Mac's own address at `Edition.sidebarPort` (macOS keeps other apps, Lamp
+included, out of an extension's folder, so a socket there can't be made), and Lamp listens to a connection only
+after finding which process is on its other end (`Sidebar.app(on:)`, by the connection's port among the processes
+running a sidebar) and checking that it runs the very extension Lamp signed for that app: the hash of what was
+signed is kept in Lamp's own folder (`Sidebar.remember`), and the extension is signed with the hardened runtime so
+nothing can be loaded into it. The extension must start as Apple's own do, through `_NSExtensionMain` (the linker's
+entry point), or it crashes before its code runs. Whatever the app's process can do, its generated code can, so the
+app has no way to speak to the agent that builds it: it only shows the chat and says where its window is. The draft
+is shared with Lamp's window (`Store.updateDraft`). A sidebar left open opens again with the app's first window when
+the app reopens (`LampSidebar.restore`, without growing the window again: its frame already had the chat). An app
+installed without the extension (by an earlier Lamp) shows its chat in Lamp's window instead. A change still reopens
+the app; the rule (`Agent.Rules.macGenerated`) asks the agent to keep what the person was looking at in
+`@SceneStorage`, so it comes back as they left it. To make that look like the window changing in place: as the app
+quits it leaves a picture of its front window and where it was in its runtime folder (`LampMagic.leaveCover`); while
+the app's turn is going, Lamp shows that picture where the window was (`MagicPanel.showCover`, a borderless window
+marked "Updating…"), the new copy opens its first window in the same place (`putBack`), and the picture fades out
+once the new copy reports its window (or goes when the turn ends without it). The chat's crosshair lets the person
+point at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), outlines the smallest named
+thing under the pointer from its own accessibility tree (`LampDriver.elements`), and on a click leaves a cropped
+picture of it in its runtime folder and says what it is; Lamp attaches that picture to the message, named after the
+thing ("Save button.png", `MagicPanel.name`), and takes a picture only from that folder.
 
 Whether the change was asked for beside the app or in Lamp's window, a change goes into the open app without a restart when it can (`LiveReload`). The
 Mac app, or the Mac half of an app for both while Try On points at this Mac, is

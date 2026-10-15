@@ -734,7 +734,7 @@ final class Store: ObservableObject {
     }
 
     /// Tells every chat view of the app to take up its saved draft: what was typed in one editor (the wand's
-    /// panel, `MagicPanel`) reaches the other.
+    /// app's sidebar, `Sidebar`) reaches the other.
     func announceDraft(of project: LampProject) {
         draftUpdates[project.id] = UUID()
     }
@@ -818,11 +818,8 @@ final class Store: ObservableObject {
         guard url.scheme == Edition.urlScheme,
               let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                 .queryItems?.first(where: { $0.name == "app" })?.value else { return }
-        // The app's 🪄: its chat beside it, with Lamp's own window left where it is.
-        if url.host == "magic" {
-            let frame = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "frame" }?.value
-            return MagicPanel.shared.show(slug, beside: frame.map(NSRectFromString))
-        }
+        // An app's sidebar, started while Lamp wasn't open: Lamp listens for it, and its own window stays put.
+        if url.host == "sidebar" { return MagicPanel.shared.opening(slug) }
         showChat(slug)
     }
 
@@ -4196,6 +4193,8 @@ final class Store: ObservableObject {
         // metadata and resource forks. codesign accepts those for an ad hoc signature but refuses them for a
         // certificate one ("resource fork, Finder information, or similar detritus not allowed"), which is
         // how apps silently ended up ad hoc. Strip them first.
+        // The chat the app shows inside its window, signed with the app.
+        try Sidebar.install(into: project.builtURL, for: project)
         _ = await Shell.run("xattr -cr \"$LAMP_APP\"", cwd: project.dir, env: ["LAMP_APP": project.builtURL.path]) { _ in }
         // A widget keeps its own signature inside the app's (AppSigning.command), with entitlements Lamp
         // writes here rather than takes from the build folder, where anything could have changed them.
@@ -4210,13 +4209,15 @@ final class Store: ObservableObject {
         let shareEntitlements = project.dir.appendingPathComponent(".lamp/share-entitlements.plist")
         var signingEnv = ["LAMP_APP": project.builtURL.path, "LAMP_WIDGET": widget.path, "LAMP_WIDGET_ENTITLEMENTS": entitlements.path,
                           "LAMP_SHARE": share.path, "LAMP_SHARE_ENTITLEMENTS": shareEntitlements.path]
+            .merging(Sidebar.signingEnvironment(for: project)) { $1 }
         // An app for both was signed by Xcode for the person's team; what was put in since is sealed with the
         // same certificate and the same entitlements, never Lamp's own, which could carry neither.
         let identity = project.platform == .universal ? (await Devices.signingIdentity(for: Devices.team) ?? "-") : await AppSigning.identity()
         var signed = false
         if project.platform == .universal, identity != "-" {
             var output: [String] = []
-            signed = await Shell.run("codesign --force --preserve-metadata=entitlements -s \"$LAMP_IDENTITY\" \"$LAMP_APP\" 2>&1",
+            signed = await Shell.run(Sidebar.signingStep("codesign --force -s \"$LAMP_IDENTITY\"")
+                                     + " && codesign --force --preserve-metadata=entitlements -s \"$LAMP_IDENTITY\" \"$LAMP_APP\" 2>&1",
                                      cwd: project.dir, env: signingEnv.merging(["LAMP_IDENTITY": identity]) { $1 }) { output.append($0) } == 0
                 && AppSigning.isCertificateSigned(project.builtURL)
             if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
@@ -4286,6 +4287,9 @@ final class Store: ObservableObject {
                 log(project, .status, AppSigning.adHocNotice(for: project.name))
             }
         }
+
+        // What Lamp signed as the app's sidebar, the one program it will talk to there.
+        Sidebar.remember(project)
 
         // What the copy being replaced was signed as, to notice when this build is signed differently. Only a copy
         // of this app, by its id: one of another id at the same place (an app of the same name since deleted, or

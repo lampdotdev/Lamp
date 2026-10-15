@@ -40,7 +40,8 @@ enum AppSigning {
         let keychain = ownKeychain ? " --keychain \"$LAMP_KEYCHAIN\"" : ""
         let sign = adHoc ? "codesign --force -s -" : "codesign --force\(keychain) -s \"$LAMP_IDENTITY\""
         let app = "\(sign)\(appEntitlements ? " --entitlements \"$LAMP_APP_ENTITLEMENTS\"" : "") \"$LAMP_APP\" 2>&1"
-        var steps: [String] = []
+        // The chat inside the app's window (`Sidebar`), when the app has it, before the app around it.
+        var steps: [String] = [Sidebar.signingStep(sign)]
         if widget { steps.append("\(sign) --entitlements \"$LAMP_WIDGET_ENTITLEMENTS\" \"$LAMP_WIDGET\" 2>&1") }
         if share { steps.append("\(sign) --entitlements \"$LAMP_SHARE_ENTITLEMENTS\" \"$LAMP_SHARE\" 2>&1") }
         return (steps + [app]).joined(separator: " && ")
