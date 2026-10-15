@@ -741,7 +741,8 @@ the app with the service under its own name (dynamic client registration, no sec
 in the browser with PKCE. Each address is trusted only as far as the document before it vouches for it (`discover`):
 the resource description must be on the service's own https origin and name that server, its authorization server
 must be https and its description must name itself as `issuer`, and every sign-in address must be on that server's
-origin; anything else stops the sign-in before the browser opens, and the sign-in's posts never follow a redirect.
+origin; anything else stops the sign-in before the browser opens. No request of the sign-in follows a redirect, its
+description fetches included, so each document comes from the address that was vouched for.
 `ServiceSignInTests` runs this against the five services' recorded answers and against changed copies of them.
 The service sends the person back to this Mac's own address (`127.0.0.1`, a listener open
 only while that sign-in waits, which ignores anything that isn't the answer to it), and the app trades the code for

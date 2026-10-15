@@ -20,12 +20,14 @@ final class ServiceSignInTests: XCTestCase {
     /// Each of these is Linear's real answers with one thing changed. Before the check, the app opened the other
     /// host's sign-in page and posted the proof of the sign-in to it.
     func testAnAddressOffTheServicesOwnChainStopsTheSignIn() throws {
-        let scenarios = ["endpoints-elsewhere", "endpoints-http", "issuer-elsewhere", "description-elsewhere", "resource-mismatch"]
+        let scenarios = ["endpoints-elsewhere", "endpoints-http", "issuer-elsewhere", "description-elsewhere", "resource-mismatch",
+                         "description-redirected", "description-redirected-http"]
         let printed = try runProgram(scenarios: scenarios)
         for scenario in scenarios {
             XCTAssertTrue(printed.contains("\(scenario) refused"), "\(scenario) was followed:\n\(printed)")
         }
         XCTAssertFalse(printed.contains("attacker.example"), printed)
+        XCTAssertFalse(printed.contains("evilas.test"), printed)
     }
 
     /// What a service says when it turns the app down is shown in the app's own Connect button, so it is cut short.
@@ -96,6 +98,10 @@ final class ServiceSignInTests: XCTestCase {
             }
             let answer = Answers.table[request.url!.absoluteString] ?? (404, [:], Data())
             let response = HTTPURLResponse(url: request.url!, statusCode: answer.0, httpVersion: "HTTP/1.1", headerFields: answer.1)!
+            // A redirect is offered to the session, which follows it unless the request said not to.
+            if (300..<400).contains(answer.0), let location = answer.1["Location"].flatMap(URL.init(string:)) {
+                client?.urlProtocol(self, wasRedirectedTo: URLRequest(url: location), redirectResponse: response)
+            }
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: answer.2)
             client?.urlProtocolDidFinishLoading(self)
@@ -154,6 +160,16 @@ final class ServiceSignInTests: XCTestCase {
                         answers["https://attacker.example/.well-known/oauth-protected-resource/mcp"] = ["status": 200, "body": #"{"resource":"https://mcp.linear.app/mcp","authorization_servers":["https://attacker.example"]}"#]
                         answers["https://attacker.example/.well-known/oauth-authorization-server"] = ["status": 200, "body": #"{"issuer":"https://attacker.example","authorization_endpoint":"https://attacker.example/authorize","token_endpoint":"https://attacker.example/token","registration_endpoint":"https://attacker.example/register"}"#]
                     })
+                case "description-redirected", "description-redirected-http":
+                    // The service's own description address sends the app elsewhere, where a document names an
+                    // authorization server that agrees with itself; over https, and over plain http as a network
+                    // attacker could answer.
+                    let elsewhere = (scenario.hasSuffix("http") ? "http" : "https") + "://evil.test/resource-doc"
+                    load(linear { answers in
+                        answers[elsewhere] = ["status": 200, "body": #"{"resource":"https://mcp.linear.app/mcp","authorization_servers":["https://evilas.test"]}"#]
+                        answers["https://evilas.test/.well-known/oauth-authorization-server"] = ["status": 200, "body": #"{"issuer":"https://evilas.test","authorization_endpoint":"https://evilas.test/authorize","token_endpoint":"https://evilas.test/token","registration_endpoint":"https://evilas.test/register"}"#]
+                    })
+                    Answers.table[description] = (302, ["Location": elsewhere], Data())
                 case "resource-mismatch":
                     load(linear { edit(&$0, description) { $0["resource"] = "https://attacker.example/mcp" } })
                 case "disconnect":

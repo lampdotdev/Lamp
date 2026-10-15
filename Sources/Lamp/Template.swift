@@ -7627,8 +7627,8 @@ enum Template {
         /// How the sign-in page is shown: the browser. Replaced only by a harness that has no person to click.
         fileprivate static var openPage: (URL) -> Void = { NSWorkspace.shared.open($0) }
 
-        /// The service's sign-in addresses, found the way MCP describes: the server names where its
-        /// authorization server's description is; older servers keep that at their own address.
+        /// The service's sign-in addresses, found the way MCP describes: the server's 401 names its own description,
+        /// which names its authorization server, whose description gives the addresses.
         fileprivate struct Discovered {
             var authorizationEndpoint: URL
             var tokenEndpoint: URL
@@ -7643,16 +7643,17 @@ enum Template {
             probe.setValue("application/json", forHTTPHeaderField: "Content-Type")
             probe.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
             probe.httpBody = try JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "id": 0, "method": "initialize", "params": Self.initializeParams])
-            let challenge = (try? await URLSession.shared.data(for: probe)).flatMap { ($0.1 as? HTTPURLResponse)?.value(forHTTPHeaderField: "WWW-Authenticate") } ?? ""
+            let challenge = (try? await URLSession.shared.data(for: probe, delegate: Self.stayPut)).flatMap { ($0.1 as? HTTPURLResponse)?.value(forHTTPHeaderField: "WWW-Authenticate") } ?? ""
             func parameter(_ key: String) -> String? {
                 guard let range = challenge.range(of: key + "=\"") else { return nil }
                 let rest = challenge[range.upperBound...]
                 return rest.firstIndex(of: "\"").map { String(rest[..<$0]) }
             }
             // Every address comes from a description, and each description is trusted only as far as the one before it
-            // vouches for it: the server's own description sits on the server's own address and names the server; it
-            // names the authorization server, whose description names itself; and the sign-in addresses are that
-            // server's, over https. Anything else stops here, before the browser opens or a code is sent anywhere.
+            // vouches for it: the server's own description is served from the server's own address, never reached by a
+            // redirect, and names the server; it names the authorization server, whose description names itself; and
+            // the sign-in addresses are that server's, over https. Anything else stops here, before the browser opens or
+            // a code is sent anywhere.
             func refuse(_ why: String) -> Failure {
                 fputs("LampService: \(name)'s sign-in description doesn't hold together: \(why)\n", stderr)
                 return Failure(message: "\(name) can't be reached right now.")
@@ -7926,7 +7927,8 @@ enum Template {
             guard let url = URL(string: address) else { throw URLError(.badURL) }
             var request = URLRequest(url: url, timeoutInterval: 20)
             request.setValue("application/json", forHTTPHeaderField: "Accept")
-            let (data, response) = try await URLSession.shared.data(for: request)
+            // Only the document at this very address: a redirect would let whoever it points to vouch for the next step.
+            let (data, response) = try await URLSession.shared.data(for: request, delegate: stayPut)
             guard (response as? HTTPURLResponse)?.statusCode == 200,
                   let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw URLError(.badServerResponse) }
             return json
@@ -7980,8 +7982,8 @@ enum Template {
             return line.count > 160 ? String(line.prefix(159)) + "…" : line
         }
 
-        /// The sign-in's posts go to the address they were made for and nowhere a redirect points: following one
-        /// would send the form, the code and its proof with it.
+        /// Every request of the sign-in goes to the address it was made for and nowhere a redirect points: following
+        /// one would let another host vouch for the next step, or send the form, the code and its proof with it.
         private final class StayPut: NSObject, URLSessionTaskDelegate {
             func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                             newRequest request: URLRequest) async -> URLRequest? { nil }
