@@ -269,6 +269,31 @@ final class BrowserLookTests: XCTestCase {
         XCTAssertEqual(BrowserLook.picture("0123456789abcdef", of: app)?.isArt, false)
         XCTAssertNil(BrowserLook.picture("fedcba9876543210", of: app))
         XCTAssertNil(BrowserLook.picture("../../../private", of: app))
+
+        // A sidebar folder that is itself a link to a folder elsewhere isn't followed.
+        let other = LampProject(id: "other", name: "Other", exe: "Other", dir: root.appendingPathComponent("other"), instance: "other-instance")
+        let outside = root.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try jpeg.write(to: outside.appendingPathComponent("0123456789abcdef.jpg"))
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("other/.lamp/runtime"), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("other/.lamp/runtime/sidebar"), withDestinationURL: outside)
+        XCTAssertNil(BrowserLook.picture("0123456789abcdef", of: other))
+    }
+
+    // Chrome takes at most 1 MB in one answer from Lamp: a large picture is made smaller to fit, not dropped there.
+    func testALargePictureIsMadeSmallEnoughForChrome() throws {
+        let space = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+        let context = try XCTUnwrap(CGContext(data: nil, width: 4000, height: 3000, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        for x in stride(from: 0, to: 4000, by: 7) {
+            context.setFillColor(CGColor(srgbRed: CGFloat(x % 255) / 255, green: CGFloat((x * 7) % 255) / 255, blue: 0.5, alpha: 1))
+            context.fill(CGRect(x: x, y: (x * 13) % 3000, width: 7, height: 3000))
+        }
+        let photo = try XCTUnwrap(NSBitmapImageRep(cgImage: try XCTUnwrap(context.makeImage())).representation(using: .jpeg, properties: [.compressionFactor: 1.0]))
+        let drawn = try XCTUnwrap(BrowserLook.redrawn(photo, png: false))
+        XCTAssertLessThanOrEqual(drawn.count, 700_000)
+        let size = try XCTUnwrap(NSBitmapImageRep(data: drawn))
+        XCTAssertLessThanOrEqual(max(size.pixelsWide, size.pixelsHigh), 1024)
     }
 }
 

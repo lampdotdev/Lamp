@@ -30,7 +30,8 @@ enum BrowserLook {
         var r: Double, g: Double, b: Double
         init(_ r: Double, _ g: Double, _ b: Double) { self.r = r; self.g = g; self.b = b }
         init?(hex: String) {
-            guard hex.count == 7, hex.first == "#", let value = Int(hex.dropFirst(), radix: 16) else { return nil }
+            guard hex.count == 7, hex.first == "#", hex.dropFirst().allSatisfy(\.isHexDigit),
+                  let value = Int(hex.dropFirst(), radix: 16) else { return nil }
             self.init(Double(value >> 16 & 255) / 255, Double(value >> 8 & 255) / 255, Double(value & 255) / 255)
         }
         var hex: String {
@@ -73,10 +74,17 @@ enum BrowserLook {
             default: self = .standard
             }
         }
+        /// Asked every time a sidebar redraws, so read once per change of APP.md, and only its first kilobyte.
+        private static var known: [String: (stamp: Date, template: Template)] = [:]
         static func of(_ project: LampProject) -> Template {
-            guard let text = try? String(contentsOf: project.dir.appendingPathComponent("APP.md"), encoding: .utf8) else { return .standard }
+            let file = project.dir.appendingPathComponent("APP.md")
+            let stamp = (try? FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate] as? Date) ?? .distantPast
+            if let kept = known[project.id], kept.stamp == stamp { return kept.template }
+            let text = BrowserLook.plainFile(file, limit: 1024).map { String(decoding: $0, as: UTF8.self) } ?? ""
             let line = text.split(separator: "\n").prefix(5).first { $0.hasPrefix("Kind:") }
-            return Template(kind: line.map { $0.dropFirst(5).trimmingCharacters(in: .whitespaces) })
+            let template = Template(kind: line.map { $0.dropFirst(5).trimmingCharacters(in: .whitespaces) })
+            known[project.id] = (stamp, template)
+            return template
         }
     }
 
@@ -138,24 +146,63 @@ enum BrowserLook {
     /// as JPEG, art with a clear background as PNG. Only a plain file of that folder is read, and it's drawn afresh, so
     /// what reaches the sidebar is only ever a picture.
     struct Picture { var data: Data; var isArt: Bool; var dataURL: String { (isArt ? "data:image/png;base64," : "data:image/jpeg;base64,") + data.base64EncodedString() } }
+    /// Drawn once for each file: the sidebar asks again whenever it opens.
+    private static var drawnPictures: [String: (file: String, picture: Picture)] = [:]
     static func picture(_ name: String, of project: LampProject) -> Picture? {
         guard isPictureName(name) else { return nil }
-        let folder = Runtime.macFolder(project).appendingPathComponent("sidebar").resolvingSymlinksInPath()
+        // The folders are the app's, and its builder's to write: none of them may lead elsewhere.
+        var folder = project.dir
+        for step in [".lamp", "runtime", "sidebar"] {
+            folder.appendPathComponent(step)
+            guard let values = try? folder.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey]),
+                  values.isSymbolicLink != true, values.isDirectory == true else { return nil }
+        }
         for (ext, isArt) in [("jpg", false), ("png", true)] {
             let file = folder.appendingPathComponent(name + "." + ext)
-            guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
-                  values.isRegularFile == true, values.isSymbolicLink != true, (values.fileSize ?? .max) <= 4_000_000,
-                  let data = try? Data(contentsOf: file), let drawn = redrawn(data, png: isArt) else { continue }
-            return Picture(data: drawn, isArt: isArt)
+            guard let stat = try? FileManager.default.attributesOfItem(atPath: file.path) else { continue }
+            let identity = "\(project.id) \(stat[.systemFileNumber] ?? 0) \(stat[.modificationDate] ?? 0) \(stat[.size] ?? 0)"
+            if let kept = drawnPictures[name], kept.file == identity { return kept.picture }
+            guard let data = plainFile(file, limit: 4_000_000), let drawn = redrawn(data, png: isArt) else { continue }
+            let picture = Picture(data: drawn, isArt: isArt)
+            if drawnPictures.count > 64 { drawnPictures.removeAll() }
+            drawnPictures[name] = (identity, picture)
+            return picture
         }
         return nil
     }
 
+    /// A file's contents when it is a plain file (not a link, a pipe or a device) no longer than `limit`, checked and
+    /// read through one opening of it, so it can't be swapped for another between the two.
+    nonisolated static func plainFile(_ url: URL, limit: Int) -> Data? {
+        let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard descriptor >= 0 else { return nil }
+        defer { close(descriptor) }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size <= limit else { return nil }
+        var data = Data(count: limit + 1)
+        let count = data.withUnsafeMutableBytes { read(descriptor, $0.baseAddress, limit + 1) }
+        guard count >= 0, count <= limit else { return nil }
+        return data.prefix(count)
+    }
+
     /// A picture drawn again in sRGB and written by ImageIO. AppKit's own PNGs carry a gamma value that Chrome applies
     /// and other viewers don't, which washes the picture out in the sidebar.
+    /// At most 1024 pixels on its longer side, and small enough for Chrome to take in one answer (about 700 KB).
     nonisolated static func redrawn(_ data: Data, png: Bool) -> Data? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil), let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
-              (1...4096).contains(image.width), (1...4096).contains(image.height), let space = CGColorSpace(name: CGColorSpace.sRGB),
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int, let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              (1...4096).contains(width), (1...4096).contains(height) else { return nil }
+        for side in [1024, 720, 480] {
+            guard let out = redrawn(source, side: side, png: png) else { return nil }
+            if out.count <= 700_000 { return out }
+        }
+        return nil
+    }
+    private nonisolated static func redrawn(_ source: CGImageSource, side: Int, png: Bool) -> Data? {
+        let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: side,
+                                        kCGImageSourceCreateThumbnailWithTransform: true]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary), let space = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
                                       space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
