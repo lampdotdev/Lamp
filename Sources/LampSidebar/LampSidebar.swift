@@ -168,16 +168,42 @@ private struct Chat: View {
                         if let working = state.working, let since = state.workingSince {
                             ChatLook.ActivityLine(working, started: since).padding(.top, 12)
                         }
+                        if let notResponding = state.notResponding {
+                            ChatLook.UnresponsiveNotice(text: notResponding) { link.send(.forceQuit) }.padding(.top, 12)
+                        }
+                        ForEach(state.queued ?? []) { message in
+                            ChatLook.QueuedRow(text: message.text, waitingForSetup: state.waitingForSetup ?? false,
+                                               onRemove: { link.send(.unqueue(message.id)) }) {
+                                ForEach(message.attachments.indices, id: \.self) { index in
+                                    AttachmentChip(attachment: message.attachments[index])
+                                }
+                            }
+                            .padding(.top, state.lines.isEmpty ? 0 : 32)
+                        }
                         Color.clear.frame(height: 16).id("end")
                     }
+                    // A readable line length, as in Lamp's window; wide sidebars get margins instead.
+                    .frame(maxWidth: 640, alignment: .leading)
                     .padding(.horizontal, 20).padding(.top, 16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity)
                 }
                 .onChange(of: state.lines.last?.id) { follow(scroller) }
                 .onChange(of: state.lines.last?.text) { follow(scroller) }
                 .onChange(of: state.working) { follow(scroller) }
+                .onChange(of: state.queued?.count) { follow(scroller) }
                 // Once the lines are laid out: scrolled before then, the chat opens partway up.
                 .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { follow(scroller, animated: false) } }
+            }
+            if let approval = state.approval {
+                ChatLook.ApprovalCard(title: approval.title, command: approval.command, explanation: approval.explanation,
+                                      onAllow: { link.send(.approve(approval.id, allow: true, allowAll: false)) },
+                                      onAllowAll: { link.send(.approve(approval.id, allow: true, allowAll: true)) },
+                                      onDeny: { link.send(.approve(approval.id, allow: false, allowAll: false)) })
+                    // Each request starts with its command hidden, even when one follows another.
+                    .id(approval.id)
+                    .frame(maxWidth: 640)
+                    .padding(.horizontal, 20).padding(.top, 8)
+                    .frame(maxWidth: .infinity)
             }
             ComposerRow(state: state)
         }
@@ -200,7 +226,11 @@ private struct LineView: View {
                 if let attachments = line.attachments, !attachments.isEmpty {
                     HStack(spacing: 6) {
                         ForEach(attachments.indices, id: \.self) { index in
-                            Thumbnail(attachment: attachments[index], size: 72)
+                            if attachments[index].isImage ?? (attachments[index].thumbnail != nil) {
+                                Thumbnail(attachment: attachments[index], size: 72)
+                            } else {
+                                AttachmentChip(attachment: attachments[index])
+                            }
                         }
                     }
                 }
@@ -254,8 +284,20 @@ private struct Thumbnail: View {
             }
         }
         .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 5))
         .help(attachment.name)
+    }
+}
+
+/// An attachment as Lamp's window shows it in a chip.
+private struct AttachmentChip: View {
+    let attachment: SidebarAttachment
+    var onRemove: (() -> Void)?
+
+    var body: some View {
+        ChatLook.Chip(onRemove: onRemove) {
+            ChatLook.ChipLabel(name: attachment.name) { Thumbnail(attachment: attachment, size: 28) }
+        }
     }
 }
 
@@ -277,24 +319,19 @@ private struct ComposerRow: View {
         } above: {
             if !state.attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         ForEach(state.attachments.indices, id: \.self) { index in
-                            Thumbnail(attachment: state.attachments[index], size: 48)
-                                .overlay(alignment: .topTrailing) {
-                                    Button { link.send(.removeAttachment(index)) } label: {
-                                        Image(systemName: "xmark.circle.fill").symbolRenderingMode(.palette)
-                                            .foregroundStyle(.white, .black.opacity(0.6))
-                                    }
-                                    .buttonStyle(.plain)
-                                    .offset(x: 5, y: -5)
-                                }
+                            AttachmentChip(attachment: state.attachments[index]) { link.send(.removeAttachment(index)) }
                         }
                     }
-                    .padding(.top, 6).padding(.trailing, 6)
                 }
+                .padding(.top, 2)
             }
         }
-        .padding(.horizontal, 12).padding(.top, 4).padding(.bottom, 12)
+        // Lined up with the chat above it, as in Lamp's window.
+        .frame(maxWidth: 640)
+        .padding(.horizontal, 20).padding(.top, 4).padding(.bottom, 16)
+        .frame(maxWidth: .infinity)
         .onAppear { take(state) }
         .onChange(of: state.draftVersion) { take(state) }
         .onChange(of: text) { link.send(.draft(text)) }

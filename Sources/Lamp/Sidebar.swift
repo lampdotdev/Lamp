@@ -223,10 +223,20 @@ final class SidebarServer {
         let busy = store.busy.contains(project.id)
         // The progress line, as Lamp's window shows it: not under the agent's questions.
         let progress = busy && Talk.open(in: log) == nil ? store.progress[project.id] : nil
-        return SidebarState(app: project.name, lines: Self.lines(log, dir: project.dir, busy: busy, progressShown: progress != nil),
-                            working: progress?.activity, workingSince: progress?.started, empty: log.isEmpty, busy: busy,
-                            draft: draft.text, draftVersion: draftVersions[project.id] ?? 0,
-                            attachments: draft.attachments.map { SidebarAttachment(name: $0.lastPathComponent, thumbnail: Self.thumbnail($0)) })
+        var state = SidebarState(app: project.name, lines: Self.lines(log, dir: project.dir, busy: busy, progressShown: progress != nil),
+                                 working: progress?.activity, workingSince: progress?.started, empty: log.isEmpty, busy: busy,
+                                 draft: draft.text, draftVersion: draftVersions[project.id] ?? 0,
+                                 attachments: draft.attachments.map { Self.attachment($0) })
+        state.queued = (store.queued[project.id] ?? []).map { message in
+            SidebarQueued(id: message.id, text: message.text,
+                          attachments: message.attachments.map { Self.attachment($0) })
+        }
+        state.waitingForSetup = !store.setup.ready
+        state.approval = store.approvals[project.id].map {
+            SidebarApproval(id: $0.id, title: $0.title, command: $0.command, explanation: $0.explanation?.look)
+        }
+        state.notResponding = store.notResponding[project.id] != nil ? ErrorMessages.notResponding(project.name) : nil
+        return state
     }
 
     /// The chat as Lamp's window shows it without Agent Details (`Transcript`): the same lines, gathered and
@@ -257,7 +267,7 @@ final class SidebarServer {
                 case .user:
                     let files = (line.attachments ?? []).map { dir.appendingPathComponent(Attachments.folder).appendingPathComponent($0) }
                     out.append(SidebarLine(id: line.id, kind: .user, text: line.text, gap: gap,
-                                           attachments: files.isEmpty ? nil : files.map { SidebarAttachment(name: $0.lastPathComponent, thumbnail: thumbnail($0)) }))
+                                           attachments: files.isEmpty ? nil : files.map { attachment($0) }))
                 case .agent:
                     out.append(SidebarLine(id: line.id, kind: .agent, text: line.text, gap: gap, growing: busy))
                 case .summary:
@@ -285,10 +295,16 @@ final class SidebarServer {
         return out
     }
 
+    /// An attachment as the sidebar shows it: its name, and a picture of it or its icon, as Lamp's window has it.
+    fileprivate static func attachment(_ url: URL) -> SidebarAttachment {
+        SidebarAttachment(name: url.lastPathComponent, thumbnail: thumbnail(url), isImage: Attachments.isImage(url))
+    }
+
     private static var thumbnails: [URL: Data] = [:]
     fileprivate static func thumbnail(_ url: URL) -> Data? {
         if let data = thumbnails[url] { return data }
-        guard let image = NSImage(contentsOf: url) else { return nil }
+        let image = Attachments.isImage(url) ? NSImage(contentsOf: url) : NSWorkspace.shared.icon(forFile: url.path)
+        guard let image else { return nil }
         let side: CGFloat = 64
         let scale = min(side / max(image.size.width, 1), side / max(image.size.height, 1), 1)
         let size = NSSize(width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
@@ -345,6 +361,16 @@ final class SidebarServer {
             store.updateDraft(draft, for: project)
         case .stop:
             store.stop(project)
+        case .unqueue(let id):
+            guard let message = store.queued[project.id]?.first(where: { $0.id == id }) else { return }
+            store.unqueue(message, from: project)
+        case .approve(let id, let allow, let allowAll):
+            // Only the approval still waiting: a click that arrives after it was answered in Lamp does nothing.
+            guard store.approvals[project.id]?.id == id else { return }
+            store.answerApproval(for: project, allow: allow, allowAll: allowAll)
+        case .forceQuit:
+            guard store.notResponding[project.id] != nil else { return }
+            store.forceQuit(project)
         case .hello:
             break   // answered by the connection
         }

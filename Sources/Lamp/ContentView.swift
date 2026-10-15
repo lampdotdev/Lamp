@@ -499,10 +499,12 @@ struct ProjectView: View {
             if let progress { ActivityRow(progress: progress).padding(.top, 12) }
         }
         if store.notResponding[project.id] != nil {
-            UnresponsiveNotice(name: project.name) { store.forceQuit(project) }.padding(.top, 12)
+            ChatLook.UnresponsiveNotice(text: ErrorMessages.notResponding(project.name)) { store.forceQuit(project) }.padding(.top, 12)
         }
         ForEach(queued) { message in
-            QueuedRow(message: message) { store.unqueue(message, from: project) }
+            ChatLook.QueuedRow(text: message.text, waitingForSetup: !store.setup.ready, onRemove: { store.unqueue(message, from: project) }) {
+                ForEach(message.attachments, id: \.self) { AttachmentChip(url: $0, siblings: message.attachments) }
+            }
                 .padding(.top, lines.isEmpty ? 0 : 32)
         }
     }
@@ -580,7 +582,7 @@ struct ProjectView: View {
         VStack(spacing: 0) {
             chat(lines)
             if let approval = store.approvals[project.id] {
-                ApprovalCard(title: approval.title, command: approval.command, explanation: approval.explanation,
+                ChatLook.ApprovalCard(title: approval.title, command: approval.command, explanation: approval.explanation?.look,
                              onAllow: { store.answerApproval(for: project, allow: true) },
                              onAllowAll: { store.answerApproval(for: project, allow: true, allowAll: true) },
                              onDeny: { store.answerApproval(for: project, allow: false) })
@@ -1150,42 +1152,6 @@ struct BuildToolsBanner: View {
     }
 }
 
-/// A message waiting for the current change to finish. It can still be taken back.
-struct QueuedRow: View {
-    @EnvironmentObject private var store: Store
-    let message: QueuedMessage
-    let onRemove: () -> Void
-
-    /// The first request, sent from the welcome while Apple's tools were still installing.
-    private var waitingForSetup: Bool { !store.setup.ready }
-
-    var body: some View {
-        VStack(alignment: .trailing, spacing: 6) {
-            if !message.attachments.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(message.attachments, id: \.self) { AttachmentChip(url: $0, siblings: message.attachments) }
-                }
-            }
-            HStack(spacing: 6) {
-                Button(action: onRemove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                    .buttonStyle(.plain)
-                    .help("Remove from the queue")
-                    .accessibilityLabel("Remove from the queue")
-                Text(message.text)
-                    .lineSpacing(2)
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
-                    .foregroundStyle(.secondary)
-            }
-            // The width limit goes around the button too, so it stays next to the bubble.
-            .frame(maxWidth: 480 + 22, alignment: .trailing)
-            Label(waitingForSetup ? "Starts when Apple's app-building tools finish installing" : "Queued",
-                  systemImage: "clock").font(.caption).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .trailing)
-    }
-}
-
 /// An app's empty chat: its icon, its name (editable), and what to do next.
 struct NewAppIntro: View {
     @EnvironmentObject private var store: Store
@@ -1553,106 +1519,6 @@ struct ImportReviewView: View {
             .foregroundStyle(color)
             .padding(.horizontal, 10).padding(.vertical, 6)
             .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-    }
-}
-
-/// A shell command the agent wants to run, explained in plain words. Nothing runs until the user allows it.
-struct ApprovalCard: View {
-    var title = Store.PendingApproval.commandTitle
-    let command: String
-    let explanation: Store.CommandExplanation?
-    let onAllow: () -> Void
-    let onAllowAll: () -> Void
-    let onDeny: () -> Void
-    @State private var showCommand = false
-
-    private var highRisk: Bool { explanation?.risk == "high" }
-
-    /// The same green, yellow and red as app icons' backgrounds. The icon yellow is too pale to read on a
-    /// light background, so light mode gets a darker shade of it.
-    private var riskColor: Color {
-        let hex = switch explanation?.risk {
-        case "low": Icons.background(named: "green").bottom
-        case "high": Icons.background(named: "red").bottom
-        default: Icons.background(named: "yellow").bottom
-        }
-        let color = Icons.color(hex: hex) ?? .systemOrange
-        guard explanation?.risk != "low" && explanation?.risk != "high" else { return Color(nsColor: color) }
-        return Color(nsColor: NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? color : color.blended(withFraction: 0.3, of: .black) ?? color
-        })
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            if let explanation {
-                // No fixedSize here: it makes SwiftUI size the text for its narrowest possible width, and that
-                // height became the whole window's minimum, growing the window past the screen.
-                Text(explanation.summary).font(.headline)
-            } else {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Working out what this does…").foregroundStyle(.secondary)
-                }
-            }
-            // Not a DisclosureGroup: on the Mac only its chevron toggles it, so clicking the words did nothing.
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) { showCommand.toggle() }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .rotationEffect(.degrees(showCommand ? 90 : 0))
-                    Text(showCommand ? "Hide command" : "Show command").font(.caption)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            if showCommand {
-                // A short command takes only the room it needs; a long one scrolls rather than pushing the chat
-                // out of the window. The limit goes on a scroll view sized to what's in it: a frame with only
-                // a maximum takes all the height it's offered, which made a one-line command a five-line box.
-                ScrollView { commandText }
-                    .scrollBounceBehavior(.basedOnSize)
-                    .frame(maxHeight: 120)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(8)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
-            }
-            HStack {
-                // Nothing rated it: no level to show, so nothing here.
-                if let explanation, !explanation.risk.isEmpty {
-                    (Text("\(explanation.risk.capitalized) risk").bold() + Text(explanation.why.isEmpty ? "" : ": \(explanation.why)"))
-                        .font(.callout)
-                        .foregroundStyle(riskColor)
-                }
-                Spacer()
-                if highRisk {
-                    // Risky: denying is the default, on Escape as well, and there's no blanket "allow all".
-                    Button("Allow", action: onAllow)
-                    Button("Deny", role: .cancel, action: onDeny)
-                        .keyboardShortcut(.cancelAction)
-                        .buttonStyle(.borderedProminent)
-                } else {
-                    Button("Deny", role: .cancel, action: onDeny)
-                        .keyboardShortcut(.escape, modifiers: [])
-                    Button("Allow All This Turn", action: onAllowAll)
-                    Button("Allow", action: onAllow)
-                        .keyboardShortcut(.return, modifiers: .command)
-                        .buttonStyle(.borderedProminent)
-                }
-            }
-        }
-    }
-
-    private var commandText: some View {
-        Text(command)
-            .font(.system(.callout, design: .monospaced))
-            .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
