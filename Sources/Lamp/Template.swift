@@ -11806,13 +11806,13 @@ enum Template {
     # Builds build/{{EXE}}.app. Run after every change.
     set -euo pipefail
     cd "$(dirname "$0")"
-    FLAGS=(-c release -Xswiftc -g)
     # dyld ignores DYLD_INSERT_LIBRARIES and the like for a binary with a __RESTRICT segment. The agent's shell
     # can start the installed app, and Lamp answers its secrets calls only to the app itself (PeerProcess), so
     # nothing may ride into it this way. Loading from inside the app (LiveReload's dlopen) is unaffected.
     mkdir -p .build
     : > .build/restrict
-    FLAGS+=(-Xlinker -sectcreate -Xlinker __RESTRICT -Xlinker __restrict -Xlinker "$PWD/.build/restrict")
+    RESTRICT=(-Xlinker -sectcreate -Xlinker __RESTRICT -Xlinker __restrict -Xlinker "$PWD/.build/restrict")
+    FLAGS=(-c release -Xswiftc -g "${RESTRICT[@]}")
     # A live build (Lamp's changing apps while they're open): debug, linked so a change can be put into the running
     # app (LampLive), from a copy of the sources in .lamp/live with each view's body wrapped so its type stays the
     # same from one change to the next. A file is copied only when it differs, so builds stay incremental.
@@ -11821,11 +11821,14 @@ enum Template {
       cmp -s Package.swift "$LIVE/Package.swift" || cp Package.swift "$LIVE/Package.swift"
       # Lamp only wants the live copy, to put a change into the open app before building the whole of it.
       [[ "${LAMP_LIVE_COPY:-}" == 1 ]] && exit 0
-      FLAGS=(-c debug --package-path "$LIVE" --scratch-path "$LIVE/.build" -Xswiftc -DLAMP_LIVE -Xswiftc -enable-testing -Xlinker -interposable)
+      FLAGS=(-c debug --package-path "$LIVE" --scratch-path "$LIVE/.build" -Xswiftc -DLAMP_LIVE -Xswiftc -enable-testing -Xlinker -interposable "${RESTRICT[@]}")
     fi
     \(appIntentsSetup(ios: false))
-    swift build "${FLAGS[@]}" 2>&1
     BIN="$(swift build "${FLAGS[@]}" --show-bin-path)/{{EXE}}"
+    # SwiftPM doesn't relink for the new flags alone: an app first built by a Lamp without them keeps its old
+    # binary until the link runs again. Take that binary away once, and it links again with the segment.
+    if [ -f "$BIN" ] && ! otool -l "$BIN" 2>/dev/null | grep -qs __RESTRICT; then rm -f "$BIN"; fi
+    swift build "${FLAGS[@]}" 2>&1
     APP="build/{{EXE}}.app"
     rm -rf "$APP"
     mkdir -p "$APP/Contents/MacOS"
