@@ -3398,6 +3398,8 @@ enum Template {
         /// a library's calls to functions it doesn't hold were bound to the app's first copies.
         private var latest: [String: UnsafeRawPointer] = [:]
         private var images: [String] = []
+        /// The app's own accessors of its stored globals and statics, by name.
+        private var kept: [String: UnsafeRawPointer]?
 
         private func load(_ path: String?, signature: String?) {
             let folder = "{{APPS}}/{{SLUG}}/.lamp/live/"
@@ -3419,16 +3421,22 @@ enum Template {
             guard let image = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == path }),
                   let header = _dyld_get_image_header(image) else { return }
             let defined = Self.definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image))
-            // A stored global's or static's own accessors would read a second copy of it, empty, in the new code.
-            let stored = Set(defined.map(\.0).filter { $0.hasSuffix("vau") }.map { String($0.dropLast(3)) })
-            for (name, address) in defined where Self.isCode(name) && !Self.accesses(name, oneOf: stored) {
+            for (name, address) in defined where Self.isCode(name) && !Self.accesses(name, oneOf: Self.stored(in: defined)) {
                 latest[name] = address
             }
+            // Stored globals and statics stay the app's: the new code's own accessors for them would reach a second
+            // copy, made afresh, so its calls to them go to the app's, and only one that's new keeps its own.
+            if kept == nil, let app = _dyld_get_image_header(0) {
+                let symbols = Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0))
+                let stored = Self.stored(in: symbols)
+                kept = Dictionary(symbols.filter { $0.0.hasSuffix("vau") || Self.accesses($0.0, oneOf: stored) }) { first, _ in first }
+            }
+            let bindings = latest.merging(kept ?? [:]) { new, _ in new }
             images.append(path)
             var rebound = Self.rebind(image: 0, to: latest)
             for earlier in images {
                 guard let index = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == earlier }) else { continue }
-                rebound += Self.rebind(image: index, to: latest)
+                rebound += Self.rebind(image: index, to: bindings)
             }
             generation += 1
             result = "ok \(rebound)"
@@ -3444,6 +3452,11 @@ enum Template {
             for kept in ["Mn", "Mf", "MV", "Ma", "Mm", "MF", "Mc", "Ml", "MXX", "Ms", "Wp", "WP", "Wl", "WL", "lau", "vau", "Wz", "Qo", "QO", "So", "WV", "Wvd", "MQ"]
             where name.hasSuffix(kept) { return false }
             return name.hasSuffix("F") || name.hasSuffix("g") || name.hasSuffix("s") || name.hasSuffix("M") || name.hasSuffix("fC") || name.hasSuffix("fc")
+        }
+
+        /// The properties kept in storage among these symbols: those with an addressor, by the name before it.
+        private static func stored(in symbols: [(String, UnsafeRawPointer)]) -> Set<String> {
+            Set(symbols.map(\.0).filter { $0.hasSuffix("vau") }.map { String($0.dropLast(3)) })
         }
 
         /// Whether this is the getter, setter or modify of a property kept in storage (one with an addressor).
