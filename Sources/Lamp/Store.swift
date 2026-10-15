@@ -2423,7 +2423,7 @@ final class Store: ObservableObject {
         }
         Self.trashData(of: project)
         // Its sign-ins too: an app made later under the same name is another app, and starts disconnected.
-        AppSecrets.forget(app: project.id)
+        AppSecrets.forget(app: project.instance)
         let index = projects.firstIndex { $0.id == project.id }
         projects.removeAll { $0.id == project.id }
         logs[project.id] = nil
@@ -4830,14 +4830,14 @@ final class Store: ObservableObject {
         guard let name = body["name"] as? String, AppSecrets.isName(name) else { return (400, ["error": "That name can't be used."]) }
         switch body["op"] as? String {
         case "read":
-            return (200, AppSecrets.read(name, app: project.id).map { ["value": $0.base64EncodedString()] } ?? [:])
+            return (200, AppSecrets.read(name, app: project.instance).map { ["value": $0.base64EncodedString()] } ?? [:])
         case "save":
             guard let value = (body["value"] as? String).flatMap({ Data(base64Encoded: $0) }), value.count <= 64 * 1024 else {
                 return (400, ["error": "Nothing to keep."])
             }
-            return AppSecrets.save(value, as: name, app: project.id) ? (200, ["ok": true]) : (500, ["error": "Lamp couldn't keep it."])
+            return AppSecrets.save(value, as: name, app: project.instance) ? (200, ["ok": true]) : (500, ["error": "Lamp couldn't keep it."])
         case "delete":
-            AppSecrets.delete(name, app: project.id)
+            AppSecrets.delete(name, app: project.instance)
             return (200, ["ok": true])
         default:
             return (400, ["error": "Unknown request."])

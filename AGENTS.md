@@ -750,7 +750,8 @@ its sign-in. The registration and the sign-in are kept by Lamp for the app, not 
 (`LampSecrets` in LampSupport.swift, `AppSecrets` and `/app/secrets` in Lamp): Lamp's certificate has no Apple team,
 so macOS ties an item an app makes to the one build that made it and asks for the login password after every
 rebuild, while Lamp is the same program from build to build. Lamp keeps them as it keeps its own keys (the Keychain
-when it is signed for a team, else a file only this user can read), each app's under its id, and forgets them when
+when it is signed for a team, else a file only this user can read), each app's under its instance (so an app made
+later under the same folder name doesn't inherit them), and forgets them when
 the app is deleted. The app's token is in its folder, where the agent can read it, so Lamp answers only the app
 itself (`PeerProcess.isApp`): the process on the other end of the connection must run from where Lamp installed the
 app and pass that installed copy's designated requirement; `AppSecretsTests` runs real processes against it.

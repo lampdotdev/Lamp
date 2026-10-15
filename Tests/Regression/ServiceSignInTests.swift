@@ -51,6 +51,15 @@ final class ServiceSignInTests: XCTestCase {
         XCTAssertFalse(logged.contains { $0.contains("made-up-") }, printed)
     }
 
+    /// Disconnect with Lamp closed can't keep the cleared sign-in through Lamp (`.lamp`): it must not look
+    /// done, since the old sign-in is still kept and comes back on the next read.
+    func testDisconnectThatLampCantKeepStaysConnected() throws {
+        let printed = try runProgram(scenarios: ["disconnect-unkept"])
+        XCTAssertTrue(printed.contains("disconnect-unkept kept by lamp: true"), printed)
+        XCTAssertTrue(printed.contains("disconnect-unkept still connected: true"), printed)
+        XCTAssertTrue(printed.contains("didn't finish on this Mac"), printed)
+    }
+
     /// A renewal whose new keys the Keychain won't keep stops there, rather than going on with the expired key.
     func testARenewalThatCantBeKeptStops() throws {
         let printed = try runProgram(scenarios: ["renew-unsaved"])
@@ -89,7 +98,7 @@ final class ServiceSignInTests: XCTestCase {
         import CryptoKit
         import Security
         enum LampRuntime { static let folder = URL(fileURLWithPath: "/nonexistent-lamp-runtime") }
-        let lampGateway = "http://127.0.0.1:1"
+        var lampGateway = "http://127.0.0.1:1"
         \(support[secretsStart.upperBound..<secretsEnd.lowerBound])
         \(support[start.lowerBound..<end.lowerBound])
         \(Self.harness)
@@ -236,6 +245,47 @@ final class ServiceSignInTests: XCTestCase {
                     }
                     SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Bundle.main.bundleIdentifier ?? "lamp",
                                    kSecAttrAccount as String: "lamp-service-" + id] as CFDictionary)
+                    continue
+                case "disconnect-unkept":
+                    // As on a Mac (`.lamp`) with Lamp closing between reads: a tiny stand-in keeps the sign-in
+                    // first (so the app's read of it is cached), then Lamp is gone and Disconnect can't keep
+                    // the cleared one — it must stay connected rather than look done.
+                    load(real)
+                    LampSecrets.store = .lamp
+                    let server = socket(AF_INET, SOCK_STREAM, 0)
+                    var reuse: Int32 = 1
+                    setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+                    var address = sockaddr_in()
+                    address.sin_family = sa_family_t(AF_INET)
+                    address.sin_addr.s_addr = INADDR_ANY
+                    address.sin_port = UInt16(47899).bigEndian
+                    _ = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(server, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+                    listen(server, 4)
+                    DispatchQueue.global().async {
+                        while true {
+                            let connection = accept(server, nil, nil)
+                            guard connection >= 0 else { return }
+                            var buffer = [UInt8](repeating: 0, count: 8192)
+                            _ = Darwin.read(connection, &buffer, buffer.count)
+                            let body = #"{"ok": true}"#
+                            let head = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+                            _ = (head + body).withCString { Darwin.write(connection, $0, strlen($0)) }
+                            Darwin.close(connection)
+                        }
+                    }
+                    lampGateway = "http://127.0.0.1:47899"
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    let id = "test-" + UUID().uuidString.prefix(8)
+                    let test = LampService(id: id, name: "Linear", url: "https://mcp.linear.app/mcp")
+                    var saved = LampService.Saved(clientID: "made-up-client", clientSecret: nil, redirectURI: "http://127.0.0.1:1/callback",
+                                                  authorizationEndpoint: "https://mcp.linear.app/authorize", tokenEndpoint: "https://mcp.linear.app/token")
+                    saved.accessToken = "made-up-access"
+                    print("disconnect-unkept kept by lamp: \(saved.save(id))")
+                    close(server)
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    test.disconnect()
+                    print("disconnect-unkept still connected: \(test.isConnected)")
+                    LampSecrets.store = .keychain
                     continue
                 case "renew-unsaved", "old-401", "late-registration":
                     // Made-up sign-ins for Linear, answered as its addresses would; nothing leaves this Mac.

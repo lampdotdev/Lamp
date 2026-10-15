@@ -7,8 +7,9 @@ import Darwin
 /// Keychain item an app makes to that one build and asks for the login password after every rebuild. Lamp is the
 /// same program from one build of an app to the next, so it keeps them, the way it keeps its own keys: in the
 /// Keychain when Lamp is signed for a team (`KeyStore.usesKeychain`), else in a file only this user can read.
-/// Each app's are its own (by its id), and they go when the app is deleted, so an app made later under the same
-/// name starts disconnected.
+/// Each app's are its own (by its instance, which a new app under the same name never inherits — the folder
+/// name would be reused), and they go when the app is deleted, so an app made later under the same name starts
+/// disconnected. What's left when a folder is deleted outside Lamp stays under an instance no app has again.
 enum AppSecrets {
     enum Place {
         case keychain(service: String)

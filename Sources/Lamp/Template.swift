@@ -476,7 +476,9 @@ enum Template {
         # the app (LiveReload's dlopen) is unaffected.
         mkdir -p .build
         : > .build/restrict
-        RESTRICT_FLAGS="-Xlinker -sectcreate -Xlinker __RESTRICT -Xlinker __restrict -Xlinker $PWD/.build/restrict"
+        # The path is quoted inside the value: Xcode splits the setting on spaces otherwise, and the app's
+        # folder has them ("Application Support").
+        RESTRICT_FLAGS="-Xlinker -sectcreate -Xlinker __RESTRICT -Xlinker __restrict -Xlinker \"$PWD/.build/restrict\""
         # A live build (LiveReload): Xcode builds a copy of the project whose sources are the live copy (its
         # ../../Sources lands on .lamp/live/Sources), unoptimized and linked so a change can go into the open app.
         if [[ "${LAMP_LIVE:-}" == 1 ]]; then
@@ -7711,9 +7713,18 @@ enum Template {
                 saved.accessToken = nil
                 saved.refreshToken = nil
                 saved.expiresAt = nil
-                saved.save(id)
+                // False when Lamp isn't open: it never kept the cleared sign-in, so the old one comes back on
+                // the next read. Stay connected then (it's the truth), and say why to the log; the service may
+                // already have ended the keys, which a Connect also sorts out.
+                if saved.save(id) {
+                    state = .notConnected
+                } else {
+                    fputs("LampService: Lamp isn't open, so the disconnect didn't finish on this Mac; the sign-in is still kept.\n", stderr)
+                    state = .connected
+                }
+            } else {
+                state = .notConnected
             }
-            state = .notConnected
         }
 
         /// The service's tools, with what each takes.
