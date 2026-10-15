@@ -178,8 +178,8 @@ final class SidebarServer {
         watching = Store.shared.objectWillChange.merge(with: AskProgresses.shared.objectWillChange).sink { [weak self] _ in
             DispatchQueue.main.async { self?.scheduleUpdate() }
         }
-        // A key or a model chosen in Settings changes what an offer's card says.
-        for name in [KeyStore.changed, AppModels.changed] {
+        // A key, a model chosen in Settings or for the app, or Not Now changes what an offer's card says.
+        for name in [KeyStore.changed, AppModels.changed, UserDefaults.didChangeNotification] {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.scheduleUpdate() }
             }
@@ -449,13 +449,11 @@ final class SidebarServer {
             store.attach(urls, to: project)
         case .offer(let id):
             guard let line = store.logs[project.id]?.first(where: { $0.id == id }) else { return }
-            if line.kind == .drawIcon {
-                store.iconFromPlayground(project)
-            } else {
-                // Set up in Lamp's window, where the card's keys, downloads and sign-ins are.
-                NSApp.activate(ignoringOtherApps: true)
-                store.showChat(project.id)
-            }
+            // In Lamp's window: where the card's keys, downloads and sign-ins are, and what Image Playground
+            // opens over, which Lamp may have put away for the sidebar.
+            NSApp.activate(ignoringOtherApps: true)
+            store.showChat(project.id)
+            if line.kind == .drawIcon { store.iconFromPlayground(project) }
         case .undoNote(let id):
             Self.noteProblems[id] = store.undoNote(id, in: project)
             scheduleUpdate()
