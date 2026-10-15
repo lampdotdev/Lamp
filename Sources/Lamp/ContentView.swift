@@ -5,10 +5,11 @@ import AVFoundation
 import QuickLook
 import ImagePlayground
 
+/// The desk's window: the welcome until it's done, then the desk. Each wish's chat has a window of its own
+/// (`WishWindow`).
 struct ContentView: View {
     @EnvironmentObject private var store: Store
-    @State private var newName = ""
-    @State private var versionName = ""
+    @Environment(\.openWindow) private var openWindow
     @AppStorage(Onboarding.key) private var onboarded = false
 
     var body: some View {
@@ -28,71 +29,19 @@ struct ContentView: View {
                 .frame(minWidth: 760, minHeight: 480)
             }
         }
-        .sheet(item: $store.pendingImport) { pending in
-            ImportReviewView(pending: pending)
-        }
-        .modifier(PlaygroundIconSheet())
+        .modifier(StoreDialogs(active: store.selection == nil))
+        .background(WindowKeyWatcher { store.selection = nil })
+        .onAppear { LampWindows.open = openWindow }
     }
 
-    /// The desk, or one wish's chat. The chat goes back to the desk with its toolbar's back button.
     private var main: some View {
         VStack(spacing: 0) {
             if store.setup.checked && !store.setup.hasBuildTools { BuildToolsBanner() }
-            if let project = store.selected {
-                ProjectView(project: project).id(project.id)
-            } else {
-                WishDesk()
-            }
+            WishDesk()
         }
-        .alert("Rename “\(store.renaming?.name ?? "")”", isPresented: Binding(
-            get: { store.renaming != nil }, set: { if !$0 { store.renaming = nil } })) {
-            TextField("Name", text: $newName)
-            Button("Rename") {
-                // Read the field now: by the time the task runs the alert has closed and the field is reset.
-                if let project = store.renaming {
-                    let name = newName
-                    Task { await store.rename(project, to: name) }
-                }
-            }
-            .disabled(newName.trimmed.isEmpty)
-            Button("Cancel", role: .cancel) {}
-        }
-        .alert(store.naming?.version.name == nil ? "Name This Version" : "Rename This Version", isPresented: Binding(
-            get: { store.naming != nil }, set: { if !$0 { store.naming = nil } })) {
-            TextField("Name", text: $versionName)
-            Button("Save") {
-                if let naming = store.naming {
-                    let name = versionName   // same: the field is reset when the alert closes
-                    Task { await store.name(naming.version, of: naming.project, as: name) }
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("A name makes this version easy to find, and to go back to later.")
-        }
-        .onChange(of: store.naming) { versionName = store.naming?.version.name ?? "" }
-        .confirmationDialog("Delete “\(store.deleting?.title ?? "")”?", isPresented: Binding(
-            get: { store.deleting != nil }, set: { if !$0 { store.deleting = nil } })) {
-            Button("Move to Trash", role: .destructive) {
-                if let project = store.deleting { Task { await store.delete(project) } }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The wish, its chat, its history and what it saved are moved to the Trash.")
-        }
-        .dialogIcon(store.deleting.map { Image(nsImage: dialogIcon(for: $0)) })
-        .onChange(of: store.renaming) { newName = store.renaming.map { $0.untitled ? "" : $0.name } ?? "" }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             store.markRead()
         }
-    }
-
-    /// The app's own icon, or its blueprint stand-in if it doesn't have one yet.
-    private func dialogIcon(for project: LampProject) -> NSImage {
-        if let icon = store.icons[project.id] { return icon }
-        let renderer = ImageRenderer(content: StandInIcon(project: project, size: 128))
-        renderer.scale = 2
-        return renderer.nsImage ?? NSApp.applicationIconImage
     }
 }
 
@@ -228,10 +177,13 @@ struct ReadyDot: View {
 /// takes it from there. It has no menu item of its own: New Icon draws with whatever Settings says draws.
 struct PlaygroundIconSheet: ViewModifier {
     @EnvironmentObject private var store: Store
+    /// The window in front: only it shows the sheet.
+    var active = true
 
     func body(content: Content) -> some View {
         if #available(macOS 15.1, *) {
-            content.imagePlaygroundSheet(isPresented: $store.showingPlayground,
+            content.imagePlaygroundSheet(isPresented: Binding(get: { active && store.showingPlayground },
+                                                              set: { if active { store.showingPlayground = $0 } }),
                                          concepts: [.text(store.playgroundPrompt)]) { url in
                 // The file is Image Playground's own and temporary, so it's read before anything else happens.
                 guard let project = store.playgroundIcon, let picture = try? Data(contentsOf: url) else { return }
@@ -267,8 +219,11 @@ struct AppMenu: View {
             .disabled(busy || !project.scaffolded || project.untitled)
         Button("New Icon") { Task { await store.newIcon(project) } }
             .disabled(busy || project.untitled)
-        Button("Show in Finder") {
-            NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
+        // Only once there's an app to show: a wish not yet made has nothing in Finder.
+        if FileManager.default.fileExists(atPath: project.installedURL.path) {
+            Button("Show in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
+            }
         }
         Divider()
         if store.canShare(project) {
@@ -709,7 +664,7 @@ struct ProjectView: View {
         } message: { problem in
             Text(problem.message)
         }
-        .onChange(of: store.chatFocusRequest) { focusRequest += 1 }
+        .onChange(of: store.chatFocusRequest) { if store.selection == project.id { focusRequest += 1 } }
         .task(id: historyKey) {
             // A read can outlast the change that started it (the git commands it runs finish even when it's
             // cancelled), so one started before a turn ended mustn't land after the read that followed.
@@ -793,13 +748,6 @@ struct ProjectView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            Button { store.showDesk() } label: {
-                Label("All Wishes", systemImage: "chevron.backward")
-            }
-            .keyboardShortcut("[", modifiers: .command)
-            .help("Back to all your wishes (⌘[)")
-        }
         if #available(macOS 26, *) {
             ToolbarItem(placement: .navigation) { titleIcon }
                 .sharedBackgroundVisibility(.hidden)
@@ -1189,7 +1137,7 @@ struct AppInfoView: View {
 }
 
 /// While Apple's tools install, above everything: what's happening, and that requests wait for it.
-private struct BuildToolsBanner: View {
+struct BuildToolsBanner: View {
     @EnvironmentObject private var store: Store
 
     var body: some View {
