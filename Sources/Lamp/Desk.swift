@@ -508,6 +508,7 @@ private struct WishDrag: NSViewRepresentable {
         private var pressed: NSEvent?
         /// What one drag hands over, made once whichever way the other app asks for it.
         private var payload: Payload?
+        private weak var session: NSDraggingSession?
 
         init(store: Store, project: LampProject) {
             self.store = store
@@ -557,7 +558,7 @@ private struct WishDrag: NSViewRepresentable {
             if store.canShare(project) {
                 let installed = project.platform.hasMac && FileManager.default.fileExists(atPath: project.installedURL.path)
                     ? project.installedURL : nil
-                let payload = Payload(project: project, app: installed)
+                let payload = Payload(project: project, app: installed) { [weak self] in self?.publish() }
                 self.payload = payload
                 writer = Promise(payload: payload, name: "\(project.name).lampapp", delegate: self)
             } else {
@@ -572,7 +573,7 @@ private struct WishDrag: NSViewRepresentable {
             let point = convert(event.locationInWindow, from: nil)
             item.setDraggingFrame(CGRect(origin: CGPoint(x: point.x - size.width / 2, y: point.y - size.height / 2), size: size),
                                   contents: store.iconImage(for: project))
-            beginDraggingSession(with: [item], event: event, source: self)
+            session = beginDraggingSession(with: [item], event: event, source: self)
         }
 
         static let wishType = NSPasteboard.PasteboardType("dev.lamp.wish")
@@ -583,18 +584,24 @@ private struct WishDrag: NSViewRepresentable {
             return payload == nil ? .delete : [.copy, .link, .delete]
         }
 
-        /// Apps that take a file by its address (the Dock, Slack, most mail apps) read it from the drag as they please,
-        /// so the drag says the app while it's over the Dock and the shared file everywhere else.
         func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
             guard let payload, payload.app != nil else { return }
             let overDock = Payload.dockIsUnder(screenPoint)
             guard overDock != payload.overDock else { return }
             payload.overDock = overDock
-            let url = payload.address as NSURL
-            if let list = url.pasteboardPropertyList(forType: .fileURL) {
+            publish()
+        }
+
+        /// Apps that take a file by its address (the Dock, Slack, most mail apps) read it from the drag as they please,
+        /// so the drag gives one only for what exists: the app while it's over the Dock, the shared file once it's
+        /// written. The address can be added to a drag under way and changed in it; Finder's promise stays as it was.
+        private func publish() {
+            guard let session, let payload, let url = payload.address, url != payload.published else { return }
+            payload.published = url
+            if let list = (url as NSURL).pasteboardPropertyList(forType: .fileURL) {
                 session.draggingPasteboard.setPropertyList(list, forType: .fileURL)
             }
-            session.draggingPasteboard.setPropertyList([url.path ?? ""], forType: NSPasteboard.PasteboardType("NSFilenamesPboardType"))
+            session.draggingPasteboard.setPropertyList([url.path], forType: NSPasteboard.PasteboardType("NSFilenamesPboardType"))
         }
 
         func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
@@ -634,35 +641,42 @@ private struct WishDrag: NSViewRepresentable {
         }()
     }
 
-    /// What a drag hands over: the wish's shared file, or the app itself where an app belongs. An app that takes a
-    /// file by its address reads it from the drag as it starts, before the file can be written, so the file is begun
-    /// then, in the background, and appears at that address whole (a moment later for all but the biggest wishes).
+    /// What a drag hands over: the wish's shared file, or the app itself where an app belongs. The file is begun as
+    /// the drag starts, in the background, in a folder of the drag's own so nothing stale is ever there.
     final class Payload: @unchecked Sendable {
         /// The installed Mac app, when there is one.
         let app: URL?
-        /// Where the shared file will be: a folder of this drag's own, so nothing stale is ever there.
-        let file: URL
-        /// Whether the drag last said the app, for the Dock.
+        /// Whether the pointer is over the Dock.
         @MainActor var overDock = false
+        /// The shared file, once it's whole.
+        @MainActor private var written: URL?
+        /// What the drag last gave as its address.
+        @MainActor var published: URL?
         private let made = DispatchGroup()
         private var result: Result<URL, Error>?
 
-        init(project: LampProject, app: URL?) {
+        init(project: LampProject, app: URL?, whenWritten: @escaping @MainActor () -> Void) {
             self.app = app
-            file = Store.sharedFolder.appendingPathComponent(UUID().uuidString)
-                .appendingPathComponent("\(project.name).lampapp")
+            let file = Store.sharedFolder.appendingPathComponent(UUID().uuidString).appendingPathComponent("\(project.name).lampapp")
             made.enter()
             DispatchQueue.global(qos: .userInitiated).async { [self] in
                 let result = Result { try Store.sharedFile(of: project, at: file) }
-                if case .failure(let error) = result {
-                    DispatchQueue.main.async { NSAlert(error: error).runModal() }
-                }
                 self.result = result
                 made.leave()
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success(let url):
+                        self.written = url
+                        whenWritten()
+                    case .failure(let error):
+                        NSAlert(error: error).runModal()
+                    }
+                }
             }
         }
 
-        @MainActor var address: URL { overDock ? app ?? file : file }
+        /// The address the drag gives now, if any.
+        @MainActor var address: URL? { overDock && app != nil ? app : written }
 
         /// The .lampapp, once it's written. A failure is told once, as Share… tells it: the app it was dropped on
         /// only gets nothing.
@@ -680,16 +694,39 @@ private struct WishDrag: NSViewRepresentable {
             let frame = screen.frame, visible = screen.visibleFrame
             // How far in the point is from the Dock's edge, and how much of the screen a Dock that stays keeps.
             let inset: CGFloat, depth: CGFloat
-            switch dock?.string(forKey: "orientation") {
+            switch side(of: dock) {
             case "left": (inset, depth) = (point.x - frame.minX, visible.minX - frame.minX)
             case "right": (inset, depth) = (frame.maxX - point.x, frame.maxX - visible.maxX)
             default: (inset, depth) = (point.y - frame.minY, visible.minY - frame.minY)
             }
+            let tile = CGFloat(dock?.double(forKey: "tilesize") ?? 0)
+            let icons = tile > 0 ? tile : 48
+            // Along the edge the Dock is centred and only as long as what it holds: past its ends is the desktop.
+            let along = side(of: dock) == "bottom" ? point.x - frame.midX : point.y - frame.midY
+            guard abs(along) <= length(of: dock, icons: icons) / 2 else { return false }
             if depth > 4 { return inset <= depth }
             // A Dock that hides comes out when the pointer reaches the edge, about as deep as its icons, and only while
             // it's out is the strip beside the edge the Dock rather than the window behind it.
-            let icons = CGFloat(dock?.double(forKey: "tilesize") ?? 0)
-            return inset <= 1 || inset <= (icons > 0 ? icons : 48) + 24 && dockIsOut()
+            return inset <= 1 || inset <= icons + 24 && dockIsOut()
+        }
+
+        private static func side(of dock: UserDefaults?) -> String {
+            dock?.string(forKey: "orientation").flatMap { ["left", "right"].contains($0) ? $0 : nil } ?? "bottom"
+        }
+
+        /// About how long the Dock is: its icons (Finder, the apps kept in it and the others open, recent ones when
+        /// it shows them, its files and folders, the Trash) and the space between its sections, with an icon's room
+        /// at each end for the pointer's sake and for magnified icons. Over rather than under: past the ends is only a
+        /// strip of desktop a hand's width from the edge.
+        private static func length(of dock: UserDefaults?, icons: CGFloat) -> CGFloat {
+            let kept = (dock?.array(forKey: "persistent-apps") as? [[String: Any]] ?? [])
+                .compactMap { ($0["tile-data"] as? [String: Any])?["bundle-identifier"] as? String }
+            let open = NSWorkspace.shared.runningApplications
+                .filter { $0.activationPolicy == .regular && !kept.contains($0.bundleIdentifier ?? "") && $0.bundleIdentifier != "com.apple.finder" }
+            let recent = dock?.object(forKey: "show-recents") as? Bool ?? true ? (dock?.array(forKey: "recent-apps")?.count ?? 0) : 0
+            let others = dock?.array(forKey: "persistent-others")?.count ?? 0
+            let count = 1 + kept.count + open.count + recent + others + 1
+            return CGFloat(count) * icons * 1.25 + icons * 4
         }
 
         /// The Dock's window is on screen only while the Dock is.
@@ -722,8 +759,8 @@ private struct WishDrag: NSViewRepresentable {
         }
     }
 
-    /// A promise, which Finder takes, that also carries the file's address, for apps that read only that (the Dock,
-    /// Slack, most mail apps).
+    /// The promise Finder takes. The file's address, for the apps that read only that, is added to the drag once it
+    /// exists (`publish`).
     final class Promise: NSFilePromiseProvider {
         let payload: Payload
         let name: String
@@ -734,16 +771,6 @@ private struct WishDrag: NSViewRepresentable {
             super.init()
             fileType = UTType.lampApp.identifier
             self.delegate = delegate
-        }
-
-        override func writableTypes(for pasteboard: NSPasteboard) -> [NSPasteboard.PasteboardType] {
-            super.writableTypes(for: pasteboard) + [.fileURL]
-        }
-
-        // Asked as the drag starts: a type only promised for later is never asked for at all.
-        override func pasteboardPropertyList(forType type: NSPasteboard.PasteboardType) -> Any? {
-            guard type == .fileURL else { return super.pasteboardPropertyList(forType: type) }
-            return (payload.file as NSURL).pasteboardPropertyList(forType: .fileURL)
         }
     }
 }
