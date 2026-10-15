@@ -159,8 +159,9 @@ enum Agent {
     This app is updated in place while it's open, keeping what's on screen, when a change only edits or adds code. \
     Adding or changing a stored property, an enum case or the App reopens it, so put new state in a new view with \
     its own @State (in a new file) rather than in an existing type, when that's as clear. \
-    Try a change in the window that's open, as it is: don't open another window to see it fresh, which the person \
-    sees as a second copy of their app.
+    The person may be using it as you work, so check a change with look_at_app, a picture of the window as it is, \
+    and leave the app alone: no use_app (menus, keys, clicks, opening or closing windows) unless the change can't \
+    be seen without it.
     """
 
     /// Short for the same reason. What AI the app has comes at the end of a request (AIStatus.brief), since it
