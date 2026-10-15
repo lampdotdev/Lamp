@@ -37,6 +37,10 @@ public enum ChatLook {
         }
     }
 
+    /// The line that says a change closed the open app and opened it again: the window going away and coming back
+    /// is otherwise left unexplained, since why is only in Agent Details.
+    public static let reloaded = "Lamp reloaded the app to apply this change"
+
     /// One status line: a check, or a small spinner for a step still going.
     public struct StatusLine: View {
         let text: String
@@ -49,7 +53,7 @@ public enum ChatLook {
         public var body: some View {
             HStack(spacing: 6) {
                 Group {
-                    if running { ProgressView().controlSize(.mini) } else { Image(systemName: "checkmark.circle") }
+                    if running { ProgressView().controlSize(.mini) } else { Image(systemName: text == ChatLook.reloaded ? "arrow.clockwise" : "checkmark.circle") }
                 }
                 .frame(width: 16)
                 Text(text)
