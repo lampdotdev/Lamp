@@ -278,16 +278,28 @@ final class SidebarServer {
                     out.append(SidebarLine(id: line.id, kind: .error, text: line.text, gap: gap))
                 case .ask:
                     guard let ask = line.ask else { continue }
-                    var card = SidebarLine(id: line.id, kind: .ask, text: ask.text, gap: gap)
+                    let open = line.id == openAsk
+                    // What a sidebar from before the shared card reads: the questions while they wait, else what
+                    // was chosen, folded.
+                    var card = SidebarLine(id: line.id, kind: .ask, text: open ? ask.text : (ask.folded ?? ask.text), gap: gap,
+                                           questions: open ? ask.questions.map {
+                                               SidebarQuestion(question: $0.question, options: $0.options.map { $0.title },
+                                                               symbols: $0.options.map { $0.symbol })
+                                           } : nil)
                     card.ask = ask
-                    card.askOpen = line.id == openAsk
-                    card.progress = AskProgresses.shared.progress(for: line.id)
+                    card.askOpen = open
+                    let progress = AskProgresses.shared.progress(for: line.id)
+                    card.progress = progress
+                    card.progressVersion = progressVersion(for: line.id, progress)
                     out.append(card)
                 case .result:
                     guard let result = line.result else { continue }
-                    var card = SidebarLine(id: line.id, kind: .result, text: result.summary, gap: gap)
+                    let current = line.id == currentResult && !busy
+                    // `untried` for a sidebar from before the shared card, which offers it as Try It.
+                    var card = SidebarLine(id: line.id, kind: .result, text: result.summary, gap: gap,
+                                           untried: current ? result.untried : nil)
                     card.result = result
-                    card.resultCurrent = line.id == currentResult && !busy
+                    card.resultCurrent = current
                     card.picture = result.version.flatMap { picture(Versions.pictureURL(in: project, for: $0)) }
                     out.append(card)
                 case .noted:
@@ -309,6 +321,21 @@ final class SidebarServer {
     /// An attachment as the sidebar shows it: its name, and a picture of it or its icon, as Lamp's window has it.
     fileprivate static func attachment(_ url: URL) -> SidebarAttachment {
         SidebarAttachment(name: url.lastPathComponent, thumbnail: thumbnail(url), isImage: Attachments.isImage(url))
+    }
+
+    /// How far each open card has been answered, as last sent and as the sidebar last said, and the number that
+    /// goes up only when it changed in Lamp's window (`SidebarLine.progressVersion`), as the draft's does.
+    fileprivate static var shownProgress: [UUID: AskProgress] = [:]
+    fileprivate static var progressFromSidebar: [UUID: AskProgress] = [:]
+    fileprivate static var progressVersions: [UUID: Int] = [:]
+
+    private static func progressVersion(for line: UUID, _ progress: AskProgress?) -> Int {
+        let value = progress ?? AskProgress()
+        if shownProgress[line] != value {
+            if progressFromSidebar[line] != value { progressVersions[line, default: 0] += 1 }
+            shownProgress[line] = value
+        }
+        return progressVersions[line] ?? 0
     }
 
     /// What went wrong taking back a save of the notes from the sidebar, by its receipt, as Lamp's window shows it
@@ -387,6 +414,7 @@ final class SidebarServer {
             Self.noteProblems[id] = store.undoNote(id, in: project)
             scheduleUpdate()
         case .askProgress(let id, let progress):
+            Self.progressFromSidebar[id] = progress
             AskProgresses.shared.set(progress, for: id)
         case .removeAttachment(let index):
             var draft = store.draft(for: project)

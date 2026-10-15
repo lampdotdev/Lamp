@@ -272,18 +272,28 @@ private struct AskLine: View {
     @EnvironmentObject private var link: Link
     let line: SidebarLine
     @State private var progress = AskProgress()
+    @State private var version = -1
 
     var body: some View {
         if let ask = line.ask {
             AskCardView(ask: ask, isOpen: line.askOpen ?? false, progress: $progress) { answers in
                 link.send(.answer(line.id, answers))
             }
-            .onAppear { if let given = line.progress { progress = given } }
-            .onChange(of: line.progress) { if let given = line.progress, given != progress { progress = given } }
-            .onChange(of: progress) { if progress != line.progress { link.send(.askProgress(line.id, progress)) } }
+            .onAppear { take() }
+            // Only a change made in Lamp's window: an echo of this sidebar's own edit keeps its number, so an
+            // older one arriving late never undoes what was typed since.
+            .onChange(of: line.progressVersion) { take() }
+            .onChange(of: progress) { link.send(.askProgress(line.id, progress)) }
         } else {
             Text(line.text).font(.callout).foregroundStyle(.secondary)
         }
+    }
+
+    private func take() {
+        let given = line.progressVersion ?? 0
+        guard given != version else { return }
+        version = given
+        if let progress = line.progress, progress != self.progress { self.progress = progress }
     }
 }
 

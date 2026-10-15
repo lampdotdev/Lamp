@@ -88,6 +88,9 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var ask: TalkCard.Ask?
     public var askOpen: Bool?
     public var progress: AskProgress?
+    /// Goes up when the progress changed in Lamp's window, so the sidebar takes it up; its own edits come back
+    /// with the same number and are left alone, so an echo of an older one never undoes a newer one.
+    public var progressVersion: Int?
     /// What a request made as Lamp's window draws it, whether its Try It still applies, and its picture.
     public var result: TalkCard.Result?
     public var resultCurrent: Bool?
