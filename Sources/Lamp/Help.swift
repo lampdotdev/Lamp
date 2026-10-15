@@ -105,7 +105,7 @@ private enum HelpTopic: String, CaseIterable, Identifiable {
             [
                 HelpSection(title: "Make the app you need", text: "Describe a task and Lamp builds a real app for it, for your Mac, iPhone or iPad. Start with one small job, then keep improving the app in its chat."),
                 HelpSection(title: "Finish setup", text: "The first time you open Lamp, it welcomes you and asks what your first app should do. Then it gets two things ready. If Apple's app-building tools are missing, it opens Apple's installer: click Install, then Agree. It usually takes 5–10 minutes, and you can carry on meanwhile. Then choose what makes your apps: your Claude or ChatGPT account, or Lamp's own, with an OpenRouter key, a model on this Mac or another provider. Your first app starts building as soon as everything is ready. You can change this later in Lamp → Settings (⌘,)."),
-                HelpSection(title: "Build your first app", text: "Click New App at the bottom of the app list, or press ⌘N. Choose Mac, iPhone or iPad, then describe what the app should do: what you give it and what you want back. Or pick one of the starter ideas and change its request to suit you. Press Return to send. If the request is unclear, Lamp asks up to three short questions first: click an answer, or type your own. Then it names the app, designs its icon, builds it and opens it."),
+                HelpSection(title: "Make your first app", text: "Click New Wish at the bottom of the list, or press ⌘N. Say what you wish was easier, in your own words: what gets in your way, and what you'd want instead. Or pick one of the wishes shown and change it to suit you. Press Return to send. If something's unclear, Lamp asks up to three short questions first: click an answer, or type your own. Then it works out what to make, names it, designs its icon, builds it and opens it."),
                 HelpSection(title: "Find your apps", text: "Your apps are listed in Lamp's sidebar. Double-click one to open it. Mac apps are installed in Applications → \(Edition.name) Apps in your home folder; in one, choose Edit with Lamp… (⇧⌘E) from the app's own menu to return to its chat in Lamp. iPhone and iPad apps open in a simulator on your Mac, or on your own iPhone or iPad.")
             ]
         case .phoneApps:
@@ -159,7 +159,7 @@ private enum HelpTopic: String, CaseIterable, Identifiable {
             ]
         case .shortcuts:
             [
-                HelpSection(title: "In Lamp", text: "⌘N — New App\n⌘O — Import Shared App\n⌘S — Name This Version\n⇧⌘C — Copy App File\n⌘, — Settings\n⌘/ — Lamp Help\n⇧⌘/ — Search the Help menu\nEscape — Put back a message you took from the chat to change"),
+                HelpSection(title: "In Lamp", text: "⌘N — New Wish\n⌘O — Import Shared App\n⌘S — Name This Version\n⇧⌘C — Copy App File\n⌘, — Settings\n⌘/ — Lamp Help\n⇧⌘/ — Search the Help menu\nEscape — Put back a message you took from the chat to change"),
                 HelpSection(title: "In the chat", text: "Return — Send a message\nShift-Return — Add a new line\n⌘V — Paste text, or attach a copied image or file\nTab — Use the suggested next request\nEsc — Dismiss the suggestion"),
                 HelpSection(title: "In an app built with Lamp", text: "⇧⌘E — Edit with Lamp")
             ]

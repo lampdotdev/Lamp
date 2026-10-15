@@ -133,7 +133,7 @@ struct SetupView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             Text("Welcome to Lamp").font(.largeTitle.bold())
-            Text("Describe an app your Mac is missing, and Lamp builds it: a real app you can keep using, change whenever you like, and share. Two one-time steps first, and they can happen at the same time.")
+            Text("Say what you wish was easier, and Lamp makes something for it: a real app you can keep using, change whenever you like, and share. Two one-time steps first, and they can happen at the same time.")
                 .foregroundStyle(.secondary)
 
             if !store.setup.hasAgent {

@@ -77,7 +77,7 @@ struct LampProject: Identifiable, Hashable {
     /// something started on a draft still finds the app it became, and a later draft that takes the same
     /// folder name is a different app. Apps from before it existed use their folder name.
     var instance: String = ""
-    /// Made with New App and not named yet. The first message names it.
+    /// Made with New Wish and not named yet. The first message names it.
     var untitled = false
     /// Made by a wish that came from the site (`Wish`): until it has a name it reads as their wish.
     var fromWish = false
@@ -115,9 +115,10 @@ struct LampProject: Identifiable, Hashable {
     /// Every successful build is copied here so it shows up in Spotlight and Launchpad.
     var installedURL: URL { Store.installDir.appendingPathComponent("\(name).app") }
     /// What the app is called on screen. An unnamed one has only a stand-in name on disk ("Untitled", which
-    /// its folder and everything that asks `untitled` go by), so the screen says what it is instead: their
-    /// wish, or a new app. The name Lamp or the person gives it takes over everywhere at once.
-    var title: String { !untitled ? name : fromWish ? "Your wish" : "New App" }
+    /// its folder and everything that asks `untitled` go by), so the screen says what it is instead: a wish,
+    /// theirs from the site or one still to be told. Nothing is an app until Lamp has made something; the
+    /// name Lamp or the person gives it takes over everywhere at once.
+    var title: String { !untitled ? name : fromWish ? "Your wish" : "New Wish" }
     /// False for a draft (Template.draft): a new app whose scaffold isn't written yet.
     var scaffolded: Bool { FileManager.default.fileExists(atPath: dir.appendingPathComponent("Package.swift").path) }
 }
@@ -887,7 +888,7 @@ final class Store: ObservableObject {
 
     // MARK: - Actions
 
-    /// New App: an untitled app, straight into its chat. Its first message names it and designs its icon.
+    /// New Wish: an untitled app, straight into its chat. Its first message names it and designs its icon.
     /// A Mac app until the intro says otherwise (`setKind`).
     func create(fromWelcome: Bool = false, fromSite: Bool = false) {
         // A draft: its scaffold waits for the first build (`materialize`), so the intro can still change its kind.
@@ -1100,7 +1101,7 @@ final class Store: ObservableObject {
         }
     }
 
-    /// An untitled app you left without ever using is deleted, so trying New App leaves nothing behind.
+    /// An untitled app you left without ever using is deleted, so trying New Wish leaves nothing behind.
     /// Words in its message box count as using it: they're kept, like a draft in any other app.
     private func discardIfUnused(_ id: String) {
         guard let project = projects.first(where: { $0.id == id }), project.untitled, nothingAsked(of: id),

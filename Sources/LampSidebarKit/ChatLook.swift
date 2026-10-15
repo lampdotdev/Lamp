@@ -193,7 +193,7 @@ public enum ChatLook {
 
     /// What the message box says while empty.
     public static func placeholder(busy: Bool, empty: Bool) -> String {
-        busy ? "Working… describe the next change" : empty ? "Describe an app…" : "Describe a change…"
+        busy ? "Working… describe the next change" : empty ? "Describe what you wish was easier…" : "Describe a change…"
     }
 
     /// Parsed once per message: parsing markdown on every redraw adds up while an agent is streaming.
