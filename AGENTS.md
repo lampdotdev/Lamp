@@ -106,6 +106,11 @@ A capability given to one engine must be given to all of them that can take it, 
   refused, and the agent may use git on it as it likes. On Lamp's own runs signing, hooks and the
   file-watcher command are off (`Versions.environment`): the sandbox closes the person's keys, and a hook
   could only stall a save.
+  Undo Last Change also sits under the latest change in both chats (`UndoOffer`, `ChatLook.UndoChange`): it is
+  `Store.undo`, given the version it was shown for and refusing when the app has moved on. It shows only when that
+  Undo would take back just this change, and when the older code can still read what the newer saves: the compiler's
+  layout of each type with coding keys (`LiveReload.layout`) is compared, and a removed, renamed or retyped
+  non-optional field or a new enum case hides it. Undo puts back code, never data.
 - **Pictures the agent is shown** (`look_at_app`, `use_app`, `make_art`): the conversation is sent whole with
   every request, so its pictures add up until the provider refuses the request (Anthropic takes 30 MB of images
   in one; OpenRouter drops the connection at about 5 MB of body). Every engine is handed a JPEG copy
