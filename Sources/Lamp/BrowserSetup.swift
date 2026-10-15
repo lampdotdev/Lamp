@@ -22,6 +22,46 @@ final class BrowserSetup: ObservableObject {
     static var bundledHelper: URL { Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/BrowserNativeHost") }
     static var extensionID: String { (try? String(contentsOf: source.appendingPathComponent("extension-id.txt")))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
 
+    /// Where each piece of the connection lives: this Lamp's own, or a test's.
+    @MainActor struct Layout {
+        var hostManifest: URL
+        var helper: URL
+        var bundledHelper: URL
+        var bundledExtension: URL
+        var extensionFolder: URL
+        var config: URL
+        var secret: URL
+        var extensionID: String
+        var port: Int
+
+        static var current: Layout {
+            Layout(hostManifest: BrowserSetup.hostManifest, helper: BrowserSetup.helper, bundledHelper: BrowserSetup.bundledHelper,
+                   bundledExtension: BrowserSetup.source.appendingPathComponent("extension"), extensionFolder: BrowserSetup.extensionFolder,
+                   config: BrowserBridge.folder.appendingPathComponent("config.json"), secret: BrowserBridge.secretURL,
+                   extensionID: BrowserSetup.extensionID, port: Int(Edition.gatewayPort))
+        }
+        /// What Chrome's manifest says when this Lamp wrote it: Chrome starts this helper, for this extension only.
+        var manifestIsOurs: Bool {
+            guard !extensionID.isEmpty, let data = try? Data(contentsOf: hostManifest),
+                  let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+            return manifest["name"] as? String == BrowserSetup.hostName && manifest["path"] as? String == helper.path
+                && manifest["type"] as? String == "stdio" && manifest["allowed_origins"] as? [String] == ["chrome-extension://\(extensionID)/"]
+        }
+        var extensionMatches: Bool {
+            guard let expected = BrowserSetup.files(in: bundledExtension), !expected.isEmpty else { return false }
+            return BrowserSetup.files(in: extensionFolder) == expected
+        }
+        var configData: Data? { try? JSONSerialization.data(withJSONObject: ["port": port, "secretPath": secret.path], options: [.sortedKeys]) }
+        var configMatches: Bool {
+            guard let data = try? Data(contentsOf: config), let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+            return value["port"] as? Int == port && value["secretPath"] as? String == secret.path
+        }
+        var helperMatches: Bool {
+            guard let installed = try? Data(contentsOf: helper), let bundled = try? Data(contentsOf: bundledHelper) else { return false }
+            return installed == bundled && FileManager.default.isExecutableFile(atPath: helper.path)
+        }
+    }
+
     init() {
         refresh()
         if Edition.isDev {
@@ -41,6 +81,10 @@ final class BrowserSetup: ObservableObject {
     }
     func refresh() {
         let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome") != nil
+        if BrowserBridge.enabled, Self.Layout.current.manifestIsOurs {
+            try? BrowserBridge.shared.prepare()   // the secret, written back if it went missing
+            Self.bringUpToDate()
+        }
         let installed = Self.validBridge()
         let live = BrowserBridge.enabled && installed
             && (Date().timeIntervalSince(heard) < 15 || UserDefaults.standard.bool(forKey: Self.heardKey))
@@ -64,25 +108,41 @@ final class BrowserSetup: ObservableObject {
         }
         return result
     }
-    static var extensionMatches: Bool {
-        guard let expected = files(in: source.appendingPathComponent("extension")), !expected.isEmpty else { return false }
-        return files(in: extensionFolder) == expected
-    }
-    static func validBridge() -> Bool {
-        guard extensionMatches, let data = try? Data(contentsOf: hostManifest),
-              let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              manifest["name"] as? String == hostName, manifest["path"] as? String == helper.path,
-              manifest["type"] as? String == "stdio", !extensionID.isEmpty,
-              manifest["allowed_origins"] as? [String] == ["chrome-extension://\(extensionID)/"],
-              let installed = try? Data(contentsOf: helper), let bundled = try? Data(contentsOf: bundledHelper),
-              installed == bundled, FileManager.default.isExecutableFile(atPath: helper.path),
-              let configData = try? Data(contentsOf: BrowserBridge.folder.appendingPathComponent("config.json")),
-              let config = try? JSONSerialization.jsonObject(with: configData) as? [String: Any],
-              config["port"] as? Int == Int(Edition.gatewayPort),
-              config["secretPath"] as? String == BrowserBridge.folder.appendingPathComponent("secret").path,
-              let secret = try? Data(contentsOf: BrowserBridge.folder.appendingPathComponent("secret")), !secret.isEmpty else { return false }
+    static var extensionMatches: Bool { Layout.current.extensionMatches }
+
+    /// Everything Chrome needs is in place and is this Lamp's: the manifest naming its helper for its extension, the
+    /// extension's files, the helper byte for byte as this Lamp ships it, its settings and the shared secret.
+    static func validBridge() -> Bool { validBridge(.current) }
+    static func validBridge(_ layout: Layout) -> Bool {
+        guard layout.extensionMatches, layout.manifestIsOurs, layout.helperMatches, layout.configMatches,
+              let secret = try? Data(contentsOf: layout.secret), !secret.isEmpty else { return false }
         return true
     }
+
+    /// Once the person has connected Chrome, Lamp keeps its own copy of the helper and its settings current by itself:
+    /// every build of Lamp brings a newly signed helper, and asking for the setup again for that would be asking the
+    /// person to do Lamp's job. Only when the manifest is the one this Lamp wrote (so Chrome starts the helper in this
+    /// Lamp's folder) and the extension's files are this Lamp's, since a changed extension needs Chrome to load it again.
+    /// What's written is the helper this Lamp ships, so Chrome still only ever runs that. True when anything changed.
+    @discardableResult
+    static func bringUpToDate() -> Bool { bringUpToDate(.current) }
+    @discardableResult
+    static func bringUpToDate(_ layout: Layout) -> Bool {
+        guard layout.manifestIsOurs, layout.extensionMatches else { return false }
+        let fm = FileManager.default
+        var changed = false
+        if !layout.helperMatches, let bytes = try? Data(contentsOf: layout.bundledHelper) {
+            guard (try? bytes.write(to: layout.helper, options: .atomic)) != nil,
+                  (try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: layout.helper.path)) != nil else { return false }
+            changed = true
+        }
+        if !layout.configMatches, let data = layout.configData {
+            guard (try? data.write(to: layout.config, options: .atomic)) != nil else { return changed }
+            changed = true
+        }
+        return changed
+    }
+
     func install() {
         do {
             guard BrowserBridge.enabled, Self.extensionID.count == 32 else { throw Failure() }
@@ -103,8 +163,7 @@ final class BrowserSetup: ObservableObject {
             let bytes = try Data(contentsOf: Self.bundledHelper)
             if (try? Data(contentsOf: Self.helper)) != bytes { try bytes.write(to: Self.helper, options: .atomic) }
             try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: Self.helper.path)
-            let config: [String: Any] = ["port": Int(Edition.gatewayPort), "secretPath": BrowserBridge.folder.appendingPathComponent("secret").path]
-            try JSONSerialization.data(withJSONObject: config).write(to: BrowserBridge.folder.appendingPathComponent("config.json"), options: .atomic)
+            if let config = Layout.current.configData { try config.write(to: Layout.current.config, options: .atomic) }
             try fm.createDirectory(at: Self.hostManifest.deletingLastPathComponent(), withIntermediateDirectories: true)
             let manifest: [String: Any] = ["name": Self.hostName, "description": "Lamp browser companion", "path": Self.helper.path,
                                          "type": "stdio", "allowed_origins": ["chrome-extension://\(Self.extensionID)/"]]
