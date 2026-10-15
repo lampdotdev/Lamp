@@ -2254,7 +2254,7 @@ final class Store: ObservableObject {
     /// request's attachments before the agent starts.
     private func agentChangedFiles(_ project: LampProject) async -> Bool {
         var output = ""
-        let ignored = "':!Sources/LampSupport.swift' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)' ':!\(Template.shareFolder)/\(Template.shareSupportFile)' ':!icon.json' ':!\(Attachments.folder)'"
+        let ignored = "':!Sources/LampSupport.swift' ':!\(Template.sceneSupportPath)' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)' ':!\(Template.shareFolder)/\(Template.shareSupportFile)' ':!icon.json' ':!\(Attachments.folder)'"
             + Template.watchSupportPaths.map { " ':!\($0)'" }.joined()
         _ = await Versions.git("git status --porcelain -- . \(ignored)", cwd: project.dir) {
             output += $0
@@ -2827,7 +2827,14 @@ final class Store: ObservableObject {
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name(Edition.notificationPrefix + "useApp.\(project.id)"), object: nil,
             userInfo: ["actions": json, "id": id, "lampUseAppSignature": signature], deliverImmediately: true)
-        let waits = actions.reduce(0.0) { $0 + (($1["action"] as? String) == "wait" ? min($1["amount"] as? Double ?? 1, 10) : 0) }
+        // Waits, and keys held down (a Mac app's `key` with `amount`), each up to 10 seconds, as the app takes them.
+        let waits = actions.reduce(0.0) { total, action in
+            switch action["action"] as? String {
+            case "wait": total + min(action["amount"] as? Double ?? 1, 10)
+            case "key": total + min(max(action["amount"] as? Double ?? 0, 0), 10)
+            default: total
+            }
+        }
         let wait = Double(actions.count) * 0.4 + waits + 5
         guard let report = await Runtime.useReport(of: project, id: id, waiting: wait, while: { !app.isTerminated }) else {
             guard app.isTerminated else {
@@ -2957,7 +2964,8 @@ final class Store: ObservableObject {
             switch name {
             case "look_at_app":
                 (status, answer) = arguments["sidebar"] as? Bool == true
-                    ? await lookAtSidebar(project, page: arguments["page"] as? String) : await look(at: project)
+                    ? await lookAtSidebar(project, page: arguments["page"] as? String)
+                    : await look(at: project, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false)
             case "use_app":
                 let actions = (try? JSONSerialization.data(withJSONObject: arguments)) ?? Data("{}".utf8)
                 (status, answer) = await use(project, request: actions)
@@ -3041,7 +3049,7 @@ final class Store: ObservableObject {
             ? String(target.path.dropFirst((target.path.hasPrefix(root.path + "/") ? root.path : project.dir.path).count + 1)) : ""
         guard !relative.isEmpty else { return (400, ["error": "Only files inside the app's folder can be deleted."]) }
         // Compared without regard to case: the Mac's usual file system treats "package.swift" as the same file.
-        let protected = [".lamp", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/LampSupport.swift",
+        let protected = [".lamp", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/LampSupport.swift", Template.sceneSupportPath,
                          Template.widgetFolder + "/" + Template.widgetSupportFile, Template.shareFolder + "/" + Template.shareSupportFile] + Template.watchSupportPaths
         let lowered = relative.lowercased()
         if protected.contains(where: { lowered == $0.lowercased() || lowered.hasPrefix($0.lowercased() + "/") }) {
@@ -5014,7 +5022,8 @@ final class Store: ObservableObject {
         if request.path == "/agent/look" {
             let arguments = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             return arguments["sidebar"] as? Bool == true
-                ? await lookAtSidebar(project, page: arguments["page"] as? String) : await look(at: project)
+                ? await lookAtSidebar(project, page: arguments["page"] as? String)
+                : await look(at: project, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false)
         }
         if request.path == "/agent/use" { return await use(project, request: request.body) }
         if request.path.hasPrefix("/agent/versions") {
@@ -5417,8 +5426,10 @@ final class Store: ObservableObject {
         """
 
     /// The agent's `look_at_app` tool: builds what it has written so far, opens the app behind the
-    /// user's windows, and reports what happened. The pictures are sent as file paths for pi to read.
-    private func look(at project: LampProject) async -> (Int, [String: Any]) {
+    /// user's windows, and reports what happened. The pictures are sent as file paths for pi to read. For a Mac
+    /// app it can instead show one of the app's 3D props from four sides (`prop`), or watch the window for a
+    /// couple of seconds and say what moved and what flickered (`motion`).
+    private func look(at project: LampProject, prop: String? = nil, motion: Bool = false) async -> (Int, [String: Any]) {
         // Only for the agent Lamp is running right now. The app knows the same token and must not
         // be able to rebuild itself.
         guard let turn = turns[project.id], turn.agent != nil else {
@@ -5475,6 +5486,7 @@ final class Store: ObservableObject {
                 }
             }
             if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
+            if prop != nil || motion { text += "\n\nprop and motion are for Mac apps; this look is the usual one." }
             return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
         }
         // The copy on screen is an earlier build the person kept open: not shown as the agent's work, and not
@@ -5505,9 +5517,33 @@ final class Store: ObservableObject {
             if !changed { note = "The app is running your latest code; it was reopened without rebuilding." }
             screenshots = await Runtime.screenshots(of: project, since: launched)
         }
-        var text = note + " " + (screenshots.isEmpty
+        var lead = ""
+        if let prop, !prop.isEmpty, !screenshots.isEmpty {
+            // One prop on its own: the app shows it from four sides over its scene, pictures it, and goes back.
+            let asked = Date()
+            Runtime.requestProp(prop, of: project)
+            switch await Runtime.propAnswer(of: project) {
+            case "shown"?:
+                let pictures = await Runtime.screenshots(of: project, since: asked, waiting: 3)
+                if !pictures.isEmpty { screenshots = pictures }
+                lead = "The prop \"\(prop)\" on its own, from the front, the right, above at three quarters and the back. "
+            case let why?:
+                lead = why + " "
+            case nil:
+                lead = "The app didn't show the prop: only a LampSceneView given `props` can. "
+            }
+        }
+        if motion, !screenshots.isEmpty {
+            if Privacy.sharesPictures, let watched = await Runtime.motion(of: project) {
+                lead += watched.text + " "
+                if !watched.pictures.isEmpty { screenshots = watched.pictures }
+            } else if Privacy.sharesPictures {
+                lead += "The app didn't answer the request to watch it; it may need rebuilding. "
+            }
+        }
+        var text = lead + note + " " + (screenshots.isEmpty
             ? "It has no window open, so there's no picture. If it lives in the menu bar, use_app's bar_icon opens its panel."
-            : Privacy.sharesPictures ? "Pictures of its windows follow, frontmost first; x and y for use_app are pixels in the first." : Privacy.picturesOff)
+            : Privacy.sharesPictures ? (lead.isEmpty ? "Pictures of its windows follow, frontmost first; x and y for use_app are pixels in the first." : "") : Privacy.picturesOff)
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         text += Self.handingHint(for: project)
         text += await Self.intentsHint(for: project)

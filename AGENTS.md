@@ -554,6 +554,27 @@ installed copy's path, since the copy in build/ or the bundle id starts a second
 opened. `Agent.sandboxNote` says which failures are the sandbox's and not the app's; keep it true when the
 profile changes.
 
+### 3D scenes and games
+
+Games have two recipes in the prompt: `Agent.Rules.game2D` (SpriteKit, every kind of app) and `Agent.Rules.scene3D`
+(RealityKit, Mac apps, given only on a Mac with macOS 15, where RealityView begins). A Mac app whose own code
+imports RealityKit gets `Sources/LampScene.swift` (`Template.lampSceneSwift`, written by `writeSceneSupport`
+beside LampSupport.swift and taken away with the last such import), and its Package.swift and build.sh ask for
+macOS 15 (`Template.withScene`). It's Lamp's like LampSupport.swift: protected, left out of versions' diffs and of
+shared `.lampapp` files, and part of `BuildStamp`. It holds `LampSceneView` (sky, camera rig, keys, the frame
+loop), `LampMesh` (lathe, extrude, sweep, tube and boxes with textures laid on in metres), `LampMaterial`
+(materials with their detail drawn in code, no image files), parts that press, turn, slide and are grabbed, and
+`LampScene.copies` (instancing), `scene.place` (a prop by name, so a live change to it shows) and `scene.stream` (a big world built a tile at a time around the player, a few milliseconds a frame, so it opens at once). It carries what cost time to find: no sun shadows (with them RealityKit drops
+the sunlight on some frames and the whole picture flickers), a camera near plane of 10 cm, and instance batches
+split below a few million vertices (a bigger batch isn't drawn, silently).
+
+Props are made in code and checked by eye: `LampSceneView(props:)` names them, and `look_at_app` with `prop`
+asks the running app to show one from four sides (`LampPropStudio`, answered in `.lamp/runtime/prop.txt`) for the
+agent to compare with a reference picture. `look_at_app` with `motion` works for every Mac app: `LampRuntime`
+watches the front window for about two seconds and writes what changed frame to frame (`motion.json`, the two
+most different frames beside it), and `Runtime.motion` puts that in words; it's how flicker is caught, which a
+single picture hides.
+
 ### Widgets
 
 A Mac app can have a desktop widget. The agent writes it in `Widget/` at the app's root (`Agent.Rules.widget`,

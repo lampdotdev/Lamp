@@ -18,16 +18,17 @@ enum Sharing {
     /// The newest kind of file this Lamp opens. 2: the app's own files travel in Assets/ (1 bundled the chat's
     /// attachments the code named). 3: the file also carries a widget's code, in Widget/. 4: it also carries
     /// what the app declares in capabilities.json. 6: it may be an iPhone app or an app for both (`platform`),
-    /// with an Apple Watch app's code in Watch/. 7: it also carries a share extension's code, in Share/.
-    static let formatVersion = 7
+    /// with an Apple Watch app's code in Watch/. 7: it also carries a share extension's code, in Share/. 8: its
+    /// code builds a 3D scene on LampScene.swift, which the Lamp that opens it writes.
+    static let formatVersion = 8
 
     /// What a file says it is: the oldest number a Lamp must know to open it whole. Only a file with a widget
     /// is a 3, only one that declares capabilities a 4, only an iPhone app, an app for both or one with a watch
-    /// app a 6 and only one with a share extension a 7, so an app with none of them still opens in an older
+    /// app a 6, only one with a share extension a 7 and only one with a 3D scene an 8, so an app with none of them still opens in an older
     /// Lamp, and a Lamp that would build the app without one of them says to update instead.
     static func format(withWidget: Bool, capabilities: Bool = false, platform: Platform = .mac, watch: Bool = false,
-                       share: Bool = false) -> Int {
-        share ? 7 : platform != .mac || watch ? 6 : capabilities ? 4 : withWidget ? 3 : 2
+                       share: Bool = false, scene: Bool = false) -> Int {
+        scene ? 8 : share ? 7 : platform != .mac || watch ? 6 : capabilities ? 4 : withWidget ? 3 : 2
     }
 
     @MainActor private static var picker: NSSharingServicePicker?
@@ -152,7 +153,7 @@ enum Sharing {
         try fm.createDirectory(at: stage, withIntermediateDirectories: true)
 
         for file in swiftSources(in: project.dir.appendingPathComponent("Sources"))
-        where file.lastPathComponent != "LampSupport.swift" {
+        where file.lastPathComponent != "LampSupport.swift" && file.lastPathComponent != Template.sceneSupportFile {
             let relative = relativePath(of: file, in: project.dir)
             let target = stage.appendingPathComponent(relative)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -208,7 +209,8 @@ enum Sharing {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(Manifest(format: format(withWidget: !widgetCode.isEmpty, capabilities: !capabilities.isEmpty,
-                                                    platform: project.platform, watch: !watchCode.isEmpty, share: !shareCode.isEmpty),
+                                                    platform: project.platform, watch: !watchCode.isEmpty, share: !shareCode.isEmpty,
+                                                    scene: Template.usesScene(project)),
                                     name: project.name, exportedAt: Date(),
                                     app: identity(of: project), description: AppDescription.description(of: project),
                                     platform: project.platform, family: project.platform.hasIOS ? project.family : nil))
@@ -370,7 +372,7 @@ enum Sharing {
         try? fm.removeItem(at: project.dir.appendingPathComponent(Template.shareFolder))
         // Code comes from the one list the review read (`Package.sources`), and lands only in the code folders.
         let codeFolders = ["Sources/", Template.widgetFolder + "/", Template.watchFolder + "/", Template.shareFolder + "/"]
-        let lampsOwn = ["LampSupport.swift", Template.widgetSupportFile, Template.shareSupportFile]
+        let lampsOwn = ["LampSupport.swift", Template.sceneSupportFile, Template.widgetSupportFile, Template.shareSupportFile]
         for file in package.sources where !lampsOwn.contains(file.lastPathComponent) {
             let relative = package.path(of: file)
             guard !relative.contains(".."), codeFolders.contains(where: { relative.hasPrefix($0) }),

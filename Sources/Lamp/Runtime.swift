@@ -159,6 +159,57 @@ enum Runtime {
             Notification.Name(Edition.notificationPrefix + "snapshot.\(project.id)"), object: nil, userInfo: nil, deliverImmediately: true)
     }
 
+    /// Asks a running app with a 3D scene to show one of its props on its own, from four sides (`LampSceneView` in
+    /// the app), and take pictures of that. Its answer is in prop.txt: "shown", or why not.
+    static func requestProp(_ name: String, of project: LampProject) {
+        try? FileManager.default.removeItem(at: folder(project).appendingPathComponent("prop.txt"))
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(Edition.notificationPrefix + "prop.\(project.id)"), object: nil, userInfo: ["name": name], deliverImmediately: true)
+    }
+
+    /// The app's answer to `requestProp`, waited for up to `seconds`; nil when there's none (an app without props).
+    static func propAnswer(of project: LampProject, waiting seconds: Double = 5) async -> String? {
+        let url = folder(project).appendingPathComponent("prop.txt")
+        for _ in 0..<Int(seconds * 4) {
+            if let text = try? String(contentsOf: url, encoding: .utf8) { return text }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        return nil
+    }
+
+    /// What moved in the app's front window over a couple of seconds (`LampRuntime.recordMotion` in the app):
+    /// in words for the agent, and the two frames that differ most. Nil when the app didn't answer (built before
+    /// it could, or not running).
+    static func motion(of project: LampProject) async -> (text: String, pictures: [URL])? {
+        let report = folder(project).appendingPathComponent("motion.json")
+        let asked = Date()
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(Edition.notificationPrefix + "motion.\(project.id)"), object: nil, userInfo: nil, deliverImmediately: true)
+        for _ in 0..<32 {
+            try? await Task.sleep(for: .milliseconds(250))
+            guard (try? report.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast > asked,
+                  let data = try? Data(contentsOf: report),
+                  let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { continue }
+            if answer["error"] != nil { return ("The app had no window open to watch.", []) }
+            let changes = answer["changes"] as? [Double] ?? []
+            let frames = answer["frames"] as? Int ?? 0, flickers = answer["flickers"] as? Int ?? 0
+            let seconds = answer["seconds"] as? Double ?? 0
+            guard !changes.isEmpty else { return ("Lamp couldn't take pictures of the window to watch it.", []) }
+            func percent(_ x: Double) -> String { x < 0.001 ? "0%" : x < 0.01 ? "under 1%" : "\(Int((x * 100).rounded()))%" }
+            let still = changes.filter { $0 < 0.001 }.count
+            var text = "Watched the front window for \(String(format: "%.1f", seconds)) s, \(frames) frames. From one frame to the next, "
+                + "on average \(percent(changes.reduce(0, +) / Double(changes.count))) of the picture changed, at most \(percent(changes.max() ?? 0)); "
+                + "\(still) of \(changes.count) steps changed nothing."
+            text += flickers > 0
+                ? " \(flickers) time\(flickers == 1 ? "" : "s") a frame changed and the next changed straight back: that's flicker, not movement. The two frames that differ most follow."
+                : " Nothing changed and changed straight back, so there's no flicker. The two frames that differ most follow."
+            let pictures = ["motion-1.png", "motion-2.png"].map { folder(project).appendingPathComponent($0) }
+                .filter { FileManager.default.fileExists(atPath: $0.path) }
+            return (text, pictures)
+        }
+        return nil
+    }
+
     /// Pictures the app has saved since `date`, frontmost window first. Waits up to `seconds` for the
     /// first one: the app takes it shortly after it opens.
     static func screenshots(of project: LampProject, since date: Date, waiting seconds: Double = 6) async -> [URL] {

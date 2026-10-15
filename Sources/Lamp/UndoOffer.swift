@@ -61,9 +61,9 @@ enum UndoOffer {
         }.joined(separator: " && ")
         guard await Versions.git(extract, cwd: project.dir, env: env) == 0 else { return nil }
         let ios = project.platform == .iphone
-        async let before = LiveReload.layout(of: folder.appendingPathComponent("older/Sources"), files: nil, module: project.exe,
+        async let before = LiveReload.layout(of: folder.appendingPathComponent("older/Sources"), files: nil, module: project.exe, macOS: Template.macMinimum(project),
                                              ios: ios, rawValues: true)
-        async let after = LiveReload.layout(of: folder.appendingPathComponent("newer/Sources"), files: nil, module: project.exe,
+        async let after = LiveReload.layout(of: folder.appendingPathComponent("newer/Sources"), files: nil, module: project.exe, macOS: Template.macMinimum(project),
                                             ios: ios, rawValues: true)
         guard let before = await before, let after = await after else { return nil }
         return readable(before: before, after: after)
