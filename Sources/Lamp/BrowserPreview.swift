@@ -161,7 +161,13 @@ enum BrowserPreview {
         text += (text.isEmpty ? "" : "\n\n") + Ids(state.surface).text(app: project.name, offer: fits ? declaration?.offer : nil,
                                                                          values: Dictionary(uniqueKeysWithValues: shown), busy: state.busy)
         let picture = Runtime.folder(project).appendingPathComponent("sidebar.png")
-        let view = SidebarPicture(app: project.name, offer: fits ? declaration?.offer : nil, surface: state.surface,
+        if state.surface.look == nil {
+            text += "\n\nThe sidebar has no look of its own, so Lamp took its color from the app's icon. Give the surface the app's " +
+                "`look` (the accent and background its Mac window uses, and its type design), so it looks like this app."
+        }
+        let icon = BrowserLook.icon(project).png.flatMap(NSImage.init(data:))
+        let view = SidebarPicture(app: project.name, icon: icon, offer: fits ? declaration?.offer : nil, surface: state.surface,
+                                  look: BrowserLook.drawn(state.surface.look, for: project),
                                   values: Dictionary(uniqueKeysWithValues: shown), busy: state.busy)
         let renderer = ImageRenderer(content: view)
         renderer.scale = 2
@@ -208,53 +214,65 @@ enum BrowserPreview {
 }
 
 /// The sidebar as the extension draws it, for a picture: plain text and boxes, since ImageRenderer draws no controls.
+/// In the app's look, as it shows in light.
 private struct SidebarPicture: View {
     let app: String
+    let icon: NSImage?
     let offer: String?
     let surface: BrowserCompanions.Surface
+    let look: BrowserLook.Drawn
     let values: [String: String]
     let busy: Bool
-    private let green = Color(red: 0.24, green: 0.34, blue: 0.21)
+    private var palette: BrowserLook.Palette { look.light }
+    private func color(_ c: BrowserLook.RGB) -> Color { Color(red: c.r, green: c.g, blue: c.b) }
+    private var design: Font.Design {
+        ["rounded": .rounded, "serif": .serif, "monospaced": .monospaced][look.design] ?? .default
+    }
+    private func face(_ size: CGFloat, _ weight: Font.Weight) -> Font { .system(size: size, weight: weight, design: design) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(app).font(.system(size: 15, weight: .semibold))
-            if let offer { Text(offer).font(.system(size: 14, weight: .semibold)).foregroundStyle(Color(red: 0.7, green: 0.4, blue: 0.16)) }
-            Text(surface.title).font(.system(size: 24, weight: .semibold, design: .serif)).padding(.top, 6)
-            if !surface.detail.isEmpty { Text(surface.detail).foregroundStyle(.secondary) }
+            HStack(spacing: 10) {
+                if let icon { Image(nsImage: icon).resizable().frame(width: 30, height: 30) }
+                Text(app).font(face(15, .semibold))
+            }
+            if let offer { Text(offer).font(face(14, .semibold)).foregroundStyle(color(palette.accent)) }
+            Text(surface.title).font(face(26, look.design == "serif" ? .semibold : .bold)).padding(.top, 6)
+            if !surface.detail.isEmpty { Text(surface.detail).foregroundStyle(color(palette.muted)) }
             ForEach(Array(surface.fields.enumerated()), id: \.offset) { _, field in
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(field.label)
+                    Text(field.label).fontWeight(.medium)
                     Text((values[field.id] ?? field.value).isEmpty ? " " : values[field.id] ?? field.value)
                         .lineLimit((field.lines ?? 1) > 1 ? 12 : 1)
                         .frame(maxWidth: .infinity, minHeight: CGFloat(field.lines ?? 1) * 17, alignment: .topLeading)
-                        .padding(7)
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(red: 0.73, green: 0.76, blue: 0.68)))
+                        .padding(8)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(color(palette.card)))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(color(palette.field)))
                 }
             }
             ForEach(Array(surface.sections.enumerated()), id: \.offset) { _, section in
-                Text(section.title.uppercased()).font(.system(size: 12, weight: .semibold)).foregroundStyle(green).padding(.top, 8)
+                Text(section.title.uppercased()).font(face(12, .bold)).foregroundStyle(color(palette.accent)).padding(.top, 8)
                 if !section.text.isEmpty { Text(String(section.text.prefix(1500))) }
                 ForEach(Array((section.items ?? []).prefix(30).enumerated()), id: \.offset) { _, item in Text("•  " + item) }
             }
-            Divider().padding(.top, 8)
+            Rectangle().fill(color(palette.line)).frame(height: 1).padding(.top, 8)
             if surface.actions.contains(where: { $0.readsPage }) {
-                Text("Using this page shares its text with \(app) and its AI.").font(.caption).foregroundStyle(.secondary)
+                Text("Using this page shares its text with \(app) and its AI.").font(.caption).foregroundStyle(color(palette.muted))
             }
             ForEach(Array(surface.actions.enumerated()), id: \.offset) { index, action in
-                Text(action.label).font(.system(size: 14, weight: .semibold))
+                Text(action.label).font(face(14, .semibold))
                     .padding(.horizontal, 15).padding(.vertical, 9)
-                    .foregroundStyle(index == 0 ? .white : green)
-                    .background(RoundedRectangle(cornerRadius: 9).fill(index == 0 ? green : .white))
-                    .overlay(RoundedRectangle(cornerRadius: 9).stroke(index == 0 ? green : Color(red: 0.73, green: 0.76, blue: 0.68)))
+                    .foregroundStyle(color(index == 0 ? palette.onFill : palette.accent))
+                    .background(RoundedRectangle(cornerRadius: 10).fill(color(index == 0 ? palette.fill : palette.card)))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(color(index == 0 ? palette.fill : palette.line)))
                     .opacity(busy || surface.busy ? 0.55 : 1)
             }
         }
-        .foregroundStyle(Color(red: 0.15, green: 0.16, blue: 0.13))
-        .font(.system(size: 14))
+        .foregroundStyle(color(palette.ink))
+        .font(.system(size: 14, design: look.design == "rounded" ? .rounded : .default))
         .padding(20)
         .frame(width: 360, alignment: .leading)
-        .background(Color(red: 0.99, green: 0.99, blue: 0.97))
+        .background(color(palette.background))
     }
 }
 

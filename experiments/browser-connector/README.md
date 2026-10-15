@@ -37,6 +37,12 @@ The extension never runs an app's HTML or JavaScript.
   moves to another page the grant is gone and the sidebar asks for a click on
   the icon again. Capture (`surface-capture.js`) skips fields, editable and
   hidden text and frames, and stops at 24,000 characters (`truncated`).
+- **Each app's look**: a surface carries the app's `look` (its accent, its
+  background and its type design, each color as it shows in light and dark).
+  Lamp turns it into every color the sidebar uses, keeping text readable on
+  them (`BrowserLook`), and the extension only sets those finished colors and
+  one of four type designs. Without one, the color comes from the app's icon,
+  which is also shown beside its name.
 - **Per tab**: Chrome keeps one sidebar per tab. What's typed is kept per tab
   (`chrome.storage.session`), and the app is told which tabs are open on it and
   draws a surface for each (`LampBrowser.start(surface: { tab in … })`), so a

@@ -56,9 +56,37 @@ function typed(field, value) {
   chrome.storage.session.set({[keys.draft]: drafts});
 }
 
+// Each app's sidebar is drawn in its own colors and type. Lamp works them out from what the app asked for and sends
+// only finished colors and the name of a type design; anything else is ignored, so an app's values never become CSS.
+const faces = {default: '-apple-system,BlinkMacSystemFont,system-ui,sans-serif', rounded: 'ui-rounded,"SF Pro Rounded",-apple-system,system-ui,sans-serif',
+  serif: 'ui-serif,"New York",Charter,Georgia,serif', monospaced: 'ui-monospace,"SF Mono",Menlo,monospace'};
+const colorNames = {background: 'bg', card: 'card', line: 'line', field: 'field', ink: 'ink', muted: 'muted', accent: 'accent', fill: 'fill', onFill: 'on-fill'};
+const looks = new CSSStyleSheet(); document.adoptedStyleSheets = [looks];
+let lookKey = '';
+function dress(look) {
+  const key = JSON.stringify(look || null);
+  if (key === lookKey) return;
+  lookKey = key;
+  const colors = palette => Object.entries(colorNames).map(([name, variable]) =>
+    /^#[0-9a-f]{6}$/.test(palette?.[name]) ? `--${variable}:${palette[name]};` : '').join('');
+  const face = faces[look?.design] || faces.default;
+  const fixed = `--face:${face};--body-face:${look?.design === 'rounded' ? face : faces.default};--title-weight:${look?.design === 'serif' ? 600 : 700};`;
+  looks.replaceSync(look ? `:root{${fixed}${colors(look.light)}}@media (prefers-color-scheme:dark){:root{${colors(look.dark)}}}` : '');
+}
+// The app's icon beside its name, asked of Lamp once each time another app is chosen.
+let iconFor = '';
+function showIcon(app) {
+  if (!app || iconFor === app.id) return;
+  iconFor = app.id; $('icon').removeAttribute('src');
+  call({op: 'surface-icon', app: app.id}).then(r => {
+    if (iconFor === app.id && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(r.icon || '')) $('icon').src = r.icon;
+  }).catch(() => {});
+}
+
 function render(state) {
   const s = state.surface, key = selected + ':' + state.revision + ':' + state.busy;
   revision = state.revision;
+  dress(state.look);
   if (key === viewKey) return;
   viewKey = key;
   $('title').textContent = s.title; $('detail').textContent = s.detail;
@@ -115,13 +143,14 @@ async function refresh() {
     if (!selected && saved[keys.pick]) selected = saved[keys.pick];
     ({apps} = await call({op: 'surface-list'}));
     const app = choose();
+    showIcon(app);
     $('empty').hidden = apps.length > 0;
     if (transportProblem) { error(); transportProblem = false; }
     if (!app) { document.querySelector('main').hidden = true; note(''); return; }
     const state = await call({op: 'surface-view', app: app.id});
     if (!state.surface) {
       // An app that isn't open on the Mac is opened when chosen, once; it shows here as soon as it's up.
-      document.querySelector('main').hidden = true; viewKey = '';
+      document.querySelector('main').hidden = true; viewKey = ''; dress(null);
       opening[app.id] ??= {at: Date.now(), asked: call({op: 'surface-open', app: app.id}).catch(e => { error(e); })};
       note(Date.now() - opening[app.id].at < 30000 ? `Opening ${app.name}…` : `${app.name} didn’t open. Open it on your Mac, then come back.`);
       return;

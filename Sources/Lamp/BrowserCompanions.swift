@@ -20,8 +20,10 @@ final class BrowserCompanions {
         var fields: [Field]
         var actions: [Action]
         var busy: Bool
+        /// The app's own colors and type; Lamp draws them (`BrowserLook`).
+        var look: BrowserLook.Requested?
         var valid: Bool {
-            title.count <= 120 && detail.count <= 1000 && sections.count <= 20 && fields.count <= 12 && actions.count <= 8
+            (look?.valid ?? true) && title.count <= 120 && detail.count <= 1000 && sections.count <= 20 && fields.count <= 12 && actions.count <= 8
             && sections.allSatisfy { $0.title.count <= 120 && $0.text.count <= 16000 && ($0.items ?? []).count <= 60 && ($0.items ?? []).allSatisfy { $0.count <= 1000 } }
             && fields.allSatisfy { !$0.id.isEmpty && $0.id.count <= 60 && $0.label.count <= 120 && $0.value.count <= 4000 && (1...12).contains($0.lines ?? 1) }
             && actions.allSatisfy { !$0.id.isEmpty && $0.id.count <= 60 && $0.label.count <= 120 && !($0.readsPage && $0.readsSelection == true) }
@@ -240,6 +242,9 @@ final class BrowserCompanions {
         guard let id = body["app"] as? String, let project = projects.first(where: { $0.id == id && $0.platform.hasMac }) else {
             return ["error": "That app isn't on this Mac any more."]
         }
+        if op == "surface-icon" {
+            return ["icon": BrowserLook.icon(project).png.map { "data:image/png;base64," + $0.base64EncodedString() } ?? ""]
+        }
         if op == "surface-open" {
             if !isLive(project), listed([project]).count == 1 { Store.shared.openForSidebar(project) }
             return ["opening": true]
@@ -250,7 +255,7 @@ final class BrowserCompanions {
             viewed[id, default: [:]][tab] = Date()
             let surface = entry.surfaces[tab] ?? entry.surfaces[""]!
             return ["surface": (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(surface))) ?? [:],
-                    "revision": revision(entry, tab), "busy": entry.event != nil, "running": true]
+                    "look": BrowserLook.drawn(surface.look, for: project).values, "revision": revision(entry, tab), "busy": entry.event != nil, "running": true]
         }
         guard op == "surface-action", let eventID = body["id"] as? String, UUID(uuidString: eventID) != nil else {
             return ["error": "Unknown action."]

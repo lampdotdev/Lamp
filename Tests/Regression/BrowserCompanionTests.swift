@@ -201,3 +201,39 @@ final class BrowserCompanionTests: XCTestCase {
         XCTAssertEqual((shown["surface"] as? [String: Any])?["title"] as? String, "Review")
     }
 }
+
+@MainActor
+final class BrowserLookTests: XCTestCase {
+    // Whatever colors an app picks, from pale yellow to near black, on its own background or Lamp's tint, the text
+    // the sidebar draws with them reads at 4.5:1 in light and dark.
+    func testEveryAppColorStaysReadable() throws {
+        let accents = ["#ffd60a", "#ffffff", "#000000", "#34c759", "#5ac8fa", "#ff2d55", "#3d5736", "#8e8e93"]
+        let backgrounds: [String?] = [nil, "#ffffff", "#fff8e1", "#101418", "#2b1d3a"]
+        for accent in accents {
+            for background in backgrounds {
+                let look = BrowserLook.Requested(accent: .init(light: accent, dark: accent),
+                                                 background: background.map { .init(light: $0, dark: $0) })
+                let drawn = BrowserLook.drawn(look)
+                for palette in [drawn.light, drawn.dark] {
+                    let where_ = "\(accent) on \(background ?? "tint")"
+                    XCTAssertGreaterThanOrEqual(palette.ink.contrast(palette.background), 4.5, where_)
+                    XCTAssertGreaterThanOrEqual(palette.muted.contrast(palette.background), 4.5, where_)
+                    XCTAssertGreaterThanOrEqual(palette.accent.contrast(palette.background), 4.5, where_)
+                    XCTAssertGreaterThanOrEqual(palette.onFill.contrast(palette.fill), 4.5, where_)
+                }
+            }
+        }
+    }
+
+    // The extension sets only finished colors: a look that isn't plain colors and a known design never gets there.
+    func testALookThatIsntPlainColorsIsRefused() {
+        let app = LampProject(id: "notes", name: "Notes", exe: "Notes", dir: URL(fileURLWithPath: "/tmp/notes"), instance: "notes-instance")
+        func publish(_ look: [String: Any]) -> Int {
+            let surface: [String: Any] = ["title": "Notes", "detail": "", "sections": [], "fields": [], "actions": [], "busy": false, "look": look]
+            return BrowserCompanions().exchange(["boot": UUID().uuidString, "surface": surface], app: app).0
+        }
+        XCTAssertEqual(publish(["accent": ["light": "#ff9500", "dark": "#ff9f0a"], "design": "rounded"]), 200)
+        XCTAssertEqual(publish(["accent": ["light": "red;}body{background:url(https://x)", "dark": "#ff9f0a"]]), 400)
+        XCTAssertEqual(publish(["accent": ["light": "#ff9500", "dark": "#ff9f0a"], "design": "Comic Sans\"}"]), 400)
+    }
+}

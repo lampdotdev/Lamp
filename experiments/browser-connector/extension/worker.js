@@ -155,6 +155,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     const tab = Number(message.tab);
     if (message.op === 'surface-list') return list();
     if (message.op === 'surface-open') return native({op: 'surface-open', app: message.app});
+    if (message.op === 'surface-icon') return native({op: 'surface-icon', app: message.app});
     if (message.op === 'surface-view') return native({op: 'surface-view', app: message.app, tab});
     if (message.op !== 'surface-action') throw new Error('Unknown action.');
     const state = await native({op: 'surface-view', app: message.app, tab});

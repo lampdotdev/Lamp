@@ -1,20 +1,24 @@
 <!doctype html><html><head><meta charset="utf-8"><title>Lamp</title>
 <style>
-:root{color-scheme:light dark;--bg:#fcfcf7;--ink:#252820;--muted:#626858;--line:#e0e3d8;--field:#bbc3ae;--green:#3d5736;--on-green:white;--card:white;--accent:#b26728}
-@media (prefers-color-scheme:dark){:root{--bg:#1e201b;--ink:#ecefe4;--muted:#a3a995;--line:#3a3d33;--field:#5a6150;--green:#9cc48d;--on-green:#16200f;--card:#272a23}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,sans-serif}
-#top{padding:14px 20px 0}#chooser{font-weight:600;font-size:15px}#offer{color:var(--accent);font-weight:600;margin:6px 0 0}
-select{font:inherit;max-width:100%;padding:7px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
-main{padding:12px 20px 170px}#controls{position:fixed;bottom:0;left:0;right:0;padding:12px 20px 18px;background:var(--bg);border-top:1px solid var(--line)}
-h1{font:600 26px/1.15 Georgia,serif;margin:6px 0 12px}h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;margin:22px 0 8px;color:var(--green)}
-p{white-space:pre-line;margin:0 0 12px}ul{margin:0 0 12px;padding-left:20px}li{margin:2px 0}#detail,#consent,#empty,#note{color:var(--muted)}#consent{font-size:12px;margin:0 0 10px}
-label{display:block;margin:14px 0}input,textarea{display:block;width:100%;font:inherit;padding:8px;border:1px solid var(--field);border-radius:7px;margin-top:5px;background:var(--card);color:var(--ink)}textarea{resize:vertical}
-button{font:600 14px/1.3 -apple-system,sans-serif;border:1px solid var(--field);background:var(--card);color:var(--green);border-radius:9px;padding:10px 15px;cursor:pointer}
-#actions button:first-child{background:var(--green);color:var(--on-green);border-color:var(--green)}button:disabled{opacity:.55;cursor:wait}
+/* Lamp's own colors until the app's look arrives; each app's sidebar is then drawn in its own (sidebar.js). */
+:root{color-scheme:light dark;--bg:#fcfcf7;--card:#ffffff;--line:#e0e3d8;--field:#bbc3ae;--ink:#252820;--muted:#626858;--accent:#3d5736;--fill:#3d5736;--on-fill:#ffffff;
+--face:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;--body-face:var(--face);--title-weight:700}
+@media (prefers-color-scheme:dark){:root{--bg:#1e201b;--card:#272a23;--line:#3a3d33;--field:#5a6150;--ink:#ecefe4;--muted:#a3a995;--accent:#9cc48d;--fill:#9cc48d;--on-fill:#16200f}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--body-face)}
+#top{display:flex;align-items:center;gap:10px;padding:14px 20px 0}#icon{width:30px;height:30px;flex:none}#icon:not([src]),#icon[src=""]{display:none}
+#chooser{font:600 15px/1.3 var(--face);min-width:0}#offer{color:var(--accent);font:600 14px/1.4 var(--face);margin:8px 20px 0}
+select{font:inherit;max-width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
+main{padding:10px 20px 170px}#controls{position:fixed;bottom:0;left:0;right:0;padding:12px 20px 18px;background:var(--bg);border-top:1px solid var(--line)}
+h1{font:var(--title-weight) 26px/1.15 var(--face);letter-spacing:-.01em;margin:6px 0 10px}
+h2{font:700 12px/1.3 var(--face);text-transform:uppercase;letter-spacing:.07em;margin:22px 0 8px;color:var(--accent)}
+p{white-space:pre-line;margin:0 0 12px}ul{margin:0 0 12px;padding-left:20px}li{margin:2px 0}li::marker{color:var(--accent)}#detail,#consent,#empty,#note{color:var(--muted)}#consent{font-size:12px;margin:0 0 10px}
+label{display:block;margin:14px 0;font-weight:500}input,textarea{display:block;width:100%;font:400 14px/1.45 var(--body-face);padding:8px 10px;border:1px solid var(--field);border-radius:8px;margin-top:5px;background:var(--card);color:var(--ink)}textarea{resize:vertical}
+button{font:600 14px/1.3 var(--face);border:1px solid var(--line);background:var(--card);color:var(--accent);border-radius:10px;padding:10px 15px;cursor:pointer}
+#actions button:first-child{background:var(--fill);color:var(--on-fill);border-color:var(--fill)}button:disabled{opacity:.55;cursor:wait}
 button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 #actions{display:flex;flex-wrap:wrap;gap:9px}#error{margin:8px 20px 0;color:#c2412a}#error:empty{display:none}#empty,#note{padding:4px 20px}
 </style></head><body>
-<div id="top"><div id="chooser"></div><p id="offer" hidden></p></div>
+<div id="top"><img id="icon" alt=""><div id="chooser"></div></div><p id="offer" hidden></p>
 <p id="error" role="alert"></p>
 <p id="note" role="status" hidden></p>
 <p id="empty" hidden>None of your Lamp apps work beside web pages yet. Ask Lamp for one, like “Keep the recipes I find.”</p>

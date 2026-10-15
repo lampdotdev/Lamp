@@ -7479,6 +7479,9 @@ enum Template {
     ///
     ///     LampBrowser.start(surface: { tab in model.sidebar(for: tab) }, handle: { event in await model.handle(event) })
     ///
+    /// Give every surface the app's `look` (its accent, its background and its type design, as the Mac window has
+    /// them), so the sidebar looks like this app: `Surface(title: …, look: .init(accent: .basil, design: .rounded))`.
+    ///
     /// A page is read only when a button with `readsPage` (the page's readable text) or `readsSelection` (only the
     /// passage the person selected) is clicked. Page text is untrusted: give it to LampAI as `data:`.
     @MainActor
@@ -7489,6 +7492,56 @@ enum Template {
         struct Field: Codable { var id: String; var label: String; var value: String = ""; var lines: Int = 1 }
         /// A button. The first is drawn as the main one. Never both `readsPage` and `readsSelection`.
         struct Action: Codable { var id: String; var label: String; var readsPage: Bool = false; var readsSelection: Bool = false }
+        /// How the sidebar looks, so it reads as this app and not as a page of Lamp's: give it the same colors the
+        /// Mac window uses (its accent or the main color of its palette, and its background when the window has
+        /// one of its own) and the window's type design. Lamp keeps text readable on them in light and dark.
+        struct Look: Codable {
+            var accent: Color
+            var background: Color? = nil
+            var design: Font.Design = .default
+
+            private enum Keys: String, CodingKey { case accent, background, design }
+            private struct Pair: Codable { var light: String; var dark: String }
+            private static let designs: [(Font.Design, String)] = [(.default, "default"), (.rounded, "rounded"), (.serif, "serif"), (.monospaced, "monospaced")]
+            /// A color as it shows in light and in dark, so a color that changes with the appearance keeps doing so.
+            private static func pair(_ color: Color) -> Pair {
+                func hex(_ scheme: ColorScheme) -> String {
+                    var environment = EnvironmentValues()
+                    environment.colorScheme = scheme
+                    let resolved = color.resolve(in: environment)
+                    func byte(_ value: Float) -> Int { Int((min(max(value, 0), 1) * 255).rounded()) }
+                    return String(format: "#%02x%02x%02x", byte(resolved.red), byte(resolved.green), byte(resolved.blue))
+                }
+                return Pair(light: hex(.light), dark: hex(.dark))
+            }
+            private static func color(_ pair: Pair) -> Color {
+                func rgb(_ hex: String) -> (Double, Double, Double) {
+                    let value = Int(hex.dropFirst(), radix: 16) ?? 0
+                    return (Double(value >> 16 & 255) / 255, Double(value >> 8 & 255) / 255, Double(value & 255) / 255)
+                }
+                let light = rgb(pair.light), dark = rgb(pair.dark)
+                return Color(nsColor: NSColor(name: nil) { appearance in
+                    let c = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+                    return NSColor(srgbRed: c.0, green: c.1, blue: c.2, alpha: 1)
+                })
+            }
+            init(accent: Color, background: Color? = nil, design: Font.Design = .default) {
+                self.accent = accent; self.background = background; self.design = design
+            }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: Keys.self)
+                accent = Self.color(try c.decode(Pair.self, forKey: .accent))
+                background = try c.decodeIfPresent(Pair.self, forKey: .background).map(Self.color)
+                let name = try c.decodeIfPresent(String.self, forKey: .design)
+                design = Self.designs.first { $0.1 == name }?.0 ?? .default
+            }
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: Keys.self)
+                try c.encode(Self.pair(accent), forKey: .accent)
+                try c.encodeIfPresent(background.map(Self.pair), forKey: .background)
+                try c.encode(Self.designs.first { $0.0 == design }?.1 ?? "default", forKey: .design)
+            }
+        }
         struct Surface: Codable {
             var title: String
             var detail: String = ""
@@ -7496,6 +7549,8 @@ enum Template {
             var fields: [Field] = []
             var actions: [Action] = []
             var busy: Bool = false
+            /// Without one, Lamp takes the colors from the app's icon.
+            var look: Look? = nil
         }
         struct Page: Codable {
             var url: String
