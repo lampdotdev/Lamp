@@ -113,10 +113,11 @@ extension Template {
                     focused = true
                 }
                 #if LAMP_LIVE
-                // A change Lamp put into the open app replaces functions, but the scene was built, and is updated every
-                // frame, by the closures it was first given, which still run the old code: it takes this view's (the
-                // new code's) and builds again, so a changed prop, layout or game rule shows. The camera stays.
-                .onChange(of: LampLive.generation) { _, _ in Task { await scene.rebuild(build: build, update: update) } }
+                // A change Lamp put into the open app replaces functions, but the scene is updated every frame by the
+                // closure it was first given, which still runs the old code: it takes this view's, so a changed game
+                // rule shows at once, and remakes each prop in place. Building the whole scene again would cost a big
+                // world seconds of a stalled app and reset it, so a change to the rest shows at the next launch.
+                .onChange(of: LampLive.generation) { _, _ in scene.refresh(update: update, props: props) }
                 #endif
                 .onChange(of: geometry.size) { _, size in scene.viewSize = size }
             }
@@ -167,7 +168,6 @@ extension Template {
         private var subscription: EventSubscription?
         private var monitor: Any?
         private var update: ((LampScene, Float) -> Void)?
-        private var build: ((LampScene) async -> Void)?
         private var drag: Drag?
         private var orbitYaw: Float = 0.6, orbitPitch: Float = 0.35, orbitDistance: Float = 4
         private var lookYaw: Float = 0, lookPitch: Float = 0
@@ -178,15 +178,25 @@ extension Template {
 
         func add(_ entity: Entity) { root.addChild(entity) }
 
-        /// Builds the scene again from scratch with the given code (see LampSceneView's live reload).
-        func rebuild(build: @escaping (LampScene) async -> Void, update: ((LampScene, Float) -> Void)?) async {
-            self.build = build
+        /// After a live change: the frame loop runs the new code, and every entity named after a prop is made of
+        /// what the new code makes (see LampSceneView's live reload).
+        func refresh(update: ((LampScene, Float) -> Void)?, props: [String: @MainActor () -> Entity]) {
             self.update = update
-            for child in Array(root.children) { child.removeFromParent() }
-            keys.removeAll()
-            chaseHeading = nil
-            chasePosition = nil
-            await build(self)
+            for (name, make) in props {
+                var found: [Entity] = []
+                func visit(_ e: Entity) {
+                    if e.name == name { found.append(e); return }
+                    for child in e.children { visit(child) }
+                }
+                visit(root)
+                // The entity itself stays (the app's code holds it, and moves it); what it's made of is the new code's.
+                for old in found {
+                    let fresh = make()
+                    for child in Array(old.children) { child.removeFromParent() }
+                    for child in Array(fresh.children) { old.addChild(child, preservingWorldTransform: false) }
+                    if let model = fresh.components[ModelComponent.self] { old.components.set(model) }
+                }
+            }
         }
 
         /// The first entity with this name anywhere in the scene.
@@ -199,10 +209,9 @@ extension Template {
         }
 
         func start(_ content: inout RealityViewCameraContent, sky: LampSky, rig: LampCameraRig,
-                   build: @escaping (LampScene) async -> Void, update: ((LampScene, Float) -> Void)?) async {
+                   build: (LampScene) async -> Void, update: ((LampScene, Float) -> Void)?) async {
             self.rig = rig
             self.update = update
-            self.build = build
             if case .orbit(_, let distance, let yaw, let pitch) = rig { orbitDistance = distance; orbitYaw = yaw; orbitPitch = pitch }
             if case .firstPerson(let position, let heading) = rig { camera.position = position; lookYaw = heading }
             content.add(root)
