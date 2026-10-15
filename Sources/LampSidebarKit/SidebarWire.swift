@@ -71,7 +71,7 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var growing: Bool
     /// An open question card's questions.
     public var questions: [SidebarQuestion]?
-    /// A result's step that wasn't tried, offered as Try It.
+    /// A result's step that wasn't tried, offered as Have Lamp Test It.
     public var untried: String?
 
     public init(id: UUID, kind: Kind, text: String, gap: Double = 0, running: Bool = false, attachments: [SidebarAttachment]? = nil,

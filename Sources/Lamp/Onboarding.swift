@@ -814,10 +814,10 @@ private struct BuilderCard: View {
                         .font(.system(size: 13)).foregroundStyle(.secondary)
                 }
                 HStack(spacing: 10) {
-                    Option(selected: choice == .claude, title: "Claude Code", detail: "Uses your Claude subscription") {
+                    Option(selected: choice == .claude, title: Engine.claude.title, detail: "Uses your Claude subscription") {
                         ProviderLogo(id: "anthropic", size: 30)
                     } action: { pick(.claude) }
-                    Option(selected: choice == .chatGPT, title: "ChatGPT", detail: "Uses your ChatGPT subscription") {
+                    Option(selected: choice == .chatGPT, title: Engine.codex.title, detail: "Uses your ChatGPT subscription") {
                         ProviderLogo(id: "openai", size: 30)
                     } action: { pick(.chatGPT) }
                     Option(selected: choice?.isForge == true, title: "Lamp Agent", detail: "You choose the AI") {
@@ -867,7 +867,7 @@ private struct BuilderCard: View {
     @ViewBuilder
     private func account(_ which: Engine, app: String) -> some View {
         let installed = EngineInstall.path(for: which) != nil
-        let name = which == .claude ? "Claude Code" : app
+        let name = which.title
         HStack(spacing: 10) {
             if !installed, let failure = downloads.failure[which] {
                 Text(failure).font(.system(size: 13)).foregroundStyle(Color.orange)

@@ -1430,8 +1430,8 @@ final class Store: ObservableObject {
                 alert.messageText = "Finish setting up Lamp first"
                 if waitingImport.keep(file) {
                     alert.informativeText = waitingImport.count > 1
-                        ? "Lamp will open your shared apps as soon as setup is done."
-                        : "Lamp will open the shared app as soon as setup is done."
+                        ? "Lamp will open your shared apps as soon as it can build them."
+                        : "Lamp will open the shared app as soon as it can build it."
                 } else {
                     alert.informativeText = "Then open the shared app again."
                 }
