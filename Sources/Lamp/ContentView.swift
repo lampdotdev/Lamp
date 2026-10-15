@@ -1,4 +1,5 @@
 import SwiftUI
+import LampSidebarKit
 import AppKit
 import AVFoundation
 import QuickLook
@@ -731,8 +732,7 @@ struct ProjectView: View {
                 .accessibilityLabel("Attach files")
                 .frame(height: Composer.lineHeight)
             Composer(text: shownDraft, height: $composerHeight,
-                     placeholder: busy ? "Working… describe the next change"
-                        : lines.isEmpty ? "Describe an app…" : "Describe a change…",
+                     placeholder: ChatLook.placeholder(busy: busy, empty: lines.isEmpty),
                      // No suggestion while a request from the chat is in the box: it would be about a turn
                      // that's on its way out, and Escape, which dismisses one, puts the request back instead.
                      suggestion: replacing == nil ? shownSuggestion : nil,
@@ -754,22 +754,10 @@ struct ProjectView: View {
                 .accessibilityLabel(dictation.isListening ? "Stop dictation" : "Dictate a change")
                 .frame(height: Composer.lineHeight)
             }
-            if busy {
-                Button { store.stop(project) } label: { Image(systemName: "stop.circle.fill").font(.title2) }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help("Stop")
-                    .accessibilityLabel("Stop")
-                    .frame(height: Composer.lineHeight)
-            }
-            Button(action: send) {
-                Image(systemName: "arrow.up.circle.fill").font(.title2)
-            }
-            .buttonStyle(.plain)
-            // A request sent again starts from the app as it was, so it can't wait behind other work.
-            .disabled(submissionPending || draft.trimmed.isEmpty && attachments.isEmpty || replacing != nil && busy)
-            .help(busy ? "Queue this change. It's sent when the current one is done." : "Send")
-            .frame(height: Composer.lineHeight)
+            if busy { ChatLook.StopButton { store.stop(project) } }
+            ChatLook.SendButton(busy: busy, action: send)
+                // A request sent again starts from the app as it was, so it can't wait behind other work.
+                .disabled(submissionPending || draft.trimmed.isEmpty && attachments.isEmpty || replacing != nil && busy)
         }
         .padding(12)
     }

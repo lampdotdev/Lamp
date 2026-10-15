@@ -1,4 +1,5 @@
 import SwiftUI
+import LampSidebarKit
 
 /// A tool call as logged by the engines ("Read App.swift", "Bash: ./build.sh", "Run: ls"), split into
 /// what the agent did and what it did it to.
@@ -304,14 +305,14 @@ struct Transcript: View {
     }
 
     /// Without the step at the end that's still going ("Building…"): the progress line is saying it.
-    private static func withoutStepInProgress(_ lines: [LogLine]) -> [LogLine] {
+    static func withoutStepInProgress(_ lines: [LogLine]) -> [LogLine] {
         var lines = lines
         while let last = lines.last, last.kind == .status, last.text.hasSuffix("…") { lines.removeLast() }
         return lines
     }
 
     /// The last agent message of each finished turn: the answer people actually read.
-    private static func finalAnswers(in lines: [LogLine], busy: Bool) -> Set<UUID> {
+    static func finalAnswers(in lines: [LogLine], busy: Bool) -> Set<UUID> {
         var answers: Set<UUID> = []
         var lastAgent: LogLine?
         for line in lines {
@@ -389,13 +390,7 @@ struct LogRow: View, Equatable {
                             .accessibilityLabel("Edit and Send Again")
                     }
                     // A message that's only attachments shows just them.
-                    if !line.text.isEmpty {
-                        Text(line.text)
-                            .textSelection(.enabled)
-                            .lineSpacing(2)
-                            .padding(.horizontal, 12).padding(.vertical, 8)
-                            .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
-                    }
+                    if !line.text.isEmpty { ChatLook.UserBubble(line.text) }
                 }
                 // The width limit goes around the buttons too, so they stay next to a short message.
                 .frame(maxWidth: 480 + 50, alignment: .trailing)
@@ -404,34 +399,19 @@ struct LogRow: View, Equatable {
             .onHover { hovered = $0 }
         case .agent:
             // While a turn is going this may be a message still being written, a little longer every time.
-            Text(Self.prose(line.text, keep: !busy))
-                .lineSpacing(4)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            ChatLook.AgentText(line.text, keep: !busy)
         case .status, .tool:
             // Shown through StatusGroup and ToolGroup.
             EmptyView()
         case .summary:
-            HStack(spacing: 10) {
-                Rectangle().fill(.separator).frame(height: 1)
-                Text(line.text).font(.caption).foregroundStyle(.tertiary).fixedSize()
-                Rectangle().fill(.separator).frame(height: 1)
-            }
+            ChatLook.SummaryLine(line.text)
         case .error:
-            VStack(alignment: .leading, spacing: 10) {
-                Label {
-                    Text(line.text).textSelection(.enabled).lineSpacing(2)
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                }
+            ChatLook.ErrorNote(line.text) {
                 if let udid = line.retryPhone, let retryPhone {
                     Button("Retry") { retryPhone(udid) }
                         .disabled(busy)
                 }
             }
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
         case .detail:
             VStack(alignment: .leading, spacing: 6) {
                 Text(line.text)
@@ -473,20 +453,7 @@ struct LogRow: View, Equatable {
         }
     }
 
-    /// Parsed once per message: parsing markdown on every redraw adds up while an agent is streaming.
-    @MainActor private static var proseCache: [String: AttributedString] = [:]
-
-    /// Inline markdown, with code spans set off by a faint background.
-    @MainActor static func prose(_ text: String, keep: Bool = true) -> AttributedString {
-        if let cached = proseCache[text] { return cached }
-        if proseCache.count > 2000 { proseCache.removeAll() }
-        var string = (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-            ?? AttributedString(text)
-        let code = string.runs.filter { $0.inlinePresentationIntent?.contains(.code) == true }.map(\.range)
-        for range in code { string[range].backgroundColor = Color.primary.opacity(0.07) }
-        if keep { proseCache[text] = string }
-        return string
-    }
+    @MainActor static func prose(_ text: String, keep: Bool = true) -> AttributedString { ChatLook.prose(text, keep: keep) }
 }
 
 /// Consecutive tool calls. A single call shows as is; several collapse into one summary line.
@@ -593,20 +560,10 @@ struct StatusGroup: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(lines) { line in
-                if let command = RanCommand.command(in: line) {
-                    RanCommand(command: command)
+                if line.kind == .status, let command = ChatLook.ranCommand(in: line.text) {
+                    ChatLook.RanCommand(command)
                 } else {
-                    HStack(spacing: 6) {
-                        Group {
-                            if running && line.id == lines.last?.id && line.text.hasSuffix("…") {
-                                ProgressView().controlSize(.mini)
-                            } else {
-                                Image(systemName: "checkmark.circle")
-                            }
-                        }
-                        .frame(width: 16)
-                        Text(line.text)
-                    }
+                    ChatLook.StatusLine(line.text, running: running && line.id == lines.last?.id && line.text.hasSuffix("…"))
                 }
             }
         }
@@ -635,43 +592,5 @@ struct UnresponsiveNotice: View {
         .padding(.horizontal, 12).padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
-    }
-}
-
-/// A command the agent ran without asking ("Ran: git clone …"). The chat says that it happened; the command
-/// itself is a click away, for anyone who wants to see it.
-struct RanCommand: View {
-    let command: String
-    @State private var expanded = false
-
-    static func command(in line: LogLine) -> String? {
-        line.kind == .status && line.text.hasPrefix("Ran: ") ? String(line.text.dropFirst(5)) : nil
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button {
-                withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle").frame(width: 16)
-                    Text("Ran a command")
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Show the command")
-            if expanded {
-                Text(command)
-                    .font(.system(.callout, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    .textSelection(.enabled)
-                    .padding(.leading, 22)
-            }
-        }
     }
 }

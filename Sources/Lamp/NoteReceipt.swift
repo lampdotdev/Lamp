@@ -84,7 +84,7 @@ struct NoteReceipt: Codable, Equatable {
 }
 
 /// The receipt in the chat: one line saying what was noted and about whom, with Undo. The line opens to the
-/// notes themselves, the way a command Lamp ran does (`RanCommand`): a receipt is there to be glanced at, and
+/// notes themselves, the way a command Lamp ran does (`ChatLook.RanCommand`): a receipt is there to be glanced at, and
 /// drawn as a card it competed with the card the person is answering. Taken back, it is the two words.
 struct NoteCard: View {
     let line: LogLine

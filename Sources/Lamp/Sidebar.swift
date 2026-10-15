@@ -63,12 +63,14 @@ enum Sidebar {
         try entitlements.write(to: entitlementsURL(for: project), atomically: true, encoding: .utf8)
     }
 
-    /// Sandboxed, which macOS asks of every extension it loads, with the one way out it needs: to reach Lamp.
+    /// Sandboxed, which macOS asks of every extension it loads, with the ways out it needs: to reach Lamp, and to
+    /// read the files the person attaches.
     private static let entitlements = """
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
         <plist version="1.0"><dict><key>com.apple.security.app-sandbox</key><true/>
-        <key>com.apple.security.network.client</key><true/></dict></plist>
+        <key>com.apple.security.network.client</key><true/>
+        <key>com.apple.security.files.user-selected.read-only</key><true/></dict></plist>
 
         """
 
@@ -217,51 +219,74 @@ final class SidebarServer {
             if draftsFromSidebar[project.id] != draft.text { draftVersions[project.id, default: 0] += 1 }
             shownDrafts[project.id] = draft.text
         }
-        let working = store.busy.contains(project.id) ? (store.progress[project.id]?.activity ?? "Working") : nil
-        return SidebarState(app: project.name, lines: Self.lines(store.logs[project.id] ?? [], busy: working != nil), working: working,
+        let log = store.logs[project.id] ?? []
+        let busy = store.busy.contains(project.id)
+        // The progress line, as Lamp's window shows it: not under the agent's questions.
+        let progress = busy && Talk.open(in: log) == nil ? store.progress[project.id] : nil
+        return SidebarState(app: project.name, lines: Self.lines(log, dir: project.dir, busy: busy, progressShown: progress != nil),
+                            working: progress?.activity, workingSince: progress?.started, empty: log.isEmpty, busy: busy,
                             draft: draft.text, draftVersion: draftVersions[project.id] ?? 0,
                             attachments: draft.attachments.map { SidebarAttachment(name: $0.lastPathComponent, thumbnail: Self.thumbnail($0)) })
     }
 
-    /// The chat as Lamp's window shows it without Agent Details: what was asked, answered and done.
-    static func lines(_ log: [LogLine], busy: Bool) -> [SidebarLine] {
-        let visible = LogLine.visible(log, details: false)
+    /// The chat as Lamp's window shows it without Agent Details (`Transcript`): the same lines, gathered and
+    /// spaced the same way. Cards and notes Lamp's window has and this doesn't yet are left out.
+    static func lines(_ log: [LogLine], dir: URL, busy: Bool, progressShown: Bool) -> [SidebarLine] {
+        let lines = LogLine.visible(log, details: false)
+        let finalAnswers = Transcript.finalAnswers(in: lines, busy: busy)
+        let openAsk = Talk.open(in: lines)?.id
+        let currentResult = Talk.current(in: lines)?.id
+        // Only the end of a long chat, as Lamp's window opens on it; the rest is a click away in Lamp.
+        let start = LogLine.recentStart(in: lines, atLeast: LogLine.recentCount)
+        let shown = lines[start...].filter { $0.fromCard != true }
+        let items = ChatItem.items(progressShown ? Transcript.withoutStepInProgress(shown) : shown)
         var out: [SidebarLine] = []
-        for (index, line) in visible.enumerated() {
-            switch line.kind {
-            case .user where line.fromCard != true:
-                out.append(SidebarLine(id: line.id, kind: .user, text: line.text))
-            case .agent:
-                out.append(SidebarLine(id: line.id, kind: .agent, text: line.text))
-            case .status:
-                // Only what's happening at the end of the chat: a status from an earlier turn ("… is ready") says
-                // nothing the app beside it doesn't, and the work in progress has its own line.
-                guard index == visible.count - 1, !busy else { continue }
-                out.append(SidebarLine(id: line.id, kind: .status, text: line.text))
-            case .error:
-                out.append(SidebarLine(id: line.id, kind: .error, text: line.text))
-            case .ask:
-                guard let ask = line.ask else { continue }
-                if ask.answers == nil, ask.typed != true, Talk.open(in: log)?.id == line.id {
-                    out.append(SidebarLine(id: line.id, kind: .ask, text: ask.text, questions: ask.questions.map {
-                        SidebarQuestion(question: $0.question, options: $0.options.map { $0.title }, symbols: $0.options.map { $0.symbol })
-                    }))
-                } else if let folded = ask.folded {
-                    out.append(SidebarLine(id: line.id, kind: .ask, text: folded))
+        for (index, item) in items.enumerated() {
+            let isLast = index == items.count - 1
+            let gap = Double(ChatItem.gap(after: index > 0 ? items[index - 1] : nil, before: item, isFinalAnswer: finalAnswers.contains(item.id)))
+            switch item {
+            case .statuses(let run):
+                for (position, line) in run.enumerated() {
+                    let running = isLast && busy && !progressShown && line.id == run.last?.id && line.text.hasSuffix("…")
+                    out.append(SidebarLine(id: line.id, kind: .status, text: line.text, gap: position == 0 ? gap : 4, running: running))
                 }
-            case .result:
-                guard let result = line.result else { continue }
-                let current = Talk.current(in: log)?.id == line.id
-                out.append(SidebarLine(id: line.id, kind: .result, text: result.summary, untried: current ? result.untried : nil))
-            default:
+            case .tools:
                 continue
+            case .line(let line):
+                switch line.kind {
+                case .user:
+                    let files = (line.attachments ?? []).map { dir.appendingPathComponent(Attachments.folder).appendingPathComponent($0) }
+                    out.append(SidebarLine(id: line.id, kind: .user, text: line.text, gap: gap,
+                                           attachments: files.isEmpty ? nil : files.map { SidebarAttachment(name: $0.lastPathComponent, thumbnail: thumbnail($0)) }))
+                case .agent:
+                    out.append(SidebarLine(id: line.id, kind: .agent, text: line.text, gap: gap, growing: busy))
+                case .summary:
+                    out.append(SidebarLine(id: line.id, kind: .summary, text: line.text, gap: gap))
+                case .error:
+                    out.append(SidebarLine(id: line.id, kind: .error, text: line.text, gap: gap))
+                case .ask:
+                    guard let ask = line.ask else { continue }
+                    if line.id == openAsk {
+                        out.append(SidebarLine(id: line.id, kind: .ask, text: ask.text, gap: gap, questions: ask.questions.map {
+                            SidebarQuestion(question: $0.question, options: $0.options.map { $0.title }, symbols: $0.options.map { $0.symbol })
+                        }))
+                    } else if let folded = ask.folded {
+                        out.append(SidebarLine(id: line.id, kind: .ask, text: folded, gap: gap))
+                    }
+                case .result:
+                    guard let result = line.result else { continue }
+                    let current = line.id == currentResult && !busy
+                    out.append(SidebarLine(id: line.id, kind: .result, text: result.summary, gap: gap, untried: current ? result.untried : nil))
+                default:
+                    continue
+                }
             }
         }
         return out
     }
 
     private static var thumbnails: [URL: Data] = [:]
-    private static func thumbnail(_ url: URL) -> Data? {
+    fileprivate static func thumbnail(_ url: URL) -> Data? {
         if let data = thumbnails[url] { return data }
         guard let image = NSImage(contentsOf: url) else { return nil }
         let side: CGFloat = 64
@@ -301,6 +326,18 @@ final class SidebarServer {
             draft.text = text
             draftsFromSidebar[project.id] = text
             store.updateDraft(draft, for: project)
+        case .attach(let files):
+            // Written where Lamp keeps pasted files, each in a folder of its own so two of one name both stay.
+            let urls = files.compactMap { file -> URL? in
+                let name = (file.name as NSString).lastPathComponent.filter { !"/:\\\0".contains($0) }
+                guard !name.isEmpty, !name.hasPrefix(".") else { return nil }
+                let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-sidebar-\(UUID().uuidString)")
+                let url = folder.appendingPathComponent(name)
+                guard (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil,
+                      (try? file.data.write(to: url)) != nil else { return nil }
+                return url
+            }
+            store.attach(urls, to: project)
         case .removeAttachment(let index):
             var draft = store.draft(for: project)
             guard draft.attachments.indices.contains(index) else { return }
@@ -308,6 +345,8 @@ final class SidebarServer {
             store.updateDraft(draft, for: project)
         case .stop:
             store.stop(project)
+        case .hello:
+            break   // answered by the connection
         }
     }
 
@@ -354,6 +393,11 @@ final class SidebarServer {
         private var source: DispatchSourceRead?
         private var buffer = Data()
         private var last: Data?
+        private let outbox: SidebarOutbox
+        /// A state that came while the last one was still going out: only the latest is sent once it has.
+        private var waiting = false
+        /// Which shape of the chat the sidebar reads (`SidebarCommand.hello`); 1 until it says.
+        fileprivate var version = 1
 
         init(socket: Int32, projectID: String, server: SidebarServer) {
             fd = socket
@@ -362,38 +406,50 @@ final class SidebarServer {
             // A sidebar that went away mid-write mustn't end Lamp.
             var on: Int32 = 1
             setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+            outbox = SidebarOutbox(fd: socket)
             let source = DispatchSource.makeReadSource(fileDescriptor: socket, queue: .main)
             source.setEventHandler { [weak self] in MainActor.assumeIsolated { self?.read() } }
             source.resume()
             self.source = source
+            outbox.onDrain = { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.waiting else { return }
+                    self.waiting = false
+                    self.push(force: false)
+                }
+            }
         }
 
         @MainActor private func read() {
             var chunk = [UInt8](repeating: 0, count: 65536)
             let count = Darwin.read(fd, &chunk, chunk.count)
+            if count < 0, errno == EAGAIN || errno == EINTR { return }
             guard count > 0 else { return end() }
             buffer.append(contentsOf: chunk[0..<count])
             for line in SidebarWire.lines(from: &buffer) {
-                if let command = try? JSONDecoder().decode(SidebarCommand.self, from: line) { server?.handle(command, from: projectID) }
-            }
-        }
-
-        @MainActor func push(force: Bool) {
-            guard let server, let project = Store.shared.projects.first(where: { $0.id == projectID }),
-                  let data = SidebarWire.encode(server.state(for: project)) else { return }
-            guard force || data != last else { return }
-            last = data
-            data.withUnsafeBytes { bytes in
-                var offset = 0
-                while offset < bytes.count {
-                    let written = Darwin.write(fd, bytes.baseAddress! + offset, bytes.count - offset)
-                    if written <= 0 { break }
-                    offset += written
+                guard let command = try? JSONDecoder().decode(SidebarCommand.self, from: line) else { continue }
+                if case .hello(let version) = command {
+                    self.version = version
+                    push(force: true)
+                } else {
+                    server?.handle(command, from: projectID)
                 }
             }
         }
 
+        @MainActor func push(force: Bool) {
+            guard !outbox.isHolding else { waiting = true; return }
+            guard let server, let project = Store.shared.projects.first(where: { $0.id == projectID }) else { return }
+            var state = server.state(for: project)
+            // A sidebar from before the summary line can't read one, and would drop the whole chat.
+            if version < 2 { state.lines.removeAll { $0.kind == .summary } }
+            guard let data = SidebarWire.encode(state), force || data != last else { return }
+            last = data
+            outbox.send(data)
+        }
+
         @MainActor private func end() {
+            outbox.close()
             source?.cancel()
             source = nil
             close(fd)

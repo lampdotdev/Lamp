@@ -35,6 +35,7 @@ final class Link: ObservableObject {
     @Published var lampAway = false
 
     private var fd: Int32 = -1
+    private var outbox: SidebarOutbox?
     private var source: DispatchSourceRead?
     private var buffer = Data()
     private var since = Date()
@@ -64,6 +65,8 @@ final class Link: ObservableObject {
         var on: Int32 = 1
         setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         fd = socket
+        outbox = SidebarOutbox(fd: socket)
+        send(.hello(SidebarWire.version))
         connected = true
         lampAway = false
         let source = DispatchSource.makeReadSource(fileDescriptor: socket, queue: .main)
@@ -75,6 +78,7 @@ final class Link: ObservableObject {
     private func read() {
         var chunk = [UInt8](repeating: 0, count: 65536)
         let count = Darwin.read(fd, &chunk, chunk.count)
+        if count < 0, errno == EAGAIN || errno == EINTR { return }
         guard count > 0 else { return drop() }
         buffer.append(contentsOf: chunk[0..<count])
         for line in SidebarWire.lines(from: &buffer) {
@@ -83,6 +87,8 @@ final class Link: ObservableObject {
     }
 
     private func drop() {
+        outbox?.close()
+        outbox = nil
         source?.cancel()
         source = nil
         if fd >= 0 { close(fd) }
@@ -93,15 +99,8 @@ final class Link: ObservableObject {
     }
 
     func send(_ command: SidebarCommand) {
-        guard fd >= 0, let data = SidebarWire.encode(command) else { return }
-        data.withUnsafeBytes { bytes in
-            var offset = 0
-            while offset < bytes.count {
-                let written = Darwin.write(fd, bytes.baseAddress! + offset, bytes.count - offset)
-                if written <= 0 { break }
-                offset += written
-            }
-        }
+        guard let outbox, let data = SidebarWire.encode(command) else { return }
+        outbox.send(data)
     }
 
     /// Starts Lamp when it isn't open, by its link, without bringing it in front.
@@ -141,6 +140,7 @@ struct SidebarView: View {
     }
 }
 
+/// The chat as Lamp's window draws it (`Transcript`, the composer row), from the same pieces (`ChatLook`).
 private struct Chat: View {
     @EnvironmentObject private var link: Link
     let state: SidebarState
@@ -149,37 +149,32 @@ private struct Chat: View {
         VStack(spacing: 0) {
             ScrollViewReader { scroller in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 0) {
                         ForEach(state.lines) { line in
-                            LineView(line: line).id(line.id)
+                            LineView(line: line).padding(.top, line.gap).id(line.id)
                         }
-                        if let working = state.working {
-                            HStack(spacing: 8) {
-                                ProgressView().controlSize(.small)
-                                Text(working).foregroundStyle(.secondary)
-                                Spacer()
-                                Button("Stop") { link.send(.stop) }.controlSize(.small)
-                            }
-                            .id("working")
+                        if let working = state.working, let since = state.workingSince {
+                            ChatLook.ActivityLine(working, started: since).padding(.top, 12)
                         }
+                        Color.clear.frame(height: 16).id("end")
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 14)
-                    .padding(.bottom, 10)
+                    .padding(.horizontal, 20).padding(.top, 16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .onChange(of: state.lines.last?.id) { follow(scroller) }
+                .onChange(of: state.lines.last?.text) { follow(scroller) }
                 .onChange(of: state.working) { follow(scroller) }
                 // Once the lines are laid out: scrolled before then, the chat opens partway up.
                 .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { follow(scroller, animated: false) } }
             }
-            Composer(state: state)
+            Divider()
+            ComposerRow(state: state)
         }
+        .background(Color(nsColor: .textBackgroundColor))
     }
 
     private func follow(_ scroller: ScrollViewProxy, animated: Bool = true) {
-        withAnimation(animated ? .easeOut(duration: 0.2) : nil) {
-            if state.working != nil { scroller.scrollTo("working", anchor: .bottom) } else if let last = state.lines.last { scroller.scrollTo(last.id, anchor: .bottom) }
-        }
+        withAnimation(animated ? .easeOut(duration: 0.2) : nil) { scroller.scrollTo("end", anchor: .bottom) }
     }
 }
 
@@ -190,23 +185,30 @@ private struct LineView: View {
     var body: some View {
         switch line.kind {
         case .user:
-            HStack {
-                Spacer(minLength: 40)
-                Text(line.text)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 12).padding(.vertical, 7)
-                    .background(Color.secondary.opacity(0.18), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            VStack(alignment: .trailing, spacing: 6) {
+                if let attachments = line.attachments, !attachments.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(attachments.indices, id: \.self) { index in
+                            Thumbnail(attachment: attachments[index], size: 72)
+                        }
+                    }
+                }
+                if !line.text.isEmpty { ChatLook.UserBubble(line.text) }
             }
+            .frame(maxWidth: 480, alignment: .trailing)
+            .frame(maxWidth: .infinity, alignment: .trailing)
         case .agent:
-            Text((try? AttributedString(markdown: line.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(line.text))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+            ChatLook.AgentText(line.text, keep: !line.growing)
         case .status:
-            Label(line.text, systemImage: "checkmark.circle")
-                .font(.callout).foregroundStyle(.secondary)
+            if let command = ChatLook.ranCommand(in: line.text) {
+                ChatLook.RanCommand(command)
+            } else {
+                ChatLook.StatusLine(line.text, running: line.running)
+            }
+        case .summary:
+            ChatLook.SummaryLine(line.text)
         case .error:
-            Label(line.text, systemImage: "exclamationmark.triangle")
-                .font(.callout).foregroundStyle(.orange)
+            ChatLook.ErrorNote(line.text)
         case .ask:
             if let questions = line.questions {
                 QuestionCard(id: line.id, questions: questions)
@@ -215,16 +217,114 @@ private struct LineView: View {
             }
         case .result:
             VStack(alignment: .leading, spacing: 8) {
-                Text(line.text).fixedSize(horizontal: false, vertical: true)
+                ChatLook.AgentText(line.text)
                 if let untried = line.untried {
                     HStack(alignment: .firstTextBaseline) {
                         Text(untried).font(.callout).foregroundStyle(.secondary)
                         Spacer()
-                        Button("Try It") { link.send(.tryIt(line.id)) }.controlSize(.small)
+                        Button("Try It") { link.send(.tryIt(line.id)) }
                     }
                 }
             }
         }
+    }
+}
+
+private struct Thumbnail: View {
+    let attachment: SidebarAttachment
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let data = attachment.thumbnail, let image = NSImage(data: data) {
+                Image(nsImage: image).resizable().scaledToFill()
+            } else {
+                Image(systemName: "doc").foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .help(attachment.name)
+    }
+}
+
+/// The message box with the buttons around it, as in Lamp's window.
+private struct ComposerRow: View {
+    @EnvironmentObject private var link: Link
+    let state: SidebarState
+    @State private var text = ""
+    @State private var height = Composer.lineHeight
+    @State private var version = -1
+    @State private var focus = 0
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if !state.attachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(state.attachments.indices, id: \.self) { index in
+                            Thumbnail(attachment: state.attachments[index], size: 48)
+                                .overlay(alignment: .topTrailing) {
+                                    Button { link.send(.removeAttachment(index)) } label: {
+                                        Image(systemName: "xmark.circle.fill").symbolRenderingMode(.palette)
+                                            .foregroundStyle(.white, .black.opacity(0.6))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .offset(x: 5, y: -5)
+                                }
+                        }
+                    }
+                    .padding(.horizontal, 12).padding(.top, 10)
+                }
+            }
+            HStack(alignment: .bottom, spacing: 8) {
+                Button(action: chooseFiles) { Image(systemName: "paperclip").font(.title3) }
+                    .buttonStyle(.borderless)
+                    .help("Attach files. You can also paste images and files here.")
+                    .accessibilityLabel("Attach files")
+                    .frame(height: Composer.lineHeight)
+                Composer(text: $text, height: $height, placeholder: ChatLook.placeholder(busy: state.busy, empty: state.empty),
+                         isEnabled: true, focusRequest: focus, onSubmit: submit, onFiles: attach)
+                    .frame(height: height)
+                if state.busy { ChatLook.StopButton { link.send(.stop) } }
+                ChatLook.SendButton(busy: state.busy, action: submit)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && state.attachments.isEmpty)
+            }
+            .padding(12)
+        }
+        .onAppear { take(state) }
+        .onChange(of: state.draftVersion) { take(state) }
+        .onChange(of: text) { link.send(.draft(text)) }
+    }
+
+    /// Lamp's draft, when it was changed elsewhere.
+    private func take(_ state: SidebarState) {
+        guard state.draftVersion != version else { return }
+        version = state.draftVersion
+        if text != state.draft { text = state.draft }
+        focus += 1
+    }
+
+    private func submit() {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !state.attachments.isEmpty else { return }
+        link.send(.send(text))
+        text = ""
+    }
+
+    /// Only this process can read what was pasted or chosen here: the files go to Lamp whole.
+    private func attach(_ urls: [URL]) {
+        let files = urls.compactMap { url -> SidebarFile? in
+            guard let data = try? Data(contentsOf: url), data.count < 50_000_000 else { return nil }
+            return SidebarFile(name: url.lastPathComponent, data: data)
+        }
+        if !files.isEmpty { link.send(.attach(files)) }
+    }
+
+    private func chooseFiles() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK { attach(panel.urls) }
     }
 }
 
@@ -267,88 +367,6 @@ private struct QuestionCard: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-}
-
-private struct Composer: View {
-    @EnvironmentObject private var link: Link
-    let state: SidebarState
-    @State private var text = ""
-    @State private var version = -1
-    @FocusState private var focused: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if !state.attachments.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(state.attachments.indices, id: \.self) { index in
-                            let attachment = state.attachments[index]
-                            HStack(spacing: 6) {
-                                if let data = attachment.thumbnail, let image = NSImage(data: data) {
-                                    Image(nsImage: image).resizable().scaledToFill().frame(width: 22, height: 22)
-                                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                                }
-                                Text(attachment.name).font(.caption).lineLimit(1)
-                                Button { link.send(.removeAttachment(index)) } label: { Image(systemName: "xmark.circle.fill") }
-                                    .buttonStyle(.plain).foregroundStyle(.secondary)
-                            }
-                            .padding(.horizontal, 8).padding(.vertical, 4)
-                            .background(Color.secondary.opacity(0.14), in: Capsule())
-                        }
-                    }
-                }
-            }
-            HStack(alignment: .bottom, spacing: 6) {
-                TextField("Describe a change", text: $text, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...8)
-                    .focused($focused)
-                    .onKeyPress(.return, phases: .down) { press in
-                        if press.modifiers.contains(.shift) || press.modifiers.contains(.option) {
-                            text += "\n"
-                            return .handled
-                        }
-                        submit()
-                        return .handled
-                    }
-                    .padding(.vertical, 3)
-                Button(action: submit) {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 22, height: 22)
-                        .background(canSend ? Color.accentColor : Color.secondary.opacity(0.35), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!canSend)
-                .help("Send")
-            }
-            .padding(.leading, 12).padding(.trailing, 6).padding(.vertical, 6)
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.6), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
-        }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 12)
-        .onAppear { take(state) }
-        .onChange(of: state.draftVersion) { take(state) }
-        .onChange(of: text) { link.send(.draft(text)) }
-    }
-
-    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !state.attachments.isEmpty }
-
-    /// Lamp's draft, when it was changed elsewhere.
-    private func take(_ state: SidebarState) {
-        guard state.draftVersion != version else { return }
-        version = state.draftVersion
-        if text != state.draft { text = state.draft }
-        focused = true
-    }
-
-    private func submit() {
-        guard canSend else { return }
-        link.send(.send(text))
-        text = ""
     }
 }
 
