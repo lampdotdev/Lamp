@@ -6,9 +6,11 @@ import CryptoKit
 struct BuildStamp: Equatable {
     /// Lamp's version, e.g. "0.2.0". Nil for apps built before stamps existed.
     var lamp: String?
-    /// A fingerprint of the LampSupport.swift template the app was compiled with. Two builds of Lamp
-    /// can share a version number (every local build is 0.1); this is what says whether the code Lamp
-    /// puts in each app has changed.
+    /// A fingerprint of the LampSupport.swift template and the build scripts the app was compiled with.
+    /// Two builds of Lamp can share a version number (every local build is 0.1); this is what says whether
+    /// what Lamp puts in each app has changed. The build scripts are in it because they change the binary
+    /// too: an app built before they restricted dyld's environment variables (buildSh) takes injected
+    /// libraries until it's built again.
     /// It covers the reasons a Mac app gives for its permissions too: an app built before one was added is
     /// killed when it asks, until it's built again. And the build's App Intents step: an app built before it
     /// has none of its intents where the system looks for them. And the chat Lamp puts in a Mac app's window
@@ -21,7 +23,8 @@ struct BuildStamp: Equatable {
     /// What this Lamp stamps on the apps it builds.
     static let current = BuildStamp(
         lamp: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1",
-        support: SHA256.hash(data: Data((Template.lampSupportSwift + Template.macUsagePlistLines(name: "") + Template.appIntentsSetup(ios: false) + Template.appIntentsSetup(ios: true)).utf8)
+        support: SHA256.hash(data: Data((Template.lampSupportSwift + Template.macUsagePlistLines(name: "") + Template.appIntentsSetup(ios: false) + Template.appIntentsSetup(ios: true)
+                                         + Template.buildSh + Template.universalBuildSh).utf8)
                              + (Bundle.main.url(forResource: "LampSidebar", withExtension: nil).flatMap { try? Data(contentsOf: $0) } ?? Data()))
             .prefix(6).map { String(format: "%02x", $0) }.joined())
 

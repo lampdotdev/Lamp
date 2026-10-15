@@ -118,7 +118,9 @@ enum Sidebar {
         var peer = sockaddr_in()
         var length = socklen_t(MemoryLayout<sockaddr_in>.size)
         guard withUnsafeMutablePointer(to: &peer, { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getpeername(socket, $0, &length) } }) == 0,
-              peer.sin_addr.s_addr == inet_addr("127.0.0.1"), let pid = process(connectedFrom: peer.sin_port) else { return nil }
+              peer.sin_addr.s_addr == inet_addr("127.0.0.1"),
+              let pid = PeerProcess.find(connectedFrom: UInt16(bigEndian: peer.sin_port), to: Edition.sidebarPort,
+                                         path: { $0.hasSuffix("/LampSidebar.appex/Contents/MacOS/LampSidebar") }) else { return nil }
         var code: SecCode?
         guard SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid: pid] as CFDictionary, [], &code) == errSecSuccess, let code else { return nil }
         return Store.shared.projects.first { project in
@@ -128,33 +130,6 @@ enum Sidebar {
                     && SecCodeCheckValidity(code, [], requirement) == errSecSuccess
             }
         }
-    }
-
-    /// The sidebar process whose connection to Lamp's port goes out from `port` (both in network order).
-    private static func process(connectedFrom port: in_port_t) -> pid_t? {
-        let count = proc_listallpids(nil, 0)
-        guard count > 0 else { return nil }
-        var pids = [pid_t](repeating: 0, count: Int(count) * 2)
-        let found = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
-        for pid in pids.prefix(Int(max(found, 0))) where pid > 0 {
-            var path = [CChar](repeating: 0, count: 4096)
-            guard proc_pidpath(pid, &path, UInt32(path.count)) > 0,
-                  String(cString: path).hasSuffix("/LampSidebar.appex/Contents/MacOS/LampSidebar") else { continue }
-            let size = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
-            guard size > 0 else { continue }
-            var fds = [proc_fdinfo](repeating: proc_fdinfo(), count: Int(size) / MemoryLayout<proc_fdinfo>.size)
-            let filled = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, &fds, size)
-            for fd in fds.prefix(Int(filled) / MemoryLayout<proc_fdinfo>.size) where fd.proc_fdtype == PROX_FDTYPE_SOCKET {
-                var info = socket_fdinfo()
-                guard proc_pidfdinfo(pid, fd.proc_fd, PROC_PIDFDSOCKETINFO, &info, Int32(MemoryLayout<socket_fdinfo>.size)) > 0,
-                      info.psi.soi_kind == SOCKINFO_TCP else { continue }
-                let tcp = info.psi.soi_proto.pri_tcp.tcpsi_ini
-                if in_port_t(truncatingIfNeeded: tcp.insi_lport) == port, in_port_t(truncatingIfNeeded: tcp.insi_fport) == Edition.sidebarPort.bigEndian {
-                    return pid
-                }
-            }
-        }
-        return nil
     }
 }
 
@@ -272,7 +247,6 @@ final class SidebarServer {
         let lines = Transcript.withoutSpentOffers(LogLine.visible(log, details: false), dir: dir)
         let finalAnswers = Transcript.finalAnswers(in: lines, busy: busy)
         let openAsk = Talk.open(in: lines)?.id
-        let currentResult = Talk.current(in: lines)?.id
         // Only the end of a long chat, as Lamp's window opens on it; the rest is a click away in Lamp.
         let start = LogLine.recentStart(in: lines, atLeast: reach)
         let latestRequest = lines.last { $0.kind == .user }?.id
@@ -324,13 +298,8 @@ final class SidebarServer {
                     out.append(card)
                 case .result:
                     guard let result = line.result else { continue }
-                    let current = line.id == currentResult && !busy
-                    // `untried` for a sidebar from before the shared card, which offers it as Try It.
-                    var card = SidebarLine(id: line.id, kind: .result, text: result.summary, gap: gap,
-                                           untried: current ? result.untried : nil)
+                    var card = SidebarLine(id: line.id, kind: .result, text: result.summary, gap: gap)
                     card.result = result
-                    card.resultCurrent = current
-                    card.picture = result.version.flatMap { picture(Versions.pictureURL(in: project, for: $0)) }
                     out.append(card)
                 case .needsKey, .offer:
                     // The card's header: setting it up (a key, a download, a sign-in) happens in Lamp's window.
@@ -481,20 +450,6 @@ final class SidebarServer {
     /// under the receipt.
     fileprivate static var noteProblems: [UUID: String] = [:]
 
-    /// A result's picture, small enough to send every time the chat changes.
-    private static var pictures: [URL: Data] = [:]
-    fileprivate static func picture(_ url: URL) -> Data? {
-        if let data = pictures[url] { return data }
-        guard let image = NSImage(contentsOf: url) else { return nil }
-        let scale = min(300 / max(image.size.width, 1), 200 / max(image.size.height, 1), 1)
-        let size = NSSize(width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
-        let small = NSImage(size: size, flipped: false) { rect in image.draw(in: rect); return true }
-        guard let tiff = small.tiffRepresentation,
-              let data = NSBitmapImageRep(data: tiff)?.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else { return nil }
-        pictures[url] = data
-        return data
-    }
-
     private static var thumbnails: [URL: Data] = [:]
     fileprivate static func thumbnail(_ url: URL) -> Data? {
         if let data = thumbnails[url] { return data }
@@ -577,9 +532,6 @@ final class SidebarServer {
         case .answer(let id, let answers):
             guard let line = store.logs[project.id]?.first(where: { $0.id == id }) else { return }
             store.answer(line, with: answers, in: project)
-        case .tryIt(let id):
-            guard let untried = store.logs[project.id]?.first(where: { $0.id == id })?.result?.untried else { return }
-            store.send(Talk.tryRequest(untried), to: project)
         case .draft(let text):
             var draft = store.draft(for: project)
             guard draft.text != text else { return }

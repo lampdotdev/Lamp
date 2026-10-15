@@ -59,19 +59,29 @@ function matchers(fit) {
   const make = pageUrl => new chrome.declarativeContent.PageStateMatcher(fit.selector ? {pageUrl, css: [fit.selector]} : {pageUrl});
   return fit.site ? [make({...base, hostEquals: fit.site}), make({...base, hostSuffix: '.' + fit.site})] : [make(base)];
 }
-let rulesKey;
-async function syncRules(apps) {
+// Chrome 155 answers these with undefined rather than a promise, so they're asked with a callback. A rule Chrome
+// refuses comes back as lastError, read here so it's that rule's failure and not an error in the console.
+const pageRules = (method, argument) =>
+  new Promise(resolve => chrome.declarativeContent.onPageChanged[method](argument, () => resolve(chrome.runtime.lastError)));
+// One sync at a time: the hellos as the worker starts each find the fits new, and two syncs at once add the same
+// rule twice, which Chrome refuses.
+let rulesKey, syncing = Promise.resolve();
+function syncRules(apps) {
+  const next = syncing.then(() => replaceRules(apps));
+  syncing = next.catch(() => {});
+  return next;
+}
+async function replaceRules(apps) {
   const key = JSON.stringify(apps.map(app => [app.id, app.fits || []]));
   if (rulesKey === undefined) rulesKey = (await chrome.storage.local.get('rulesKey')).rulesKey ?? '';
   if (key === rulesKey) return;
-  await chrome.declarativeContent.onPageChanged.removeRules(undefined);
+  await pageRules('removeRules', undefined);
   const imageData = await litIcon();
   // One rule per app, so a fit Chrome refuses costs only that app its lit icon.
   for (const app of apps) {
     const conditions = (app.fits || []).flatMap(matchers);
     if (!conditions.length) continue;
-    await chrome.declarativeContent.onPageChanged.addRules([{id: 'app:' + app.id, conditions,
-      actions: [new chrome.declarativeContent.SetIcon({imageData})]}]).catch(() => {});
+    await pageRules('addRules', [{id: 'app:' + app.id, conditions, actions: [new chrome.declarativeContent.SetIcon({imageData})]}]);
   }
   rulesKey = key;
   await chrome.storage.local.set({rulesKey});

@@ -394,6 +394,8 @@ final class Store: ObservableObject {
         /// The person kept the app open when this turn's build asked it to quit: it isn't asked a second time
         /// in the turn, and the agent isn't shown the copy on screen as its work.
         var keptOpen = false
+        /// The chat has said this turn closed the open app and opened it again (`ChatLook.reloaded`).
+        var saidReloaded = false
         /// Nil for a simulator/Mac turn; false until the chosen phone acknowledges opening the app.
         var phoneReady: Bool?
         var allowAll = false                // "Allow all for this turn"
@@ -1912,17 +1914,7 @@ final class Store: ObservableObject {
             if let head = await Versions.head(project) { mark(asked, sentFrom: head, in: project) }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
             worked = result.end != .failed
-            if newApp && result.end == .changed { await showResult(of: project) }
         }
-    }
-
-    /// Puts the app's real window on its build card, once it has opened and saved a picture of itself.
-    private func showResult(of project: LampProject) async {
-        guard let started = progress[project.id]?.started,
-              macCopies(of: project).first != nil,
-              let picture = await Runtime.screenshots(of: project, since: started, waiting: 4).first,
-              let image = NSImage(contentsOf: picture) else { return }
-        progress[project.id]?.screenshot = image
     }
 
     /// Posts a notification for a turn that ended while the user was looking elsewhere.
@@ -2527,6 +2519,8 @@ final class Store: ObservableObject {
             return
         }
         Self.trashData(of: project)
+        // Its sign-ins too: an app made later under the same name is another app, and starts disconnected.
+        AppSecrets.forget(app: project.instance)
         projects.removeAll { $0.id == project.id }
         logs[project.id] = nil
         usage[project.id] = nil
@@ -3863,6 +3857,9 @@ final class Store: ObservableObject {
             log(project, .error, problem)
             return problem
         }
+        // A request's change that closes the open app and opens it again says so in the chat, once in the turn:
+        // otherwise the window just goes away and comes back. Not for Open App or Undo, which ask for that.
+        let reloading = owner?.request != nil && owner?.saidReloaded == false && isRunning(project)
         // Asked once in a turn: a second build in it leaves the app the person kept open alone.
         let asked = owner?.keptOpen == true && isRunning(project)
         guard !asked, await quit(project, for: owner, only: .mac) else {
@@ -3918,6 +3915,10 @@ final class Store: ObservableObject {
                 log(project, .detail, crash!)
             } else {
                 noteOpened(true, for: project)
+                if reloading, let owner {
+                    owner.saidReloaded = true
+                    log(project, .status, ChatLook.reloaded)
+                }
                 if inFront { log(project, .status, "\(project.name) is ready") }
             }
         } catch {
@@ -4872,7 +4873,7 @@ final class Store: ObservableObject {
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/kind", "/agent/art", "/agent/talk", "/mcp", "/pi/key"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/kind", "/agent/art", "/agent/talk", "/mcp", "/pi/key", "/app/secrets"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -4926,8 +4927,34 @@ final class Store: ObservableObject {
         // setup incomplete, and that's exactly when the phone has to hear that its copy should go.
         if route == "/ai/keys" { return keysForPhone(project) }
         if route == "/ai/status" { return await aiStatus(for: project) }
+        if route == "/app/secrets" { return appSecrets(request, for: project) }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
+    }
+
+    /// `LampSecrets` in a Mac app: what it keeps secret, kept here (AppSecrets). Only the app itself is answered, the
+    /// program Lamp installed, on this Mac: the token is in the app's folder, where the agent can read it.
+    private func appSecrets(_ request: Gateway.Request, for project: LampProject) -> (Int, [String: Any]) {
+        guard !request.fromNetwork, let port = request.peerPort,
+              PeerProcess.isApp(at: project.installedURL, connectedFrom: port, to: Gateway.port) else {
+            return (403, ["error": "Only the app itself, as Lamp installed it, can do that."])
+        }
+        let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+        guard let name = body["name"] as? String, AppSecrets.isName(name) else { return (400, ["error": "That name can't be used."]) }
+        switch body["op"] as? String {
+        case "read":
+            return (200, AppSecrets.read(name, app: project.instance).map { ["value": $0.base64EncodedString()] } ?? [:])
+        case "save":
+            guard let value = (body["value"] as? String).flatMap({ Data(base64Encoded: $0) }), value.count <= 64 * 1024 else {
+                return (400, ["error": "Nothing to keep."])
+            }
+            return AppSecrets.save(value, as: name, app: project.instance) ? (200, ["ok": true]) : (500, ["error": "Lamp couldn't keep it."])
+        case "delete":
+            AppSecrets.delete(name, app: project.instance)
+            return (200, ["ok": true])
+        default:
+            return (400, ["error": "Unknown request."])
+        }
     }
 
     /// Whether a Host header is this Mac's name on the local network (what apps on phones are given), with

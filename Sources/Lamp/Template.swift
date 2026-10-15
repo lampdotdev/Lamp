@@ -472,6 +472,15 @@ enum Template {
         fi
         PROJECT=.lamp/device
         LIVE_SETTINGS=()
+        # dyld ignores DYLD_INSERT_LIBRARIES and the like for a binary with a __RESTRICT segment: the agent's
+        # shell can start the installed app, so nothing may ride into it (see buildSh). Loading from inside
+        # the app (LiveReload's dlopen) is unaffected.
+        mkdir -p .build
+        : > .build/restrict
+        # The path is quoted inside the value: Xcode splits the setting on spaces otherwise, and the app's
+        # folder has them ("Application Support"). The quotes must reach the shell literally (\\" in this
+        # literal), or the shell itself eats them.
+        RESTRICT_FLAGS="-Xlinker -sectcreate -Xlinker __RESTRICT -Xlinker __restrict -Xlinker \\"$PWD/.build/restrict\\""
         # A live build (LiveReload): Xcode builds a copy of the project whose sources are the live copy (its
         # ../../Sources lands on .lamp/live/Sources), unoptimized and linked so a change can go into the open app.
         if [[ "${LAMP_LIVE:-}" == 1 ]]; then
@@ -485,11 +494,11 @@ enum Template {
           # One binary: unoptimized, Xcode would put the app's code in a separate debug library (for previews),
           # and the open app's calls to it wouldn't go through the binary that's changed.
           LIVE_SETTINGS=(SWIFT_OPTIMIZATION_LEVEL=-Onone SWIFT_COMPILATION_MODE=singlefile ENABLE_TESTABILITY=YES ENABLE_DEBUG_DYLIB=NO
-            "SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG LAMP_LIVE" "OTHER_LDFLAGS=-Xlinker -interposable")
+            "SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG LAMP_LIVE" "OTHER_LDFLAGS=-Xlinker -interposable $RESTRICT_FLAGS")
         fi
         xcodebuild -project "$PROJECT/{{EXE}}.xcodeproj" -scheme "{{EXE}}" -configuration Release -destination "platform=macOS" \\
           -derivedDataPath "$PROJECT/DerivedData" -allowProvisioningUpdates -allowProvisioningDeviceRegistration \\
-          DEVELOPMENT_TEAM="$LAMP_TEAM" "${LIVE_SETTINGS[@]}" build 2>&1
+          DEVELOPMENT_TEAM="$LAMP_TEAM" "OTHER_LDFLAGS=$RESTRICT_FLAGS" "${LIVE_SETTINGS[@]}" build 2>&1
         APP="build/{{EXE}}.app"
         rm -rf "$APP"
         mkdir -p build
@@ -3389,6 +3398,15 @@ enum Template {
         /// a library's calls to functions it doesn't hold were bound to the app's first copies.
         private var latest: [String: UnsafeRawPointer] = [:]
         private var images: [String] = []
+        /// The accessors of each stored global and static, by name, from the image that first had it.
+        private var kept: [String: UnsafeRawPointer] = [:]
+
+        private func keep(_ symbols: [(String, UnsafeRawPointer)]) {
+            let stored = Self.stored(in: symbols)
+            for (name, address) in symbols where kept[name] == nil && (name.hasSuffix("vau") || Self.accesses(name, oneOf: stored)) {
+                kept[name] = address
+            }
+        }
 
         private func load(_ path: String?, signature: String?) {
             let folder = "{{APPS}}/{{SLUG}}/.lamp/live/"
@@ -3409,14 +3427,23 @@ enum Template {
             }
             guard let image = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == path }),
                   let header = _dyld_get_image_header(image) else { return }
-            for (name, address) in Self.definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image)) where Self.isCode(name) {
+            let defined = Self.definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image))
+            for (name, address) in defined where Self.isCode(name) && !Self.accesses(name, oneOf: Self.stored(in: defined)) {
                 latest[name] = address
             }
+            // Stored globals and statics stay where they were first made: the new code's own accessors for them
+            // would reach a second copy, made afresh. So its calls to them go to the app's, or to the earlier
+            // change's that first added one, and only one that's new keeps its own.
+            if kept.isEmpty, let app = _dyld_get_image_header(0) {
+                keep(Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0)))
+            }
+            keep(defined)
+            let bindings = latest.merging(kept) { new, _ in new }
             images.append(path)
             var rebound = Self.rebind(image: 0, to: latest)
             for earlier in images {
                 guard let index = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == earlier }) else { continue }
-                rebound += Self.rebind(image: index, to: latest)
+                rebound += Self.rebind(image: index, to: bindings)
             }
             generation += 1
             result = "ok \(rebound)"
@@ -3427,9 +3454,23 @@ enum Template {
         /// and state.
         private static func isCode(_ name: String) -> Bool {
             guard name.hasPrefix("_$s") else { return false }
+            // A type's own (static) functions and properties are named as an instance's, with a Z after.
+            let name = name.hasSuffix("Z") ? String(name.dropLast()) : name
             for kept in ["Mn", "Mf", "MV", "Ma", "Mm", "MF", "Mc", "Ml", "MXX", "Ms", "Wp", "WP", "Wl", "WL", "lau", "vau", "Wz", "Qo", "QO", "So", "WV", "Wvd", "MQ"]
             where name.hasSuffix(kept) { return false }
             return name.hasSuffix("F") || name.hasSuffix("g") || name.hasSuffix("s") || name.hasSuffix("M") || name.hasSuffix("fC") || name.hasSuffix("fc")
+        }
+
+        /// The properties kept in storage among these symbols: those with an addressor, by the name before it.
+        private static func stored(in symbols: [(String, UnsafeRawPointer)]) -> Set<String> {
+            Set(symbols.map(\.0).filter { $0.hasSuffix("vau") }.map { String($0.dropLast(3)) })
+        }
+
+        /// Whether this is the getter, setter or modify of a property kept in storage (one with an addressor).
+        private static func accesses(_ name: String, oneOf stored: Set<String>) -> Bool {
+            let name = name.hasSuffix("Z") ? String(name.dropLast()) : name
+            guard ["vg", "vs", "vM"].contains(where: { name.hasSuffix($0) }) else { return false }
+            return stored.contains(String(name.dropLast(2)))
         }
 
         private static func commands(_ header: UnsafePointer<mach_header>) -> [UnsafeRawPointer] {
@@ -7647,6 +7688,113 @@ enum Template {
     }
     #endif
 
+    // LampSecrets
+    /// Where the app keeps what must stay secret, such as a service's sign-in: a few bytes under a name.
+    ///
+    /// On a Mac, Lamp keeps them for the app (`.lamp`), on this Mac only. The app is signed with Lamp's own
+    /// certificate, which has no Apple team, so macOS ties a Keychain item to the one build that made it and asks
+    /// for the login password after every rebuild; Lamp itself is the same program from build to build. Lamp
+    /// answers only the app it built, running from where Lamp installed it, and only while Lamp is open. On an
+    /// iPhone the device's Keychain (`.keychain`) asks nothing, so it's kept there. Both ways sit behind the same
+    /// three calls, so an app that keeps its own secrets again is one line: `store`.
+    enum LampSecrets {
+        enum Store { case lamp, keychain }
+        #if os(macOS)
+        static var store = Store.lamp
+        #else
+        static var store = Store.keychain
+        #endif
+
+        /// What's kept under `name`, or nil when nothing is (or Lamp couldn't be asked: then it's asked again
+        /// next time).
+        static func read(_ name: String) -> Data? {
+            if store == .keychain { return Keychain.read(name) }
+            lock.lock()
+            if let known = cache[name] { lock.unlock(); return known }
+            lock.unlock()
+            guard let answer = ask(["op": "read", "name": name]) else { return nil }
+            let value = (answer["value"] as? String).flatMap { Data(base64Encoded: $0) }
+            lock.lock(); cache[name] = .some(value); lock.unlock()
+            return value
+        }
+
+        /// False when it couldn't be kept (Lamp isn't open, or the Keychain refused).
+        @discardableResult
+        static func save(_ data: Data, as name: String) -> Bool {
+            if store == .keychain { return Keychain.save(data, as: name) }
+            lock.lock(); cache[name] = nil; lock.unlock()
+            guard ask(["op": "save", "name": name, "value": data.base64EncodedString()])?["ok"] as? Bool == true else { return false }
+            lock.lock(); cache[name] = .some(data); lock.unlock()
+            return true
+        }
+
+        static func delete(_ name: String) {
+            if store == .keychain { return Keychain.delete(name) }
+            lock.lock(); cache[name] = nil; lock.unlock()
+            _ = ask(["op": "delete", "name": name])
+        }
+
+        // Lamp is asked once for each name; what it answered, and what was kept since, is remembered here.
+        private static let lock = NSLock()
+        nonisolated(unsafe) private static var cache: [String: Data?] = [:]
+
+        /// One question to Lamp, answered before going on: the callers need the answer at once, and Lamp is on this
+        /// Mac. Nil when Lamp didn't answer.
+        private static func ask(_ body: [String: Any]) -> [String: Any]? {
+            guard let url = URL(string: lampGateway + "/app/secrets") else { return nil }
+            var request = URLRequest(url: url, timeoutInterval: 5)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            let done = DispatchSemaphore(value: 0)
+            nonisolated(unsafe) var answer: [String: Any]?
+            URLSession.shared.dataTask(with: request) { data, response, error in
+                defer { done.signal() }
+                guard (response as? HTTPURLResponse)?.statusCode == 200, let data else {
+                    let said = data.map { String(decoding: $0.prefix(200), as: UTF8.self) } ?? error?.localizedDescription ?? ""
+                    fputs("LampSecrets: Lamp didn't keep or read \(body["name"] ?? ""): \(said)\n", stderr)
+                    return
+                }
+                answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            }.resume()
+            done.wait()
+            return answer
+        }
+
+        /// The app's own Keychain, under its id: for an iPhone, and for an app that keeps its own secrets.
+        enum Keychain {
+            private static func query(_ name: String) -> [String: Any] {
+                [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Bundle.main.bundleIdentifier ?? "lamp",
+                 kSecAttrAccount as String: name]
+            }
+
+            static func read(_ name: String) -> Data? {
+                var query = query(name)
+                query[kSecReturnData as String] = true
+                var item: CFTypeRef?
+                guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess else { return nil }
+                return item as? Data
+            }
+
+            static func save(_ data: Data, as name: String) -> Bool {
+                let query = query(name)
+                var status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+                if status == errSecItemNotFound {
+                    var add = query
+                    add[kSecValueData as String] = data
+                    add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+                    status = SecItemAdd(add as CFDictionary, nil)
+                }
+                if status != errSecSuccess { fputs("LampSecrets: the Keychain didn't keep \(name) (\(status))\n", stderr) }
+                return status == errSecSuccess
+            }
+
+            static func delete(_ name: String) { SecItemDelete(query(name) as CFDictionary) }
+        }
+    }
+    // end LampSecrets
+
     #if os(macOS)
     // Mac only for now: the service sends the person back to a listener on this Mac's own address, which an
     // iPhone app can't keep open while the browser is in front.
@@ -7654,8 +7802,8 @@ enum Template {
     /// A service the person already uses, reached through that service's own MCP server: Notion, Linear,
     /// Todoist, Jira and Confluence (`.atlassian`) and monday.com. The person clicks Connect, approves on the
     /// service's own page in their browser, and the app is connected: it registers itself with the service
-    /// during that sign-in, so nobody sets anything up beforehand. The sign-in is kept in this Mac's Keychain
-    /// for this app only and is sent only to that service. It is never in the app's folder, so a shared copy
+    /// during that sign-in, so nobody sets anything up beforehand. The sign-in is kept by Lamp on this Mac
+    /// (`LampSecrets`) for this app only and is sent only to that service. It is never in the app's folder, so a shared copy
     /// arrives disconnected and each person connects their own account.
     ///
     ///     @ObservedObject private var linear = LampService.linear
@@ -7757,6 +7905,10 @@ enum Template {
             }
         }
 
+        /// A cleared sign-in Lamp couldn't keep (it isn't open), for the next Disconnect to try again with:
+        /// reading it back then returns nothing (Lamp still closed), which would look done without this.
+        private var clearing: Saved?
+
         /// Stops waiting for a sign-in the person didn't finish.
         func cancel() {
             generation += 1
@@ -7773,7 +7925,7 @@ enum Template {
             pending?.close(with: CancellationError())
             pending = nil
             session = nil
-            if var saved = Saved.read(id) {
+            if var saved = Saved.read(id) ?? clearing {
                 if let endpoint = saved.revocationEndpoint {
                     let keys = [("refresh_token", saved.refreshToken), ("access_token", saved.accessToken)].compactMap { kind, token in token.map { (kind, $0) } }
                     let client = saved.clientID, secret = saved.clientSecret, name = name
@@ -7784,9 +7936,21 @@ enum Template {
                 saved.accessToken = nil
                 saved.refreshToken = nil
                 saved.expiresAt = nil
-                saved.save(id)
+                // False when Lamp isn't open: it never kept the cleared sign-in, so the old one comes back on
+                // the next read. Stay connected then (it's the truth), say why to the log, and keep the cleared
+                // record for the next Disconnect to try again with; the service may already have ended the keys,
+                // which a Connect also sorts out.
+                if saved.save(id) {
+                    clearing = nil
+                    state = .notConnected
+                } else {
+                    clearing = saved
+                    fputs("LampService: Lamp isn't open, so the disconnect didn't finish on this Mac; the sign-in is still kept.\n", stderr)
+                    state = .connected
+                }
+            } else {
+                state = .notConnected
             }
-            state = .notConnected
         }
 
         /// The service's tools, with what each takes.
@@ -8203,8 +8367,8 @@ enum Template {
         }
 
         /// What's kept for one service: the app's registration with it and, while connected, the sign-in.
-        /// In the person's Keychain under this app's id, never in the app's folder: a shared copy has a different id
-        /// and doesn't see it, and another program can't read it without the person's password.
+        /// In `LampSecrets`, for this app only, never in the app's folder: a shared copy is another app and doesn't
+        /// see it.
         fileprivate struct Saved: Codable {
             var clientID: String
             var clientSecret: String?
@@ -8224,36 +8388,18 @@ enum Template {
                 expiresAt = seconds.map { Date().addingTimeInterval($0) }
             }
 
-            private static func query(_ id: String) -> [String: Any] {
-                [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Bundle.main.bundleIdentifier ?? "lamp",
-                 kSecAttrAccount as String: "lamp-service-" + id]
-            }
-
             static func read(_ id: String) -> Saved? {
-                var query = query(id)
-                query[kSecReturnData as String] = true
-                var item: CFTypeRef?
-                guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
-                return try? JSONDecoder().decode(Saved.self, from: data)
+                LampSecrets.read("lamp-service-" + id).flatMap { try? JSONDecoder().decode(Saved.self, from: $0) }
             }
 
-            /// Stands in for a Keychain that refuses, as a locked one does, in the harness that checks what follows.
+            /// Stands in for a store that refuses, as a locked Keychain does, in the harness that checks what follows.
             fileprivate static var refusesSaving = false
 
-            /// False when the Keychain refused it (the person clicked Deny, or the keychain is locked).
+            /// False when it couldn't be kept (Lamp isn't open, the person clicked Deny, or the keychain is locked).
             @discardableResult
             func save(_ id: String) -> Bool {
                 guard !Saved.refusesSaving, let data = try? JSONEncoder().encode(self) else { return false }
-                let query = Saved.query(id)
-                var status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-                if status == errSecItemNotFound {
-                    var add = query
-                    add[kSecValueData as String] = data
-                    add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-                    status = SecItemAdd(add as CFDictionary, nil)
-                }
-                if status != errSecSuccess { fputs("LampService: couldn't keep the sign-in (\(status))\n", stderr) }
-                return status == errSecSuccess
+                return LampSecrets.save(data, as: "lamp-service-" + id)
             }
         }
 
@@ -11897,7 +12043,13 @@ enum Template {
     # Builds build/{{EXE}}.app. Run after every change.
     set -euo pipefail
     cd "$(dirname "$0")"
-    FLAGS=(-c release -Xswiftc -g)
+    # dyld ignores DYLD_INSERT_LIBRARIES and the like for a binary with a __RESTRICT segment. The agent's shell
+    # can start the installed app, and Lamp answers its secrets calls only to the app itself (PeerProcess), so
+    # nothing may ride into it this way. Loading from inside the app (LiveReload's dlopen) is unaffected.
+    mkdir -p .build
+    : > .build/restrict
+    RESTRICT=(-Xlinker -sectcreate -Xlinker __RESTRICT -Xlinker __restrict -Xlinker "$PWD/.build/restrict")
+    FLAGS=(-c release -Xswiftc -g "${RESTRICT[@]}")
     # A live build (Lamp's changing apps while they're open): debug, linked so a change can be put into the running
     # app (LampLive), from a copy of the sources in .lamp/live with each view's body wrapped so its type stays the
     # same from one change to the next. A file is copied only when it differs, so builds stay incremental.
@@ -11906,11 +12058,14 @@ enum Template {
       cmp -s Package.swift "$LIVE/Package.swift" || cp Package.swift "$LIVE/Package.swift"
       # Lamp only wants the live copy, to put a change into the open app before building the whole of it.
       [[ "${LAMP_LIVE_COPY:-}" == 1 ]] && exit 0
-      FLAGS=(-c debug --package-path "$LIVE" --scratch-path "$LIVE/.build" -Xswiftc -DLAMP_LIVE -Xswiftc -enable-testing -Xlinker -interposable)
+      FLAGS=(-c debug --package-path "$LIVE" --scratch-path "$LIVE/.build" -Xswiftc -DLAMP_LIVE -Xswiftc -enable-testing -Xlinker -interposable "${RESTRICT[@]}")
     fi
     \(appIntentsSetup(ios: false))
-    swift build "${FLAGS[@]}" 2>&1
     BIN="$(swift build "${FLAGS[@]}" --show-bin-path)/{{EXE}}"
+    # SwiftPM doesn't relink for the new flags alone: an app first built by a Lamp without them keeps its old
+    # binary until the link runs again. Take that binary away once, and it links again with the segment.
+    if [ -f "$BIN" ] && ! otool -l "$BIN" 2>/dev/null | grep -qs __RESTRICT; then rm -f "$BIN"; fi
+    swift build "${FLAGS[@]}" 2>&1
     APP="build/{{EXE}}.app"
     rm -rf "$APP"
     mkdir -p "$APP/Contents/MacOS"

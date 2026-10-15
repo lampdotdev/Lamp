@@ -139,12 +139,20 @@ enum BrowserPreview {
         Dictionary(uniqueKeysWithValues: surface.fields.map { ($0.id, typed[project.id]?[$0.id] ?? $0.value) })
     }
 
+    /// Chrome lights the icon for a fit whose selector matches something shown; a click on Lamp chooses the app by
+    /// whether the selector matches anything at all, so a hidden match opens the app on a page whose icon stayed dim.
     private static func fitNote(_ declaration: BrowserCompanions.Declaration, _ page: PageReader.Page) -> String {
         guard let url = URL(string: page.url) else { return "" }
-        let matching = declaration.fits.filter { $0.fitsAddress(url) && ($0.selector.map(page.present.contains) ?? true) }
-        if let fit = matching.first {
-            let how = [fit.site.map { "site \($0)" }, fit.path.map { "path \($0)" }, fit.selector.map { "selector \($0) is on the page" }].compactMap { $0 }
-            return "This page fits browser.json (\(how.joined(separator: ", "))): Lamp's icon lights up on it in Chrome, and the sidebar opens on this app with \"\(declaration.offer)\"."
+        let address = declaration.fits.filter { $0.fitsAddress(url) }
+        let how = { (fit: BrowserCompanions.Declaration.Fit) in
+            [fit.site.map { "site \($0)" }, fit.path.map { "path \($0)" }, fit.selector.map { "selector \($0) is shown on the page" }].compactMap { $0 }.joined(separator: ", ")
+        }
+        if let fit = address.first(where: { $0.selector.map(page.shown.contains) ?? true }) {
+            return "This page fits browser.json (\(how(fit))): Lamp's icon lights up on it in Chrome, and the sidebar opens on this app with \"\(declaration.offer)\"."
+        }
+        if let hidden = address.first(where: { $0.selector.map(page.present.contains) ?? false })?.selector {
+            return "This page doesn't light Lamp's icon: \(hidden) is on it but not shown, and Chrome lights the icon only for a selector that matches something shown. " +
+                "A click on Lamp still opens the sidebar on this app. If the app is for pages like this, fit them by something that's shown."
         }
         return "This page doesn't fit browser.json: Lamp's icon stays dim on it, and the person has to choose the app. " +
             "If the app is for pages like this, add a fit for it (a site, or a selector that's on pages like it and shown)."
@@ -283,7 +291,9 @@ private struct SidebarPicture: View {
 /// a time limit.
 @MainActor
 final class PageReader: NSObject, WKNavigationDelegate {
-    struct Page { var url: String; var title: String; var text: String; var truncated: Bool; var present: Set<String> }
+    /// `present` are the selectors something on the page matches, as the extension asks when Lamp is clicked;
+    /// `shown`, those it matches with something laid out, which is all Chrome lights the icon for.
+    struct Page { var url: String; var title: String; var text: String; var truncated: Bool; var present: Set<String>; var shown: Set<String> }
     private var finished: CheckedContinuation<Error?, Never>?
     private var refused: String?
 
@@ -339,7 +349,8 @@ final class PageReader: NSObject, WKNavigationDelegate {
         guard let landed = web.url, Self.isPublic(landed) else { return .failure(.init("\(url.absoluteString) went to an address that isn't a public https page.")) }
         let list = (try? JSONSerialization.data(withJSONObject: selectors)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
         let call = script + "\n;JSON.stringify({page: (() => { try { return __lampCaptureSurface('page'); } catch (e) { return {error: String(e.message)}; } })(), " +
-            "present: \(list).map(s => { try { return !!document.querySelector(s); } catch { return false; } })})"
+            "present: \(list).map(s => { try { return !!document.querySelector(s); } catch { return false; } }), " +
+            "shown: \(list).map(s => { try { return [...document.querySelectorAll(s)].some(e => e.checkVisibility()); } catch { return false; } })})"
         // In a world of the reader's own, and given ten seconds: a page that spins forever doesn't hold the builder up.
         let json: String? = await withCheckedContinuation { done in
             var answered = false
@@ -352,9 +363,10 @@ final class PageReader: NSObject, WKNavigationDelegate {
               let page = value["page"] as? [String: Any] else { return .failure(.init("Lamp opened \(url.absoluteString) but couldn't read it in time.")) }
         if let error = page["error"] as? String { return .failure(.init("Lamp couldn't read \(url.absoluteString): \(error.prefix(200))")) }
         let present = zip(selectors, value["present"] as? [Bool] ?? []).filter(\.1).map(\.0)
+        let shown = zip(selectors, value["shown"] as? [Bool] ?? []).filter(\.1).map(\.0)
         return .success(Page(url: landed.absoluteString, title: String((page["title"] as? String ?? "").prefix(300)),
                              text: String((page["text"] as? String ?? "").prefix(24000)), truncated: page["truncated"] as? Bool ?? false,
-                             present: Set(present)))
+                             present: Set(present), shown: Set(shown)))
     }
 
     private func wait(_ seconds: Double) async -> Error? {

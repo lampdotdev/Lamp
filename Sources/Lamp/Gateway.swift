@@ -14,6 +14,8 @@ final class Gateway: @unchecked Sendable {
         let body: Data
         /// Came in over the local network (an app on the person's phone) rather than from this Mac.
         var fromNetwork = false
+        /// The port the request came from (host order), which tells Lamp which program on this Mac sent it.
+        var peerPort: UInt16?
     }
 
     private var listener: NWListener?
@@ -69,6 +71,7 @@ final class Gateway: @unchecked Sendable {
             if var request = Self.parse(buffer) {
                 if request.method == "BAD" { self.respond(connection, status: 400, json: ["error": "Bad request"]); return }
                 request.fromNetwork = fromNetwork
+                if case .hostPort(_, let port) = connection.endpoint { request.peerPort = port.rawValue }
                 Task {
                     let (status, json) = await self.handler(request)
                     self.respond(connection, status: status, json: json)

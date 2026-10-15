@@ -41,12 +41,14 @@ A capability given to one engine must be given to all of them that can take it, 
   tools' descriptions), and a call over it is turned away for the agent to say shorter, whichever engine it is. Its
   pieces are tools: `ask` puts questions in the chat as a card answered by clicking, laid out as the agent
   chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own), and `show_result` is
-  the card for what a request came to: its picture and one sentence, for a new app or a big change what they
-  now have, for an ordinary change that adds things to find what's new and where, and what wasn't tried as a
-  Have Lamp Test It button. No rows: under the picture they read as captions of it, and a new app's guesses and idea there
-  made a form to go through when it's the app the person wants to try. Cards saved with them still read
+  the card for what a request came to, saying one thing: one sentence, for a new app or a big change what they
+  now have, for an ordinary change that adds things what's new and where, and under it, as a plain sentence, what
+  wasn't tried. No picture of the app and no buttons: the app is open beside the chat and people try a change
+  themselves, and a picture beside an offer to test left them unsure how the two went together. No rows either:
+  a new app's guesses and idea there made a form to go through when it's the app the person wants to try. Cards saved with them still read
   (`Talk.News`, `Talk.Guess`, `Talk.Idea`): what's new as lines under the sentence, a guess the person turned as
-  what they chose, and nothing else. The card takes the place of the reply and of the line saying the app is ready (`LogLine.visible`); a
+  what they chose, and nothing else. A new app's build card folds to its first line (its name, Ready) once the turn is over, with no
+  picture of the app, so the result card under it is the one thing that says what came of it. The card takes the place of the reply and of the line saying the app is ready (`LogLine.visible`); a
   small change or a fix keeps one sentence and that line. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
   tool waits for the person: it returns at once, the agent ends its reply, and a click is sent as the
@@ -494,7 +496,9 @@ own `.lamp/live` (`LampLive` in LampSupport, under `#if LAMP_LIVE`). It points t
 functions by rewriting the symbol pointers they go through; types, metadata and stored globals are left alone. The
 build then waits to be installed until the app closes (`LiveReload.awaitInstall`, which unlike a held build doesn't
 keep the agent off the app). Anything else is installed the usual way, by reopening the app, with why in the chat's
-details (`LiveReload.Verdict`), so the rules can be tuned by what happens. A live build reads the app's own files
+details (`LiveReload.Verdict`), so the rules can be tuned by what happens. The person sees only that it happened: one
+quiet status line in both chats (`ChatLook.reloaded`), once a turn, when a request's change closed the open app and
+opened it again, never for Open App or Undo. A live build reads the app's own files
 from its Assets folder rather than its bundle (`LampAssets`), so a new picture goes in live too; the package, the
 app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which asks for
 new state in new views rather than new stored properties in existing types, when that's as clear.
@@ -772,7 +776,21 @@ description fetches included, so each document comes from the address that was v
 `ServiceSignInTests` runs this against the five services' recorded answers and against changed copies of them.
 The service sends the person back to this Mac's own address (`127.0.0.1`, a listener open
 only while that sign-in waits, which ignores anything that isn't the answer to it), and the app trades the code for
-its sign-in. The registration and the sign-in are one Keychain item of the app's, this device only: never in the
+its sign-in. The registration and the sign-in are kept by Lamp for the app, not in the app's own Keychain
+(`LampSecrets` in LampSupport.swift, `AppSecrets` and `/app/secrets` in Lamp): Lamp's certificate has no Apple team,
+so macOS ties an item an app makes to the one build that made it and asks for the login password after every
+rebuild, while Lamp is the same program from build to build. Lamp keeps them as it keeps its own keys (the Keychain
+when it is signed for a team, else a file only this user can read), each app's under its instance (so an app made
+later under the same folder name doesn't inherit them), and forgets them when
+the app is deleted. The app's token is in its folder, where the agent can read it, so Lamp answers only the app
+itself (`PeerProcess.isApp`): the process on the other end of the connection must run from where Lamp installed the
+app and pass that installed copy's designated requirement; `AppSecretsTests` runs real processes against it.
+Two things keep that check from being passed by a process the builder's shell starts as the app: every Mac app
+is built with a `__RESTRICT` segment (buildSh), so dyld ignores `DYLD_INSERT_LIBRARIES` and the like for it —
+LiveReload's `dlopen` from inside the app is unaffected — and the agent's sandbox refuses `process-exec` under
+the apps folder, since exec needs no read the profile closes. A
+connection therefore opens only while Lamp is open. On iPhone `LampSecrets` stays the device's Keychain, which asks
+nothing, and an app that keeps its own secrets again is one line (`LampSecrets.store`). They are never in the
 app's folder, so a shared copy arrives disconnected and is flagged in the review (`Sharing.checklist`). Disconnect
 forgets the sign-in here and asks the service to end both its keys, writing each answer (never a key) to the app's log. A service is
 added only when its server lets an app register itself this way; one that needs a developer app or a pasted token
