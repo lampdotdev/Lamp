@@ -194,8 +194,9 @@ enum LiveReload {
     /// actor in `files`, its stored properties with their types (inferred ones included) and its cases with what
     /// they carry, in order, from the type-checked syntax tree (`-dump-ast`). Comparing the open app's with the new
     /// code's says whether a library can go in: no reading of the text, which formatting, comments, strings and
-    /// inferred types all fool. Nil when the compiler can't say (the code doesn't type-check).
-    static func layout(of folder: URL, files: [String]?, module: String, ios: Bool = false) async -> [String]? {
+    /// inferred types all fool. Nil when the compiler can't say (the code doesn't type-check). `rawValues` adds
+    /// each case's raw value (`= "plant_name"`), which is what a coding key or a saved enum writes.
+    static func layout(of folder: URL, files: [String]?, module: String, ios: Bool = false, rawValues: Bool = false) async -> [String]? {
         if files?.isEmpty == true { return [] }
         // All of the app's own files, by name: the compiler prints (and checks the bodies of) only the files it's
         // given as primaries, or just the first with none. Lamp's building blocks are read for context only: the
@@ -206,24 +207,33 @@ enum LiveReload {
         let status = await Shell.run(frontend("-dump-ast", in: folder, primaries: primaries, module: module, ios: ios) + " 2>/dev/null",
                                      cwd: folder) { output.append($0) }
         guard status == 0 else { return nil }
-        return members(inDump: output.joined(separator: "\n"))
+        return members(inDump: output.joined(separator: "\n"), rawValues: rawValues)
     }
 
     /// The stored members of every type in a `-dump-ast` printout: each line's indent says what it's inside, so
     /// a function's locals (inside a func or closure) never count, nor a static or a computed property.
-    static func members(inDump dump: String) -> [String] {
+    static func members(inDump dump: String, rawValues: Bool = false) -> [String] {
         let typeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|actor)_decl\b[^"]*"([^"]+)""#)
         let scopeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|accessor_decl|constructor_decl|destructor_decl|closure_expr|subscript_decl|top_level_code_decl)\b"#)
         // A declaration's position (decl_context=…, range=[…]) comes before its name; neither holds a quote.
         let varDecl = try! NSRegularExpression(pattern: #"^(\s*)\(var_decl\b[^"]*"([^"]+)" interface_type="([^"]*)"(.*)$"#)
         let caseDecl = try! NSRegularExpression(pattern: #"^(\s*)\(enum_element_decl\b[^"]*"([^"]+)" interface_type="([^"]*)""#)
+        // A case's raw value is the node right under it: a string's in quotes, a number's bare.
+        let rawValue = try! NSRegularExpression(pattern: #"^\s*\(raw_value_expr=\w+\b.*? value=("(?:[^"\\]|\\.)*"|[^ )]+)"#)
         var scopes: [(indent: Int, type: String?)] = [], out: [String] = [], seen = Set<String>()
+        var lastCase: Int?
         for raw in dump.split(separator: "\n") {
             let line = String(raw), range = NSRange(line.startIndex..., in: line)
             let indent = line.prefix { $0 == " " }.count
             // Only a line that opens a node says where it sits; the closing brackets of a deep node sometimes
             // come on a line of their own at the left edge, which would otherwise end every scope.
             guard line.dropFirst(indent).first == "(" else { continue }
+            if rawValues, let index = lastCase, let m = rawValue.firstMatch(in: line, range: range) {
+                out[index] += " = " + String(line[Range(m.range(at: 1), in: line)!])
+                lastCase = nil
+                continue
+            }
+            lastCase = nil
             while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
             // What a member line belongs to is the nearest scope around it: a type's member when that's the type,
             // nothing when it's a function, an accessor or a closure (a local).
@@ -244,7 +254,10 @@ enum LiveReload {
                 }
             } else if let m = caseDecl.firstMatch(in: line, range: range), let owner {
                 let entry = owner + "\tcase " + String(line[Range(m.range(at: 2), in: line)!]) + ": " + String(line[Range(m.range(at: 3), in: line)!])
-                if seen.insert(entry).inserted { out.append(entry) }
+                if seen.insert(entry).inserted {
+                    out.append(entry)
+                    lastCase = out.count - 1
+                }
             } else if scopeDecl.firstMatch(in: line, range: range) != nil {
                 scopes.append((indent, nil))
             }

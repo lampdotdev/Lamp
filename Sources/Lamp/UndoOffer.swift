@@ -18,49 +18,62 @@ enum UndoOffer {
         return made
     }
 
-    /// Known answers, by the two versions: they don't change, and finding one compiles the app's code twice.
+    /// Known answers, by the two versions: they don't change, and finding one compiles the app's code twice. A
+    /// look still going is shared by whoever asks meanwhile (a turn's end, the chat shown, the sidebar), rather
+    /// than started again beside it.
     @MainActor private static var known: [String: Bool] = [:]
+    @MainActor private static var looking: [String: Task<Bool?, Never>] = [:]
 
     /// Whether the code of `older` can still read whatever the code of `newer` saves. Worked out from what the
     /// compiler says each saved type holds (`LiveReload.layout`), not from the code's text. Not known (the code
-    /// doesn't compile here) counts as no: the offer is left to the toolbar's Undo, which asks nothing.
+    /// doesn't compile here) counts as no: the offer is left to the toolbar's Undo, which asks nothing. Only a
+    /// known answer is kept, so a look that failed is made again next time.
     @MainActor static func keepsSavedDataReadable(_ project: LampProject, from older: String, to newer: String) async -> Bool {
-        let key = older + ">" + newer
+        let key = project.dir.path + "\n" + older + ">" + newer
         if let answer = known[key] { return answer }
-        let answer = await findOut(project, from: older, to: newer)
-        known[key] = answer
-        return answer
+        let look = looking[key] ?? Task { await findOut(project, from: older, to: newer) }
+        looking[key] = look
+        let answer = await look.value
+        looking[key] = nil
+        if let answer { known[key] = answer }
+        return answer ?? false
     }
 
-    private static func findOut(_ project: LampProject, from older: String, to newer: String) async -> Bool {
+    private static func findOut(_ project: LampProject, from older: String, to newer: String) async -> Bool? {
         let env = ["LAMP_OLDER": older, "LAMP_NEWER": newer]
         var changed = ""
         guard await Versions.git("git diff --name-only \"$LAMP_OLDER\" \"$LAMP_NEWER\" -- '*.swift'", cwd: project.dir, env: env,
-                                 onLine: { changed += $0 }) == 0 else { return false }
+                                 onLine: { changed += $0 }) == 0 else { return nil }
         // A change to pictures, settings or anything but code leaves what the app saves as it was.
         if changed.trimmed.isEmpty { return true }
-        // The older code, beside the app's own and laid out as it is, so the compiler reads it the same way.
-        let folder = project.dir.appendingPathComponent(".lamp/runtime/undo-check")
-        try? FileManager.default.removeItem(at: folder)
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        // Both versions' code as saved, each in a folder of its own and laid out as the app's is, so the compiler
+        // reads them the same way. Not the app's own Sources: a turn may be writing there by now.
+        let place = ".lamp/runtime/undo-check-" + UUID().uuidString
+        let folder = project.dir.appendingPathComponent(place)
         defer { try? FileManager.default.removeItem(at: folder) }
         let widget = Template.widgetFolder + "/" + Template.sharedWidgetFolder
-        let extract = """
-            git archive "$LAMP_OLDER" Sources | tar -x -C .lamp/runtime/undo-check && \
-            { ! git cat-file -e "$LAMP_OLDER:\(widget)" 2>/dev/null || git archive "$LAMP_OLDER" '\(widget)' | tar -x -C .lamp/runtime/undo-check; }
-            """
-        guard await Versions.git(extract, cwd: project.dir, env: env) == 0 else { return false }
+        let extract = ["older", "newer"].map { side in
+            let version = side == "older" ? "$LAMP_OLDER" : "$LAMP_NEWER"
+            return """
+                mkdir -p '\(place)/\(side)' && git archive "\(version)" Sources | tar -x -C '\(place)/\(side)' && \
+                { ! git cat-file -e "\(version):\(widget)" 2>/dev/null || git archive "\(version)" '\(widget)' | tar -x -C '\(place)/\(side)'; }
+                """
+        }.joined(separator: " && ")
+        guard await Versions.git(extract, cwd: project.dir, env: env) == 0 else { return nil }
         let ios = project.platform == .iphone
-        async let before = LiveReload.layout(of: folder.appendingPathComponent("Sources"), files: nil, module: project.exe, ios: ios)
-        async let after = LiveReload.layout(of: project.dir.appendingPathComponent("Sources"), files: nil, module: project.exe, ios: ios)
-        guard let before = await before, let after = await after else { return false }
+        async let before = LiveReload.layout(of: folder.appendingPathComponent("older/Sources"), files: nil, module: project.exe,
+                                             ios: ios, rawValues: true)
+        async let after = LiveReload.layout(of: folder.appendingPathComponent("newer/Sources"), files: nil, module: project.exe,
+                                            ios: ios, rawValues: true)
+        guard let before = await before, let after = await after else { return nil }
         return readable(before: before, after: after)
     }
 
     /// Whether code with the `before` layout reads every value saved by code with the `after` one. A saved
     /// type is one the compiler gave coding keys (`Codable`, saved by `LampStore` and `LampSync` as JSON by
-    /// those keys). The older code reads it when each key it needs is still saved and holds the same type
-    /// (an optional one it can do without), and when no enum it reads has a case it doesn't know.
+    /// those keys, which are their raw values when they have them). The older code reads it when each key it needs
+    /// is still written and holds the same type (an optional one it can do without, but not read as another
+    /// type), and when no enum it reads writes a value it doesn't know.
     static func readable(before: [String], after: [String]) -> Bool {
         func byType(_ entries: [String]) -> [String: [String]] {
             var types: [String: [String]] = [:]
@@ -78,10 +91,22 @@ enum UndoOffer {
                 member.range(of: ": ").map { (String(member[..<$0.lowerBound]), String(member[$0.upperBound...])) }
             }, uniquingKeysWith: { first, _ in first })
         }
-        func cases(_ list: [String]) -> Set<String> {
-            Set(list.filter { $0.hasPrefix("case ") }.map { String($0.dropFirst(5).prefix { $0 != ":" }) })
+        // "case name: Type = \"raw\"" as its name and what it writes: its raw value, else its name.
+        func cases(_ list: [String]) -> [String: String] {
+            Dictionary(list.filter { $0.hasPrefix("case ") }.map { entry in
+                let name = String(entry.dropFirst(5).prefix { $0 != ":" })
+                guard let raw = entry.range(of: " = ", options: .backwards) else { return (name, name) }
+                var written = String(entry[raw.upperBound...])
+                if written.count >= 2, written.hasPrefix("\""), written.hasSuffix("\"") { written = String(written.dropFirst().dropLast()) }
+                return (name, written)
+            }, uniquingKeysWith: { first, _ in first })
         }
         func optional(_ type: String) -> Bool { type.hasSuffix("?") || type.hasPrefix("Optional<") }
+        func unwrapped(_ type: String) -> String {
+            if type.hasSuffix("?") { return String(type.dropLast()) }
+            if type.hasPrefix("Optional<"), type.hasSuffix(">") { return String(type.dropFirst(9).dropLast()) }
+            return type
+        }
         // The app's own types a member's type names: "[Entry]", "Entry?", "[String: Plant.Kind]".
         let names = try! NSRegularExpression(pattern: #"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*"#)
         func named(in type: String) -> [String] {
@@ -94,16 +119,25 @@ enum UndoOffer {
         var seen = Set<String>()
         while let type = waiting.popLast() {
             guard seen.insert(type).inserted, let held = old[type] else { continue }
-            // An enum: a case added is one the older code can't read.
-            if !cases(held).isEmpty, !cases(new[type] ?? []).isSubset(of: cases(held)) { return false }
+            // An enum: a value it writes that the older code doesn't know (a case added, a raw value changed).
+            let oldValues = Set(cases(held).values)
+            if !oldValues.isEmpty, !Set(cases(new[type] ?? []).values).isSubset(of: oldValues) { return false }
             if let keys = old[type + ".CodingKeys"] {
                 let oldMembers = members(held), newMembers = members(new[type] ?? [])
-                let newKeys = cases(new[type + ".CodingKeys"] ?? [])
-                for key in cases(keys) {
-                    guard let wanted = oldMembers[key] else { continue }
+                // Which property the newer code writes under each key.
+                let newProperties = Dictionary(cases(new[type + ".CodingKeys"] ?? []).map { ($0.value, $0.key) },
+                                               uniquingKeysWith: { first, _ in first })
+                for (property, key) in cases(keys) {
+                    guard let wanted = oldMembers[property] else { continue }
                     waiting += named(in: wanted)
-                    if optional(wanted) { continue }
-                    guard newKeys.contains(key), newMembers[key] == wanted else { return false }
+                    // A key no longer written is fine only for what the older code can do without.
+                    guard let written = newProperties[key].flatMap({ newMembers[$0] }) else {
+                        if optional(wanted) { continue }
+                        return false
+                    }
+                    // One still written must hold what the older code reads there. An optional the newer code
+                    // writes leaves the key out when empty, which a required one can't be read without.
+                    if optional(wanted) ? unwrapped(written) != unwrapped(wanted) : written != wanted { return false }
                 }
             }
         }

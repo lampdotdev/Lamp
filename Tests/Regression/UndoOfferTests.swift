@@ -20,10 +20,10 @@ final class UndoOfferTests: XCTestCase {
         """
 
     /// An app at `before`, then a request that changed it to `after`, linked in the chat as Lamp links it.
-    private func changed(to after: String) async throws -> (app: HistoryEscapeTests.App, chat: [LogLine]) {
+    private func changed(from start: String? = nil, to after: String) async throws -> (app: HistoryEscapeTests.App, chat: [LogLine]) {
         let app = try escape.app()
         let file = app.project.dir.appendingPathComponent("Sources/App.swift")
-        try before.write(to: file, atomically: true, encoding: .utf8)
+        try (start ?? before).write(to: file, atomically: true, encoding: .utf8)
         let first = await Versions.save(app.project, message: "Log watering")
         XCTAssertTrue(first)
         try after.write(to: file, atomically: true, encoding: .utf8)
@@ -81,5 +81,45 @@ final class UndoOfferTests: XCTestCase {
         try "// a stopped turn's edit\n".write(to: app.project.dir.appendingPathComponent("Sources/More.swift"), atomically: true, encoding: .utf8)
         let offered = await offer(app, chat)
         XCTAssertNil(offered, "the toolbar's Undo would discard the unsaved work, not this change")
+    }
+
+    func testAKeyRenamedInCodingKeysIsNotOffered() async throws {
+        let keys = "\n    enum CodingKeys: String, CodingKey { case id, plant = \"plant_name\", when, how }\n}"
+        let after = before.replacingOccurrences(of: "var how: Method\n}", with: "var how: Method" + keys)
+        let (app, chat) = try await changed(to: after)
+        let offered = await offer(app, chat)
+        XCTAssertNil(offered, "entries saved under plant_name have no `plant` for the older code")
+    }
+
+    func testARawValueChangedIsNotOffered() async throws {
+        let (app, chat) = try await changed(to: before.replacingOccurrences(of: "case can, hose", with: "case can = \"watering-can\", hose"))
+        let offered = await offer(app, chat)
+        XCTAssertNil(offered, "an entry saved as watering-can can't be read by code that knows only can and hose")
+    }
+
+    func testAnOptionalRetypedIsNotOffered() async throws {
+        let start = before.replacingOccurrences(of: "var how: Method", with: "var how: Method\n    var amount: Int?")
+        let (app, chat) = try await changed(from: start, to: start.replacingOccurrences(of: "var amount: Int?", with: "var amount: String?"))
+        let offered = await offer(app, chat)
+        XCTAssertNil(offered, "an amount saved as \"a cup\" can't be read as a number, and the whole entry is skipped")
+    }
+
+    func testAnOptionalTakenAwayIsOffered() async throws {
+        let start = before.replacingOccurrences(of: "var how: Method", with: "var how: Method\n    var amount: Int?")
+        let (app, chat) = try await changed(from: start, to: before)
+        let offered = await offer(app, chat)
+        XCTAssertEqual(offered, chat[0].version, "the older code reads an entry without an amount")
+    }
+
+    /// A turn's end, the chat shown and the sidebar all ask at once: every one of them gets the answer.
+    func testLooksAtTheSameTimeAgree() async throws {
+        let (app, chat) = try await changed(to: before.replacingOccurrences(of: "var how: Method", with: "var how: Method\n    var millilitres: Int?"))
+        let versions = await Versions.list(app.project)
+        let older = try XCTUnwrap(versions.dropFirst().first?.id), newer = try XCTUnwrap(chat[0].version)
+        async let a = UndoOffer.keepsSavedDataReadable(app.project, from: older, to: newer)
+        async let b = UndoOffer.keepsSavedDataReadable(app.project, from: older, to: newer)
+        async let c = UndoOffer.keepsSavedDataReadable(app.project, from: older, to: newer)
+        let answers = await [a, b, c]
+        XCTAssertEqual(answers, [true, true, true])
     }
 }
