@@ -250,6 +250,13 @@ private struct LineView: View {
             ChatLook.SummaryLine(line.text)
         case .error:
             ChatLook.ErrorNote(line.text)
+        case .offer:
+            ChatLook.OfferCard(symbol: line.symbol ?? "sparkles", title: line.text, status: line.status ?? "", done: line.done ?? false) {
+                if let button = line.button { Button(button) { link.send(.offer(line.id)) } }
+            }
+        case .action:
+            ChatLook.ActionLine(symbol: line.symbol ?? "sparkles", text: line.text, button: line.button ?? "",
+                                disabled: line.disabled ?? false) { link.send(.offer(line.id)) }
         case .note:
             ChatLook.NoteLine(title: line.text, added: line.added ?? [], removed: line.removed ?? [], undone: line.undone ?? false,
                               problem: line.problem, undo: { link.send(.undoNote(line.id)) })

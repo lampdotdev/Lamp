@@ -1,4 +1,5 @@
 import SwiftUI
+import LampSidebarKit
 
 /// Offers a way to set up a kind of AI where it's first wanted: in the chat of the app that wanted it, put
 /// there by Lamp when an app hit something nothing here can do, or by the agent with `offer_setup`. Built
@@ -80,9 +81,27 @@ struct SetupCard: View {
 
     /// What's being offered, on a tile the size of the build card's app icon. Not the app's own icon: it's
     /// Lamp asking, not the app.
+    static func symbol(_ offer: SetupOffer) -> String {
+        offer.context == .phoneAway ? "iphone.radiowaves.left.and.right" : offer.capability.symbol
+    }
+
+    /// The card's header in words, for the chat inside an app's window, which shows it and opens the card here
+    /// to set things up: its title, its status line, and whether it's done.
+    @MainActor static func header(_ offer: SetupOffer, reason: String, project: LampProject) -> (title: String, status: String, done: Bool) {
+        let resolution = AppAI.resolve(offer.capability, for: project, in: offer.context)
+        let byHand = resolution.provider == Icons.byHand
+        if resolution.tier == .best {
+            return (title(offer), byHand ? "All set. You draw each app's icon with Image Playground." : doneText(offer, resolution.answer ?? ""), true)
+        }
+        if offer.declined(in: project) {
+            return (title(offer), offer.capability == .browser ? "No problem. You can connect Chrome any time in Lamp’s Settings, under Experimental." : "No problem. You can set this up any time in Lamp's Settings, under AI Providers.", false)
+        }
+        return (title(offer), reason, false)
+    }
+
     private var badge: some View {
         let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
-        return Image(systemName: offer.context == .phoneAway ? "iphone.radiowaves.left.and.right" : offer.capability.symbol)
+        return Image(systemName: Self.symbol(offer))
             .font(.system(size: 20, weight: .medium))
             .foregroundStyle(.white)
             .frame(width: 40, height: 40)
@@ -92,7 +111,9 @@ struct SetupCard: View {
             .frame(width: CardColumn.icon, height: CardColumn.icon)
     }
 
-    private var title: String {
+    private var title: String { Self.title(offer) }
+
+    static func title(_ offer: SetupOffer) -> String {
         if offer.context == .phoneAway { return "Use AI on your phone, away from this Mac" }
         // Raised for the app's icon, its options include drawing icons by hand, which isn't AI.
         if offer.context == .icon { return "Give your apps proper icons" }
@@ -104,7 +125,9 @@ struct SetupCard: View {
         }
     }
 
-    private func doneText(_ answer: String) -> String {
+    private func doneText(_ answer: String) -> String { Self.doneText(offer, answer) }
+
+    static func doneText(_ offer: SetupOffer, _ answer: String) -> String {
         if offer.context == .phoneAway { return "All set. Away from this Mac, your phone's apps now use your OpenRouter key." }
         return switch offer.capability {
         case .text: "All set. Your apps' AI now runs on \(answer)."
@@ -407,14 +430,12 @@ private struct DrawIconsUpgrade: View {
 struct DrawIconLine: View {
     let project: LampProject
 
+    static func text(_ app: String) -> String { "\(app) has a plain icon for now." }
+
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "paintbrush.pointed").foregroundStyle(.secondary)
-            Text("\(project.name) has a plain icon for now.").foregroundStyle(.secondary)
-            Button("Draw Icon…") { Store.shared.iconFromPlayground(project) }
-                .controlSize(.small)
+        ChatLook.ActionLine(symbol: "paintbrush.pointed", text: Self.text(project.name), button: "Draw Icon…") {
+            Store.shared.iconFromPlayground(project)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -430,20 +451,17 @@ struct IPhoneSetupLine: View {
     /// Apps whose setup is under way: one click per app, so a second can't queue the same conversion again.
     /// Once setup is done the request is the app's turn, queued or running, which keeps the button off until
     /// it ends; an app still only for the Mac then (the turn failed, was stopped or undone) can try again.
+    static func text(_ app: String) -> String { "\(app) is a Mac app for now. This Mac needs a few things from Apple to make iPhone apps." }
+
     @MainActor final class Asked: ObservableObject {
         static let shared = Asked()
         @Published var ids: Set<String> = []
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "iphone").foregroundStyle(.secondary)
-            Text("\(project.name) is a Mac app for now. This Mac needs a few things from Apple to make iPhone apps.").foregroundStyle(.secondary)
-            Button("See What's Needed…", action: setUp)
-                .controlSize(.small)
-                .disabled(asked.ids.contains(project.id) || store.busy.contains(project.id) || !(store.queued[project.id] ?? []).isEmpty)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        ChatLook.ActionLine(symbol: "iphone", text: Self.text(project.name), button: "See What's Needed…",
+                            disabled: asked.ids.contains(project.id) || store.busy.contains(project.id) || !(store.queued[project.id] ?? []).isEmpty,
+                            action: setUp)
     }
 
     private func setUp() {

@@ -6,7 +6,7 @@ import Foundation
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
     /// What this side reads and writes; see `SidebarCommand.hello`.
-    public static let version = 3
+    public static let version = 4
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -67,7 +67,7 @@ public struct SidebarState: Codable, Equatable {
 }
 
 public struct SidebarLine: Codable, Equatable, Identifiable {
-    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary, note }
+    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary, note, offer, action }
     public var id: UUID
     public var kind: Kind
     public var text: String
@@ -101,6 +101,14 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var removed: [String]?
     public var undone: Bool?
     public var problem: String?
+    /// An offer's card (`offer`: a setup offer, the widget card) or line (`action`: Draw Icon, iPhone setup):
+    /// its symbol, its status line (the title, or the line's words, is `text`), whether it's done, and its
+    /// button, if any, with what the button does (`SidebarCommand.offer`).
+    public var symbol: String?
+    public var status: String?
+    public var done: Bool?
+    public var button: String?
+    public var disabled: Bool?
 
     public init(id: UUID, kind: Kind, text: String, gap: Double = 0, running: Bool = false, attachments: [SidebarAttachment]? = nil,
                 growing: Bool = false, questions: [SidebarQuestion]? = nil, untried: String? = nil) {
@@ -171,7 +179,7 @@ public struct SidebarAttachment: Codable, Equatable {
 /// What the person did in the sidebar.
 public enum SidebarCommand: Codable, Equatable {
     /// The first thing a sidebar says: which shape of `SidebarState` it reads. One that says nothing is from
-    /// before the summary line, which it can't read; one before 3, from before the notes receipt.
+    /// before the summary line, which it can't read; one before 3, from before the notes receipt; one before 4, from before offers.
     case hello(Int)
     case send(String)
     case answer(UUID, [String])
@@ -182,6 +190,8 @@ public enum SidebarCommand: Codable, Equatable {
     case askProgress(UUID, AskProgress)
     /// Takes back the save of Lamp's notes this receipt is for.
     case undoNote(UUID)
+    /// The button on an offer's card or line: what it does is Lamp's to know, by the line.
+    case offer(UUID)
     /// Files pasted, dropped or chosen in the sidebar, which only it can read: their names and contents.
     case attach([SidebarFile])
     case stop
