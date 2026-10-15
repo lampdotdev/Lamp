@@ -34,6 +34,10 @@ extension Template {
         }
     }
 
+    /// The oldest macOS a Mac app runs on: 15 with a 3D scene (RealityView begins there), else 14. Whatever compiles
+    /// the app's code outside its own build (live reload's checks and libraries) targets this, as the build does.
+    static func macMinimum(_ project: LampProject) -> String { usesScene(project) ? "15.0" : "14.0" }
+
     /// Package.swift and build.sh for a Mac app with a 3D scene: macOS 15 at least, as RealityView needs.
     static func withScene(_ template: String, for project: LampProject) -> String {
         guard usesScene(project) else { return template }
@@ -99,7 +103,10 @@ extension Template {
                         scene.dragChanged(from: $0.startLocation, to: $0.location)
                     }
                     .onEnded { scene.dragEnded(from: $0.startLocation, to: $0.location) })
-                .background(LampSceneWindow { scene.window = $0 })
+                .background(LampSceneWindow { view in
+                    scene.window = view?.window
+                    scene.marker = view
+                })
                 .onAppear {
                     scene.viewSize = geometry.size
                     focused = true
@@ -146,6 +153,8 @@ extension Template {
         private var keys = Set<UInt16>()
         /// The window the scene is drawn in: only its keys are the scene's.
         weak var window: NSWindow?
+        /// A view drawn with the scene, to tell where in the window keyboard focus really is.
+        weak var marker: NSView?
         /// Whether the scene has keyboard focus (see `LampSceneView.focused`).
         var hasFocus = false
         private var subscription: EventSubscription?
@@ -204,10 +213,21 @@ extension Template {
                 // (by a click or Tab), its typing, Space and Return are its own, as menu shortcuts always are. Tab is
                 // never the scene's: it's how the keyboard moves focus out of it.
                 guard self.hasFocus, event.keyCode != 48, !event.modifierFlags.contains(.command),
-                      !(window.firstResponder is NSText) else { return event }
+                      !(window.firstResponder is NSText), self.focusIsHere(in: window) else { return event }
                 self.keys.insert(event.keyCode)
                 return nil
             }
+        }
+
+        /// Whether AppKit's keyboard focus is in the scene's own SwiftUI content (or the window itself). SwiftUI's
+        /// focus state doesn't see a view outside its content take focus, such as Lamp's chat beside the app,
+        /// whose typing must be its own.
+        private func focusIsHere(in window: NSWindow) -> Bool {
+            guard let responder = window.firstResponder as? NSView else { return true }
+            guard let marker else { return false }
+            if marker.isDescendant(of: responder) { return true }
+            let hosting = sequence(first: marker, next: \.superview).first { String(describing: type(of: $0)).contains("NSHostingView") }
+            return hosting.map { responder.isDescendant(of: $0) } ?? false
         }
 
         private func tick(_ dt: Float) {
@@ -439,14 +459,14 @@ extension Template {
 
     /// Finds the window a view is drawn in.
     private struct LampSceneWindow: NSViewRepresentable {
-        let found: (NSWindow?) -> Void
+        let found: (NSView?) -> Void
         func makeNSView(context: Context) -> NSView {
             let view = NSView()
-            DispatchQueue.main.async { [weak view] in found(view?.window) }
+            DispatchQueue.main.async { [weak view] in found(view) }
             return view
         }
         func updateNSView(_ view: NSView, context: Context) {
-            DispatchQueue.main.async { [weak view] in found(view?.window) }
+            DispatchQueue.main.async { [weak view] in found(view) }
         }
     }
 

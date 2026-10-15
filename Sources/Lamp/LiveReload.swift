@@ -120,11 +120,11 @@ enum LiveReload {
     /// (then the usual build runs and the agent sees its errors). The open app's layout is kept from the last
     /// time, so only the new code is type-checked, alongside the changed files' compile.
     @MainActor static func layoutProblem(_ project: LampProject) async -> (problem: String?, layout: [String]?) {
-        async let after = layout(of: sources(project), files: nil, module: project.exe)
+        async let after = layout(of: sources(project), files: nil, module: project.exe, macOS: Template.macMinimum(project))
         let saved = (try? String(contentsOf: runningLayout(project), encoding: .utf8)).map { $0.components(separatedBy: "\n").filter { !$0.isEmpty } }
         var before = saved
         if before == nil {
-            before = await layout(of: running(project), files: nil, module: project.exe)
+            before = await layout(of: running(project), files: nil, module: project.exe, macOS: Template.macMinimum(project))
             if let before { try? before.joined(separator: "\n").write(to: runningLayout(project), atomically: true, encoding: .utf8) }
         }
         guard let now = await after else { return ("the new code doesn't type-check as a whole", nil) }
@@ -160,8 +160,8 @@ enum LiveReload {
 
     /// The compiler's command line for the live copy: the files named as primaries (what's compiled, or printed)
     /// and every other one there for context, the way the live build compiles a file (unoptimized, testable,
-    /// macOS 14, named after the app, with SwiftUI's macros).
-    private static func frontend(_ action: String, in folder: URL, primaries: [String], module: String) -> String {
+    /// the macOS the app is built for, named after the app, with SwiftUI's macros).
+    private static func frontend(_ action: String, in folder: URL, primaries: [String], module: String, macOS: String) -> String {
         let all = swiftFiles(in: folder)
         // The widget's code the app shares (Widget/Shared, linked into Sources and not followed there) is read for
         // context: a change to it reopens the app (`inputs`), but the app's code may use what it declares.
@@ -173,7 +173,7 @@ enum LiveReload {
             SDK="$(xcrun --sdk macosx --show-sdk-path)"
             PLUGINS="$(dirname "$(dirname "$(xcrun -f swiftc)")")/lib/swift/host/plugins"
             xcrun swiftc -frontend \(action) \(firsts) \(others.map(quoted).joined(separator: " ")) -module-name \(quoted(module)) \\
-              -parse-as-library -Onone -enable-testing -D DEBUG -D LAMP_LIVE -target arm64-apple-macosx14.0 -sdk "$SDK" \\
+              -parse-as-library -Onone -enable-testing -D DEBUG -D LAMP_LIVE -target arm64-apple-macosx\(macOS) -sdk "$SDK" \\
               -plugin-path "$PLUGINS" -plugin-path "$SDK/../../usr/lib/swift/host/plugins"
             """
     }
@@ -190,7 +190,7 @@ enum LiveReload {
     /// they carry, in order, from the type-checked syntax tree (`-dump-ast`). Comparing the open app's with the new
     /// code's says whether a library can go in: no reading of the text, which formatting, comments, strings and
     /// inferred types all fool. Nil when the compiler can't say (the code doesn't type-check).
-    static func layout(of folder: URL, files: [String]?, module: String) async -> [String]? {
+    static func layout(of folder: URL, files: [String]?, module: String, macOS: String) async -> [String]? {
         if files?.isEmpty == true { return [] }
         // All of the app's own files, by name: the compiler prints (and checks the bodies of) only the files it's
         // given as primaries, or just the first with none. Lamp's building blocks are read for context only: the
@@ -198,7 +198,7 @@ enum LiveReload {
         let primaries = files ?? swiftFiles(in: folder).keys.filter { ($0 as NSString).lastPathComponent != "LampSupport.swift" }.sorted()
         guard !primaries.isEmpty else { return [] }
         var output: [String] = []
-        let status = await Shell.run(frontend("-dump-ast", in: folder, primaries: primaries, module: module) + " 2>/dev/null",
+        let status = await Shell.run(frontend("-dump-ast", in: folder, primaries: primaries, module: module, macOS: macOS) + " 2>/dev/null",
                                      cwd: folder) { output.append($0) }
         guard status == 0 else { return nil }
         return members(inDump: output.joined(separator: "\n"))
@@ -253,7 +253,7 @@ enum LiveReload {
     }
 
     /// Compiles the whole module from the live copy, the way the live build does (SwiftPM's for a Mac app,
-    /// Xcode's for the Mac half of an app for both: both unoptimized, testable, for macOS 14, named after the app),
+    /// Xcode's for the Mac half of an app for both: both unoptimized, testable, for the app's macOS, named after the app),
     /// and links the changed files' objects into a library for the open app. Nil, with the compiler's words, when it doesn't compile.
     static func compile(_ project: LampProject, changed: [String]) async -> (url: URL?, problem: String?) {
         let live = folder(project)
@@ -263,10 +263,11 @@ enum LiveReload {
         let library = live.appendingPathComponent("hot-\(UUID().uuidString.prefix(8)).dylib")
         // One object for each changed file, in the order they're named; only they are compiled.
         let objects = changed.indices.map { work.appendingPathComponent("\($0).o").path }
-        let script = "set -e\n" + frontend("-c", in: sources(project), primaries: changed, module: project.exe)
+        let macOS = Template.macMinimum(project)
+        let script = "set -e\n" + frontend("-c", in: sources(project), primaries: changed, module: project.exe, macOS: macOS)
             + " " + objects.map { "-o " + quoted($0) }.joined(separator: " ") + " 2>&1\n" + """
             xcrun swiftc -emit-library \(objects.map(quoted).joined(separator: " ")) -o \(quoted(library.path)) \\
-              -target arm64-apple-macosx14.0 -sdk "$SDK" -Xlinker -undefined -Xlinker dynamic_lookup -Xlinker -interposable 2>&1
+              -target arm64-apple-macosx\(macOS) -sdk "$SDK" -Xlinker -undefined -Xlinker dynamic_lookup -Xlinker -interposable 2>&1
             codesign --force -s - \(quoted(library.path)) 2>&1
             """
         var output: [String] = []
