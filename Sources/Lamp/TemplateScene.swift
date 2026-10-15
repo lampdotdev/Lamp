@@ -62,7 +62,7 @@ extension Template {
     //  Materials: LampMaterial.metal, chrome, brushed, plastic, rubber, glass, paint, wood, fabric, ceramic,
     //             concrete, asphalt, brick, tiles, grass, glow.
     //  Parts: entity.lampPress { }, lampTurn(axis:range:), lampSlide(axis:range:), lampGrab(), lampPhysics(), lampShadow().
-    //  Many copies of one thing: LampScene.copies(of:at:).
+    //  Many copies of one thing: LampScene.copies(of:at:). A big world: scene.stream(tile:radius:) { tile in … }.
     //  Props: a dictionary of name to a function making the prop; `scene.place(name, at:)` puts one in the scene.
 
     import SwiftUI
@@ -203,6 +203,7 @@ extension Template {
         func refresh(update: ((LampScene, Float) -> Void)?, props: [String: @MainActor () -> Entity]) {
             self.update = update
             self.props = props
+            restream()
             for (name, make) in props {
                 var found: [Entity] = []
                 func visit(_ e: Entity) {
@@ -310,6 +311,82 @@ extension Template {
             time += dt
             update?(self, dt)
             moveCamera(dt)
+            streamStep()
+        }
+
+        // MARK: A world built as you go
+
+        private struct Streaming {
+            var size: Float
+            var radius: Float
+            var focus: (@MainActor () -> SIMD3<Float>)?
+            var make: @MainActor (LampTile) -> Entity?
+            var built: [LampTile: Entity] = [:]
+            var first = true
+        }
+        private var streaming: Streaming?
+        private let streamRoot = Entity()
+
+        /// A big world built a square tile at a time: the tiles within `radius` metres of the camera (or of what
+        /// `around` returns, such as the player's car) are made by `make` as they come into reach, nearest first, a
+        /// few milliseconds' worth each frame so the app never stalls, and taken away again once well out of
+        /// reach. So the app opens at once however big the world is. `make` returns what's drawn on one tile (its
+        /// buildings, roads, trees, signs), or nil for an empty one; what the game itself needs everywhere
+        /// (collisions, routes, the map's data) stays outside it, made once.
+        func stream(tile size: Float = 100, radius: Float = 400, around: (@MainActor () -> SIMD3<Float>)? = nil,
+                    make: @escaping @MainActor (LampTile) -> Entity?) {
+            for entity in streaming?.built.values ?? [:].values { entity.removeFromParent() }
+            if streamRoot.parent == nil { root.addChild(streamRoot) }
+            streaming = Streaming(size: max(size, 1), radius: max(radius, size), focus: around, make: make)
+        }
+
+        /// Whether a tile is built right now.
+        func isBuilt(_ tile: LampTile) -> Bool { streaming?.built[tile] != nil }
+
+        private func streamStep() {
+            guard var s = streaming else { return }
+            let at = s.focus?() ?? camera.position(relativeTo: nil)
+            let here = SIMD2<Float>(at.x, at.z)
+            let reach = Int((s.radius / s.size).rounded(.up))
+            let cx = Int(floor(at.x / s.size)), cz = Int(floor(at.z / s.size))
+            func distance(_ t: LampTile) -> Float {
+                let lo = SIMD2<Float>(Float(t.x), Float(t.z)) * s.size
+                return simd_distance(here, simd_clamp(here, lo, lo + s.size))
+            }
+            // Far ones go (a little past reach, so a tile on the edge isn't made and dropped over and over).
+            for (tile, entity) in s.built where distance(tile) > s.radius * 1.25 {
+                entity.removeFromParent()
+                s.built[tile] = nil
+            }
+            var wanted: [(LampTile, Float)] = []
+            for x in (cx - reach)...(cx + reach) {
+                for z in (cz - reach)...(cz + reach) {
+                    let tile = LampTile(x: x, z: z, size: s.size)
+                    let d = distance(tile)
+                    if d <= s.radius, s.built[tile] == nil { wanted.append((tile, d)) }
+                }
+            }
+            wanted.sort { $0.1 < $1.1 }
+            // Nearest first, within a time budget: more at the start, where nothing is on screen yet.
+            let budget: Double = s.first ? 0.25 : 0.006
+            let started = Date()
+            for (tile, _) in wanted {
+                let entity = s.make(tile) ?? Entity()
+                entity.name = "tile \(tile.x),\(tile.z)"
+                streamRoot.addChild(entity)
+                s.built[tile] = entity
+                if Date().timeIntervalSince(started) > budget { break }
+            }
+            s.first = false
+            streaming = s
+        }
+
+        /// Drops every built tile, so they're made again (by the new code, after a live change).
+        func restream() {
+            guard var s = streaming else { return }
+            for entity in s.built.values { entity.removeFromParent() }
+            s.built = [:]
+            streaming = s
         }
 
         // MARK: Camera
@@ -544,6 +621,22 @@ extension Template {
         func updateNSView(_ view: NSView, context: Context) {
             DispatchQueue.main.async { [weak view] in found(view) }
         }
+    }
+
+    /// One square of a streamed world (`LampScene.stream`): its place in the grid and the ground it covers.
+    struct LampTile: Hashable, Sendable {
+        let x: Int, z: Int
+        let size: Float
+        /// The corner with the smallest x and z, and the opposite one, at ground level.
+        var min: SIMD3<Float> { [Float(x) * size, 0, Float(z) * size] }
+        var max: SIMD3<Float> { [Float(x + 1) * size, 0, Float(z + 1) * size] }
+        var center: SIMD3<Float> { [(Float(x) + 0.5) * size, 0, (Float(z) + 0.5) * size] }
+        /// Whether a point on the ground (x and z) is on this tile: to share out a world's things among tiles.
+        func contains(_ point: SIMD3<Float>) -> Bool {
+            point.x >= min.x && point.x < max.x && point.z >= min.z && point.z < max.z
+        }
+        static func == (a: LampTile, b: LampTile) -> Bool { a.x == b.x && a.z == b.z }
+        func hash(into hasher: inout Hasher) { hasher.combine(x); hasher.combine(z) }
     }
 
     /// A key, for `LampScene.isDown`.

@@ -844,7 +844,12 @@ enum Agent {
         parts at real size; the parts that move are `lampPress { }`, `lampTurn(axis:range:)`, \
         `lampSlide(axis:range:)` and `lampGrab()`; `lampPhysics(.dynamic)` or `.static` for falling and \
         knocking; `lampShadow()` under anything standing on the ground. Many copies of one thing go in one \
-        `LampScene.copies(of:at:)`.
+        `LampScene.copies(of:at:)`. A world bigger than a few hundred metres (a town, a map, a landscape) is \
+        streamed, never built whole at launch: `scene.stream(tile: 100, radius: 400, around: { car.position }) { tile in … }` \
+        returns what's drawn on one tile (share things out with `tile.contains`), made as it comes into reach; what \
+        the game needs everywhere (collisions, routes, the map's data) is made once, outside it. Make each kind of \
+        mesh once and reuse it (`copies`, or one text mesh per distinct word): never rebuild the same thing per \
+        place.
           Model a real thing from a picture of it, never from memory alone. Before writing a main prop that is a \
         real object (a car model, a building, a piece of furniture, an animal), get a reference: the person's photo \
         from the chat, else one `make_art` of the object alone on a plain background, seen straight from the side \

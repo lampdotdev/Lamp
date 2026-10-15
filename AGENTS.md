@@ -556,7 +556,7 @@ macOS 15 (`Template.withScene`). It's Lamp's like LampSupport.swift: protected, 
 shared `.lampapp` files, and part of `BuildStamp`. It holds `LampSceneView` (sky, camera rig, keys, the frame
 loop), `LampMesh` (lathe, extrude, sweep, tube and boxes with textures laid on in metres), `LampMaterial`
 (materials with their detail drawn in code, no image files), parts that press, turn, slide and are grabbed, and
-`LampScene.copies` (instancing). It carries what cost time to find: no sun shadows (with them RealityKit drops
+`LampScene.copies` (instancing), `scene.place` (a prop by name, so a live change to it shows) and `scene.stream` (a big world built a tile at a time around the player, a few milliseconds a frame, so it opens at once). It carries what cost time to find: no sun shadows (with them RealityKit drops
 the sunlight on some frames and the whole picture flickers), a camera near plane of 10 cm, and instance batches
 split below a few million vertices (a bigger batch isn't drawn, silently).
 
