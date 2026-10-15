@@ -290,6 +290,14 @@ final class SidebarServer {
                     card.resultCurrent = line.id == currentResult && !busy
                     card.picture = result.version.flatMap { picture(Versions.pictureURL(in: project, for: $0)) }
                     out.append(card)
+                case .noted:
+                    guard let receipt = line.noted else { continue }
+                    var card = SidebarLine(id: line.id, kind: .note, text: NoteCard.title(receipt, app: project.name), gap: gap)
+                    card.added = receipt.added
+                    card.removed = receipt.removed
+                    card.undone = receipt.undone == true
+                    card.problem = noteProblems[line.id]
+                    out.append(card)
                 default:
                     continue
                 }
@@ -302,6 +310,10 @@ final class SidebarServer {
     fileprivate static func attachment(_ url: URL) -> SidebarAttachment {
         SidebarAttachment(name: url.lastPathComponent, thumbnail: thumbnail(url), isImage: Attachments.isImage(url))
     }
+
+    /// What went wrong taking back a save of the notes from the sidebar, by its receipt, as Lamp's window shows it
+    /// under the receipt.
+    fileprivate static var noteProblems: [UUID: String] = [:]
 
     /// A result's picture, small enough to send every time the chat changes.
     private static var pictures: [URL: Data] = [:]
@@ -371,6 +383,9 @@ final class SidebarServer {
                 return url
             }
             store.attach(urls, to: project)
+        case .undoNote(let id):
+            Self.noteProblems[id] = store.undoNote(id, in: project)
+            scheduleUpdate()
         case .askProgress(let id, let progress):
             AskProgresses.shared.set(progress, for: id)
         case .removeAttachment(let index):
@@ -488,6 +503,8 @@ final class SidebarServer {
             var state = server.state(for: project)
             // A sidebar from before the summary line can't read one, and would drop the whole chat.
             if version < 2 { state.lines.removeAll { $0.kind == .summary } }
+            // Nor one from before the notes receipt a receipt.
+            if version < 3 { state.lines.removeAll { $0.kind == .note } }
             guard let data = SidebarWire.encode(state), force || data != last else { return }
             last = data
             outbox.send(data)

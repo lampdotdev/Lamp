@@ -6,7 +6,7 @@ import Foundation
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
     /// What this side reads and writes; see `SidebarCommand.hello`.
-    public static let version = 2
+    public static let version = 3
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -67,7 +67,7 @@ public struct SidebarState: Codable, Equatable {
 }
 
 public struct SidebarLine: Codable, Equatable, Identifiable {
-    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary }
+    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary, note }
     public var id: UUID
     public var kind: Kind
     public var text: String
@@ -92,6 +92,12 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var result: TalkCard.Result?
     public var resultCurrent: Bool?
     public var picture: Data?
+    /// A receipt for a save of Lamp's notes (its title is `text`): the lines added and removed, whether it was
+    /// taken back, and what went wrong taking it back.
+    public var added: [String]?
+    public var removed: [String]?
+    public var undone: Bool?
+    public var problem: String?
 
     public init(id: UUID, kind: Kind, text: String, gap: Double = 0, running: Bool = false, attachments: [SidebarAttachment]? = nil,
                 growing: Bool = false, questions: [SidebarQuestion]? = nil, untried: String? = nil) {
@@ -162,7 +168,7 @@ public struct SidebarAttachment: Codable, Equatable {
 /// What the person did in the sidebar.
 public enum SidebarCommand: Codable, Equatable {
     /// The first thing a sidebar says: which shape of `SidebarState` it reads. One that says nothing is from
-    /// before the summary line, which it can't read.
+    /// before the summary line, which it can't read; one before 3, from before the notes receipt.
     case hello(Int)
     case send(String)
     case answer(UUID, [String])
@@ -171,6 +177,8 @@ public enum SidebarCommand: Codable, Equatable {
     case removeAttachment(Int)
     /// How far an open card has been answered, as it changes, so the other chat carries on from there.
     case askProgress(UUID, AskProgress)
+    /// Takes back the save of Lamp's notes this receipt is for.
+    case undoNote(UUID)
     /// Files pasted, dropped or chosen in the sidebar, which only it can read: their names and contents.
     case attach([SidebarFile])
     case stop

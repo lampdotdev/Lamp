@@ -250,6 +250,9 @@ private struct LineView: View {
             ChatLook.SummaryLine(line.text)
         case .error:
             ChatLook.ErrorNote(line.text)
+        case .note:
+            ChatLook.NoteLine(title: line.text, added: line.added ?? [], removed: line.removed ?? [], undone: line.undone ?? false,
+                              problem: line.problem, undo: { link.send(.undoNote(line.id)) })
         case .ask:
             AskLine(line: line)
         case .result:
