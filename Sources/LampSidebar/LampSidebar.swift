@@ -201,7 +201,11 @@ private struct LineView: View {
         case .agent:
             ChatLook.AgentText(line.text, keep: !line.growing)
         case .status:
-            ChatLook.StatusLine(line.text, running: line.running)
+            if let command = ChatLook.ranCommand(in: line.text) {
+                ChatLook.RanCommand(command)
+            } else {
+                ChatLook.StatusLine(line.text, running: line.running)
+            }
         case .summary:
             ChatLook.SummaryLine(line.text)
         case .error:

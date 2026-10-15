@@ -560,8 +560,8 @@ struct StatusGroup: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(lines) { line in
-                if let command = RanCommand.command(in: line) {
-                    RanCommand(command: command)
+                if line.kind == .status, let command = ChatLook.ranCommand(in: line.text) {
+                    ChatLook.RanCommand(command)
                 } else {
                     ChatLook.StatusLine(line.text, running: running && line.id == lines.last?.id && line.text.hasSuffix("…"))
                 }
@@ -592,43 +592,5 @@ struct UnresponsiveNotice: View {
         .padding(.horizontal, 12).padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
-    }
-}
-
-/// A command the agent ran without asking ("Ran: git clone …"). The chat says that it happened; the command
-/// itself is a click away, for anyone who wants to see it.
-struct RanCommand: View {
-    let command: String
-    @State private var expanded = false
-
-    static func command(in line: LogLine) -> String? {
-        line.kind == .status && line.text.hasPrefix("Ran: ") ? String(line.text.dropFirst(5)) : nil
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button {
-                withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle").frame(width: 16)
-                    Text("Ran a command")
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Show the command")
-            if expanded {
-                Text(command)
-                    .font(.system(.callout, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    .textSelection(.enabled)
-                    .padding(.leading, 22)
-            }
-        }
     }
 }
