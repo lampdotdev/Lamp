@@ -48,17 +48,23 @@ extension ChatLook {
         }
     }
 
-    /// A message waiting for the current change to finish. It can still be taken back.
+    /// A message waiting for the current change to finish. It can still be taken back, and, where the agent can
+    /// take it while it works, sent to it now (`sendNow`); once that's asked, the row says it's on its way.
     public struct QueuedRow<Chips: View>: View {
         let text: String
         let waitingForSetup: Bool
+        let sending: Bool
         let onRemove: () -> Void
+        let sendNow: (() -> Void)?
         let chips: Chips
 
-        public init(text: String, waitingForSetup: Bool, onRemove: @escaping () -> Void, @ViewBuilder chips: () -> Chips) {
+        public init(text: String, waitingForSetup: Bool, sending: Bool = false, onRemove: @escaping () -> Void,
+                    sendNow: (() -> Void)? = nil, @ViewBuilder chips: () -> Chips) {
             self.text = text
             self.waitingForSetup = waitingForSetup
+            self.sending = sending
             self.onRemove = onRemove
+            self.sendNow = sendNow
             self.chips = chips()
         }
 
@@ -78,8 +84,19 @@ extension ChatLook {
                 }
                 // The width limit goes around the button too, so it stays next to the bubble.
                 .frame(maxWidth: 480 + 22, alignment: .trailing)
-                Label(waitingForSetup ? "Starts when Apple's app-building tools finish installing" : "Queued",
-                      systemImage: "clock").font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 10) {
+                    if sending {
+                        Label("Sending now", systemImage: "arrow.up.circle").font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Label(waitingForSetup ? "Starts when Apple's app-building tools finish installing" : "Queued",
+                              systemImage: "clock").font(.caption).foregroundStyle(.secondary)
+                        if let sendNow {
+                            Button("Send Now", action: sendNow)
+                                .buttonStyle(.link).font(.caption)
+                                .help("Send this to the agent while it works")
+                        }
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         }

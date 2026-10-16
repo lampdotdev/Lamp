@@ -254,6 +254,8 @@ struct QueuedMessage: Identifiable {
     var tookBack: [String] = []
     /// What was pointed at in the app, its picture going with the message besides `attachments`.
     var pointed: PointedAt? = nil
+    /// The person pressed Send Now: it goes to the agent in the turn that's running (`Store.handOver`).
+    var sendNow = false
 }
 
 extension QueuedMessage {
@@ -1794,7 +1796,6 @@ final class Store: ObservableObject {
         }
         queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, card: card, pointed: pointed))
         startQueued(project)
-        steer(project)
         saveWaiting()
     }
 
@@ -1882,6 +1883,25 @@ final class Store: ObservableObject {
             }
         }
         return project
+    }
+
+    /// Whether a waiting message can be sent to the agent in the turn that's running (Send Now): the engine takes
+    /// messages while it works (not Codex), and the message is a plain request. An answer to a card or a request
+    /// sent again changes what the turn is for, and so does anything while a wish is being found or once the agent
+    /// has asked its questions; those wait for the next turn.
+    func canSendNow(_ message: QueuedMessage, in project: LampProject) -> Bool {
+        guard let turn = turns[project.id], Builder.engine != .codex, !turn.asked, !turn.stopped,
+              current(project)?.finding == false else { return false }
+        return message.card == nil && message.replaces == nil && message.tookBack.isEmpty
+    }
+
+    /// Send Now: the message goes to the agent at its next step, if it still has one; otherwise it starts the next
+    /// turn as any waiting message does.
+    func sendNow(_ message: QueuedMessage, in project: LampProject) {
+        guard canSendNow(message, in: project), let index = queued[project.id]?.firstIndex(where: { $0.id == message.id })
+        else { return }
+        queued[project.id]?[index].sendNow = true
+        steer(project)
     }
 
     func unqueue(_ message: QueuedMessage, from project: LampProject) {
@@ -2579,21 +2599,21 @@ final class Store: ObservableObject {
         return false
     }
 
-    /// A message sent while the agent works goes to it in the same turn: the engine gives it to the model after
-    /// the tools it is running, before the model goes on, rather than leaving it for the next request. pi asks
-    /// for it after each of its turns (`/agent/steer`, lamp-tools.ts); Claude Code is written to while a tool
-    /// runs (`steer`). Each goes into the chat as it's handed over, and is a request of this turn (its version is the
-    /// turn's) once the engine's output shows the model has it (`received`); until then it can still go back in line. Answers to a card and requests sent again wait, as they change what the turn is for; so does
-    /// everything while a wish is being found, or once the agent has asked its questions. Returns what the
-    /// agent is sent, nil when nothing can go.
+    /// A waiting message the person sent with Send Now goes to the agent in the same turn: the engine gives it to
+    /// the model after the tools it is running, before the model goes on. Any other waiting message is the next
+    /// request, as before. pi asks for them after each of its turns (`/agent/steer`, lamp-tools.ts); Claude Code is
+    /// written to while a tool runs (`steer`). Each goes into the chat as it's handed over, and is a request of this
+    /// turn (its version is the turn's) once the engine's output shows the model has it (`received`); until then
+    /// it can still go back in line. Returns what the agent is sent, nil when nothing can go.
     private func handOver(_ project: LampProject) -> String? {
         // Nothing more while a handover is unconfirmed: a receipt confirms everything handed over, so one that
         // never arrived could otherwise be counted by the next one's receipt instead of going back in line.
         guard let turn = turns[project.id], turn.agent != nil, turn.steering != nil, !turn.asked, !turn.stopped,
               turn.handed.isEmpty, current(project)?.finding == false, let waiting = queued[project.id] else { return nil }
-        let taken = Array(waiting.prefix { $0.card == nil && $0.replaces == nil && $0.tookBack.isEmpty })
+        let taken = waiting.filter { $0.sendNow && $0.card == nil && $0.replaces == nil && $0.tookBack.isEmpty }
         guard !taken.isEmpty else { return nil }
-        queued[project.id] = taken.count == waiting.count ? nil : Array(waiting.dropFirst(taken.count))
+        let rest = waiting.filter { message in !taken.contains { $0.id == message.id } }
+        queued[project.id] = rest.isEmpty ? nil : rest
         saveWaiting()
         let saved = post(taken, to: project)
         guard var chat = logs[project.id] else { return nil }

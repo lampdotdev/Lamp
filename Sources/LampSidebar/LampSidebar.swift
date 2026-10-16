@@ -199,7 +199,9 @@ private struct Chat: View {
                         }
                         ForEach(state.queued ?? []) { message in
                             ChatLook.QueuedRow(text: message.text, waitingForSetup: state.waitingForSetup ?? false,
-                                               onRemove: { link.send(.unqueue(message.id)) }) {
+                                               sending: message.sendingNow == true,
+                                               onRemove: { link.send(.unqueue(message.id)) },
+                                               sendNow: message.canSendNow == true ? { link.send(.sendNow(message.id)) } : nil) {
                                 if let pointed = message.pointed { PointedPill(pointed: pointed) }
                                 ForEach(message.attachments.indices, id: \.self) { index in
                                     AttachmentChip(attachment: message.attachments[index])

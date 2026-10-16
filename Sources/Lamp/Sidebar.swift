@@ -226,6 +226,8 @@ final class SidebarServer {
             var queued = SidebarQueued(id: message.id, text: message.text,
                                        attachments: message.attachments.map { Self.attachment($0) })
             queued.pointed = message.pointed.map { Self.pointed($0) }
+            queued.sendingNow = message.sendNow ? true : nil
+            queued.canSendNow = !message.sendNow && store.canSendNow(message, in: project) ? true : nil
             return queued
         }
         state.waitingForSetup = !store.setup.ready
@@ -599,6 +601,9 @@ final class SidebarServer {
         case .unqueue(let id):
             guard let message = store.queued[project.id]?.first(where: { $0.id == id }) else { return }
             store.unqueue(message, from: project)
+        case .sendNow(let id):
+            guard let message = store.queued[project.id]?.first(where: { $0.id == id }) else { return }
+            store.sendNow(message, in: project)
         case .approve(let id, let allow, let allowAll):
             // Only the approval still waiting: a click that arrives after it was answered in Lamp does nothing.
             guard store.approvals[project.id]?.id == id else { return }

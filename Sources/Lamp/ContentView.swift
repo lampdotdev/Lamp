@@ -523,7 +523,10 @@ struct ProjectView: View {
             ChatLook.UnresponsiveNotice(text: ErrorMessages.notResponding(project.name)) { store.forceQuit(project) }.padding(.top, 12)
         }
         ForEach(queued) { message in
-            ChatLook.QueuedRow(text: message.text, waitingForSetup: !store.setup.ready, onRemove: { store.unqueue(message, from: project) }) {
+            ChatLook.QueuedRow(text: message.text, waitingForSetup: !store.setup.ready, sending: message.sendNow,
+                               onRemove: { store.unqueue(message, from: project) },
+                               sendNow: !message.sendNow && store.canSendNow(message, in: project)
+                                   ? { store.sendNow(message, in: project) } : nil) {
                 if let pointed = message.pointed {
                     ChatLook.PointedPill(title: pointed.title, detail: pointed.detail)
                 }
