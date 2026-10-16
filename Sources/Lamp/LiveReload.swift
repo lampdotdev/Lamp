@@ -5,7 +5,8 @@ import CryptoKit
 /// While the experiment is on, a Mac app is built live (build.sh with LAMP_LIVE: debug, -interposable, from the
 /// copy of its sources in `.lamp/live` with each view's body wrapped). After a change, the files it touched are
 /// compiled into a library, and the running app loads it (`LampLive` in LampSupport.swift), keeping its state.
-/// What can't go in that way (a stored property or an enum case added, removed or changed, a file removed, the
+/// What can't go in that way (a stored property or an enum case added, removed or changed, but for a property added
+/// to a class, which `LiveSlots` fits into a spare place; a file removed, the
 /// App itself, Lamp's own file, the app's assets or settings) is installed as before, by reopening the app.
 enum LiveReload {
     /// Whether the app is built live: a Mac app, or the Mac half of an app for both while Try On points at this Mac.
@@ -19,12 +20,16 @@ enum LiveReload {
     /// The sources the open app is running: what was installed, and every change put into it since.
     static func running(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running") }
 
-    /// After an install: the open app is the build, so what it runs is what the build used, with the other
-    /// things the build puts in the app as they were.
-    static func markRunning(_ project: LampProject) {
+    /// The sources the last whole build compiled (build.sh keeps them): the live copy may have changed since, when
+    /// a change went in or was tried after it (`LiveSlots` rewrites the copy).
+    static func built(_ project: LampProject) -> URL { folder(project).appendingPathComponent("built") }
+
+    /// What the open app runs is now `from` (the live copy, after a change went in, or what the build compiled,
+    /// after an install), with the other things the build puts in the app as they are.
+    static func markRunning(_ project: LampProject, from: URL? = nil) {
         let fm = FileManager.default
         try? fm.removeItem(at: running(project))
-        try? fm.copyItem(at: sources(project), to: running(project))
+        try? fm.copyItem(at: from ?? sources(project), to: running(project))
         try? inputs(project).write(to: runningInputs(project), atomically: true, encoding: .utf8)
         try? fm.removeItem(at: runningLayout(project))
     }
@@ -49,6 +54,7 @@ enum LiveReload {
 
     static func forget(_ project: LampProject) {
         try? FileManager.default.removeItem(at: running(project))
+        LiveSlots.clear(project)
     }
 
     /// The open app has a change the copy in the apps folder doesn't: the build goes in when the app closes.
@@ -122,14 +128,12 @@ enum LiveReload {
     /// (then the usual build runs and the agent sees its errors). The open app's layout is kept from the last
     /// time, so only the new code is type-checked, alongside the changed files' compile.
     @MainActor static func layoutProblem(_ project: LampProject) async -> (problem: String?, layout: [String]?) {
-        async let after = layout(of: sources(project), files: nil, module: project.exe, macOS: Template.macMinimum(project))
-        let saved = (try? String(contentsOf: runningLayout(project), encoding: .utf8)).map { $0.components(separatedBy: "\n").filter { !$0.isEmpty } }
-        var before = saved
-        if before == nil {
-            before = await layout(of: running(project), files: nil, module: project.exe, macOS: Template.macMinimum(project))
-            if let before { try? before.joined(separator: "\n").write(to: runningLayout(project), atomically: true, encoding: .utf8) }
-        }
-        guard let now = await after else { return ("the new code doesn't type-check as a whole", nil) }
+        let (before, after) = await layouts(project)
+        return layoutProblem(before: before, after: after)
+    }
+
+    static func layoutProblem(before: [String]?, after: [String]?) -> (problem: String?, layout: [String]?) {
+        guard let now = after else { return ("the new code doesn't type-check as a whole", nil) }
         guard let before else { return ("the compiler couldn't say what the open app's types hold", nil) }
         // Type by type, each "Owner<tab>member": a type the open app has must hold just what it did, in order;
         // a new type (a new view with its own state) is the library's to lay out. A type taken away may still
@@ -147,6 +151,18 @@ enum LiveReload {
             }
         }
         return (nil, now)
+    }
+
+    /// What the open app's types hold (kept from the last time, or worked out from the sources it runs) and what
+    /// the new code's hold; nil for either the compiler can't say.
+    @MainActor static func layouts(_ project: LampProject) async -> (before: [String]?, after: [String]?) {
+        async let after = layout(of: sources(project), files: nil, module: project.exe, macOS: Template.macMinimum(project))
+        var before = (try? String(contentsOf: runningLayout(project), encoding: .utf8)).map { $0.components(separatedBy: "\n").filter { !$0.isEmpty } }
+        if before == nil {
+            before = await layout(of: running(project), files: nil, module: project.exe, macOS: Template.macMinimum(project))
+            if let before { try? before.joined(separator: "\n").write(to: runningLayout(project), atomically: true, encoding: .utf8) }
+        }
+        return (before, await after)
     }
 
     /// What the open app's types hold, kept beside the sources it runs: written when a change goes in (the new
@@ -314,5 +330,153 @@ enum LiveReload {
             if let text = try? String(contentsOf: answer, encoding: .utf8) { return text.hasPrefix("ok") }
         }
         return false
+    }
+}
+
+/// A stored property added to a class while the app is open, put in without reopening it. A live build gives every
+/// class of the app's `count` spare places (`__lampSpare0`…, of `LampSpare?`, written by build.sh's copy step), so
+/// the open app's objects already have room. When the only thing keeping a change out is new stored properties in
+/// such classes, each one's declaration in the live copy becomes a computed property kept in a free spare place:
+/// the class then holds what it did, and the change goes in like any other. Being stored, a spare place is observed
+/// like the rest (`@Observable`'s tracking, `@Published` in an `ObservableObject`), so a view that reads the new
+/// property is redrawn when it changes. Which property is in which place is kept until the app is next installed,
+/// and put back into every live copy made meanwhile (`apply`), so later changes see the same layout.
+enum LiveSlots {
+    static let count = 4
+
+    struct Slot: Codable, Equatable {
+        var index: Int
+        /// The property's type as the compiler worked it out, for a declaration that doesn't spell it.
+        var type: String
+    }
+
+    private static func url(_ project: LampProject) -> URL { LiveReload.folder(project).appendingPathComponent("slots.json") }
+
+    /// Type ("Outer.Inner") → property → its place.
+    static func mapping(_ project: LampProject) -> [String: [String: Slot]] {
+        (try? JSONDecoder().decode([String: [String: Slot]].self, from: Data(contentsOf: url(project)))) ?? [:]
+    }
+
+    private static func save(_ mapping: [String: [String: Slot]], for project: LampProject) {
+        try? JSONEncoder().encode(mapping).write(to: url(project), options: .atomic)
+    }
+
+    /// The app was installed: its objects are the new build's, with every property stored, and its places empty.
+    static func clear(_ project: LampProject) { try? FileManager.default.removeItem(at: url(project)) }
+
+    /// Puts the properties already in places back into a fresh live copy, before it's compared with the open app.
+    static func apply(_ project: LampProject) {
+        for (type, properties) in mapping(project) {
+            for (name, slot) in properties { _ = rewrite(name, as: slot, in: type, project: project) }
+        }
+    }
+
+    /// When every way the new code's types differ from the open app's is a stored property added to a class that
+    /// has places to spare, moves each into a place and answers what it moved ("Game.onFoot"); else nothing
+    /// changes and it answers nil.
+    static func fit(_ project: LampProject, before: [String], after: [String]) -> [String]? {
+        func byType(_ entries: [String]) -> [String: [String]] {
+            Dictionary(grouping: entries, by: { String($0.prefix { $0 != "\t" }) })
+        }
+        let old = byType(before), new = byType(after)
+        var map = mapping(project)
+        var planned: [(type: String, name: String, slot: Slot)] = []
+        for (type, members) in old.sorted(by: { $0.key < $1.key }) {
+            guard let current = new[type] else { return nil }
+            guard current != members else { continue }
+            // Only additions, with what was there still there, in order.
+            let extras = current.filter { !members.contains($0) }
+            guard current.filter({ members.contains($0) }) == members, !extras.isEmpty else { return nil }
+            // The places as the class keeps them: plain, behind @Observable's `_`, or in @Published's wrapper.
+            let observed = members.contains(type + "\t___lampSpare0: LampSpare?")
+            guard observed || members.contains(type + "\t__lampSpare0: LampSpare?")
+                    || members.contains(type + "\t___lampSpare0: Published<LampSpare?>") else { return nil }
+            var taken = Set((map[type] ?? [:]).values.map(\.index))
+            for extra in extras {
+                let field = extra.dropFirst(type.count + 1)
+                guard !field.hasPrefix("case "), let colon = field.range(of: ": ") else { return nil }
+                var name = String(field[..<colon.lowerBound]), kind = String(field[colon.upperBound...])
+                // @Observable keeps a property in `_name`, @Published in `_name: Published<T>`.
+                if observed, name.hasPrefix("_") { name.removeFirst() }
+                if kind.hasPrefix("Published<"), kind.hasSuffix(">"), name.hasPrefix("_") {
+                    name.removeFirst()
+                    kind = String(kind.dropFirst("Published<".count).dropLast())
+                }
+                guard map[type]?[name] == nil, let free = (0..<count).first(where: { !taken.contains($0) }) else { return nil }
+                taken.insert(free)
+                planned.append((type, name, Slot(index: free, type: kind)))
+            }
+        }
+        // Every type the open app doesn't have is the library's to lay out; one it has that changed must be fitted.
+        guard !planned.isEmpty else { return nil }
+        var originals: [URL: Data] = [:]
+        for item in planned {
+            guard rewrite(item.name, as: item.slot, in: item.type, project: project, keeping: &originals) != nil else {
+                // Put back what was already rewritten: the change goes in by reopening, from the copy as it was.
+                for (url, data) in originals { try? data.write(to: url) }
+                return nil
+            }
+            map[item.type, default: [:]][item.name] = item.slot
+        }
+        save(map, for: project)
+        return planned.map { $0.type + "." + $0.name }
+    }
+
+    @discardableResult
+    private static func rewrite(_ name: String, as slot: Slot, in type: String, project: LampProject) -> URL? {
+        var unused: [URL: Data] = [:]
+        return rewrite(name, as: slot, in: type, project: project, keeping: &unused)
+    }
+
+    /// Turns `var name = value` in the class `type` of the live copy into a computed property kept in the place.
+    /// Only a one-line declaration with nothing but access words, `@Published` or `@ObservationIgnored` before it,
+    /// and a type or a starting value (an optional may have neither): anything else (a `didSet`, `lazy`, `weak`,
+    /// another wrapper) isn't moved, and the change goes in by reopening. Answers the file changed.
+    private static func rewrite(_ name: String, as slot: Slot, in type: String, project: LampProject,
+                                keeping originals: inout [URL: Data]) -> URL? {
+        let simple = String(type.split(separator: ".").last ?? Substring(type))
+        let files = (FileManager.default.enumerator(at: LiveReload.sources(project), includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL } ?? []).filter { $0.pathExtension == "swift" }.sorted { $0.path < $1.path }
+        let header = try! NSRegularExpression(
+            pattern: #"^([ \t]*)(?:@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated)\s+)*class\s+"#
+                + NSRegularExpression.escapedPattern(for: simple) + #"\b[^{\n]*\{"#, options: .anchorsMatchLines)
+        let escaped = NSRegularExpression.escapedPattern(for: name)
+        let declaration = try! NSRegularExpression(
+            pattern: #"^([ \t]*)((?:@(?:Published|ObservationIgnored)[ \t]+)*)((?:(?:public|private|fileprivate|internal|nonisolated)(?:\(set\))?[ \t]+)*)(var|let)[ \t]+"#
+                + escaped + #"[ \t]*(?::[ \t]*([^={}\n]+?))?[ \t]*(?:=[ \t]*([^{}\n]+?))?[ \t]*(?://[^\n]*)?$"#, options: .anchorsMatchLines)
+        for file in files where !["LampSupport.swift", Template.sceneSupportFile].contains(file.lastPathComponent) {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            let ns = text as NSString
+            for found in header.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+                // The class's body: from its header to the first line that closes at the header's indent or less.
+                let indent = ns.substring(with: found.range(at: 1)).count
+                let start = found.range.location + found.range.length
+                var end = ns.length
+                let closing = try! NSRegularExpression(pattern: #"^[ \t]{0,\#(indent)}\}"#, options: .anchorsMatchLines)
+                if let close = closing.firstMatch(in: text, range: NSRange(location: start, length: ns.length - start)) { end = close.range.location }
+                let body = NSRange(location: start, length: end - start)
+                guard let m = declaration.firstMatch(in: text, range: body) else { continue }
+                func group(_ i: Int) -> String? {
+                    m.range(at: i).location == NSNotFound ? nil : ns.substring(with: m.range(at: i)).trimmingCharacters(in: .whitespaces)
+                }
+                let lead = ns.substring(with: m.range(at: 1)), access = group(3) ?? "", isLet = group(4) == "let"
+                let declared = group(5) ?? slot.type
+                guard !declared.isEmpty else { return nil }
+                let optional = declared.hasSuffix("?") || declared.hasPrefix("Optional<")
+                guard let start = group(6) ?? (optional ? "nil" : nil) else { return nil }
+                let place = "__lampSpare\(slot.index)"
+                // A starting value that's worked out (a call, an object) is kept the first time it's read, so every
+                // read after sees the same one; a plain value is just answered until something is set.
+                let made = start.contains("(") || start.contains("{")
+                let first = made ? "let v: \(declared) = \(start); \(place) = LampSpare(v); return v" : "return \(start)"
+                let getter = "get { if let v = \(place)?.value as? \(declared) { return v }; \(first) }"
+                let setter = isLet ? "" : " set { \(place) = LampSpare(newValue) }"
+                let line = "\(lead)\(access.isEmpty ? "" : access + " ")var \(name): \(declared) { \(getter)\(setter) }"
+                if originals[file] == nil { originals[file] = Data(text.utf8) }
+                try? ns.replacingCharacters(in: m.range, with: line).write(to: file, atomically: true, encoding: .utf8)
+                return file
+            }
+        }
+        return nil
     }
 }

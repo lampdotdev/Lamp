@@ -171,8 +171,10 @@ enum Agent {
 
     ---
     This app is updated in place while it's open, keeping what's on screen, when a change only edits or adds code. \
-    Adding or changing a stored property, an enum case or the App reopens it, so put new state in a new view with \
-    its own @State (in a new file) rather than in an existing type, when that's as clear. \
+    A new stored property in a class goes in too, when it's declared on one line with a starting value (or is an \
+    optional). Adding a stored property to a struct, changing or removing one, an enum case or the App reopens it, \
+    so put new state in a class or in a new view with its own @State (in a new file) rather than in an existing \
+    struct, when that's as clear. \
     A look shows the window as the person left it, with the change in it.
     """
 

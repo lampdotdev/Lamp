@@ -511,6 +511,17 @@ from its Assets folder rather than its bundle (`LampAssets`), so a new picture g
 app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which asks for
 new state in new views rather than new stored properties in existing types, when that's as clear.
 
+A stored property added to a class goes in live too (`LiveSlots`, in LiveReload.swift). The copy step gives every
+class of the app's (not `@Model`, Core Data or `Sendable` ones) a few empty spare places, `__lampSpare0`… of
+`LampSpare?` (`@Published` in an `ObservableObject`), so the open app's objects already have room. When the only
+difference in layout is new stored properties in such classes, `LiveSlots.fit` rewrites each one-line declaration in
+the live copy into a computed property kept in a free place, and the change is compiled again and checked as usual.
+Being stored, a place is observed like any property, so views redraw. Which property is in which place
+(`.lamp/live/slots.json`) is put back into each fresh copy (`LiveSlots.apply`) until the app is installed again: the
+whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs
+once it's installed (`LiveReload.markRunning(from:)`). A place never reaches saved data: `LampSpare` encodes as
+nothing, and a computed property isn't encoded.
+
 A Mac app can also open beside a web page, in Chrome's sidebar (Lamp Dev only, an experiment: Settings →
 Experimental, `BrowserBridge.switchKey`; how it fits together is in `experiments/browser-connector/README.md`).
 One extension draws every app's sidebar from data the app publishes (`LampBrowser` in LampSupport.swift), and the
