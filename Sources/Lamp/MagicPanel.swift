@@ -94,11 +94,43 @@ final class MagicPanel {
         // Lamp's window closes once the chat is up in the app, and not before: with no window of its own and no chat
         // connected, Lamp would quit, and an app that couldn't show the chat would leave it nowhere.
         for _ in 0..<50 {
-            if SidebarServer.shared.isConnected(project.id) {
-                Store.shared.chatsHandedOff.insert(project.id)
-                return
-            }
+            if SidebarServer.shared.isConnected(project.id) { return Self.closeChatWindow(of: project) }
             try? await Task.sleep(for: .milliseconds(200))
+        }
+    }
+
+    /// An app's chat is in one place at a time: when it opens beside the app, its window in Lamp closes. Not while
+    /// someone is using that window (Lamp in front, with it), which they opened on purpose (a setup card's button,
+    /// the Window menu) and may be typing in.
+    func chatOpenedInApp(_ project: LampProject) {
+        let store = Store.shared
+        guard !(NSApp.isActive && store.selection == project.id) else { return }
+        Self.closeChatWindow(of: project)
+    }
+
+    private static func closeChatWindow(of project: LampProject) {
+        guard Store.shared.chatWindows.contains(project.id) else { return }
+        Store.shared.chatsHandedOff.insert(project.id)
+    }
+
+    /// The app was opened to show its chat beside it: if no chat has come by the time it should have (the app
+    /// couldn't start, or quit as it opened), the chat is shown in Lamp's window, so it's never nowhere. A rebuild
+    /// first (an app built by an older Lamp) is waited for, since its progress is in that chat.
+    func showChatIfAppNeverComes(_ project: LampProject) {
+        let id = project.id
+        Task {
+            var waited = 0
+            while Store.shared.busy.contains(id), waited < 1200 {
+                try? await Task.sleep(for: .milliseconds(500))
+                waited += 1
+            }
+            for _ in 0..<30 {
+                if SidebarServer.shared.isConnected(id) { return }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+            guard let current = Store.shared.projects.first(where: { $0.id == id }), !SidebarServer.shared.isConnected(id),
+                  Store.shared.macCopies(of: current).isEmpty else { return }
+            Store.shared.showChat(id)
         }
     }
 
@@ -133,6 +165,8 @@ final class MagicPanel {
     func opening(_ id: String) {
         guard let project = Store.shared.projects.first(where: { $0.id == id }) else { return }
         follow(project.id)
+        // A chat closed beside the app keeps its connection, so opening it again is told only this way.
+        chatOpenedInApp(project)
     }
 
     // MARK: Following an app

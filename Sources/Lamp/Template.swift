@@ -4313,9 +4313,6 @@ enum Template {
                 guard let window = sender.window else { return }
                 LampSidebar.close(window)
             }
-            @objc func openInLamp(_ sender: NSButton) {
-                NSWorkspace.shared.open(URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!)
-            }
         }
     }
 
@@ -4538,7 +4535,6 @@ enum Template {
             let split = NSSplitViewController()
             split.splitView.isVertical = true
             split.addSplitViewItem(NSSplitViewItem(viewController: content))
-            // The chat on the chat's own paper, which runs up behind the bar above it to the window's top edge.
             let column = NSViewController()
             column.view = Backing()
             column.view.wantsLayer = true
@@ -4546,19 +4542,19 @@ enum Template {
             column.addChild(host)
             host.view.translatesAutoresizingMaskIntoConstraints = false
             host.view.identifier = chatIdentifier
-            column.view.addSubview(host.view)
+            // From macOS 26 the chat floats beside the app on a pane of Liquid Glass, inset from the window's edges as
+            // the system's own sidebars are; before it, it sits on the chat's paper, which runs up to the window's top.
+            // Either way what's on it is the same: the bar's buttons, and the chat under them.
+            let pane = Self.pane(in: column.view)
+            pane.addSubview(host.view)
             watchClicks()
-            // The bar above the chat, drawn as the message box's row is at its foot: round buttons floating on the
-            // paper with nothing behind them, closing the chat at the left (as an inspector closes) and opening it
-            // in Lamp at the right, with what the chat is for between them. They're the column's, not the title
-            // bar's, which the window's split view covers above the chat. They do only what the app could do
-            // anyway (close its own inspector, open Lamp), so they needn't be the chat's. Pointing at part of the
-            // app is in the message box's + menu.
+            // The bar above the chat: a round button closing the chat at the left (as an inspector closes) and what
+            // the chat is for beside it. It's the column's, not the title bar's, which the window's split view covers
+            // above the chat, and it does only what the app could do anyway (close its own inspector). What changes
+            // the wish (undo, versions, sharing…) is in the chat under it, which only Lamp speaks to.
             let titlebar = max(window.frame.height - window.contentLayoutRect.height, 28)
             let size = RoundButton.side
             let close = RoundButton("sidebar.trailing", "Close Chat", "Close the chat", #selector(LampMagic.Opener.close(_:)))
-            let expand = RoundButton("arrow.up.left.and.arrow.down.right", "Open in Lamp", "Open this chat in Lamp",
-                                     #selector(LampMagic.Opener.openInLamp(_:)))
             let title = Caption(labelWithString: "Customize \(appName)")
             title.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
             title.textColor = .labelColor
@@ -4567,31 +4563,30 @@ enum Template {
             title.maximumNumberOfLines = 1
             title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             title.translatesAutoresizingMaskIntoConstraints = false
-            column.view.addSubview(title)
+            pane.addSubview(title)
             let strip = NSLayoutGuide()
-            column.view.addLayoutGuide(strip)
+            pane.addLayoutGuide(strip)
+            // On glass the pane starts below the window's top edge, so its bar needs only the button's height.
+            let floating = pane !== column.view
             var constraints = [
-                strip.topAnchor.constraint(equalTo: column.view.topAnchor),
-                strip.heightAnchor.constraint(equalToConstant: max(titlebar, size + 20)),
+                strip.topAnchor.constraint(equalTo: pane.topAnchor),
+                strip.heightAnchor.constraint(equalToConstant: floating ? size + 16 : max(titlebar, size + 20)),
                 host.view.topAnchor.constraint(equalTo: strip.bottomAnchor),
-                host.view.bottomAnchor.constraint(equalTo: column.view.bottomAnchor),
-                host.view.leadingAnchor.constraint(equalTo: column.view.leadingAnchor),
-                host.view.trailingAnchor.constraint(equalTo: column.view.trailingAnchor),
+                host.view.bottomAnchor.constraint(equalTo: pane.bottomAnchor),
+                host.view.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
+                host.view.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
             ]
-            for button in [close, expand] {
-                button.translatesAutoresizingMaskIntoConstraints = false
-                column.view.addSubview(button)
-                constraints += [button.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
-                                button.widthAnchor.constraint(equalToConstant: size), button.heightAnchor.constraint(equalToConstant: size)]
-            }
-            // The same 12 points from the edges as the message box's row.
-            constraints += [close.leadingAnchor.constraint(equalTo: column.view.leadingAnchor, constant: 12),
-                            expand.trailingAnchor.constraint(equalTo: column.view.trailingAnchor, constant: -12),
+            close.translatesAutoresizingMaskIntoConstraints = false
+            pane.addSubview(close)
+            constraints += [close.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
+                            close.widthAnchor.constraint(equalToConstant: size), close.heightAnchor.constraint(equalToConstant: size),
+                            // The same 12 points from the edge as the message box's row.
+                            close.leadingAnchor.constraint(equalTo: pane.leadingAnchor, constant: 12),
                             title.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
                             title.leadingAnchor.constraint(greaterThanOrEqualTo: close.trailingAnchor, constant: 10),
-                            title.trailingAnchor.constraint(lessThanOrEqualTo: expand.leadingAnchor, constant: -10)]
-            // Centred in the column while there's room, else as much as fits between the buttons.
-            let centred = title.centerXAnchor.constraint(equalTo: column.view.centerXAnchor)
+                            title.trailingAnchor.constraint(lessThanOrEqualTo: pane.trailingAnchor, constant: -(12 + size + 10))]
+            // Centred in the column while there's room, else as much as fits beside the button.
+            let centred = title.centerXAnchor.constraint(equalTo: pane.centerXAnchor)
             centred.priority = .defaultHigh
             constraints.append(centred)
             NSLayoutConstraint.activate(constraints)
@@ -4599,7 +4594,7 @@ enum Template {
             side.minimumThickness = 320
             side.maximumThickness = 640
             side.canCollapse = true
-            // No line under the bar: it floats on the paper, as the message box's row does.
+            // No line under the bar: it floats on the paper or the glass, as the message box's row does.
             side.titlebarSeparatorStyle = .none
             host.view.alphaValue = 0
             split.addSplitViewItem(side)
@@ -4636,11 +4631,16 @@ enum Template {
                     let column = item.viewController.view
                     let point = column.convert(event.locationInWindow, from: nil)
                     guard column.bounds.contains(point) else { return event }
-                    for case let button as RoundButton in column.subviews where !button.isHidden && button.isEnabled && button.frame.contains(point) {
+                    // The bar's buttons and the chat are on the glass pane from macOS 26, a level further in.
+                    func all(_ view: NSView) -> [NSView] { view.subviews + view.subviews.flatMap(all) }
+                    let inside = all(column)
+                    for case let button as RoundButton in inside where !button.isHidden && button.isEnabled
+                        && button.convert(button.bounds, to: column).contains(point) {
                         button.performClick(nil)
                         return nil
                     }
-                    if let chat = column.subviews.first(where: { $0.identifier == chatIdentifier }), chat.frame.contains(point) {
+                    if let chat = inside.first(where: { $0.identifier == chatIdentifier }),
+                       chat.convert(chat.bounds, to: column).contains(point) {
                         let location = event.locationInWindow
                         DispatchQueue.main.async {
                             guard let hit = chat.hitTest(chat.superview?.convert(location, from: nil) ?? .zero) else { return }
@@ -4662,15 +4662,59 @@ enum Template {
             split.splitView.setPosition(min(position, window.frame.width - 320), ofDividerAt: 0)
         }
 
+        /// What the chat sits on, and what its bar and the chat are laid out in. From macOS 26 a pane of Liquid Glass
+        /// (`NSGlassEffectView`), inset from the window's top, right and bottom edges and rounded to sit inside its
+        /// corner, over the column, which is left clear; the chat draws no paper of its own there, so the glass is what
+        /// shows. Before macOS 26 the column itself, on the chat's paper.
+        @MainActor private static func pane(in column: NSView) -> NSView {
+            guard #available(macOS 26, *) else { return column }
+            let glass = Glass()
+            glass.cornerRadius = 18
+            glass.translatesAutoresizingMaskIntoConstraints = false
+            let content = Passing()
+            glass.contentView = content
+            column.addSubview(glass)
+            let inset: CGFloat = 8
+            NSLayoutConstraint.activate([
+                glass.topAnchor.constraint(equalTo: column.safeAreaLayoutGuide.topAnchor, constant: inset / 2),
+                glass.bottomAnchor.constraint(equalTo: column.bottomAnchor, constant: -inset),
+                glass.leadingAnchor.constraint(equalTo: column.leadingAnchor, constant: inset / 2),
+                glass.trailingAnchor.constraint(equalTo: column.trailingAnchor, constant: -inset),
+            ])
+            return content
+        }
+
         /// The chat's paper, as the chat draws it (`ChatLook.paper`): a warm off-white, a warm near-black in the dark.
+        /// Clear under the glass.
         private final class Backing: NSView {
             override var wantsUpdateLayer: Bool { true }
             override func updateLayer() {
+                if #available(macOS 26, *) {
+                    layer?.backgroundColor = nil
+                    return
+                }
                 let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
                 layer?.backgroundColor = dark ? CGColor(srgbRed: 0x1F / 255, green: 0x1E / 255, blue: 0x1C / 255, alpha: 1)
                                               : CGColor(srgbRed: 0xF7 / 255, green: 0xF5 / 255, blue: 0xF1 / 255, alpha: 1)
             }
             // It only paints behind the bar: a click there is the title bar's, for moving the window.
+            override func hitTest(_ point: NSPoint) -> NSView? {
+                let hit = super.hitTest(point)
+                return hit === self ? nil : hit
+            }
+        }
+
+        /// The glass and what's laid out on it take no clicks of their own: the window moves by its bar, as by its
+        /// title bar.
+        @available(macOS 26, *)
+        private final class Glass: NSGlassEffectView {
+            override func hitTest(_ point: NSPoint) -> NSView? {
+                let hit = super.hitTest(point)
+                return hit === self ? nil : hit
+            }
+        }
+
+        private final class Passing: NSView {
             override func hitTest(_ point: NSPoint) -> NSView? {
                 let hit = super.hitTest(point)
                 return hit === self ? nil : hit
@@ -4683,7 +4727,8 @@ enum Template {
         }
 
         /// A round button as the message box's row draws its own (`ChatLook.Round`): as tall as a one-line box, a
-        /// text background ringed by a separator, its symbol in the secondary colour.
+        /// text background ringed by a separator, its symbol in the secondary colour. On the glass pane, a glass
+        /// button, as the chat's own buttons are there.
         private final class RoundButton: NSButton {
             static let side = (NSLayoutManager().defaultLineHeight(for: .systemFont(ofSize: NSFont.systemFontSize)) + 20).rounded()
 
@@ -4692,14 +4737,23 @@ enum Template {
                     .withSymbolConfiguration(.init(pointSize: 14, weight: .semibold))!
                 self.init(image: image, target: LampMagic.Opener.shared, action: action)
                 toolTip = tip
-                isBordered = false
                 imagePosition = .imageOnly
                 contentTintColor = .secondaryLabelColor
+                if #available(macOS 26, *) {
+                    bezelStyle = .glass
+                    borderShape = .circle
+                    return
+                }
+                isBordered = false
                 wantsLayer = true
             }
 
-            override var wantsUpdateLayer: Bool { true }
+            override var wantsUpdateLayer: Bool {
+                if #available(macOS 26, *) { return super.wantsUpdateLayer }
+                return true
+            }
             override func updateLayer() {
+                if #available(macOS 26, *) { return super.updateLayer() }
                 guard let layer else { return }
                 layer.cornerRadius = bounds.height / 2
                 layer.borderWidth = 1

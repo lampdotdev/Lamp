@@ -319,6 +319,8 @@ final class Store: ObservableObject {
     @Published var chatFocusRequest = 0
     /// Wishes whose chat window should close, its chat having moved into the app's own window (`MagicPanel.handOff`).
     @Published var chatsHandedOff: Set<String> = []
+    /// Wishes whose chat has a window of its own open now (`WishWindow`).
+    var chatWindows: Set<String> = []
     /// A wish from the site's link that came while the welcome is up, for the welcome to take (`take(wish:)`).
     @Published var arrivedWish: String?
     /// The wishes being written into a message box right now, by app (`Wish.Arrival`). The drafts hold them whole.
@@ -650,9 +652,12 @@ final class Store: ObservableObject {
         if let selection, NSApp?.isActive ?? true { unread.remove(selection) }
     }
 
-    /// Lamp is in front with this app's chat on screen.
+    /// This app's chat is on screen in front: in Lamp's window, or beside the app while the app is in front.
     func isWatching(_ id: String?) -> Bool {
-        id != nil && selection == id && NSApp.isActive
+        guard let id else { return false }
+        if selection == id && NSApp.isActive { return true }
+        guard SidebarServer.shared.isConnected(id), let project = projects.first(where: { $0.id == id }) else { return false }
+        return macCopies(of: project).contains { $0.isActive }
     }
 
     func reload() {

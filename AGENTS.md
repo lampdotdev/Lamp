@@ -211,7 +211,7 @@ typed in the bar, or said with the talk button beside it (`TalkButton`, moving w
 way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so it passes the same
 setup checks as anything typed in a chat. A click on a wish (or Return, or Open on its menu) opens it to use and
 change at once (`Store.open(fromDesk:)`): a Mac app with windows opens with
-its chat beside it (`Store.change`, below); a wish that opens no window is used (`Store.use`), and one still coming
+its chat beside it (`Store.change`, below; a notification's click goes the same way, `Store.openChat`); a wish that opens no window is used (`Store.use`), and one still coming
 true, or waiting on an answer, opens its chat. Change… on its menu changes it the same way, or in Lamp's window. Under each icon is only its
 name: a spinner or a dot says what's going on with it, and VoiceOver also hears where it lives (`WishPlace`, read
 from its files). While the pointer is on a wish, its picture and what it is take the place where a new wish is made
@@ -576,11 +576,21 @@ the app; the rule (`Agent.Rules.macGenerated`) asks the agent to keep what the p
 quits it leaves a picture of its front window and where it was in its runtime folder (`LampMagic.leaveCover`); while
 the app's turn is going, Lamp shows that picture where the window was (`MagicPanel.showCover`, a borderless window
 marked "Updating…"), the new copy opens its first window in the same place (`putBack`), and the picture fades out
-once the new copy reports its window (or goes when the turn ends without it). The chat's two buttons sit in
-the strip above it where the title bar is, as the column's own (`LampSidebar.embed`), drawn by the app since they do
-only what the app could do anyway: close the chat, and open it in Lamp's window. They can't be title bar accessories:
-with the chat a full-height inspector, the window's split view lies over the title bar there and takes the clicks.
-The chat sits below the strip, on a solid background that runs up behind them. A window with a toolbar lays the toolbar over the strip too, and the chat is
+once the new copy reports its window (or goes when the turn ends without it). The chat's close button sits in
+the strip above it, as the column's own (`LampSidebar.embed`), drawn by the app since it does only what the app could
+do anyway. It can't be a title bar accessory: with the chat a full-height inspector, the window's split view lies over
+the title bar there and takes the clicks. From macOS 26 the strip and the chat float on a pane of Liquid Glass
+(`NSGlassEffectView`, `LampSidebar.pane`) inset from the window's edges, and the chat draws no paper of its own there
+(`chatGround`); before macOS 26 they sit on a solid background that runs up to the window's top. What Lamp's window has in
+its toolbar is the chat's own, drawn by the extension above the chat (`ChatToolbar`): Undo Last Change, Share (the file is
+made by Lamp and handed over whole, `SidebarState.sharing`, since the extension can't read it), Delete, Agent Details, and
+Versions and Wish Info as panels in place of the chat (`VersionsPanel`, `InfoPanel`; the info rows are
+`AppInfoView.sections`, the same list Lamp's window draws). An app's chat is in one place at a time: when it opens beside
+the app, its window in Lamp closes, unless Lamp is in front with that window (`MagicPanel.chatOpenedInApp`). Lamp's window
+keeps the chat where there's no app window to put it beside: a wish not yet made or being found, a menu bar app, a widget,
+a background app, an iPhone app, an app built by a Lamp from before the sidebar, and setup cards' keys, sign-ins and
+Image Playground. An app opened for its chat that never connects one (it couldn't start) has its chat shown in Lamp's
+window (`MagicPanel.showChatIfAppNeverComes`). A window with a toolbar lays the toolbar over the strip too, and the chat is
 drawn by another process, which AppKit's focus doesn't follow (what had the keyboard, a list say, keeps it through a
 click in the chat), so `LampSidebar.watchClicks` does both as each click arrives: a click on one of the strip's
 buttons presses it, and once a click in the chat has landed the keyboard goes to the chat. The + by the message box offers

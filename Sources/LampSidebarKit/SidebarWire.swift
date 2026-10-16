@@ -6,7 +6,7 @@ import Foundation
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
     /// What this side reads and writes; see `SidebarCommand.hello`.
-    public static let version = 5
+    public static let version = 6
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -72,6 +72,15 @@ public struct SidebarState: Codable, Equatable {
     public var pointed: SidebarPointed?
     /// The version the latest change made, when Undo Last Change is offered under it (`SidebarCommand.undoChange`).
     public var undoChange: String?
+    /// The buttons above the chat, as Lamp's window has them in its toolbar.
+    public var toolbar: SidebarToolbar?
+    /// The panel open in place of the chat, as the sidebar asked for it (`SidebarCommand.panel`), with what it shows.
+    public var panel: SidebarPanel?
+    public var versions: [SidebarVersion]?
+    public var info: [SidebarInfoSection]?
+    /// The wish's file after Share…, for the sidebar's own share menu: sent once, since only the sidebar can show
+    /// that menu where the button is, and it can't read Lamp's files.
+    public var sharing: SidebarSharing?
 
     public init(app: String, lines: [SidebarLine], working: String?, workingSince: Date?, empty: Bool, busy: Bool,
                 draft: String, draftVersion: Int, attachments: [SidebarAttachment]) {
@@ -88,7 +97,7 @@ public struct SidebarState: Codable, Equatable {
 }
 
 public struct SidebarLine: Codable, Equatable, Identifiable {
-    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary, note, offer, action }
+    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary, note, offer, action, tools }
     public var id: UUID
     public var kind: Kind
     public var text: String
@@ -132,6 +141,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var isLatest: Bool?
     /// What a request pointed at in the app, its picture counting as the attachment after the last of `attachments`.
     public var pointed: SidebarPointed?
+    /// The agent's steps, shown with Agent Details on (`tools`): what `text` sums up, one by one.
+    public var calls: [SidebarToolCall]?
 
     public init(id: UUID, kind: Kind, text: String, gap: Double = 0, running: Bool = false, attachments: [SidebarAttachment]? = nil,
                 growing: Bool = false, questions: [SidebarQuestion]? = nil) {
@@ -143,6 +154,107 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
         self.attachments = attachments
         self.growing = growing
         self.questions = questions
+    }
+}
+
+/// One of the agent's steps as Agent Details shows it: its symbol, what it did, and to what.
+public struct SidebarToolCall: Codable, Equatable {
+    public var symbol: String
+    public var verb: String
+    public var argument: String
+
+    public init(symbol: String, verb: String, argument: String) {
+        self.symbol = symbol
+        self.verb = verb
+        self.argument = argument
+    }
+}
+
+/// Which of Lamp's toolbar buttons can do something now, and what Agent Details is set to.
+public struct SidebarToolbar: Codable, Equatable {
+    /// There's a change to undo, and nothing running.
+    public var canUndo: Bool
+    /// The wish has been made: there's a file to share.
+    public var canShare: Bool
+    /// It has versions to look back at.
+    public var hasVersions: Bool
+    public var details: Bool
+    /// What the app's AI has cost ("AI: 3 calls · $0.02"), when it has used any.
+    public var usage: String?
+
+    public init(canUndo: Bool, canShare: Bool, hasVersions: Bool, details: Bool, usage: String?) {
+        self.canUndo = canUndo
+        self.canShare = canShare
+        self.hasVersions = hasVersions
+        self.details = details
+        self.usage = usage
+    }
+}
+
+public enum SidebarPanel: String, Codable { case versions, info }
+
+/// A saved version, as the Versions panel lists it: newest first, with a small picture of how the app looked.
+public struct SidebarVersion: Codable, Equatable, Identifiable {
+    public var id: String
+    public var label: String
+    public var named: Bool
+    public var date: Date
+    public var current: Bool
+    public var picture: Data?
+
+    public init(id: String, label: String, named: Bool, date: Date, current: Bool, picture: Data?) {
+        self.id = id
+        self.label = label
+        self.named = named
+        self.date = date
+        self.current = current
+        self.picture = picture
+    }
+}
+
+/// A part of the app's info panel: its rows, and the buttons under them (`SidebarCommand.infoAction`).
+public struct SidebarInfoSection: Codable, Equatable, Identifiable {
+    public var id: String { title ?? "" }
+    public var title: String?
+    public var rows: [SidebarInfoRow]
+    public var buttons: [SidebarInfoButton]
+
+    public init(title: String?, rows: [SidebarInfoRow], buttons: [SidebarInfoButton] = []) {
+        self.title = title
+        self.rows = rows
+        self.buttons = buttons
+    }
+}
+
+/// A fact: its label and its value, or Not Ready when nothing answers.
+public struct SidebarInfoRow: Codable, Equatable {
+    public var label: String
+    public var value: String?
+
+    public init(label: String, value: String?) {
+        self.label = label
+        self.value = value
+    }
+}
+
+public struct SidebarInfoButton: Codable, Equatable {
+    public var title: String
+    /// What it does, Lamp's to know.
+    public var action: String
+
+    public init(title: String, action: String) {
+        self.title = title
+        self.action = action
+    }
+}
+
+public struct SidebarSharing: Codable, Equatable {
+    public var id: UUID
+    public var file: SidebarFile
+
+    public init(id: UUID, file: SidebarFile) {
+        self.id = id
+        self.file = file
     }
 }
 
@@ -221,7 +333,8 @@ public struct SidebarAttachment: Codable, Equatable {
 public enum SidebarCommand: Codable, Equatable {
     /// The first thing a sidebar says: which shape of `SidebarState` it reads. One that says nothing is from
     /// before the summary line, which it can't read; one before 3, from before the notes receipt; one before 4, from before offers;
-    /// one before 5, from before what was pointed at had a pill of its own.
+    /// one before 5, from before what was pointed at had a pill of its own; one before 6, from before the agent's
+    /// steps (`SidebarLine.Kind.tools`) could be shown.
     case hello(Int)
     /// The message box's words, and how many of the box's messages Lamp had taken when it last said
     /// (`SidebarState.sends`): a Return pressed again before the sidebar hears that they were sent is for words Lamp
@@ -266,6 +379,23 @@ public enum SidebarCommand: Codable, Equatable {
     /// The answer to the approval with this id.
     case approve(UUID, allow: Bool, allowAll: Bool)
     case forceQuit
+    // The toolbar's, as in Lamp's window.
+    /// Undo Last Change: back to the version before this one.
+    case undo
+    /// Delete the wish, which the sidebar has already confirmed.
+    case delete
+    case copyWishFile
+    /// Share…: Lamp makes the file and sends it back (`SidebarState.sharing`).
+    case share
+    case export
+    case details(Bool)
+    /// The panel shown in place of the chat, or (nil) the chat.
+    case panel(SidebarPanel?)
+    case goBackToVersion(String)
+    /// A version's name, or (empty) none.
+    case nameVersion(String, String)
+    /// A button in the info panel.
+    case infoAction(String)
 }
 
 public struct SidebarFile: Codable, Equatable {

@@ -480,7 +480,7 @@ struct ToolGroup: View, Equatable {
     }
 
     /// "Read 4 files, wrote 7 files and ran 1 command"
-    private static func summary(_ calls: [ToolCall]) -> String {
+    static func summary(_ calls: [ToolCall]) -> String {
         var order: [ToolCall.Action] = []
         var counts: [ToolCall.Action: Int] = [:]
         for call in calls {
@@ -495,7 +495,7 @@ struct ToolGroup: View, Equatable {
     }
 
     /// The most frequent action's icon.
-    private static func icon(_ calls: [ToolCall]) -> String {
+    static func icon(_ calls: [ToolCall]) -> String {
         let groups = Dictionary(grouping: calls, by: \.action)
         return groups.max { $0.value.count < $1.value.count }?.value.first?.icon ?? "wrench.adjustable"
     }

@@ -149,7 +149,7 @@ struct SidebarView: View {
             }
         }
         .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity)
-        .background(ChatLook.paper)
+        .chatGround()
         // Files and pictures dropped on the chat go with the next message, as in Lamp's window.
         .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
             Dropped.load(providers) { files in if !files.isEmpty { link.send(.attach(files)) } }
@@ -174,6 +174,18 @@ private struct Chat: View {
     @State private var settled = false
 
     var body: some View {
+        VStack(spacing: 0) {
+            if let toolbar = state.toolbar { ChatToolbar(state: state, toolbar: toolbar) }
+            switch state.panel {
+            case .versions: VersionsPanel(state: state)
+            case .info: InfoPanel(state: state)
+            case nil: chat
+            }
+        }
+        .chatGround()
+    }
+
+    private var chat: some View {
         VStack(spacing: 0) {
             ScrollViewReader { scroller in
                 ScrollView {
@@ -268,7 +280,6 @@ private struct Chat: View {
             }
             ComposerRow(state: state)
         }
-        .background(ChatLook.paper)
     }
 
     private func follow(_ scroller: ScrollViewProxy, animated: Bool = true) {
@@ -331,6 +342,8 @@ private struct LineView: View {
             AskLine(line: line)
         case .result:
             EmptyView()
+        case .tools:
+            ToolsLine(line: line)
         }
     }
 }

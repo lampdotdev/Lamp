@@ -94,12 +94,12 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    /// Clicking a notification opens that app's chat.
+    /// Clicking a notification opens that app's chat, beside the app when it has a window to be beside.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
         let id = response.notification.request.content.userInfo["app"] as? String
         Task { @MainActor in
-            if let id { Store.shared.showChat(id) }
+            if let id { Store.shared.openChat(id) }
             completionHandler()
         }
     }
