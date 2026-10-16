@@ -365,6 +365,9 @@ extension Template {
             var focus: (@MainActor () -> SIMD3<Float>)?
             var make: @MainActor (LampTile) -> Entity?
             var built: [LampTile: Entity] = [:]
+            /// Built by code a live change has since replaced: made again, and swapped in once made.
+            var stale = Set<LampTile>()
+            var warnedEmpty = false
             var first = true
         }
         private var streaming: Streaming?
@@ -402,13 +405,14 @@ extension Template {
             for (tile, entity) in s.built where distance(tile) > s.radius * 1.25 {
                 entity.removeFromParent()
                 s.built[tile] = nil
+                s.stale.remove(tile)
             }
             var wanted: [(LampTile, Float)] = []
             for x in (cx - reach)...(cx + reach) {
                 for z in (cz - reach)...(cz + reach) {
                     let tile = LampTile(x: x, z: z, size: s.size)
                     let d = distance(tile)
-                    if d <= s.radius, s.built[tile] == nil { wanted.append((tile, d)) }
+                    if d <= s.radius, s.built[tile] == nil || s.stale.contains(tile) { wanted.append((tile, d)) }
                 }
             }
             wanted.sort { $0.1 < $1.1 }
@@ -428,6 +432,19 @@ extension Template {
                     if slowTiles <= 3 { print("LampScene: tile \(tile.x),\(tile.z) took \(Int(took * 1000)) ms to build; a tile should take a few.") }
                 }
                 entity.name = "tile \(tile.x),\(tile.z)"
+                if let old = s.built[tile] {
+                    // A tile made again after a live change goes in once made, so nothing vanishes meanwhile; and if
+                    // the new code makes nothing where the old made something, the old stays.
+                    s.stale.remove(tile)
+                    if entity.children.isEmpty && entity.components[ModelComponent.self] == nil && !old.children.isEmpty {
+                        if !s.warnedEmpty {
+                            s.warnedEmpty = true
+                            print("LampScene: the new code built tile \(tile.x),\(tile.z) empty, so the old one stays. Check what it makes.")
+                        }
+                        continue
+                    }
+                    old.removeFromParent()
+                }
                 streamRoot.addChild(entity)
                 s.built[tile] = entity
                 if Date().timeIntervalSince(started) > budget { break }
@@ -436,13 +453,12 @@ extension Template {
             streaming = s
         }
 
-        /// Drops every built tile, so they're made again as they come into reach. After a live change, the new code
+        /// Makes every built tile again, nearest first, each swapped in once it's made, so the world never goes blank. After a live change, the new code
         /// is what makes them only if `make` calls a named function (`{ tile in World.tile(tile) }`): a live change
         /// replaces functions, and a closure written out in place keeps running the code it was made with.
         func restream() {
             guard var s = streaming else { return }
-            for entity in s.built.values { entity.removeFromParent() }
-            s.built = [:]
+            s.stale = Set(s.built.keys)
             streaming = s
         }
 
