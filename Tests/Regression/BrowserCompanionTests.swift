@@ -148,6 +148,18 @@ final class BrowserCompanionTests: XCTestCase {
         XCTAssertTrue(encoded.fitsAddress(try XCTUnwrap(URL(string: "https://example.com/caf%C3%A9/menu"))))
     }
 
+    /// The right-click item's place is a Chrome match pattern, where `*` in a path is a wildcard; a fit's path is a
+    /// literal prefix. A fit with `*` in its path would put the item on pages the fit doesn't match, so it doesn't count.
+    func testARightClickItemNeedsAFitChromeMatchesAsLamp() throws {
+        let declare = { (fits: [BrowserCompanions.Declaration.Fit]) in
+            BrowserCompanions.Declaration(offer: "Save this article", fits: fits, menu: "Save to Reading List")
+        }
+        XCTAssertNotNil(declare([.init(site: "example.com", path: "/articles/*/print/", selector: nil)]).problem)
+        XCTAssertNotNil(declare([.init(site: "example.com", path: nil, selector: ".article")]).problem)
+        XCTAssertNotNil(declare([.init(site: nil, path: nil, selector: ".article")]).problem)
+        XCTAssertNil(declare([.init(site: "wikipedia.org", path: "/wiki/", selector: nil)]).problem)
+    }
+
     func testSelectorsWithAnyCombinatorAreRefused() {
         for selector in ["div a", "div\ta", "div\na", "div>a", "a,b", ":not(div a)"] {
             XCTAssertNotNil(BrowserCompanions.Declaration.selectorProblem(selector), selector)

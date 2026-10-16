@@ -51,8 +51,9 @@ final class BrowserCompanions {
         var menu: String?
 
         /// The fits Chrome can show the right-click item on: it decides from the page's address alone before the
-        /// menu opens, so a fit that needs a selector can't be checked there.
-        var menuFits: [Fit] { fits.filter { $0.site != nil && $0.selector == nil } }
+        /// menu opens, so a fit that needs a selector can't be checked there, and a `*` in a path would be a wildcard
+        /// to Chrome where the fit means it literally.
+        var menuFits: [Fit] { fits.filter { $0.site != nil && $0.selector == nil && !($0.path ?? "").contains("*") } }
 
         static let file = "browser.json"
         static func url(_ project: LampProject) -> URL { project.dir.appendingPathComponent(file) }
@@ -93,7 +94,7 @@ final class BrowserCompanions {
             if let menu {
                 let words = menu.trimmingCharacters(in: .whitespacesAndNewlines)
                 if words.isEmpty || words.count > 40 || words.contains(where: \.isNewline) { return "browser.json's menu is a few words on one line (up to 40 characters)." }
-                if menuFits.isEmpty { return "browser.json's menu shows only on pages a fit names by site (and path) without a selector, and there's none: add one, or leave the menu out." }
+                if menuFits.isEmpty { return "browser.json's menu shows only on pages a fit names by site (and a path without *) and no selector, and there's none: add one, or leave the menu out." }
             }
             return nil
         }

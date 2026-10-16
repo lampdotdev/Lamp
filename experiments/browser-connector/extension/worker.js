@@ -106,7 +106,8 @@ async function list() {
 // a selector; Lamp refuses a menu that has none.
 const menuCall = (method, ...args) =>
   new Promise(resolve => chrome.contextMenus[method](...args, () => resolve(chrome.runtime.lastError)));
-const menuPatterns = app => [...new Set((app.fits || []).filter(fit => fit.site && !fit.selector)
+// A `*` in a path would be a wildcard here where the fit means it literally, so such a fit gets no item (as Lamp says).
+const menuPatterns = app => [...new Set((app.fits || []).filter(fit => fit.site && !fit.selector && !(fit.path || '').includes('*'))
   .map(fit => `https://*.${fit.site}${fit.path || '/'}*`))];
 let menusKey, menuSync = Promise.resolve();
 function syncMenus(apps) {
