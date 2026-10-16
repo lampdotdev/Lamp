@@ -22,9 +22,9 @@
  *   adapt the code.
  * - `connectors`: lists the services an app can connect to with the person's own account, and open data that
  *   needs none, or says how to build on one.
- * - `ask`, `show_result`: the agent's cards. `ask` puts questions in the chat as a card the person answers by
- *   clicking; `show_result` is the card for what a request made: its picture and one sentence. Lamp
- *   draws both and turns a click into the person's next message, so neither waits for an answer here.
+ * - `ask`, `write_wish`: `ask` puts questions in the chat as a card the person answers by clicking, and
+ *   `write_wish` writes a found wish into the message box. Lamp draws the card and turns a click into the
+ *   person's next message, so nothing waits for an answer here.
  * - `web_fetch`: reads a web page (or any URL) as text. Reading needs no approval.
  * - pi's file tools (read, edit, write, grep, find, ls) are checked before they run: inside the app's folder
  *   they need nothing, outside it Lamp decides (system files are fine, Lamp's own keys never, the rest asks
@@ -594,7 +594,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(offerSetup);
 	pi.registerTool(makeAppFor);
 	pi.registerTool(connectors);
-	for (const name of ["ask", "show_result", "write_wish"]) pi.registerTool(talkTool(name));
+	for (const name of ["ask", "write_wish"]) pi.registerTool(talkTool(name));
 	for (const name of ["read_notes", "save_notes"]) pi.registerTool(notesTool(name));
 	pi.registerTool(readSkill);
 }

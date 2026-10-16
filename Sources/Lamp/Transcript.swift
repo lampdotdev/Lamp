@@ -154,7 +154,11 @@ extension LogLine {
     /// app. The agent's working is left out, both its steps and what it says between them, which is where
     /// the file names and code are; the progress line stands in for it. Agent Details shows everything.
     static func visible(_ lines: [LogLine], details: Bool) -> [LogLine] {
-        if details { return lines }
+        // What a card shows isn't said again as a message: decided from the whole chat, since which card a clicked
+        // message came from decides it, and left out only at the end, since a clicked answer still ends the
+        // request before it for what's chosen below.
+        let hidden = Talk.cardMessages(in: lines)
+        if details { return lines.filter { !hidden.contains($0.id) } }
         // The last thing the agent says in a run is its answer. A run ends with its summary; while one is
         // going, the latest message shows as it's written (it says what the agent is about to do, or is
         // the answer arriving) and gives way to the next.
@@ -177,7 +181,10 @@ extension LogLine {
             }
         }
         if let latest { answers.insert(latest) }
-        return lines.filter { $0.kind == .agent ? answers.contains($0.id) : !$0.isDetail }
+        // A result card saved by an earlier Lamp isn't shown: the agent's last message says what it did.
+        return lines.filter {
+            !hidden.contains($0.id) && ($0.kind == .agent ? answers.contains($0.id) : !$0.isDetail && $0.kind != .result)
+        }
     }
 }
 
@@ -213,12 +220,6 @@ enum ChatItem: Identifiable {
                 let kept = run.filter { !$0.text.hasSuffix("…") }
                 items[items.count - 1] = .statuses(kept + [line])
             case (.status, _): items.append(.statuses([line]))
-            case (.result, .statuses(let run)?):
-                // The card comes once the app is built and open, so a step still saying it's building is over.
-                // The line that would have followed it ("… is ready") is left out for the card (Store.turn).
-                let kept = run.filter { !$0.text.hasSuffix("…") }
-                if kept.isEmpty { items.removeLast() } else { items[items.count - 1] = .statuses(kept) }
-                items.append(.line(line))
             default: items.append(.line(line))
             }
         }
@@ -265,7 +266,7 @@ struct Transcript: View {
         let latestRequest = lines.last { $0.kind == .user }?.id
         let openAsk = Talk.open(in: lines)?.id
         // Answers clicked on a card are shown by the card, folded where it was: not again as a message.
-        let shown = lines.filter { $0.fromCard != true }
+        let shown = lines
         let items = ChatItem.items(progressShown ? Self.withoutStepInProgress(shown) : shown)
         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
             let isLast = index == items.count - 1
@@ -276,7 +277,6 @@ struct Transcript: View {
                 // The agent's cards depend on what came after them, so they're outside the row that's
                 // redrawn only when its own line changes.
                 case .line(let line) where line.kind == .ask: AskCard(line: line, dir: dir, isOpen: line.id == openAsk)
-                case .line(let line) where line.kind == .result: ResultCard(line: line)
                 case .line(let line): LogRow(line: line, dir: dir, busy: busy, goBack: goBack, sendAgain: sendAgain,
                                              retryPhone: retryPhone, isLatestRequest: line.id == latestRequest).equatable()
                 case .tools(let lines): ToolGroup(lines: lines, running: isLast && busy && !progressShown).equatable()

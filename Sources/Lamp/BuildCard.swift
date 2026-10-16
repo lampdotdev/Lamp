@@ -222,7 +222,7 @@ struct BuildCard: View {
 
 /// The build card drawn from plain values: by Lamp's window and its gallery. Once the turn is over it folds to its
 /// first line, the app's name and how it ended. It used to end on a big picture of the app's window, which said
-/// again what the app beside it and the result card under it say, and left people unsure what the block was for.
+/// again what the app beside it and the agent's message under it say, and left people unsure what the block was for.
 struct BuildCardView<Icon: View>: View {
     let title: String
     /// The app's name once Lamp has given it one.

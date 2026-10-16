@@ -174,7 +174,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     var offer: SetupOffer? = nil      // a setup offer: what it's about (its text is the reason)
     var ask: Talk.Ask? = nil          // the agent's questions, and what was clicked
     var fromCard: Bool? = nil         // for a request: it was clicked on the agent's card, which shows it
-    var result: Talk.Result? = nil    // what a request made, as the agent put it
+    var result: Talk.Result? = nil    // read from chats saved with a result card, which no longer shows
     var noted: NoteReceipt? = nil     // what a save of Lamp's notes changed, with Undo
     var pointed: PointedAt? = nil     // for a request: what was pointed at in the app, one of its attachments
     var midTurn: Bool? = nil          // for a request: the agent took it while working on the one before (Store.handOver)
@@ -417,7 +417,6 @@ final class Store: ObservableObject {
         var approving = false               // between the queue check and the approval card
         var look = Look()                   // what the agent's look_at_app has done
         var pendingName: String?            // a name the agent gave the version this request makes
-        var pendingResult: Talk.Result?     // the agent's card for what this request made, shown once it's open
         /// The agent put its questions to the person this turn: the turn is over, whatever the agent does next.
         var asked = false
         /// Lamp ended the agent because it went on working past its own questions. Not a stop and not a failure.
@@ -2351,20 +2350,6 @@ final class Store: ObservableObject {
         let failed = crash != nil || owner.stopped || owner.phoneReady == false
         // Not over an app that couldn't be put in place or opened either: that isn't a failed turn, but the
         // card would say it's ready next to the line saying it didn't open.
-        if !failed, edited, !owner.didNotOpen, var result = owner.pendingResult {
-            result.version = await Versions.head(project)
-            // The card is the word that it's ready, and says so first: the line saying it just above would say it
-            // twice. A change that went into the open app says it was updated instead.
-            let said = ["\(project.name) is ready", "\(project.name) is updated"]
-            if let last = logs[project.id]?.last, last.kind == .status, said.contains(last.text) {
-                logs[project.id]?.removeLast()
-                result.status = last.text
-            } else {
-                result.status = said[0]
-            }
-            logs[project.id, default: []].append(LogLine(kind: .result, text: result.text, result: result))
-            saveChat(project)
-        }
         // A new app that opened in a window of its own: its chat goes on beside it from now on.
         if !failed, edited, !owner.didNotOpen, !owner.keptOpen { Task { await MagicPanel.shared.handOff(project) } }
         return TurnResult(end: failed ? .failed : edited ? .changed : .replied, watched: watched)
@@ -3217,7 +3202,7 @@ final class Store: ObservableObject {
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             case "make_app_for": (status, answer) = await agentKind(arguments, for: project)
             case "connectors": (status, answer) = Connectors.answer(arguments, for: project)
-            case "ask", "show_result", "write_wish": (status, answer) = talk(name, arguments, for: project)
+            case "ask", "write_wish": (status, answer) = talk(name, arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
@@ -3297,7 +3282,7 @@ final class Store: ObservableObject {
         return (200, ["text": "Deleted \(relative)."])
     }
 
-    /// `ask` and `show_result`, for every engine: pi's extension posts them to `/agent/talk`, Claude Code and
+    /// `ask` and `write_wish`, for every engine: pi's extension posts them to `/agent/talk`, Claude Code and
     /// Codex call them over MCP.
     func talk(_ tool: String, _ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
         guard let turn = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
@@ -3319,15 +3304,6 @@ final class Store: ObservableObject {
                 turn.asked = true
                 saveChat(project)
                 return (200, ["text": Talk.asked])
-            }
-        case "show_result":
-            switch Talk.result(from: arguments) {
-            case .failure(let trouble): return (400, ["error": trouble.text])
-            case .success(let result):
-                // Kept until the app is built and open: a card saying it's ready over a build that failed
-                // would be the one thing on screen that isn't true.
-                turn.pendingResult = result
-                return (200, ["text": Talk.resultKept])
             }
         case "write_wish":
             // Only for a wish being found: one the person told is already theirs, and a box they're typing in

@@ -8,7 +8,7 @@ import AppKit
 /// getting a card into a given state means a turn of the agent. Here every state is one click, at the chat's
 /// width and the wand panel's, light and dark.
 ///
-/// A card is listed here by the view that draws it from plain values (`AskCardView`, `ResultCardView`), the same
+/// A card is listed here by the view that draws it from plain values (`AskCardView`), the same
 /// view the chat uses, so what's here is what people see. A new card, or a new state of one, gets an entry in
 /// the same change.
 enum Gallery {
@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = askEntries + resultEntries + buildEntries + pointedEntries
+    static let entries: [Entry] = askEntries + buildEntries + pointedEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -68,34 +68,6 @@ enum Gallery {
 
     private static func ask(_ name: String, _ ask: Talk.Ask, isOpen: Bool = true) -> Entry {
         Entry(group: "Ask card", name: name) { AnyView(LiveAsk(ask: ask, isOpen: isOpen)) }
-    }
-
-    // MARK: Result
-
-    private static let resultEntries: [Entry] = [
-        result("New app", Talk.Result(summary: "Your habit tracker is ready to try.", guesses: [])),
-        result("Change", Talk.Result(summary: "Reminders now come at the time you pick.", guesses: [])),
-        result("New app, ready", Talk.Result(summary: "A week of habits, with a streak beside each.", guesses: [],
-                                             status: "Habit Tracker is ready")),
-        result("Change, updated in place", Talk.Result(summary: "Added a weekly chart under your habits.", guesses: [],
-                                                       status: "Habit Tracker is updated")),
-        result("Latest change, with Undo", Talk.Result(summary: "Watering entries can now include an amount.", guesses: []), undo: true),
-        result("Saved with what's new", Talk.Result(summary: "Added streaks and a dark look.", guesses: [], news: [
-            Talk.News(what: "Streaks", place: "beside each habit"), Talk.News(what: "Dark look", place: "View menu"),
-        ])),
-        result("Saved with a guess turned", Talk.Result(summary: "Your habit tracker is ready to try.", guesses: [
-            Talk.Guess(guess: "Habits reset at midnight", instead: "Reset at 4 am instead", request: "Reset habits at 4 am"),
-        ], switched: [0])),
-    ]
-
-    private static func result(_ name: String, _ result: Talk.Result, undo: Bool = false) -> Entry {
-        Entry(group: "Result card", name: name) {
-            AnyView(VStack(spacing: 0) {
-                ResultCardView(result: result)
-                // Undo Last Change goes under the latest change, as the chat puts it (`UndoOffer`).
-                if undo { ChatLook.UndoChange {}.padding(.top, 12) }
-            })
-        }
     }
 
     // MARK: Build

@@ -267,7 +267,7 @@ final class SidebarServer {
         // Only the end of a long chat, as Lamp's window opens on it; the rest is a click away in Lamp.
         let start = LogLine.recentStart(in: lines, atLeast: reach)
         let latestRequest = lines.last { $0.kind == .user }?.id
-        let shown = lines[start...].filter { $0.fromCard != true }
+        let shown = Array(lines[start...])
         let items = ChatItem.items(progressShown ? Transcript.withoutStepInProgress(shown) : shown)
         var out: [SidebarLine] = []
         for (index, item) in items.enumerated() {
@@ -315,10 +315,7 @@ final class SidebarServer {
                     card.progressVersion = progressVersion(for: line.id, progress)
                     out.append(card)
                 case .result:
-                    guard let result = line.result else { continue }
-                    var card = SidebarLine(id: line.id, kind: .result, text: result.summary, gap: gap)
-                    card.result = result
-                    out.append(card)
+                    continue
                 case .needsKey, .offer:
                     // The card's header: setting it up (a key, a download, a sign-in) happens in Lamp's window.
                     guard let offer = line.setupOffer else { continue }

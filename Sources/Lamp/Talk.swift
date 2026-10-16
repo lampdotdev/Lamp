@@ -3,7 +3,7 @@ import Foundation
 import LampSidebarKit
 
 /// The pieces the agent talks to the person with instead of paragraphs: a card of questions answered by
-/// clicking (`ask`), and a card for what a finished request made (`show_result`). The agent
+/// clicking (`ask`). The agent
 /// chooses the piece and fills it in; Lamp draws it (TalkCards.swift) and turns a click into the person's
 /// next message, so to the agent a click and a typed answer arrive the same way. Nothing here waits: the
 /// tool returns at once, the agent ends its reply, and the answer starts the next turn. That keeps it the
@@ -26,7 +26,7 @@ enum Talk {
     /// long sentence in it is a paragraph again, set in bold. Too long goes back to the agent to say shorter, so
     /// every engine is held to the same; the tools' descriptions give the same numbers.
     enum Words {
-        static let question = 10, option = 4, summary = 12, wish = 40
+        static let question = 10, option = 4, wish = 40
     }
 
     static func words(in text: String) -> Int { text.split(whereSeparator: \.isWhitespace).count }
@@ -74,14 +74,6 @@ enum Talk {
         }
         // One question has nothing to lay out together.
         return .success(Ask(layout: layout ?? .steps, questions: questions))
-    }
-
-    /// The agent's `show_result` arguments, checked.
-    static func result(from arguments: [String: Any]) -> Swift.Result<Result, Trouble> {
-        let summary = (arguments["summary"] as? String)?.trimmed ?? ""
-        guard !summary.isEmpty else { return .failure(.message("Say in `summary` what the person now has, in one sentence.")) }
-        if let trouble = tooLong(summary, Words.summary, as: "`summary`") { return .failure(trouble) }
-        return .success(Result(summary: summary, guesses: []))
     }
 
     static func hasSymbol(_ name: String) -> Bool {
@@ -157,14 +149,19 @@ enum Talk {
         card?.ask?.answers != nil || card?.result?.switched != nil
     }
 
-    /// The result whose buttons still mean something: the latest, until the person asks for anything else.
-    static func current(in lines: [LogLine]) -> LogLine? {
-        guard let index = lines.lastIndex(where: { $0.kind == .result }),
-              !lines[(index + 1)...].contains(where: { $0.kind == .user }) else { return nil }
-        return lines[index]
+    /// The messages a card shows, which the chat leaves out. A guess turned on a result card saved by an earlier Lamp was
+    /// shown only by that card, which no longer is, so its message shows again: a message clicked on a card
+    /// stays hidden only when the card before it is a question card.
+    static func cardMessages(in lines: [LogLine]) -> Set<UUID> {
+        var lastCard: LogLine.Kind?
+        var hidden: Set<UUID> = []
+        for line in lines {
+            if line.kind == .ask || line.kind == .result { lastCard = line.kind }
+            if line.fromCard == true, lastCard == .ask { hidden.insert(line.id) }
+        }
+        return hidden
     }
 
     static let asked = "The person now sees your questions as a card and answers by clicking or typing. Your turn ends here: change nothing and call nothing more. Their answer is the next message: one line for each question, in the order you asked, each question followed by its answer, or their own words."
     static let alreadyAsked = "The person already sees the questions you asked and hasn't answered yet, so these weren't shown. End your reply now with no more words; their answer is the next message."
-    static let resultKept = "Lamp shows this when the app is built and open. End your reply now with nothing more: no question, no offer, nothing the card already says."
 }
