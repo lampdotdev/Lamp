@@ -47,20 +47,30 @@ struct WishDesk: View {
                     // The wishes come first: using one and changing it is where most wishes start, and a new
                     // one is the way on from there.
                     VStack(spacing: 0) {
-                        stage
+                        headline
                         if !wishes.isEmpty {
-                            grid.padding(.top, 12)
+                            grid.padding(.top, 28)
                         }
-                        header.padding(.top, wishes.isEmpty ? 18 : 28)
-                        if showingIdeas && !ideas.isEmpty {
-                            DeskIdeas(ideas: ideas, choose: choose, find: store.findWish)
-                                .padding(.top, 28)
-                                .padding(.horizontal, 32)
-                                .transition(.modifier(active: MiddleOut(shown: 0), identity: MiddleOut(shown: 1)))
+                        // While the pointer is on a wish, what it is takes this place: making a new one and
+                        // looking at one aren't done at once.
+                        VStack(spacing: 0) {
+                            header
+                            if showingIdeas && !ideas.isEmpty {
+                                DeskIdeas(ideas: ideas, choose: choose, find: store.findWish)
+                                    .padding(.top, 28)
+                                    .padding(.horizontal, 32)
+                                    .transition(.modifier(active: MiddleOut(shown: 0), identity: MiddleOut(shown: 1)))
+                            }
                         }
+                        .scaleEffect(staged == nil ? 1 : 0.92, anchor: .top)
+                        .blur(radius: staged == nil ? 0 : 10)
+                        .opacity(staged == nil ? 1 : 0)
+                        .overlay(alignment: .top) { stage }
+                        .padding(.top, wishes.isEmpty ? 18 : 32)
                     }
-                    // The stage starts high, in the clear title bar, so a picture there doesn't push the desk down.
-                    .padding(.top, 12).padding(.bottom, 40)
+                    .padding(.top, 16).padding(.bottom, 40)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.85), value: staged?.id)
+                    .task(id: pointedAt) { await stagePicture() }
                     // Laid out as if the scroll bar were always there: when one comes and goes as the ideas
                     // open, the desk would otherwise move sideways by its width.
                     .frame(width: max(0, area.size.width - scrollerWidth))
@@ -69,7 +79,6 @@ struct WishDesk: View {
                 }
                 .scrollContentBackground(.hidden)
             }
-            .ignoresSafeArea(.container, edges: .top)
         }
         .navigationTitle("Lamp")
         .toolbar {
@@ -116,14 +125,10 @@ struct WishDesk: View {
             .padding(.horizontal, 32)
     }
 
-    /// The headline, which steps back and fades as a wish's picture and what it is come forward in its place while
-    /// the pointer is on the wish. Its room is kept either way, so nothing below moves.
+    /// A wish's picture and what it is, over the place to make a new one, which steps back and fades while the
+    /// pointer is on the wish. It lies over that place rather than taking room of its own, so nothing moves.
     private var stage: some View {
         ZStack {
-            headline
-                .scaleEffect(staged == nil ? 1 : 0.86)
-                .blur(radius: staged == nil ? 0 : 10)
-                .opacity(staged == nil ? 1 : 0)
             if let staged {
                 HStack(spacing: 32) {
                     if let picture = staged.picture {
@@ -147,10 +152,8 @@ struct WishDesk: View {
                 .accessibilityHidden(true)
             }
         }
-        .frame(height: wishes.isEmpty ? nil : Self.stageHeight)
         .frame(maxWidth: .infinity)
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: staged?.id)
-        .task(id: pointedAt) { await stagePicture() }
+        .allowsHitTesting(false)
     }
 
     /// A short rest before the first picture, so crossing the desk on the way somewhere doesn't flash one; from one
@@ -530,13 +533,7 @@ struct DeskIcon: View {
 
     private var busy: Bool { store.busy.contains(project.id) }
 
-    /// What's under the name: what's going on with it, else, while the pointer is on it, what a click does,
-    /// else where it lives.
-    private var caption: String? {
-        if let status { return status }
-        return hovered ? "Open and change" : place?.caption
-    }
-
+    /// What's going on with it, for VoiceOver: on screen the spinner and the dot say it.
     private var status: String? {
         // A wish Lamp came with, built for the first time out of sight: nothing shows until it's clicked, and then it
         // says it's opening, which it does by itself once it's ready.
@@ -572,12 +569,6 @@ struct DeskIcon: View {
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
                 .truncationMode(.tail)
-            // Its line is always kept, so the hint coming and going on hover never moves the icons below.
-            Text(caption ?? " ")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .accessibilityHidden(caption == nil)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8).padding(.horizontal, 4)
