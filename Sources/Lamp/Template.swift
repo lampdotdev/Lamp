@@ -3501,16 +3501,25 @@ enum Template {
     /// been given (`key` names the value too).
     enum LampConstants {
         private static var values: [String: Any] = [:]
+        private static var making: [String: NSRecursiveLock] = [:]
         private static let lock = NSLock()
+        /// Each value is made once, as Swift makes a constant: a second reader waits for the first to finish. One
+        /// constant's value may read another's while it's made.
         static func value<T>(_ key: String, _ make: () -> T) -> T {
+            lock.lock()
+            if let value = values[key] as? T { lock.unlock(); return value }
+            let own = making[key] ?? NSRecursiveLock()
+            making[key] = own
+            lock.unlock()
+            own.lock()
+            defer { own.unlock() }
             lock.lock()
             if let value = values[key] as? T { lock.unlock(); return value }
             lock.unlock()
             let value = make()
             lock.lock()
-            defer { lock.unlock() }
-            if let made = values[key] as? T { return made }
             values[key] = value
+            lock.unlock()
             return value
         }
     }

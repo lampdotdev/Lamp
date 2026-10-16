@@ -522,8 +522,8 @@ enum LiveSlots {
         func values(_ entries: [String]) -> [String: String] {
             Dictionary(entries.filter { $0.hasPrefix("\u{2}constant\t") }.compactMap { entry -> (String, String)? in
                 let field = entry.dropFirst("\u{2}constant\t".count)
-                guard let colon = field.range(of: ": ", options: .backwards), let dot = field[..<colon.lowerBound].lastIndex(of: ".") else { return nil }
-                return (String(field[..<dot]) + "\t" + String(field[field.index(after: dot)..<colon.lowerBound]), String(field[colon.upperBound...]))
+                guard let colon = field.range(of: ": ", options: .backwards) else { return nil }
+                return (String(field[..<colon.lowerBound]), String(field[colon.upperBound...]))
             }, uniquingKeysWith: { first, _ in first })
         }
         let old = values(before), new = values(after)
@@ -625,6 +625,9 @@ enum LiveSlots {
             if let at = list.firstIndex(where: { $0.binding == variable.binding }) { list[at].items.append(item) } else { list.append((variable.binding, [item], nil)) }
             byFile[file] = list
         }
+        // A constant whose value is made from a changed one is made again too (`half = size / 2`), and so on.
+        let constants = withDependents(constants, in: declarations)
+        let byType = Dictionary(grouping: after, by: { String($0.prefix { $0 != "\t" }) })
         for key in constants {
             guard let variable = declarations.constants[key] else { return nil }
             byFile[variable.position.file, default: []].append((variable.binding, [], key))
@@ -638,7 +641,7 @@ enum LiveSlots {
                 || (declarations.bindings[$0.binding].start.line == declarations.bindings[$1.binding].start.line
                     && declarations.bindings[$0.binding].start.column > declarations.bindings[$1.binding].start.column) }
             for edit in ordered {
-                let made = edit.constant.map { rewriteConstant($0, in: original, declarations: declarations) }
+                let made = edit.constant.map { rewriteConstant($0, in: original, declarations: declarations, rewritten: Set(constants), layout: byType) }
                     ?? rewrite(declarations.bindings[edit.binding], items: edit.items, in: original, declarations: declarations, cases: cases)
                 guard let (range, text) = made else { return nil }
                 bytes.replaceSubrange(range, with: Array(text.utf8))
@@ -668,24 +671,74 @@ enum LiveSlots {
         return Plan(added: planned.filter(\.isNew).map { $0.type + "." + $0.name },
                     layout: after.filter { !moved.contains($0) },
                     files: written.map { URL(fileURLWithPath: $0.path).standardizedFileURL.path }.map { $0.hasPrefix(base) ? String($0.dropFirst(base.count)) : $0 },
-                    constants: constants.filter { !earlier.contains($0) }
-                        .map { $0.hasPrefix("\t") ? String($0.dropFirst()) : $0.replacingOccurrences(of: "\t", with: ".") })
+                    constants: constants.filter { !earlier.contains($0) }.map(displayName))
     }
 
     /// A constant whose value changed, rewritten to give the new one: `static let size: Float = 200` becomes a
-    /// computed `static var` that makes the value once (`LampConstants`, by name and value) and keeps it. The open
-    /// app made the old value once and keeps it in storage the new code no longer reads. Not for one holding an
-    /// object of the app's own classes: a new object there would split the app's state in two, so that reopens.
-    private static func rewriteConstant(_ key: String, in text: SwiftSource.Text, declarations: SwiftSource.Declarations) -> (Range<Int>, String)? {
+    /// computed `static var` that makes the value once (`LampConstants`) and keeps it. The open app made the old
+    /// value once and keeps it in storage the new code no longer reads. Its name in `LampConstants` carries its
+    /// text and the texts of the rewritten constants it's made from, so a change to any of them makes it again. Not
+    /// for one that holds an object of the app's own classes, however wrapped (`[Model]`, `Session<Int>`, a struct
+    /// holding one): new objects there would split the app's state in two, so that reopens.
+    private static func rewriteConstant(_ key: String, in text: SwiftSource.Text, declarations: SwiftSource.Declarations,
+                                        rewritten: Set<String>, layout: [String: [String]]) -> (Range<Int>, String)? {
         guard let variable = declarations.constants[key] else { return nil }
         let binding = declarations.bindings[variable.binding]
         guard binding.entries.count == 1, let start = text.offset(binding.start), let end = text.tokenEnd(binding.last),
               text.slice(start, start + 3) == "let", let initial = initialText(of: variable, in: declarations) else { return nil }
-        let base = variable.type.trimmingCharacters(in: CharacterSet(charactersIn: "?!"))
-        guard !declarations.classes.contains(base) else { return nil }
-        let name = key.replacingOccurrences(of: "\t", with: ".") + "#" + SwiftSource.digest(initial)
+        var seen = Set<String>()
+        guard !holdsObject(variable.type, classes: declarations.classes, layout: layout, seen: &seen) else { return nil }
+        // Its own text, and those of the rewritten constants it's made from, however far back.
+        var sources = [initial], visited: Set<String> = [key], queue = [initial]
+        while let next = queue.popLast() {
+            for other in rewritten where !visited.contains(other) && SwiftText.mentions(constantName(other), in: next) {
+                visited.insert(other)
+                if let made = declarations.constants[other].flatMap({ initialText(of: $0, in: declarations) }) { sources.append(made); queue.append(made) }
+            }
+        }
+        let name = displayName(key) + "#" + SwiftSource.digest(sources.joined(separator: "\n"))
         let quoted = name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         return (start..<end, "var \(variable.name): \(variable.type) { LampConstants.value(\"\(quoted)\") { () -> \(variable.type) in \(initial) } }")
+    }
+
+    /// The changed constants and every constant whose starting value names one of them, however far back.
+    private static func withDependents(_ changed: [String], in declarations: SwiftSource.Declarations) -> [String] {
+        var set = Set(changed), grew = true
+        while grew {
+            grew = false
+            for (key, variable) in declarations.constants where !set.contains(key) {
+                guard let made = initialText(of: variable, in: declarations) else { continue }
+                if set.contains(where: { SwiftText.mentions(constantName($0), in: made) }) { set.insert(key); grew = true }
+            }
+        }
+        return set.sorted()
+    }
+
+    /// A constant's own name, from its key ("Type<tab>name", "@File.swift" after a private one's).
+    private static func constantName(_ key: String) -> String {
+        String(key.split(separator: "\t", omittingEmptySubsequences: false).last?.prefix { $0 != "@" } ?? "")
+    }
+
+    /// A constant's name as people read it: "Car.topSpeed", or "topSpeed" for a global.
+    private static func displayName(_ key: String) -> String {
+        let owner = key.split(separator: "\t", omittingEmptySubsequences: false).first.map(String.init) ?? ""
+        return (owner.isEmpty ? "" : owner + ".") + constantName(key)
+    }
+
+    /// Whether a value of this type can hold an object of the app's own classes: one of them named in it, or a type
+    /// of the app's named in it that holds one, as far down as it goes.
+    private static func holdsObject(_ type: String, classes: Set<String>, layout: [String: [String]], seen: inout Set<String>) -> Bool {
+        let names = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
+        for match in names.matches(in: type, range: NSRange(type.startIndex..., in: type)) {
+            let name = String(type[Range(match.range, in: type)!])
+            if classes.contains(name) || classes.contains(String(name.split(separator: ".").last ?? "")) { return true }
+            guard let members = layout[name], seen.insert(name).inserted else { continue }
+            for member in members {
+                guard let colon = member.range(of: ": ") else { continue }
+                if holdsObject(String(member[colon.upperBound...]), classes: classes, layout: layout, seen: &seen) { return true }
+            }
+        }
+        return false
     }
 
     /// The text of a property's starting value, when it has one.
@@ -874,6 +927,11 @@ enum SwiftText {
             at += 1
         }
         return at
+    }
+
+    /// Whether `identifier` is used in `text`'s code (not in a string or comment, nor as part of a longer name).
+    static func mentions(_ identifier: String, in text: String) -> Bool {
+        !identifier.isEmpty && replacing(identifier: identifier, with: "\u{0}", in: text) != text
     }
 
     /// `text` with each use of `identifier` in its code (not in a string or comment, nor part of a longer name)

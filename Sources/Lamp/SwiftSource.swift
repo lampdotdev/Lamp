@@ -98,7 +98,9 @@ enum SwiftSource {
                 if entryOpen, var entry = out.bindings[open.index].entries.last {
                     if entry.name.isEmpty, let m = named.firstMatch(in: line, range: range) {
                         entry.name = String(line[Range(m.range(at: 1), in: line)!])
-                    } else if entry.initial == nil, line.contains("(original_init="), let r = self.range(in: line) {
+                    } else if entry.initial == nil, line.contains("(original_init=") || line.contains("(processed_init="),
+                              let r = self.range(in: line) {
+                        // As written, or (when that's unresolved and has no place) as the compiler settled it.
                         entry.initial = r
                     }
                     out.bindings[open.index].entries[out.bindings[open.index].entries.count - 1] = entry
@@ -131,7 +133,10 @@ enum SwiftSource {
                 if isStatic || global {
                     // A constant: a static or global `let` with a starting value.
                     if rest.contains(" let ") {
-                        out.constants[(owner ?? "") + "\t" + name] = Variable(name: name, position: r.start,
+                        // A private or file-private one is the file's own: another file may have one by the same name.
+                        let own = rest.contains("access=private") || rest.contains("access=fileprivate")
+                        let place = own ? "@" + (r.start.file as NSString).lastPathComponent : ""
+                        out.constants[(owner ?? "") + "\t" + name + place] = Variable(name: name, position: r.start,
                                                                                type: String(line[Range(m.range(at: 3), in: line)!]),
                                                                                binding: index, attributes: [])
                     }
@@ -176,7 +181,7 @@ enum SwiftSource {
         }
     }
 
-    /// Each constant's starting value, as "\u{2}constant<tab>Type.name: <digest of its text>": what the open app made
+    /// Each constant's starting value, as "\u{2}constant<tab>Type<tab>name: <digest of its text>": what the open app made
     /// is what it keeps, so one whose value changes is rewritten in the live copy to give the new value
     /// (`LiveSlots.fit`). Not part of what a type holds: the layout comparison passes over them.
     static func constantEntries(_ declarations: Declarations) -> [String] {
@@ -188,7 +193,7 @@ enum SwiftSource {
             guard let text = files[path] ?? Text(path: path) else { return nil }
             files[path] = text
             guard let start = text.offset(initial.start), let end = text.tokenEnd(initial.last), start < end else { return nil }
-            return "\u{2}constant\t" + key.replacingOccurrences(of: "\t", with: ".") + ": " + digest(text.slice(start, end))
+            return "\u{2}constant\t" + key + ": " + digest(text.slice(start, end))
         }
     }
 
