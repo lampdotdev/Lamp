@@ -36,6 +36,7 @@ final class BrowserMovedNoteTests: XCTestCase {
                         onMessage: event('message'), onStartup: event('startup'), onInstalled: event('installed')},
               alarms: {create: () => {}, onAlarm: event('alarm')},
               action: {onClicked: event('click')},
+              contextMenus: {onClicked: event('menu'), removeAll: done => done && done(), create: (item, done) => done && done()},
               sidePanel: {setOptions: () => {}, open: async () => {}},
               tabs: {onUpdated: event('updated'), onRemoved: event('removed'), get: async () => null},
               declarativeContent: {onPageChanged: {removeRules: (a, f) => f(), addRules: (a, f) => f()}},

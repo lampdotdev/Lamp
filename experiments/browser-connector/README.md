@@ -39,7 +39,10 @@ for everything else.
 - **A right-click item**, when the builder gives an app one (`"menu": "Save to
   Recipe Box"` in `browser.json`): Chrome lists it under Lamp in the page's
   right-click menu, and choosing it opens the tab's sidebar on that app with
-  `activeTab`, as the icon does; the page still reads only after a click in it.
+  `activeTab`, as the icon does. Choosing it is the person's click for that
+  app's page: the sidebar tells the proved page once (`lamp.onMenu`) and lets
+  it read once without a click in it, within 15 seconds and only on the
+  address the item was chosen on, so the page does what the item says at once.
   Chrome decides where an item shows from the address alone before the menu
   opens, so it shows only on pages a fit names by site (and path) without a
   selector, and Lamp refuses a menu for an app with no such fit. An app that

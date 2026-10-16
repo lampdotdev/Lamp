@@ -79,7 +79,8 @@ picture works in light, dark and any tint. Don't add `?color=`: a colour baked i
 
 ## Every state, in the page
 
-A page that saves goes through all of these, an article or a link too: nothing is saved straight from the offer.
+A page that saves goes through all of these, an article or a link too: nothing is saved straight from the offer
+(the right-click item, 8, is the one way that saves without the check step).
 
 1. **Ready**: the offer row, and the list (or the empty state: a symbol, a title such as "No Recipes Yet", and one
    sentence on how to fill it).
@@ -98,6 +99,11 @@ A page that saves goes through all of these, an article or a link too: nothing i
 6. **Failed save**: the app's message in the status line with `.error`, everything typed kept, focus back on Save to
    try again.
 7. **Changed elsewhere**: `lamp.onChange(show)` redraws when the window or another tab changed the items.
+8. **From the right-click item** (only when browser.json has a `menu`): `lamp.onMenu(…)` runs when the person chose
+   it, and that choice is their click and their say-so. It does the whole job at once with the same calls as the
+   buttons: Reading…, then for a page that saves, the save itself with no check step (Saving…, then Saved with the
+   new row focused, where it opens to change or remove it), and for a page that answers, the answer. A failure
+   shows as in 6, with what was read put in the check step so nothing is lost.
 
 Build everything with `createElement` and `textContent`, never `innerHTML` with data: the words came from a web page.
 
@@ -208,6 +214,22 @@ $("keep").onclick = async () => {
   } catch (e) { status(e.message, true); b.focus(); }
   b.disabled = cancel.disabled = false; b.textContent = "Save Plant";
 };
+// The right-click item "Save to My Plants": read, check by the app, save, show it saved.
+lamp.onMenu(async () => {
+  const b = $("save"); b.disabled = true; b.textContent = "Reading…"; status("");
+  try {
+    draft = await lamp.call("preview", await lamp.readPage());
+    b.textContent = "Saving…";
+    const item = await lamp.call("save", draft);
+    draft = null; await show();
+    status(item.name + " saved to My Plants.");
+    document.querySelector(`[data-id="${CSS.escape(String(item.id))}"]`)?.focus();
+  } catch (e) {
+    status(e.message, true);
+    if (draft) { $("name").value = draft.name; $("every").value = draft.every; checking(true); }
+  }
+  b.disabled = false; b.textContent = "Save…";
+});
 lamp.onChange(show);
 show();
 ```

@@ -156,8 +156,9 @@ async function fitting(tab, apps) {
   return near.map(app => [app, score(app)]).filter(([, s]) => s >= 0).sort((a, b) => b[1] - a[1]).map(([app]) => app.id);
 }
 // The toolbar icon and an app's right-click item both open the tab's sidebar here, and both give `activeTab`. The item
-// names its app, which comes first; the page there still reads only after a click in it.
-function openFor(tab, chosen) {
+// names its app, which comes first, and is the person's click for that app's page: the sidebar tells the page its item
+// was chosen and lets it read this page once (`menu`, with the address it was chosen on).
+function openFor(tab, chosen, fromMenu = false) {
   if (tab.incognito) return;
   // Opening has to happen inside the click, before anything is awaited, or Chrome refuses it.
   chrome.sidePanel.setOptions({tabId: tab.id, path: `sidebar.html?tab=${tab.id}`, enabled: true});
@@ -168,13 +169,14 @@ function openFor(tab, chosen) {
     const origin = (() => { try { return new URL(tab.url).origin; } catch { return ''; } })();
     let fits = await fitting(tab, apps);
     if (chosen && apps.some(app => app.id === chosen)) fits = [chosen, ...fits.filter(id => id !== chosen)];
-    await chrome.storage.session.set({['tab:' + tab.id]: {fitting: fits, site, origin, at: Date.now()}});
+    const at = Date.now(), chose = fromMenu && fits[0] === chosen;
+    await chrome.storage.session.set({['tab:' + tab.id]: {fitting: fits, site, origin, at, ...(chose ? {menu: {app: chosen, at, url: tab.url}} : {})}});
   })();
 }
 chrome.action.onClicked.addListener(tab => openFor(tab));
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   const id = String(info.menuItemId);
-  if (tab && tab.id >= 0 && id.startsWith('app:')) openFor(tab, id.slice(4));
+  if (tab && tab.id >= 0 && id.startsWith('app:')) openFor(tab, id.slice(4), true);
 });
 // A tab that moves to another site loses the click's access; its sidebar says to click Lamp again to use the new
 // page. Chrome keeps the access while the tab stays on the same site (a reload, another page there), and once it's
@@ -193,9 +195,11 @@ chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
 chrome.tabs.onRemoved.addListener(tabId => { chrome.storage.session.remove(['tab:' + tabId, 'draft:' + tabId, 'pick:' + tabId]); });
 
 const CLICK_AGAIN = 'Click Lamp in Chrome’s toolbar, then try again.';
-async function capture(tabId, scope) {
+// `expect`: for a read the right-click item allowed, the address it was chosen on; any other page isn't read on it.
+async function capture(tabId, scope, expect) {
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!tab || !tab.active || tab.incognito) throw new Error('Open that tab to use this.');
+  if (expect !== undefined && tab.url !== expect) throw new Error('The page changed. Try again.');
   let url; try { url = new URL(tab.url); } catch { throw new Error(CLICK_AGAIN); }   // no address means no access
   if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Open a website to use this.');
   const [metadata] = await chrome.scripting.executeScript({target: {tabId}, func: () => location.href}).catch(() => { throw new Error(CLICK_AGAIN); });
@@ -224,7 +228,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       return {key: 't' + [...digest.slice(0, 6)].map(b => b.toString(16).padStart(2, '0')).join('')};
     }
     // An app's own page asks for the page the person is on; the sidebar passes that on only right after a click.
-    if (message.op === 'page-read') return capture(tab, message.scope === 'selection' ? 'selection' : 'page');
+    if (message.op === 'page-read') return capture(tab, message.scope === 'selection' ? 'selection' : 'page', typeof message.expect === 'string' ? message.expect : undefined);
     if (message.op === 'surface-open') return native({op: 'surface-open', app: message.app});
     if (message.op === 'surface-view') return native({op: 'surface-view', app: message.app, tab});
     if (message.op !== 'surface-action') throw new Error('Unknown action.');

@@ -143,7 +143,17 @@ enum BrowserPreview {
                 try? await Task.sleep(for: .seconds(min(action["amount"] as? Double ?? 1, 10)))
                 happened.append("\(number): waited."); continue
             }
-            guard kind == "click" || kind == "type" else { happened.append("\(number): the sidebar page only takes click, type and wait."); break }
+            if kind == "menu" {
+                // The app's right-click item, chosen as in Chrome: the page's `lamp.onMenu` runs, and may read the page.
+                guard let menu = BrowserCompanions.Declaration.load(project)?.menu else { happened.append("\(number): this app has no right-click item (`menu` in browser.json)."); break }
+                guard pages[project.id] != nil else { happened.append("\(number): give use_app a `page` to choose \"\(menu)\" on."); break }
+                let asked = Date()
+                if let trouble = await preview.chooseMenu() { happened.append("\(number): \(trouble)"); break }
+                await preview.settle()
+                happened.append("\(number): chose \"\(menu)\" on the page; the page's calls to the app came back in \(Int(Date().timeIntervalSince(asked).rounded())) s.")
+                continue
+            }
+            guard kind == "click" || kind == "type" else { happened.append("\(number): the sidebar page only takes click, type, menu and wait."); break }
             guard let target = action["target"] as? String, !target.isEmpty else {
                 happened.append("\(number): name what to act on with `target` (an id or exact name from the sidebar page as text)."); break
             }
@@ -210,7 +220,7 @@ enum BrowserPreview {
     private static func menuNote(_ declaration: BrowserCompanions.Declaration, _ url: URL) -> String? {
         guard let menu = declaration.menu else { return nil }
         let gets = declaration.menuFits.contains { $0.fitsAddress(url) }
-        return gets ? "Right-clicking this page in Chrome offers \"\(menu)\", which opens the sidebar on this app; the person then clicks the page's own button."
+        return gets ? "Right-clicking this page in Chrome offers \"\(menu)\": choosing it opens the sidebar on this app and runs the page's `lamp.onMenu` handler, which may read the page once. Try it with use_app's `menu` action."
             : "Right-clicking this page in Chrome doesn't offer \"\(menu)\": it shows only on \(declaration.menuFits.map { $0.site! + ($0.path ?? "") }.joined(separator: ", "))."
     }
 
@@ -692,6 +702,12 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
         guard let image = try? await web.takeSnapshot(configuration: configuration), let tiff = image.tiffRepresentation,
               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return false }
         return (try? png.write(to: file)) != nil
+    }
+
+    /// The right-click item chosen: what Chrome's sidebar tells the page, told the same way (`lamp.js`'s preview hook).
+    func chooseMenu() async -> String? {
+        let result = (try? await web.callAsyncJavaScript("if (!window.__lampChooseMenu) return 'none'; window.__lampChooseMenu(); return 'ok';", contentWorld: .page)) as? String
+        return result == "ok" ? nil : "The sidebar page doesn't load lamp.js, so it can't hear its right-click item."
     }
 
     /// One click or typing, by target: an id from the page as text, a control's exact name, or a CSS selector.

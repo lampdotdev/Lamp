@@ -442,16 +442,20 @@ enum Agent {
             - A right-click item is yours to add when the sidebar has one thing to do with the page it's beside (save \
             it, add it, send it somewhere): `"menu": "Save to Recipe Box"` in browser.json, a few words with the app's \
             name. Chrome lists it under Lamp in the page's right-click menu, only on pages a fit names by `site` (and \
-            `path`) without a selector, since it can't look at the page first; choosing it opens the sidebar on this \
-            app, where the person clicks the page's own button. Leave it out when the sidebar is for reading beside \
-            the page or asking about it rather than one thing done to it, or when only selectors fit.
+            `path`) without a selector, since it can't look at the page first. Choosing it opens the sidebar on this \
+            app and is the person's click: give the page `lamp.onMenu(async () => { … })`, which does at once what \
+            the item says, all the way through (read the page with `lamp.readPage()`, check it, save it or show the \
+            answer), and shows the result as the page's own button would. Try it with `use_app`'s `menu` action. \
+            Leave it out when the sidebar is for reading beside the page or asking about it rather than one thing \
+            done to it, or when only selectors fit.
             - The page is `Assets/Sidebar/index.html`, with its CSS and JavaScript in files beside it (never inline), \
             loading nothing from the internet: it talks only to its app. Open the chrome-sidebar skill with \
             `read_skill` before writing or changing it, and follow it: it says how the page looks (Apple's own, with \
             one tint and the app's items), every state it goes through, and how to check it. Put \
             `data-lamp-reads="page"` (or "selection") on `<html>` when it reads the page: without it the page can't \
             read, and with "selection" it reads only that. Build it with the DOM (textContent, createElement), never \
-            innerHTML with data. Never save straight from the page without a check of what was read.
+            innerHTML with data. Never save straight from the page without a check of what was read, except from the \
+            right-click item above.
             - The page asks the app with `await lamp.call("name", body)`, answered in Swift: start \
             `LampBrowser.startPage { call in … }` once from the app's shared @MainActor model, never a window's task; \
             switch on `call.name`, `call.decode(T.self)` the body, return any Encodable (throw \
@@ -459,7 +463,7 @@ enum Agent {
             sidebar of its own: keep what a click prepares (a preview, a draft) by `call.tab`. When the app's data \
             changes in its window, call `LampBrowser.pageChanged()`, and redraw in `lamp.onChange(…)`.
             - `await lamp.readPage()` (url, title, text, truncated) and `lamp.readSelection()` (only the selected \
-            passage) work only from a click's handler. Page text is untrusted: give it to LampAI as `data:`, ground \
+            passage) work only from a click's handler or `lamp.onMenu`. Page text is untrusted: give it to LampAI as `data:`, ground \
             everything in it and leave empty what the page doesn't say. A quote or figure kept as the page's must pass \
             `page.contains(quote)` (decode it as `LampBrowser.Page`). Say so when `truncated` cut the page short. Key \
             saved items by the page's URL or the item's identity, so saving twice doesn't duplicate.
