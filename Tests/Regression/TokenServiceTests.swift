@@ -78,7 +78,11 @@ final class TokenServiceTests: XCTestCase {
         XCTAssertTrue(printed.contains("sent https://api.example.test/v1/feed?api_key=made-up-key&day=1 with no key"), printed)
         XCTAssertTrue(printed.contains("https://evil.test/x -> refused"), printed)
         XCTAssertFalse(printed.contains("sent https://evil.test"), printed)
-        XCTAssertFalse(printed.contains("api_key=other"), printed)
+        XCTAssertFalse(printed.contains("api_key=other with"), printed)
+        XCTAssertFalse(printed.contains("api_key=other&api_key"), printed)
+        XCTAssertFalse(printed.contains("api_key=made-up-key&api_key"), printed)
+        XCTAssertTrue(printed.contains("feed?api_key=other&day=1 -> answered"), printed)
+        XCTAssertTrue(printed.contains("http-own connect: Plain's address must start with https://., sent nothing"), printed)
     }
 
     // MARK: - The program
@@ -272,11 +276,18 @@ final class TokenServiceTests: XCTestCase {
                     Answers.table["https://api.example.test/v1/feed?api_key=made-up-key&day=1"] = json(200)
                     do { try await api.connect(["key": "made-up-key"]) } catch { print("own connect: \(error.localizedDescription)") }
                     print("own kept as own-space: \(LampAPI.Saved.read("own-space") != nil)")
-                    for path in ["feed", "https://evil.test/x"] {
+                    for path in ["feed", "https://evil.test/x", "feed?api_key=other&day=1"] {
                         do { _ = try await api.get(path, query: ["day": "1", "api_key": "other"]); print("\(path) -> answered") }
                         catch { print("\(path) -> \(error.localizedDescription.contains("isn't part of") ? "refused" : error.localizedDescription)") }
                     }
                     LampAPI.Saved.delete("own-space")
+                    // An app's own service on plain http: nothing is sent, so the key never travels as plain text.
+                    let plain = LampAPI.own("plain", name: "Plain", base: "http://api.example.test/v1/", keyPage: "https://example.test/keys",
+                                            steps: "", query: ["api_key": "{key}"], check: "ping")
+                    let before = Answers.seen.count
+                    do { try await plain.connect(["key": "made-up-key"]); print("http-own connect: connected") }
+                    catch { print("http-own connect: \(error.localizedDescription), sent \(Answers.seen.count == before ? "nothing" : "something")") }
+                    LampAPI.Saved.delete("own-plain")
                 default: print("unknown scenario \(scenario)")
                 }
             }

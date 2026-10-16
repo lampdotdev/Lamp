@@ -8889,7 +8889,10 @@ enum Template {
             guard var parts = URLComponents(string: relative) else { return nil }
             guard parts.scheme == nil, parts.host == nil else { return nil }
             if !query.isEmpty {
-                parts.queryItems = (parts.queryItems ?? []) + query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
+                // A parameter given here takes the place of one of the same name already in the path, so a key in a
+                // path can't ride beside the saved one.
+                let kept = (parts.queryItems ?? []).filter { query[$0.name] == nil }
+                parts.queryItems = kept + query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
                 // A plus in a value would read as a space at the other end.
                 parts.percentEncodedQuery = parts.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
             }
@@ -8906,6 +8909,9 @@ enum Template {
                 for (key, pasted) in values { value = value.replacingOccurrences(of: "{\(key)}", with: pasted) }
                 query[name] = value
             }
+            // A key goes only over https: an app's own service names its address itself, and http would send the key
+            // as plain text.
+            guard base.scheme == "https" else { throw Failure(message: "\(name)'s address must start with https://.") }
             guard let url = address(of: path, query: query) else {
                 throw Failure(message: "\(path) isn't part of \(name)'s API.")
             }
