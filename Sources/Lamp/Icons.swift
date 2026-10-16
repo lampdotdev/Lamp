@@ -227,19 +227,54 @@ enum Icons {
     static func squareURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/AppIcon-square.png") }
 
     /// The icon at its largest size (1024px) as a PNG for Quick Look, named after the app so the panel's title reads well.
-    /// Falls back to the small sidebar preview when there's no .icns yet.
-    static func largePreview(_ project: LampProject) -> URL? {
+    /// It's drawn from the design as it is now, not copied from the .icns: while a turn has the app, new artwork is
+    /// on show in the chat but reaches the .icns only when the turn ends. Each design gets a folder of its own, since
+    /// Quick Look goes on showing what it once read at a path even after the file there changes.
+    /// Falls back to the .icns, then the small sidebar preview, when there's no design to draw.
+    static func largePreview(_ project: LampProject) async -> URL? {
         let fm = FileManager.default
         let folder = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Forge/Icons", isDirectory: true)
-        let target = folder.appendingPathComponent("\(project.name).png")
-        let largest = NSImage(contentsOf: icnsURL(project))?.representations
-            .compactMap { $0 as? NSBitmapImageRep }.max { $0.pixelsWide < $1.pixelsWide }
-        if let png = largest?.representation(using: .png, properties: [:]) {
-            try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
-            if (try? png.write(to: target)) != nil { return target }
+            .appendingPathComponent("Forge/Icons/\(project.id)", isDirectory: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys   // the same design must make the same key every time
+        guard let spec = load(project), let encoded = try? encoder.encode(spec) else {
+            let largest = NSImage(contentsOf: icnsURL(project))?.representations
+                .compactMap { $0 as? NSBitmapImageRep }.max { $0.pixelsWide < $1.pixelsWide }
+            if let png = largest?.representation(using: .png, properties: [:]),
+               let url = write(png, named: project.name, key: png, in: folder) { return url }
+            return fm.fileExists(atPath: previewURL(project).path) ? previewURL(project) : nil
         }
-        return fm.fileExists(atPath: previewURL(project).path) ? previewURL(project) : nil
+        // A picture the person chose is written over the artwork at the same path, so its date is part of the key.
+        let artFile = artURL(project, spec: spec)
+        let artDate = (try? fm.attributesOfItem(atPath: artFile.path)[.modificationDate] as? Date)?.timeIntervalSince1970
+        let key = encoded + Data("|\(artDate ?? 0)".utf8)
+        if let url = cached(named: project.name, key: key, in: folder) { return url }
+        let art = NSImage(contentsOf: artFile)
+        let tile = await tile(spec, foreground: foregroundLayer(spec, art: art), artwork: art != nil)
+        guard let png = onGrid(tile, size: 1024).representation(using: .png, properties: [:]) else { return nil }
+        return write(png, named: project.name, key: key, in: folder)
+    }
+
+    private static func previewFolder(for key: Data, in folder: URL) -> URL {
+        folder.appendingPathComponent(SHA256.hash(data: key).map { String(format: "%02x", $0) }.joined().prefix(16).description,
+                                      isDirectory: true)
+    }
+
+    private static func cached(named name: String, key: Data, in folder: URL) -> URL? {
+        let url = previewFolder(for: key, in: folder).appendingPathComponent("\(name).png")
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Writes the picture into the key's folder and clears the app's earlier ones.
+    private static func write(_ png: Data, named name: String, key: Data, in folder: URL) -> URL? {
+        let fm = FileManager.default
+        let own = previewFolder(for: key, in: folder)
+        for old in (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [] where old != own {
+            try? fm.removeItem(at: old)
+        }
+        let url = own.appendingPathComponent("\(name).png")
+        try? fm.createDirectory(at: own, withIntermediateDirectories: true)
+        return (try? png.write(to: url)) != nil ? url : nil
     }
 
     static func load(_ project: LampProject) -> IconSpec? {

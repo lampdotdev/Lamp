@@ -880,7 +880,7 @@ struct ProjectView: View {
     }
 
     private var titleIcon: some View {
-        Button { iconPreview = Icons.largePreview(project) } label: {
+        Button { Task { iconPreview = await Icons.largePreview(project) } } label: {
             AppIcon(project: project, size: 30)
         }
         .buttonStyle(.plain)
