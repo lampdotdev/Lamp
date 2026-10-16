@@ -200,10 +200,23 @@ enum BrowserPreview {
         Dictionary(uniqueKeysWithValues: surface.fields.map { ($0.id, typed[project.id]?[$0.id] ?? $0.value) })
     }
 
-    /// Chrome lights the icon for a fit whose selector matches something shown; a click on Lamp chooses the app by
-    /// whether the selector matches anything at all, so a hidden match opens the app on a page whose icon stayed dim.
+    /// What the builder is told about how Chrome treats this page, from browser.json.
     private static func fitNote(_ declaration: BrowserCompanions.Declaration, _ page: PageReader.Page) -> String {
         guard let url = URL(string: page.url) else { return "" }
+        return [addressNote(declaration, page, url), menuNote(declaration, url)].compactMap { $0 }.joined(separator: " ")
+    }
+
+    /// Chrome shows the right-click item from the address alone, so whether this page gets it is said apart from the fit.
+    private static func menuNote(_ declaration: BrowserCompanions.Declaration, _ url: URL) -> String? {
+        guard let menu = declaration.menu else { return nil }
+        let gets = declaration.menuFits.contains { $0.fitsAddress(url) }
+        return gets ? "Right-clicking this page in Chrome offers \"\(menu)\", which opens the sidebar on this app; the person then clicks the page's own button."
+            : "Right-clicking this page in Chrome doesn't offer \"\(menu)\": it shows only on \(declaration.menuFits.map { $0.site! + ($0.path ?? "") }.joined(separator: ", "))."
+    }
+
+    /// Chrome lights the icon for a fit whose selector matches something shown; a click on Lamp chooses the app by
+    /// whether the selector matches anything at all, so a hidden match opens the app on a page whose icon stayed dim.
+    private static func addressNote(_ declaration: BrowserCompanions.Declaration, _ page: PageReader.Page, _ url: URL) -> String {
         let address = declaration.fits.filter { $0.fitsAddress(url) }
         let how = { (fit: BrowserCompanions.Declaration.Fit) in
             [fit.site.map { "site \($0)" }, fit.path.map { "path \($0)" }, fit.selector.map { "selector \($0) is shown on the page" }].compactMap { $0 }.joined(separator: ", ")

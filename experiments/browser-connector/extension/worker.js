@@ -97,7 +97,33 @@ async function list() {
   }
   await chrome.storage.local.set({apps: state.apps});
   await syncRules(state.apps).catch(() => {});
+  await syncMenus(state.apps).catch(() => {});
   return state;
+}
+
+// An app's right-click item, when its builder gave it one. Chrome decides where an item shows from the page's address
+// alone (there is no "about to show" to ask the page), so it goes only on the sites, and paths, the app named without
+// a selector; Lamp refuses a menu that has none.
+const menuCall = (method, ...args) =>
+  new Promise(resolve => chrome.contextMenus[method](...args, () => resolve(chrome.runtime.lastError)));
+const menuPatterns = app => [...new Set((app.fits || []).filter(fit => fit.site && !fit.selector)
+  .map(fit => `https://*.${fit.site}${fit.path || '/'}*`))];
+let menusKey, menuSync = Promise.resolve();
+function syncMenus(apps) {
+  const next = menuSync.then(() => replaceMenus(apps));
+  menuSync = next.catch(() => {});
+  return next;
+}
+async function replaceMenus(apps) {
+  const withMenu = apps.filter(app => app.menu && menuPatterns(app).length);
+  const key = JSON.stringify(withMenu.map(app => [app.id, app.menu, menuPatterns(app)]));
+  if (menusKey === undefined) menusKey = (await chrome.storage.local.get('menusKey')).menusKey ?? '';
+  if (key === menusKey) return;
+  await menuCall('removeAll');
+  for (const app of withMenu)
+    await menuCall('create', {id: 'app:' + app.id, title: app.menu, contexts: ['page', 'selection'], documentUrlPatterns: menuPatterns(app)});
+  menusKey = key;
+  await chrome.storage.local.set({menusKey});
 }
 
 // Lamp counts the extension as connected while it hears from it. Its answer says when the apps' fits changed.
@@ -128,7 +154,9 @@ async function fitting(tab, apps) {
     .map(fit => (fit.site ? 4 : 0) + (fit.path ? 2 : 0) + (fit.selector ? 1 : 0)), -1);
   return near.map(app => [app, score(app)]).filter(([, s]) => s >= 0).sort((a, b) => b[1] - a[1]).map(([app]) => app.id);
 }
-chrome.action.onClicked.addListener(tab => {
+// The toolbar icon and an app's right-click item both open the tab's sidebar here, and both give `activeTab`. The item
+// names its app, which comes first; the page there still reads only after a click in it.
+function openFor(tab, chosen) {
   if (tab.incognito) return;
   // Opening has to happen inside the click, before anything is awaited, or Chrome refuses it.
   chrome.sidePanel.setOptions({tabId: tab.id, path: `sidebar.html?tab=${tab.id}`, enabled: true});
@@ -137,8 +165,15 @@ chrome.action.onClicked.addListener(tab => {
     const {apps} = await list().catch(() => ({apps: []}));
     const site = (() => { try { return new URL(tab.url).hostname; } catch { return ''; } })();
     const origin = (() => { try { return new URL(tab.url).origin; } catch { return ''; } })();
-    await chrome.storage.session.set({['tab:' + tab.id]: {fitting: await fitting(tab, apps), site, origin, at: Date.now()}});
+    let fits = await fitting(tab, apps);
+    if (chosen && apps.some(app => app.id === chosen)) fits = [chosen, ...fits.filter(id => id !== chosen)];
+    await chrome.storage.session.set({['tab:' + tab.id]: {fitting: fits, site, origin, at: Date.now()}});
   })();
+}
+chrome.action.onClicked.addListener(tab => openFor(tab));
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  const id = String(info.menuItemId);
+  if (tab && tab.id >= 0 && id.startsWith('app:')) openFor(tab, id.slice(4));
 });
 // A tab that moves to another site loses the click's access; its sidebar says to click Lamp again to use the new
 // page. Chrome keeps the access while the tab stays on the same site (a reload, another page there), and once it's
@@ -205,7 +240,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 chrome.alarms.create('hello', {periodInMinutes: 0.5});
 chrome.alarms.onAlarm.addListener(() => { void hello(); });
 chrome.runtime.onStartup.addListener(() => { void hello(); });
-chrome.runtime.onInstalled.addListener(() => { rulesKey = ''; chrome.storage.local.remove('rulesKey'); void hello(); });
+chrome.runtime.onInstalled.addListener(() => { rulesKey = ''; menusKey = ''; chrome.storage.local.remove(['rulesKey', 'menusKey']); void hello(); });
 // A connected native port keeps the worker alive, so Lamp hears from it every two seconds while Chrome is open.
 setInterval(hello, 2000);
 void hello();

@@ -439,6 +439,12 @@ enum Agent {
             spaces, `>` or commas) for something shown on the page: script tags and hidden markup never match. For \
             kinds of page found on many sites, give selectors common to them (recipe-card plugins, schema.org \
             microdata like `[itemtype*="schema.org/Recipe"]`) as well as the best-known sites by name.
+            - A right-click item is yours to add when the sidebar has one thing to do with the page it's beside (save \
+            it, add it, send it somewhere): `"menu": "Save to Recipe Box"` in browser.json, a few words with the app's \
+            name. Chrome lists it under Lamp in the page's right-click menu, only on pages a fit names by `site` (and \
+            `path`) without a selector, since it can't look at the page first; choosing it opens the sidebar on this \
+            app, where the person clicks the page's own button. Leave it out when the sidebar is for reading beside \
+            the page or asking about it rather than one thing done to it, or when only selectors fit.
             - The page is `Assets/Sidebar/index.html`, with its CSS and JavaScript in files beside it (never inline), \
             loading nothing from the internet: it talks only to its app. Open the chrome-sidebar skill with \
             `read_skill` before writing or changing it, and follow it: it says how the page looks (Apple's own, with \

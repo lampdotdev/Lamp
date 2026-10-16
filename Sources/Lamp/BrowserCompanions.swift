@@ -31,8 +31,9 @@ final class BrowserCompanions {
     }
 
     /// What an app says about its sidebar in `browser.json` at its root, written by the builder: the sentence shown
-    /// on a page that fits it, and what fits. Lamp reads it to list the app in the sidebar before it's running and
-    /// hands the fits to Chrome, which lights Lamp's icon on a matching page without the extension reading it.
+    /// on a page that fits it, what fits, and the words of its right-click item if the builder gave it one. Lamp reads
+    /// it to list the app in the sidebar before it's running and hands the fits to Chrome, which lights Lamp's icon on
+    /// a matching page without the extension reading it.
     struct Declaration: Codable, Equatable {
         struct Fit: Codable, Equatable {
             var site: String?; var path: String?; var selector: String?
@@ -47,6 +48,11 @@ final class BrowserCompanions {
         }
         var offer: String
         var fits: [Fit]
+        var menu: String?
+
+        /// The fits Chrome can show the right-click item on: it decides from the page's address alone before the
+        /// menu opens, so a fit that needs a selector can't be checked there.
+        var menuFits: [Fit] { fits.filter { $0.site != nil && $0.selector == nil } }
 
         static let file = "browser.json"
         static func url(_ project: LampProject) -> URL { project.dir.appendingPathComponent(file) }
@@ -83,6 +89,11 @@ final class BrowserCompanions {
                 if let site = fit.site, !Self.isSite(site) { return "\"\(site)\" in browser.json isn't a site: give a host name like example.com, without https:// or a path." }
                 if let path = fit.path, !path.hasPrefix("/") || path.count > 200 || path.contains(where: \.isWhitespace) { return "A fit's path in browser.json starts with / and has no spaces." }
                 if let selector = fit.selector, let trouble = Self.selectorProblem(selector) { return trouble }
+            }
+            if let menu {
+                let words = menu.trimmingCharacters(in: .whitespacesAndNewlines)
+                if words.isEmpty || words.count > 40 || words.contains(where: \.isNewline) { return "browser.json's menu is a few words on one line (up to 40 characters)." }
+                if menuFits.isEmpty { return "browser.json's menu shows only on pages a fit names by site (and path) without a selector, and there's none: add one, or leave the menu out." }
             }
             return nil
         }
@@ -209,9 +220,11 @@ final class BrowserCompanions {
         }.sorted { $0.project.name.localizedStandardCompare($1.project.name) == .orderedAscending }
     }
 
-    /// Changes whenever an app's fits do, so the extension knows when to give Chrome new ones.
+    /// Changes whenever an app's fits or right-click item do, so the extension knows when to give Chrome new ones.
     func fitsKey(_ projects: [LampProject]) -> String {
-        let all = listed(projects).map { [$0.project.id: $0.declaration.fits.map { [$0.site ?? "", $0.path ?? "", $0.selector ?? ""] }] }
+        let all = listed(projects).map { item in
+            [item.project.id: item.declaration.fits.map { [$0.site ?? "", $0.path ?? "", $0.selector ?? ""] } + [["menu", item.declaration.menu ?? ""]]]
+        }
         let data = (try? JSONSerialization.data(withJSONObject: all, options: [.sortedKeys])) ?? Data()
         return SHA256.hash(data: data).prefix(8).map { String(format: "%02x", $0) }.joined()
     }
@@ -236,6 +249,7 @@ final class BrowserCompanions {
                             "reads": Template.sidebarReads(item.project)]
                 }
                 return ["id": item.project.id, "name": item.project.name, "offer": item.declaration.offer, "running": isLive(item.project), "page": page,
+                 "menu": item.declaration.menu ?? "",
                  "fits": item.declaration.fits.map { fit in
                      var value: [String: String] = [:]
                      if let site = fit.site { value["site"] = site }

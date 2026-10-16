@@ -659,7 +659,9 @@ builder decides from the wish (`Agent.Rules.browserCompanion`) and tries the sid
 parts out of line),
 and hands it the page beside it, so every engine tries it the same way; it's the one thing the builder uses in a new app, since it isn't the person's Chrome.
 Each Chrome tab has its own sidebar and the app keeps what one tab prepared by its tab (`call.tab`), so what one
-page prepared never shows on another; keep that when changing either side.
+page prepared never shows on another; keep that when changing either side. The builder may also give an app a
+right-click item (`menu` in browser.json) for the one thing its sidebar does with a page: it opens that app's sidebar,
+and shows only on pages a fit names by address, the one thing Chrome can check before its menu opens.
 
 A build asks the app to quit before it replaces it, and the app's answer decides (`AppQuit`). An app may ask
 about unsaved work first: Lamp sends the quit request itself and reads the reply macOS carries back, which is
