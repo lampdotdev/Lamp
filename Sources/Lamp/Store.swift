@@ -3183,9 +3183,8 @@ final class Store: ObservableObject {
 
     /// A card's answers, chosen by clicking: noted on the card, then sent as the person's message.
     func answer(_ line: LogLine, with answers: [String], in project: LampProject) {
-        guard var ask = line.ask, let index = logs[project.id]?.firstIndex(where: { $0.id == line.id }) else { return }
-        ask.answers = answers
-        logs[project.id]?[index].ask = ask
+        guard var lines = logs[project.id], let ask = Talk.give(answers, to: line.id, in: &lines) else { return }
+        logs[project.id] = lines
         saveChat(project)
         send(Talk.message(for: ask, answers: answers), answering: line.id, to: project)
     }

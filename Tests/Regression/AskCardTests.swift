@@ -53,4 +53,23 @@ final class AskCardTests: XCTestCase {
         XCTAssertEqual(QueuedMessage(saved: ["text": "Just me", "ask": card.uuidString], attachments: []).card, card)
         XCTAssertNil(QueuedMessage(saved: ["text": "Make it blue"], attachments: []).card)
     }
+
+    /// A card clicked again before the chat has redrawn it folded (Lamp busy, the sidebar a beat behind) was
+    /// sent once for each click: the same answer queued three times. Only the first click answers it.
+    func testACardIsAnsweredOnce() {
+        let browsers = [Talk.Option(title: "Safari"), Talk.Option(title: "Chrome")]
+        let card = LogLine(kind: .ask, text: "", ask: Talk.Ask(layout: .steps, questions: [Talk.Question(question: "Which browser do you use?", options: browsers)]))
+        var lines = [LogLine(kind: .user, text: "Read my tabs"), card]
+
+        XCTAssertEqual(Talk.give(["Chrome"], to: card.id, in: &lines)?.answers, ["Chrome"])
+        XCTAssertNil(Talk.give(["Chrome"], to: card.id, in: &lines))
+        XCTAssertNil(Talk.give(["Safari"], to: card.id, in: &lines))
+        XCTAssertEqual(lines[1].ask?.answers, ["Chrome"])
+
+        // Answered in words while it waited, a click on it doesn't answer it a second time.
+        var typed = card
+        typed.ask?.typed = true
+        var later = [LogLine(kind: .user, text: "Read my tabs"), typed]
+        XCTAssertNil(Talk.give(["Chrome"], to: card.id, in: &later))
+    }
 }
