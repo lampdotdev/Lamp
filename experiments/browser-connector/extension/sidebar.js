@@ -201,6 +201,15 @@ window.addEventListener('message', async event => {
   // The page says hello and gets a nonce; it shows the app's signature over it and its port, and only then is it
   // the app's page: another program that took one of the app's ports can't make that, and is passed over.
   if (message.lamp === 'alive') { if (frameReady) lastAlive = Date.now(); return; }
+  // The page's colours for the strip above it: plain colours only (hex or rgb), each checked before it's used.
+  if (message.lamp === 'look') {
+    const colour = value => typeof value === 'string' && /^(#[0-9a-f]{3,8}|rgba?\(\s*\d{1,3}(\.\d+)?%?\s*,\s*\d{1,3}(\.\d+)?%?\s*,\s*\d{1,3}(\.\d+)?%?\s*(,\s*[\d.]+\s*)?\))$/i.test(value.trim()) ? value.trim() : '';
+    for (const name of ['bg', 'ink', 'muted', 'line', 'accent']) {
+      const value = colour(message[name]);
+      if (value) document.body.style.setProperty('--page-' + name, value); else document.body.style.removeProperty('--page-' + name);
+    }
+    return;
+  }
   if (message.lamp === 'hello') {
     const nonce = crypto.randomUUID();
     nonces.add(nonce); if (nonces.size > 8) nonces.delete(nonces.values().next().value);

@@ -535,16 +535,19 @@ line above the frame, gives the page no browser powers, and is the page's only w
 when the page's file declares it, once per click in it). The page asks its app for everything else (`lamp.call`,
 with a key Lamp hands the extension, which passes it on only once the page proves it's the app's: the key's
 signature over a nonce and the port); the app answers only its own name, only that key, never a request another
-site made, and lets only the extension frame the page, whose own policy keeps it talking to the app alone. Lamp's
-`/lamp.css` gives the page the Mac window's look, which the app makes its own. Apps built before pages still
-publish a surface as data (`LampBrowser.start`), which the extension still draws. The app declares where it fits in
+site made, and lets only the extension frame the page, whose own policy keeps it talking to the app alone. The page
+looks like its app, not like a web page: `/lamp.css` gives it the parts a sidebar is made of, each look a variable
+the page sets from the window's code (colours, type, corners, controls), the app serves its own pictures
+(`/assets/`) and the SF Symbols its window shows (`/symbols/`, drawn by the app), and the extension draws its
+strip above the page in the page's colours (`look`, plain colours only). Apps built before pages still publish a
+surface as data (`LampBrowser.start`), which the extension still draws. The app declares where it fits in
 `browser.json` (`BrowserCompanions.Declaration`), which Chrome matches without the extension reading the page. The
 builder decides from the wish (`Agent.Rules.browserCompanion`) and tries the sidebar with `look_at_app` and
 `use_app` given `sidebar` and `page`: Lamp opens the app's page itself, out of sight at the sidebar's width
-(`PagePreview`), and hands it the page beside it, so every engine tries it the same way; it's the one thing the
-builder uses in a new app, since it isn't the person's Chrome. Each Chrome tab has its own sidebar and the app
-keeps what one tab prepared by its tab (`call.tab`), so what one page prepared never shows on another; keep that
-when changing either side.
+(`PagePreview`), shows it with the app's window beside it to compare, and hands it the page beside it, so every
+engine tries it the same way; it's the one thing the builder uses in a new app, since it isn't the person's Chrome.
+Each Chrome tab has its own sidebar and the app keeps what one tab prepared by its tab (`call.tab`), so what one
+page prepared never shows on another; keep that when changing either side.
 
 A build asks the app to quit before it replaces it, and the app's answer decides (`AppQuit`). An app may ask
 about unsaved work first: Lamp sends the quit request itself and reads the reply macOS carries back, which is
