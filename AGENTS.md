@@ -526,13 +526,15 @@ box), and the change is compiled again and checked as usual. Being stored, a spa
 views redraw. A class's starting value that isn't a literal (`.now`, a call) is worked out on the first read and kept;
 a struct can't keep one from a read, so its new property needs a starting value that comes out the same every time (a
 literal, an empty collection, or one of the app's own enum's cases, judged again each time the property is put back;
-anything else reopens the app); a `@Published` property in a class whose places aren't published (conforming
+anything else, or a different one later, reopens the app, since the spare compares a value that never set the
+property by the starting value it was taken in with); a `@Published` property in a class whose places aren't published (conforming
 in an extension) reopens it too. `@State` is read in both forms the compiler has given it: `_name: State<T>`, and
 `__name: LazyState<T>` where it is a macro. Cases added at the end of an enum whose cases carry nothing need no
 spare: its values keep their size (`LiveSlots.casesAdded`). Only while nothing the app keeps holds it but as itself or
 in a plain collection: Swift uses the numbers after the last case for `nil` in an optional of it and for other enums'
 cases that carry it, which a new case would take over. That's looked for in every stored field, static and global of
-the new code and in the types the spares keep (`LiveReload.enumsHeld`), before the change goes in. Which property is in which spare
+the new code and in the types the spares keep (`LiveReload.enumsHeld`), before the change goes in; an app that keeps
+values of any type (`Any`, `AnyObject`, `AnyHashable`, `any P`) reopens instead, since one could hide there. Which property is in which spare
 (`.lamp/live/slots.json`) is put back into each fresh copy (`LiveSlots.apply`) until the app is installed again: the
 whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs
 once it's installed (`LiveReload.markRunning(from:)`). A spare never reaches saved data: `LampSpare` encodes as

@@ -179,6 +179,11 @@ enum LiveReload {
             guard let colon = entry.range(of: ": ") else { return nil }
             return (String(entry.prefix { $0 != "\t" }), String(entry[colon.upperBound...]))
         } + LiveSlots.mapping(project).flatMap { type, properties in properties.map { (type, $0.value.type) } }
+        // A value of the enum could hide in what holds anything at all, where its type can't be seen.
+        let untyped = try! NSRegularExpression(pattern: #"(?<![\w.])(Any|AnyObject|AnyHashable|any [\w.]+)(?![\w])"#)
+        for (owner, kind) in held where untyped.firstMatch(in: kind, range: NSRange(kind.startIndex..., in: kind)) != nil {
+            return "\(owner.isEmpty ? "a global" : owner) keeps values of any type (\(kind)), which may hold \(grown.joined(separator: ", "))"
+        }
         for type in grown {
             let name = NSRegularExpression.escapedPattern(for: type)
             let mention = try! NSRegularExpression(pattern: #"(?<![\w.])"# + name + #"(?![\w])"#)
@@ -400,6 +405,9 @@ enum LiveSlots {
         /// A struct's property: the cases of its enum type when it was taken in, by which its starting value is
         /// judged again each time it's put back.
         var cases: [String]?
+        /// A struct's property: the starting value it was taken in with. Its spare compares a value that never set
+        /// it by that, so a different one later can't share the spare: the property stays stored, and reopens the app.
+        var initial: String?
     }
 
     private static func url(_ project: LampProject) -> URL { LiveReload.folder(project).appendingPathComponent("slots.json") }
@@ -535,12 +543,14 @@ enum LiveSlots {
         guard !planned.isEmpty else { return nil }
         var originals: [URL: Data] = [:]
         for item in planned {
-            guard rewrite(item.name, as: item.slot, in: item.type, published: item.published, cases: cases, project: project, keeping: &originals) != nil else {
+            guard let done = rewrite(item.name, as: item.slot, in: item.type, published: item.published, cases: cases, project: project, keeping: &originals) else {
                 // Put back what was already rewritten: the change goes in by reopening, from the copy as it was.
                 for (url, data) in originals { try? data.write(to: url) }
                 return nil
             }
-            map[item.type, default: [:]][item.name] = item.slot
+            var slot = item.slot
+            if slot.holder == .value { slot.initial = done.initial }
+            map[item.type, default: [:]][item.name] = slot
         }
         save(map, for: project)
         return planned.map { $0.type + "." + $0.name }
@@ -589,7 +599,7 @@ enum LiveSlots {
     /// `cases` (each enum's cases, in the new code) is for judging a struct's starting value; nil when putting back
     /// what was judged before.
     private static func rewrite(_ name: String, as slot: Slot, in type: String, published: Bool?, cases: [String: Set<String>]?, project: LampProject,
-                                keeping originals: inout [URL: Data]) -> URL? {
+                                keeping originals: inout [URL: Data]) -> (file: URL, initial: String)? {
         let holder = slot.holder ?? .object
         let simple = simpleName(type)
         let files = (FileManager.default.enumerator(at: LiveReload.sources(project), includingPropertiesForKeys: nil)?
@@ -637,6 +647,7 @@ enum LiveSlots {
                     replacement = "\(opening)\(name): \(declared) { \(getter)\(setter) }"
                 case .value:
                     if let cases { guard isSteady(initial, type: declared, cases: cases) else { return nil } }
+                    if let taken = slot.initial, taken != initial { return nil }
                     let place = place(in: type, holder: .value)
                     let getter = "get { if let v = \(place).field(\"\(name)\") as? \(declared) { return v }; return \(initial) }"
                     // Set back to its starting value, it's as if never set, so two values alike compare alike.
@@ -654,7 +665,7 @@ enum LiveSlots {
                 }
                 if originals[file] == nil { originals[file] = Data(text.utf8) }
                 try? changed.write(to: file, atomically: true, encoding: .utf8)
-                return file
+                return (file, initial)
             }
         }
         return nil
