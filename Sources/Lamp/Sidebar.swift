@@ -604,8 +604,8 @@ final class SidebarServer {
         case .unqueue(let id):
             guard let message = store.queued[project.id]?.first(where: { $0.id == id }) else { return }
             store.unqueue(message, from: project)
-        case .sendNow:
-            store.sendNow(in: project)
+        case .sendNow(let latest):
+            store.sendNow(in: project, latest: latest)
         case .approve(let id, let allow, let allowAll):
             // Only the approval still waiting: a click that arrives after it was answered in Lamp does nothing.
             guard store.approvals[project.id]?.id == id else { return }

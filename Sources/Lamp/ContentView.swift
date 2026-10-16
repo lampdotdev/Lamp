@@ -528,7 +528,7 @@ struct ProjectView: View {
             let place = places[index]
             ChatLook.QueuedRow(text: message.text, waitingForSetup: !store.setup.ready, sending: message.sendNow, place: place,
                                onRemove: { store.unqueue(message, from: project) },
-                               sendNow: !message.sendNow && place.last && canSendNow ? { store.sendNow(in: project) } : nil) {
+                               sendNow: !message.sendNow && place.last && canSendNow ? { store.sendNow(in: project, latest: message.id) } : nil) {
                 if let pointed = message.pointed {
                     ChatLook.PointedPill(title: pointed.title, detail: pointed.detail)
                 }

@@ -1902,9 +1902,12 @@ final class Store: ObservableObject {
     }
 
     /// Send Now: every waiting message goes to the agent at its next step, in the order they were sent, if it still
-    /// has one; otherwise they start the next turn as any waiting messages do.
-    func sendNow(in project: LampProject) {
-        guard canSendNow(in: project), var waiting = queued[project.id] else { return }
+    /// has one; otherwise they start the next turn as any waiting messages do. `latest` is the message the button
+    /// was under: a button drawn for a group that has since gone (sent, taken back) or grown sends nothing, so a
+    /// late click can't send messages the person never saw it offered for.
+    func sendNow(in project: LampProject, latest: UUID) {
+        guard canSendNow(in: project), waitingToSend(in: project).last?.id == latest, var waiting = queued[project.id]
+        else { return }
         for index in waiting.indices { waiting[index].sendNow = true }
         queued[project.id] = waiting
         steer(project)

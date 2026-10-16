@@ -254,7 +254,8 @@ public enum SidebarCommand: Codable, Equatable {
     case point
     case stop
     case unqueue(UUID)
-    /// Send Now under the latest waiting message: every waiting message goes to the agent in the turn that's running.
+    /// Send Now under the latest waiting message, named by its id: every waiting message goes to the agent in the turn
+    /// that's running, if that is still the latest.
     case sendNow(UUID)
     /// The answer to the approval with this id.
     case approve(UUID, allow: Bool, allowAll: Bool)
