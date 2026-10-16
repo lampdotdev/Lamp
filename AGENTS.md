@@ -550,8 +550,10 @@ carries its file's) is laid out by the library itself, which does it as the app 
 
 A file taken away doesn't reopen the app: its code stays in the open app, which the new code no longer calls, and a
 type it declared that something still holds shows as that holder changing. A type taken away is therefore no
-reason to reopen by itself (`layoutProblem`). Only removing the App's file or Lamp's own does. With nothing else
-changed there's nothing to load, and the open app's sources are simply marked as the new ones.
+reason to reopen by itself (`layoutProblem`), but its layout is kept with the open app's until it reopens, so a type
+brought back under the same name is held to what it was. Only removing the App's file or Lamp's own reopens. A
+removal can change what an unchanged caller means (a deleted method that stood in for a protocol's default), so
+every file but the App's and Lamp's is compiled again and every call goes to code compiled without it.
 
 A Mac app can also open beside a web page, in Chrome's sidebar (Lamp Dev only, an experiment: Settings →
 Experimental, `BrowserBridge.switchKey`; how it fits together is in `experiments/browser-connector/README.md`).

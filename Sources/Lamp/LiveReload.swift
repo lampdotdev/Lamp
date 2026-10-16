@@ -127,7 +127,16 @@ enum LiveReload {
             if declaresApp(new) { return .reopen("\(path) is the app's entry point") }
             changed.append(path)
         }
-        // Only files taken away: nothing to load, but the open app's sources are now these (an empty reload).
+        // A file taken away can change what an unchanged caller means: a method it declared may have stood in for
+        // a protocol's default or another overload, which the caller now gets. So every file is compiled again,
+        // and every call goes to code compiled without it (but the App's, which ran once, and Lamp's own).
+        if !gone.isEmpty {
+            changed = built.keys.sorted().filter { path in
+                guard !["LampSupport.swift", Template.sceneSupportFile].contains((path as NSString).lastPathComponent),
+                      let text = try? String(contentsOf: built[path]!, encoding: .utf8) else { return false }
+                return !declaresApp(text)
+            }
+        }
         return changed.isEmpty && gone.isEmpty ? .unchanged : .reload(changed)
     }
 
@@ -161,7 +170,10 @@ enum LiveReload {
                 return ("\(type) changed what it holds (\(what))", nil)
             }
         }
-        return (nil, now)
+        // A type taken away is still in the open app, with its objects and statics, until it reopens: its layout
+        // is kept, so one brought back under the same name is held to what it was.
+        let kept = now + before.filter { new[String($0.prefix { $0 != "\t" })] == nil }
+        return (nil, kept)
     }
 
     /// The enums that only gained cases at the end (`LiveSlots.casesAdded`), which the layout check let through.
