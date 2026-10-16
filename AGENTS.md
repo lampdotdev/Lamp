@@ -528,8 +528,9 @@ heading in its binary (`Store.screenTextMarker`): such an app is told to be rebu
 
 A Mac app can be changed while it's in use (apps show the wand while the file `MagicPanel.flag`, which Lamp writes
 at launch, is beside their folders, checked each time a window comes forward): `LampMagic` in LampSupport.swift puts a
-wand at the top right of each of its windows, which opens and closes the app's chat beside that window
-(`LampSidebar`; where it goes is below); the app menu's Customize with Lamp… (⇧⌘E) opens it too (`LampSidebar.openFromMenu`), and in Lamp's window
+wand at the top right of each of its windows, which opens the app's chat beside that window
+(`LampSidebar`; where it goes is below) and is hidden while the chat is open, whose own close button closes it, so one
+chat has one control (`LampMagic.showWand`); the app menu's Customize with Lamp… (⇧⌘E) opens it too (`LampSidebar.openFromMenu`), and in Lamp's window
 when the app has no window to put it beside. In a window with a title bar the wand is a title bar accessory. A
 window whose content runs under a title bar with nothing in it (a game, `.hiddenTitleBar`) has no bar for it, and an
 accessory would give it one: there the wand floats at the top right over the content, level with the traffic
@@ -612,10 +613,10 @@ Image Playground. An app opened for its chat that never connects one (it couldn'
 window (`MagicPanel.showChatIfAppNeverComes`). Inside the window, a window with a toolbar lays the toolbar over the bar too,
 and the chat is drawn by another process, which AppKit's focus doesn't follow (what had the keyboard, a list say, keeps it
 through a click in the chat), so `LampSidebar.watchClicks` does both as each click arrives: a click on one of the bar's
-buttons presses it, and once a click in the chat, in its column or its panel, has landed the keyboard goes to the chat. The + by the message box offers
-Point at Something in the App beside Add Files (`ChatLook.MessageBar`'s `point`, `PlusMenu`), in the sidebar and in
-Lamp's window while the app is open on this Mac (`MagicPanel.point`; from Lamp's window, Lamp comes back in front
-when it's done). It lets the person point at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), outlines the smallest named
+buttons presses it, and once a click in the chat, in its column or its panel, has landed the keyboard goes to the chat. Point at Something in the App is a
+button with the chat's tools at its top in the sidebar (`ChatToolbar`), where the + by the message box keeps only Add
+Files, and in Lamp's window an item of that + beside Add Files (`ChatLook.MessageBar`'s `point`, `PlusMenu`) while the
+app is open on this Mac (`MagicPanel.point`; from Lamp's window, Lamp comes back in front when it's done). It lets the person point at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), outlines the smallest named
 thing under the pointer from its own accessibility tree (`LampDriver.elements`), a click where nothing is named (a game's
 ball, a drawing) takes the area around it, and a drag draws a box of the person's own; it then leaves a cropped
 picture in its runtime folder and says what it is (an area is named by where it is, "Top left area"); Lamp attaches that picture to the message, named after the

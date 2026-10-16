@@ -46,6 +46,10 @@ struct ChatToolbar: View {
             }
             Spacer(minLength: 0)
             ToolGroup {
+                // Pointing has its own button here, where the chat sits beside the app it points into; the + by the
+                // message box keeps only Add Files.
+                ToolButton("scope", "Point at Something in the App") { link.send(.point) }
+                    .help("Point at what you want to change")
                 ToolButton("wrench.and.screwdriver", "Agent Details", on: toolbar.details) { link.send(.details(!toolbar.details)) }
                     .help("Agent details")
                 ToolButton("clock.arrow.circlepath", "Versions", on: state.panel == .versions) {

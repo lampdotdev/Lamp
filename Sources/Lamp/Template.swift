@@ -4164,7 +4164,8 @@ enum Template {
             }
             floating(in: window)?.removeFromSuperview()
             if let holder = window.titlebarAccessoryViewControllers.first(where: { $0.view.identifier == identifier })?.view {
-                return fit(holder, in: window)
+                fit(holder, in: window)
+                return showWand(in: window)
             }
             let holder = NSView()
             holder.identifier = identifier
@@ -4174,6 +4175,7 @@ enum Template {
             accessory.layoutAttribute = .trailing
             window.addTitlebarAccessoryViewController(accessory)
             fit(holder, in: window)
+            showWand(in: window)
             DispatchQueue.main.async { fit(holder, in: window) }
         }
 
@@ -4219,6 +4221,7 @@ enum Template {
             let right = bar.bounds.width - LampSidebar.openWidth(in: window) - inset
             wand.autoresizingMask = [.minXMargin]
             wand.frame = NSRect(x: (right - side).rounded(), y: (zoom.frame.midY - side / 2).rounded(), width: side, height: side)
+            showWand(in: window)
         }
 
         /// The wand floating over the app's own content: a dark disc with a white wand, legible over a game's night
@@ -4292,6 +4295,13 @@ enum Template {
             }
             guard let holder = window.titlebarAccessoryViewControllers.first(where: { $0.view.identifier == identifier })?.view else { return }
             fit(holder, in: window)
+            showWand(in: window)
+        }
+
+        /// The wand only while the chat is closed: open, the chat has its own close button, and two controls for one
+        /// chat (the wand left over beside its column or its panel) said less than one.
+        @MainActor private static func showWand(in window: NSWindow) {
+            wand(in: window)?.isHidden = LampSidebar.isOpen(in: window)
         }
 
         /// Where the window is, in screen coordinates, for the picture Lamp shows in its place while a change
