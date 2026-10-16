@@ -522,17 +522,20 @@ struct ProjectView: View {
         if store.notResponding[project.id] != nil {
             ChatLook.UnresponsiveNotice(text: ErrorMessages.notResponding(project.name)) { store.forceQuit(project) }.padding(.top, 12)
         }
-        ForEach(queued) { message in
-            ChatLook.QueuedRow(text: message.text, waitingForSetup: !store.setup.ready, sending: message.sendNow,
+        let places = ChatLook.QueuedPlace.places(sending: queued.map(\.sendNow))
+        let canSendNow = store.canSendNow(in: project)
+        ForEach(Array(queued.enumerated()), id: \.element.id) { index, message in
+            let place = places[index]
+            ChatLook.QueuedRow(text: message.text, waitingForSetup: !store.setup.ready, sending: message.sendNow, place: place,
                                onRemove: { store.unqueue(message, from: project) },
-                               sendNow: !message.sendNow && store.canSendNow(message, in: project)
-                                   ? { store.sendNow(message, in: project) } : nil) {
+                               sendNow: !message.sendNow && place.last && canSendNow ? { store.sendNow(in: project) } : nil) {
                 if let pointed = message.pointed {
                     ChatLook.PointedPill(title: pointed.title, detail: pointed.detail)
                 }
                 ForEach(message.attachments, id: \.self) { AttachmentChip(url: $0, siblings: message.attachments) }
             }
-                .padding(.top, lines.isEmpty ? 0 : 32)
+                // A group's messages sit close together; the group stands apart from the chat above it.
+                .padding(.top, lines.isEmpty && index == 0 ? 0 : place.first ? 32 : 8)
         }
     }
 

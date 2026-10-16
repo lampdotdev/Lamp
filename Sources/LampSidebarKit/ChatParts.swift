@@ -48,21 +48,55 @@ extension ChatLook {
         }
     }
 
-    /// A message waiting for the current change to finish. It can still be taken back, and, where the agent can
-    /// take it while it works, sent to it now (`sendNow`); once that's asked, the row says it's on its way.
+    /// Where each waiting message sits in its group. Waiting messages go out together, so they're shown as one
+    /// group: close together, with one caption under the latest saying how many there are and, where the agent can
+    /// take them while it works, Send Now for all of them. Those already sent now (`sending`) are a group of their
+    /// own, with its own caption.
+    public struct QueuedPlace: Equatable {
+        /// The latest of its group: the caption goes under it.
+        public var last: Bool
+        /// How many messages its group holds.
+        public var count: Int
+        /// It starts a group, so it stands apart from what's above it.
+        public var first: Bool
+
+        public init(last: Bool, count: Int, first: Bool) {
+            self.last = last
+            self.count = count
+            self.first = first
+        }
+
+        public static func places(sending: [Bool]) -> [QueuedPlace] {
+            sending.indices.map { index in
+                let first = index == 0 || sending[index - 1] != sending[index]
+                let last = index == sending.count - 1 || sending[index + 1] != sending[index]
+                var start = index, end = index
+                while start > 0, sending[start - 1] == sending[index] { start -= 1 }
+                while end < sending.count - 1, sending[end + 1] == sending[index] { end += 1 }
+                return QueuedPlace(last: last, count: end - start + 1, first: first)
+            }
+        }
+    }
+
+    /// A message waiting for the current change to finish. It can still be taken back. The latest of its group has
+    /// the group's caption, and, where the agent can take them while it works, Send Now for the whole group
+    /// (`sendNow`); once that's asked, the caption says they're on their way.
     public struct QueuedRow<Chips: View>: View {
         let text: String
         let waitingForSetup: Bool
         let sending: Bool
+        let place: QueuedPlace
         let onRemove: () -> Void
         let sendNow: (() -> Void)?
         let chips: Chips
 
-        public init(text: String, waitingForSetup: Bool, sending: Bool = false, onRemove: @escaping () -> Void,
+        public init(text: String, waitingForSetup: Bool, sending: Bool = false,
+                    place: QueuedPlace = QueuedPlace(last: true, count: 1, first: true), onRemove: @escaping () -> Void,
                     sendNow: (() -> Void)? = nil, @ViewBuilder chips: () -> Chips) {
             self.text = text
             self.waitingForSetup = waitingForSetup
             self.sending = sending
+            self.place = place
             self.onRemove = onRemove
             self.sendNow = sendNow
             self.chips = chips()
@@ -84,21 +118,28 @@ extension ChatLook {
                 }
                 // The width limit goes around the button too, so it stays next to the bubble.
                 .frame(maxWidth: 480 + 22, alignment: .trailing)
-                HStack(spacing: 10) {
-                    if sending {
-                        Label("Sending now", systemImage: "arrow.up.circle").font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        Label(waitingForSetup ? "Starts when Apple's app-building tools finish installing" : "Queued",
-                              systemImage: "clock").font(.caption).foregroundStyle(.secondary)
-                        if let sendNow {
-                            Button("Send Now", action: sendNow)
-                                .buttonStyle(.link).font(.caption)
-                                .help("Send this to the agent while it works")
-                        }
+                if place.last { caption }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+
+        @ViewBuilder private var caption: some View {
+            let several = place.count > 1
+            HStack(spacing: 10) {
+                if sending {
+                    Label(several ? "Sending \(place.count) now" : "Sending now", systemImage: "arrow.up.circle")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Label(waitingForSetup ? "Starts when Apple's app-building tools finish installing"
+                              : several ? "\(place.count) queued" : "Queued",
+                          systemImage: "clock").font(.caption).foregroundStyle(.secondary)
+                    if let sendNow {
+                        Button(several ? "Send All Now" : "Send Now", action: sendNow)
+                            .buttonStyle(.link).font(.caption)
+                            .help(several ? "Send these to the agent while it works" : "Send this to the agent while it works")
                     }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .trailing)
         }
     }
 

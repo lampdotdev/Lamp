@@ -197,9 +197,11 @@ private struct Chat: View {
                         if let notResponding = state.notResponding {
                             ChatLook.UnresponsiveNotice(text: notResponding) { link.send(.forceQuit) }.padding(.top, 12)
                         }
-                        ForEach(state.queued ?? []) { message in
+                        let queued = state.queued ?? []
+                        let places = ChatLook.QueuedPlace.places(sending: queued.map { $0.sendingNow == true })
+                        ForEach(Array(queued.enumerated()), id: \.element.id) { index, message in
                             ChatLook.QueuedRow(text: message.text, waitingForSetup: state.waitingForSetup ?? false,
-                                               sending: message.sendingNow == true,
+                                               sending: message.sendingNow == true, place: places[index],
                                                onRemove: { link.send(.unqueue(message.id)) },
                                                sendNow: message.canSendNow == true ? { link.send(.sendNow(message.id)) } : nil) {
                                 if let pointed = message.pointed { PointedPill(pointed: pointed) }
@@ -207,7 +209,7 @@ private struct Chat: View {
                                     AttachmentChip(attachment: message.attachments[index])
                                 }
                             }
-                            .padding(.top, state.lines.isEmpty ? 0 : 32)
+                            .padding(.top, state.lines.isEmpty && index == 0 ? 0 : places[index].first ? 32 : 8)
                         }
                         Color.clear.frame(height: 16).id("end")
                     }

@@ -143,17 +143,18 @@ A capability given to one engine must be given to all of them that can take it, 
   copies keep ahead of the byte limit. When a request is still refused (`Agent.isRequestTooLarge`), the turn
   says so in plain words and the conversation ends (`Store.forgetConversation`): the next request starts a
   fresh one rather than failing the same way.
-- **Messages sent while the agent works**: they wait in line for the next turn, and the person chooses which go
-  now. Each waiting message has Send Now under it (`ChatLook.QueuedRow`, in both chats; `Store.canSendNow`), which
-  hands it to the model in the turn that's running, after the tools it is running and before its next request
-  (`Store.handOver`). pi's extension asks `/agent/steer` after each of pi's turns and hands such messages to pi's own
+- **Messages sent while the agent works**: they wait in line for the next turn as one group, and the person chooses
+  whether it goes now. The group sits close together under one caption at its latest message, with Send Now (Send
+  All Now for several) beside it (`ChatLook.QueuedRow`, `QueuedPlace`, in both chats; `Store.canSendNow`), which hands
+  every waiting message, in the order they were sent, to the model in the turn that's running, after the tools it
+  is running and before its next request (`Store.handOver`). pi's extension asks `/agent/steer` after each of pi's turns and hands such messages to pi's own
   steering (`sendUserMessage` with `deliverAs: "steer"`); Claude Code reads its request on its input
   (`--input-format stream-json`, `Store.steer`), which Lamp writes to while a tool runs and closes once Claude Code
   has answered. A message goes into the chat as it's handed over and is a request of the turn (its version,
   `LogLine.midTurn`) once the engine's output shows the model has it (pi's user `message_end`, Claude Code's
   `--replay-user-messages` echo); nothing more is handed over until then, and one the run ends without goes back to
-  the front of the line. Send Now isn't offered for an answer to a card, a request sent again, a wish being found or
-  anything after the agent has asked. The one exception among the engines is Codex, which has no Send Now:
+  the front of the line. Send Now isn't offered while the group holds an answer to a card or a request sent again, while a
+  wish is being found, or after the agent has asked. The one exception among the engines is Codex, which has no Send Now:
   `codex exec` reads nothing once started, and `codex app-server`, which can steer, can't keep the person's own
   Codex settings out of Lamp's runs.
 - **What Lamp shows the user** (`BuildCard.activity`, `ToolCall`): tool names must be recognised in every

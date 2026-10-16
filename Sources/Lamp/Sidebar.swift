@@ -222,12 +222,15 @@ final class SidebarServer {
                                  draft: draft.text, draftVersion: draftVersions[project.id] ?? 0,
                                  attachments: draft.attachments.map { Self.attachment($0) })
         state.pointed = draft.pointed.map { Self.pointed($0, canChooseAgain: store.canPoint(in: project)) }
+        let canSendNow = store.canSendNow(in: project)
+        let lastWaiting = store.waitingToSend(in: project).last?.id
         state.queued = (store.queued[project.id] ?? []).map { message in
             var queued = SidebarQueued(id: message.id, text: message.text,
                                        attachments: message.attachments.map { Self.attachment($0) })
             queued.pointed = message.pointed.map { Self.pointed($0) }
             queued.sendingNow = message.sendNow ? true : nil
-            queued.canSendNow = !message.sendNow && store.canSendNow(message, in: project) ? true : nil
+            // Send Now is the group's: offered once, under the latest waiting message.
+            queued.canSendNow = canSendNow && message.id == lastWaiting ? true : nil
             return queued
         }
         state.waitingForSetup = !store.setup.ready
@@ -601,9 +604,8 @@ final class SidebarServer {
         case .unqueue(let id):
             guard let message = store.queued[project.id]?.first(where: { $0.id == id }) else { return }
             store.unqueue(message, from: project)
-        case .sendNow(let id):
-            guard let message = store.queued[project.id]?.first(where: { $0.id == id }) else { return }
-            store.sendNow(message, in: project)
+        case .sendNow:
+            store.sendNow(in: project)
         case .approve(let id, let allow, let allowAll):
             // Only the approval still waiting: a click that arrives after it was answered in Lamp does nothing.
             guard store.approvals[project.id]?.id == id else { return }

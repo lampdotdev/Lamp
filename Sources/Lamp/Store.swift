@@ -1885,22 +1885,28 @@ final class Store: ObservableObject {
         return project
     }
 
-    /// Whether a waiting message can be sent to the agent in the turn that's running (Send Now): the engine takes
-    /// messages while it works (not Codex), and the message is a plain request. An answer to a card or a request
-    /// sent again changes what the turn is for, and so does anything while a wish is being found or once the agent
-    /// has asked its questions; those wait for the next turn.
-    func canSendNow(_ message: QueuedMessage, in project: LampProject) -> Bool {
-        guard let turn = turns[project.id], Builder.engine != .codex, !turn.asked, !turn.stopped,
-              current(project)?.finding == false else { return false }
-        return message.card == nil && message.replaces == nil && message.tookBack.isEmpty
+    /// The waiting messages Send Now would hand over: those not already on their way, in the order they were sent.
+    func waitingToSend(in project: LampProject) -> [QueuedMessage] {
+        (queued[project.id] ?? []).filter { !$0.sendNow }
     }
 
-    /// Send Now: the message goes to the agent at its next step, if it still has one; otherwise it starts the next
-    /// turn as any waiting message does.
-    func sendNow(_ message: QueuedMessage, in project: LampProject) {
-        guard canSendNow(message, in: project), let index = queued[project.id]?.firstIndex(where: { $0.id == message.id })
-        else { return }
-        queued[project.id]?[index].sendNow = true
+    /// Whether the waiting messages can be sent to the agent in the turn that's running (Send Now). They go as one
+    /// group, so every one of them must be able to: the engine takes messages while it works (not Codex), and each is
+    /// a plain request. An answer to a card or a request sent again changes what the turn is for, and so does anything
+    /// while a wish is being found or once the agent has asked its questions; then they all wait for the next turn.
+    func canSendNow(in project: LampProject) -> Bool {
+        let waiting = waitingToSend(in: project)
+        guard !waiting.isEmpty, let turn = turns[project.id], Builder.engine != .codex, !turn.asked, !turn.stopped,
+              current(project)?.finding == false else { return false }
+        return waiting.allSatisfy { $0.card == nil && $0.replaces == nil && $0.tookBack.isEmpty }
+    }
+
+    /// Send Now: every waiting message goes to the agent at its next step, in the order they were sent, if it still
+    /// has one; otherwise they start the next turn as any waiting messages do.
+    func sendNow(in project: LampProject) {
+        guard canSendNow(in: project), var waiting = queued[project.id] else { return }
+        for index in waiting.indices { waiting[index].sendNow = true }
+        queued[project.id] = waiting
         steer(project)
     }
 
