@@ -45,6 +45,8 @@ for everything else.
   app's page: the sidebar tells the proved page once (`lamp.onMenu`) and lets
   it read once without a click in it, within 15 seconds and only on the
   address the item was chosen on, so the page does what the item says at once.
+  A choice that reaches the page later than that doesn't run, and the sidebar
+  says so and that choosing the item again runs it.
   Chrome decides where an item shows from the address alone before the menu
   opens, so it shows only on pages a fit names by site (and path) without a
   selector, and Lamp refuses a menu for an app with no such fit. An app that
