@@ -432,6 +432,24 @@ function notesTool(name: string) {
 	});
 }
 
+/** `read_skill`: Lamp answers from the skills in its bundle (Skills), the same for every engine. */
+const readSkill = defineTool({
+	...spec("read_skill"),
+	async execute(_toolCallId, params, signal) {
+		const url = process.env.LAMP_SKILL_URL;
+		if (!url) throw new Error("Lamp isn't available to open skills.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
+		});
+		const reply = (await response.json()) as { text?: string; error?: string };
+		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't open that skill.");
+		return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
+	},
+});
+
 const makeArt = defineTool({
 	...spec("make_art"),
 	async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -552,4 +570,5 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(connectors);
 	for (const name of ["ask", "show_result", "write_wish"]) pi.registerTool(talkTool(name));
 	for (const name of ["read_notes", "save_notes"]) pi.registerTool(notesTool(name));
+	pi.registerTool(readSkill);
 }
