@@ -260,7 +260,7 @@ struct Transcript: View {
         let latestRequest = lines.last { $0.kind == .user }?.id
         let openAsk = Talk.open(in: lines)?.id
         // Answers clicked on a card are shown by the card, folded where it was: not again as a message.
-        let shown = lines.filter { $0.fromCard != true }
+        let shown = Talk.withoutCardMessages(lines)
         let items = ChatItem.items(progressShown ? Self.withoutStepInProgress(shown) : shown)
         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
             let isLast = index == items.count - 1
