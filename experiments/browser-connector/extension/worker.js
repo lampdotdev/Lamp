@@ -109,7 +109,9 @@ const menuCall = (method, ...args) =>
 // A `*` in a path would be a wildcard here where the fit means it literally, so such a fit gets no item (as Lamp says).
 const menuPatterns = app => [...new Set((app.fits || []).filter(fit => fit.site && !fit.selector && !(fit.path || '').includes('*'))
   .map(fit => `https://*.${fit.site}${fit.path || '/'}*`))];
-let menusKey, menuSync = Promise.resolve();
+// `menusKey` is what Chrome last took whole. While Chrome refuses some of it (`menusOwed`), the same items are asked
+// for again at most every half minute (`menusTried`, `menusAsked`), by the next hello or list, rather than taken as there.
+let menusKey, menusOwed = false, menusTried = '', menusAsked = 0, menuSync = Promise.resolve();
 function syncMenus(apps) {
   const next = menuSync.then(() => replaceMenus(apps));
   menuSync = next.catch(() => {});
@@ -120,9 +122,14 @@ async function replaceMenus(apps) {
   const key = JSON.stringify(withMenu.map(app => [app.id, app.menu, menuPatterns(app)]));
   if (menusKey === undefined) menusKey = (await chrome.storage.local.get('menusKey')).menusKey ?? '';
   if (key === menusKey) return;
-  await menuCall('removeAll');
+  if (menusOwed && key === menusTried && Date.now() - menusAsked < 30000) return;
+  menusTried = key; menusAsked = Date.now();
+  let refused = !!await menuCall('removeAll');
   for (const app of withMenu)
-    await menuCall('create', {id: 'app:' + app.id, title: app.menu, contexts: ['page', 'selection'], documentUrlPatterns: menuPatterns(app)});
+    if (await menuCall('create', {id: 'app:' + app.id, title: app.menu, contexts: ['page', 'selection'], documentUrlPatterns: menuPatterns(app)}))
+      refused = true;
+  menusOwed = refused;
+  if (refused) return;
   menusKey = key;
   await chrome.storage.local.set({menusKey});
 }
@@ -132,7 +139,7 @@ let fitsSeen = '';
 async function hello() {
   try {
     const reply = await native({op: 'companion-hello', version: 3});
-    if (reply.fits !== fitsSeen) { await list(); fitsSeen = reply.fits; }
+    if (reply.fits !== fitsSeen || menusOwed) { await list(); fitsSeen = reply.fits; }
   } catch {}
 }
 
