@@ -181,7 +181,8 @@ enum Sharing {
         for file in assetFiles(of: project) {
             attachedBytes += (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             guard attachedBytes <= maxAttachedBytes else {
-                throw ImportError("This app's files are over \(maxAttachedBytes / 1_000_000) MB, too big to share.")
+                throw ImportError("\(project.name) is too big to share.",
+                                  detail: "Its pictures and other files come to over \(maxAttachedBytes / 1_000_000) MB.")
             }
             let target = stage.appendingPathComponent(Assets.folder).appendingPathComponent(relativePath(of: file, in: assets))
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -219,14 +220,14 @@ enum Sharing {
         // Everything staged, counted and measured the way the importer's listing does (files and folders,
         // bytes before compression), so Lamp never makes a file another Lamp refuses.
         let staged = fm.enumerator(at: stage, includingPropertiesForKeys: [.fileSizeKey])?.compactMap { $0 as? URL } ?? []
-        guard staged.count <= maxFiles else { throw ImportError("This app has too many files to share (over \(maxFiles)).") }
+        guard staged.count <= maxFiles else { throw ImportError("\(project.name) has too many files to share.") }
         let unpacked = staged.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) }
-        guard unpacked <= maxUnpackedBytes else { throw ImportError("This app is over \(maxUnpackedBytes / 1_000_000) MB, too big to share.") }
+        guard unpacked <= maxUnpackedBytes else { throw ImportError("\(project.name) is too big to share.") }
         let output = work.appendingPathComponent("\(project.name).lampapp")
         try run("/usr/bin/ditto", ["-c", "-k", "--norsrc", stage.path, output.path])
         // Media is already compressed, so the archive can be as big as what went in: make sure it's one Lamp opens.
         let size = (try? output.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-        guard size <= maxArchiveBytes else { throw ImportError("This app is over \(maxArchiveBytes / 1_000_000) MB packed, too big to share.") }
+        guard size <= maxArchiveBytes else { throw ImportError("\(project.name) is too big to share.") }
         return output
     }
 
@@ -428,8 +429,11 @@ enum Sharing {
 
     struct ImportError: LocalizedError {
         let message: String
-        init(_ message: String) { self.message = message }
+        /// The smaller line under the message in an alert: why, when it's something the person can change.
+        let detail: String?
+        init(_ message: String, detail: String? = nil) { self.message = message; self.detail = detail }
         var errorDescription: String? { message }
+        var recoverySuggestion: String? { detail }
     }
 
     /// `.swift` files under a folder, ignoring symlinks so nothing outside it can be pulled in.

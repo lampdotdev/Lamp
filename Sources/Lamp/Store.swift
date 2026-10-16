@@ -1501,7 +1501,7 @@ final class Store: ObservableObject {
         importApp(from: url)
     }
 
-    /// Puts the app's .lampapp file on the clipboard, ready to paste into Slack, Messages, Mail or Finder.
+    /// Puts the app's .lampapp file on the clipboard, ready to paste into a message (or a Finder window).
     func canShare(_ project: LampProject) -> Bool { project.scaffolded }
 
     func copyAppFile(_ project: LampProject) {
@@ -1510,7 +1510,7 @@ final class Store: ObservableObject {
             let file = try Self.sharedFile(of: project)
             NSPasteboard.general.clearContents()
             NSPasteboard.general.writeObjects([file as NSURL])
-            log(project, .status, "Copied \(file.lastPathComponent). Paste it into Slack, Messages, Mail or a Finder window.")
+            log(project, .status, "\(project.name) is copied. Paste it into a message to send it.")
         } catch {
             NSAlert(error: error).runModal()
         }
