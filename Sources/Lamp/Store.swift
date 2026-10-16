@@ -2915,9 +2915,9 @@ final class Store: ObservableObject {
 
     /// `look_at_app` with `sidebar`: the app is built and opened as for any look, then its sidebar in Chrome is
     /// drawn by Lamp (BrowserPreview) in place of its windows, beside the page the agent names.
-    private func lookAtSidebar(_ project: LampProject, page: String?) async -> (Int, [String: Any]) {
+    private func lookAtSidebar(_ project: LampProject, page: String?, reopen: Bool = false) async -> (Int, [String: Any]) {
         guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
-        let window = await look(at: project)
+        let window = await look(at: project, reopen: reopen)
         guard window.0 == 200, !macCopies(of: project).isEmpty else { return window }
         var (status, sidebar) = await BrowserPreview.look(project, page: page)
         // The window beside it, so the sidebar's items are judged against the app's, not on their own.
@@ -3026,7 +3026,7 @@ final class Store: ObservableObject {
             switch name {
             case "look_at_app":
                 (status, answer) = arguments["sidebar"] as? Bool == true
-                    ? await lookAtSidebar(project, page: arguments["page"] as? String)
+                    ? await lookAtSidebar(project, page: arguments["page"] as? String, reopen: arguments["reopen"] as? Bool ?? false)
                     : await look(at: project, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
                                  reopen: arguments["reopen"] as? Bool ?? false)
             case "use_app":
@@ -5267,7 +5267,7 @@ final class Store: ObservableObject {
         if request.path == "/agent/look" {
             let arguments = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             return arguments["sidebar"] as? Bool == true
-                ? await lookAtSidebar(project, page: arguments["page"] as? String)
+                ? await lookAtSidebar(project, page: arguments["page"] as? String, reopen: arguments["reopen"] as? Bool ?? false)
                 : await look(at: project, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
                                  reopen: arguments["reopen"] as? Bool ?? false)
         }
