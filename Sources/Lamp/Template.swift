@@ -3435,16 +3435,83 @@ enum Template {
     }
 
     #if LAMP_LIVE
-    /// A spare place in a class, for a stored property added while the app is open (LiveReload's slots): live
-    /// builds give every class of the app's a few, empty, and a new property kept in one leaves the object's
-    /// layout as the open app has it. Saved data never holds one (it encodes as nothing and decodes empty).
-    struct LampSpare: Codable, @unchecked Sendable {
+    /// A spare place for a stored property added while the app is open (LiveSlots): live builds give every class of
+    /// the app's a few, and every struct one that holds any number by name, empty, so a new property kept in one
+    /// leaves the type's layout as the open app has it. Saved data never holds one (it encodes as nothing and
+    /// decodes empty), and it compares and hashes by what it holds that can, so a struct's own Equatable and
+    /// Hashable still see a new property.
+    struct LampSpare: Codable, Hashable, @unchecked Sendable {
         var value: Any?
         init(_ value: Any?) { self.value = value }
         init(from decoder: Decoder) throws { value = nil }
         func encode(to encoder: Encoder) throws {
             var container = encoder.singleValueContainer()
             try container.encodeNil()
+        }
+        /// A struct's property, by name: what was set, kept as set.
+        func field(_ name: String) -> Any? { (value as? [String: Entry])?[name]?.value }
+        struct Entry { var value: Any; var initial: Any }
+        /// Keeps what was set beside the property's starting value, which is what a struct that never set it holds:
+        /// two values compare and hash by what their properties are, set or not, as they would stored.
+        static func setting(_ name: String, to new: Any, initial: Any, in spare: LampSpare) -> LampSpare {
+            var entries = (spare.value as? [String: Entry]) ?? [:]
+            entries[name] = Entry(value: new, initial: initial)
+            return LampSpare(entries)
+        }
+        private static func same(_ a: Any?, _ b: Any?) -> Bool {
+            guard let a, let b else { return a == nil && b == nil }
+            guard let equatable = a as? any Equatable else { return false }
+            func compare<T: Equatable>(_ x: T) -> Bool { (b as? T) == x }
+            return compare(equatable)
+        }
+        static func == (a: LampSpare, b: LampSpare) -> Bool {
+            guard let left = a.value as? [String: Entry] ?? (a.value == nil ? [:] : nil),
+                  let right = b.value as? [String: Entry] ?? (b.value == nil ? [:] : nil) else { return same(a.value, b.value) }
+            for name in Set(left.keys).union(right.keys) {
+                let one = left[name]?.value ?? right[name]?.initial, other = right[name]?.value ?? left[name]?.initial
+                if !same(one, other) { return false }
+            }
+            return true
+        }
+        func hash(into hasher: inout Hasher) {
+            guard let entries = value as? [String: Entry] else {
+                if let value = value as? AnyHashable { hasher.combine(value) }
+                return
+            }
+            // What equals its starting value hashes as if never set, as it compares.
+            for (name, entry) in entries.sorted(by: { $0.key < $1.key }) where !Self.same(entry.value, entry.initial) {
+                hasher.combine(name)
+                if let value = entry.value as? AnyHashable { hasher.combine(value) }
+            }
+        }
+    }
+
+    /// A struct's spare is a property it doesn't spell, so saved data leaves it out: nothing is written for it, and
+    /// data without it reads as empty. The app's own Codable code, written by the compiler, takes these over the
+    /// general ones.
+    extension KeyedEncodingContainer {
+        mutating func encode(_ value: LampSpare, forKey key: Key) throws {}
+    }
+    extension KeyedDecodingContainer {
+        func decode(_ type: LampSpare.Type, forKey key: Key) throws -> LampSpare { LampSpare(nil) }
+    }
+
+    /// A view's spare state (LiveSlots): `@State` added to a view while the app is open is kept here by name, so the
+    /// view holds what it did. A starting value is worked out on the first read and kept without redrawing anything;
+    /// a change redraws the views that read any of it.
+    @Observable final class LampStateBox {
+        @ObservationIgnored private var values: [String: Any] = [:]
+        private var changes = 0
+        func get<T>(_ name: String, _ initial: () -> T) -> T {
+            _ = changes
+            if let value = values[name] as? T { return value }
+            let value = initial()
+            values[name] = value
+            return value
+        }
+        func set<T>(_ name: String, _ value: T) {
+            values[name] = value
+            changes += 1
         }
     }
 
@@ -3502,6 +3569,7 @@ enum Template {
             }
             guard let image = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == path }),
                   let header = _dyld_get_image_header(image) else { return }
+            Self.takeFieldOffsets(header, slide: _dyld_get_image_vmaddr_slide(image))
             let defined = Self.definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image))
             for (name, address) in defined where Self.isCode(name) && !Self.accesses(name, oneOf: Self.stored(in: defined)) {
                 latest[name] = address
@@ -3584,16 +3652,38 @@ enum Template {
                     Int(symtab.pointee.nsyms), base, dysymtab)
         }
 
-        private static func definedSymbols(_ header: UnsafePointer<mach_header>, slide: Int) -> [(String, UnsafeRawPointer)] {
+        private static func definedSymbols(_ header: UnsafePointer<mach_header>, slide: Int, local: Bool = false) -> [(String, UnsafeRawPointer)] {
             guard let tables = tables(header, slide: slide) else { return [] }
             var out: [(String, UnsafeRawPointer)] = []
             for index in 0..<tables.count {
                 let symbol = tables.symbols[index]
-                guard symbol.n_type & UInt8(N_EXT) != 0, symbol.n_type & UInt8(N_TYPE) == UInt8(N_SECT), symbol.n_value != 0,
+                guard local || symbol.n_type & UInt8(N_EXT) != 0, symbol.n_type & UInt8(N_STAB) == 0,
+                      symbol.n_type & UInt8(N_TYPE) == UInt8(N_SECT), symbol.n_value != 0,
                       let address = UnsafeRawPointer(bitPattern: Int(symbol.n_value) + slide) else { continue }
                 out.append((String(cString: tables.strings.advanced(by: Int(symbol.n_un.n_strx))), address))
             }
             return out
+        }
+
+        /// Where a class's fields are is worked out as the app runs when it can't be known when it's compiled (a
+        /// subclass, or fields after one of the system's types, such as an @Observable class's registrar), and kept
+        /// in a global for each field. A library has its own copies, which nothing fills in: its code would read
+        /// every such field at the start of the object. So they take the app's values, once the app has worked
+        /// the class out (asking for its metadata does that). A field the app has none for is new, and stays the
+        /// library's.
+        private static func takeFieldOffsets(_ header: UnsafePointer<mach_header>, slide: Int) {
+            guard let app = _dyld_get_image_header(0) else { return }
+            let theirs = Dictionary(definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0), local: true), uniquingKeysWith: { first, _ in first })
+            let accessors = theirs.filter { $0.key.hasSuffix("CMa") }
+            for (name, address) in definedSymbols(header, slide: slide, local: true) where name.hasSuffix("Wvd") {
+                // One the compiler knew is already right, and may be in memory that can't be written.
+                guard address.load(as: Int.self) == 0, let source = theirs[name] else { continue }
+                if source.load(as: Int.self) == 0,
+                   let accessor = accessors.filter({ name.hasPrefix($0.key.dropLast(2)) }).max(by: { $0.key.count < $1.key.count }) {
+                    _ = unsafeBitCast(accessor.value, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0)
+                }
+                UnsafeMutableRawPointer(mutating: address).storeBytes(of: source.load(as: Int.self), as: Int.self)
+            }
         }
 
         /// Points the image's symbol pointers, which its calls to its own functions go through, at the new code.
@@ -13102,19 +13192,55 @@ enum Template {
 
 """#
 
+    /// The copy step's spare places (LiveSlots), written beside the live copy and run on each file copied: every class
+    /// of the app's gets `LiveSlots.count` (named after the class, so a subclass's don't clash with what it inherits;
+    /// `@Published` when it says it's an ObservableObject), every view one `@State` box, and every other struct one
+    /// place for any number of properties. Left out: what a spare would break (SwiftData and Core Data models,
+    /// Sendable classes, Equatable views, the App and its scenes, property wrappers, App Intents) and structs in a
+    /// file that lays memory out by hand (vertex data for the GPU), whose size must be what it says.
+    static let sparesPerl = #"""
+    use strict; use warnings;
+    my $count = shift @ARGV;
+    local $/;
+    for my $file (@ARGV) {
+        open(my $in, '<', $file) or die "$file: $!"; my $s = <$in>; close($in);
+        my $raw = $s =~ /MemoryLayout|withUnsafe|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
+        $s =~ s#^([ \t]*)(((?:@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated|indirect)\s+)*)(class|struct)\s+(?!(?:func|var|let|subscript|override|class)\b)(\w+)([^{\n]*)\{)#$1 . spares($1, $2, $3 . $6, $4, $5, $raw)#gme;
+        open(my $out, '>', $file) or die "$file: $!"; print $out $s; close($out);
+    }
+    sub spares {
+        my ($i, $whole, $header, $kind, $name, $raw) = @_;
+        my $pad = "\n$i    ";
+        if ($kind eq 'class') {
+            return $whole if $header =~ /\@Model\b|NSManagedObject|(?<!unchecked )\bSendable\b/;
+            my $published = $header =~ /ObservableObject/ ? '@Published ' : '';
+            return $whole . join('', map { "${pad}${published}var __lampSpare_${name}_$_: LampSpare? = nil;" } 0 .. $count - 1);
+        }
+        return $whole if $header =~ /\@propertyWrapper|\@frozen|\b(?:App|Scene|Commands|DynamicProperty|AppIntent|\w*Intent|AppEntity|\w*Query|TimelineProvider|TimelineEntry|Widget\w*)\b/;
+        if ($header =~ /\bView\b/) {
+            return $whole if $header =~ /\b(?:Equatable|Hashable)\b/;
+            return "${whole}${pad}\@State private var __lampState_${name} = LampStateBox();";
+        }
+        return $whole if $raw;
+        return "${whole}${pad}var __lampSpare_${name} = LampSpare(nil);";
+    }
+    """#
+
     /// The live copy of the sources (LiveReload): each file copied into .lamp/live with its views' bodies wrapped,
     /// so a body's type stays the same from one change to the next (`LampLive`), and only when it differs, so the
     /// build stays incremental; files gone from Sources go from the copy too. Indented for the scripts' `if`.
     static let liveCopySteps = """
       LIVE=.lamp/live
       mkdir -p "$LIVE/Sources"
+      cat > "$LIVE/spares.pl" <<'LAMPSPARES'
+    \(sparesPerl)
+    LAMPSPARES
       for f in Sources/**/*.swift(N); do
         out="$LIVE/$f"
         mkdir -p "${out:h}"
         perl -0pe 's/var body: some View \\{/var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\\n    \\@ViewBuilder var __lampBody: some View {/g' "$f" > "$out.new"
-        # Every class of the app's gets \(LiveSlots.count) spare places for properties added while it's open (LiveSlots),
-        # named after the class, so a subclass's don't clash with those it inherits.
-        case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) perl -0pi -e 's#^([ \\t]*)((?:@[\\w.]+(?:\\([^)\\n]*\\))?\\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated)\\s+)*class\\s+(?!(?:func|var|let|subscript|override|class)\\b)(\\w+)[^{\\n]*\\{)#my ($i, $h, $n) = ($1, $2, $3); ($h =~ /\\@Model\\b|NSManagedObject|(?<!unchecked )\\bSendable\\b/) ? "$i$h" : "$i$h" . join("", map { "\\n$i    " . ($h =~ /ObservableObject/ ? "\\@Published " : "") . "var __lampSpare_${n}_$_: LampSpare? = nil;" } 0 .. \(LiveSlots.count - 1))#gme' "$out.new" ;; esac
+        # Spare places for properties added while the app is open (LiveSlots), unless they kept the app from building.
+        case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) [[ -e "$LIVE/no-spares" ]] || perl "$LIVE/spares.pl" \(LiveSlots.count) "$out.new" ;; esac
         if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi
       done
       for f in "$LIVE"/Sources/**/*.swift(N); do [[ -f "${f#$LIVE/}" ]] || rm "$f"; done
