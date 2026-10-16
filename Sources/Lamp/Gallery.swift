@@ -62,7 +62,8 @@ enum Gallery {
         ask("A starter's first changes", Talk.Ask(layout: .steps, questions: [Talk.Question(question: "Make Today yours", options: [
             option("Five priorities instead of three", "list.number"), option("Add a water counter", "drop"),
             option("Remind me to plan at 8", "bell"),
-        ])], offer: true)),
+        ], detail: "Today came with Lamp as an example, and it's yours to change. Try one of these, or describe your own.")],
+        offer: true)),
     ]
 
     private static func ask(_ name: String, _ ask: Talk.Ask, isOpen: Bool = true) -> Entry {

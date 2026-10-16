@@ -28,16 +28,20 @@ public enum TalkCard {
     public struct Question: Codable, Equatable {
         public var question: String
         public var options: [Option]
+        /// A line under the question, for what it's about: Lamp's own cards have one (`Starters`), the agent's don't.
+        public var detail: String?
 
-        public init(question: String, options: [Option]) {
+        public init(question: String, options: [Option], detail: String? = nil) {
             self.question = question
             self.options = options
+            self.detail = detail
         }
 
         /// A card saved while options were plain words, some with the one the agent had `chosen`, reads too.
         public init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             question = try values.decode(String.self, forKey: .question)
+            detail = try values.decodeIfPresent(String.self, forKey: .detail)
             if let options = try? values.decode([Option].self, forKey: .options) {
                 self.options = options
             } else {
@@ -45,6 +49,10 @@ public enum TalkCard {
             }
         }
     }
+
+    /// Whether "You decide" is one of a question's tiles: beside up to three answers, where the tiles make a row of
+    /// four or two by two. With four of its own there's no room left in the row, and it's a link under them.
+    public static func decidesAsTile(_ question: Question) -> Bool { question.options.count < 4 }
 
     public struct Ask: Codable, Equatable {
         public var layout: Layout

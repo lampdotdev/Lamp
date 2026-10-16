@@ -4280,7 +4280,16 @@ enum Template {
             restored = true
             // A window that had the chat open last time comes back at a size that already holds it.
             let wasOpen = UserDefaults.standard.bool(forKey: openKey)
-            if askedToOpen() { open(window, grow: !wasOpen) }
+            if let wait = askedToOpen() {
+                // A wish Lamp came with, opened for the first time, is seen on its own a moment before its chat
+                // comes in beside it: the file says how long (`MagicPanel.startWithChat`).
+                guard wait > 0 else { return open(window, grow: !wasOpen) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
+                    MainActor.assumeIsolated {
+                        if window.isVisible, !isOpen(in: window) { open(window, grow: !wasOpen) }
+                    }
+                }
+            }
             else if wasOpen { open(window, grow: false) }
         }
 
@@ -4289,10 +4298,12 @@ enum Template {
         /// file is taken once, so the chat isn't opened again on the next launch by it.
         private static var handOff: URL { LampRuntime.folder.appendingPathComponent("open-sidebar") }
 
-        @MainActor private static func askedToOpen() -> Bool {
-            guard FileManager.default.fileExists(atPath: handOff.path) else { return false }
+        /// How long to wait before opening the chat, when Lamp asked for it: nothing written means at once.
+        @MainActor private static func askedToOpen() -> TimeInterval? {
+            guard FileManager.default.fileExists(atPath: handOff.path) else { return nil }
+            let wait = (try? String(contentsOf: handOff, encoding: .utf8)).flatMap { TimeInterval($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
             try? FileManager.default.removeItem(at: handOff)
-            return true
+            return max(0, min(wait ?? 0, 5))
         }
 
         /// The window the chat goes beside: the one in front, else the frontmost of the app's own windows.

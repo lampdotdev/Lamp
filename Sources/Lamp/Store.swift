@@ -940,6 +940,7 @@ final class Store: ObservableObject {
     /// Brings Lamp to the front on an app's chat, in its own window, ready to type.
     func showChat(_ id: String) {
         reload()
+        offerStarterChanges(id, after: 0.5)
         selection = id
         chatFocusRequest += 1
         NSApp.activate()
@@ -2809,7 +2810,6 @@ final class Store: ObservableObject {
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
         config.arguments = ["-LampInFront", "YES"]   // see install
-        MagicPanel.shared.startWithChat(project)
         do {
             _ = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
             noteOpened(true, for: project)
@@ -3497,10 +3497,6 @@ final class Store: ObservableObject {
                     try Template.fill(project)
                     try Starters.copy(starter, into: project)
                     try Template.writeOwnedFiles(for: project)   // again, now it's known whether it has a widget
-                    // Its chat opens on what it offers to change first, for a click or a message of their own.
-                    if let card = Starters.card(for: starter) {
-                        try JSONEncoder().encode([card]).write(to: project.dir.appendingPathComponent(".lamp/chat.json"))
-                    }
                     made.append(project)
                 } catch {
                     try? FileManager.default.removeItem(at: project.dir)
@@ -3520,6 +3516,23 @@ final class Store: ObservableObject {
         }
     }
     private var startersInstall: Task<Void, Never>?
+
+    /// A starter's chat begins with what it offers to change first (`Starters.card`), added a moment after the chat
+    /// is first shown, beside the app or in Lamp's window, so it arrives there rather than being there already.
+    /// Once: a chat with anything in it is left as it is.
+    func offerStarterChanges(_ id: String, after delay: Double) {
+        guard (logs[id] ?? []).isEmpty, let project = projects.first(where: { $0.id == id }), Starters.isStarter(project),
+              let starter = Starters.starter(of: project), let card = Starters.card(for: starter),
+              offeringStarter.insert(id).inserted else { return }
+        Task {
+            try? await Task.sleep(for: .seconds(delay))
+            offeringStarter.remove(id)
+            guard let current = current(project), (logs[id] ?? []).isEmpty else { return }
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { logs[id] = [card] }
+            saveChat(current)
+        }
+    }
+    private var offeringStarter: Set<String> = []
 
     /// Starters being built for the first time, out of sight: their icons spin on the desk.
     @Published private(set) var preparing: Set<String> = []
@@ -3558,7 +3571,7 @@ final class Store: ObservableObject {
     private func prepare(_ project: LampProject) async {
         guard begin(project) != nil else { return }
         preparing.insert(project.id)
-        let before = logs[project.id]?.count ?? 0
+        let before = Set((logs[project.id] ?? []).map(\.id))
         var made = false
         if await build(project) == nil {
             await prepareIcon(project)
@@ -3572,15 +3585,16 @@ final class Store: ObservableObject {
                 log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
             }
         }
-        if made, let lines = logs[project.id], lines.count > before {
-            logs[project.id] = Array(lines.prefix(before))
+        // Only what the build said goes: the card its chat may have been given meanwhile stays.
+        if made, let lines = logs[project.id] {
+            logs[project.id] = lines.filter { before.contains($0.id) || $0.kind == .ask }
             saveChat(project)
         }
         if !made { unpreparedStarters.insert(project.id) }
         preparing.remove(project.id)
         finish(project)
         guard openWhenReady.remove(project.id) != nil, let current = current(project) else { return }
-        if made { use(current) } else { showChat(current.id) }
+        if made { open(fromDesk: current) } else { showChat(current.id) }
     }
 
     func run(_ project: LampProject) async {
@@ -4125,10 +4139,7 @@ final class Store: ObservableObject {
         let config = NSWorkspace.OpenConfiguration()
         config.activates = inFront
         // An app that lives in the menu bar opens its panel, so there's something to see (LampMenuBar).
-        if inFront {
-            config.arguments = ["-LampInFront", "YES"]
-            MagicPanel.shared.startWithChat(project)
-        }
+        if inFront { config.arguments = ["-LampInFront", "YES"] }
         note("Opening \(project.name)…", for: project)
         var crash: String?
         do {

@@ -14,14 +14,15 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 # A raw string of Template.swift, from its `static let <name> = #"""` line to the `"""#` that ends it, with its
-# placeholders filled by stand-ins (only their types matter here).
+# placeholders filled by stand-ins (only their types matter here). The services Connectors.fill writes into
+# LampSupport are left out: no starter uses one.
 extract() {
   awk -v start="static let $1 = #\"\"\"" '
     index($0, start) { on = 1; next }
     on && /^ *"""#$/ { exit }
-    on { print }' "$template" | sed -E 's/\{\{(PORT|WIDGET_PORT)\}\}/7777/g; s/\{\{[A-Z_]+\}\}/stand-in/g'
+    on { print }' "$template" | sed -E 's/\{\{[A-Z_]*(PORT|TRIES)\}\}/7777/g; s/\{\{[A-Z_]+\}\}/stand-in/g'
 }
-extract lampSupportSwift > "$work/LampSupport.swift"
+extract lampSupportTemplate > "$work/LampSupport.swift"
 extract lampWidgetSupportSwift > "$work/LampWidgetSupport.swift"
 
 sdk="${SDKROOT:-$(xcrun --sdk macosx --show-sdk-path)}"

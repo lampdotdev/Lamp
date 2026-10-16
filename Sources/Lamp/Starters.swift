@@ -16,7 +16,13 @@ enum Starters {
         let name: String
         /// The first thing the app's chat offers: a line inviting a change, and three changes to choose from.
         let offer: String
+        /// The line under it, saying what this is: one of the wishes Lamp came with, theirs to change.
+        var intro = ""
         let tweaks: [Tweak]
+
+        var introduction: String {
+            intro.isEmpty ? "\(name) came with Lamp as an example, and it's yours to change. Try one of these, or describe your own." : intro
+        }
     }
 
     /// A change the chat offers, with the symbol on its tile (`- drop.fill: Add a water counter` in starter.md;
@@ -69,7 +75,7 @@ enum Starters {
         var lines = text.components(separatedBy: .newlines)[...]
         guard lines.first?.trimmed == "---" else { return nil }
         lines = lines.dropFirst()
-        var name = "", offer = "", tweaks: [Tweak] = []
+        var name = "", offer = "", intro = "", tweaks: [Tweak] = []
         for line in lines {
             let trimmed = line.trimmed
             if trimmed == "---" { break }
@@ -80,12 +86,13 @@ enum Starters {
                 switch trimmed[..<colon] {
                 case "name": name = value
                 case "offer": offer = value
+                case "intro": intro = value
                 default: break
                 }
             }
         }
         guard !name.isEmpty else { return nil }
-        return Starter(folder: folder, name: name, offer: offer, tweaks: tweaks)
+        return Starter(folder: folder, name: name, offer: offer, intro: intro, tweaks: tweaks)
     }
 
     /// A symbol's name is lowercase words joined by dots, so `Group: by client` stays words.
@@ -103,7 +110,8 @@ enum Starters {
         let options = starter.tweaks.map { tweak in
             TalkCard.Option(title: tweak.title, symbol: tweak.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) == nil ? nil : $0 })
         }
-        let ask = TalkCard.Ask(layout: .steps, questions: [TalkCard.Question(question: starter.offer, options: options)], offer: true)
+        let question = TalkCard.Question(question: starter.offer, options: options, detail: starter.introduction)
+        let ask = TalkCard.Ask(layout: .steps, questions: [question], offer: true)
         return LogLine(kind: .ask, text: ask.text, ask: ask)
     }
 
