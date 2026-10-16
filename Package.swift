@@ -11,7 +11,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Lamp",
-            dependencies: [.product(name: "Sparkle", package: "Sparkle"), "LampSidebarKit"],
+            dependencies: [.product(name: "Sparkle", package: "Sparkle"), "LampSidebarKit", "LampFileLook"],
             path: "Sources/Lamp",
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
         ),
@@ -26,6 +26,23 @@ let package = Package(
             swiftSettings: [.unsafeFlags(["-application-extension"])],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain", "-Xlinker", "-application_extension"])]
         ),
-        .testTarget(name: "LampTests", dependencies: ["Lamp"], path: "Tests/Regression"),
+        // How a shared .lampapp looks before anyone opens it: the picture sent with it, and its Quick Look
+        // thumbnail and preview, two extensions that start the way the chat does.
+        .target(name: "LampFileLook", path: "Sources/LampFileLook", swiftSettings: [.unsafeFlags(["-application-extension"])]),
+        .executableTarget(
+            name: "LampThumbnail",
+            dependencies: ["LampFileLook"],
+            path: "Sources/LampThumbnail",
+            swiftSettings: [.unsafeFlags(["-application-extension"])],
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain", "-Xlinker", "-application_extension"])]
+        ),
+        .executableTarget(
+            name: "LampPreview",
+            dependencies: ["LampFileLook"],
+            path: "Sources/LampPreview",
+            swiftSettings: [.unsafeFlags(["-application-extension"])],
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain", "-Xlinker", "-application_extension"])]
+        ),
+        .testTarget(name: "LampTests", dependencies: ["Lamp", "LampFileLook"], path: "Tests/Regression"),
     ]
 )
