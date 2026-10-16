@@ -849,8 +849,9 @@ enum Agent {
         returns what's drawn on one tile (share things out with `tile.contains`), made as it comes into reach, by \
         a named function (`{ tile in World.tile(tile) }`) so a change to it shows in the open app (anything else the \
         app draws itself and should redraw after a change goes in LampSceneView's `onLiveChange`); what \
-        the game needs everywhere (collisions, routes, the map's data) is made once, outside it. Make each kind of \
-        mesh once and reuse it (`copies`, or one text mesh per distinct word): never rebuild the same thing per \
+        the game needs everywhere (collisions, routes, the map's data) is made once, outside it. A tile should take a few \
+        milliseconds to build (the log names any slower one, and each slow tile is a stutter): make each kind of \
+        mesh once and reuse it (`copies`, or one text mesh per distinct word), never rebuilding the same thing per \
         place.
           Model a real thing from a picture of it, never from memory alone. Before writing a main prop that is a \
         real object (a car model, a building, a piece of furniture, an animal), get a reference: the person's photo \

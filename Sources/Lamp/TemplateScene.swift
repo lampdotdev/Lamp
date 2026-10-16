@@ -368,6 +368,7 @@ extension Template {
             var first = true
         }
         private var streaming: Streaming?
+        private var slowTiles = 0
         private let streamRoot = Entity()
 
         /// A big world built a square tile at a time: the tiles within `radius` metres of the camera (or of what
@@ -411,11 +412,21 @@ extension Template {
                 }
             }
             wanted.sort { $0.1 < $1.1 }
-            // Nearest first, within a time budget: more at the start, where nothing is on screen yet.
-            let budget: Double = s.first ? 0.25 : 0.006
+            // At the start, everything within half the reach, before the first frame: one pause while the app opens
+            // rather than a stutter once it's moving. After that, nearest first within a few milliseconds a frame.
+            let budget: Double = s.first ? 3 : 0.006
             let started = Date()
-            for (tile, _) in wanted {
+            for (tile, distance) in wanted {
+                if s.first, distance > s.radius / 2 { break }
+                let began = Date()
                 let entity = s.make(tile) ?? Entity()
+                let took = Date().timeIntervalSince(began)
+                // A tile that takes longer than a frame stalls the app however it's scheduled: said in the log, where
+                // the builder sees it, so it can make the tile cheaper (meshes and text made once and reused).
+                if took > 0.02 {
+                    slowTiles += 1
+                    if slowTiles <= 3 { print("LampScene: tile \(tile.x),\(tile.z) took \(Int(took * 1000)) ms to build; a tile should take a few.") }
+                }
                 entity.name = "tile \(tile.x),\(tile.z)"
                 streamRoot.addChild(entity)
                 s.built[tile] = entity
