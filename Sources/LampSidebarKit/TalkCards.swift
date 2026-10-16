@@ -456,15 +456,8 @@ public struct ResultCardView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if let status = result.status {
-                Label {
-                    Text(status).fontWeight(.semibold)
-                } icon: {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                }
-                .font(.callout)
-            }
-            Text(result.summary).font(result.status == nil ? .headline : .body).fixedSize(horizontal: false, vertical: true)
+            if let status = result.status { ChatLook.StatusLine(status, running: false) }
+            Text(result.summary).font(.headline).fixedSize(horizontal: false, vertical: true)
             // A card saved while it had rows of what's new: where to find each, as part of its sentence.
             ForEach(Array((result.news ?? []).enumerated()), id: \.offset) { _, news in
                 Text("\(news.what): \(news.place)").foregroundStyle(.secondary)
