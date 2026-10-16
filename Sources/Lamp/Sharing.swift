@@ -58,7 +58,7 @@ enum Sharing {
                 // Copying assets and compressing the file must leave the interface free to respond.
                 let icon = await sharedIcon(of: project)
                 let (file, picture) = try await Task.detached(priority: .userInitiated) {
-                    let file = try export(project, icon: icon)
+                    let file = try Store.sharedFile(of: project, icon: icon)
                     return (file, Store.sharePicture(for: file))
                 }.value
                 guard shareRequest == request, window.isVisible else { return }
@@ -158,6 +158,10 @@ enum Sharing {
         let work = fm.temporaryDirectory.appendingPathComponent("forge-share-\(UUID().uuidString)")
         let stage = work.appendingPathComponent("app")
         try fm.createDirectory(at: stage, withIntermediateDirectories: true)
+        // Only the finished file is left in the folder, and whoever takes it out removes the folder: nothing
+        // empties the temporary folder while Lamp runs, and a file that can't be made leaves nothing at all.
+        var made = false
+        defer { removeStaged(made ? stage : work) }
 
         for file in swiftSources(in: project.dir.appendingPathComponent("Sources"))
         where file.lastPathComponent != "LampSupport.swift" && file.lastPathComponent != Template.sceneSupportFile {
@@ -240,6 +244,7 @@ enum Sharing {
         // Media is already compressed, so the archive can be as big as what went in: make sure it's one Lamp opens.
         let size = (try? output.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         guard size <= maxArchiveBytes else { throw ImportError("\(project.name) is too big to share.") }
+        made = true
         return output
     }
 
@@ -283,6 +288,19 @@ enum Sharing {
     /// The files in the app's Assets/ folder, subfolders included (`LampAssets.image("images/logo.png")`).
     static func assetFiles(of project: LampProject) -> [URL] {
         filesUnder(project.dir.appendingPathComponent(Assets.folder))
+    }
+
+    /// Removes a folder `export` made. A copy keeps the flags of the file it was copied from, and one the person
+    /// locked in Finder can't be deleted, nor the folders around it, until the copy is unlocked. Only Lamp's copies
+    /// are unlocked: a link is passed over, since unlocking it would unlock the file it points to.
+    private static func removeStaged(_ folder: URL) {
+        let fm = FileManager.default
+        if let items = fm.enumerator(at: folder, includingPropertiesForKeys: [.isSymbolicLinkKey]) {
+            for case let item as URL in items where (try? item.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink != true {
+                try? fm.setAttributes([.immutable: false, .appendOnly: false], ofItemAtPath: item.path)
+            }
+        }
+        try? fm.removeItem(at: folder)
     }
 
     /// Where a file sits inside a folder ("images/logo.png"), for copying it somewhere else at the same spot.

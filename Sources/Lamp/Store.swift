@@ -1531,19 +1531,40 @@ final class Store: ObservableObject {
     nonisolated static func sharePicture(for file: URL) -> URL? {
         guard let look = LampFile(contentsOf: file), let png = ShareCard.png(look) else { return nil }
         let picture = file.deletingPathExtension().appendingPathExtension("png")
-        return (try? png.write(to: picture)) == nil ? nil : picture
+        // Written whole: another share of the same wish may be writing the same picture.
+        return (try? png.write(to: picture, options: .atomic)) == nil ? nil : picture
     }
 
     /// The app's .lampapp, written where it outlives the paste or the drop that hands it on: another app may
     /// read it after Lamp has moved on.
     nonisolated static func sharedFile(of project: LampProject, at file: URL? = nil, icon: Data? = nil) throws -> URL {
+        sharing.lock()
+        defer { sharing.unlock() }
         let exported = try Sharing.export(project, icon: icon)
         let file = file ?? sharedFolder.appendingPathComponent(exported.lastPathComponent)
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? FileManager.default.removeItem(at: file)
-        try FileManager.default.moveItem(at: exported, to: file)
+        let fm = FileManager.default
+        defer { try? fm.removeItem(at: exported.deletingLastPathComponent()) }
+        try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // The new file is first put whole on the same disk as the old one, which stays as it was if that fails
+        // (a full disk), and then takes the old one's place in one step: whatever was handed the old file (a paste,
+        // the picker, a drop) finds a file there at every moment.
+        let nearby = try fm.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: file, create: true)
+        defer { try? fm.removeItem(at: nearby) }
+        let staged = nearby.appendingPathComponent(file.lastPathComponent)
+        try fm.moveItem(at: exported, to: staged)
+        if fm.fileExists(atPath: file.path) {
+            _ = try fm.replaceItemAt(file, withItemAt: staged)
+        } else {
+            try fm.moveItem(at: staged, to: file)
+        }
         return file
     }
+
+    /// One shared file is made at a time. Shares of one wish go to the same file, so two at once could leave the
+    /// copy that began first, or trip over each other putting it in place. Made one after the other, the file left
+    /// is the one that read the app last. Nothing made under it waits for the main
+    /// thread, which may be waiting here.
+    nonisolated private static let sharing = NSLock()
 
     nonisolated static var sharedFolder: URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("Forge/Shared", isDirectory: true)
@@ -1555,9 +1576,7 @@ final class Store: ObservableObject {
         panel.nameFieldStringValue = "\(project.name).lampapp"
         guard panel.runModal() == .OK, let destination = panel.url else { return }
         do {
-            let file = try Sharing.export(project)
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.moveItem(at: file, to: destination)
+            _ = try Self.sharedFile(of: project, at: destination)
         } catch {
             NSAlert(error: error).runModal()
         }

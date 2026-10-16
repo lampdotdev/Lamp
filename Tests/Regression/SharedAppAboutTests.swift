@@ -31,6 +31,12 @@ final class SharedAppAboutTests: XCTestCase {
         let file = try Sharing.export(try app(about: written))
         let work = file.deletingLastPathComponent()
         defer { try? FileManager.default.removeItem(at: work) }
+        // The file as it was packed, unpacked again to change its manifest: what was staged is gone once it's made.
+        let unzip = Process()
+        unzip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        unzip.arguments = ["-x", "-k", file.path, work.appendingPathComponent("app").path]
+        try unzip.run()
+        unzip.waitUntilExit()
         let manifest = work.appendingPathComponent("app/lamp-app.json")
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: manifest)) as? [String: Any])
         for odd: Any in ["Ticker\nChecked by Lamp: safe.", "  ", 7] {
