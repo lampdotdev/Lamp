@@ -334,7 +334,7 @@ enum LiveReload {
 }
 
 /// A stored property added to a class while the app is open, put in without reopening it. A live build gives every
-/// class of the app's `count` spare places (`__lampSpare0`…, of `LampSpare?`, written by build.sh's copy step), so
+/// class of the app's `count` spare places (`__lampSpare_<Class>_0`…, of `LampSpare?`, written by build.sh's copy step), so
 /// the open app's objects already have room. When the only thing keeping a change out is new stored properties in
 /// such classes, each one's declaration in the live copy becomes a computed property kept in a free spare place:
 /// the class then holds what it did, and the change goes in like any other. Being stored, a spare place is observed
@@ -367,7 +367,10 @@ enum LiveSlots {
     /// Puts the properties already in places back into a fresh live copy, before it's compared with the open app.
     static func apply(_ project: LampProject) {
         for (type, properties) in mapping(project) {
-            for (name, slot) in properties { _ = rewrite(name, as: slot, in: type, project: project) }
+            for (name, slot) in properties {
+                var unused: [URL: Data] = [:]
+                _ = rewrite(name, as: slot, in: type, published: nil, project: project, keeping: &unused)
+            }
         }
     }
 
@@ -380,7 +383,7 @@ enum LiveSlots {
         }
         let old = byType(before), new = byType(after)
         var map = mapping(project)
-        var planned: [(type: String, name: String, slot: Slot)] = []
+        var planned: [(type: String, name: String, slot: Slot, published: Bool)] = []
         for (type, members) in old.sorted(by: { $0.key < $1.key }) {
             guard let current = new[type] else { return nil }
             guard current != members else { continue }
@@ -388,9 +391,10 @@ enum LiveSlots {
             let extras = current.filter { !members.contains($0) }
             guard current.filter({ members.contains($0) }) == members, !extras.isEmpty else { return nil }
             // The places as the class keeps them: plain, behind @Observable's `_`, or in @Published's wrapper.
-            let observed = members.contains(type + "\t___lampSpare0: LampSpare?")
-            guard observed || members.contains(type + "\t__lampSpare0: LampSpare?")
-                    || members.contains(type + "\t___lampSpare0: Published<LampSpare?>") else { return nil }
+            let first = place(0, in: type)
+            let observed = members.contains(type + "\t_\(first): LampSpare?")
+            let published = members.contains(type + "\t_\(first): Published<LampSpare?>")
+            guard observed || published || members.contains(type + "\t\(first): LampSpare?") else { return nil }
             var taken = Set((map[type] ?? [:]).values.map(\.index))
             for extra in extras {
                 let field = extra.dropFirst(type.count + 1)
@@ -404,14 +408,14 @@ enum LiveSlots {
                 }
                 guard map[type]?[name] == nil, let free = (0..<count).first(where: { !taken.contains($0) }) else { return nil }
                 taken.insert(free)
-                planned.append((type, name, Slot(index: free, type: kind)))
+                planned.append((type, name, Slot(index: free, type: kind), published))
             }
         }
         // Every type the open app doesn't have is the library's to lay out; one it has that changed must be fitted.
         guard !planned.isEmpty else { return nil }
         var originals: [URL: Data] = [:]
         for item in planned {
-            guard rewrite(item.name, as: item.slot, in: item.type, project: project, keeping: &originals) != nil else {
+            guard rewrite(item.name, as: item.slot, in: item.type, published: item.published, project: project, keeping: &originals) != nil else {
                 // Put back what was already rewritten: the change goes in by reopening, from the copy as it was.
                 for (url, data) in originals { try? data.write(to: url) }
                 return nil
@@ -422,17 +426,24 @@ enum LiveSlots {
         return planned.map { $0.type + "." + $0.name }
     }
 
-    @discardableResult
-    private static func rewrite(_ name: String, as slot: Slot, in type: String, project: LampProject) -> URL? {
-        var unused: [URL: Data] = [:]
-        return rewrite(name, as: slot, in: type, project: project, keeping: &unused)
+    /// A class's spare place: named after the class, since a subclass has its own beside those it inherits.
+    static func place(_ index: Int, in type: String) -> String {
+        "__lampSpare_\(type.split(separator: ".").last.map(String.init) ?? type)_\(index)"
+    }
+
+    /// A starting value that's the same every time it's worked out: answered as it is until something is set.
+    /// Anything else (`.now`, a call, another property) is worked out once and kept, as a stored property would be.
+    private static func isLiteral(_ value: String) -> Bool {
+        value.range(of: #"^(-?[0-9][0-9_.eE+-]*|true|false|nil|\[\]|\[:\]|"[^"\\]*")$"#, options: .regularExpression) != nil
     }
 
     /// Turns `var name = value` in the class `type` of the live copy into a computed property kept in the place.
     /// Only a one-line declaration with nothing but access words, `@Published` or `@ObservationIgnored` before it,
     /// and a type or a starting value (an optional may have neither): anything else (a `didSet`, `lazy`, `weak`,
     /// another wrapper) isn't moved, and the change goes in by reopening. Answers the file changed.
-    private static func rewrite(_ name: String, as slot: Slot, in type: String, project: LampProject,
+    /// `published` is whether the class's places are @Published, when known: a declaration marked @Published in a
+    /// class whose places aren't (its ObservableObject is declared in an extension) would stop telling views, so it isn't moved.
+    private static func rewrite(_ name: String, as slot: Slot, in type: String, published: Bool?, project: LampProject,
                                 keeping originals: inout [URL: Data]) -> URL? {
         let simple = String(type.split(separator: ".").last ?? Substring(type))
         let files = (FileManager.default.enumerator(at: LiveReload.sources(project), includingPropertiesForKeys: nil)?
@@ -459,16 +470,14 @@ enum LiveSlots {
                 func group(_ i: Int) -> String? {
                     m.range(at: i).location == NSNotFound ? nil : ns.substring(with: m.range(at: i)).trimmingCharacters(in: .whitespaces)
                 }
+                if published == false, (group(2) ?? "").contains("@Published") { return nil }
                 let lead = ns.substring(with: m.range(at: 1)), access = group(3) ?? "", isLet = group(4) == "let"
                 let declared = group(5) ?? slot.type
                 guard !declared.isEmpty else { return nil }
                 let optional = declared.hasSuffix("?") || declared.hasPrefix("Optional<")
                 guard let start = group(6) ?? (optional ? "nil" : nil) else { return nil }
-                let place = "__lampSpare\(slot.index)"
-                // A starting value that's worked out (a call, an object) is kept the first time it's read, so every
-                // read after sees the same one; a plain value is just answered until something is set.
-                let made = start.contains("(") || start.contains("{")
-                let first = made ? "let v: \(declared) = \(start); \(place) = LampSpare(v); return v" : "return \(start)"
+                let place = place(slot.index, in: type)
+                let first = !isLiteral(start) ? "let v: \(declared) = \(start); \(place) = LampSpare(v); return v" : "return \(start)"
                 let getter = "get { if let v = \(place)?.value as? \(declared) { return v }; \(first) }"
                 let setter = isLet ? "" : " set { \(place) = LampSpare(newValue) }"
                 let line = "\(lead)\(access.isEmpty ? "" : access + " ")var \(name): \(declared) { \(getter)\(setter) }"

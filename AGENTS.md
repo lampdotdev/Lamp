@@ -512,8 +512,11 @@ app's settings and its icon still reopen it. Each request to a live app ends wit
 new state in new views rather than new stored properties in existing types, when that's as clear.
 
 A stored property added to a class goes in live too (`LiveSlots`, in LiveReload.swift). The copy step gives every
-class of the app's (not `@Model`, Core Data or `Sendable` ones) a few empty spare places, `__lampSpare0`… of
-`LampSpare?` (`@Published` in an `ObservableObject`), so the open app's objects already have room. When the only
+class of the app's (not `@Model`, Core Data or `Sendable` ones) a few empty spare places, `__lampSpare_<Class>_0`…
+of `LampSpare?` (named after the class, so a subclass's don't clash with what it inherits; `@Published` when the
+header says `ObservableObject`), so the open app's objects already have room. A starting value that isn't a literal
+(`.now`, a call) is worked out on the first read and kept; a `@Published` property in a class whose places aren't
+published (conforming in an extension) reopens the app instead. When the only
 difference in layout is new stored properties in such classes, `LiveSlots.fit` rewrites each one-line declaration in
 the live copy into a computed property kept in a free place, and the change is compiled again and checked as usual.
 Being stored, a place is observed like any property, so views redraw. Which property is in which place
