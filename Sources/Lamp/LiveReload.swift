@@ -689,14 +689,16 @@ enum LiveSlots {
         var seen = Set<String>()
         guard !holdsObject(variable.type, classes: declarations.classes, layout: layout, seen: &seen) else { return nil }
         // Its own text, and those of the rewritten constants it's made from, however far back.
-        var sources = [initial], visited: Set<String> = [key], queue = [initial]
+        // Walked and hashed in name order, each with its name, so the same inputs always give the same name.
+        var sources: [String: String] = [key: initial], queue = [initial]
         while let next = queue.popLast() {
-            for other in rewritten where !visited.contains(other) && SwiftText.mentions(constantName(other), in: next) {
-                visited.insert(other)
-                if let made = declarations.constants[other].flatMap({ initialText(of: $0, in: declarations) }) { sources.append(made); queue.append(made) }
+            for other in rewritten.sorted() where sources[other] == nil && SwiftText.mentions(constantName(other), in: next) {
+                guard let made = declarations.constants[other].flatMap({ initialText(of: $0, in: declarations) }) else { continue }
+                sources[other] = made
+                queue.append(made)
             }
         }
-        let name = displayName(key) + "#" + SwiftSource.digest(sources.joined(separator: "\n"))
+        let name = displayName(key) + "#" + SwiftSource.digest(sources.keys.sorted().map { $0 + "=" + sources[$0]! }.joined(separator: "\n"))
         let quoted = name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         return (start..<end, "var \(variable.name): \(variable.type) { LampConstants.value(\"\(quoted)\") { () -> \(variable.type) in \(initial) } }")
     }
