@@ -49,7 +49,7 @@ A capability given to one engine must be given to all of them that can take it, 
   a new app's guesses and idea there made a form to go through when it's the app the person wants to try. Cards saved with them still read
   (`Talk.News`, `Talk.Guess`, `Talk.Idea`): what's new as lines under the sentence, a guess the person turned as
   what they chose, and nothing else. A new app's build card folds to its first line (its name, Ready) once the turn is over, with no
-  picture of the app, so the result card under it is the one thing that says what came of it. The card takes the place of the reply and of the line saying the app is ready (`LogLine.visible`); a
+  picture of the app, so the result card under it is the one thing that says what came of it. The card takes the place of the line saying the app is ready; the agent's last message still shows above it, since what it says there (what looked off, what it changed its mind about) is said nowhere else. A
   small change or a fix keeps one sentence and that line. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
   tool waits for the person: it returns at once, the agent ends its reply, and a click is sent as the
