@@ -69,6 +69,34 @@ final class TokenServiceTests: XCTestCase {
         XCTAssertTrue(printed.contains("disconnect-unkept call after: answered"), printed)
     }
 
+    /// Home Assistant runs on the person's server: the address they type, however they type it, is cut to its
+    /// scheme, host and port, and the token goes there and nowhere else.
+    func testATokenGoesOnlyToTheServerThePersonTyped() throws {
+        let printed = try runProgram(scenarios: ["server"])
+        XCTAssertTrue(printed.contains("sent http://homeassistant.local:8123/api/ with Bearer made-up-token"), printed)
+        XCTAssertTrue(printed.contains("states -> answered"), printed)
+        XCTAssertTrue(printed.contains("sent http://homeassistant.local:8123/api/states with Bearer made-up-token"), printed)
+        for path in ["https://evil.test/x", "../x", "//evil.test/x"] {
+            XCTAssertTrue(printed.contains("\(path) -> refused"), printed)
+        }
+        XCTAssertTrue(printed.contains("typed 192.168.1.20:8123 -> http://192.168.1.20:8123"), printed)
+        XCTAssertTrue(printed.contains("typed my-home.example.com -> https://my-home.example.com"), printed)
+        XCTAssertTrue(printed.contains("typed https://box.local:8123/lovelace/0?x=1 -> https://box.local:8123"), printed)
+        XCTAssertTrue(printed.contains("typed not an address -> nothing"), printed)
+        XCTAssertFalse(printed.contains("sent https://evil.test"), printed)
+    }
+
+    /// Open data needs no Connect: it's connected from the start, sends no key, reaches its own other hosts and no
+    /// others, and a refusal doesn't turn it into something to connect.
+    func testOpenDataNeedsNoConnection() throws {
+        let printed = try runProgram(scenarios: ["open"])
+        XCTAssertTrue(printed.contains("open connected at start: true"), printed)
+        XCTAssertTrue(printed.contains("sent https://open.example.test/v1/forecast?latitude=1 with no key"), printed)
+        XCTAssertTrue(printed.contains("sent https://other.open.example.test/v1/air?latitude=1 with no key"), printed)
+        XCTAssertTrue(printed.contains("https://evil.test/v1/air -> refused"), printed)
+        XCTAssertTrue(printed.contains("open after 401: needsConnection false, connected true"), printed)
+    }
+
     /// A service the app declares itself takes the key on the same sheet and keeps it under a name of its own. A key
     /// sent as a query parameter goes only to the service's address, with every call, and a call can't send another.
     func testAnAppsOwnServiceSendsItsKeyOnlyToItsAddress() throws {
@@ -170,7 +198,10 @@ final class TokenServiceTests: XCTestCase {
                     for api in LampAPI.all {
                         let before = Answers.seen.count
                         do {
-                            try await api.connect(Dictionary(uniqueKeysWithValues: api.fields.map { ($0.key, "made-up-\($0.key)") }))
+                            // A server address is the one the sheet suggests; the rest is made up.
+                            try await api.connect(Dictionary(uniqueKeysWithValues: api.fields.map {
+                                ($0.key, !$0.secret && $0.prompt.contains("://") ? $0.prompt : "made-up-\($0.key)")
+                            }))
                             print("\(api.id): connected")
                             api.disconnect()
                         } catch {
@@ -269,6 +300,37 @@ final class TokenServiceTests: XCTestCase {
                     do { _ = try await api.get("items"); print("disconnect-unkept call after: answered") }
                     catch { print("disconnect-unkept call after: \(error.localizedDescription)") }
                     LampSecrets.store = .keychain
+                case "server":
+                    let api = LampAPI(id: "test-" + UUID().uuidString.prefix(8), name: "Home", base: "{server}/api/", page: "{server}/profile",
+                                      steps: "", fields: [.init(key: "server", label: "Address", secret: false), .init(key: "token", label: "Token")],
+                                      headers: ["Authorization": "Bearer {token}"], check: "")
+                    Answers.table["http://homeassistant.local:8123/api/"] = json(200)
+                    Answers.table["http://homeassistant.local:8123/api/states"] = json(200)
+                    do { try await api.connect(["server": " homeassistant.local:8123/lovelace/0 ", "token": "made-up-token"]) }
+                    catch { print("server connect: \(error.localizedDescription)") }
+                    for path in ["states", "https://evil.test/x", "../x", "//evil.test/x"] {
+                        do { _ = try await api.get(path); print("\(path) -> answered") }
+                        catch { print("\(path) -> \(error.localizedDescription.contains("isn't part of") ? "refused" : error.localizedDescription)") }
+                    }
+                    for typed in ["192.168.1.20:8123", "my-home.example.com", "https://box.local:8123/lovelace/0?x=1", "not an address"] {
+                        print("typed \(typed) -> \(LampAPI.server(typed) ?? "nothing")")
+                    }
+                    LampAPI.Saved.delete(api.id)
+                case "open":
+                    let api = LampAPI(id: "test-" + UUID().uuidString.prefix(8), name: "Open", base: "https://open.example.test/v1/",
+                                      page: "https://open.example.test/docs", steps: "", fields: [], headers: [:], check: "",
+                                      also: ["https://other.open.example.test/v1/"])
+                    print("open connected at start: \(api.isConnected)")
+                    Answers.table["https://open.example.test/v1/forecast?latitude=1"] = json(200)
+                    Answers.table["https://other.open.example.test/v1/air?latitude=1"] = json(200)
+                    Answers.table["https://open.example.test/v1/limited"] = json(401)
+                    for path in ["forecast", "https://other.open.example.test/v1/air", "https://evil.test/v1/air"] {
+                        do { _ = try await api.get(path, query: ["latitude": "1"]); print("\(path) -> answered") }
+                        catch { print("\(path) -> \(error.localizedDescription.contains("isn't part of") ? "refused" : error.localizedDescription)") }
+                    }
+                    do { _ = try await api.get("limited") }
+                    catch let failure as LampAPI.Failure { print("open after 401: needsConnection \(failure.needsConnection), connected \(api.isConnected)") }
+                    catch { print("open after 401: \(error)") }
                 case "own":
                     let api = LampAPI.own("space", name: "Space", base: "https://api.example.test/v1/", keyPage: "https://example.test/keys",
                                           steps: "", query: ["api_key": "{key}"], check: "ping")

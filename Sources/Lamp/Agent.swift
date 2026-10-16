@@ -171,10 +171,9 @@ enum Agent {
 
     ---
     This app is updated in place while it's open, keeping what's on screen, when a change only edits or adds code. \
-    A new stored property in a class goes in too, when it's declared on one line with a starting value (or is an \
-    optional). Adding a stored property to a struct, changing or removing one, an enum case or the App reopens it, \
-    so put new state in a class or in a new view with its own @State (in a new file) rather than in an existing \
-    struct, when that's as clear. \
+    New stored properties go in too, in a class, a struct or (as @State) a view, when each is declared on one line \
+    with a starting value (or is an optional); so do new cases at the end of an enum whose cases carry nothing. \
+    Changing or removing a stored property, the App, or a case anywhere else reopens it. \
     A look shows the window as the person left it, with the change in it.
     """
 
@@ -193,8 +192,9 @@ enum Agent {
     /// rule however many there are.
     private static let connectorRules = """
 
-    - When a wish needs a service the person uses (their Notion, Airtable, GitHub…) that the accounts on this \
-    device can't reach, call `connectors` before writing code for it, and build on what it says. Never ask for a \
+    - When a wish needs a service the person uses (their Notion, Airtable, GitHub, Home Assistant…) that the \
+    accounts on this device can't reach, or open data from the web (weather, exchange rates, food products), \
+    call `connectors` before writing code for it, and build on what it says. Never ask for a \
     key or a token in the chat or put one in the code: the app's own button asks the person. For a service that \
     isn't listed and needs a key, declare it with `LampAPI.own` (LampAPI's comment in LampSupport.swift) and put \
     `LampAPIButton` in the app, so the person gets the same Connect sheet: never a key field or dialog of your \
@@ -493,7 +493,7 @@ enum Agent {
         person stops and for how long, which needs `"backgroundModes": ["location"]`). Weather: `LampWeather` \
         (`now(latitude:longitude:)`, `hours`, `days`, `here()`), after `{"weather": true}` in capabilities.json, \
         for apps with an iPhone half only; the team also turns WeatherKit on for the app at developer.apple.com \
-        once, and the call's message says so until then. Apple's terms ask for `LampWeatherAttribution()` (its \
+        once, and the call's message says so until then (otherwise, Open-Meteo through `connectors`). Apple's terms ask for `LampWeatherAttribution()` (its \
         Weather mark, linking to its sources) wherever its weather is shown, allow forecasts to be kept only \
         briefly (never saved with the app's data), and rule out apps meant for emergencies or safety. Music: `LampMusic` (`authorize()`, `recentlyPlayed()`, \
         `library()`, `search(_:)`, `play(_:)`, `pause()`, and on the iPhone `nowPlaying`), Apple Music only, with \

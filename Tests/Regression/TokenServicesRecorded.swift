@@ -1,5 +1,7 @@
 /// What each token service's address for checking a token answered to a token that isn't one, sent with the
-/// headers its `LampAPI` declaration sends. Recorded from the services on 2026-10-15 at about 05:34 UTC.
+/// headers its `LampAPI` declaration sends. Recorded from the services on 2026-10-15 at about 05:34 UTC; Intervals.icu
+/// and Home Assistant at about 23:13 UTC, Home Assistant's from a local 2026.2.3 server, filed under the address
+/// the sheet's prompt suggests.
 enum TokenServicesRecorded {
     static let answers: [String: (status: Int, body: String)] = [
         "https://api.airtable.com/v0/meta/whoami": (401, #"{"error":{"type":"AUTHENTICATION_REQUIRED","message":"Authentication required"}}"#),
@@ -12,5 +14,7 @@ enum TokenServicesRecorded {
         "https://api.harvestapp.com/v2/users/me": (401, #"{"error":"invalid_token","error_description":"The access token provided is expired, revoked, malformed or invalid for other reasons."}"#),
         "https://api.clockify.me/api/v1/user": (401, #"{"message":"Api key does not exist","code":4003}"#),
         "https://api.figma.com/v1/me": (401, #"{"status":401,"err":"Invalid token"}"#),
+        "https://intervals.icu/api/v1/athlete/0": (401, #"{"status":401,"error":"Unauthorized"}"#),
+        "http://homeassistant.local:8123/api/": (401, "401: Unauthorized"),
     ]
 }

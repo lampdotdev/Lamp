@@ -20,8 +20,8 @@
  *   use yet (a key, a download, a sign-in). Lamp decides whether to show it and says what happened.
  * - `make_app_for`: asks Lamp to make the app for the Mac, the iPhone and iPad, or both; the reply says how to
  *   adapt the code.
- * - `connectors`: lists the services an app can connect to with the person's own account, or says how to build
- *   on one.
+ * - `connectors`: lists the services an app can connect to with the person's own account, and open data that
+ *   needs none, or says how to build on one.
  * - `ask`, `show_result`: the agent's cards. `ask` puts questions in the chat as a card the person answers by
  *   clicking; `show_result` is the card for what a request made: its picture and one sentence. Lamp
  *   draws both and turns a click into the person's next message, so neither waits for an answer here.

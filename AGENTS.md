@@ -524,22 +524,43 @@ details (`LiveReload.Verdict`), so the rules can be tuned by what happens. The p
 quiet status line in both chats (`ChatLook.reloaded`), once a turn, when a request's change closed the open app and
 opened it again, never for Open App or Undo. A live build reads the app's own files
 from its Assets folder rather than its bundle (`LampAssets`), so a new picture goes in live too; the package, the
-app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which asks for
-new state in new views rather than new stored properties in existing types, when that's as clear.
+app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which tells the
+agent what goes in without reopening.
 
-A stored property added to a class goes in live too (`LiveSlots`, in LiveReload.swift). The copy step gives every
-class of the app's (not `@Model`, Core Data or `Sendable` ones) a few empty spare places, `__lampSpare_<Class>_0`…
-of `LampSpare?` (named after the class, so a subclass's don't clash with what it inherits; `@Published` when the
-header says `ObservableObject`), so the open app's objects already have room. A starting value that isn't a literal
-(`.now`, a call) is worked out on the first read and kept; a `@Published` property in a class whose places aren't
-published (conforming in an extension) reopens the app instead. When the only
-difference in layout is new stored properties in such classes, `LiveSlots.fit` rewrites each one-line declaration in
-the live copy into a computed property kept in a free place, and the change is compiled again and checked as usual.
-Being stored, a place is observed like any property, so views redraw. Which property is in which place
+New stored properties go in live too (`LiveSlots`, in LiveReload.swift). The copy step (`Template.sparesPerl`) gives
+each type of the app's spare room the open app's values already have: every class a few places,
+`__lampSpare_<Class>_0`… of `LampSpare?` (named after the class, so a subclass's don't clash with what it inherits;
+`@Published` when the header says `ObservableObject`), every view one `@State` box (`__lampState_<View>`, a
+`LampStateBox`), and every other struct one place holding any number of properties by name (`__lampSpare_<Struct>`, not optional,
+so its own `==` and hash run: they take a property never set as its starting value; saved data leaves it out
+through two overloads of the keyed coding containers, which the compiler's Codable code takes over the general ones).
+Left out is what a spare would break: SwiftData and Core Data models, `Sendable` classes, `Equatable` views, the App
+and its scenes, property wrappers, App Intents, and structs in a file that lays memory out by hand (vertex data). When
+the only difference in layout is new stored properties in such types, `LiveSlots.fit` rewrites each one-line
+declaration in the live copy into a computed property kept in a spare (a view's `$name` becomes a binding to its
+box), and the change is compiled again and checked as usual. Being stored, a spare is observed like any property, so
+views redraw. A class's starting value that isn't a literal (`.now`, a call) is worked out on the first read and kept;
+a struct can't keep one from a read, so its new property needs a starting value that comes out the same every time (a
+literal, an empty collection, or one of the app's own enum's cases, judged again each time the property is put back;
+anything else, or a different one later, reopens the app, since the spare compares a value that never set the
+property by the starting value it was taken in with); a `@Published` property in a class whose places aren't published (conforming
+in an extension) reopens it too. `@State` is read in both forms the compiler has given it: `_name: State<T>`, and
+`__name: LazyState<T>` where it is a macro. Cases added at the end of an enum whose cases carry nothing need no
+spare: its values keep their size (`LiveSlots.casesAdded`). Only while nothing the app keeps holds it but as itself or
+in a plain collection: Swift uses the numbers after the last case for `nil` in an optional of it and for other enums'
+cases that carry it, which a new case would take over. That's looked for in every stored field, static and global of
+the new code and in the types the spares keep (`LiveReload.enumsHeld`), before the change goes in; an app that keeps
+values of any type (`Any`, `AnyObject`, `AnyHashable`, `any P`) reopens instead, since one could hide there. Which property is in which spare
 (`.lamp/live/slots.json`) is put back into each fresh copy (`LiveSlots.apply`) until the app is installed again: the
 whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs
-once it's installed (`LiveReload.markRunning(from:)`). A place never reaches saved data: `LampSpare` encodes as
-nothing, and a computed property isn't encoded.
+once it's installed (`LiveReload.markRunning(from:)`). A spare never reaches saved data: `LampSpare` encodes as
+nothing, and a computed property isn't encoded. If spares ever keep an app from building, it's built again without
+them and stays without (`LiveSlots.giveUp`, `.lamp/live/no-spares`), so the agent only sees errors in its own code.
+
+Where a class's fields are is sometimes worked out at run time (a subclass, or fields after a system type such as
+an `@Observable` class's registrar), kept in a global for each field that the app fills in. A library has its own
+copies, which nothing fills in, so `LampLive` copies the app's values into each library as it loads
+(`takeFieldOffsets`), asking for the class's metadata first when the app hasn't worked it out yet.
 
 A Mac app can also open beside a web page, in Chrome's sidebar (Lamp Dev only, an experiment: Settings →
 Experimental, `BrowserBridge.switchKey`; how it fits together is in `experiments/browser-connector/README.md`).
@@ -836,11 +857,13 @@ modifier, since an app has no other place that's told. The rules are `Agent.Rule
 ### Services the person already uses
 
 An app reaches the person's account on a service they use (Notion, Linear, Airtable, GitHub, Readwise…) in one of two
-ways, and every service an app can connect to is one entry in `Connectors.all` (Sources/Lamp/Connectors.swift): its
+ways, or open data that needs no account in a third, and every service an app can connect to is one entry in
+`Connectors.all` (Sources/Lamp/Connectors.swift): its
 name, what people keep there, how it connects, its API's documentation and a few lines on the calls that matter.
 The builder finds them through the `connectors` tool, which lists them and, given one, says how to build on it
 (`Connectors.answer`), so the system prompt has one line about connectors however many there are
-(`Agent.connectorRules`, which keeps the Mac's own accounts first and `LampComputer` after). Each entry's
+(`Agent.connectorRules`, which keeps the Mac's own accounts first and `LampComputer` after, and names open data
+too, since a wish for the weather or exchange rates isn't about an account). Each entry's
 declaration in LampSupport.swift (`LampService.<id>`, `LampAPI.<id>`) is written from the same entry
 (`Connectors.fill`, in place of `{{SIGN_IN_SERVICES}}` and `{{TOKEN_SERVICES}}`), so what the builder is told is what
 the app has. A service is added only when the person can connect without anyone registering an app first; one that
@@ -875,7 +898,16 @@ refused before anything is sent, and no request follows a redirect, so the token
 A 401 means the token is over and it's forgotten; a 403 is asked of the check address again, since Toggl Track says
 403 for a token it doesn't take where others say it of one thing the token may not see. Disconnect forgets the
 token here; it still works until the person deletes it on the service. `TokenServiceTests` runs this against each
-service's recorded answer to a wrong token.
+service's recorded answer to a wrong token. A service that runs on the person's own server (Home Assistant) has
+`{server}` in its base and its token page, and an address field on the sheet: what they type is cut to its scheme,
+host and port (`LampAPI.server`; with no scheme, http for a home-network name or a number, as such servers come,
+https otherwise), kept with the token, and the token goes only there.
+
+**Open data** (`LampAPI` with no fields; Open-Meteo, Open Food Facts, Frankfurter): no account and no key, so no
+Connect, no sheet and no button; it is always connected and the app calls it as it opens. It keeps `LampAPI`'s paths
+relative to its base, plus a full address under one of its own other hosts (`also`: Open-Meteo answers air quality
+and place names elsewhere). Only services free to read without signing up belong here, and their terms (credit,
+limits) go in the entry's notes for the builder.
 
 Both kinds are kept by Lamp for the app, not in the app's own Keychain (`LampSecrets` in LampSupport.swift,
 `AppSecrets` and `/app/secrets` in Lamp): Lamp's certificate has no Apple team, so macOS ties an item an app makes to
@@ -901,8 +933,10 @@ on the same Connect sheet as a listed service's, it is checked, kept in `LampSec
 (`own-…`, so it can't stand in for a listed service's token), and sent only to that address. No key field or dialog
 of the app's own, and never UserDefaults, LampStore or a Keychain item of the app's own: the first two are the app's
 settings and folder, and the last asks for the password after every rebuild. Both `Agent.connectorRules` and the
-tool's list (`Connectors.list`, also its answer to a name it doesn't know) say so. The review counts `LampAPI` and
-`LampSecrets.` in the app's code as connecting an account.
+tool's list (`Connectors.list`, also its answer to a name it doesn't know) say so. Such a service's address must be
+https (`httpsOnly`: nothing is sent otherwise), while a listed one's may be the person's own server on plain http.
+The review counts `LampAPIButton`, `LampAPI.own` and `LampSecrets.` in the app's code as connecting an account, and
+open data alone as going online.
 
 ## Naming: Lamp and Lamp
 

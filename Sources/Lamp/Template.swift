@@ -3435,16 +3435,83 @@ enum Template {
     }
 
     #if LAMP_LIVE
-    /// A spare place in a class, for a stored property added while the app is open (LiveReload's slots): live
-    /// builds give every class of the app's a few, empty, and a new property kept in one leaves the object's
-    /// layout as the open app has it. Saved data never holds one (it encodes as nothing and decodes empty).
-    struct LampSpare: Codable, @unchecked Sendable {
+    /// A spare place for a stored property added while the app is open (LiveSlots): live builds give every class of
+    /// the app's a few, and every struct one that holds any number by name, empty, so a new property kept in one
+    /// leaves the type's layout as the open app has it. Saved data never holds one (it encodes as nothing and
+    /// decodes empty), and it compares and hashes by what it holds that can, so a struct's own Equatable and
+    /// Hashable still see a new property.
+    struct LampSpare: Codable, Hashable, @unchecked Sendable {
         var value: Any?
         init(_ value: Any?) { self.value = value }
         init(from decoder: Decoder) throws { value = nil }
         func encode(to encoder: Encoder) throws {
             var container = encoder.singleValueContainer()
             try container.encodeNil()
+        }
+        /// A struct's property, by name: what was set, kept as set.
+        func field(_ name: String) -> Any? { (value as? [String: Entry])?[name]?.value }
+        struct Entry { var value: Any; var initial: Any }
+        /// Keeps what was set beside the property's starting value, which is what a struct that never set it holds:
+        /// two values compare and hash by what their properties are, set or not, as they would stored.
+        static func setting(_ name: String, to new: Any, initial: Any, in spare: LampSpare) -> LampSpare {
+            var entries = (spare.value as? [String: Entry]) ?? [:]
+            entries[name] = Entry(value: new, initial: initial)
+            return LampSpare(entries)
+        }
+        private static func same(_ a: Any?, _ b: Any?) -> Bool {
+            guard let a, let b else { return a == nil && b == nil }
+            guard let equatable = a as? any Equatable else { return false }
+            func compare<T: Equatable>(_ x: T) -> Bool { (b as? T) == x }
+            return compare(equatable)
+        }
+        static func == (a: LampSpare, b: LampSpare) -> Bool {
+            guard let left = a.value as? [String: Entry] ?? (a.value == nil ? [:] : nil),
+                  let right = b.value as? [String: Entry] ?? (b.value == nil ? [:] : nil) else { return same(a.value, b.value) }
+            for name in Set(left.keys).union(right.keys) {
+                let one = left[name]?.value ?? right[name]?.initial, other = right[name]?.value ?? left[name]?.initial
+                if !same(one, other) { return false }
+            }
+            return true
+        }
+        func hash(into hasher: inout Hasher) {
+            guard let entries = value as? [String: Entry] else {
+                if let value = value as? AnyHashable { hasher.combine(value) }
+                return
+            }
+            // What equals its starting value hashes as if never set, as it compares.
+            for (name, entry) in entries.sorted(by: { $0.key < $1.key }) where !Self.same(entry.value, entry.initial) {
+                hasher.combine(name)
+                if let value = entry.value as? AnyHashable { hasher.combine(value) }
+            }
+        }
+    }
+
+    /// A struct's spare is a property it doesn't spell, so saved data leaves it out: nothing is written for it, and
+    /// data without it reads as empty. The app's own Codable code, written by the compiler, takes these over the
+    /// general ones.
+    extension KeyedEncodingContainer {
+        mutating func encode(_ value: LampSpare, forKey key: Key) throws {}
+    }
+    extension KeyedDecodingContainer {
+        func decode(_ type: LampSpare.Type, forKey key: Key) throws -> LampSpare { LampSpare(nil) }
+    }
+
+    /// A view's spare state (LiveSlots): `@State` added to a view while the app is open is kept here by name, so the
+    /// view holds what it did. A starting value is worked out on the first read and kept without redrawing anything;
+    /// a change redraws the views that read any of it.
+    @Observable final class LampStateBox {
+        @ObservationIgnored private var values: [String: Any] = [:]
+        private var changes = 0
+        func get<T>(_ name: String, _ initial: () -> T) -> T {
+            _ = changes
+            if let value = values[name] as? T { return value }
+            let value = initial()
+            values[name] = value
+            return value
+        }
+        func set<T>(_ name: String, _ value: T) {
+            values[name] = value
+            changes += 1
         }
     }
 
@@ -3502,6 +3569,7 @@ enum Template {
             }
             guard let image = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == path }),
                   let header = _dyld_get_image_header(image) else { return }
+            Self.takeFieldOffsets(header, slide: _dyld_get_image_vmaddr_slide(image))
             let defined = Self.definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image))
             for (name, address) in defined where Self.isCode(name) && !Self.accesses(name, oneOf: Self.stored(in: defined)) {
                 latest[name] = address
@@ -3584,16 +3652,38 @@ enum Template {
                     Int(symtab.pointee.nsyms), base, dysymtab)
         }
 
-        private static func definedSymbols(_ header: UnsafePointer<mach_header>, slide: Int) -> [(String, UnsafeRawPointer)] {
+        private static func definedSymbols(_ header: UnsafePointer<mach_header>, slide: Int, local: Bool = false) -> [(String, UnsafeRawPointer)] {
             guard let tables = tables(header, slide: slide) else { return [] }
             var out: [(String, UnsafeRawPointer)] = []
             for index in 0..<tables.count {
                 let symbol = tables.symbols[index]
-                guard symbol.n_type & UInt8(N_EXT) != 0, symbol.n_type & UInt8(N_TYPE) == UInt8(N_SECT), symbol.n_value != 0,
+                guard local || symbol.n_type & UInt8(N_EXT) != 0, symbol.n_type & UInt8(N_STAB) == 0,
+                      symbol.n_type & UInt8(N_TYPE) == UInt8(N_SECT), symbol.n_value != 0,
                       let address = UnsafeRawPointer(bitPattern: Int(symbol.n_value) + slide) else { continue }
                 out.append((String(cString: tables.strings.advanced(by: Int(symbol.n_un.n_strx))), address))
             }
             return out
+        }
+
+        /// Where a class's fields are is worked out as the app runs when it can't be known when it's compiled (a
+        /// subclass, or fields after one of the system's types, such as an @Observable class's registrar), and kept
+        /// in a global for each field. A library has its own copies, which nothing fills in: its code would read
+        /// every such field at the start of the object. So they take the app's values, once the app has worked
+        /// the class out (asking for its metadata does that). A field the app has none for is new, and stays the
+        /// library's.
+        private static func takeFieldOffsets(_ header: UnsafePointer<mach_header>, slide: Int) {
+            guard let app = _dyld_get_image_header(0) else { return }
+            let theirs = Dictionary(definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0), local: true), uniquingKeysWith: { first, _ in first })
+            let accessors = theirs.filter { $0.key.hasSuffix("CMa") }
+            for (name, address) in definedSymbols(header, slide: slide, local: true) where name.hasSuffix("Wvd") {
+                // One the compiler knew is already right, and may be in memory that can't be written.
+                guard address.load(as: Int.self) == 0, let source = theirs[name] else { continue }
+                if source.load(as: Int.self) == 0,
+                   let accessor = accessors.filter({ name.hasPrefix($0.key.dropLast(2)) }).max(by: { $0.key.count < $1.key.count }) {
+                    _ = unsafeBitCast(accessor.value, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0)
+                }
+                UnsafeMutableRawPointer(mutating: address).storeBytes(of: source.load(as: Int.self), as: Int.self)
+            }
         }
 
         /// Points the image's symbol pointers, which its calls to its own functions go through, at the new code.
@@ -9120,11 +9210,16 @@ enum Template {
     #endif
 
     /// A service the person already uses that lets them make a personal token on its own site: Airtable, Coda,
-    /// Readwise, GitHub, Toggl Track and the others listed below. The person clicks Connect, opens the service's
-    /// page from the sheet, makes a token there and pastes it into the sheet; the app checks it with the service
-    /// before keeping it. It is kept on this device for this app only (`LampSecrets`) and is sent only to that service's
-    /// own address. It is never in the app's folder, so a shared copy arrives disconnected and each person
-    /// connects their own account.
+    /// Readwise, GitHub, Toggl Track, Home Assistant and the others listed below. The person clicks Connect, opens the
+    /// service's page from the sheet, makes a token there and pastes it into the sheet; the app checks it with the
+    /// service before keeping it. It is kept on this device for this app only (`LampSecrets`) and is sent only to that
+    /// service's own address (for Home Assistant, the server address the person typed with it). It is never in the
+    /// app's folder, so a shared copy arrives disconnected and each person connects their own account.
+    ///
+    /// Open data (Open-Meteo, Open Food Facts, Frankfurter) is a `LampAPI` with nothing to paste: it is always
+    /// connected and has no button or sheet, so call it straight away.
+    ///
+    ///     let rates = try await LampAPI.frankfurter.get("rates", query: ["base": "USD", "quotes": "EUR"])
     ///
     ///     @ObservedObject private var readwise = LampAPI.readwise
     ///     LampAPIButton(api: .readwise)              // Connect (a sheet to paste the token), connected with Disconnect
@@ -9168,8 +9263,10 @@ enum Template {
         struct Field: Identifiable {
             let key: String
             let label: String
-            /// Shown as dots while typed: a token. An account number isn't.
+            /// Shown as dots while typed: a token. An account number or an address isn't.
             var secret = true
+            /// What the empty field shows.
+            var prompt = "Paste here"
             var id: String { key }
         }
 
@@ -9195,12 +9292,17 @@ enum Template {
 
         let id: String
         let name: String
-        /// The address every path is relative to.
-        let base: URL
-        /// The service's page where the person makes the token.
-        let page: URL
+        /// The address every path is relative to, with `{key}` for a server address the person types (Home
+        /// Assistant runs on theirs).
+        private let baseAddress: String
+        /// The service's page where the person makes the token, written the same way.
+        private let pageAddress: String
+        /// The same service's other addresses, for open data that answers from more than one: a path may be a full
+        /// address under one of these.
+        private let also: [URL]
         /// What to do on that page, in a sentence.
         let steps: String
+        /// What the person pastes; none for open data, which needs no account.
         let fields: [Field]
         /// The headers each request carries, with `{key}` standing for what the person pasted under that key. A
         /// value beginning "Basic " has the rest sent as Basic authentication.
@@ -9210,23 +9312,67 @@ enum Template {
         private let keyQuery: [String: String]
         /// A path that answers 2xx to a token that works: it's asked before the token is kept.
         private let check: String
+        /// An app's own service names its address itself, so it must be https or the key would travel as plain
+        /// text. A listed one's address is Lamp's, or the person's own server (Home Assistant on the home network
+        /// comes on plain http).
+        private let httpsOnly: Bool
         @Published private(set) var isConnected = false
         private var generation = 0
         /// Counts Connects, so one the person walked away from keeps nothing it hears back.
         private var attempt = 0
 
         fileprivate init(id: String, name: String, base: String, page: String, steps: String, fields: [Field],
-                         headers: [String: String], check: String, query: [String: String] = [:]) {
+                         headers: [String: String], check: String, also: [String] = [], query: [String: String] = [:],
+                         httpsOnly: Bool = false) {
             self.id = id
             self.name = name
-            self.base = URL(string: base)!
-            self.page = URL(string: page)!
+            baseAddress = base
+            pageAddress = page
+            self.also = also.compactMap(URL.init(string:))
             self.steps = steps
             self.fields = fields
             self.headers = headers
             keyQuery = query
+            self.httpsOnly = httpsOnly
             self.check = check
-            isConnected = Saved.read(id) != nil
+            isConnected = fields.isEmpty || Saved.read(id) != nil
+        }
+
+        /// Open data: nothing to paste, nothing to connect.
+        var isOpen: Bool { fields.isEmpty }
+
+        /// The base, or the token page, with the address the person typed in place. Nil while it isn't an address.
+        private func filled(_ template: String, _ values: [String: String]) -> URL? {
+            var text = template
+            for field in fields where template.contains("{\(field.key)}") {
+                guard let server = Self.server(values[field.key] ?? "") else { return nil }
+                text = text.replacingOccurrences(of: "{\(field.key)}", with: server)
+            }
+            guard let url = URL(string: text), url.host != nil else { return nil }
+            return url
+        }
+        func base(_ values: [String: String]) -> URL? { filled(baseAddress, values) }
+        func page(_ values: [String: String]) -> URL? { filled(pageAddress, values) }
+
+        /// A server's address as people type it ("homeassistant.local:8123", or one copied from the browser with a
+        /// page after it), cut to its scheme, host and port. With no scheme it's http for a name on the home network
+        /// or a number, as such servers come out of the box, and https for anything else.
+        static func server(_ typed: String) -> String? {
+            var text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            if !text.contains("://") {
+                let host = text.split(separator: "/").first.flatMap { $0.split(separator: ":").first }.map(String.init) ?? ""
+                let home = !host.contains(".") || host.allSatisfy { $0.isNumber || $0 == "." }
+                    || [".local", ".lan", ".home", ".internal", ".home.arpa"].contains { host.lowercased().hasSuffix($0) }
+                text = (home ? "http://" : "https://") + text
+            }
+            guard let parts = URLComponents(string: text), let scheme = parts.scheme?.lowercased(), scheme == "http" || scheme == "https",
+                  let host = parts.host, !host.isEmpty, parts.user == nil, parts.password == nil else { return nil }
+            var server = URLComponents()
+            server.scheme = scheme
+            server.host = host
+            server.port = parts.port
+            return server.string
         }
 
         /// A service that isn't one of Lamp's connectors, declared by the app, with the same Connect sheet, check
@@ -9238,7 +9384,7 @@ enum Template {
                         headers: [String: String] = [:], query: [String: String] = [:], check: String) -> LampAPI {
             // Its own name, so it can't take the place of a listed service's token in this app.
             LampAPI(id: "own-" + id, name: name, base: base, page: keyPage, steps: steps, fields: fields,
-                    headers: headers, check: check, query: query)
+                    headers: headers, check: check, query: query, httpsOnly: true)
         }
 
         /// Checks what the person pasted with the service and keeps it when the service takes it. Throws the reason
@@ -9246,10 +9392,15 @@ enum Template {
         func connect(_ values: [String: String]) async throws {
             attempt += 1
             let mine = (attempt, generation)
+            guard !isOpen else { return }
             var cleaned: [String: String] = [:]
             for field in fields {
-                let value = (values[field.key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                var value = (values[field.key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !value.isEmpty, !value.contains(where: \.isNewline) else { throw Failure(message: "Paste your \(field.label.lowercased()).") }
+                if baseAddress.contains("{\(field.key)}") {
+                    guard let server = Self.server(value) else { throw Failure(message: "That doesn't look like an address. Type it as it is in your browser.") }
+                    value = server
+                }
                 cleaned[field.key] = value
             }
             do {
@@ -9269,6 +9420,7 @@ enum Template {
 
         /// Forgets the token on this device. It still works on the service until the person deletes it there.
         func disconnect() {
+            guard !isOpen else { return }
             // False when Lamp isn't open: the token is still kept and comes back on the next read, so the app stays
             // connected (it's the truth) and says why to the log; Disconnect works once Lamp is open.
             guard Saved.delete(id) else {
@@ -9288,7 +9440,7 @@ enum Template {
         /// Any method, for what the shortcuts above don't cover. A JSON body may be a dictionary, an array or an
         /// Encodable value.
         func send(_ method: String, _ path: String, _ json: Any? = nil, query: [String: String] = [:]) async throws -> Reply {
-            guard let values = Saved.read(id) else {
+            guard let values = isOpen ? [:] : Saved.read(id) else {
                 isConnected = false
                 throw Failure(message: "Connect \(name) first.", needsConnection: true)
             }
@@ -9303,7 +9455,7 @@ enum Template {
             let mine = generation
             do {
                 return try await request(method, path, query: query, body: body, values: values)
-            } catch let failure as Failure where failure.status == 401 || failure.status == 403 {
+            } catch let failure as Failure where !isOpen && (failure.status == 401 || failure.status == 403) {
                 // 401 is a token the service no longer takes (deleted or expired there). Some services say 403 for
                 // that too, which others say of a working token that may not see this one thing: asking the
                 // address that checks a token tells the two apart.
@@ -9321,8 +9473,15 @@ enum Template {
         }
 
         /// The address a path stands for, or nil when it leads off the service's API: another site, another scheme,
-        /// or above the base.
-        func address(of path: String, query: [String: String] = [:]) -> URL? {
+        /// or above the base. Open data with more than one address also takes a full address under one of them.
+        func address(of path: String, query: [String: String] = [:], values: [String: String] = [:]) -> URL? {
+            if let other = also.first(where: { path.hasPrefix($0.absoluteString) }) {
+                return address(of: String(path.dropFirst(other.absoluteString.count)), query: query, under: other)
+            }
+            return base(values).flatMap { address(of: path, query: query, under: $0) }
+        }
+
+        private func address(of path: String, query: [String: String], under base: URL) -> URL? {
             guard !path.hasPrefix("//"), !path.contains("://"), !path.contains("\\") else { return nil }
             let relative = path.hasPrefix("/") ? String(path.dropFirst()) : path
             guard var parts = URLComponents(string: relative) else { return nil }
@@ -9348,10 +9507,8 @@ enum Template {
                 for (key, pasted) in values { value = value.replacingOccurrences(of: "{\(key)}", with: pasted) }
                 query[name] = value
             }
-            // A key goes only over https: an app's own service names its address itself, and http would send the key
-            // as plain text.
-            guard base.scheme == "https" else { throw Failure(message: "\(name)'s address must start with https://.") }
-            guard let url = address(of: path, query: query) else {
+            guard !httpsOnly || base(values)?.scheme == "https" else { throw Failure(message: "\(name)'s address must start with https://.") }
+            guard let url = address(of: path, query: query, values: values) else {
                 throw Failure(message: "\(path) isn't part of \(name)'s API.")
             }
             var request = URLRequest(url: url, timeoutInterval: 60)
@@ -9418,7 +9575,9 @@ enum Template {
 
         var body: some View {
             HStack(spacing: 8) {
-                if api.isConnected {
+                if api.isOpen {
+                    // Open data has nothing to connect.
+                } else if api.isConnected {
                     Label("Connected to \(api.name)", systemImage: "checkmark.circle.fill").foregroundStyle(.secondary)
                     Button("Disconnect") { api.disconnect() }
                 } else {
@@ -9478,7 +9637,7 @@ enum Template {
                 .scrollContentBackground(.hidden)
                 .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
-                    Button { openURL(api.page) } label: { Label("Open \(api.name)", systemImage: "arrow.up.forward.square") }
+                    openPage
                     Spacer()
                     if checking { ProgressView().controlSize(.small) }
                     Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
@@ -9494,7 +9653,7 @@ enum Template {
                 Form {
                     Section {
                         Text(api.steps).foregroundStyle(.secondary)
-                        Button { openURL(api.page) } label: { Label("Open \(api.name)", systemImage: "arrow.up.forward.square") }
+                        openPage
                     }
                     Section { fields } footer: { note }
                 }
@@ -9510,13 +9669,23 @@ enum Template {
         }
         #endif
 
+        /// The service's page; on the person's own server, once its address is typed.
+        private var openPage: some View {
+            Button { api.page(values).map { openURL($0) } } label: { Label("Open \(api.name)", systemImage: "arrow.up.forward.square") }
+                .disabled(api.page(values) == nil)
+        }
+
         @ViewBuilder private var fields: some View {
             ForEach(api.fields) { field in
                 let text = Binding(get: { values[field.key] ?? "" }, set: { values[field.key] = $0; problem = nil })
                 if field.secret {
-                    SecureField(field.label, text: text, prompt: Text("Paste here"))
+                    SecureField(field.label, text: text, prompt: Text(field.prompt))
                 } else {
-                    TextField(field.label, text: text, prompt: Text("Paste here"))
+                    TextField(field.label, text: text, prompt: Text(field.prompt))
+                        .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
                 }
             }
             .disabled(checking)
@@ -9536,7 +9705,7 @@ enum Template {
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Label("Kept on \(Self.device) and sent only to \(api.base.host ?? api.name).", systemImage: "lock.fill")
+                Label("Kept on \(Self.device) and sent only to \(api.base(values)?.host ?? "the address above").", systemImage: "lock.fill")
                     .foregroundStyle(.secondary)
             }
         }
@@ -13023,19 +13192,55 @@ enum Template {
 
 """#
 
+    /// The copy step's spare places (LiveSlots), written beside the live copy and run on each file copied: every class
+    /// of the app's gets `LiveSlots.count` (named after the class, so a subclass's don't clash with what it inherits;
+    /// `@Published` when it says it's an ObservableObject), every view one `@State` box, and every other struct one
+    /// place for any number of properties. Left out: what a spare would break (SwiftData and Core Data models,
+    /// Sendable classes, Equatable views, the App and its scenes, property wrappers, App Intents) and structs in a
+    /// file that lays memory out by hand (vertex data for the GPU), whose size must be what it says.
+    static let sparesPerl = #"""
+    use strict; use warnings;
+    my $count = shift @ARGV;
+    local $/;
+    for my $file (@ARGV) {
+        open(my $in, '<', $file) or die "$file: $!"; my $s = <$in>; close($in);
+        my $raw = $s =~ /MemoryLayout|withUnsafe|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
+        $s =~ s#^([ \t]*)(((?:@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated|indirect)\s+)*)(class|struct)\s+(?!(?:func|var|let|subscript|override|class)\b)(\w+)([^{\n]*)\{)#$1 . spares($1, $2, $3 . $6, $4, $5, $raw)#gme;
+        open(my $out, '>', $file) or die "$file: $!"; print $out $s; close($out);
+    }
+    sub spares {
+        my ($i, $whole, $header, $kind, $name, $raw) = @_;
+        my $pad = "\n$i    ";
+        if ($kind eq 'class') {
+            return $whole if $header =~ /\@Model\b|NSManagedObject|(?<!unchecked )\bSendable\b/;
+            my $published = $header =~ /ObservableObject/ ? '@Published ' : '';
+            return $whole . join('', map { "${pad}${published}var __lampSpare_${name}_$_: LampSpare? = nil;" } 0 .. $count - 1);
+        }
+        return $whole if $header =~ /\@propertyWrapper|\@frozen|\b(?:App|Scene|Commands|DynamicProperty|AppIntent|\w*Intent|AppEntity|\w*Query|TimelineProvider|TimelineEntry|Widget\w*)\b/;
+        if ($header =~ /\bView\b/) {
+            return $whole if $header =~ /\b(?:Equatable|Hashable)\b/;
+            return "${whole}${pad}\@State private var __lampState_${name} = LampStateBox();";
+        }
+        return $whole if $raw;
+        return "${whole}${pad}var __lampSpare_${name} = LampSpare(nil);";
+    }
+    """#
+
     /// The live copy of the sources (LiveReload): each file copied into .lamp/live with its views' bodies wrapped,
     /// so a body's type stays the same from one change to the next (`LampLive`), and only when it differs, so the
     /// build stays incremental; files gone from Sources go from the copy too. Indented for the scripts' `if`.
     static let liveCopySteps = """
       LIVE=.lamp/live
       mkdir -p "$LIVE/Sources"
+      cat > "$LIVE/spares.pl" <<'LAMPSPARES'
+    \(sparesPerl)
+    LAMPSPARES
       for f in Sources/**/*.swift(N); do
         out="$LIVE/$f"
         mkdir -p "${out:h}"
         perl -0pe 's/var body: some View \\{/var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\\n    \\@ViewBuilder var __lampBody: some View {/g' "$f" > "$out.new"
-        # Every class of the app's gets \(LiveSlots.count) spare places for properties added while it's open (LiveSlots),
-        # named after the class, so a subclass's don't clash with those it inherits.
-        case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) perl -0pi -e 's#^([ \\t]*)((?:@[\\w.]+(?:\\([^)\\n]*\\))?\\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated)\\s+)*class\\s+(?!(?:func|var|let|subscript|override|class)\\b)(\\w+)[^{\\n]*\\{)#my ($i, $h, $n) = ($1, $2, $3); ($h =~ /\\@Model\\b|NSManagedObject|(?<!unchecked )\\bSendable\\b/) ? "$i$h" : "$i$h" . join("", map { "\\n$i    " . ($h =~ /ObservableObject/ ? "\\@Published " : "") . "var __lampSpare_${n}_$_: LampSpare? = nil;" } 0 .. \(LiveSlots.count - 1))#gme' "$out.new" ;; esac
+        # Spare places for properties added while the app is open (LiveSlots), unless they kept the app from building.
+        case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) [[ -e "$LIVE/no-spares" ]] || perl "$LIVE/spares.pl" \(LiveSlots.count) "$out.new" ;; esac
         if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi
       done
       for f in "$LIVE"/Sources/**/*.swift(N); do [[ -f "${f#$LIVE/}" ]] || rm "$f"; done

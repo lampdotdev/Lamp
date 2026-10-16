@@ -580,7 +580,7 @@ extension Sharing {
     static let checklist: [Capability] = [
         Capability(label: "Uses AI (your OpenRouter credit)", icon: "sparkles", level: .ordinary, patterns: ["LampAI."]),
         Capability(label: "Connects to the internet", icon: "network", level: .ordinary,
-                   patterns: ["URLSession", "NWConnection", "http://", "https://", "WebSocket"]),
+                   patterns: ["URLSession", "NWConnection", "http://", "https://", "WebSocket", "LampAPI."]),
         Capability(label: "Runs other programs or shell commands", icon: "terminal", level: .powerful,
                    patterns: ["Process(", "NSTask", "/bin/sh", "/bin/zsh", "/bin/bash", "posix_spawn", "system(\""]),
         Capability(label: "Runs code the AI writes while the app runs (in a sealed context)", icon: "curlybraces", level: .powerful, patterns: ["LampScript"]),
@@ -590,7 +590,7 @@ extension Sharing {
         Capability(label: "Reads or uses your other apps (Slack, Mail, your browser…)", icon: "macwindow.on.rectangle", level: .powerful,
                    patterns: ["LampComputer."]),
         Capability(label: "Asks you to connect an account you use elsewhere (Notion, Airtable, GitHub…)", icon: "person.badge.key", level: .powerful,
-                   patterns: ["LampService", "LampAPI", "LampSecrets."]),
+                   patterns: ["LampService", "LampAPIButton", "LampAPI.own", "LampSecrets."]),
         Capability(label: "Controls other apps with AppleScript", icon: "applescript", level: .powerful,
                    patterns: ["NSAppleScript", "osascript", "OSAScript"]),
         Capability(label: "Uses the camera or microphone", icon: "mic", level: .powerful,
@@ -711,8 +711,9 @@ extension Sharing {
         LampMenuBar, LampDrop, LampWindows, LampWidget, LampService and LampAPI (the reader connects their own account \
         on a service such as Notion, Airtable or GitHub, by signing in on that service's own page or pasting a token \
         they make there; it stays on the reader's device, never comes with a shared app, and goes only to that \
-        service), and LampSecrets (where the app keeps a key the reader types in for a service, on the reader's \
-        device; it never comes with a shared app). Using these is normal and expected: they are Lamp's code, not the \
+        service; LampAPI also reads open data such as weather, exchange rates and food products, with no account), \
+        and LampSecrets (where the app keeps a key the reader types in for a service, on the reader's device; it \
+        never comes with a shared app). Using these is normal and expected: they are Lamp's code, not the \
         sender's, not hidden, and not a concern in themselves, and Lamp lists them to the reader separately. One \
         thing about them does matter: what goes to LampAI (its prompts, data and pictures) and what LampComputer \
         reads from other apps is sent to the AI provider the reader has set up in Lamp, which may be a service on \
