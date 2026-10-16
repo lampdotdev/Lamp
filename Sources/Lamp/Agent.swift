@@ -420,11 +420,13 @@ enum Agent {
 
         static let browserCompanion = """
             - Some wishes are about web pages: keeping what's found on them (recipes, articles, products, places), \
-            understanding or comparing what's being read, doing something with a passage. For those, the Mac app also \
-            gets a sidebar in Chrome, beside the page: a small web page of the app's own, which the app serves itself \
-            with `LampBrowser.startPage` (read its comment in LampSupport.swift first: it has a page to start from). \
-            Decide that from the wish yourself, never ask, and say it in one line of your reply, like "Recipe Box also \
-            works in Chrome, beside recipe pages." Lamp's one extension frames every app's page: never write extension \
+            understanding or comparing what's being read, doing something with a passage. A wish that says online, \
+            from the web, a site, a link or an article is one, even when it doesn't name Chrome. For those, the Mac app \
+            always also gets a sidebar in Chrome, beside the page: a small web page of the app's own, which the app \
+            serves itself with `LampBrowser.startPage` (read its comment in LampSupport.swift first: it has a page to \
+            start from). Decide that from the wish yourself, never ask; make the sidebar one of `plan`'s parts (its \
+            files: browser.json and Assets/Sidebar/), and say it in one line of your reply, like "Recipe Box also works \
+            in Chrome, beside recipe pages." Lamp's one extension frames every app's page: never write extension \
             code, a web server of your own, or browser automation.
             - Declare it in `browser.json` at the app's root: `{"offer": "Save this recipe to Recipe Box", \
             "fits": [{"site": "allrecipes.com"}, {"selector": ".wprm-recipe-container"}]}`. `offer` is the app's own short \
