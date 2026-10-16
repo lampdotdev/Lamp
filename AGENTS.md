@@ -216,6 +216,21 @@ send. Until that message, nothing is named, scaffolded, built or saved (`startQu
 becomes may be an iPhone app, which a scaffold already written as a Mac app would rule out. The message that
 isn't an answer to a card names it like any first request and ends `finding`.
 
+A new person's desk isn't empty: Lamp comes with ten wishes (`Starters`, from `Resources/Starters`), working
+apps to use as they are and to change into their own, which shows what Lamp does better than a question about
+what to make. So the welcome is the hello and setup, and ends on the desk (a wish from the site is still made
+once setup is done). They're copied once, on the first launch, each saved as its first version ("From Lamp"),
+and from then on they're the person's: a later Lamp with other starters gives those only to new people. As soon
+as Apple's tools are there they're built one by one out of sight (`Store.prepareStarters`), with nothing in
+their chats; one used before its build is done spins on the desk and opens when it's ready (`openWhenReady`). A
+starter opens with its chat beside it (`-LampOpenChat`, read by `LampSidebar.restore`) until its chat has been
+opened or closed once; one that opens no window has its chat opened in Lamp the first time it's used. Each
+folder holds the app's code, APP.md (which the agent reads first, so it knows the app it's changing), icon.json
+(a symbol icon: Lamp paints no art for a starter, which would offer to set up pictures in its chat) and
+starter.md, Lamp's own: the wish's name and what its chat offers to change first, a line and three changes. They
+are Mac apps that need no key or account, use the AI the person builds with when they use any, and come with
+example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
+
 ## Two Lamps on one Mac
 
 A build from source is **Lamp Dev**, a separate app from the Lamp people install: its own name and icon (an

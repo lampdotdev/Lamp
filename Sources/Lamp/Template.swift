@@ -230,7 +230,12 @@ enum Template {
             INTENTS=1
             mkdir -p .build
             echo '\(appIntentsProtocols)' > .build/appintents-protocols.json
-            FLAGS+=(-Xswiftc -emit-const-values -Xswiftc -const-gather-protocols-list -Xswiftc "$PWD/.build/appintents-protocols.json")
+            # The compiler's own option for the protocols' list, named as this compiler names it: Swift 6.2 (Xcode 26.0)
+            # knows only `-const-gather-protocols-file`, and only in the frontend.
+            GATHER=-const-gather-protocols-list
+            swiftc -frontend -help-hidden 2>/dev/null | grep -q -- "$GATHER" || GATHER=-const-gather-protocols-file
+            FLAGS+=(-Xswiftc -emit-const-values -Xswiftc -Xfrontend -Xswiftc "$GATHER"
+                    -Xswiftc -Xfrontend -Xswiftc "$PWD/.build/appintents-protocols.json")
           else
             echo "warning: Xcode isn't installed, so Siri, Shortcuts and Spotlight won't see this app's App Intents." >&2
           fi

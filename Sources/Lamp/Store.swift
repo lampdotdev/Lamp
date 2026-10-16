@@ -529,7 +529,9 @@ final class Store: ObservableObject {
         reload()
         restoreWaiting()
         for project in projects { discardIfUnused(project.id) }
-        Onboarding.settle(hasApps: !projects.isEmpty)
+        // The wishes Lamp comes with don't count: they're there before the welcome is.
+        Onboarding.settle(hasApps: projects.contains { !Starters.isStarter($0) })
+        if !Onboarding.isDone { installStarters() }
         // Lamp opens on the desk (`WishDesk`), not on a wish's chat.
         selection = nil
         startGateway()
@@ -567,7 +569,7 @@ final class Store: ObservableObject {
         }
         // During the welcome, Apple's installer waits for the step that explains it.
         if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone { requestBuildTools() }
-        if !setup.hasBuildTools { pollSetup() }
+        if !setup.hasBuildTools { pollSetup() } else { prepareStarters() }
         if setup.ready && !wasReady { await becameReady() }
     }
 
@@ -611,6 +613,7 @@ final class Store: ObservableObject {
                 try? await Task.sleep(for: .seconds(5))
                 setup = await SetupCheck.run(keeping: setup).keeping(setup)
             }
+            prepareStarters()
             if setup.ready { await becameReady() }
         }
     }
@@ -2805,7 +2808,7 @@ final class Store: ObservableObject {
         }
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
-        config.arguments = ["-LampInFront", "YES"]   // see install
+        config.arguments = frontArguments(for: project)   // see install
         do {
             _ = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
             noteOpened(true, for: project)
@@ -3478,6 +3481,115 @@ final class Store: ObservableObject {
         return true
     }
 
+    // MARK: - Starters
+
+    /// The wishes Lamp comes with (`Starters`), copied onto the desk on the first launch, each saved as its
+    /// first version. Built afterwards (`prepareStarters`), once Apple's tools are there.
+    private func installStarters() {
+        guard !UserDefaults.standard.bool(forKey: Starters.installedKey) else { return }
+        UserDefaults.standard.set(true, forKey: Starters.installedKey)
+        var made: [LampProject] = []
+        for starter in Starters.bundled {
+            do {
+                let project = try Template.draft(name: uniqueName(starter.name), in: root)
+                do {
+                    try Template.fill(project)
+                    try Starters.copy(starter, into: project)
+                    try Template.writeOwnedFiles(for: project)   // again, now it's known whether it has a widget
+                    made.append(project)
+                } catch {
+                    try? FileManager.default.removeItem(at: project.dir)
+                    throw error
+                }
+            } catch {
+                NSLog("Lamp couldn't add the wish \(starter.name): \(error.localizedDescription)")
+            }
+        }
+        guard !made.isEmpty else { return }
+        reload()
+        startersInstall = Task {
+            for project in made {
+                await initRepo(project, message: "From Lamp")
+                if let spec = Icons.load(project) { await renderIcon(project, spec: spec) }
+            }
+        }
+    }
+    private var startersInstall: Task<Void, Never>?
+
+    /// Starters being built for the first time, out of sight: their icons spin on the desk.
+    @Published private(set) var preparing: Set<String> = []
+    /// Starters used while they were still being built: each opens when its build is done.
+    @Published var openWhenReady: Set<String> = []
+    private var preparingStarters = false
+    /// Starters whose first build failed this time: not tried again until Lamp next starts, and opening one
+    /// shows its chat, which has the failure.
+    private var unpreparedStarters: Set<String> = []
+
+    /// Builds the starters nobody has opened yet, one at a time, as soon as Apple's tools are there, so each
+    /// opens at once when used. One that's being waited for goes first.
+    func prepareStarters() {
+        guard setup.hasBuildTools, !preparingStarters else { return }
+        preparingStarters = true
+        Task {
+            defer { preparingStarters = false }
+            await startersInstall?.value
+            while let next = nextStarterToPrepare() { await prepare(next) }
+        }
+    }
+
+    /// A starter that's never been built and that nothing else is working on.
+    func needsPreparing(_ project: LampProject) -> Bool {
+        Starters.isStarter(project) && !unpreparedStarters.contains(project.id) && !busy.contains(project.id)
+            && !FileManager.default.fileExists(atPath: project.installedURL.path)
+    }
+
+    private func nextStarterToPrepare() -> LampProject? {
+        let waiting = projects.filter(needsPreparing)
+        return waiting.first { openWhenReady.contains($0.id) } ?? waiting.first
+    }
+
+    /// A starter's first build and install, without opening it and without a word in its chat: its chat stays
+    /// empty for the person's first change. A failure stays in the chat, for the agent that is asked to fix it.
+    private func prepare(_ project: LampProject) async {
+        guard begin(project) != nil else { return }
+        preparing.insert(project.id)
+        let before = logs[project.id]?.count ?? 0
+        var made = false
+        if await build(project) == nil {
+            await prepareIcon(project)
+            do {
+                try await deploy(project)
+                heldInstalls.installed(project.id)
+                Runtime.releaseBuild(project)
+                stamps[project.id] = BuildStamp.read(project.installedURL)
+                made = true
+            } catch {
+                log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
+            }
+        }
+        if made, let lines = logs[project.id], lines.count > before {
+            logs[project.id] = Array(lines.prefix(before))
+            saveChat(project)
+        }
+        if !made { unpreparedStarters.insert(project.id) }
+        preparing.remove(project.id)
+        finish(project)
+        guard openWhenReady.remove(project.id) != nil, let current = current(project) else { return }
+        if made { use(current) } else { showChat(current.id) }
+    }
+
+    /// What an app is opened with in front of the person: `-LampInFront` (see install), and for a wish Lamp came
+    /// with, `-LampOpenChat` until its chat has been opened or closed once (the app's own `LampSidebarOpen`), so
+    /// it opens ready to be changed.
+    private func frontArguments(for project: LampProject) -> [String] {
+        var arguments = ["-LampInFront", "YES"]
+        if project.platform == .mac, Starters.isStarter(project),
+           CFPreferencesCopyAppValue("LampSidebarOpen" as CFString, project.bundleID as CFString) == nil {
+            arguments += ["-LampOpenChat", "YES"]
+        }
+        return arguments
+    }
+
     func run(_ project: LampProject) async {
         guard begin(project) != nil else { return }
         defer { finish(project) }
@@ -4020,7 +4132,7 @@ final class Store: ObservableObject {
         let config = NSWorkspace.OpenConfiguration()
         config.activates = inFront
         // An app that lives in the menu bar opens its panel, so there's something to see (LampMenuBar).
-        if inFront { config.arguments = ["-LampInFront", "YES"] }
+        if inFront { config.arguments = frontArguments(for: project) }
         note("Opening \(project.name)…", for: project)
         var crash: String?
         do {
@@ -4657,7 +4769,7 @@ final class Store: ObservableObject {
     /// Generates artwork for the icon's object in the background (best of a few candidates) and swaps it in
     /// when ready, with whatever can make pictures. With nothing, the first app asks for a key instead.
     private func upgradeIconArt(_ project: LampProject) {
-        guard let spec = Icons.load(project), !spec.subject.trimmed.isEmpty,
+        guard !Starters.isStarter(project), let spec = Icons.load(project), !spec.subject.trimmed.isEmpty,
               Icons.cachedArt(project, spec: spec) == nil else { return }
         // The person chose to draw icons themselves: Lamp draws nothing, key or no key, and asks for no key.
         guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }

@@ -417,6 +417,10 @@ struct DeskIcon: View {
 
     /// What's under the name: what's going on with it, else where it lives.
     private var caption: String? {
+        // A wish Lamp came with, built for the first time: it opens by itself once it's ready, if it was used.
+        if store.preparing.contains(project.id) || store.openWhenReady.contains(project.id) {
+            return store.openWhenReady.contains(project.id) ? "Opening…" : "Getting ready…"
+        }
         if busy { return store.progress[project.id]?.newApp == true || project.untitled ? "Coming true…" : "Changing…" }
         if Talk.open(in: store.logs[project.id] ?? []) != nil { return "Has a question" }
         if store.queued[project.id]?.isEmpty == false { return "Waiting to start" }
@@ -429,7 +433,7 @@ struct DeskIcon: View {
         VStack(spacing: 6) {
             AppIcon(project: project, size: 76)
                 .overlay(alignment: .topTrailing) {
-                    if busy {
+                    if busy || store.openWhenReady.contains(project.id) {
                         ProgressView().controlSize(.small)
                             .padding(3)
                             .background(.regularMaterial, in: Circle())
@@ -1034,14 +1038,25 @@ extension Store {
     func use(_ project: LampProject) {
         let made = FileManager.default.fileExists(atPath: project.installedURL.path)
             || FileManager.default.fileExists(atPath: project.builtURL.path)
+        // A wish Lamp came with that hasn't been built yet, or is being built now: its icon spins, and it
+        // opens as soon as it's ready, without its chat in between.
+        if !made, setup.hasBuildTools, preparing.contains(project.id) || needsPreparing(project) {
+            openWhenReady.insert(project.id)
+            prepareStarters()
+            return
+        }
         guard made, !project.finding, !busy.contains(project.id), Talk.open(in: logs[project.id] ?? []) == nil,
               queued[project.id]?.isEmpty != false else {
             return showChat(project.id)
         }
         unread.remove(project.id)
+        let firstUse = Starters.isFirstUse(project)
         Task {
             let place = await Task.detached { WishPlace.of(project) }.value
             let icon = icons[project.id]
+            // A window's chat opens beside it (`frontArguments`); anything else has its chat opened here, behind
+            // the app, the first time it's used.
+            if firstUse, place != .window { showChat(project.id) }
             switch place {
             case .widget:
                 // Nothing to open: the widget is the wish.
