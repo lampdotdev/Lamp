@@ -511,6 +511,20 @@ from its Assets folder rather than its bundle (`LampAssets`), so a new picture g
 app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which asks for
 new state in new views rather than new stored properties in existing types, when that's as clear.
 
+A stored property added to a class goes in live too (`LiveSlots`, in LiveReload.swift). The copy step gives every
+class of the app's (not `@Model`, Core Data or `Sendable` ones) a few empty spare places, `__lampSpare_<Class>_0`…
+of `LampSpare?` (named after the class, so a subclass's don't clash with what it inherits; `@Published` when the
+header says `ObservableObject`), so the open app's objects already have room. A starting value that isn't a literal
+(`.now`, a call) is worked out on the first read and kept; a `@Published` property in a class whose places aren't
+published (conforming in an extension) reopens the app instead. When the only
+difference in layout is new stored properties in such classes, `LiveSlots.fit` rewrites each one-line declaration in
+the live copy into a computed property kept in a free place, and the change is compiled again and checked as usual.
+Being stored, a place is observed like any property, so views redraw. Which property is in which place
+(`.lamp/live/slots.json`) is put back into each fresh copy (`LiveSlots.apply`) until the app is installed again: the
+whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs
+once it's installed (`LiveReload.markRunning(from:)`). A place never reaches saved data: `LampSpare` encodes as
+nothing, and a computed property isn't encoded.
+
 A Mac app can also open beside a web page, in Chrome's sidebar (Lamp Dev only, an experiment: Settings →
 Experimental, `BrowserBridge.switchKey`; how it fits together is in `experiments/browser-connector/README.md`).
 The sidebar is a web page of the app's own (`Assets/Sidebar/`), which the app serves itself on this Mac's own
@@ -862,6 +876,16 @@ iPhone `LampSecrets` stays the device's Keychain, which asks nothing, and an app
 one line (`LampSecrets.store`). Neither kind is ever in the app's folder, so a shared copy arrives disconnected and is
 flagged in the review (`Sharing.checklist`). How to build on each is in its doc comment in LampSupport.swift, which the tool's answer
 sends the builder to.
+
+**A service that isn't listed** can still be called from the app's own code. When it needs a key, the app declares
+it with `LampAPI.own` (its API's address, the page where the key is made, one sentence of steps, how the key is
+sent: a header or a query parameter, and a path to check it) and uses `LampAPIButton`, so the person pastes the key
+on the same Connect sheet as a listed service's, it is checked, kept in `LampSecrets` under a name of its own
+(`own-…`, so it can't stand in for a listed service's token), and sent only to that address. No key field or dialog
+of the app's own, and never UserDefaults, LampStore or a Keychain item of the app's own: the first two are the app's
+settings and folder, and the last asks for the password after every rebuild. Both `Agent.connectorRules` and the
+tool's list (`Connectors.list`, also its answer to a name it doesn't know) say so. The review counts `LampAPI` and
+`LampSecrets.` in the app's code as connecting an account.
 
 ## Naming: Lamp and Lamp
 
