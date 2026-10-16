@@ -3027,7 +3027,8 @@ final class Store: ObservableObject {
             case "look_at_app":
                 (status, answer) = arguments["sidebar"] as? Bool == true
                     ? await lookAtSidebar(project, page: arguments["page"] as? String)
-                    : await look(at: project, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false)
+                    : await look(at: project, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
+                                 reopen: arguments["reopen"] as? Bool ?? false)
             case "use_app":
                 let actions = (try? JSONSerialization.data(withJSONObject: arguments)) ?? Data("{}".utf8)
                 (status, answer) = await use(project, request: actions)
@@ -4089,7 +4090,8 @@ final class Store: ObservableObject {
 
     /// Installs and opens the app. Returns what's known about the failure if it died straight away.
     /// `inFront` is false for the agent's looks, which shouldn't pull the app in front of the user mid-turn.
-    private func install(_ project: LampProject, inFront: Bool = true) async -> String? {
+    /// `fresh` closes an open Mac app and opens it again even when the change could go into it as it runs.
+    private func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false) async -> String? {
         guard exists(project) else { return nil }
         // The turn this install belongs to, taken before the icon wait: a Stop during it can end the turn
         // and start the next one's, which must not inherit this launch.
@@ -4114,7 +4116,7 @@ final class Store: ObservableObject {
         }
         // A change that can go into the open app goes in there, keeping what's on screen; the build waits to be
         // installed until the app closes (LiveReload).
-        if await reloadInPlace(project, inFront: inFront) { return nil }
+        if !fresh, await reloadInPlace(project, inFront: inFront) { return nil }
         // A whole build after an early change may still be writing build/: what's installed is what it makes,
         // and nothing when it failed (build/ is the version before the change).
         await liveBuilds[project.id]?.value
@@ -5266,7 +5268,8 @@ final class Store: ObservableObject {
             let arguments = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             return arguments["sidebar"] as? Bool == true
                 ? await lookAtSidebar(project, page: arguments["page"] as? String)
-                : await look(at: project, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false)
+                : await look(at: project, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
+                                 reopen: arguments["reopen"] as? Bool ?? false)
         }
         if request.path == "/agent/use" { return await use(project, request: request.body) }
         if request.path.hasPrefix("/agent/versions") {
@@ -5677,8 +5680,11 @@ final class Store: ObservableObject {
     /// The agent's `look_at_app` tool: builds what it has written so far, opens the app behind the
     /// user's windows, and reports what happened. The pictures are sent as file paths for pi to read. For a Mac
     /// app it can instead show one of the app's 3D props from four sides (`prop`), or watch the window for a
-    /// couple of seconds and say what moved and what flickered (`motion`).
-    private func look(at project: LampProject, prop: String? = nil, motion: Bool = false) async -> (Int, [String: Any]) {
+    /// couple of seconds and say what moved and what flickered (`motion`). `reopen` closes the open app the usual
+    /// way, asking about unsaved work, and opens a fresh copy: for what only a launch shows (how long it takes to
+    /// open, code run once at the start), where otherwise a change goes into the open app. The agent ending the
+    /// app's process itself skipped that question, and Lamp rightly asked the person about every such command.
+    private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false) async -> (Int, [String: Any]) {
         // Only for the agent Lamp is running right now. The app knows the same token and must not
         // be able to rebuild itself.
         guard let turn = turns[project.id], turn.agent != nil else {
@@ -5703,12 +5709,13 @@ final class Store: ObservableObject {
             // The simulator photographs the screen; nothing in the app has to cooperate.
             // Open, and the device still this app's: otherwise it's opened again (which takes the device back).
             let running = simulatorApps[project.id].map { Simulator.isRunning(pid: $0.pid) && simulatorLeases[$0.udid] == project.id } ?? false
-            if changed || !running {
+            if changed || !running || reopen {
                 let crash = await install(project, inFront: false)
                 turn.look.installed = true
                 turn.look.crash = crash
                 if let crash { return (200, ["text": "The app \(changed ? "built" : "is built"), but it didn't stay open.\n\n\(crash)"]) }
                 if !changed { note = "The app is running your latest code; it was reopened without rebuilding." }
+                if reopen { note = "The app was closed and opened again, so it started fresh." }
             } else {
                 note = "The app is running your latest code; nothing needed rebuilding."
             }
@@ -5743,7 +5750,7 @@ final class Store: ObservableObject {
         if turn.keptOpen, isRunning(project) { return (200, ["text": Self.keptOpenNote]) }
         var since = Date()
         // A copy kept open in an earlier request is older than the build too: it's asked to quit, once.
-        if !changed, !Runtime.holdsBuild(project), macCopies(of: project).first != nil {
+        if !reopen, !changed, !Runtime.holdsBuild(project), macCopies(of: project).first != nil {
             // Nothing to rebuild and the app is open: ask it for fresh pictures instead of relaunching it.
             let asked = Date()
             since = asked
@@ -5756,7 +5763,7 @@ final class Store: ObservableObject {
         if screenshots.isEmpty {
             let launched = Date()
             since = launched
-            let crash = await install(project, inFront: false)
+            let crash = await install(project, inFront: false, fresh: reopen)
             if turn.keptOpen { return (200, ["text": Self.keptOpenNote]) }
             turn.look.installed = true
             turn.look.crash = crash
@@ -5764,6 +5771,7 @@ final class Store: ObservableObject {
                 return (200, ["text": "The app \(changed ? "built" : "is built"), but it quit right after launching.\n\n\(crash)"])
             }
             if !changed { note = "The app is running your latest code; it was reopened without rebuilding." }
+            if reopen { note = "The app was closed and opened again, so it started fresh." }
             screenshots = await Runtime.screenshots(of: project, since: launched)
         }
         var lead = ""
