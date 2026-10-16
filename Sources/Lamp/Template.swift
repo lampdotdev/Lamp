@@ -4152,6 +4152,8 @@ enum Template {
                 needsDisplay = true
             }
             override var isHighlighted: Bool { didSet { needsDisplay = true } }
+            // One click works in a window in the back too, as it does on the traffic lights beside it.
+            override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
         }
 
         /// The wand in this window, wherever it is, for what points at it (`LampSidebar.coach`).
@@ -4306,9 +4308,22 @@ enum Template {
                 return
             }
             Task { @MainActor in
-                var identity: AppExtensionIdentity?
-                if let found = try? AppExtensionIdentity.matching(appExtensionPointIDs: pointID) {
-                    for try await list in found { identity = list.first; break }
+                // Just after Lamp installs a new build, macOS may not have registered its chat yet: the first
+                // answer can be an empty list with the chat a moment behind it. A few seconds are given before
+                // the chat goes to Lamp's window instead.
+                let identity: AppExtensionIdentity? = await withTaskGroup(of: AppExtensionIdentity?.self) { group in
+                    group.addTask {
+                        guard let found = try? AppExtensionIdentity.matching(appExtensionPointIDs: pointID) else { return nil }
+                        for await list in found { if let first = list.first { return first } }
+                        return nil
+                    }
+                    group.addTask {
+                        try? await Task.sleep(for: .seconds(6))
+                        return nil
+                    }
+                    let first = await group.next() ?? nil
+                    group.cancelAll()
+                    return first
                 }
                 guard let identity else { return fallback() }
                 let host = EXHostViewController()
@@ -4519,6 +4534,8 @@ enum Template {
                 needsDisplay = true
             }
             override var isHighlighted: Bool { didSet { needsDisplay = true } }
+            // One click works in a window in the back too, as it does on the traffic lights beside it.
+            override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
         }
 
         /// The app's name as the person knows it, for what the chat says about it.
