@@ -8145,14 +8145,23 @@ enum Template {
             if (parent === window || !framer) return Promise.resolve({error: 'Open this in Chrome’s sidebar.'});
             return new Promise(resolve => { const id = ++next; waiting[id] = resolve; parent.postMessage({...body, id}, framer); });
           }
-          const ready = (async () => {
-            const hello = await ask({lamp: 'hello'});
-            if (hello && hello.key) { key = hello.key; return; }
-            if (!hello || !hello.nonce) return;
-            const proof = await fetch('/lamp/proof?nonce=' + encodeURIComponent(hello.nonce)).then(r => r.json()).catch(() => ({}));
-            const answer = await ask({lamp: 'proof', proof: proof.proof || ''});
-            if (answer && answer.key) key = answer.key;
-          })();
+          let token = '', proving = null;
+          function prove() {
+            proving = proving || (async () => {
+              const hello = await ask({lamp: 'hello'});
+              if (hello && hello.key) { key = hello.key; return; }
+              if (!hello || !hello.nonce) return;
+              const proof = await fetch('/lamp/proof?nonce=' + encodeURIComponent(hello.nonce)).then(r => r.json()).catch(() => ({}));
+              const answer = await ask({lamp: 'proof', nonce: hello.nonce, proof: proof.proof || ''});
+              if (answer && answer.key) { key = answer.key; token = answer.token || ''; }
+            })().finally(() => { proving = null; });
+            return proving;
+          }
+          const ready = prove();
+          // The sidebar asks each document it loads to prove itself again.
+          addEventListener('message', event => {
+            if (event.source === parent && event.origin === framer && event.data && event.data.lamp === 'prove') prove();
+          });
           async function call(name, body) {
             await ready;
             let reply;
@@ -8165,7 +8174,8 @@ enum Template {
             return value;
           }
           async function read(scope) {
-            const answer = await ask({lamp: 'read', scope});
+            await ready;
+            const answer = await ask({lamp: 'read', scope, token});
             if (!answer || answer.error) throw new Error((answer && answer.error) || 'The page couldn’t be read.');
             return answer.page;
           }

@@ -485,6 +485,7 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
         for address in Template.sidebarURLs(for: project) {
             // The app's own page only: the address has to prove it's the app before the page is shown or given the key.
             guard await Self.proves(address, key: key) else { continue }
+            proven = URL(string: address)?.port ?? 0
             helloed = false
             web.load(URLRequest(url: URL(string: address + "#tab=\(BrowserPreview.tab)")!, timeoutInterval: 6))
             let error = await withCheckedContinuation { done in
@@ -500,6 +501,8 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
         return "The app's sidebar page didn't load from the app (\(trouble)). Call LampBrowser.startPage once when the app launches, from its shared model, put the page in Assets/Sidebar/index.html, and load /lamp.js first."
     }
     private var host = "", key = "", reads = ""
+    /// The port that proved it's the app's: the key goes to a page there and nowhere else.
+    private var proven = 0
     private var helloed = false
 
     /// Whether the app answers at `address`: its key's signature over a fresh nonce and the port, as the sidebar checks.
@@ -592,13 +595,16 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finish(error) }
     /// Only the app's own page, nothing it links to.
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
-        decisionHandler(navigationAction.request.url?.host == host || navigationAction.targetFrame?.isMainFrame == false ? .allow : .cancel)
+        let url = navigationAction.request.url
+        decisionHandler(url?.host == host && url?.port == proven || navigationAction.targetFrame?.isMainFrame == false ? .allow : .cancel)
     }
 
     /// What the page's `lamp.readPage` and `lamp.readSelection` get here: the page Lamp opened beside the preview.
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping @MainActor (Any?, String?) -> Void) {
         // Only the app's own page: anything it frames is left unanswered.
         guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any] else { return replyHandler([:], nil) }
+        let origin = message.frameInfo.securityOrigin
+        guard origin.protocol == "http", origin.host == host, origin.port == proven else { return replyHandler([:], nil) }
         if body["lamp"] as? String == "hello" { helloed = true; return replyHandler(["key": key], nil) }
         guard body["lamp"] as? String == "read" else { return replyHandler([:], nil) }
         // As Chrome's sidebar allows: only what the page's file declares it reads.
