@@ -3410,9 +3410,10 @@ enum Template {
     }
 
     #if os(macOS)
-    // Mac only: the Edit with Lamp command, windows, and what Lamp needs to watch and try the app.
+    // Mac only: the Customize with Lamp command, windows, and what Lamp needs to watch and try the app.
 
-    /// Adds "Edit with Lamp…" (⇧⌘E), which jumps back to this app's chat in Lamp.
+    /// Adds "Customize with Lamp…" (⇧⌘E), which opens this app's chat beside the window in front
+    /// (`LampSidebar.openFromMenu`); its button up top opens the same chat in Lamp's own window.
     struct LampCommands: Commands {
         init() {
             LampRuntime.start
@@ -3426,8 +3427,8 @@ enum Template {
 
         var body: some Commands {
             CommandGroup(after: .appInfo) {
-                Button("Edit with Lamp…") {
-                    NSWorkspace.shared.open(URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!)
+                Button("Customize with Lamp…") {
+                    LampSidebar.openFromMenu()
                 }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
             }
@@ -4045,7 +4046,7 @@ enum Template {
         }
 
         /// Whether Lamp's experiment is on (Settings → Experimental): a file Lamp keeps beside the apps' folders.
-        private static var isOn: Bool { FileManager.default.fileExists(atPath: "{{APPS}}/.magic") }
+        static var isOn: Bool { FileManager.default.fileExists(atPath: "{{APPS}}/.magic") }
 
         @MainActor private static func detach(from window: NSWindow) {
             while let index = window.titlebarAccessoryViewControllers.firstIndex(where: { $0.view.identifier == identifier }) {
@@ -4075,7 +4076,7 @@ enum Template {
             }
             let holder = NSView()
             holder.identifier = identifier
-            holder.addSubview(button("wand.and.sparkles", "Change This App", "Change this app with Lamp", #selector(Opener.open(_:))))
+            holder.addSubview(button("wand.and.sparkles", "Customize This App", "Customize this app with Lamp", #selector(Opener.open(_:))))
             let accessory = NSTitlebarAccessoryViewController()
             accessory.view = holder
             accessory.layoutAttribute = .trailing
@@ -4097,9 +4098,9 @@ enum Template {
 
         /// A window whose content runs under a title bar with nothing drawn in it (a game, a full-bleed app) has no
         /// bar to hold the wand: an accessory would give it one, a strip across the top it asked not to have. There
-        /// the wand floats beside the window's own close, minimize and zoom buttons, over the content as they are,
-        /// in the corner every app already leaves free for them. SwiftUI may add a toolbar after the window first
-        /// shows, so this is asked again each time the window comes to the front.
+        /// the wand floats at the top right, over the content, level with the window's own close, minimize and zoom
+        /// buttons. SwiftUI may add a toolbar after the window first shows, so this is asked again each time the
+        /// window comes to the front.
         @MainActor private static func isFullBleed(_ window: NSWindow) -> Bool {
             window.toolbar == nil && window.styleMask.contains(.fullSizeContentView)
                 && (window.titlebarAppearsTransparent || window.titleVisibility == .hidden)
@@ -4118,10 +4119,14 @@ enum Template {
                 bar.addSubview(made)
                 return made
             }()
-            // A touch larger than the traffic lights, level with them, as far from the zoom button as they are apart.
+            // At the top right, where the title bar's wand is in other windows: a touch larger than the traffic
+            // lights, level with them, as far from the right edge as they are from the left, and left of the chat
+            // while it's open. It keeps to the right edge as the window is resized.
             let side = (zoom.frame.height + 6).rounded()
-            let gap = max(zoom.frame.minX - (window.standardWindowButton(.miniaturizeButton)?.frame.maxX ?? zoom.frame.minX - 6), 6)
-            wand.frame = NSRect(x: (zoom.frame.maxX + gap + 2).rounded(), y: (zoom.frame.midY - side / 2).rounded(), width: side, height: side)
+            let inset = window.standardWindowButton(.closeButton)?.frame.minX ?? 12
+            let right = bar.bounds.width - LampSidebar.openWidth(in: window) - inset
+            wand.autoresizingMask = [.minXMargin]
+            wand.frame = NSRect(x: (right - side).rounded(), y: (zoom.frame.midY - side / 2).rounded(), width: side, height: side)
         }
 
         /// The wand floating over the app's own content: a dark disc with a white wand, legible over a game's night
@@ -4129,10 +4134,10 @@ enum Template {
         /// colours from the window's appearance, and over content of the other shade it all but disappeared.
         @MainActor private final class FloatingWand: NSButton {
             convenience init() {
-                let image = NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: "Change This App")!
+                let image = NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: "Customize This App")!
                     .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))!
                 self.init(image: image, target: Opener.shared, action: #selector(Opener.open(_:)))
-                toolTip = "Change this app with Lamp"
+                toolTip = "Customize this app with Lamp"
                 isBordered = false
                 imagePosition = .imageOnly
                 contentTintColor = .white
@@ -4278,11 +4283,28 @@ enum Template {
             return true
         }
 
+        /// The window the chat goes beside: the one in front, else the frontmost of the app's own windows.
+        @MainActor private static func frontWindow() -> NSWindow? {
+            [NSApp.keyWindow, NSApp.mainWindow].compactMap({ $0 }).first(where: { LampMagic.isAppWindow($0) && $0.isVisible })
+                ?? NSApp.orderedWindows.first(where: { LampMagic.isAppWindow($0) && $0.isVisible })
+        }
+
+        /// Customize with Lamp… in the app's menu: the chat beside the window in front, left open when it is already.
+        /// An app with no window to put it beside (one that lives in the menu bar, or a window in the Dock) has its
+        /// chat in Lamp's window instead.
+        @MainActor static func openFromMenu() {
+            guard LampMagic.isOn, let window = frontWindow(), !window.isMiniaturized else {
+                NSWorkspace.shared.open(URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!)
+                return
+            }
+            window.makeKeyAndOrderFront(nil)
+            open(window)
+        }
+
         /// Lamp asks for the chat: in the window in front, which comes forward with it.
         @MainActor static func openForLamp() {
             // A copy still starting has no window yet: the file stays for its first one (`restore`).
-            guard let window = [NSApp.keyWindow, NSApp.mainWindow].compactMap({ $0 }).first(where: { LampMagic.isAppWindow($0) && $0.isVisible })
-                    ?? NSApp.orderedWindows.first(where: { LampMagic.isAppWindow($0) && $0.isVisible }) else { return }
+            guard let window = frontWindow() else { return }
             _ = askedToOpen()
             restored = true
             NSApp.activate()
@@ -5381,7 +5403,7 @@ enum Template {
                     let alert = NSAlert()
                     alert.messageText = "Some saved data couldn't be opened"
                     alert.informativeText = "This version of the app can't read some data saved by an earlier one. Your data "
-                        + "is safe and won't be overwritten. Choose Edit with Lamp (⇧⌘E) and ask Lamp to fix it."
+                        + "is safe and won't be overwritten. Choose Customize with Lamp (⇧⌘E) and ask Lamp to fix it."
                     alert.runModal()
                     #endif
                 }
@@ -13647,7 +13669,7 @@ enum Template {
     ## Structure
     - `Sources/App.swift`: entry point and window.
     - `Sources/ContentView.swift`: main UI.
-    - `Sources/LampSupport.swift`: generated by Lamp ("Edit with Lamp" command and `LampAI`). Don't edit.
+    - `Sources/LampSupport.swift`: generated by Lamp ("Customize with Lamp" command and `LampAI`). Don't edit.
     - `build.sh`: builds `build/{{EXE}}.app`.
 
     """

@@ -464,11 +464,13 @@ heading in its binary (`Store.screenTextMarker`): such an app is told to be rebu
 
 A Mac app can be changed while it's in use (apps show the wand while the file `MagicPanel.flag`, which Lamp writes
 at launch, is beside their folders, checked each time a window comes forward): `LampMagic` in LampSupport.swift puts a
-wand in each of its windows' title bars, which opens and closes the app's chat inside that window, as its inspector
-(`LampSidebar`: an `NSSplitViewController` around the window's content, the window growing by the chat's width). A
-window whose content runs under a title bar with nothing in it (a game, `.hiddenTitleBar`) has no bar for the wand,
-and an accessory would give it one: there the wand floats beside the close, minimize and zoom buttons, over the
-content as they are (`LampMagic.isFullBleed`, `float`). This is how a new app is changed from its first build on:
+wand at the top right of each of its windows, which opens and closes the app's chat inside that window, as its
+inspector (`LampSidebar`: an `NSSplitViewController` around the window's content, the window growing by the chat's
+width); the app menu's Customize with Lamp… (⇧⌘E) opens it too (`LampSidebar.openFromMenu`), and in Lamp's window
+when the app has no window to put it beside. In a window with a title bar the wand is a title bar accessory. A
+window whose content runs under a title bar with nothing in it (a game, `.hiddenTitleBar`) has no bar for it, and an
+accessory would give it one: there the wand floats at the top right over the content, level with the traffic
+lights, on a dark disc of its own so it shows over any content (`LampMagic.isFullBleed`, `float`, `FloatingWand`). This is how a new app is changed from its first build on:
 after the turn that first builds and opens a Mac app with windows, its chat window closes and the app opens the
 chat beside its content (`MagicPanel.handOff`, once per app, marked by `.lamp/sidebar-handed-off`; the chat window
 closes only once the sidebar has connected, so Lamp neither quits nor leaves the chat nowhere). Lamp asks the app
@@ -978,7 +980,7 @@ open data alone as going online.
 ## Naming: Lamp and Lamp
 
 The app is called **Lamp**: that's the name in everything the user reads (the interface, Help, the agent's
-words to the user, the "Edit with Lamp" command in generated apps, the bundle and the DMG). **Lamp** is its
+words to the user, the "Customize with Lamp" command in generated apps, the bundle and the DMG). **Lamp** is its
 code name and stays in code, comments, type names (`LampSupport`, `LampAI`, …) and in everything existing
 installs depend on: the bundle ID `dev.lamp.host`, `~/Library/Application Support/Lamp`,
 `~/Applications/Lamp Apps`, the `lamp://` scheme, the `.lampapp` extension and the signing certificates.
