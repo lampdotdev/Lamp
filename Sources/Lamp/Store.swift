@@ -3511,7 +3511,8 @@ final class Store: ObservableObject {
         startersInstall = Task {
             for project in made {
                 await initRepo(project, message: "From Lamp")
-                if let spec = Icons.load(project) { await renderIcon(project, spec: spec) }
+                // Drawn only for a starter shipped without its icon: the others' are on the desk already.
+                if !Starters.hasShippedIcon(project), let spec = Icons.load(project) { await renderIcon(project, spec: spec) }
             }
         }
     }
@@ -4701,6 +4702,8 @@ final class Store: ObservableObject {
             spec = await Icons.design(for: project)
             Icons.save(spec!, for: project)
         }
+        // A wish Lamp came with has its icon already, drawn when Lamp was made, until its design changes.
+        if Starters.hasShippedIcon(project), icons[project.id] != nil { return }
         await renderIcon(project, spec: spec!)
     }
 

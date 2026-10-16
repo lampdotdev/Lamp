@@ -127,6 +127,27 @@ enum Starters {
     /// read these where any app keeps them.
     private static let copied = ["Sources", "Widget", "APP.md", "icon.json", "about.json", "capabilities.json"]
 
+    /// A starter's icon, drawn once from its icon.json (`StarterIconsTests`) and shipped with Lamp, so it's on the desk
+    /// as soon as the starter is: the files `Icons.write` makes, which go into the app's .lamp folder, and the
+    /// icon.json they were drawn from.
+    static let iconFolder = "icon"
+
+    static func iconFiles(of project: LampProject) -> [URL] {
+        [Icons.icnsURL(project), Icons.carURL(project), Icons.documentURL(project), Icons.previewURL(project), Icons.squareURL(project)]
+    }
+
+    /// Where the app keeps the icon.json its shipped icon was drawn from.
+    private static func drawnFrom(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/starter-icon.json") }
+
+    /// Whether the icon the starter shipped with is still the one its icon.json describes: then it isn't drawn again.
+    /// Once the agent or the person changes the design, it's drawn like any app's.
+    static func hasShippedIcon(_ project: LampProject) -> Bool {
+        guard let drawn = try? Data(contentsOf: drawnFrom(project)),
+              let current = try? Data(contentsOf: Icons.specURL(project)),
+              FileManager.default.fileExists(atPath: Icons.icnsURL(project).path) else { return false }
+        return (try? JSONDecoder().decode(IconSpec.self, from: drawn)) == (try? JSONDecoder().decode(IconSpec.self, from: current))
+    }
+
     /// Puts a starter's files into a scaffolded app: its Sources replace the scaffold's (LampSupport.swift,
     /// which Lamp writes before every build, stays), and starter.md goes into .lamp.
     static func copy(_ starter: Starter, into project: LampProject) throws {
@@ -159,5 +180,14 @@ enum Starters {
             }
         }
         try fm.copyItem(at: starter.folder.appendingPathComponent("starter.md"), to: file(of: project))
+        let icon = starter.folder.appendingPathComponent(iconFolder)
+        for made in iconFiles(of: project) {
+            let shipped = icon.appendingPathComponent(made.lastPathComponent)
+            guard fm.fileExists(atPath: shipped.path) else { continue }
+            try? fm.removeItem(at: made)
+            try fm.copyItem(at: shipped, to: made)
+        }
+        let spec = icon.appendingPathComponent("icon.json")
+        if fm.fileExists(atPath: spec.path) { try fm.copyItem(at: spec, to: drawnFrom(project)) }
     }
 }

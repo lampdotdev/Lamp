@@ -200,8 +200,8 @@ one place to make a new one. Everything someone makes with Lamp is a **wish** in
 be made of an app, a widget, a menu bar item, a watch app, so "app" stays where it means that piece. A wish is
 typed in the bar, or said with the talk button beside it (`TalkButton`, moving with `Dictation.level`); either
 way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so it passes the same
-setup checks as anything typed in a chat. As on the desktop, a click selects a wish, and a double click (or Return,
-or Open on its menu) opens it to use and change at once (`Store.open(fromDesk:)`): a Mac app with windows opens with
+setup checks as anything typed in a chat. A click on a wish (or Return, or Open on its menu) opens it to use and
+change at once (`Store.open(fromDesk:)`): a Mac app with windows opens with
 its chat beside it (`Store.change`, below); a wish that opens no window is used (`Store.use`), and one still coming
 true, or waiting on an answer, opens its chat. Change… on its menu changes it the same way, or in Lamp's window. Under each icon is what's
 going on with it or where it lives (`WishPlace`, read from its files), and when it's used where nothing comes
@@ -229,7 +229,9 @@ Lamp's own card (`Starters.card`, an `ask` marked `offer`): the starter's line a
 the first request when clicked, with the message box answering it too. Nothing waits on it (`Talk.waiting`), so the
 desk doesn't say it has a question and using it still opens it. Each
 folder holds the app's code, APP.md (which the agent reads first, so it knows the app it's changing), icon.json
-(a symbol icon: Lamp paints no art for a starter, which would offer to set up pictures in its chat) and
+(a symbol icon: Lamp paints no art for a starter, which would offer to set up pictures in its chat), the icon drawn
+from it in icon/ (`StarterIconsTests` draws them again, with Xcode set up for the Liquid Glass one), so the desk
+shows them at once and Lamp draws one again only once its icon.json changes (`Starters.hasShippedIcon`), and
 starter.md, Lamp's own: the wish's name and what its chat offers to change first, a line and three changes, each
 with its tile's symbol (`- drop: Add a water counter`): changes the app doesn't do already, that the agent can make in
 one request with no key, account or pictures to draw. They

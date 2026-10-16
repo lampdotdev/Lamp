@@ -4,8 +4,7 @@ import AVFoundation
 import UniformTypeIdentifiers
 
 /// Lamp's home: the person's wishes laid out like a desktop, and the place to make a new one, by typing it,
-/// saying it, or finding it with the agent's help. As on the desktop, a click on a wish selects it and a double
-/// click opens it, with its chat beside it.
+/// saying it, or finding it with the agent's help. A click on a wish opens it, with its chat beside it.
 struct WishDesk: View {
     @EnvironmentObject private var store: Store
     @StateObject private var dictation = Dictation()
@@ -16,8 +15,6 @@ struct WishDesk: View {
     /// The ideas under the bar, opened by "Not sure?", and open from the start on an empty desk.
     @State private var showingIdeas = false
     @State private var notSureHovered = false
-    /// The wish clicked last, as Finder selects a file: a click elsewhere on the desk lets it go.
-    @State private var selection: String?
     /// The room a scroll bar takes: none where scroll bars only show over the content while scrolling.
     @State private var scrollerWidth = WishDesk.scrollerWidth()
     /// How the desk moves when the ideas open or close and wishes come and go: everything on it together,
@@ -51,8 +48,6 @@ struct WishDesk: View {
                     // open, the desk would otherwise move sideways by its width.
                     .frame(width: max(0, area.size.width - scrollerWidth))
                     .frame(maxWidth: .infinity, minHeight: area.size.height, alignment: .leading)
-                    // A click on the desk itself, between and around the wishes, lets the selected one go.
-                    .background(Color.clear.contentShape(Rectangle()).onTapGesture { selection = nil })
                     .animation(Self.glide, value: wishes.map(\.id))
                 }
                 .scrollContentBackground(.hidden)
@@ -163,7 +158,7 @@ struct WishDesk: View {
     private var grid: some View {
         DeskRows(width: 124, spacing: 8, lineSpacing: 22) {
             ForEach(wishes) { project in
-                DeskIcon(project: project, selected: selection == project.id) { selection = project.id }
+                DeskIcon(project: project)
             }
         }
         .frame(maxWidth: 880)
@@ -408,13 +403,11 @@ struct TalkButton: View {
     private static let glow = Color(red: 1.0, green: 0.62, blue: 0.3)
 }
 
-/// One wish on the desk: its icon, its name, and under it where it lives or what it's waiting for. As in Finder, a
-/// click selects it and a double click opens it, here with its chat beside it to change it (`Store.open(fromDesk:)`).
+/// One wish on the desk: its icon, its name, and under it where it lives or what it's waiting for. A click opens
+/// it, with its chat beside it to change it (`Store.open(fromDesk:)`).
 struct DeskIcon: View {
     @EnvironmentObject private var store: Store
     let project: LampProject
-    var selected = false
-    var select: () -> Void = {}
     @State private var hovered = false
     @State private var place: WishPlace?
 
@@ -456,9 +449,6 @@ struct DeskIcon: View {
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
                 .truncationMode(.tail)
-                .foregroundStyle(selected ? Color.white : Color.primary)
-                .padding(.horizontal, 6).padding(.vertical, 1)
-                .background(selected ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
             if let caption {
                 Text(caption)
                     .font(.caption)
@@ -468,17 +458,14 @@ struct DeskIcon: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8).padding(.horizontal, 4)
-        .background(selected ? Color.primary.opacity(0.1) : Color.primary.opacity(hovered ? 0.05 : 0),
-                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Color.primary.opacity(hovered ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(Rectangle())
-        // Both at once, as in Finder: the first click selects without waiting to see whether a second follows.
-        .simultaneousGesture(TapGesture(count: 2).onEnded { store.open(fromDesk: project) })
-        .simultaneousGesture(TapGesture().onEnded { select() })
+        .onTapGesture { store.open(fromDesk: project) }
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAddTraits(.isButton)
         .accessibilityAction { store.open(fromDesk: project) }
         .accessibilityAction(named: "Use") { store.use(project) }
-        // With keyboard navigation on, Tab reaches it: Return opens it, as in Finder ⌘↓ does.
+        // With keyboard navigation on, Tab reaches it, and Return opens it.
         .focusable(interactions: .activate)
         .onKeyPress(.return) { store.open(fromDesk: project); return .handled }
         .onHover { hovered = $0 }
@@ -1041,7 +1028,7 @@ extension Store {
         }
     }
 
-    /// A wish double-clicked on the desk, or Return on the one selected: it opens with its chat beside it, to use
+    /// A wish clicked on the desk: it opens with its chat beside it, to use
     /// and to change at once, as a document opens ready to edit (`change`). A wish that opens no window (the menu
     /// bar, a widget, the background, a phone) is used instead (`use`), and the desk says where it is. A wish Lamp
     /// came with that isn't built yet spins and opens when it's ready.

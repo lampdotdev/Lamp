@@ -62,6 +62,11 @@ final class StartersTests: XCTestCase {
             let spec = try JSONDecoder().decode(IconSpec.self, from: Data(contentsOf: folder.appendingPathComponent("icon.json")))
             XCTAssertTrue(Icons.backgrounds.contains { $0.name == spec.background }, name)
             XCTAssertNotNil(AppDescription.description(at: folder.appendingPathComponent("about.json")), name)
+            // Its icon ships drawn (StarterIconsTests), from the icon.json it has now.
+            let icon = folder.appendingPathComponent(Starters.iconFolder)
+            XCTAssertTrue(fm.fileExists(atPath: icon.appendingPathComponent("icon.png").path), "\(name) ships no icon")
+            let drawn = try? JSONDecoder().decode(IconSpec.self, from: Data(contentsOf: icon.appendingPathComponent("icon.json")))
+            XCTAssertEqual(drawn, spec, "\(name)'s icon was drawn from another icon.json: draw it again")
             for owned in ["Sources/LampSupport.swift", "Widget/LampWidgetSupport.swift", "build.sh", "Package.swift"] {
                 XCTAssertFalse(fm.fileExists(atPath: folder.appendingPathComponent(owned).path), "\(name) ships \(owned)")
             }
