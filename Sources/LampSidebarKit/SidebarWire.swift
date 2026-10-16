@@ -64,6 +64,9 @@ public struct SidebarState: Codable, Equatable {
     public var dictationProblem: SidebarProblem?
     /// A message is on its way in (Lamp's window or this one sent it): nothing else is sent meanwhile.
     public var submitting: Bool?
+    /// How many messages Lamp has taken from the sidebar's box, which a Send says back (`SidebarCommand.send`).
+    /// Kept apart from `draftVersion`: taking the words doesn't change the box, which waits for the draft.
+    public var sends: Int?
     /// What was pointed at in the app, on its own pill in the message box. Its picture counts as the attachment
     /// after the last of `attachments`, for `SidebarCommand.preview` and `removeAttachment`.
     public var pointed: SidebarPointed?
@@ -220,7 +223,10 @@ public enum SidebarCommand: Codable, Equatable {
     /// before the summary line, which it can't read; one before 3, from before the notes receipt; one before 4, from before offers;
     /// one before 5, from before what was pointed at had a pill of its own.
     case hello(Int)
-    case send(String)
+    /// The message box's words, and how many of the box's messages Lamp had taken when it last said
+    /// (`SidebarState.sends`): a Return pressed again before the sidebar hears that they were sent is for words Lamp
+    /// has already sent, and does nothing. A sidebar from before the count sends none.
+    case send(String, sends: Int? = nil)
     case answer(UUID, [String])
     case draft(String)
     case removeAttachment(Int)

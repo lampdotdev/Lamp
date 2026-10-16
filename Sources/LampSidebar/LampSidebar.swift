@@ -542,7 +542,7 @@ private struct ComposerRow: View {
     /// Lamp sends it and empties the box as its window does, keeping whatever came after (`afterSubmission`).
     private func submit() {
         guard canSend else { return }
-        link.send(.send(text))
+        link.send(.send(text, sends: state.sends ?? 0))
     }
 
     /// Only this process can read what was pasted or chosen here: the files go to Lamp whole.
