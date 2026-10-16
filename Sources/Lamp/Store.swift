@@ -2,6 +2,7 @@ import SwiftUI
 import LampSidebarKit
 import CryptoKit
 import AppKit
+import LampFileLook
 
 /// What an app is for: a Mac app that installs beside the user's others, an iPhone app that runs in the
 /// iOS Simulator on this Mac or on the person's own phone, or one app for both, as Xcode's multiplatform
@@ -1501,19 +1502,30 @@ final class Store: ObservableObject {
         importApp(from: url)
     }
 
-    /// Puts the app's .lampapp file on the clipboard, ready to paste into a message (or a Finder window).
+    /// Puts the app's .lampapp file on the clipboard with its picture, ready to paste into a message: a chat
+    /// shows the picture large beside the file, where the file alone is a blank document.
     func canShare(_ project: LampProject) -> Bool { project.scaffolded }
 
     func copyAppFile(_ project: LampProject) {
         guard canShare(project) else { return }
         do {
             let file = try Self.sharedFile(of: project)
+            // Two files, as Finder copies them, so every app that takes a pasted file takes both.
+            let items = ([Self.sharePicture(for: file), file].compactMap { $0 }) as [NSURL]
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.writeObjects([file as NSURL])
-            log(project, .status, "\(project.name) is copied. Paste it into a message to send it.")
+            NSPasteboard.general.writeObjects(items)
+            log(project, .status, "\(project.name) is copied with its picture. Paste it into a message to send it.")
         } catch {
             NSAlert(error: error).runModal()
         }
+    }
+
+    /// The picture sent with a shared app (`ShareCard`), written beside its file as "<name>.png". It's drawn from
+    /// the finished file, so it can show nothing the file doesn't already carry: the name and the icon.
+    nonisolated static func sharePicture(for file: URL) -> URL? {
+        guard let look = LampFile(contentsOf: file), let png = ShareCard.png(look) else { return nil }
+        let picture = file.deletingPathExtension().appendingPathExtension("png")
+        return (try? png.write(to: picture)) == nil ? nil : picture
     }
 
     /// The app's .lampapp, written where it outlives the paste or the drop that hands it on: another app may

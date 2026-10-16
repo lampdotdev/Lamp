@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import LampFileLook
 import UniformTypeIdentifiers
 
 extension UTType {
@@ -55,10 +56,14 @@ enum Sharing {
         Task {
             do {
                 // Copying assets and compressing the file must leave the interface free to respond.
-                let file = try await Task.detached(priority: .userInitiated) { try export(project) }.value
+                let (file, picture) = try await Task.detached(priority: .userInitiated) {
+                    let file = try export(project)
+                    return (file, Store.sharePicture(for: file))
+                }.value
                 guard shareRequest == request, window.isVisible else { return }
-                // Separate native items keep the opening instructions beside the attachment in Mail and Messages.
-                let picker = NSSharingServicePicker(items: ["Open this with Lamp https://lamp.dev", file])
+                // Separate native items keep the opening instructions beside the attachment in Mail and Messages,
+                // and the picture before it, so it shows large where the file alone is a blank document.
+                let picker = NSSharingServicePicker(items: ["Open this with Lamp https://lamp.dev"] + [picture, file].compactMap { $0 })
                 self.picker = picker
                 // The picker opens from the control, as the system's own Share menus do; a rectangle with no
                 // size isn't a place to it, and it opens beside the window instead.
@@ -206,6 +211,11 @@ enum Sharing {
         if let spec = Icons.load(project), fm.fileExists(atPath: Icons.artURL(project, spec: spec).path) {
             try fm.copyItem(at: Icons.artURL(project, spec: spec), to: stage.appendingPathComponent("icon-art.png"))
         }
+        // The icon as drawn here, for Quick Look and the picture sent with the file. The Mac that opens the file
+        // draws its own from icon.json; an older Lamp leaves this one unread.
+        if let icon = drawnIcon(of: project) {
+            try icon.write(to: stage.appendingPathComponent(LampFile.iconEntry))
+        }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -229,6 +239,20 @@ enum Sharing {
         let size = (try? output.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         guard size <= maxArchiveBytes else { throw ImportError("\(project.name) is too big to share.") }
         return output
+    }
+
+    /// The app's icon at 512 px as a PNG: from the .icns Lamp wrote, else the desk's smaller one. Nil before it has one.
+    static func drawnIcon(of project: LampProject) -> Data? {
+        let largest = NSImage(contentsOf: Icons.icnsURL(project))?.representations
+            .compactMap { $0 as? NSBitmapImageRep }.max { $0.pixelsWide < $1.pixelsWide }
+        guard let largest, let image = largest.cgImage else { return try? Data(contentsOf: Icons.previewURL(project)) }
+        let side = min(512, largest.pixelsWide)
+        guard let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+        return context.makeImage().flatMap { NSBitmapImageRep(cgImage: $0).representation(using: .png, properties: [:]) }
     }
 
     /// Attached files up to this much go into a shared app: under the archive limit, with room for the code.
