@@ -153,8 +153,14 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 chrome.alarms.create('hello', {periodInMinutes: 0.5});
 chrome.alarms.onAlarm.addListener(() => { void hello(); });
 chrome.runtime.onStartup.addListener(() => { void hello(); });
-// The rules an earlier version gave Chrome would keep lighting its icon after an update, so they go.
-chrome.runtime.onInstalled.addListener(() => { chrome.storage.local.remove('rulesKey'); void hello(); });
+// An earlier version gave Chrome rules that lit the icon on matching pages, and Chrome keeps registered rules
+// through an update and adds them back when the extension loads. They're taken out once here, which is all the
+// declarativeContent permission is still for.
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.declarativeContent?.onPageChanged.removeRules(undefined, () => void chrome.runtime.lastError);
+  chrome.storage.local.remove('rulesKey');
+  void hello();
+});
 // A connected native port keeps the worker alive, so Lamp hears from it every two seconds while Chrome is open.
 setInterval(hello, 2000);
 void hello();

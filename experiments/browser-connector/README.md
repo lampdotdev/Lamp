@@ -30,7 +30,9 @@ for everything else.
   app fits: `{"offer": "…", "fits": [{"site": "…", "path": "…", "selector": "…"}]}`.
   Lamp reads it (`BrowserCompanions.Declaration`) to list the app and passes the
   fits to the extension, which uses them only when Lamp's icon is clicked (below).
-  The extension reads nothing to notice a page.
+  The extension reads nothing to notice a page. It keeps the `declarativeContent`
+  permission only to remove, once on install or update, the page rules an earlier
+  version gave Chrome to light its icon.
 - **The click** on Lamp's icon (`chrome.action.onClicked`) opens a side panel
   for that tab only and grants `activeTab`. With it the worker asks whether each
   declared selector is on the page (yes or no, nothing else) to choose the app.
