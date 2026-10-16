@@ -355,6 +355,9 @@ enum LiveSlots {
         var type: String
         /// Nil in what was saved before structs and views had spares: a class's.
         var holder: Holder?
+        /// A struct's property: the cases of its enum type when it was taken in, by which its starting value is
+        /// judged again each time it's put back.
+        var cases: [String]?
     }
 
     private static func url(_ project: LampProject) -> URL { LiveReload.folder(project).appendingPathComponent("slots.json") }
@@ -389,7 +392,10 @@ enum LiveSlots {
         for (type, properties) in mapping(project) {
             for (name, slot) in properties {
                 var unused: [URL: Data] = [:]
-                _ = rewrite(name, as: slot, in: type, published: nil, cases: nil, project: project, keeping: &unused)
+                // A struct's starting value is judged again: one changed to something that isn't steady stays a
+                // stored property, and the change reopens the app.
+                let known = slot.holder == .value ? [enumName(slot.type): Set(slot.cases ?? [])] : nil
+                _ = rewrite(name, as: slot, in: type, published: nil, cases: known, project: project, keeping: &unused)
             }
         }
     }
@@ -431,6 +437,13 @@ enum LiveSlots {
         }
         let old = byType(before), new = byType(after)
         var map = mapping(project)
+        var cases: [String: Set<String>] = [:]
+        for entry in after {
+            let parts = entry.split(separator: "\t", maxSplits: 1)
+            guard parts.count == 2, parts[1].hasPrefix("case "), let colon = parts[1].range(of: ": ") else { continue }
+            cases[String(parts[0]), default: []].insert(String(parts[1][parts[1].index(parts[1].startIndex, offsetBy: 5)..<colon.lowerBound]))
+        }
+
         var planned: [(type: String, name: String, slot: Slot, published: Bool)] = []
         for (type, members) in old.sorted(by: { $0.key < $1.key }) {
             guard let current = new[type] else { return nil }
@@ -483,17 +496,12 @@ enum LiveSlots {
                     taken.insert(free)
                     index = free
                 }
-                planned.append((type, name, Slot(index: index, type: kind, holder: holder), published))
+                let known = holder == .value ? cases[enumName(kind)].map { $0.sorted() } : nil
+                planned.append((type, name, Slot(index: index, type: kind, holder: holder, cases: known), published))
             }
         }
         // Every type the open app doesn't have is the library's to lay out; one it has that changed must be fitted.
         guard !planned.isEmpty else { return nil }
-        var cases: [String: Set<String>] = [:]
-        for entry in after {
-            let parts = entry.split(separator: "\t", maxSplits: 1)
-            guard parts.count == 2, parts[1].hasPrefix("case "), let colon = parts[1].range(of: ": ") else { continue }
-            cases[String(parts[0]), default: []].insert(String(parts[1][parts[1].index(parts[1].startIndex, offsetBy: 5)..<colon.lowerBound]))
-        }
         var originals: [URL: Data] = [:]
         for item in planned {
             guard rewrite(item.name, as: item.slot, in: item.type, published: item.published, cases: cases, project: project, keeping: &originals) != nil else {
@@ -517,6 +525,9 @@ enum LiveSlots {
         holder == .view ? "__lampState_\(simpleName(type))" : "__lampSpare_\(simpleName(type))"
     }
 
+    /// The enum a property's type names, an optional's included.
+    private static func enumName(_ type: String) -> String { type.hasSuffix("?") ? String(type.dropLast()) : type }
+
     private static func simpleName(_ type: String) -> String { type.split(separator: ".").last.map(String.init) ?? type }
 
     /// A starting value that's the same every time it's worked out: answered as it is until something is set.
@@ -531,7 +542,7 @@ enum LiveSlots {
     /// `Session()` may make something new each time, and `.shared` or `.now` may be worked out on each read.
     private static func isSteady(_ value: String, type: String, cases: [String: Set<String>]) -> Bool {
         if isLiteral(value) || value.range(of: #"^\[[\w.<>, :?]+\]\(\)$"#, options: .regularExpression) != nil { return true }
-        let enumName = type.hasSuffix("?") ? String(type.dropLast()) : type
+        let enumName = enumName(type)
         let parts = value.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count == 2, parts[0].isEmpty || parts[0] == Substring(enumName) else { return false }
         return cases[enumName]?.contains(String(parts[1])) == true

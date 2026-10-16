@@ -3393,12 +3393,23 @@ enum Template {
         }
         /// A struct's property, by name.
         func field(_ name: String) -> Any? { (value as? [String: Any])?[name] }
-        /// A property set back to its starting value is taken out, as if never set: a value that has it and one
-        /// that never did are alike, as they would be with the property stored.
+        /// A property set back to exactly its starting value is taken out, as if never set: a value that has it and
+        /// one that never did are alike, as they would be with the property stored. Only exactly: a value that's
+        /// equal but not the same (-0.0 for 0.0, or a case a custom == calls equal) is kept as it was set.
         static func setting(_ name: String, to new: Any, initial: Any, in spare: LampSpare?) -> LampSpare? {
             var fields = (spare?.value as? [String: Any]) ?? [:]
-            fields[name] = same(new, initial) ? nil : new
+            fields[name] = identical(new, initial) ? nil : new
             return fields.isEmpty ? nil : LampSpare(fields)
+        }
+        /// Equal, and for plain data (numbers, flags, simple enums) the same bytes too.
+        private static func identical(_ a: Any, _ b: Any) -> Bool {
+            guard let equatable = a as? any Equatable else { return false }
+            func check<T: Equatable>(_ x: T) -> Bool {
+                guard let y = b as? T, x == y else { return false }
+                guard _isPOD(T.self) else { return true }
+                return withUnsafeBytes(of: x) { left in withUnsafeBytes(of: y) { right in left.elementsEqual(right) } }
+            }
+            return check(equatable)
         }
         private static func same(_ a: Any?, _ b: Any?) -> Bool {
             guard let a, let b else { return a == nil && b == nil }
