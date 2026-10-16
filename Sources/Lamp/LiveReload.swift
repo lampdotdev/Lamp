@@ -357,25 +357,31 @@ enum LiveReload {
     /// The App runs once, at launch: a change to it can't show in an app that's already open.
     /// The declarations at the top of a file that SwiftUI reads only at launch: the App (with its `@main`), and
     /// the types that are scenes or menu commands, whose bodies aren't wrapped the way a view's is. Each is its text
-    /// from its first line (attributes included) to the brace that closes it, in order.
+    /// from its first line (attributes included) to the brace that closes it, in order. When the App can't be
+    /// told apart from the rest, the whole file counts, so any change to it reopens the app.
     static func launchParts(of source: String) -> [String] {
-        let lines = source.components(separatedBy: "\n")
-        var parts: [String] = [], index = 0
-        let start = try! NSRegularExpression(pattern: #"^(@\w+.*|((public|private|fileprivate|internal|final|open)\s+)*(struct|class|enum|extension|actor)\s.*)$"#)
+        let chars = Array(source)
+        let start = try! NSRegularExpression(pattern: #"^(@\w+|((public|private|fileprivate|internal|final|open)\s+)*(struct|class|enum|extension|actor)\s)"#)
         let launch = try! NSRegularExpression(pattern: #"@main\b|:[^{]*\b(App|Scene|Commands)\b"#)
-        while index < lines.count {
-            let line = lines[index]
-            guard start.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) != nil else { index += 1; continue }
-            // A declaration at the left edge runs to the first line after it that closes at the left edge.
-            var end = index
-            if !(line.contains("{") && line.trimmingCharacters(in: .whitespaces).hasSuffix("}")) {
-                while end + 1 < lines.count, !lines[end + 1].hasPrefix("}") { end += 1 }
-                end = min(end + 1, lines.count - 1)
+        var parts: [String] = [], index = 0
+        while index < chars.count {
+            // The start of a line at the left edge.
+            var lineEnd = index
+            while lineEnd < chars.count, chars[lineEnd] != "\n" { lineEnd += 1 }
+            let line = String(chars[index..<lineEnd])
+            guard start.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) != nil,
+                  let open = SwiftText.next("{", in: chars, from: index), let close = SwiftText.closing(chars, open: open) else {
+                index = lineEnd + 1
+                continue
             }
-            let text = lines[index...end].joined(separator: "\n")
-            let header = String(text.prefix { $0 != "{" })
-            if launch.firstMatch(in: header, range: NSRange(header.startIndex..., in: header)) != nil { parts.append(text) }
-            index = end + 1
+            let header = String(chars[index..<open])
+            if launch.firstMatch(in: header, range: NSRange(header.startIndex..., in: header)) != nil {
+                parts.append(String(chars[index...close]))
+            }
+            index = close + 1
+        }
+        if declaresApp(source), !parts.contains(where: { $0.contains("@main") || $0.range(of: #"\bApp\b"#, options: .regularExpression) != nil }) {
+            return [source]
         }
         return parts
     }
@@ -616,38 +622,27 @@ enum LiveSlots {
 
     /// A type's body with each member on a line of its own: what follows its `{` up to the `}` that closes it,
     /// with members split at `;`, the closing brace on a line of its own, and each name of a `var a = 1, b = 2`
-    /// given its own declaration (`var a = 1` and `var b = 2`, with the same attributes and access). What's inside
-    /// a member (a function's body, a closure, brackets, a string) is left as it is.
+    /// given its own declaration (`var a = 1` and `var b = 2`, with the same attributes and access). A list whose
+    /// names share a type written once at its end (`var a, b: Int`) is left as it is. What's inside a member (a
+    /// function's body, a closure, brackets, strings of every kind, comments) is left as it is.
     static func membersOnLines(_ text: String, after start: Int, lead: String) -> String {
         let ns = text as NSString
         let head = ns.substring(to: start), chars = Array(ns.substring(from: start))
         let memberLead = lead + "    "
-        var out = "", depth = 1, nesting = 0, inString = false, statement = ""
+        var out = "", depth = 1, nesting = 0, statement = ""
         let binding = try! NSRegularExpression(pattern: #"^\s*((?:@\w+(?:\([^)]*\))?\s+)*(?:(?:public|private|fileprivate|internal|nonisolated|static|final)(?:\(set\))?\s+)*(?:var|let)\s+)(?!\()"#)
         var index = 0
         while index < chars.count {
+            if let skipped = SwiftText.skip(chars, at: index) {
+                let piece = String(chars[index..<skipped])
+                out += piece
+                if !piece.hasPrefix("/") { statement += piece }
+                index = skipped
+                continue
+            }
             let c = chars[index]
             index += 1
-            if inString {
-                out.append(c); statement.append(c)
-                if c == "\\", index < chars.count { out.append(chars[index]); statement.append(chars[index]); index += 1 }
-                else if c == "\"" { inString = false }
-                continue
-            }
-            // A comment runs to the end of its line (or its */), as it is.
-            if c == "/", index < chars.count, chars[index] == "/" || chars[index] == "*" {
-                let block = chars[index] == "*"
-                out.append(c)
-                while index < chars.count {
-                    let d = chars[index]
-                    if !block && d == "\n" { break }
-                    out.append(d); index += 1
-                    if block && d == "/" && out.hasSuffix("*/") && out.count > 2 { break }
-                }
-                continue
-            }
             switch c {
-            case "\"": inString = true
             case "{": depth += 1
             case "}":
                 depth -= 1
@@ -667,11 +662,16 @@ enum LiveSlots {
             case "," where depth == 1 && nesting == 0:
                 let range = NSRange(statement.startIndex..., in: statement)
                 if let m = binding.firstMatch(in: statement, range: range) {
-                    let prefix = (statement as NSString).substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
-                    out += "\n" + memberLead + prefix + " "
-                    statement = memberLead + prefix + " "
-                    while index < chars.count, chars[index] == " " { index += 1 }
-                    continue
+                    let prefix = (statement as NSString).substring(with: m.range(at: 1))
+                    let name = (statement as NSString).substring(from: m.range(at: 1).location + m.range(at: 1).length)
+                    // A name with neither a type nor a value takes the type written after the last one: kept whole.
+                    if name.contains(":") || name.contains("=") {
+                        let clean = prefix.trimmingCharacters(in: .whitespaces)
+                        out += "\n" + memberLead + clean + " "
+                        statement = memberLead + clean + " "
+                        while index < chars.count, chars[index] == " " { index += 1 }
+                        continue
+                    }
                 }
             case "\n": statement = ""; out.append(c); continue
             default: break
@@ -788,6 +788,70 @@ enum LiveSlots {
                 try? changed.write(to: file, atomically: true, encoding: .utf8)
                 return (file, initial)
             }
+        }
+        return nil
+    }
+}
+
+/// Reading Swift source only as far as Lamp's live rewrites need: where a string or a comment ends, and which brace
+/// closes which, so text inside them is never taken for code.
+enum SwiftText {
+    /// The index just past the string literal or comment that starts at `index`, or nil when none does. Strings
+    /// may be raw (`#"…"#`, any number of `#`) and multiline (`"""…"""`); escapes count only in non-raw ones.
+    static func skip(_ chars: [Character], at index: Int) -> Int? {
+        guard index < chars.count else { return nil }
+        if chars[index] == "/", index + 1 < chars.count {
+            if chars[index + 1] == "/" {
+                var end = index
+                while end < chars.count, chars[end] != "\n" { end += 1 }
+                return end
+            }
+            if chars[index + 1] == "*" {
+                var end = index + 2, depth = 1
+                while end < chars.count, depth > 0 {
+                    if chars[end] == "/", end + 1 < chars.count, chars[end + 1] == "*" { depth += 1; end += 2; continue }
+                    if chars[end] == "*", end + 1 < chars.count, chars[end + 1] == "/" { depth -= 1; end += 2; continue }
+                    end += 1
+                }
+                return end
+            }
+        }
+        var hashes = 0, at = index
+        while at < chars.count, chars[at] == "#" { hashes += 1; at += 1 }
+        guard at < chars.count, chars[at] == "\"" else { return nil }
+        let multiline = at + 2 < chars.count && chars[at + 1] == "\"" && chars[at + 2] == "\""
+        let quotes = multiline ? 3 : 1
+        var end = at + quotes
+        while end < chars.count {
+            if hashes == 0, chars[end] == "\\" { end += 2; continue }
+            if !multiline, chars[end] == "\n" { return end }
+            if chars[end] == "\"", end + quotes - 1 < chars.count, chars[end..<(end + quotes)].allSatisfy({ $0 == "\"" }) {
+                let after = end + quotes
+                if after + hashes <= chars.count, chars[after..<(after + hashes)].allSatisfy({ $0 == "#" }) { return after + hashes }
+            }
+            end += 1
+        }
+        return end
+    }
+
+    /// The first `character` at or after `index` that isn't in a string or comment.
+    static func next(_ character: Character, in chars: [Character], from index: Int) -> Int? {
+        var at = index
+        while at < chars.count {
+            if let skipped = skip(chars, at: at) { at = skipped; continue }
+            if chars[at] == character { return at }
+            at += 1
+        }
+        return nil
+    }
+
+    /// The brace that closes the one at `open`.
+    static func closing(_ chars: [Character], open: Int) -> Int? {
+        var depth = 0, at = open
+        while at < chars.count {
+            if let skipped = skip(chars, at: at) { at = skipped; continue }
+            if chars[at] == "{" { depth += 1 } else if chars[at] == "}" { depth -= 1; if depth == 0 { return at } }
+            at += 1
         }
         return nil
     }
