@@ -203,7 +203,7 @@ struct OnboardingView: View {
 
 // MARK: - Steps
 
-/// 1. What Lamp is, over the lamp itself.
+/// 1. What Lamp is, over the lamp itself: software that keeps changing for the person.
 private struct HelloStep: View {
     let next: () -> Void
     @State private var shown = false
@@ -211,18 +211,17 @@ private struct HelloStep: View {
     var body: some View {
         GeometryReader { proxy in
             VStack(spacing: 0) {
-                // The website's own promise, so someone who just came from it sees the same words; the question
-                // is the next step's, where it can be answered.
-                Text("Lamp turns your wishes\ninto selfish software.")
+                Text("Software that changes\nwhenever you do.")
                     .font(.system(size: 54, weight: .bold))
                     .tracking(-1.2)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(Palette.ink)
                     .reveal(shown, delay: 0.1)
-                Text("Made by you, for nobody else. Tools, apps and games for your Mac, iPhone and iPad.")
+                Text("Start with one of ours or your own idea. Change anything, any time, even while you're using it.")
                     .font(.system(size: 19))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                    .frame(maxWidth: 620)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 12)
                     .reveal(shown, delay: 0.2)

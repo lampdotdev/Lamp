@@ -31,16 +31,22 @@ struct WishDesk: View {
                 ScrollView {
                     // In the middle of the window while it fits, gliding to its new place as ideas open or
                     // close and wishes come and go; from the top, scrolling, once it doesn't.
+                    // The wishes come first: using one and changing it is where most wishes start, and a new
+                    // one is the way on from there.
                     VStack(spacing: 0) {
-                        header
+                        Text(wishes.isEmpty ? "What do you wish for?" : "Use one, change one, or wish for something new.")
+                            .font(.system(size: 30, weight: .semibold, design: .rounded))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                        if !wishes.isEmpty {
+                            grid.padding(.top, 36)
+                        }
+                        header.padding(.top, wishes.isEmpty ? 18 : 40)
                         if showingIdeas && !ideas.isEmpty {
                             DeskIdeas(ideas: ideas, choose: choose, find: store.findWish)
                                 .padding(.top, 28)
                                 .padding(.horizontal, 32)
                                 .transition(.modifier(active: MiddleOut(shown: 0), identity: MiddleOut(shown: 1)))
-                        }
-                        if !wishes.isEmpty {
-                            grid.padding(.top, 44)
                         }
                     }
                     .padding(.vertical, 40)
@@ -61,7 +67,7 @@ struct WishDesk: View {
             }
         }
         .modifier(ClearToolbar())
-        // The lamp is drawn on its light page, as in the welcome, whatever the Mac's appearance.
+        // Drawn on Lamp's light page, as in the welcome, whatever the Mac's appearance.
         .environment(\.colorScheme, .light)
         .onAppear {
             hasMicrophone = Dictation.hasMicrophone
@@ -93,9 +99,6 @@ struct WishDesk: View {
 
     private var header: some View {
         VStack(spacing: 18) {
-            Text("What do you wish for?")
-                .font(.system(size: 30, weight: .semibold, design: .rounded))
-                .multilineTextAlignment(.center)
             HStack(alignment: .center, spacing: 14) {
                 bar
                 if hasMicrophone {
@@ -127,7 +130,7 @@ struct WishDesk: View {
 
     private var bar: some View {
         HStack(alignment: .center, spacing: 10) {
-            TextField(dictation.isListening ? "Listening…" : "Type a wish…", text: $store.deskDraft, axis: .vertical)
+            TextField(dictation.isListening ? "Listening…" : wishes.isEmpty ? "Type a wish…" : "Wish for something new…", text: $store.deskDraft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.title3)
                 .lineLimit(1...5)
@@ -413,18 +416,24 @@ struct DeskIcon: View {
 
     private var busy: Bool { store.busy.contains(project.id) }
 
-    /// What's under the name: what's going on with it, else where it lives.
+    /// What's under the name: what's going on with it, else, while the pointer is on it, what a click does,
+    /// else where it lives.
     private var caption: String? {
+        if let status { return status }
+        return hovered ? "Open and change" : place?.caption
+    }
+
+    private var status: String? {
         // A wish Lamp came with, built for the first time out of sight: nothing shows until it's clicked, and then it
         // says it's opening, which it does by itself once it's ready.
         if store.openWhenReady.contains(project.id) { return "Opening…" }
-        if store.preparing.contains(project.id) { return place?.caption }
+        if store.preparing.contains(project.id) { return nil }
         if busy { return store.progress[project.id]?.newApp == true || project.untitled ? "Coming true…" : "Changing…" }
         if Talk.waiting(in: store.logs[project.id] ?? []) != nil { return "Has a question" }
         if store.queued[project.id]?.isEmpty == false { return "Waiting to start" }
         if project.finding { return "Finding a wish" }
         if store.unread.contains(project.id) { return "Ready" }
-        return place?.caption
+        return nil
     }
 
     var body: some View {
@@ -449,12 +458,12 @@ struct DeskIcon: View {
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
                 .truncationMode(.tail)
-            if let caption {
-                Text(caption)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+            // Its line is always kept, so the hint coming and going on hover never moves the icons below.
+            Text(caption ?? " ")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .accessibilityHidden(caption == nil)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8).padding(.horizontal, 4)
@@ -478,9 +487,9 @@ struct DeskIcon: View {
             Divider()
             AppMenu(project: project)
         }
-        .help(project.title)
+        .help("Click to use \(project.title) and change it")
         .accessibilityLabel(project.title)
-        .accessibilityHint(caption ?? "")
+        .accessibilityHint(status ?? place?.caption ?? "")
         // Read again as a turn ends: a change can move it, say, into the menu bar.
         .task(id: busy) {
             let current = project
@@ -874,20 +883,10 @@ enum WishPlace: Equatable {
     }
 }
 
-/// The desk's backdrop: the welcome's first picture, the lamp at rest on Lamp's page.
+/// The desk's backdrop: Lamp's page, as in the welcome.
 struct DeskBackground: View {
-    private static let lamp: NSImage? = Bundle.main.url(forResource: "step0", withExtension: "png", subdirectory: "Onboarding")
-        .flatMap(NSImage.init(contentsOf:))
-
     var body: some View {
-        // Filling the window as the welcome's does, and never asking for more room than the window has.
         Color(nsColor: LampBackdrop.page)
-            .overlay {
-                if let lamp = Self.lamp {
-                    Image(nsImage: lamp).resizable().interpolation(.high).aspectRatio(contentMode: .fill)
-                }
-            }
-            .clipped()
     }
 }
 
