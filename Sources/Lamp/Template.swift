@@ -3873,6 +3873,9 @@ enum Template {
                     glass.orderOut(nil)
                 }
                 if Picker.current === self { Picker.current = nil }
+                // Pointing may have been asked for from Lamp's window, which then comes back in front: macOS lets
+                // Lamp do that only when the app in front hands it over.
+                NSApp.yieldActivation(toApplicationWithBundleIdentifier: "{{HOST}}")
                 if tell {
                     DistributedNotificationCenter.default().postNotificationName(
                         Notification.Name("{{NOTE}}pickEnded"), object: Bundle.main.bundleIdentifier, userInfo: nil, deliverImmediately: true)
@@ -4226,8 +4229,10 @@ enum Template {
         @MainActor static func restore(_ window: NSWindow) {
             guard !restored else { return }
             restored = true
-            if askedToOpen() { open(window) }
-            else if UserDefaults.standard.bool(forKey: openKey) { open(window, grow: false) }
+            // A window that had the chat open last time comes back at a size that already holds it.
+            let wasOpen = UserDefaults.standard.bool(forKey: openKey)
+            if askedToOpen() { open(window, grow: !wasOpen) }
+            else if wasOpen { open(window, grow: false) }
         }
 
         /// Lamp hands a new app's chat over to the app once it's first built (`Store.handOff`): it leaves a file in
@@ -4316,6 +4321,9 @@ enum Template {
                     label.widthAnchor.constraint(lessThanOrEqualToConstant: 220),
                 ])
                 content.view = box
+                // A popover is as big as its content says: the label's wrapped size, with the margins around it.
+                box.layoutSubtreeIfNeeded()
+                content.preferredContentSize = box.fittingSize
                 let popover = NSPopover()
                 popover.contentViewController = content
                 popover.behavior = .transient

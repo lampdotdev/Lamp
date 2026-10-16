@@ -322,8 +322,9 @@ public struct Elapsed: View {
     }
 }
 
-/// The + button's menu, opened where the click was. In an app's sidebar the chat's window is one macOS keeps out of
-/// sight, so the point is placed by where the app says the chat is (`Composer.hostOrigin`) rather than by that window.
+/// The + button's menu, opened where the pointer is. That's on the screen itself rather than in the chat's window:
+/// in an app's sidebar that window is one macOS keeps out of sight, and a press from VoiceOver or the keyboard
+/// carries no click to place it by.
 @MainActor
 enum PlusMenu {
     private final class Target: NSObject {
@@ -333,7 +334,6 @@ enum PlusMenu {
     }
 
     static func show(_ items: [(String, () -> Void)]) {
-        guard let event = NSApp.currentEvent, let window = event.window ?? NSApp.keyWindow else { return }
         let target = Target(items.map(\.1))
         let menu = NSMenu()
         for (index, title) in items.map(\.0).enumerated() {
@@ -342,14 +342,7 @@ enum PlusMenu {
             item.tag = index
             menu.addItem(item)
         }
-        let local = event.type == .leftMouseUp || event.type == .leftMouseDown ? event.locationInWindow : window.mouseLocationOutsideOfEventStream
-        let onScreen: NSPoint
-        if let host = Composer.hostOrigin {
-            onScreen = NSPoint(x: host.x + local.x, y: host.y + local.y)
-        } else {
-            onScreen = window.convertPoint(toScreen: local)
-        }
         // The target lives as long as the menu is up: popUp returns once it closes.
-        withExtendedLifetime(target) { _ = menu.popUp(positioning: nil, at: onScreen, in: nil) }
+        withExtendedLifetime(target) { _ = menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil) }
     }
 }

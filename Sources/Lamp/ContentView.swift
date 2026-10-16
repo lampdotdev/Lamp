@@ -541,8 +541,7 @@ struct ProjectView: View {
                                    attachHelp: "Attach files. You can also paste or drop images and files here.",
                                    attach: chooseFiles,
                                    // Pointing at part of the app, while it's open here with something to point at.
-                                   point: store.openOnMac.contains(project.id) && Sidebar.applies(to: project)
-                                       ? { MagicPanel.shared.point(in: project, fromLamp: true) } : nil,
+                                   point: store.canPoint(in: project) ? { MagicPanel.shared.point(in: project, fromLamp: true) } : nil,
                                    send: send, stop: { store.stop(project) },
                                    focus: { focusRequest += 1 }) {
             Composer(text: shownDraft, height: $composerHeight,
