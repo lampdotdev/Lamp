@@ -52,7 +52,8 @@ extension Library {
             }
             for v in verdicts {
                 if let error = v.error { message = error; continue }
-                var song = v.item
+                // The song as it is now: it may have been edited, refiled or deleted while the AI judged.
+                guard var song = songs.first(where: { $0.id == v.item.id }) else { continue }
                 song.folders.removeAll {$0 == folder.id}
                 if (v["fits"]?.probability ?? 0) >= 0.5 { song.folders.append(folder.id) }
                 song.ranks[folder.id] = v["rank"]?.score ?? 0

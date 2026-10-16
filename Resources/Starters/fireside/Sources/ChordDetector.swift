@@ -22,7 +22,8 @@ final class ChordDetector {
         sampleRemainder.append(contentsOf:samples)
         let step = sampleRate / rate
         var position = resamplePosition
-        while position + step < Double(sampleRemainder.count) {
+        // Both samples around the position must be here; the last one waits for the next buffer.
+        while Int(position) + 1 < sampleRemainder.count {
             let i = Int(position)
             let fraction = Float(position - Double(i))
             pending.append(sampleRemainder[i] * (1-fraction) + sampleRemainder[i+1] * fraction)
