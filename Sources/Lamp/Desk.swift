@@ -17,10 +17,19 @@ struct WishDesk: View {
     @State private var notSureHovered = false
     /// The room a scroll bar takes: none where scroll bars only show over the content while scrolling.
     @State private var scrollerWidth = WishDesk.scrollerWidth()
-    /// The wish the pointer is on, and the picture of it on the stage where the headline is.
+    /// The wish the pointer is on, and what it is on the stage where the headline is: its picture and the line
+    /// saying what it is.
     @State private var pointedAt: LampProject.ID?
-    @State private var staged: NSImage?
+    @State private var staged: Staged?
     private static let stageHeight: CGFloat = 160
+    /// The most a wish's line holds and still fits the stage's three lines (`AppDescription`, `Agent.Rules.about`).
+    static let describedIn = 90
+
+    private struct Staged: Equatable {
+        let id: LampProject.ID
+        let picture: NSImage?
+        let words: String?
+    }
     /// How the desk moves when the ideas open or close and wishes come and go: everything on it together,
     /// as one change, so nothing jumps ahead of the rest.
     private static let glide = Animation.spring(response: 0.45, dampingFraction: 0.86)
@@ -107,8 +116,8 @@ struct WishDesk: View {
             .padding(.horizontal, 32)
     }
 
-    /// The headline, which steps back and fades as a wish's picture comes forward in its place while the pointer
-    /// is on the wish. Its room is kept either way, so nothing below moves.
+    /// The headline, which steps back and fades as a wish's picture and what it is come forward in its place while
+    /// the pointer is on the wish. Its room is kept either way, so nothing below moves.
     private var stage: some View {
         ZStack {
             headline
@@ -116,16 +125,31 @@ struct WishDesk: View {
                 .blur(radius: staged == nil ? 0 : 10)
                 .opacity(staged == nil ? 1 : 0)
             if let staged {
-                WishStage(image: staged, height: Self.stageHeight - 20)
-                    .id(ObjectIdentifier(staged))
-                    .transition(.asymmetric(
-                        insertion: .scale(scale: 0.92).combined(with: .opacity),
-                        removal: .opacity))
+                HStack(spacing: 32) {
+                    if let picture = staged.picture {
+                        WishStage(image: picture, height: Self.stageHeight - 20)
+                    }
+                    if let words = staged.words {
+                        Text(words)
+                            .font(.system(size: 22, weight: .medium, design: .rounded))
+                            .foregroundStyle(.primary.opacity(0.8))
+                            .lineLimit(3)
+                            .minimumScaleFactor(0.75)
+                            .multilineTextAlignment(staged.picture == nil ? .center : .leading)
+                            .frame(maxWidth: 320, alignment: staged.picture == nil ? .center : .leading)
+                    }
+                }
+                .padding(.horizontal, 32)
+                .id(staged.id)
+                .transition(.asymmetric(
+                    insertion: .scale(scale: 0.92).combined(with: .opacity),
+                    removal: .opacity))
+                .accessibilityHidden(true)
             }
         }
         .frame(height: wishes.isEmpty ? nil : Self.stageHeight)
         .frame(maxWidth: .infinity)
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: staged.map(ObjectIdentifier.init))
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: staged?.id)
         .task(id: pointedAt) { await stagePicture() }
     }
 
@@ -141,11 +165,14 @@ struct WishDesk: View {
             try? await Task.sleep(for: .milliseconds(250))
             if Task.isCancelled { return }
         }
-        // Read afresh each time: the app takes a new picture whenever it opens.
+        // Read afresh each time: the app takes a new picture whenever it opens, and the agent writes the line again
+        // when what the app is changes.
         let url = Runtime.previewURL(project)
         let file = FileManager.default.fileExists(atPath: url.path) ? url : Starters.shippedPreview(of: project)
-        let image = file.flatMap(NSImage.init(contentsOf:))
-        if !Task.isCancelled { staged = image }
+        let picture = file.flatMap(NSImage.init(contentsOf:))
+        let words = AppDescription.description(of: project)
+        guard !Task.isCancelled else { return }
+        staged = picture == nil && words == nil ? nil : Staged(id: project.id, picture: picture, words: words)
     }
 
     private var header: some View {

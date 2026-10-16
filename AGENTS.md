@@ -234,7 +234,8 @@ folder holds the app's code, APP.md (which the agent reads first, so it knows th
 (a symbol icon: Lamp paints no art for a starter, which would offer to set up pictures in its chat), the icon drawn
 from it in icon/ (`StarterIconsTests` draws them again, with Xcode set up for the Liquid Glass one), so the desk
 shows them at once and Lamp draws one again only once its icon.json changes (`Starters.hasShippedIcon`),
-preview.png, a picture of its window that the desk shows in place of its headline while the pointer is on the icon (`WishStage`; every
+preview.png, a picture of its window that the desk shows in place of its headline while the pointer is on the icon,
+with the app's about.json line beside it in large type, 90 characters at most (`WishStage`, `WishDesk.describedIn`; every
 Mac app saves a fresh one at each launch, `LampRuntime.preview`, and Lamp takes one of the simulator for an iPhone
 app, both at `Runtime.previewURL`), and starter.md, Lamp's own: the wish's name and what its chat offers to change first, a line and three changes, each
 with its tile's symbol (`- drop: Add a water counter`): changes the app doesn't do already, that the agent can make in

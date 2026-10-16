@@ -61,7 +61,9 @@ final class StartersTests: XCTestCase {
             XCTAssertTrue(fm.fileExists(atPath: folder.appendingPathComponent("Sources/App.swift").path), name)
             let spec = try JSONDecoder().decode(IconSpec.self, from: Data(contentsOf: folder.appendingPathComponent("icon.json")))
             XCTAssertTrue(Icons.backgrounds.contains { $0.name == spec.background }, name)
-            XCTAssertNotNil(AppDescription.description(at: folder.appendingPathComponent("about.json")), name)
+            let about = try XCTUnwrap(AppDescription.description(at: folder.appendingPathComponent("about.json")), name)
+            // The desk shows it in large type beside the app's picture, in three lines at most.
+            XCTAssertLessThanOrEqual(about.count, WishDesk.describedIn, "\(name): \(about)")
             // Its icon ships drawn (StarterIconsTests), from the icon.json it has now.
             let icon = folder.appendingPathComponent(Starters.iconFolder)
             XCTAssertTrue(fm.fileExists(atPath: icon.appendingPathComponent("icon.png").path), "\(name) ships no icon")
