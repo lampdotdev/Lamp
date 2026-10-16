@@ -1531,12 +1531,15 @@ final class Store: ObservableObject {
     nonisolated static func sharePicture(for file: URL) -> URL? {
         guard let look = LampFile(contentsOf: file), let png = ShareCard.png(look) else { return nil }
         let picture = file.deletingPathExtension().appendingPathExtension("png")
-        return (try? png.write(to: picture)) == nil ? nil : picture
+        // Written whole: another share of the same wish may be writing the same picture.
+        return (try? png.write(to: picture, options: .atomic)) == nil ? nil : picture
     }
 
     /// The app's .lampapp, written where it outlives the paste or the drop that hands it on: another app may
     /// read it after Lamp has moved on.
     nonisolated static func sharedFile(of project: LampProject, at file: URL? = nil, icon: Data? = nil) throws -> URL {
+        sharing.lock()
+        defer { sharing.unlock() }
         let exported = try Sharing.export(project, icon: icon)
         let file = file ?? sharedFolder.appendingPathComponent(exported.lastPathComponent)
         defer { try? FileManager.default.removeItem(at: exported.deletingLastPathComponent()) }
@@ -1545,6 +1548,12 @@ final class Store: ObservableObject {
         try FileManager.default.moveItem(at: exported, to: file)
         return file
     }
+
+    /// One shared file is made at a time. Shares of one wish go to the same file, so two at once could leave the
+    /// copy that began first, or fail when one moves its file in between the other's removing and moving. Made one
+    /// after the other, the file left is the one that read the app last. Nothing made under it waits for the main
+    /// thread, which may be waiting here.
+    nonisolated private static let sharing = NSLock()
 
     nonisolated static var sharedFolder: URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("Forge/Shared", isDirectory: true)
