@@ -1,0 +1,109 @@
+import Foundation
+
+/// Guidance the builder opens only when a request needs it, so the system prompt carries what nearly every
+/// request uses and not what few do. Each skill is a folder in Resources/skills with a SKILL.md in the Agent
+/// Skills format (a `name` and a `description`, then the instructions). The prompt lists each skill it offers
+/// by name and description (`index`); the agent opens one with `read_skill`, the same tool for every engine,
+/// and Lamp answers from the copy in its own bundle, so a skill changed in an update reaches a conversation
+/// that began before it. When an app's code already shows a skill applies (it imports RealityKit), Lamp says
+/// so with the request (`brief`) rather than leave it to the agent to notice.
+enum Skills {
+    struct Skill: Equatable {
+        let name: String
+        let description: String
+        let body: String
+    }
+
+    /// Lamp's own skills, from its bundle.
+    static let all: [String: Skill] = Bundle.main.resourceURL.map { load(from: $0.appendingPathComponent("skills")) } ?? [:]
+
+    /// Every skill in a folder of skill folders, by name. A folder whose SKILL.md can't be read is left out.
+    static func load(from folder: URL) -> [String: Skill] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        var skills: [String: Skill] = [:]
+        for name in names {
+            guard let text = try? String(contentsOf: folder.appendingPathComponent(name).appendingPathComponent("SKILL.md"), encoding: .utf8),
+                  let skill = parse(text) else { continue }
+            skills[skill.name] = skill
+        }
+        return skills
+    }
+
+    /// A SKILL.md: frontmatter between `---` lines with at least `name` and `description` on one line each,
+    /// then the instructions.
+    static func parse(_ text: String) -> Skill? {
+        let lines = text.components(separatedBy: "\n")
+        guard lines.first == "---", let close = lines.dropFirst().firstIndex(of: "---") else { return nil }
+        var fields: [String: String] = [:]
+        for line in lines[1..<close] {
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            fields[line[..<colon].trimmingCharacters(in: .whitespaces)] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        }
+        guard let name = fields["name"], !name.isEmpty, let description = fields["description"], !description.isEmpty else { return nil }
+        return Skill(name: name, description: description,
+                     body: lines[(close + 1)...].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// The skills a prompt offers. 3D scenes need a Mac app on a Mac that can run RealityView, and a real place
+    /// from map data is built as one.
+    static func offered(mac: Bool) -> [String] {
+        mac && Agent.Rules.scenes ? ["scene-3d", "maps"] : []
+    }
+
+    /// The rule that lists a prompt's skills; empty when it offers none.
+    static func index(_ names: [String], from skills: [String: Skill] = all) -> String {
+        let listed = names.compactMap { skills[$0] }
+        guard !listed.isEmpty else { return "" }
+        return "- Skills: guidance kept out of these rules until it's needed. Before working on one of these, open it with `read_skill` and follow it:\n"
+            + listed.map { "  • \($0.name): \($0.description)\n" }.joined()
+    }
+
+    /// `read_skill`, for every engine.
+    static func read(_ arguments: [String: Any], from skills: [String: Skill] = all) -> (Int, [String: Any]) {
+        let name = (arguments["name"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+        guard let skill = skills[name] else {
+            return (400, ["error": "There's no skill called \"\(name)\". The skills are: \(skills.keys.sorted().joined(separator: ", "))."])
+        }
+        return (200, ["text": skill.body])
+    }
+
+    // MARK: - Telling the agent a skill applies
+
+    /// The skills an app's own code shows it uses, each with what showed it, among those its prompt offers.
+    static func applying(to project: LampProject) -> [(name: String, because: String)] {
+        let offered = offered(mac: project.platform == .mac)
+        var found: [(name: String, because: String)] = []
+        if offered.contains("scene-3d"), Template.usesScene(project) { found.append(("scene-3d", "its code uses RealityKit")) }
+        if offered.contains("maps"), usesMapData(project) { found.append(("maps", "its code uses OpenStreetMap data")) }
+        return found
+    }
+
+    /// Whether some Swift of the app's own fetches or shows OpenStreetMap data: the maps skill has it fetched
+    /// from the Overpass API and credits "© OpenStreetMap contributors" on screen, so either is in the code.
+    static func usesMapData(_ project: LampProject) -> Bool {
+        let sources = project.dir.appendingPathComponent("Sources")
+        let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
+        return files.contains { file in
+            file.pathExtension == "swift" && !["LampSupport.swift", Template.sceneSupportFile].contains(file.lastPathComponent)
+                && ((try? String(contentsOf: file, encoding: .utf8))?.range(of: #"OpenStreetMap|overpass-api|overpass\.|/api/interpreter"#, options: [.regularExpression, .caseInsensitive]) != nil)
+        }
+    }
+
+    /// The line at the end of a request naming the skills that apply to the app, sent as `AIStatus.brief` is:
+    /// once per conversation and when it changes. Nothing when none apply.
+    @MainActor static func brief(for project: LampProject, engine: Engine, session: String?) -> String {
+        let applying = applying(to: project)
+        let now = applying.map { "- \($0.name): \($0.because)" }.joined(separator: "\n")
+        let telling = note.telling(now, for: project, engine: engine, session: session)
+        guard !now.isEmpty, telling != .nothing else { return "" }
+        return "\n\n---\nSkills that apply to this app (from Lamp, not part of the request above). Open each with `read_skill` before changing that part of the app, unless you already have it in this conversation:\n\(now)"
+    }
+
+    /// The agent answered, so the request and the line in it arrived.
+    @MainActor static func delivered(to project: LampProject, session: String? = nil) { note.delivered(to: project, session: session) }
+
+    /// The engine summed up its conversation, and with it any skill it had opened.
+    @MainActor static func compacted(_ project: LampProject) { note.compacted(project) }
+
+    @MainActor private static let note = RequestNote(file: ".lamp/skills-shown.json")
+}

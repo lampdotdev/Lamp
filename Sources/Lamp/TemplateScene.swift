@@ -49,7 +49,7 @@ extension Template {
     }
 
     /// The building blocks for 3D scenes (RealityKit), written into a Mac app that imports RealityKit. Its own
-    /// header says what's in it; the agent's rule (`Agent.Rules.scene3D`) says how to use it.
+    /// header says what's in it; the scene-3d skill (Resources/skills/scene-3d) says how to use it.
     static let lampSceneSwift = #"""
     // LampScene.swift: Lamp's building blocks for 3D scenes in RealityKit. Lamp writes this file into an app whose
     // code imports RealityKit and rewrites it before every build, so changes made here are lost.

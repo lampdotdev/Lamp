@@ -507,5 +507,23 @@
         }
       }
     }
+  },
+  {
+    "name": "read_skill",
+    "label": "Read skill",
+    "description": "Opens a skill: guidance for one kind of work, kept out of the rules until it's needed. Open the ones the rules list or Lamp names with a request before starting that work, once per conversation.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "The skill's name, as listed",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    }
   }
 ]

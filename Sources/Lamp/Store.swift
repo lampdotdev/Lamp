@@ -2438,6 +2438,7 @@ final class Store: ObservableObject {
                 case .compacted:
                     Memory.compacted(project)
                     AIStatus.compacted(project)
+                    Skills.compacted(project)
                 case .tool(let text, let fullCall):
                     log(project, .tool, text)
                     let call = ToolCall(text)
@@ -2467,12 +2468,13 @@ final class Store: ObservableObject {
                         try? id.write(to: sessionFile, atomically: true, encoding: .utf8)
                         Memory.delivered(to: project, session: id)
                         AIStatus.delivered(to: project, session: id)
+                        Skills.delivered(to: project, session: id)
                     }
                 }
             }
         }
         turn.agent = nil
-        if answered { Memory.delivered(to: project); AIStatus.delivered(to: project) }
+        if answered { Memory.delivered(to: project); AIStatus.delivered(to: project); Skills.delivered(to: project) }
         endApprovals(for: project)
         // A message cut short (the run was stopped, or failed) keeps what was written of it.
         showWritten(for: project)
@@ -2532,6 +2534,7 @@ final class Store: ObservableObject {
         try? FileManager.default.removeItem(at: file)
         Memory.compacted(project)
         AIStatus.compacted(project)
+        Skills.compacted(project)
     }
 
     /// One pi conversation per app, so the agent remembers earlier requests, including ones that were undone.
@@ -3024,6 +3027,7 @@ final class Store: ObservableObject {
             case "name_version": (status, answer) = await versions("/name", arguments, of: project)
             case "restore_version": (status, answer) = await versions("/restore", arguments, of: project)
             case "read_notes", "save_notes": (status, answer) = notes(name, arguments, for: project)
+            case "read_skill": (status, answer) = Skills.read(arguments)
             case "make_art": (status, answer) = await makeArt(arguments, for: project)
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             case "make_app_for": (status, answer) = await agentKind(arguments, for: project)
@@ -4946,7 +4950,7 @@ final class Store: ObservableObject {
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/art", "/agent/talk", "/mcp", "/pi/key", "/app/secrets"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/art", "/agent/talk", "/mcp", "/pi/key", "/app/secrets"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -5072,6 +5076,9 @@ final class Store: ObservableObject {
         if route == "/agent/memory" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             return notes(body["tool"] as? String ?? "", body["arguments"] as? [String: Any] ?? [:], for: project)
+        }
+        if route == "/agent/skill" {
+            return Skills.read((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:])
         }
         if route == "/agent/art" {
             return await makeArt((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)

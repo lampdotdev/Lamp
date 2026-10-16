@@ -20,7 +20,7 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `show_result`, `write_wish`, the version tools, the notes tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `show_result`, `write_wish`, `read_skill`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
@@ -31,7 +31,7 @@ A capability given to one engine must be given to all of them that can take it, 
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `show_result`, `write_wish`, the version tools and the notes tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `show_result`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **How the agent talks** (`Talk`, `TalkCards.swift`): in short sentences and in cards, not paragraphs, so building
   feels like a short wizard. A vague wish gets a good first attempt built from sensible guesses, not questions: the
@@ -84,6 +84,20 @@ A capability given to one engine must be given to all of them that can take it, 
   What is worth saving is said in `save_notes`'s description: every word there is paid for on every call.
   When to think of saving is said in the rule (`Agent.memoryRules`): at the end of each request, without waiting to be told to remember, and nothing when nothing lasting came up; an instruction for the one request (“don't test it”) is not a preference and isn't noted. No second call to a model decides it.
   A save that changes what the notes say leaves a receipt in the chat (`NoteReceipt`, a `.noted` line, logged in `Store.notes` for every engine): one line that opens to the lines added and removed, and Undo (`Store.undoNote`), which takes that save back out even when the notes have changed since. What was taken back is told to the agent with its next request (`Memory.tookBack`, beside the summaries), so the conversation that learned it doesn't note it again: each engine keeps its own conversation about an app, so each one is told (`Memory.Undone`). Undoing a later save never brings back a line taken back on an earlier receipt. An Undo that leaves notes neither as they were before the save nor as they are now gives them a summary made from their own lines (`NoteReceipt.summary(of:)`): the summary is all the agent is told, so it must be true of what is left.
+- **Skills** (`Skills`, `Resources/skills`): guidance only some requests need lives in a skill, not in the system
+  prompt, so the prompt keeps what nearly every request uses. A skill is a folder with a `SKILL.md` in the Agent
+  Skills format (a one-line `name` and `description` between `---` lines, then the instructions), copied into
+  the bundle by build.sh. The prompt lists the skills it offers by name and description (`Skills.index`, offered
+  by `Skills.offered` the way a rule is given only to the prompts it fits), and the agent opens one with
+  `read_skill`, a tool like any other, so every engine reads skills the same way. Lamp answers from its own bundle,
+  so a skill changed in an update reaches a conversation that began before it. Each engine can load skills of its own,
+  and Lamp keeps that off where it can (pi's `--no-skills`; Claude Code's `--disable-slash-commands`, without which
+  it loads its own skills for coding work; Codex's sandbox keeps the person's out of reach): those are for other
+  work, and the same file for every engine is one place to keep up to date. When an app's own code
+  shows a skill applies (`Skills.applying`: it imports RealityKit, it uses OpenStreetMap data), Lamp names it at
+  the end of the request (`Skills.brief`), sent like `AIStatus.brief` through `RequestNote`: once per
+  conversation, again when it changes or the conversation was compacted. A new skill is a folder there, its name
+  in `Skills.offered`, and, when an app's code can show it applies, a check in `Skills.applying`.
 - **Approvals and privacy**: shell commands go through `/agent/approve` for every engine (pi's extension,
   Claude Code's hooks, Codex's hooks); file access outside the app's folder is checked the same way.
   Claude Code's and pi's approved commands come back confined (`Sandbox`: `sandbox-exec` with a profile
@@ -558,8 +572,9 @@ profile changes.
 
 ### 3D scenes and games
 
-Games have two recipes in the prompt: `Agent.Rules.game2D` (SpriteKit, every kind of app) and `Agent.Rules.scene3D`
-(RealityKit, Mac apps, given only on a Mac with macOS 15, where RealityView begins). A Mac app whose own code
+Games have two recipes: `Agent.Rules.game2D` in the prompt (SpriteKit, every kind of app), and the `scene-3d` skill
+(RealityKit, Mac apps, offered only on a Mac with macOS 15, where RealityView begins), with the `maps` skill beside it
+for a real place built from OpenStreetMap data. A Mac app whose own code
 imports RealityKit gets `Sources/LampScene.swift` (`Template.lampSceneSwift`, written by `writeSceneSupport`
 beside LampSupport.swift and taken away with the last such import), and its Package.swift and build.sh ask for
 macOS 15 (`Template.withScene`). It's Lamp's like LampSupport.swift: protected, left out of versions' diffs and of
