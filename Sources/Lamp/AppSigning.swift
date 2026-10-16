@@ -17,6 +17,10 @@ import Foundation
 /// name through Apple's yearly renewal.
 enum AppSigning {
     @MainActor private static var cached: String?
+    /// The script while it runs: a second caller waits for it. Two runs at once each find no certificate and
+    /// each make one, and two of the same name leave codesign unable to choose ("ambiguous"), so every app
+    /// after that is signed ad hoc and loses its permissions.
+    @MainActor private static var making: Task<String, Never>?
 
     /// Lamp's own keychain, which holds the identity (see signing-identity.sh).
     static let keychain = FileManager.default.homeDirectoryForCurrentUser
@@ -56,6 +60,16 @@ enum AppSigning {
     @MainActor
     static func identity() async -> String {
         if let cached { return cached }
+        if let making { return await making.value }
+        let task = Task { await makeIdentity() }
+        making = task
+        let identity = await task.value
+        making = nil
+        return identity
+    }
+
+    @MainActor
+    private static func makeIdentity() async -> String {
         guard let script = Bundle.main.resourceURL?.appendingPathComponent("signing-identity.sh"),
               FileManager.default.isExecutableFile(atPath: script.path) else {
             print("AppSigning: signing-identity.sh is missing from the app; signing ad hoc")

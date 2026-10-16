@@ -6,9 +6,33 @@ struct PlanPart: Identifiable, Equatable {
     let id: Int
     var title: String
     var done: Bool
-    /// The files the agent said it would write for this part. Lamp ticks the part when they're written,
-    /// so progress doesn't depend on the agent stopping to report it.
+    /// The files the agent said it would write for this part: once one is written the part is under way.
     var files: [String] = []
+    /// The app's check (`LampCheck`) that proves this part works. The part is ticked when it passes, not
+    /// when its files are written: a file says what was typed, the check what the app does.
+    var check: String?
+
+}
+
+/// What the agent's `plan` tool gives, the same from every engine: the app's parts, and its main promise
+/// (`Promise`) when the agent changes it or names the check that proves it.
+struct Plan {
+    var parts: [PlanPart]
+    var promise: String?
+    var promiseCheck: String?
+
+    /// The agent can't tick a part itself: its check does, or the turn's end once the app works.
+    init(_ arguments: [String: Any]) {
+        parts = (arguments["parts"] as? [[String: Any]] ?? []).enumerated().compactMap { index, part in
+            (part["title"] as? String).map {
+                PlanPart(id: index + 1, title: $0, done: false,
+                         files: (part["files"] as? [String] ?? []).map { ($0 as NSString).lastPathComponent },
+                         check: (part["check"] as? String)?.trimmed.nilIfEmpty)
+            }
+        }
+        promise = (arguments["promise"] as? String)?.trimmed.nilIfEmpty
+        promiseCheck = (arguments["promise_check"] as? String)?.trimmed.nilIfEmpty
+    }
 }
 
 /// What Lamp knows about the turn in progress, for showing the user something better than a spinner.
@@ -32,8 +56,10 @@ struct TurnProgress {
     /// tells which part of the plan is being worked on.
     var currentFile: String?
     var plan: [PlanPart] = []
-    /// Files written so far, newest last. Never shown: they tick the plan's parts.
+    /// Files written so far, newest last. Never shown: they say which parts of the plan are under way.
     var files: [String] = []
+    /// What the app's checks found when they last ran this turn, by check: they tick the plan's parts.
+    var checks: [String: Bool] = [:]
     /// What the agent has worked on so far, as the user was told ("Working on the interface"), newest last.
     /// Shown when the agent gave no plan.
     var steps: [String] = []
@@ -45,7 +71,7 @@ struct TurnProgress {
 
     /// A part's mark on the build card. A part being worked on gets a spinner instead.
     static let symbols: [PartState: String] = [
-        .open: "circle", .started: "circle.dotted", .done: "checkmark.circle.fill",
+        .open: "circle", .started: "circle.dotted", .done: "checkmark.circle.fill", .failed: "xmark.circle.fill",
     ]
 
     /// How long the agent may think before the card says that's expected.
@@ -58,27 +84,25 @@ struct TurnProgress {
         return "Still thinking it through. First versions take a few minutes."
     }
 
-    enum PartState { case open, started, active, done }
+    enum PartState { case open, started, active, done, failed }
 
-    /// Where a part of the plan stands. Parts finish in the order the agent writes their files, which
-    /// isn't always the order they're listed in.
+    /// Where a part of the plan stands. A part is done when its check passes, which isn't always in the
+    /// order the parts are listed in.
     func state(of part: PlanPart) -> PartState {
         let working = finished == nil
-        // Being written now, even if that completes it: the tick shows once the agent moves on.
+        // Being written now: whatever its check said was about the code before this.
         if working, let currentFile, part.files.contains(currentFile) { return .active }
         if part.done { return .done }
+        if let check = part.check, let passed = checks[check] { return passed ? .done : .failed }
         if part.files.contains(where: files.contains) { return .started }
         // A plan with no files listed: the first part still open is the one in progress.
         if working, plan.allSatisfy(\.files.isEmpty), part.id == plan.first(where: { !$0.done })?.id { return .active }
         return .open
     }
 
-    /// Ticks every part whose files have all been written.
-    mutating func tickWrittenParts() {
-        let written = Set(files)
-        for index in plan.indices where !plan[index].done && !plan[index].files.isEmpty {
-            plan[index].done = written.isSuperset(of: plan[index].files)
-        }
+    /// What a run of the app's checks found.
+    mutating func checked(_ results: [Checks.Result]) {
+        for result in results where result.skipped != true { checks[result.name] = result.passed }
     }
 
     /// The agent wrote or edited a file.
@@ -86,7 +110,6 @@ struct TurnProgress {
         if files.last != file {
             files.removeAll { $0 == file }
             files.append(file)
-            tickWrittenParts()
         }
         let step = Self.area(of: file)
         if steps.last != step {
@@ -109,13 +132,13 @@ struct TurnProgress {
         return failed ? .didNotFinish : unopened ? .didNotOpen : .ready
     }
 
-    /// The turn is over. When the app was built and opened, everything planned is done.
+    /// The turn is over. When the app was built and opened and its checks passed, everything planned is done.
     mutating func finish(worked: Bool, opened: Bool = true) {
         asking = false   // it asked and then built anyway
         finished = Date()
         failed = !worked
         unopened = !opened
-        if worked { for index in plan.indices { plan[index].done = true } }
+        if worked { for index in plan.indices where plan[index].check.flatMap({ checks[$0] }) != false { plan[index].done = true } }
     }
 
     /// The app is being built and opened: past what the agent's plan or steps describe.
@@ -153,6 +176,7 @@ struct TurnProgress {
         case .ask: return "Asking you"
         case .result: return "Wrapping up"
         case .wish: return "Writing your wish"
+        case .check: return "Checking it works"
         case .delegate, .other: return "Working on your app"
         }
     }
@@ -295,7 +319,7 @@ struct BuildCardView<Icon: View>: View {
                     let state = progress.state(of: part)
                     HStack(alignment: .firstTextBaseline, spacing: 9) {
                         Mark(symbol: TurnProgress.symbols[state])
-                            .foregroundStyle(state == .done ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
+                            .foregroundStyle(state == .done ? AnyShapeStyle(.green) : state == .failed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                         Text(part.title).foregroundStyle(state == .open ? .secondary : .primary)
                     }
                 }

@@ -221,6 +221,23 @@ const useApp = defineTool({
 	},
 });
 
+const runChecks = defineTool({
+	...spec("run_checks"),
+	async execute(_toolCallId, _params, signal) {
+		const url = process.env.LAMP_CHECKS_URL;
+		if (!url) throw new Error("Lamp isn't available to run the app's checks.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: "{}",
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(600_000)]) : AbortSignal.timeout(600_000),
+		});
+		const reply = (await response.json()) as { text?: string; error?: string };
+		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't run the app's checks.");
+		return { content: [{ type: "text", text: reply.text ?? "" }], details: undefined };
+	},
+});
+
 const plan = defineTool({
 	...spec("plan"),
 	async execute() {
@@ -586,6 +603,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(lookAtApp);
 	pi.registerTool(useApp);
 	pi.registerTool(plan);
+	pi.registerTool(runChecks);
 	pi.registerTool(deleteFile);
 	pi.registerTool(listVersions);
 	pi.registerTool(nameVersion);

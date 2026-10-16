@@ -118,6 +118,10 @@ enum AppName {
     its user would ("\(exampleParts[0])", "\(exampleParts[1])"). No file, type or framework \
     names.
 
+    Then say its promise: the one thing it must do for its user, as one sentence of at most 15 words, in their \
+    words and keeping every limit they gave (which data, how far back, where, how often). Not what would be \
+    easiest to build instead.
+
     Last, list the devices it runs on: "mac" for this Mac, "iphone" for iPhone and iPad, "watch" for Apple Watch \
     (with "iphone", when they mention a watch or their wrist). ["iphone"] when they \
     mention a phone, an iPhone or iPad, or what's done away from a desk (out walking or running, the camera on \
@@ -125,13 +129,15 @@ enum AppName {
     same on each; ["mac"] otherwise. Set "devices_by_user" to true only when they said where it runs.
 
     Respond with JSON: {"named_by_user": true or false, "name": "...", "parts": ["...", "..."], \
-    "devices": ["..."], "devices_by_user": true or false}
+    "promise": "...", "devices": ["..."], "devices_by_user": true or false}
     """
 
     struct Suggestion {
         var name: String?
         /// A guess at the app's main parts, shown until the agent gives its own plan.
         var sketch: [String]
+        /// The one thing it must do, in the person's words (`Promise`).
+        var promise: String?
         /// What it runs on, from the request (`Store.chooseKind`), and whether the person said so.
         var kind: Platform?
         var kindSaid = false
@@ -148,7 +154,9 @@ enum AppName {
         let sketch = (object["parts"] as? [Any] ?? []).compactMap { ($0 as? String)?.trimmed }
             .filter { !$0.isEmpty && $0.count <= 60 && !AppAI.parrots($0, examples: exampleParts, asked: brief) }.prefix(5)
         let devices = Set(object["devices"] as? [String] ?? [])
+        let promise = (object["promise"] as? String)?.trimmed
         return Suggestion(name: name(object, asked: brief), sketch: sketch.count >= 2 ? Array(sketch) : [],
+                          promise: promise.flatMap { $0.isEmpty || $0.count > 160 ? nil : $0 },
                           kind: Platform(devices: devices), kindSaid: object["devices_by_user"] as? Bool ?? false,
                           watch: devices.contains("watch"))
     }

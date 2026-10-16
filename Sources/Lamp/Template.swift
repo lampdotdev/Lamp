@@ -3479,6 +3479,54 @@ enum Template {
         }
     }
 
+    /// One thing the app has to do, proved by doing it: a check calls the app's own code and throws when what it
+    /// promises didn't happen. Each is a subclass, kept with the app's code, and Lamp runs them all after every
+    /// change (`LampChecks`), in a copy of the app opened out of sight: with the app's own permissions, its own
+    /// empty LampStore, no iCloud syncing and no schedules. Its settings (UserDefaults) and Keychain are the app's,
+    /// so a check leaves those alone.
+    ///
+    ///     final class ReadsLastWeek: LampCheck {
+    ///         override var promise: String { "Shows what was played last week" }
+    ///         override func run() async throws {
+    ///             let days = try await History.days(back: 7)
+    ///             try expect(!days.isEmpty, "No days of history were found")
+    ///         }
+    ///     }
+    class LampCheck: NSObject {
+        /// What the check proves, in the person's words.
+        var promise: String { String(describing: type(of: self)) }
+        /// Does the thing, and throws when it didn't happen: through `expect`, or the app's own error.
+        @MainActor func run() async throws {}
+        required override init() { super.init() }
+
+        struct Failure: LocalizedError {
+            let message: String
+            var errorDescription: String? { message }
+        }
+
+        /// Fails the check with `message` unless `condition` holds.
+        func expect(_ condition: Bool, _ message: @autoclosure () -> String) throws {
+            if !condition { throw Failure(message: message()) }
+        }
+
+        /// Ends the check without trying it, when this Mac can't (it has no microphone, say): Lamp tells the person
+        /// it wasn't tried, which a check that just returned early would hide by passing.
+        struct Skipped: LocalizedError {
+            let why: String
+            var errorDescription: String? { why }
+        }
+
+        func skip(_ why: String) throws -> Never { throw Skipped(why: why) }
+
+        /// Where Lamp wants the results, when it opened this copy to run the checks (`-LampChecks <path>`).
+        static let resultsPath: String? = UserDefaults.standard.string(forKey: "LampChecks")
+        static var isRunning: Bool { resultsPath != nil }
+        /// The checks' own LampStore, beside their results.
+        static var dataFolder: URL? {
+            resultsPath.map { URL(fileURLWithPath: $0).deletingLastPathComponent().appendingPathComponent("data") }
+        }
+    }
+
     #if os(macOS)
     // Mac only: the Customize with Lamp command, windows, and what Lamp needs to watch and try the app.
 
@@ -3625,6 +3673,7 @@ enum Template {
         static var generation: Int { shared.generation }
 
         static let start: Void = {
+            guard !LampCheck.isRunning else { return }
             DistributedNotificationCenter.default().addObserver(
                 forName: Notification.Name("{{NOTE}}reload"), object: Bundle.main.bundleIdentifier, queue: .main
             ) { note in
@@ -3835,6 +3884,7 @@ enum Template {
     /// while a change reopens it.
     enum LampMagic {
         static let start: Void = {
+            guard !LampCheck.isRunning else { return }
             MainActor.assumeIsolated {
                 let center = NotificationCenter.default
                 center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { note in
@@ -5202,6 +5252,7 @@ enum Template {
     /// lives in the menu bar (LampMenuBar) shows its panel.
     enum LampWindows {
         static let start: Void = {
+            guard !LampCheck.isRunning else { return }
             LampBackground.start
             DistributedNotificationCenter.default().addObserver(
                 forName: Notification.Name("{{NOTE}}showWindow"), object: Bundle.main.bundleIdentifier, queue: .main
@@ -5311,6 +5362,115 @@ enum Template {
         }
     }
 
+    /// Runs the app's checks (`LampCheck`) in a copy Lamp opened for them: out of sight, with no Dock icon and
+    /// nothing else a launch starts. It writes what each check found where Lamp asked, then quits.
+    enum LampChecks {
+        struct Outcome: Codable {
+            let name: String
+            let promise: String
+            let passed: Bool
+            let message: String?
+            let seconds: Double
+            var skipped: Bool? = nil
+        }
+
+        /// How long one check may take before it counts as failed.
+        static let patience: Duration = .seconds(60)
+
+        static func begin() {
+            guard let path = LampCheck.resultsPath else { return }
+            // Never left running: a check can stop the app answering, and Lamp, which ends such a copy, may be gone.
+            DispatchQueue.global().asyncAfter(deadline: .now() + 900) { exit(1) }
+            // No Dock icon, and opened hidden; still allowed to show macOS's own questions, such as for the
+            // microphone, which a check that uses it has to wait for.
+            NSApplication.shared.setActivationPolicy(.accessory)
+            // What the checks print is kept beside their results, for Lamp to show with a failure.
+            let log = URL(fileURLWithPath: path).deletingLastPathComponent().appendingPathComponent("log.txt")
+            if freopen(log.path, "a", stderr) != nil {
+                dup2(fileno(stderr), STDOUT_FILENO)
+                setvbuf(stdout, nil, _IOLBF, 0)
+            }
+            DispatchQueue.main.async {
+                Task { @MainActor in
+                    var outcomes: [Outcome] = []
+                    // Which check is running, from when: Lamp ends a copy whose check has stopped it answering.
+                    let running = URL(fileURLWithPath: path).deletingLastPathComponent().appendingPathComponent("running")
+                    for check in all() {
+                        try? String(describing: check).write(to: running, atomically: true, encoding: .utf8)
+                        outcomes.append(await run(check))
+                    }
+                    if let data = try? JSONEncoder().encode(outcomes) {
+                        try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+                    }
+                    exit(0)
+                }
+            }
+        }
+
+        /// Every subclass of LampCheck in the app, by name.
+        static func all() -> [LampCheck.Type] {
+            let count = objc_getClassList(nil, 0)
+            guard count > 0 else { return [] }
+            let classes = UnsafeMutablePointer<AnyClass>.allocate(capacity: Int(count))
+            defer { classes.deallocate() }
+            let listed = objc_getClassList(AutoreleasingUnsafeMutablePointer(classes), count)
+            var found: [LampCheck.Type] = []
+            for index in 0..<Int(min(count, listed)) {
+                // Walked by the runtime alone: asking an unrelated class anything could start it up.
+                var parent: AnyClass? = class_getSuperclass(classes[index])
+                while let above = parent, ObjectIdentifier(above) != ObjectIdentifier(LampCheck.self) {
+                    parent = class_getSuperclass(above)
+                }
+                if parent != nil, let check = classes[index] as? LampCheck.Type { found.append(check) }
+            }
+            return found.sorted { String(describing: $0) < String(describing: $1) }
+        }
+
+        @MainActor private static func run(_ type: LampCheck.Type) async -> Outcome {
+            let check = type.init()
+            let started = Date()
+            // Whichever comes first, the check's end or the time limit. A check left waiting (on a question
+            // nobody answered, say) can't be ended, so it isn't waited for: the copy quits after the last one.
+            var skipped = false
+            let failure: String? = await withCheckedContinuation { continuation in
+                let answer = Answer(continuation)
+                Task { @MainActor in
+                    do {
+                        try await check.run()
+                        answer.give(nil)
+                    } catch let skip as LampCheck.Skipped {
+                        skipped = true
+                        answer.give(skip.why)
+                    } catch {
+                        // An error with no words of its own says at least what it was.
+                        let words = error.localizedDescription
+                        answer.give(words.contains("couldn’t be completed") ? "\(words) (\(error))" : words)
+                    }
+                }
+                Task {
+                    try? await Task.sleep(for: patience)
+                    answer.give("It didn't finish within a minute.")
+                }
+            }
+            return Outcome(name: String(describing: type), promise: check.promise, passed: failure == nil,
+                           message: failure, seconds: Date().timeIntervalSince(started), skipped: skipped ? true : nil)
+        }
+
+        /// Resumes once, with the first answer given.
+        private final class Answer: @unchecked Sendable {
+            private let lock = NSLock()
+            private var continuation: CheckedContinuation<String?, Never>?
+            init(_ continuation: CheckedContinuation<String?, Never>) { self.continuation = continuation }
+            func give(_ failure: String?) {
+                lock.lock()
+                let waiting = continuation
+                continuation = nil
+                lock.unlock()
+                waiting?.resume(returning: failure)
+            }
+        }
+    }
+
     /// Saves what this app prints (`print`, `NSLog`, SwiftUI runtime warnings, fatal errors) and a picture of
     /// its windows to its Lamp project, where Lamp's builder looks to see what happened while the app ran.
     enum LampRuntime {
@@ -5318,6 +5478,8 @@ enum Template {
 
         /// Runs once, at launch. Each launch starts a new log.txt and keeps the one before as previous-log.txt.
         static let start: Void = {
+            // A copy opened only to run the checks writes nothing of the app's and listens to nobody.
+            if LampCheck.isRunning { return LampChecks.begin() }
             let fm = FileManager.default
             // Only on a Mac where Lamp has this app's project.
             guard fm.fileExists(atPath: folder.deletingLastPathComponent().path) else { return }
@@ -5593,6 +5755,11 @@ enum Template {
     /// `folder` suits other files the app keeps, such as images (store their names, not their bytes).
     enum LampStore {
         static let folder: URL = {
+            // The checks keep their own data, so they start from nothing and the person's is never touched.
+            if let checks = LampCheck.dataFolder {
+                try? FileManager.default.createDirectory(at: checks, withIntermediateDirectories: true)
+                return checks
+            }
             let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             #if os(macOS)
             // On a Mac the data is kept under the app's plain id, whatever the app is signed as: an app made for
@@ -6984,6 +7151,11 @@ enum Template {
 
         private override init() {
             super.init()
+            // A copy running the app's checks keeps to its own data: nothing it does reaches the person's iCloud.
+            guard !LampCheck.isRunning else {
+                status = "Not synced while Lamp checks the app."
+                return
+            }
             guard let identifier = Bundle.main.object(forInfoDictionaryKey: "LampICloudContainer") as? String else {
                 status = "Not set up for iCloud: declare {\"icloud\": true} in capabilities.json and build again. The data stays on this device."
                 return
@@ -11559,6 +11731,8 @@ enum Template {
             self.interval = interval
             self.time = time
             self.work = work
+            // A copy running the app's checks does only what its checks do; the person's copy keeps the schedule.
+            guard !LampCheck.isRunning else { return }
             observer = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
                 self?.arm()
             }
@@ -12728,6 +12902,7 @@ enum Template {
         /// Runs once, at launch, in an app with a widget. The click that starts the app delivers its link while
         /// the app is still launching, so the answer has to be in place by then.
         static let start: Void = {
+            guard !LampCheck.isRunning else { return }
             guard passesOn || ((try? FileManager.default.contentsOfDirectory(atPath: Bundle.main.builtInPlugInsPath ?? "")) ?? [])
                     .contains(where: { $0.hasSuffix("Widget.appex") }) else { return }
             let center = NotificationCenter.default
@@ -13836,13 +14011,13 @@ enum Template {
 
         /// Scenes can't be chosen with `if`, so both are there and only the one for the style is put in the menu bar.
         var body: some Scene {
-            MenuBarExtra(isInserted: .constant(style == .panel)) {
+            MenuBarExtra(isInserted: .constant(style == .panel && !LampCheck.isRunning)) {
                 content().background(SettingsOpener()).safeAreaInset(edge: .top, spacing: 0) { PanelWand() }
             } label: {
                 label()
             }
             .menuBarExtraStyle(.window)
-            MenuBarExtra(isInserted: .constant(style != .panel)) {
+            MenuBarExtra(isInserted: .constant(style != .panel && !LampCheck.isRunning)) {
                 content()
             } label: {
                 label()
@@ -14077,6 +14252,8 @@ enum Template {
                 return
             }
             LampRuntime.start
+            // A copy running the checks has no icon in the menu bar or the Dock to keep.
+            if LampCheck.isRunning { return }
             LampWindows.start
             LampWidget.start
             if !dockIcon { NSApplication.shared.setActivationPolicy(.accessory) }

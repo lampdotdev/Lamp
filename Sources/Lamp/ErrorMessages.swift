@@ -30,4 +30,17 @@ enum ErrorMessages {
     static func quotaExceeded(_ provider: String) -> String { "Your " + provider + quotaExceededSuffix }
     static func crashAfterLaunch(_ app: String) -> String { app + crashAfterLaunchSuffix }
     static func quitsAfterLaunch(_ app: String) -> String { app + quitsAfterLaunchSuffix }
+    /// A promise the app's checks still find broken at the end of a request. The promise is the person's own words.
+    static func doesntWorkYet(_ promise: String) -> String { "This doesn't work yet: \(sentence(promise))" }
+    static let couldntCheck = "Lamp couldn't check that the app works."
+    /// A promise the app's check couldn't try on this Mac (it has no microphone, say).
+    static func notTriedHere(_ promise: String) -> String { "Not tried on this Mac: \(sentence(promise))" }
+    /// The app's main promise, given up on after its check failed.
+    static func cantBeDone(_ promise: String) -> String { "This couldn't be done: \(sentence(promise))" }
+    /// The main promise the agent changed to, often after asking the person.
+    static func nowPromises(_ promise: String) -> String { "Now it promises: \(sentence(promise))" }
+    private static func sentence(_ words: String) -> String {
+        let words = words.trimmed
+        return words.hasSuffix(".") ? words : words + "."
+    }
 }

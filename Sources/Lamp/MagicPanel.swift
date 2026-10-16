@@ -212,6 +212,7 @@ final class MagicPanel {
             MainActor.assumeIsolated {
                 guard let self, let current = Store.shared.projects.first(where: { $0.id == id }),
                       let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                      !Checks.isCheckCopy(app.bundleURL),   // a copy that ran the checks, not the one beside the chat
                       app.bundleIdentifier == current.bundleID
                         || app.bundleURL?.standardizedFileURL == current.installedURL.standardizedFileURL else { return }
                 if Store.shared.busy.contains(id) { return self.showCover(for: current) }

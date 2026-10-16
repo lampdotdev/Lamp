@@ -4,7 +4,7 @@ import LampSidebarKit
 /// A tool call as logged by the engines ("Read App.swift", "Bash: ./build.sh", "Run: ls"), split into
 /// what the agent did and what it did it to.
 struct ToolCall {
-    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, learn, remember, art, offer, kind, connectors, ask, result, wish, other }
+    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, learn, remember, art, offer, kind, connectors, ask, result, wish, check, other }
 
     let name: String
     let argument: String
@@ -36,7 +36,7 @@ struct ToolCall {
         "ls": .list, "list": .list,
         "webfetch": .web, "web_fetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
-        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "save_notes": .remember, "make_art": .art, "offer_setup": .offer, "make_app_for": .kind, "connectors": .connectors, "ask": .ask, "show_result": .result, "write_wish": .wish,
+        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "save_notes": .remember, "make_art": .art, "offer_setup": .offer, "make_app_for": .kind, "connectors": .connectors, "ask": .ask, "show_result": .result, "write_wish": .wish, "run_checks": .check,
     ]
 
     var icon: String {
@@ -63,6 +63,7 @@ struct ToolCall {
         case .ask: "questionmark.bubble"
         case .result: "checkmark.rectangle.stack"
         case .wish: "sparkles"
+        case .check: "checkmark.seal"
         case .other: "wrench.adjustable"
         }
     }
@@ -91,6 +92,7 @@ struct ToolCall {
         case .ask: "Asked you"
         case .result: "Summed it up"
         case .wish: "Wrote your wish"
+        case .check: "Ran its checks"
         case .other: name
         }
     }
@@ -121,6 +123,7 @@ struct ToolCall {
         case .ask: "asked you"
         case .result: "summed it up"
         case .wish: "wrote your wish"
+        case .check: "ran its checks" + (count == 1 ? "" : " \(count) times")
         case .other: n("step", "steps")
         }
     }

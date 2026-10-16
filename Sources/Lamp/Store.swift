@@ -541,6 +541,7 @@ final class Store: ObservableObject {
 
     private init() {
         Migration.fromForge()
+        Checks.clearLeftovers()
         AppsLink.ensure()
         // The keys are read off the main thread first; what needs them (pi's auth file, the setup check, the
         // views drawn meanwhile) follows once they're in.
@@ -1961,6 +1962,10 @@ final class Store: ObservableObject {
                 project = await chooseKind(project, kind, said: suggestion.kindSaid, watch: suggestion.watch)
             }
             if project.untitled, let name = suggestion?.name { project = await performRename(project, to: name) }
+            if let text = suggestion?.promise, Promise.load(project) == nil {
+                Promise(text: text, asked: brief).save(for: project)
+                progress[project.id]?.sketch.insert(text, at: 0)
+            }
         }
         if Icons.load(project) == nil {
             let designing = project
@@ -2197,7 +2202,7 @@ final class Store: ObservableObject {
     func macCopies(of project: LampProject) -> [NSRunningApplication] {
         let place = project.installedURL.standardizedFileURL.resolvingSymlinksInPath()
         return NSWorkspace.shared.runningApplications.filter { app in
-            !app.isTerminated && (app.bundleIdentifier == project.bundleID
+            !app.isTerminated && !Checks.isCheckCopy(app.bundleURL) && (app.bundleIdentifier == project.bundleID
                 || app.bundleURL?.standardizedFileURL.resolvingSymlinksInPath() == place)
         }
     }
@@ -2313,6 +2318,19 @@ final class Store: ObservableObject {
         // Attachments with no words: usually a screenshot or mockup meaning "like this", or a file to use.
         if prompt.isEmpty { prompt = Self.onlyFiles(saved.count) }
 
+        // An answer to a question asked before the promise was proved may change what the app is for: Lamp says
+        // the promise again from it, and says in the chat when it changed.
+        // Once they've answered, they know: the app is no longer held back until its promise is proved. Its checks
+        // still say whether it works.
+        if var promise = Promise.load(project), promise.proved != true, Checks.canRun(project),
+           let answer = messages.first(where: { $0.card != nil })?.text {
+            if let text = await Promise.revised(promise, answer: answer), text != promise.text {
+                log(project, .status, ErrorMessages.nowPromises(text))
+                promise = Promise(text: text, asked: promise.asked)
+            }
+            promise.told = true
+            promise.save(for: project)
+        }
         let files = Attachments.inline(saved, in: project).map { "\(Attachments.folder)/\($0)" }
         // After a request is sent again the build on disk is still of the code that was just taken back, so
         // its picture and its crashes say nothing about the files the agent has now.
@@ -2320,6 +2338,7 @@ final class Store: ObservableObject {
         let pointed = asked.compactMap { id in logs[project.id]?.first { $0.id == id }?.pointed }
         let notes = Attachments.note(for: saved) + PointedAt.note(for: pointed) + Versions.note(for: project)
             + (sentAgain ? "" : Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project))
+            + (Checks.canRun(project) ? Promise.load(project).flatMap { $0.proved == true ? nil : $0.note } ?? "" : "")
         turns[project.id]?.request = prompt
         let ran = await runAgent(prompt + notes, files: files, on: project)
         project = current(project) ?? project
@@ -2364,8 +2383,51 @@ final class Store: ObservableObject {
         // Said once the turn's last save is known: a fix for a crash on launch saves again, and may get through.
         var unsaved = saving == .failed
         let edited = changed || committed
+        // Done means the app's own checks pass (`Checks`), run again whenever a turn changes the app, before it's
+        // opened. What they find goes back to the agent as build errors do, and the fix joins this turn's version.
+        // A new app needs the check of its main promise (`Promise`), which it's asked for once.
+        let newApp = progress[project.id]?.newApp == true
+        var outcome = Checks.Outcome.none
+        // A fix built new code: what the agent's look opened is older, so it's installed afresh.
+        var rebuilt = false
+        if edited, !owner.stopped, Checks.canRun(project) {
+            outcome = await runChecks(project)
+            var askedForChecks = false
+            for _ in 0..<3 where !owner.stopped {
+                let request: String
+                if Checks.needsFixing(outcome) {
+                    request = Self.fixChecks(Checks.report(outcome))
+                } else if !askedForChecks, promiseFirst(project) != nil || (newApp && outcome == .none) {
+                    askedForChecks = true
+                    request = Self.addChecks(for: Promise.load(project))
+                } else {
+                    break
+                }
+                log(project, .status, "Fixing what its checks found…")
+                guard await runAgent(request, on: project) else { return TurnResult(end: .failed, watched: watched) }
+                project = current(project) ?? project
+                // It asked: nothing more is built or opened, but what this request saved is still its version.
+                if owner.asked { break }
+                guard await buildFixingErrors(project) else {
+                    return TurnResult(end: owner.asked ? .replied : .failed, watched: watched)
+                }
+                rebuilt = true
+                project = current(project) ?? project
+                let commit = committed ? "-q --amend --no-edit" : "-qm 'Fix what its checks found'"
+                switch await Versions.commitAll(commit, in: project.dir) {
+                case .saved: (committed, unsaved) = (true, false)
+                case .failed: unsaved = true
+                case .nothingToSave: break
+                }
+                outcome = await runChecks(project)
+            }
+        }
+        // A new app whose promise isn't proved isn't opened: what's there may be something else than was asked for.
+        let promiseUnproved = edited ? promiseFirst(project) : nil
         var crash: String?
-        if changed {
+        if promiseUnproved != nil || owner.asked {
+            // Nothing to open: what's there may be something else than was asked for, or waits on an answer.
+        } else if changed || rebuilt {
             crash = await install(project)
         } else if let look = turns[project.id]?.look, look.installed {
             crash = look.crash
@@ -2384,6 +2446,7 @@ final class Store: ObservableObject {
         }
         // Like build errors, a crash on launch goes back to the agent. The fix joins this turn's commit,
         // so Undo still reverts the whole change.
+        var fixedCrash = false
         for _ in 0..<2 where crash != nil {
             log(project, .status, "Fixing the crash…")
             guard await runAgent("The app builds, but it quit right after launching. Find the cause and fix it.\n\n\(crash!)",
@@ -2401,7 +2464,24 @@ final class Store: ObservableObject {
             case .failed: unsaved = true
             case .nothingToSave: break
             }
+            fixedCrash = true
             crash = await install(project)
+        }
+        // A crash's fix is a change too: the checks say whether it broke anything they prove.
+        if fixedCrash, crash == nil, !project.onIOS { outcome = await runChecks(project) }
+        let unproved = crash == nil && !owner.asked && (Checks.needsFixing(outcome) || promiseUnproved != nil)
+        if unproved {
+            if case .ran(let results, _) = outcome, results.contains(where: \.failed) {
+                for result in results where result.failed { log(project, .error, ErrorMessages.doesntWorkYet(result.promise)) }
+            } else if let promise = Promise.load(project), promiseUnproved != nil {
+                log(project, .error, ErrorMessages.doesntWorkYet(promise.text))
+            } else {
+                log(project, .error, ErrorMessages.couldntCheck)
+            }
+        }
+        // What this Mac couldn't try isn't said to work: the person hears it wasn't tried.
+        if crash == nil, !owner.asked, case .ran(let results, _) = outcome {
+            for result in results where result.skipped == true { log(project, .status, ErrorMessages.notTriedHere(result.promise)) }
         }
         // The change is in the app either way. Without a version of its own it can't be gone back to by
         // itself, and the person should know that rather than find it out from Undo.
@@ -2423,11 +2503,13 @@ final class Store: ObservableObject {
             }
             versionsRevision += 1
         }
-        let failed = crash != nil || owner.stopped || owner.phoneReady == false
+        let failed = crash != nil || unproved || owner.stopped || owner.phoneReady == false
         // Not over an app that couldn't be put in place or opened either: that isn't a failed turn, but the
         // card would say it's ready next to the line saying it didn't open.
         // A new app that opened in a window of its own: its chat goes on beside it from now on.
-        if !failed, edited, !owner.didNotOpen, !owner.keptOpen { Task { await MagicPanel.shared.handOff(project) } }
+        if !failed, edited, !owner.asked, !owner.didNotOpen, !owner.keptOpen { Task { await MagicPanel.shared.handOff(project) } }
+        // Asked while fixing what the checks found: the turn waits for the answer, as after any question.
+        if owner.asked { return TurnResult(end: .replied, watched: watched) }
         return TurnResult(end: failed ? .failed : edited ? .changed : .replied, watched: watched)
     }
 
@@ -2597,9 +2679,8 @@ final class Store: ObservableObject {
                     streamingArguments += piece
                     let call = TurnProgress.call(tool: streamingTool, partialArguments: streamingArguments)
                     note(TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
-                case .plan(let parts):
-                    progress[project.id]?.plan = parts
-                    progress[project.id]?.tickWrittenParts()
+                case .plan(let plan):
+                    setPlan(plan, for: project)
                 case .compacted:
                     Memory.compacted(project)
                     AIStatus.compacted(project)
@@ -3262,15 +3343,10 @@ final class Store: ObservableObject {
                 (status, answer) = await use(project, request: actions)
             case "plan":
                 // pi's plan reaches the build card through its event stream (Agent.parseLine); here it's set directly.
-                let parts = (arguments["parts"] as? [[String: Any]] ?? []).enumerated().compactMap { index, part in
-                    (part["title"] as? String).map {
-                        PlanPart(id: index, title: $0, done: part["done"] as? Bool ?? false,
-                                 files: (part["files"] as? [String] ?? []).map { ($0 as NSString).lastPathComponent })
-                    }
-                }
-                progress[project.id]?.plan = parts
-                progress[project.id]?.tickWrittenParts()
+                setPlan(Plan(arguments), for: project)
                 (status, answer) = (200, ["text": "The user can see the plan."])
+            case "run_checks":
+                (status, answer) = await checkApp(project)
             case "delete_file":
                 (status, answer) = Self.deleteFile(arguments["path"] as? String ?? "", in: project)
             case "list_versions": (status, answer) = await versions("", [:], of: project)
@@ -4104,7 +4180,8 @@ final class Store: ObservableObject {
         }
     }
 
-    private func build(_ project: LampProject) async -> String? {
+    /// `inPlace` false builds the whole app without putting the change into the open copy first.
+    private func build(_ project: LampProject, inPlace: Bool = true) async -> String? {
         guard exists(project) else { return "The app was deleted." }
         log(project, .status, "Building…")
         // Lamp's own files first, and no build without them: the build runs build.sh and Package.swift.
@@ -4140,7 +4217,7 @@ final class Store: ObservableObject {
         var env: [String: String] = universal ? ["LAMP_TEAM": Devices.team] : [:]
         // The open app takes the change first, when it can (LiveReload): a few seconds, where the whole build
         // takes several more. That build goes on afterwards, for the app to be installed from when it closes.
-        if await reloadBeforeBuilding(project, command: command, env: env, fingerprint: fingerprint) { return nil }
+        if inPlace, await reloadBeforeBuilding(project, command: command, env: env, fingerprint: fingerprint) { return nil }
         await liveBuilds[project.id]?.value
         liveBuildFailed.remove(project.id)
         if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1" }   // a change can go into the open app (LiveReload)
@@ -5389,7 +5466,7 @@ final class Store: ObservableObject {
         // Then by where it runs from: a copy with another id at an app's place is that app's (`macCopies`).
         let byPlace = Dictionary(projects.map { ($0.installedURL.standardizedFileURL.resolvingSymlinksInPath(), $0.id) },
                                  uniquingKeysWith: { first, _ in first })
-        let onMac = NSWorkspace.shared.runningApplications.filter { !$0.isTerminated }.compactMap { app -> String? in
+        let onMac = NSWorkspace.shared.runningApplications.filter { !$0.isTerminated && !Checks.isCheckCopy($0.bundleURL) }.compactMap { app -> String? in
             if let id = app.bundleIdentifier, let project = byBundle[id] { return project }
             if let place = app.bundleURL?.standardizedFileURL.resolvingSymlinksInPath(), let project = byPlace[place] { return project }
             return app.bundleIdentifier.flatMap { $0.hasPrefix(prefix) ? String($0.dropFirst(prefix.count)) : nil }
@@ -5496,7 +5573,7 @@ final class Store: ObservableObject {
             return BrowserBridge.shared.handle(request, projects: projects)
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
-        let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
+        let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/checks", "/agent/approve",
                      "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
@@ -5617,6 +5694,7 @@ final class Store: ObservableObject {
                                  reopen: arguments["reopen"] as? Bool ?? false)
         }
         if request.path == "/agent/use" { return await use(project, request: request.body) }
+        if route == "/agent/checks" { return await checkApp(project) }
         if request.path.hasPrefix("/agent/versions") {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             return await versions(String(request.path.dropFirst("/agent/versions".count)), body, of: project)
@@ -6026,6 +6104,100 @@ final class Store: ObservableObject {
         once they close the app.
         """
 
+    /// The agent's `run_checks` tool: builds what it has written so far, as a look does, and runs the app's checks
+    /// in a copy of that build out of sight (`Checks`). Nothing on screen is opened or replaced.
+    private func checkApp(_ project: LampProject) async -> (Int, [String: Any]) {
+        guard let turn = turns[project.id], turn.agent != nil else {
+            return (409, ["error": "Lamp isn't working on this app right now."])
+        }
+        // One build at a time in the app's folder: a look and a run of the checks wait for each other.
+        guard !turn.look.inProgress else { return (200, ["text": "Lamp is already building the app. Wait for that result, then run the checks."]) }
+        turn.look.inProgress = true
+        defer { turn.look.inProgress = false }
+        try? Template.writeSupport(for: project)
+        // Built whole, never put into the open app: the person's copy isn't the agent's to change mid-work.
+        if Runtime.sourcesChanged(project), let errors = await build(project, inPlace: false) {
+            return (200, ["text": "The app doesn't build yet. Fix these compiler errors:\n\n\(errors)"])
+        }
+        return (200, ["text": Checks.report(await runChecks(project))])
+    }
+
+    /// Runs the app's checks on its latest build, and ticks the parts of the plan they prove.
+    private func runChecks(_ project: LampProject) async -> Checks.Outcome {
+        // A change that went into the open app is still being built whole: that build is the one checked.
+        await liveBuilds[project.id]?.value
+        if liveBuildFailed.contains(project.id) {
+            return .notRun("The app couldn't be built as a whole after its last change, so its checks couldn't run.")
+        }
+        guard Checks.has(project) else { return .none }
+        note("Checking it works", for: project)
+        let outcome = await Checks.run(project) { [weak self] in self?.turns[project.id]?.stopped ?? true }
+        if case .ran(let results, _) = outcome {
+            progress[project.id]?.checked(results)
+            if var promise = Promise.load(project), promise.proved != true, let check = promise.check,
+               results.contains(where: { $0.name == check && $0.passed }) {
+                promise.proved = true
+                promise.save(for: project)
+            }
+        }
+        return outcome
+    }
+
+    /// The agent's plan, for the build card, under the app's main promise. A promise the agent changes is said in
+    /// the chat, with the old one when its check had failed: the person asked for it, and a plan that quietly
+    /// became another would hide that.
+    private func setPlan(_ plan: Plan, for project: LampProject) {
+        var promise = Promise.load(project)
+        // An app made before Lamp kept promises gets none from a later plan: it would hold back an app in use.
+        if let text = plan.promise, text != promise?.text, promise != nil || progress[project.id]?.newApp == true {
+            if let old = promise {
+                if let check = old.check, progress[project.id]?.checks[check] == false {
+                    log(project, .status, ErrorMessages.cantBeDone(old.text))
+                }
+                log(project, .status, ErrorMessages.nowPromises(text))
+            }
+            promise = Promise(text: text, check: plan.promiseCheck, asked: promise?.asked, told: promise?.told)
+        } else if let check = plan.promiseCheck, check != promise?.check {
+            promise?.check = check
+            promise?.proved = nil
+        }
+        promise?.save(for: project)
+        let parts = plan.parts.filter { $0.title != promise?.text }
+        progress[project.id]?.plan = (promise.map { [$0.part] } ?? []) + parts
+    }
+
+    /// A new app is built to be seen once its main promise is proved, in whichever turn that comes: nil when it
+    /// may be, or why not. An app made before Lamp kept promises has none, and isn't held back.
+    private func promiseFirst(_ project: LampProject) -> String? {
+        guard Checks.canRun(project), let promise = Promise.load(project), promise.proved != true, promise.told != true else { return nil }
+        return promise.unproved(progress[project.id]?.checks ?? [:])
+    }
+
+    /// What the agent is asked when the app's checks find something to fix at the end of a turn.
+    private static func fixChecks(_ report: String) -> String {
+        """
+        The app's checks show it doesn't do what it promises yet:
+
+        \(report)
+
+        Fix the app so they pass, and run them again with run_checks. Change a check only where it's wrong about \
+        what the person asked for. If one can't pass because what it proves can't be done on this Mac, stop and \
+        tell the person with `ask` what can't be done and what could be done instead, rather than building \
+        something else.
+        """
+    }
+
+    /// What a new app's agent is asked when its main promise has no check that has run at the end of its first turn.
+    private static func addChecks(for promise: Promise?) -> String {
+        let what = promise.map { "its main promise, “\($0.text)”," } ?? "its main promise, the one thing the person asked it to do,"
+        return """
+            The app's main promise isn't proved. Add a LampCheck for \(what) that does it for real with the app's \
+            own code, name it in plan's promise_check, and run it with run_checks. Fix what it finds; if it can't \
+            be done on this Mac, tell the person with `ask` what can't be done and what can, instead of building \
+            something else.
+            """
+    }
+
     /// The agent's `look_at_app` tool: builds what it has written so far, opens the app behind the
     /// user's windows, and reports what happened. The pictures are sent as file paths for pi to read. For a Mac
     /// app it can instead show one of the app's 3D props from four sides (`prop`), or watch the window for a
@@ -6040,6 +6212,7 @@ final class Store: ObservableObject {
             return (409, ["error": "Lamp isn't working on this app right now."])
         }
         guard !turn.look.inProgress else { return (200, ["text": "Lamp is already looking at the app. Wait for that result."]) }
+        if let why = promiseFirst(project) { return (200, ["text": why]) }
         turn.look.inProgress = true
         turn.look.installed = false
         defer { turn.look.inProgress = false }

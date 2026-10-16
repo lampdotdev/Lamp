@@ -30,7 +30,7 @@ enum AgentEvent {
     case step(String)      // the model has started on a tool call (its name), or on text ("")
     case stepArgs(String)  // a piece of that call's arguments, as they stream in
     case compacted         // the engine summed up the conversation so far to make room
-    case plan([PlanPart])  // the agent's checklist for the build card
+    case plan(Plan)        // the agent's checklist for the build card
     case finished          // the engine has answered: a message written to it now would start another answer
     case received          // the engine gave the model a message of the person's (the request, or one sent mid-turn)
 }
@@ -41,7 +41,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,ask,write_wish,read_skill"
+            ",bash,web_fetch,look_at_app,use_app,plan,run_checks,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,ask,write_wish,read_skill"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -110,9 +110,15 @@ enum Agent {
     private static let planRules = """
 
     - When you build a new app, call `plan` once, before writing any code, with its 3 to 5 main parts in the \
-    user's own words (what they'll be able to do, never file or type names) and, for each part, the files \
-    you'll write for it. Lamp ticks a part off when its files are written, so the user watches the list \
-    fill in while they wait. Give every file to exactly one part. Don't use it for small changes.
+    user's own words (what they'll be able to do, never file or type names), each with the files you'll write \
+    for it and the check that proves it, and the check that proves its main promise. Give every file to \
+    exactly one part. Don't use it for small changes.
+    - Prove a new app's main promise before any design: write the least code that really does it, and its \
+    check, and `run_checks`. If it fails, find another way; if there is none, stop and tell the person with \
+    `ask` what can't be done and what can, instead of building something else.
+    - Each app keeps its own checks (`LampCheck`, see `run_checks`), and Lamp runs them after every change: a \
+    change is done when they pass. When you fix something that went wrong, add a check that fails without the \
+    fix. Never weaken a check to make it pass.
     - `delete_file` removes a file the app no longer needs, for example after moving its code elsewhere or \
     removing a screen. Never leave an emptied file behind instead.
     - Lamp saves a version of the app after every request. `name_version` names one so the user can find it \
@@ -1337,14 +1343,7 @@ enum Agent {
             let name = obj["toolName"] as? String ?? "tool"
             let args = obj["args"] as? [String: Any] ?? [:]
             var events: [AgentEvent] = [.tool(describe(name, args), call: callKey(name, args))]
-            if name == "plan", let parts = args["parts"] as? [[String: Any]] {
-                events.append(.plan(parts.enumerated().compactMap { index, part in
-                    (part["title"] as? String).map {
-                        PlanPart(id: index, title: $0, done: part["done"] as? Bool ?? false,
-                                 files: (part["files"] as? [String] ?? []).map { ($0 as NSString).lastPathComponent })
-                    }
-                }))
-            }
+            if name == "plan" { events.append(.plan(Plan(args))) }
             return events
         case "message_end":
             guard let message = obj["message"] as? [String: Any] else { return [] }

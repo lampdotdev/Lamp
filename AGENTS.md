@@ -20,7 +20,7 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `write_wish`, `read_skill`, the version tools, the notes tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `run_checks`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `write_wish`, `read_skill`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
@@ -31,7 +31,7 @@ A capability given to one engine must be given to all of them that can take it, 
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `run_checks`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **How the agent talks** (`Talk`, `TalkCards.swift`): in short sentences and in cards, not paragraphs, so building
   feels like a short wizard. A vague wish gets a good first attempt built from sensible guesses, not questions: the
@@ -518,6 +518,30 @@ the photo library, Bluetooth, the camera and the like without one. A new one goe
 else, only for something macOS refuses without it (location and music are asked about with none), and is
 named in the prompt's `{{EXTRA_PERMISSIONS}}`. The list is part of `BuildStamp`, so apps built before a
 reason was added are rebuilt when next opened.
+
+**Each app keeps its own checks.** A check is a subclass of `LampCheck` (in LampSupport.swift) in the app's own
+code: it does one thing the app promises with the app's code and throws when it didn't happen. They are how Lamp
+knows a change is done: after every turn that changed the app, and before it's opened, `Store.turn` runs them all
+(`Checks.run`); what fails goes back to the agent as build errors do, three times at most, and still failing, the turn
+ends as not finished and the chat names each promise that doesn't work yet. The agent runs them itself
+with `run_checks`. They run in the app as built, never in the agent's shell, whose sandbox hides what the app could
+reach: a copy of the build in a temporary folder, signed as `deploy` signs the app so macOS gives it the app's
+permissions (and asks for them, in the app's name), is opened hidden with `-LampChecks <results>` (`LampChecks` in
+LampSupport.swift: no Dock icon, windows, chat or anything else a launch starts), writes what each check found and quits. A check that this Mac can't try (no microphone) calls `skip`: not a pass, and the chat says it wasn't tried, where returning early would pass it. A check has a minute; one that stops the app answering is
+named and the copy ended (the `running` file beside the results). The person's own copy, open or not, isn't
+touched, and `macCopies` and `MagicPanel` don't count the check copy. Checks run for Mac apps and the Mac half of
+an app for both; an iPhone copy isn't checked yet (`Checks.canRun`).
+
+**A new app proves its main promise first** (`Promise`, `.lamp/promise.json`). The naming call (`AppName.suggest`)
+writes down the one thing the wish must do in the person's words, limits kept ("last week"), before the agent
+starts, so the promise is the person's and not what turned out easy to build. Until a check of it has passed
+(`plan`'s `promise_check`; `proved`), or the person has answered a question about it (`told`: they know, so
+nothing is built quietly), each request carries it (`Promise.note`), `look_at_app` won't build the app to be seen
+(`Store.promiseFirst`), and the turn doesn't open it. That answer has the promise said again by the same helper
+(`Promise.revised`), and the chat says what it now promises; so does a `plan` that gives another. The copy that
+runs the checks has its own LampStore, no iCloud syncing (`LampSync`) and no schedules (`LampSchedule`); its
+settings and Keychain are the app's, which the `run_checks` description tells the agent to leave alone. The build card shows the promise above the agent's parts, and a part is ticked when its check passes,
+not when its files are written.
 
 `use_app` on a Mac app is carried out by the app itself (`LampDriver`, reached by a distributed notification
 signed with the app's token, `Store.use`), so no Accessibility permission is needed. With every picture the

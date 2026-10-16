@@ -75,15 +75,31 @@ enum Gallery {
     private static let buildEntries: [Entry] = [
         build("Working on its plan") {
             $0.activity = "Working on the interface"
-            $0.plan = [PlanPart(id: 0, title: "Type in the bill", done: true, files: ["BillField.swift"]),
-                       PlanPart(id: 1, title: "Pick a tip percent", done: false, files: ["TipPicker.swift"]),
-                       PlanPart(id: 2, title: "See the tip and the total", done: false, files: ["Totals.swift"])]
-            $0.files = ["BillField.swift"]
+            $0.plan = Self.tipPlan
+            $0.files = ["Tip.swift", "TipPicker.swift"]
+            $0.checks = ["AddsTheTip": true]
             $0.currentFile = "TipPicker.swift"
         },
+        build("A check failed") {
+            $0.activity = "Fixing what its checks found"
+            $0.plan = Self.tipPlan
+            $0.files = ["Tip.swift", "TipPicker.swift", "Totals.swift"]
+            $0.checks = ["AddsTheTip": false, "SplitsTheBill": true]
+        },
         build("Ready") { $0.finish(worked: true) },
-        build("Didn't finish") { $0.finish(worked: false) },
+        build("Didn't finish") {
+            $0.plan = Self.tipPlan
+            $0.checks = ["AddsTheTip": false, "SplitsTheBill": true]
+            $0.finish(worked: false)
+        },
         build("Asking first") { $0.wait() },
+    ]
+
+    /// The first part is the app's main promise; a part is ticked when its check passes.
+    private static let tipPlan = [
+        PlanPart(id: 0, title: "Add the tip to the bill", done: false, files: ["Tip.swift"], check: "AddsTheTip"),
+        PlanPart(id: 1, title: "Pick a tip percent", done: false, files: ["TipPicker.swift"]),
+        PlanPart(id: 2, title: "Split it between friends", done: false, files: ["Totals.swift"], check: "SplitsTheBill"),
     ]
 
     private static func build(_ name: String, _ change: @escaping (inout TurnProgress) -> Void) -> Entry {

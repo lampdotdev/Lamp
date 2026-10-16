@@ -135,7 +135,7 @@
   {
     "name": "plan",
     "label": "Plan",
-    "description": "Shows the user what you're building, as a short checklist in Lamp while they wait. For a new app, call it once before writing any code with the 3 to 5 main parts, each in plain words the user would use (what they'll be able to do, not file or type names), and the files you'll write for each part. Lamp ticks a part off when all of its files are written, so there's no need to call it again. Call it again only if the plan changes; every call replaces the whole list.",
+    "description": "Shows the user what you're building, as a short checklist in Lamp while they wait. For a new app, call it once before writing any code with the 3 to 5 main parts, each in plain words the user would use (what they'll be able to do, not file or type names), with the files you'll write for it and the check that proves it, and with promise_check: the check that proves the app's main promise, which Lamp shows above the parts. Lamp ticks a part off when its check passes, so there's no need to call it again. Call it again only if the plan changes or to name the promise's check once it's written; every call replaces the whole list.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -143,10 +143,6 @@
           "items": {
             "additionalProperties": false,
             "properties": {
-              "done": {
-                "description": "True to tick this part yourself",
-                "type": "boolean"
-              },
               "files": {
                 "description": "File names you'll write for this part, e.g. Scanner.swift. Each file belongs to one part.",
                 "items": {
@@ -157,6 +153,10 @@
               "title": {
                 "description": "One part of the app, under ten words, in the user's words",
                 "type": "string"
+              },
+              "check": {
+                "description": "The name of the LampCheck subclass that proves this part works, e.g. ReadsLastWeek",
+                "type": "string"
               }
             },
             "required": [
@@ -166,11 +166,29 @@
             "type": "object"
           },
           "type": "array"
+        },
+        "promise_check": {
+          "description": "The name of the LampCheck subclass that proves the app's main promise",
+          "type": "string"
+        },
+        "promise": {
+          "description": "Only when the person chose a different main promise than Lamp gave: the new one, in their words. Lamp tells them it changed.",
+          "type": "string"
         }
       },
       "required": [
         "parts"
       ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "run_checks",
+    "label": "Run checks",
+    "description": "Builds your latest code and runs the app's checks, then says what each found. A check is a subclass of LampCheck in the app's code that does one thing the app promises, with the app's own code, and throws when it didn't happen: `final class ReadsLastWeek: LampCheck { override var promise: String { \"Shows what was played last week\" }; override func run() async throws { let days = try await History.days(back: 7); try expect(!days.isEmpty, \"No days of history were found\") } }`. They run in a copy of the app opened out of sight, with the app's permissions and an empty LampStore of their own; the app on screen isn't touched. A check proves its promise by doing it for real with the app's own code, never with made-up results or a stand-in. It leaves the app's settings and Keychain alone, and when the promise is an action outside the app (sending, posting, buying, deleting the person's files) it does everything up to that step and stops there. When this Mac can't try it (no microphone, no camera), call `try skip(\"why\")` instead of returning early: Lamp tells the person it wasn't tried.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
       "type": "object"
     }
   },
