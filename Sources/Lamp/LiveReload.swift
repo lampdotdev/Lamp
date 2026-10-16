@@ -128,14 +128,11 @@ enum LiveReload {
             changed.append(path)
         }
         // A file taken away can change what an unchanged caller means: a method it declared may have stood in for
-        // a protocol's default or another overload, which the caller now gets. So every file is compiled again,
-        // and every call goes to code compiled without it (but the App's, which ran once, and Lamp's own).
+        // a protocol's default or another overload, which the caller now gets. So every file of the app's is
+        // compiled again, the App's too (what else is in its file may call it, and the App itself, which ran once
+        // at launch, is never run again), and every call goes to code compiled without it. Not Lamp's own files.
         if !gone.isEmpty {
-            changed = built.keys.sorted().filter { path in
-                guard !["LampSupport.swift", Template.sceneSupportFile].contains((path as NSString).lastPathComponent),
-                      let text = try? String(contentsOf: built[path]!, encoding: .utf8) else { return false }
-                return !declaresApp(text)
-            }
+            changed = built.keys.sorted().filter { !["LampSupport.swift", Template.sceneSupportFile].contains(($0 as NSString).lastPathComponent) }
         }
         return changed.isEmpty && gone.isEmpty ? .unchanged : .reload(changed)
     }
