@@ -3479,6 +3479,7 @@ enum Template {
             }
             guard let image = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == path }),
                   let header = _dyld_get_image_header(image) else { return }
+            Self.takeFieldOffsets(header, slide: _dyld_get_image_vmaddr_slide(image))
             let defined = Self.definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image))
             for (name, address) in defined where Self.isCode(name) && !Self.accesses(name, oneOf: Self.stored(in: defined)) {
                 latest[name] = address
@@ -3561,16 +3562,38 @@ enum Template {
                     Int(symtab.pointee.nsyms), base, dysymtab)
         }
 
-        private static func definedSymbols(_ header: UnsafePointer<mach_header>, slide: Int) -> [(String, UnsafeRawPointer)] {
+        private static func definedSymbols(_ header: UnsafePointer<mach_header>, slide: Int, local: Bool = false) -> [(String, UnsafeRawPointer)] {
             guard let tables = tables(header, slide: slide) else { return [] }
             var out: [(String, UnsafeRawPointer)] = []
             for index in 0..<tables.count {
                 let symbol = tables.symbols[index]
-                guard symbol.n_type & UInt8(N_EXT) != 0, symbol.n_type & UInt8(N_TYPE) == UInt8(N_SECT), symbol.n_value != 0,
+                guard local || symbol.n_type & UInt8(N_EXT) != 0, symbol.n_type & UInt8(N_STAB) == 0,
+                      symbol.n_type & UInt8(N_TYPE) == UInt8(N_SECT), symbol.n_value != 0,
                       let address = UnsafeRawPointer(bitPattern: Int(symbol.n_value) + slide) else { continue }
                 out.append((String(cString: tables.strings.advanced(by: Int(symbol.n_un.n_strx))), address))
             }
             return out
+        }
+
+        /// Where a class's fields are is worked out as the app runs when it can't be known when it's compiled (a
+        /// subclass, or fields after one of the system's types, such as an @Observable class's registrar), and kept
+        /// in a global for each field. A library has its own copies, which nothing fills in: its code would read
+        /// every such field at the start of the object. So they take the app's values, once the app has worked
+        /// the class out (asking for its metadata does that). A field the app has none for is new, and stays the
+        /// library's.
+        private static func takeFieldOffsets(_ header: UnsafePointer<mach_header>, slide: Int) {
+            guard let app = _dyld_get_image_header(0) else { return }
+            let theirs = Dictionary(definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0), local: true), uniquingKeysWith: { first, _ in first })
+            let accessors = theirs.filter { $0.key.hasSuffix("CMa") }
+            for (name, address) in definedSymbols(header, slide: slide, local: true) where name.hasSuffix("Wvd") {
+                // One the compiler knew is already right, and may be in memory that can't be written.
+                guard address.load(as: Int.self) == 0, let source = theirs[name] else { continue }
+                if source.load(as: Int.self) == 0,
+                   let accessor = accessors.filter({ name.hasPrefix($0.key.dropLast(2)) }).max(by: { $0.key.count < $1.key.count }) {
+                    _ = unsafeBitCast(accessor.value, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0)
+                }
+                UnsafeMutableRawPointer(mutating: address).storeBytes(of: source.load(as: Int.self), as: Int.self)
+            }
         }
 
         /// Points the image's symbol pointers, which its calls to its own functions go through, at the new code.

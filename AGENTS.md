@@ -508,22 +508,35 @@ details (`LiveReload.Verdict`), so the rules can be tuned by what happens. The p
 quiet status line in both chats (`ChatLook.reloaded`), once a turn, when a request's change closed the open app and
 opened it again, never for Open App or Undo. A live build reads the app's own files
 from its Assets folder rather than its bundle (`LampAssets`), so a new picture goes in live too; the package, the
-app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which asks for
-new state in new views rather than new stored properties in existing types, when that's as clear.
+app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which tells the
+agent what goes in without reopening.
 
-A stored property added to a class goes in live too (`LiveSlots`, in LiveReload.swift). The copy step gives every
-class of the app's (not `@Model`, Core Data or `Sendable` ones) a few empty spare places, `__lampSpare_<Class>_0`…
-of `LampSpare?` (named after the class, so a subclass's don't clash with what it inherits; `@Published` when the
-header says `ObservableObject`), so the open app's objects already have room. A starting value that isn't a literal
-(`.now`, a call) is worked out on the first read and kept; a `@Published` property in a class whose places aren't
-published (conforming in an extension) reopens the app instead. When the only
-difference in layout is new stored properties in such classes, `LiveSlots.fit` rewrites each one-line declaration in
-the live copy into a computed property kept in a free place, and the change is compiled again and checked as usual.
-Being stored, a place is observed like any property, so views redraw. Which property is in which place
+New stored properties go in live too (`LiveSlots`, in LiveReload.swift). The copy step (`Template.sparesPerl`) gives
+each type of the app's spare room the open app's values already have: every class a few places,
+`__lampSpare_<Class>_0`… of `LampSpare?` (named after the class, so a subclass's don't clash with what it inherits;
+`@Published` when the header says `ObservableObject`), every view one `@State` box (`__lampState_<View>`, a
+`LampStateBox`), and every other struct one place holding any number of properties by name (`__lampSpare_<Struct>`).
+Left out is what a spare would break: SwiftData and Core Data models, `Sendable` classes, `Equatable` views, the App
+and its scenes, property wrappers, App Intents, and structs in a file that lays memory out by hand (vertex data). When
+the only difference in layout is new stored properties in such types, `LiveSlots.fit` rewrites each one-line
+declaration in the live copy into a computed property kept in a spare (a view's `$name` becomes a binding to its
+box), and the change is compiled again and checked as usual. Being stored, a spare is observed like any property, so
+views redraw. A class's starting value that isn't a literal (`.now`, a call) is worked out on the first read and kept;
+a struct can't keep one from a read, so its new property needs a starting value that comes out the same every time
+(the change reopens the app otherwise); a `@Published` property in a class whose places aren't published (conforming
+in an extension) reopens it too. `@State` is read in both forms the compiler has given it: `_name: State<T>`, and
+`__name: LazyState<T>` where it is a macro. Cases added at the end of an enum whose cases carry nothing need no
+spare: its values keep their size (`LiveSlots.casesAdded`). Which property is in which spare
 (`.lamp/live/slots.json`) is put back into each fresh copy (`LiveSlots.apply`) until the app is installed again: the
 whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs
-once it's installed (`LiveReload.markRunning(from:)`). A place never reaches saved data: `LampSpare` encodes as
-nothing, and a computed property isn't encoded.
+once it's installed (`LiveReload.markRunning(from:)`). A spare never reaches saved data: `LampSpare` encodes as
+nothing, and a computed property isn't encoded. If spares ever keep an app from building, it's built again without
+them and stays without (`LiveSlots.giveUp`, `.lamp/live/no-spares`), so the agent only sees errors in its own code.
+
+Where a class's fields are is sometimes worked out at run time (a subclass, or fields after a system type such as
+an `@Observable` class's registrar), kept in a global for each field that the app fills in. A library has its own
+copies, which nothing fills in, so `LampLive` copies the app's values into each library as it loads
+(`takeFieldOffsets`), asking for the class's metadata first when the app hasn't worked it out yet.
 
 A Mac app can also open beside a web page, in Chrome's sidebar (Lamp Dev only, an experiment: Settings →
 Experimental, `BrowserBridge.switchKey`; how it fits together is in `experiments/browser-connector/README.md`).
