@@ -43,6 +43,8 @@ final class Link: ObservableObject {
     static let shared = Link()
 
     @Published var state: SidebarState?
+    /// The wish's file after Share…, until the share menu has taken it (`ChatToolbar`).
+    @Published var sharing: SidebarSharing?
     @Published var connected = false
     /// Lamp hasn't answered for a while: it isn't open.
     @Published var lampAway = false
@@ -97,7 +99,11 @@ final class Link: ObservableObject {
         // A long line (a shared file) comes in many pieces: the buffer is looked through only once one ends a line.
         guard chunk[0..<count].contains(0x0A) else { return }
         for line in SidebarWire.lines(from: &buffer) {
-            if let state = try? JSONDecoder().decode(SidebarState.self, from: line) { self.state = state }
+            if let state = try? JSONDecoder().decode(SidebarState.self, from: line) {
+                // Sent once: kept here as it arrives, since a state decoded after it in the same read replaces this one.
+                if let sharing = state.sharing { self.sharing = sharing }
+                self.state = state
+            }
         }
     }
 

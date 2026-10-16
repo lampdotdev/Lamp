@@ -583,8 +583,9 @@ the title bar there and takes the clicks. From macOS 26 the strip and the chat f
 (`NSGlassEffectView`, `LampSidebar.pane`) inset from the window's edges, and the chat draws no paper of its own there
 (`chatGround`); before macOS 26 they sit on a solid background that runs up to the window's top. What Lamp's window has in
 its toolbar is the chat's own, drawn by the extension above the chat (`ChatToolbar`): Undo Last Change, Share (the file is
-made by Lamp and handed over whole, `SidebarState.sharing`, since the extension can't read it), Delete, Agent Details, and
-Versions and Wish Info as panels in place of the chat (`VersionsPanel`, `InfoPanel`; the info rows are
+made by Lamp and handed over whole, `SidebarState.sharing`, since the extension can't read it; sent once, so the
+extension keeps it as it's read, `Link.sharing`), Delete, Agent Details, and Versions and Wish Info as panels in place of
+the chat (`VersionsPanel`, a page of versions at a time with the rest a click away; `InfoPanel`; the info rows are
 `AppInfoView.sections`, the same list Lamp's window draws). An app's chat is in one place at a time: when it opens beside
 the app, its window in Lamp closes, unless Lamp is in front with that window (`MagicPanel.chatOpenedInApp`). Lamp's window
 keeps the chat where there's no app window to put it beside: a wish not yet made or being found, a menu bar app, a widget,

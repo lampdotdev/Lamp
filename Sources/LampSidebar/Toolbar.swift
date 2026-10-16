@@ -20,7 +20,6 @@ struct ChatToolbar: View {
     @State private var deleting = false
     /// The share button, where the share menu opens once Lamp has made the file.
     @State private var shareAnchor = Anchor()
-    @State private var shared: UUID?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -69,15 +68,15 @@ struct ChatToolbar: View {
         } message: {
             Text("The wish, its chat, its history and what it saved are moved to the Trash.")
         }
-        .onAppear { shared = state.sharing?.id }
-        .onChange(of: state.sharing?.id) { if let sharing = state.sharing { share(sharing) } }
+        .onChange(of: link.sharing?.id) {
+            if let sharing = link.sharing { share(sharing) }
+            link.sharing = nil
+        }
     }
 
     /// The share menu, at the share button, for the file Lamp made (`SidebarState.sharing`). This process can't read
     /// Lamp's files, so the file comes whole and is kept here, where the service it's shared with reads it.
     private func share(_ sharing: SidebarSharing) {
-        guard shared != sharing.id else { return }
-        shared = sharing.id
         // Only the latest file is kept: the one shared before has been handed to its service by now.
         let temporary = FileManager.default.temporaryDirectory
         for old in (try? FileManager.default.contentsOfDirectory(atPath: temporary.path)) ?? [] where old.hasPrefix("share-") {
@@ -272,7 +271,13 @@ struct VersionsPanel: View {
                                 }
                         }
                     }
-                    .padding(.horizontal, 12).padding(.bottom, 12)
+                    .padding(.horizontal, 12)
+                    if state.hasEarlierVersions == true {
+                        Button("Show Earlier Versions") { link.send(.earlierVersions) }
+                            .controlSize(.small)
+                            .padding(.top, 4)
+                    }
+                    Color.clear.frame(height: 12)
                 }
             } else {
                 Spacer()

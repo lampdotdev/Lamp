@@ -260,7 +260,10 @@ final class SidebarServer {
                                        hasVersions: history?.saved ?? false, details: details, usage: store.usageSummary(project))
         state.panel = panels[project.id]
         switch state.panel {
-        case .versions: state.versions = versions(for: project, busy: busy)
+        case .versions:
+            let versions = versions(for: project, busy: busy)
+            state.versions = versions.list
+            state.hasEarlierVersions = versions.more
         case .info: state.info = AppInfoView.sections(for: project, models: AppModels.load(project), store: store)
         case nil: break
         }
@@ -301,9 +304,14 @@ final class SidebarServer {
     /// changes (a picture, a title, a name). The newest first, with a small picture each.
     private var versionLists: [String: (key: String, value: [SidebarVersion]?)] = [:]
 
-    private func versions(for project: LampProject, busy: Bool) -> [SidebarVersion]? {
+    /// How many of each app's versions the panel shows, newest first, grown when it asks for earlier ones.
+    private var versionReach: [String: Int] = [:]
+    private static let versionPage = 60
+
+    private func versions(for project: LampProject, busy: Bool) -> (list: [SidebarVersion]?, more: Bool) {
         let store = Store.shared
-        let key = "\(busy)-\(store.versionsRevision)"
+        let reach = versionReach[project.id] ?? Self.versionPage
+        let key = "\(busy)-\(store.versionsRevision)-\(reach)"
         if versionLists[project.id]?.key != key {
             let known = versionLists[project.id]?.value
             versionLists[project.id] = (key, known)
@@ -311,19 +319,24 @@ final class SidebarServer {
                 let list = await Versions.list(project)
                 if let current = list.first { await store.fillCurrentPicture(project, current: current) }
                 store.titleVersions(project)
+                // A page at a time, so what's sent with each change stays small; the rest is a click away.
                 let shown = await Task.detached {
-                    list.prefix(60).enumerated().map { index, version in
+                    list.prefix(reach).enumerated().map { index, version in
                         SidebarVersion(id: version.id, label: version.label, named: version.name != nil, date: version.date,
                                        current: index == 0, picture: Self.versionPicture(Versions.pictureURL(in: project, for: version.id)))
                     }
                 }.value
                 guard let self, self.versionLists[project.id]?.key == key else { return }
                 self.versionLists[project.id] = (key, shown)
+                self.versionsTotal[project.id] = list.count
                 self.scheduleUpdate()
             }
         }
-        return versionLists[project.id]?.value
+        let list = versionLists[project.id]?.value
+        return (list, (versionsTotal[project.id] ?? 0) > (list?.count ?? 0))
     }
+
+    private var versionsTotal: [String: Int] = [:]
 
     /// A version's picture, small enough to send with the list every time the chat changes.
     private nonisolated static func versionPicture(_ url: URL) -> Data? {
@@ -741,6 +754,9 @@ final class SidebarServer {
             UserDefaults.standard.set(on, forKey: "showDetails")
         case .panel(let panel):
             panels[project.id] = panel
+            scheduleUpdate()
+        case .earlierVersions:
+            versionReach[project.id] = (versionReach[project.id] ?? Self.versionPage) + Self.versionPage
             scheduleUpdate()
         case .goBackToVersion(let id):
             guard !store.busy.contains(project.id) else { return }

@@ -77,6 +77,8 @@ public struct SidebarState: Codable, Equatable {
     /// The panel open in place of the chat, as the sidebar asked for it (`SidebarCommand.panel`), with what it shows.
     public var panel: SidebarPanel?
     public var versions: [SidebarVersion]?
+    /// Older versions than those in `versions`, sent when asked (`SidebarCommand.earlierVersions`).
+    public var hasEarlierVersions: Bool?
     public var info: [SidebarInfoSection]?
     /// The wish's file after Share…, for the sidebar's own share menu: sent once, since only the sidebar can show
     /// that menu where the button is, and it can't read Lamp's files.
@@ -392,6 +394,8 @@ public enum SidebarCommand: Codable, Equatable {
     /// The panel shown in place of the chat, or (nil) the chat.
     case panel(SidebarPanel?)
     case goBackToVersion(String)
+    /// More of the Versions panel's list, from before the oldest shown.
+    case earlierVersions
     /// A version's name, or (empty) none.
     case nameVersion(String, String)
     /// A button in the info panel.
