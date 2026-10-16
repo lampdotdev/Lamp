@@ -126,6 +126,35 @@ final class SkillsTests: XCTestCase {
         XCTAssertFalse(Skills.brief(for: project, engine: .claude, session: "c1").isEmpty)
     }
 
+    /// A conversation that was told of a skill before a Lamp update changed it is asked to open it again, and
+    /// only that skill: one that didn't change keeps "unless you already have it".
+    @MainActor func testAConversationIsToldToReopenASkillLampChanged() throws {
+        try XCTSkipUnless(Agent.Rules.scenes, "3D scenes are offered only on macOS 15 or later")
+        let project = app()
+        try source("World.swift", "import RealityKit\n")
+        let before = shipped
+        var after = shipped
+        after["scene-3d"] = Skills.Skill(name: "scene-3d", description: shipped["scene-3d"]!.description,
+                                         body: shipped["scene-3d"]!.body + "\n\nOne more thing found the hard way.")
+
+        let first = Skills.brief(for: project, engine: .claude, session: "c", skills: before)
+        XCTAssertTrue(first.contains("unless you already have it"), first)
+        Skills.delivered(to: project)
+        XCTAssertEqual(Skills.brief(for: project, engine: .claude, session: "c", skills: before), "")
+        Skills.delivered(to: project)
+
+        let updated = Skills.brief(for: project, engine: .claude, session: "c", skills: after)
+        XCTAssertTrue(updated.contains("Lamp has changed scene-3d since this conversation was told of it: open it again"), updated)
+        Skills.delivered(to: project)
+        XCTAssertEqual(Skills.brief(for: project, engine: .claude, session: "c", skills: after), "")
+        Skills.delivered(to: project)
+
+        // Another skill coming to apply names both, and asks again only for what changed: nothing did.
+        try source("Credits.swift", "Text(\"© OpenStreetMap contributors\")\n")
+        let more = Skills.brief(for: project, engine: .claude, session: "c", skills: after)
+        XCTAssertTrue(more.contains("- maps: ") && more.contains("unless you already have it"), more)
+    }
+
     // MARK: - RequestNote, shared with what the agent is told about the app's AI
 
     @MainActor func testRequestNote() {

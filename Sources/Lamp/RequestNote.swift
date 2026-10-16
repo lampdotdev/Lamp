@@ -35,6 +35,13 @@ import Foundation
         return known?.line == line ? .nothing : .changed
     }
 
+    /// The note the engine's conversation last received, if it has one.
+    func lastTold(for project: LampProject, engine: Engine, session: String?) -> String? {
+        session.flatMap { session in
+            shown(in: project)[engine.rawValue].flatMap { $0.session == session || $0.session.isEmpty ? $0.line : nil }
+        }
+    }
+
     /// The agent answered, so the request and the note in it arrived.
     func delivered(to project: LampProject, session: String? = nil) {
         guard var run = pending[project.id] else { return }

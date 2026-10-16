@@ -96,7 +96,9 @@ A capability given to one engine must be given to all of them that can take it, 
   work, and the same file for every engine is one place to keep up to date. When an app's own code
   shows a skill applies (`Skills.applying`: it imports RealityKit, it uses OpenStreetMap data), Lamp names it at
   the end of the request (`Skills.brief`), sent like `AIStatus.brief` through `RequestNote`: once per
-  conversation, again when it changes or the conversation was compacted. A new skill is a folder there, its name
+  conversation, again when it changes or the conversation was compacted. What's remembered as told carries each
+  skill's revision (`Skills.revision`, a hash of its instructions), so a conversation told of a skill before an
+  update changed it is asked to open it again. A new skill is a folder there, its name
   in `Skills.offered`, and, when an app's code can show it applies, a check in `Skills.applying`.
 - **Approvals and privacy**: shell commands go through `/agent/approve` for every engine (pi's extension,
   Claude Code's hooks, Codex's hooks); file access outside the app's folder is checked the same way.

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Guidance the builder opens only when a request needs it, so the system prompt carries what nearly every
@@ -89,14 +90,31 @@ enum Skills {
         }
     }
 
+    /// Which version of a skill this is: a change to its instructions in a Lamp update changes it.
+    static func revision(of name: String, in skills: [String: Skill] = all) -> String {
+        SHA256.hash(data: Data((skills[name]?.body ?? "").utf8)).prefix(6).map { String(format: "%02x", $0) }.joined()
+    }
+
     /// The line at the end of a request naming the skills that apply to the app, sent as `AIStatus.brief` is:
-    /// once per conversation and when it changes. Nothing when none apply.
-    @MainActor static func brief(for project: LampProject, engine: Engine, session: String?) -> String {
+    /// once per conversation and when it changes. Nothing when none apply. What's remembered as told includes
+    /// each skill's revision, so a conversation that opened a skill before a Lamp update changed it is told to
+    /// open it again rather than go on with the copy it has.
+    @MainActor static func brief(for project: LampProject, engine: Engine, session: String?, skills: [String: Skill] = all) -> String {
         let applying = applying(to: project)
         let now = applying.map { "- \($0.name): \($0.because)" }.joined(separator: "\n")
-        let telling = note.telling(now, for: project, engine: engine, session: session)
+        let revisions = applying.map { "\($0.name)@\(revision(of: $0.name, in: skills))" }
+        let told = note.lastTold(for: project, engine: engine, session: session)
+        let telling = note.telling(now + "\nrevisions: " + revisions.joined(separator: " "), for: project, engine: engine, session: session)
         guard !now.isEmpty, telling != .nothing else { return "" }
-        return "\n\n---\nSkills that apply to this app (from Lamp, not part of the request above). Open each with `read_skill` before changing that part of the app, unless you already have it in this conversation:\n\(now)"
+        let toldRevisions = told?.components(separatedBy: "\n").last { $0.hasPrefix("revisions: ") }?
+            .dropFirst("revisions: ".count).split(separator: " ").map(String.init) ?? []
+        let updated = applying.map(\.name).filter { name in
+            toldRevisions.contains { $0.hasPrefix(name + "@") } && !toldRevisions.contains(name + "@" + revision(of: name, in: skills))
+        }
+        let open = updated.isEmpty
+            ? "Open each with `read_skill` before changing that part of the app, unless you already have it in this conversation"
+            : "Open each with `read_skill` before changing that part of the app. Lamp has changed \(updated.joined(separator: " and ")) since this conversation was told of it: open it again, even if you have it, and follow the new one"
+        return "\n\n---\nSkills that apply to this app (from Lamp, not part of the request above). \(open):\n\(now)"
     }
 
     /// The agent answered, so the request and the line in it arrived.
