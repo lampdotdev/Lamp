@@ -8065,6 +8065,16 @@ enum Template {
                 // port: only the app's own name, at the port it has, is answered.
                 guard request.headers["host"] == "\(host):\(port)" else { return json(421, ["error": "Wrong host."], on: connection) }
                 let path = request.path.split(separator: "?", maxSplits: 1).first.map(String.init) ?? "/"
+                // Proof that this is the app, not another program that took one of its ports: the key's signature
+                // over the sidebar's nonce and the port asked, which only the app can make and which fits only the
+                // address it was asked at. Chrome's sidebar hands the page its key only after checking it.
+                if path == "/lamp/proof", request.method == "GET" {
+                    let query = request.path.split(separator: "?", maxSplits: 1).dropFirst().first.map(String.init) ?? ""
+                    guard let nonce = URLComponents(string: "?" + query)?.queryItems?.first(where: { $0.name == "nonce" })?.value,
+                          !nonce.isEmpty, nonce.count <= 100 else { return json(400, ["error": "No nonce."], on: connection) }
+                    let code = HMAC<SHA256>.authenticationCode(for: Data("\(nonce):\(port)".utf8), using: SymmetricKey(data: Data(key.utf8)))
+                    return json(200, ["proof": code.map { String(format: "%02x", $0) }.joined()], on: connection)
+                }
                 if path.hasPrefix("/lamp/") {
                     // The page's data: only for the key Chrome's sidebar (or Lamp's preview) was given, and never
                     // for a request another site made.
@@ -8118,11 +8128,11 @@ enum Template {
         // Lamp's bridge for this app's sidebar page. The page sits in Chrome's sidebar, framed by Lamp's extension;
         // what it knows of the person's tab comes only through that frame, after a click.
         (() => {
-          const params = new URLSearchParams(location.hash.slice(1));
-          const key = params.get('key') || sessionStorage.getItem('lamp.key') || '';
-          const tab = params.get('tab') || sessionStorage.getItem('lamp.tab') || 'preview';
-          sessionStorage.setItem('lamp.key', key); sessionStorage.setItem('lamp.tab', tab);
+          const tab = new URLSearchParams(location.hash.slice(1)).get('tab') || sessionStorage.getItem('lamp.tab') || 'preview';
+          sessionStorage.setItem('lamp.tab', tab);
           if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+          // The key for the app's data comes from the sidebar, and only once the app has proved it serves this page.
+          let key = '';
           const preview = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampPreview;
           const framer = (location.ancestorOrigins && location.ancestorOrigins[0]) || '';
           let next = 0; const waiting = {};
@@ -8135,7 +8145,16 @@ enum Template {
             if (parent === window || !framer) return Promise.resolve({error: 'Open this in Chrome’s sidebar.'});
             return new Promise(resolve => { const id = ++next; waiting[id] = resolve; parent.postMessage({...body, id}, framer); });
           }
+          const ready = (async () => {
+            const hello = await ask({lamp: 'hello'});
+            if (hello && hello.key) { key = hello.key; return; }
+            if (!hello || !hello.nonce) return;
+            const proof = await fetch('/lamp/proof?nonce=' + encodeURIComponent(hello.nonce)).then(r => r.json()).catch(() => ({}));
+            const answer = await ask({lamp: 'proof', proof: proof.proof || ''});
+            if (answer && answer.key) key = answer.key;
+          })();
           async function call(name, body) {
+            await ready;
             let reply;
             try {
               reply = await fetch('/lamp/call/' + encodeURIComponent(name), {method: 'POST',
@@ -8153,6 +8172,7 @@ enum Template {
           const watchers = []; let version = null;
           async function poll() {
             try {
+              await ready;
               const reply = await fetch('/lamp/version', {headers: {'X-Lamp-Key': key}});
               const value = await reply.json();
               if (version !== null && value.version !== version) watchers.forEach(f => { try { f(); } catch {} });
@@ -8169,7 +8189,6 @@ enum Template {
             /// Called when the app says what the page shows changed (LampBrowser.pageChanged()).
             onChange(f) { watchers.push(f); if (watchers.length === 1) poll(); },
           };
-          ask({lamp: 'hello'});
         })();
         """
 

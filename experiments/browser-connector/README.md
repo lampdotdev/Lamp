@@ -42,7 +42,9 @@ for everything else.
   from the app's id (`Template.sidebarPort`), with the next three tried when
   another program has it. Lamp lists the addresses and a key with each app
   (`surface-list`); the extension keeps that list for when Lamp is closed and
-  tries the addresses in turn until the page says hello (`/lamp.js`). The app
+  tries the addresses in turn until the page there proves it's the app (the
+  key's signature over a fresh nonce and the port, from `/lamp/proof`), and
+  only then hands the page its key (`/lamp.js`). The app
   answers only its own name at the port it has (so a website that points a
   name at this Mac, or another program on the first port, gets nothing), its
   data only to calls with the key that no other site sent, and lets only the
@@ -52,9 +54,11 @@ for everything else.
   the extension keeps the app's name, its offer and the consent line the page
   asks for (`data-lamp-reads`). `/lamp.css` gives the page the Mac window's
   look, which the app makes its own with its colour and its items.
-- **Reading** happens only when the page asks (`lamp.readPage`,
-  `lamp.readSelection`) right after a click in it: Chrome passes the click's
-  activation up to the extension's sidebar, which checks it, then reads through
+- **Reading** happens only when the page's file declares it (`data-lamp-reads`,
+  which Lamp reads from the file, never from the page as it runs) and the page
+  asks (`lamp.readPage`, `lamp.readSelection`) right after a click in it, once
+  per click: Chrome passes the click's activation up to the extension's
+  sidebar, which checks it (a press on the sidebar's own parts doesn't count), then reads through
   the `activeTab` grant. After the tab moves to another page the grant is gone
   and the sidebar asks for a click on the icon again. Capture
   (`surface-capture.js`) skips fields, editable and hidden text and frames, and

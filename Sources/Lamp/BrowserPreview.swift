@@ -1,6 +1,7 @@
 import SwiftUI
 import WebKit
 import Network
+import CryptoKit
 
 /// The builder's way to try an app's sidebar without Chrome: Lamp draws the same surface the extension would,
 /// from what the running app publishes, and acts as one more sidebar tab (`tab`), so `look_at_app` and `use_app`
@@ -478,10 +479,14 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
     /// its page says hello (another program may have the first port).
     func load(_ project: LampProject) async -> String? {
         host = Template.sidebarHost(for: project)
+        key = Template.sidebarKey(for: project)
+        reads = Template.sidebarReads(project)
         var trouble = "it didn't answer"
         for address in Template.sidebarURLs(for: project) {
+            // The app's own page only: the address has to prove it's the app before the page is shown or given the key.
+            guard await Self.proves(address, key: key) else { continue }
             helloed = false
-            web.load(URLRequest(url: URL(string: address + "#key=\(Template.sidebarKey(for: project))&tab=\(BrowserPreview.tab)")!, timeoutInterval: 6))
+            web.load(URLRequest(url: URL(string: address + "#tab=\(BrowserPreview.tab)")!, timeoutInterval: 6))
             let error = await withCheckedContinuation { done in
                 loaded = done
                 Task { [weak self] in try? await Task.sleep(for: .seconds(8)); self?.finish(URLError(.timedOut)) }
@@ -494,8 +499,22 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
         }
         return "The app's sidebar page didn't load from the app (\(trouble)). Call LampBrowser.startPage once when the app launches, from its shared model, put the page in Assets/Sidebar/index.html, and load /lamp.js first."
     }
-    private var host = ""
+    private var host = "", key = "", reads = ""
     private var helloed = false
+
+    /// Whether the app answers at `address`: its key's signature over a fresh nonce and the port, as the sidebar checks.
+    private static func proves(_ address: String, key: String) async -> Bool {
+        let nonce = UUID().uuidString
+        guard let base = URL(string: address), let port = base.port,
+              let url = URL(string: "lamp/proof?nonce=\(nonce)", relativeTo: base) else { return false }
+        var request = URLRequest(url: url, timeoutInterval: 3)
+        request.setValue(nil, forHTTPHeaderField: "Origin")
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let proof = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["proof"] as? String else { return false }
+        let expected = HMAC<SHA256>.authenticationCode(for: Data("\(nonce):\(port)".utf8), using: SymmetricKey(data: Data(key.utf8)))
+            .map { String(format: "%02x", $0) }.joined()
+        return proof == expected
+    }
 
     /// Until the page's calls to its app have come back (an AI answer can take a minute), then a beat for drawing.
     func settle(limit: TimeInterval = 150) async {
@@ -580,17 +599,20 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping @MainActor (Any?, String?) -> Void) {
         // Only the app's own page: anything it frames is left unanswered.
         guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any] else { return replyHandler([:], nil) }
-        if body["lamp"] as? String == "hello" { helloed = true }
+        if body["lamp"] as? String == "hello" { helloed = true; return replyHandler(["key": key], nil) }
         guard body["lamp"] as? String == "read" else { return replyHandler([:], nil) }
+        // As Chrome's sidebar allows: only what the page's file declares it reads.
+        guard !reads.isEmpty else { return replyHandler(["error": "This sidebar doesn’t read pages: put data-lamp-reads=\"page\" (or \"selection\") on its <html>."], nil) }
         guard let page = page() else { return replyHandler(["error": "No page is open beside the sidebar: give look_at_app or use_app a `page`."], nil) }
         var text = page.text
-        if body["scope"] as? String == "selection" {
+        let scope = reads == "selection" ? "selection" : body["scope"] as? String ?? "page"
+        if scope == "selection" {
             guard let chosen = selection?.trimmingCharacters(in: .whitespacesAndNewlines), !chosen.isEmpty else {
                 return replyHandler(["error": "Select a passage on the page first (give use_app a `selection`)."], nil)
             }
             text = String(chosen.prefix(24000))
         }
-        replyHandler(["page": ["url": page.url, "title": page.title, "text": text, "scope": body["scope"] as? String ?? "page",
-                               "truncated": body["scope"] as? String == "selection" ? false : page.truncated]], nil)
+        replyHandler(["page": ["url": page.url, "title": page.title, "text": text, "scope": scope,
+                               "truncated": scope == "selection" ? false : page.truncated]], nil)
     }
 }

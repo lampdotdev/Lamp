@@ -153,7 +153,8 @@ function showPage(app) {
     framed = app.id; frameAsked = now;
     const url = app.page.urls[tried % app.page.urls.length];
     frame.dataset.origin = new URL(url).origin;
-    frame.src = url + '#' + new URLSearchParams({key: app.page.key, tab: tabKey}).toString();
+    frame.src = url + '#' + new URLSearchParams({tab: tabKey}).toString();
+    readSpent = true;
   }
   if (frameReady) { frame.hidden = false; note(info.moved ? 'This tab is on a new page. Click Lamp in Chrome’s toolbar to use it here.' : ''); return; }
   frame.hidden = true;
@@ -163,8 +164,16 @@ function showPage(app) {
 }
 // What a page may read is what Lamp found its file declares (`page.reads`), never what the page says as it runs, and
 // the consent line says the same. One read per click: a second needs the person to click again.
-let readSpent = false;
+let readSpent = false, nonce = '';
 setInterval(() => { if (!navigator.userActivation.isActive) readSpent = false; }, 200);
+// A press on the sidebar's own parts (the app menu, the strip) isn't a click in the page: presses inside the frame
+// don't reach this document, so only those leave a read to spend.
+for (const kind of ['pointerdown', 'keydown']) document.addEventListener(kind, () => { readSpent = true; }, true);
+const hex = bytes => [...new Uint8Array(bytes)].map(b => b.toString(16).padStart(2, '0')).join('');
+async function proves(app, origin, proof) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(app.page.key), {name: 'HMAC', hash: 'SHA-256'}, false, ['sign']);
+  return proof === hex(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${nonce}:${new URL(origin).port}`)));
+}
 window.addEventListener('message', async event => {
   const frame = $('page');
   if (event.source !== frame.contentWindow || event.origin !== frame.dataset.origin) return;
@@ -172,14 +181,19 @@ window.addEventListener('message', async event => {
   // Bound to the app and page that asked: if the sidebar moves to another app meanwhile, the answer is dropped.
   const app = apps.find(a => a.id === framed), origin = frame.dataset.origin, asker = framed;
   const answer = value => { if (framed === asker && frame.dataset.origin === origin) frame.contentWindow.postMessage({lamp: 'answer', id: message.id, ...value}, origin); };
-  if (message.lamp === 'hello') {
+  // The page says hello and gets a nonce; it shows the app's signature over it and its port, and only then is it
+  // the app's page: another program that took one of the app's ports can't make that, and is passed over.
+  if (message.lamp === 'hello') { nonce = crypto.randomUUID(); return answer({nonce}); }
+  if (message.lamp === 'proof') {
+    if (!app || !nonce || !(await proves(app, origin, String(message.proof || '')))) { nonce = ''; frameAsked = 0; return answer({}); }
+    nonce = '';
     frameReady = true; delete opening[framed]; frame.hidden = false; note(info.moved ? 'This tab is on a new page. Click Lamp in Chrome’s toolbar to use it here.' : '');
-    const reads = app?.page?.reads, name = app?.name || 'this app';
+    const reads = app.page.reads, name = app.name;
     $('consent-top').textContent = reads === 'selection' ? `Using a selection shares only that passage with ${name}.`
       : reads === 'page' ? `Using this page shares its text with ${name}.` : '';
-    return answer({});
+    return answer({key: app.page.key});
   }
-  if (message.lamp !== 'read') return;
+  if (message.lamp !== 'read' || !frameReady) return;
   const reads = app?.page?.reads;
   if (!reads) return answer({error: 'This sidebar doesn’t read pages.'});
   // A click in the frame counts here too (Chrome passes a click's activation up to the frames above it).
