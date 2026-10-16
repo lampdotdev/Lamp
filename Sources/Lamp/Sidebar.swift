@@ -146,6 +146,9 @@ final class SidebarServer {
     /// Some app's chat is showing beside it: Lamp keeps running when its own window closes.
     var isInUse: Bool { !connections.isEmpty }
 
+    /// This app's chat is showing beside it.
+    func isConnected(_ projectID: String) -> Bool { connections.values.contains { $0.projectID == projectID } }
+
     /// At launch: an app whose sidebar is open finds Lamp again.
     func start() {
         listener = Listener(server: self)
@@ -591,6 +594,8 @@ final class SidebarServer {
             store.updateDraft(draft, for: project)
         case .pointAgain:
             MagicPanel.shared.pointAgain(in: project)
+        case .point:
+            MagicPanel.shared.point(in: project, fromLamp: false)
         case .stop:
             store.stop(project)
         case .unqueue(let id):

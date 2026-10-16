@@ -60,6 +60,49 @@ final class MagicPanel {
         FileManager.default.createFile(atPath: flag.path, contents: nil)
     }
 
+    // MARK: Handing the chat to the app
+
+    /// Whether this app's chat is shown beside it rather than in Lamp's window: a Mac app with windows (not one
+    /// in the menu bar, a widget or the background), built with the sidebar in it.
+    static func chatsInApp(_ project: LampProject) async -> Bool {
+        guard Sidebar.applies(to: project),
+              FileManager.default.fileExists(atPath: Sidebar.extensionURL(in: project.installedURL).path) else { return false }
+        return await Task.detached { WishPlace.of(project) }.value == .window
+    }
+
+    private static func handedOff(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/sidebar-handed-off") }
+
+    /// After the turn that first builds and opens a new app: its chat window closes and the app opens the chat
+    /// beside its content, so the rest of the making happens in the app itself. Once for each app: a chat the
+    /// person opened in Lamp's window afterwards stays there.
+    func handOff(_ project: LampProject) async {
+        guard !FileManager.default.fileExists(atPath: Self.handedOff(project).path),
+              await Self.chatsInApp(project), !Store.shared.macCopies(of: project).isEmpty else { return }
+        FileManager.default.createFile(atPath: Self.handedOff(project).path, contents: nil)
+        openChat(in: project)
+        // Lamp's window closes once the chat is up in the app, and not before: with no window of its own and no chat
+        // connected, Lamp would quit, and an app that couldn't show the chat would leave it nowhere.
+        for _ in 0..<50 {
+            if SidebarServer.shared.isConnected(project.id) {
+                Store.shared.chatsHandedOff.insert(project.id)
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+    }
+
+    /// The chat opened in the app's window: by a file in its runtime folder for a copy that's still starting
+    /// (`LampSidebar.restore`), and by a word to one that's already running (`LampSidebar.openForLamp`).
+    func openChat(in project: LampProject) {
+        let folder = Runtime.macFolder(project)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: folder.appendingPathComponent("open-sidebar").path, contents: nil)
+        follow(project.id)
+        Store.shared.macCopies(of: project).first?.activate()
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(Edition.notificationPrefix + "openSidebar"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
+    }
+
     func opening(_ id: String) {
         guard let project = Store.shared.projects.first(where: { $0.id == id }) else { return }
         follow(project.id)
@@ -119,6 +162,14 @@ final class MagicPanel {
             MainActor.assumeIsolated {
                 guard let current = Store.shared.projects.first(where: { $0.id == id }), note.object as? String == current.bundleID else { return }
                 self?.take(pointed: note.userInfo ?? [:], in: current)
+                self?.pointingEnded(id)
+            }
+        })
+        state.observers.append(DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name(Edition.notificationPrefix + "pickEnded"), object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let current = Store.shared.projects.first(where: { $0.id == id }), note.object as? String == current.bundleID else { return }
+                self?.pointingEnded(id)
             }
         })
     }
@@ -134,6 +185,27 @@ final class MagicPanel {
     }
 
     // MARK: Pointing
+
+    /// Asked for from Lamp's own window: Lamp comes back in front once the person has pointed, or given up.
+    private var pointingFromLamp: Set<String> = []
+
+    /// The person chose to point at part of the app (the + menu by the message box): the app lays its outline
+    /// over its window (`LampMagic.Picker`), and what's picked comes back as an attachment (`take`).
+    func point(in project: LampProject, fromLamp: Bool) {
+        guard let app = Store.shared.macCopies(of: project).first else { return }
+        follow(project.id)
+        if fromLamp { pointingFromLamp.insert(project.id) } else { pointingFromLamp.remove(project.id) }
+        NSApp.yieldActivation(to: app)
+        app.activate()
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(Edition.notificationPrefix + "pick"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
+    }
+
+    private func pointingEnded(_ id: String) {
+        guard pointingFromLamp.remove(id) != nil else { return }
+        NSApp.activate()
+        LampWindows.showChat(id)
+    }
 
     /// The pointed-at thing goes into the message box as a pill: its picture, named after it ("Save button.png"),
     /// and what it is, so the person writes their message as they would and the agent sees what it is and what it
@@ -155,14 +227,7 @@ final class MagicPanel {
 
     /// Points again for the message being written: the app lays its pointer over its window, in front. What's
     /// picked takes the place of what was; Escape there leaves it as it was.
-    func pointAgain(in project: LampProject) {
-        guard let app = Store.shared.macCopies(of: project).first else { return }
-        follow(project.id)
-        NSApp.yieldActivation(to: app)
-        app.activate()
-        DistributedNotificationCenter.default().postNotificationName(
-            Notification.Name(Edition.notificationPrefix + "pick"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
-    }
+    func pointAgain(in project: LampProject) { point(in: project, fromLamp: false) }
 
     /// Words from the app, on one line and short enough for the card; nil when there are none.
     static func words(_ text: String) -> String? {

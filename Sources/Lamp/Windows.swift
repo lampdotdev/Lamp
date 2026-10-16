@@ -54,6 +54,12 @@ struct WishWindow: View {
         .onChange(of: project?.id) { _, now in
             if let now, now != id { id = now }
         }
+        // Its chat moved into the app's own window (`MagicPanel.handOff`).
+        .onChange(of: store.chatsHandedOff) { _, handed in
+            guard let id = project?.id, handed.contains(id) else { return }
+            store.chatsHandedOff.remove(id)
+            dismiss()
+        }
         // Gone (deleted, or an empty wish discarded): the window goes too. Looked at again a moment later, so a
         // wish caught between its old folder and its new one isn't taken for gone.
         .task(id: project == nil) {

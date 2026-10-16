@@ -460,21 +460,21 @@ struct DeskIcon: View {
         .contentShape(Rectangle())
         // The double click first, so a single one waits to be sure it isn't one.
         .onTapGesture(count: 2) { store.use(project) }
-        .onTapGesture { store.showChat(project.id) }
+        .onTapGesture { store.change(project) }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
-        .accessibilityAction { store.showChat(project.id) }
+        .accessibilityAction { store.change(project) }
         .accessibilityAction(named: "Use") { store.use(project) }
         // With keyboard navigation on, Tab reaches it as it reached the button: Space changes it, Return uses it.
         .focusable(interactions: .activate)
-        .onKeyPress(.space) { store.showChat(project.id); return .handled }
+        .onKeyPress(.space) { store.change(project); return .handled }
         .onKeyPress(.return) { store.use(project); return .handled }
         .onHover { hovered = $0 }
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hovered)
         .background(ShareAnchor(origin: .app(project.id)))
         .background(WishDrag(project: project))
         .contextMenu {
-            Button("Change…") { store.showChat(project.id) }
+            Button("Change…") { store.change(project) }
             Button("Use") { store.use(project) }
             Divider()
             AppMenu(project: project)
@@ -1012,6 +1012,20 @@ enum WishHUD {
 }
 
 extension Store {
+    /// Change… on a wish: its chat beside it in its own window, opening it when it's closed, for a Mac app with
+    /// windows that has been made; anything else (a wish still being found, a menu bar app, a widget, an iPhone
+    /// app) in Lamp's window.
+    func change(_ project: LampProject) {
+        Task {
+            guard !project.finding, FileManager.default.fileExists(atPath: project.installedURL.path),
+                  await MagicPanel.chatsInApp(project) else { return showChat(project.id) }
+            unread.remove(project.id)
+            let running = !macCopies(of: project).isEmpty
+            MagicPanel.shared.openChat(in: project)
+            if !running { openPrepared(project) }
+        }
+    }
+
     /// A wish double-clicked on the desk: used when it's made and nothing's waiting on it, else its chat is shown.
     /// Where opening it brings nothing to the front (the menu bar, a widget, the background, the person's own
     /// phone), the desk says where it is.

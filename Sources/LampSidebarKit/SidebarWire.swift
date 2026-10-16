@@ -246,6 +246,8 @@ public enum SidebarCommand: Codable, Equatable {
     case dictationProblem(openSettings: Bool)
     /// Files pasted, dropped or chosen in the sidebar, which only it can read: their names and contents.
     case attach([SidebarFile])
+    /// Point at part of the app for the message (`MagicPanel.point`).
+    case point
     case stop
     case unqueue(UUID)
     /// The answer to the approval with this id.

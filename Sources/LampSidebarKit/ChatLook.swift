@@ -172,6 +172,8 @@ public enum ChatLook {
         let canSend: Bool
         let attachHelp: String
         let attach: () -> Void
+        /// Pointing at part of the app, offered beside Add Files in the + menu while the app is open on this Mac.
+        let point: (() -> Void)?
         let send: () -> Void
         let stop: () -> Void
         let focus: () -> Void
@@ -179,7 +181,7 @@ public enum ChatLook {
         let above: Above
         let beside: Beside
 
-        public init(busy: Bool, canSend: Bool, attachHelp: String, attach: @escaping () -> Void,
+        public init(busy: Bool, canSend: Bool, attachHelp: String, attach: @escaping () -> Void, point: (() -> Void)? = nil,
                     send: @escaping () -> Void, stop: @escaping () -> Void, focus: @escaping () -> Void,
                     @ViewBuilder field: () -> Field,
                     @ViewBuilder above: () -> Above = { EmptyView() }, @ViewBuilder beside: () -> Beside = { EmptyView() }) {
@@ -187,6 +189,7 @@ public enum ChatLook {
             self.canSend = canSend
             self.attachHelp = attachHelp
             self.attach = attach
+            self.point = point
             self.send = send
             self.stop = stop
             self.focus = focus
@@ -201,10 +204,10 @@ public enum ChatLook {
 
         public var body: some View {
             HStack(alignment: .bottom, spacing: 8) {
-                Button(action: attach) { Image(systemName: "plus") }
+                Button(action: plus) { Image(systemName: "plus") }
                     .buttonStyle(Round(prominent: false))
-                    .help(attachHelp)
-                    .accessibilityLabel("Attach files")
+                    .help(point == nil ? attachHelp : "Add files, or point at part of the app")
+                    .accessibilityLabel(point == nil ? "Attach files" : "Add")
                 VStack(alignment: .leading, spacing: 6) {
                     above
                     field
@@ -233,6 +236,13 @@ public enum ChatLook {
                     .help(busy ? "Queue this change. It's sent when the current one is done." : "Send")
                     .accessibilityLabel("Send")
             }
+        }
+
+        /// Straight to the files when that's all there is; else a menu under the button, as the system's own +
+        /// buttons have.
+        private func plus() {
+            guard let point else { return attach() }
+            PlusMenu.show([("Add Files…", attach), ("Point at Something in the App", point)])
         }
 
         static var fieldShape: RoundedRectangle { RoundedRectangle(cornerRadius: height / 2, style: .continuous) }
@@ -309,5 +319,37 @@ public struct Elapsed: View {
             let seconds = max(0, Int((end ?? context.date).timeIntervalSince(start)))
             Text(String(format: "%d:%02d", seconds / 60, seconds % 60)).monospacedDigit()
         }
+    }
+}
+
+/// The + button's menu, opened where the click was. In an app's sidebar the chat's window is one macOS keeps out of
+/// sight, so the point is placed by where the app says the chat is (`Composer.hostOrigin`) rather than by that window.
+@MainActor
+enum PlusMenu {
+    private final class Target: NSObject {
+        let actions: [() -> Void]
+        init(_ actions: [() -> Void]) { self.actions = actions }
+        @objc func run(_ item: NSMenuItem) { actions[item.tag]() }
+    }
+
+    static func show(_ items: [(String, () -> Void)]) {
+        guard let event = NSApp.currentEvent, let window = event.window ?? NSApp.keyWindow else { return }
+        let target = Target(items.map(\.1))
+        let menu = NSMenu()
+        for (index, title) in items.map(\.0).enumerated() {
+            let item = NSMenuItem(title: title, action: #selector(Target.run(_:)), keyEquivalent: "")
+            item.target = target
+            item.tag = index
+            menu.addItem(item)
+        }
+        let local = event.type == .leftMouseUp || event.type == .leftMouseDown ? event.locationInWindow : window.mouseLocationOutsideOfEventStream
+        let onScreen: NSPoint
+        if let host = Composer.hostOrigin {
+            onScreen = NSPoint(x: host.x + local.x, y: host.y + local.y)
+        } else {
+            onScreen = window.convertPoint(toScreen: local)
+        }
+        // The target lives as long as the menu is up: popUp returns once it closes.
+        withExtendedLifetime(target) { _ = menu.popUp(positioning: nil, at: onScreen, in: nil) }
     }
 }
