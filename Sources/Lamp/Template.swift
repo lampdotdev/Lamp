@@ -4857,7 +4857,19 @@ enum Template {
                     guard let self, let start = self.dragStart else { return }
                     self.widen(from: start, by: change)
                 }
+                // A new width moves the chat on the screen without moving the window (on the left it moves its origin),
+                // and the window's own moves are all the chat is otherwise told of: say where it is now, for the
+                // input method's candidates and the emoji picker.
+                resized = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: self, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self, let parent = self.parent else { return }
+                        self.contentView?.layoutSubtreeIfNeeded()
+                        LampSidebar.Placing.shared.place(in: parent)
+                    }
+                }
             }
+
+            private var resized: (any NSObjectProtocol)?
 
             private var dragStart: NSRect?
 
