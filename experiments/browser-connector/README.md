@@ -36,8 +36,10 @@ for everything else.
   for that tab only and grants `activeTab`. With it the worker asks whether each
   declared selector is on the page (yes or no, nothing else) to choose the app.
   The extension has no host permissions at all.
-- **A right-click item**, when the builder gives an app one (`"menu": "Save to
-  Recipe Box"` in `browser.json`): Chrome lists it under Lamp in the page's
+- **A right-click item**, when the builder gives an app one (`"menu": "Explain
+  in Plain Words"` in `browser.json`, or whatever the app's sidebar does with a
+  page: save it, summarise or translate it, answer something about it): Chrome
+  lists it under Lamp in the page's
   right-click menu, and choosing it opens the tab's sidebar on that app with
   `activeTab`, as the icon does. Choosing it is the person's click for that
   app's page: the sidebar tells the proved page once (`lamp.onMenu`) and lets

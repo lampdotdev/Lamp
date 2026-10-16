@@ -80,7 +80,8 @@ picture works in light, dark and any tint. Don't add `?color=`: a colour baked i
 ## Every state, in the page
 
 A page that saves goes through all of these, an article or a link too: nothing is saved straight from the offer
-(the right-click item, 8, is the one way that saves without the check step).
+(choosing the app's right-click item, 8, is the one way past the check step). A page that explains, summarises,
+translates or answers has Reading, its answer in place of 3 to 5, and a failure as in 6.
 
 1. **Ready**: the offer row, and the list (or the empty state: a symbol, a title such as "No Recipes Yet", and one
    sentence on how to fill it).
@@ -100,10 +101,11 @@ A page that saves goes through all of these, an article or a link too: nothing i
    try again.
 7. **Changed elsewhere**: `lamp.onChange(show)` redraws when the window or another tab changed the items.
 8. **From the right-click item** (only when browser.json has a `menu`): `lamp.onMenu(…)` runs when the person chose
-   it, and that choice is their click and their say-so. It does the whole job at once with the same calls as the
-   buttons: Reading…, then for a page that saves, the save itself with no check step (Saving…, then Saved with the
-   new row focused, where it opens to change or remove it), and for a page that answers, the answer. A failure
-   shows as in 6, with what was read put in the check step so nothing is lost.
+   it, and that choice is their click and their say-so. It does whatever the item says, at once, with the same calls
+   as the page's own button: Reading…, then the job. An explanation, summary, translation or answer shows as the
+   button shows it. A save goes through with no check step (Saving…, then Saved with the new row focused, where it
+   opens to change or remove it). A failure shows as in 6; for a save, what was read is put in the check step so
+   nothing is lost.
 
 Build everything with `createElement` and `textContent`, never `innerHTML` with data: the words came from a web page.
 
@@ -214,7 +216,7 @@ $("keep").onclick = async () => {
   } catch (e) { status(e.message, true); b.focus(); }
   b.disabled = cancel.disabled = false; b.textContent = "Save Plant";
 };
-// The right-click item "Save to My Plants": read, check by the app, save, show it saved.
+// A right-click item "Save to My Plants" would do the button's whole job at once: read, save, show it saved.
 lamp.onMenu(async () => {
   const b = $("save"); b.disabled = true; b.textContent = "Reading…"; status("");
   try {
@@ -232,6 +234,24 @@ lamp.onMenu(async () => {
 });
 lamp.onChange(show);
 show();
+```
+
+A page that answers instead of keeping things is shorter. For "Explain in Plain Words", the page's own button and its
+right-click item run the same function, which reads the page, asks the app (which asks its AI, given the page as
+`data:`) and shows the answer:
+
+```js
+async function explain() {
+  const b = $("explain"); b.disabled = true; b.textContent = "Reading…"; status("");
+  try {
+    const answer = await lamp.call("explain", await lamp.readPage());
+    $("answer").replaceChildren(...answer.paragraphs.map(p => el("p", null, p)));
+    $("answer-group").hidden = false;
+  } catch (e) { status(e.message, true); }
+  b.disabled = false; b.textContent = "Explain";
+}
+$("explain").onclick = explain;
+lamp.onMenu(explain);
 ```
 
 ## Check it, light, dark and large
