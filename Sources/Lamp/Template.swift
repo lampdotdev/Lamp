@@ -2128,6 +2128,44 @@ enum Template {
     import Foundation
     import Network
     import CryptoKit
+    import SwiftUI
+    import WidgetKit
+
+    extension View {
+        /// The wand every Lamp app shows at the top right of its windows, here in the widget's top right corner:
+        /// a click opens the app's chat, to change the widget. Put it on each widget's whole view, beside
+        /// `.containerBackground(for: .widget)`, and keep that corner free of the widget's own content.
+        /// `edgeToEdge: true` for a widget with `.contentMarginsDisabled()`, whose view reaches the corner.
+        func lampWand(edgeToEdge: Bool = false) -> some View { modifier(LampWidgetWandPlacement(edgeToEdge: edgeToEdge)) }
+    }
+
+    /// Out in the corner, a few points from the widget's edges, over the margin the system leaves there.
+    struct LampWidgetWandPlacement: ViewModifier {
+        @Environment(\.widgetContentMargins) private var margins
+        let edgeToEdge: Bool
+
+        func body(content: Content) -> some View {
+            content.overlay(alignment: .topTrailing) {
+                LampWidgetWand()
+                    .padding([.top, .trailing], edgeToEdge ? 4 : 0)
+                    .offset(x: edgeToEdge ? 0 : max(0, margins.trailing - 4), y: edgeToEdge ? 0 : -max(0, margins.top - 4))
+            }
+        }
+    }
+
+    /// The widget's wand (`.lampWand()`): a link the app takes as Customize with Lamp….
+    struct LampWidgetWand: View {
+        var body: some View {
+            Link(destination: URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!) {
+                Image(systemName: "wand.and.sparkles")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Customize This Widget")
+        }
+    }
 
     /// What the app shared for its widget, with `LampWidget.share(value, as: "summary")`, and the widget's
     /// buttons acting on the app's data.
@@ -2396,6 +2434,8 @@ enum Template {
         let contents = project.platform.hasIOS ? lampWidgetSupportIOSSwift : lampWidgetSupportSwift
             .replacingOccurrences(of: "{{WIDGET_PORT}}", with: String(widgetPort(for: project)))
             .replacingOccurrences(of: "{{WIDGET_TOKEN}}", with: widgetToken(for: project))
+            .replacingOccurrences(of: "{{SCHEME}}", with: Edition.urlScheme)
+            .replacingOccurrences(of: "{{SLUG}}", with: project.id)
         let url = project.dir.appendingPathComponent(widgetFolder).appendingPathComponent(widgetSupportFile)
         if (try? String(contentsOf: url, encoding: .utf8)) != contents {
             try contents.write(to: url, atomically: true, encoding: .utf8)
@@ -3854,7 +3894,11 @@ enum Template {
             guard Date().timeIntervalSince(made) < 600, frame.width > 0, frame.height > 0,
                   NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) }) else { return }
             window.setFrame(frame, display: true)
+            putBackWindow = window
         }
+
+        /// The window put back where the last copy's was, with the chat's width if it had the chat open then.
+        @MainActor static weak var putBackWindow: NSWindow?
 
         /// Pointing at part of the window for Lamp's chat: the named thing under the pointer is outlined, and a
         /// click sends what it is and a picture of it to Lamp; a click where nothing is named (a game's ball, a
@@ -4287,6 +4331,13 @@ enum Template {
 
         @MainActor static func isOpen(in window: NSWindow) -> Bool { item(in: window).map { !$0.isCollapsed } ?? false }
 
+        /// Whether the chat was open when the app last quit: a menu bar app opens its panel as a window to hold it
+        /// again (`LampMenuBar.arrive`), since it has no first window of its own to bring it back with.
+        @MainActor static var wasOpen: Bool { UserDefaults.standard.bool(forKey: openKey) }
+
+        /// The window the chat was in was closed: it isn't opened with the app next time.
+        @MainActor static func forget() { UserDefaults.standard.set(false, forKey: openKey) }
+
         @MainActor static func openWidth(in window: NSWindow) -> CGFloat {
             guard let item = item(in: window), !item.isCollapsed else { return 0 }
             return item.viewController.view.frame.width
@@ -4341,9 +4392,10 @@ enum Template {
         }
 
         /// Customize with Lamp… in the app's menu: the chat beside the window in front, left open when it is already.
-        /// An app with no window to put it beside (one that lives in the menu bar, or a window in the Dock) has its
-        /// chat in Lamp's window instead.
+        /// An app that lives in the menu bar opens its panel as a window to put it beside (`LampMenuBar.customize`);
+        /// one with no window to put it beside (a widget, or a window in the Dock) has its chat in Lamp's window.
         @MainActor static func openFromMenu() {
+            if LampMagic.isOn, frontWindow() == nil, LampMenuBar.isInstalled { return LampMenuBar.customize() }
             guard LampMagic.isOn, let window = frontWindow(), !window.isMiniaturized else {
                 NSWorkspace.shared.open(URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!)
                 return
@@ -12226,6 +12278,7 @@ enum Template {
     struct LampWidgetOnly: Scene {
         init() {
             LampWidgetPlacement.quitsWhenDone = true
+            LampWidgetLinks.passesOn = true
             LampRuntime.start
             LampWidgetLinks.start
         }
@@ -12237,30 +12290,56 @@ enum Template {
     }
 
     /// A link on the widget (`widgetURL`, `Link`) is sent to the app the widget belongs to, not to the browser.
-    /// SwiftUI would hand it to a window, and an app that is only its widget has none, so the app takes the
-    /// request to open a link itself, as an AppKit app does, and passes the link on to whatever opens it. A
-    /// widget with no link sends none, and its click opens nothing.
+    /// The widget's wand (`LampWidgetWand`) is one: it opens the app's chat, as Customize with Lamp… does. Any
+    /// other link goes where it would have: SwiftUI hands it to a window, through the app's delegate; an app that
+    /// is only its widget has none, so it passes the link on to whatever opens it. A widget with no link sends
+    /// none, and its click opens nothing.
     final class LampWidgetLinks: NSObject {
         private static let shared = LampWidgetLinks()
+        /// An app that is only its widget: every link but the wand goes to whatever opens it.
+        nonisolated(unsafe) static var passesOn = false
+        @MainActor private static var launched = false
+        @MainActor private static var customizeWhenLaunched = false
 
-        /// Runs once, at launch. The click that starts the app delivers its link while the app is still
-        /// launching, so the answer has to be in place by then.
+        /// Runs once, at launch, in an app with a widget. The click that starts the app delivers its link while
+        /// the app is still launching, so the answer has to be in place by then.
         static let start: Void = {
-            NotificationCenter.default.addObserver(forName: NSApplication.willFinishLaunchingNotification,
-                                                   object: nil, queue: .main) { _ in
+            guard passesOn || ((try? FileManager.default.contentsOfDirectory(atPath: Bundle.main.builtInPlugInsPath ?? "")) ?? [])
+                    .contains(where: { $0.hasSuffix("Widget.appex") }) else { return }
+            let center = NotificationCenter.default
+            center.addObserver(forName: NSApplication.willFinishLaunchingNotification, object: nil, queue: .main) { _ in
                 NSAppleEventManager.shared().setEventHandler(
                     shared, andSelector: #selector(open(_:reply:)),
                     forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL))
             }
+            center.addObserver(forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main) { _ in
+                // After the app's first window, or its menu bar icon's panel (`LampMenuBar.arrive`), is up.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    MainActor.assumeIsolated {
+                        launched = true
+                        if customizeWhenLaunched { LampSidebar.openFromMenu() }
+                    }
+                }
+            }
         }()
+
+        /// The link the widget's wand opens: the same one the app opens to show its chat in Lamp's window.
+        static let wand = URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!
 
         @objc private func open(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
             guard let text = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
                   let url = URL(string: text) else { return }
-            // Never back to this app: it has nothing to show for a link, and would only be asked again.
-            guard let opener = NSWorkspace.shared.urlForApplication(toOpen: url),
-                  opener.standardizedFileURL != Bundle.main.bundleURL.standardizedFileURL else { return }
-            NSWorkspace.shared.open(url)
+            MainActor.assumeIsolated {
+                if url == Self.wand {
+                    NSApp.activate()
+                    return Self.launched ? LampSidebar.openFromMenu() : (Self.customizeWhenLaunched = true)
+                }
+                guard Self.passesOn else { _ = NSApp.delegate?.application?(NSApp, open: [url]); return }
+                // Never back to this app: it has nothing to show for a link, and would only be asked again.
+                guard let opener = NSWorkspace.shared.urlForApplication(toOpen: url),
+                      opener.standardizedFileURL != Bundle.main.bundleURL.standardizedFileURL else { return }
+                NSWorkspace.shared.open(url)
+            }
         }
     }
 
@@ -12423,6 +12502,7 @@ enum Template {
 
         /// Runs once, at launch: what was shared last time is there to answer with before the app shares again.
         static let start: Void = {
+            LampWidgetLinks.start
             queue.async {
                 load()
                 if !shared.isEmpty { listen() }
@@ -13333,7 +13413,7 @@ enum Template {
         /// Scenes can't be chosen with `if`, so both are there and only the one for the style is put in the menu bar.
         var body: some Scene {
             MenuBarExtra(isInserted: .constant(style == .panel)) {
-                content().background(SettingsOpener())
+                content().background(SettingsOpener()).safeAreaInset(edge: .top, spacing: 0) { PanelWand() }
             } label: {
                 label()
             }
@@ -13354,12 +13434,61 @@ enum Template {
             var body: some View {
                 items()
                 Divider()
+                // The wand every window of a Lamp app has, here as the menu's item, where a menu has its commands.
+                if LampMagic.isOn {
+                    Button { LampMenuBar.customize() } label: { Label("Customize with Lamp…", systemImage: "wand.and.sparkles") }
+                }
                 if settings { Button("Settings…") { LampMenuBar.openSettings() }.keyboardShortcut(",") }
                 Button("Quit \(LampMenuBar.appName)") { NSApp.terminate(nil) }.keyboardShortcut("q")
             }
         }
 
+        /// The wand every window of a Lamp app has at the top right of its title bar, here at the top right of the
+        /// panel, in a strip of its own above the app's content as a title bar would be, so it covers nothing the
+        /// app put in its corner.
+        private struct PanelWand: View {
+            var body: some View {
+                if LampMagic.isOn {
+                    HStack {
+                        Spacer()
+                        Button { LampMenuBar.customize() } label: {
+                            Image(systemName: "wand.and.sparkles").font(.system(size: 13, weight: .medium))
+                                .frame(width: 24, height: 22).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help("Customize this app with Lamp")
+                        .accessibilityLabel("Customize This App")
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.top, 4)
+                }
+            }
+        }
+
         // MARK: From the panel
+
+        /// The wand: the panel's contents open as a window of the app's (the one shown when the icon is hidden),
+        /// with the app's chat beside it, as any other app's window has it. A panel closes as soon as anything
+        /// else is clicked, which a chat would be all the time.
+        @MainActor static func customize() {
+            guard LampMagic.isOn else { return LampSidebar.openFromMenu() }
+            close()
+            // The window is new each launch, at the panel's size: the chat makes it wider, rather than coming back
+            // into it as into a window macOS restored at a size that already held it (`LampSidebar.restore`).
+            LampSidebar.forget()
+            showWindow()
+            guard let window else { return }
+            // Once the window is in front and has its wand. Put back where the copy before a change left it, its
+            // frame already holds the chat.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    let putBack = LampMagic.putBackWindow === window
+                    LampMagic.putBackWindow = nil
+                    LampSidebar.open(window, grow: !putBack)
+                }
+            }
+        }
 
         /// Opens the app's Settings scene and brings it in front of other apps, however often it's asked.
         @MainActor static func openSettings() {
@@ -13553,13 +13682,28 @@ enum Template {
             center.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { _ in
                 DispatchQueue.main.async { syncDockIcon() }
             }
+            center.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated {
+                    if let window, window.isVisible, LampSidebar.isOpen(in: window) {
+                        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: chatQuitKey)
+                    }
+                }
+            }
         }
+
+        /// When the app last quit with its chat open beside the panel's window.
+        private static let chatQuitKey = "LampMenuBarChatQuit"
 
         /// Just after launch. Opened by the person (not at login, nor behind their windows), the app shows itself:
         /// an app that starts with nothing but an icon, which may well be hidden, looks like it quit.
         /// Lamp says so when it opens the app in front (`-LampInFront YES`).
         @MainActor private static func arrive() {
             let inFront = NSApp.isActive || wasActive || UserDefaults.standard.bool(forKey: "LampInFront")
+            // A change reopened the app while its chat was open beside the panel's window: both come back. Only
+            // just after that quit: opened at login a day later, the app is its icon as ever.
+            let chatQuit = UserDefaults.standard.double(forKey: chatQuitKey)
+            UserDefaults.standard.removeObject(forKey: chatQuitKey)
+            if LampMagic.isOn, LampSidebar.wasOpen, !hasWindow, Date().timeIntervalSince1970 - chatQuit < 120 { return customize() }
             if inFront, !hasWindow { show() }
         }
 
@@ -13638,6 +13782,15 @@ enum Template {
                 made.isReleasedWhenClosed = false
                 made.center()
                 window = made
+                // Closed, it takes the chat with it: the app doesn't open as a window with it next time, and the
+                // window, which would still hold the chat, is made afresh when it's next shown.
+                NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: made, queue: .main) { [weak made] _ in
+                    MainActor.assumeIsolated {
+                        guard let made, LampSidebar.isOpen(in: made) else { return }
+                        LampSidebar.forget()
+                        if window === made { window = nil }
+                    }
+                }
                 print("LampMenuBar: the app's menu bar icon is hidden, so its panel opened as a window instead")
             }
             holdDockIcon = .distantPast

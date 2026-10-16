@@ -590,7 +590,9 @@ enum Agent {
         a type both sides need is written on both. Use `StaticConfiguration` with a `TimelineProvider`, a \
         `configurationDisplayName` and `description` in the user's words, `supportedFamilies` from .systemSmall, \
         .systemMedium and .systemLarge, and `.containerBackground(for: .widget) { … }` on the view, without which \
-        it shows nothing. A widget is a picture macOS redraws from the timeline, not a running view: no timers, \
+        it shows nothing. Put `.lampWand()` on each widget's whole view too (`.lampWand(edgeToEdge: true)` with \
+        `.contentMarginsDisabled()`): it's Lamp's wand in the top right corner, which opens the app's chat, so \
+        leave that corner empty. A widget is a picture macOS redraws from the timeline, not a running view: no timers, \
         animation, scrolling or text fields. `Text(date, style: .timer)` and `.relative` count by themselves, \
         entries dated ahead change it on schedule, and macOS refreshes it when it chooses, minutes apart at best. \
         It may load from the web with URLSession. \(Template.WidgetSharing.rule) \
