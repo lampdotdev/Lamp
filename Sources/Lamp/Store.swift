@@ -417,6 +417,7 @@ final class Store: ObservableObject {
         var endedOnQuestions = false
         var artCost = 0.0                   // what make_art's pictures cost, for the turn's summary
         var request: String?                // the user's words, for the command classifiers
+        var messages: [String] = []         // each queued message this turn took, as sent, from the moment it took them
         var claudeSession: String?          // Claude Code's conversation, as its own output says (Privacy.isOwnOutput)
         var writing: (line: UUID, unshown: String)?   // the message the agent is writing right now
         var showingWritten = false
@@ -437,6 +438,10 @@ final class Store: ObservableObject {
         }
     }
     private var turns: [String: Turn] = [:]
+
+    /// Whether the app's running turn took this message: one of those it was sent, together or alone, from the
+    /// moment it took them (before its request is put together) until it ends.
+    func isRunning(_ message: String, for project: LampProject) -> Bool { turns[project.id]?.messages.contains(message) ?? false }
 
     /// Takes the app for a span of work. Nil when something else has it.
     private func begin(_ project: LampProject) -> Turn? {
@@ -1881,6 +1886,7 @@ final class Store: ObservableObject {
         guard setup.ready, let messages = queued[project.id], !messages.isEmpty,
               let owner = begin(project) else { return }
         queued[project.id] = nil
+        owner.messages = messages.map(\.text)
         // A wish being found isn't named by its opening request or by answers to the agent's cards: the wish
         // the agent writes into the box (or one of the person's own) names it when it's sent.
         let spoken = (logs[project.id] ?? []).contains { $0.kind == .user }

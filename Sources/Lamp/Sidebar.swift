@@ -334,12 +334,10 @@ final class SidebarServer {
                     card.button = "Draw Icon…"
                     out.append(card)
                 case .iphoneSetup:
-                    let store = Store.shared
                     var card = SidebarLine(id: line.id, kind: .action, text: IPhoneSetupLine.text(project.name), gap: gap)
                     card.symbol = "iphone"
                     card.button = "See What's Needed…"
-                    card.disabled = IPhoneSetupLine.Asked.shared.ids.contains(project.id) || store.busy.contains(project.id)
-                        || !(store.queued[project.id] ?? []).isEmpty
+                    card.disabled = IPhoneSetupLine.isOff(for: project)
                     out.append(card)
                 case .noted:
                     guard let receipt = line.noted else { continue }
