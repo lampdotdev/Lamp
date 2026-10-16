@@ -4800,6 +4800,7 @@ enum Template {
     enum LampWindows {
         static let start: Void = {
             LampBackground.start
+            endsAtAnException()
             DistributedNotificationCenter.default().addObserver(
                 forName: Notification.Name("{{NOTE}}showWindow"), object: Bundle.main.bundleIdentifier, queue: .main
             ) { _ in
@@ -4813,6 +4814,16 @@ enum Template {
             }
         }()
 
+        // begin LampWindows.calls
+        /// An Objective-C exception (a framework refusing a call, such as WebKit's for a script message handler
+        /// added twice) ends the app where it was thrown. AppKit's default is to log it and carry on, but Swift
+        /// can't be unwound by one: the code it skipped never puts back what it had set, such as SwiftUI's record
+        /// of what a view is reading, and the app crashes minutes later somewhere unrelated, in the background,
+        /// with a report that names neither the exception nor the code that threw it (`Runtime.crash`).
+        static func endsAtAnException() {
+            UserDefaults.standard.register(defaults: ["NSApplicationCrashOnExceptions": true])
+        }
+
         @MainActor private final class ReopenHandler: NSObject {
             static let shared = ReopenHandler()
 
@@ -4822,10 +4833,14 @@ enum Template {
                     forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEReopenApplication))
             }
 
+            /// After the Apple Event is handled, not inside it: an exception thrown in a handler is caught there,
+            /// whatever `endsAtAnException` says, and a new window is the app's own code (its views' first
+            /// `makeNSView`), which may throw one.
             @objc func reopen(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
-                LampWindows.show()
+                DispatchQueue.main.async { MainActor.assumeIsolated { LampWindows.show() } }
             }
         }
+        // end LampWindows.calls
 
         @MainActor static func show() {
             NSApp.unhide(nil)
