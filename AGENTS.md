@@ -631,8 +631,8 @@ Experimental, `BrowserBridge.switchKey`; how it fits together is in `experiments
 The sidebar is a web page of the app's own (`Assets/Sidebar/`), which the app serves itself on this Mac's own
 address (`LampBrowser.startPage` in LampSupport.swift), at a name under `.localhost` and a port of its own
 (`Template.sidebarHost`, `sidebarPort`, trying the next few when another program has it), so it works while the app
-is open whether Lamp is or not. One extension frames every app's page: it keeps the app's name, offer and consent
-line above the frame, gives the page no browser powers, and is the page's only way to the person's tab (a read only
+is open whether Lamp is or not. One extension frames every app's page: it keeps the app's name and consent
+line above the frame (the page makes its own offer), gives the page no browser powers, and is the page's only way to the person's tab (a read only
 when the page's file declares it, once per click in it). The page asks its app for everything else (`lamp.call`,
 with a key Lamp hands the extension, which passes it on only once the page proves it's the app's: the key's
 signature over a nonce and the port); the app answers only its own name, only that key, never a request another

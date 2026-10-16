@@ -14,11 +14,10 @@ theirs. It isn't an iPhone layout and it isn't a copy of the window's own theme.
 
 ## What's above the page
 
-Lamp's strip: the app's name, then the offer from browser.json ("Save this recipe to Recipe Box") written in the
-tint, then a line saying what the page reads. The page never repeats that offer and never offers the same thing
-with another verb: when the strip says "Save", the page's button says "Save" ("Save…" when a check comes first),
-not "Read This Recipe", "Add" or "Keep". The page's heading names the collection ("My Recipes", "Reading List"),
-not the app, which the strip already names.
+Lamp's strip: the app's name, then a line saying what the page reads. It makes no offer: the page's offer row is
+the only one, and it uses the verb of browser.json's offer ("Save this recipe to Recipe Box"): the button says
+"Save" ("Save…" when a check comes first), not "Read This Recipe", "Add" or "Keep". The page's heading names the
+collection ("My Recipes", "Reading List"), not the app, which the strip already names.
 
 ## Set it up
 
@@ -224,7 +223,7 @@ the pictures as Apple would:
 
 1. Squint: a Mac list pane (grey ground, white rounded groups) or a web page (borders, boxes in boxes, a coloured
    page, a big button bar)?
-2. With the strip: one action, the strip's verb, obvious what it saves, little height before the first item?
+2. Under the strip: one action, browser.json's verb, obvious what it saves, little height before the first item?
 3. Does every picture show the item it's on? Would a symbol be more honest?
 4. Separators start at the words, rows at least 44px, group edges in line with the titles?
 5. Each item as the window shows it, the urgent ones first?

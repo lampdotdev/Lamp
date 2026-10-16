@@ -29,10 +29,9 @@ function choose() {
       $('chooser').append(menu);
     } else if (apps.length) $('chooser').textContent = apps[0].name;
   }
-  const app = apps.find(a => a.id === selected);
-  $('offer').textContent = app && fitting.includes(app.id) ? app.offer : '';
-  $('offer').hidden = !$('offer').textContent;
-  return app;
+  // The strip names the app and nothing it offers: the app's own sidebar makes its offer, and a second one here
+  // said the same thing twice.
+  return apps.find(a => a.id === selected);
 }
 
 // What the person typed is kept against the value the app showed when they typed it: if the app changes that

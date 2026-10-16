@@ -16,8 +16,8 @@ for everything else.
    unpacked** in Chrome's developer mode (until the extension is in the Chrome
    Web Store).
 3. On a page an app is for, Lamp's toolbar icon lights up (a dim icon gets its
-   colour and a dot). One click opens that tab's sidebar on the fitting app, with
-   the app's own sentence ("Save this recipe to Recipe Box").
+   colour and a dot). One click opens that tab's sidebar on the fitting app, whose
+   page offers to save it.
 4. An app that isn't open is opened when it's chosen. Every installed app with a
    sidebar is listed, open or not. The sidebar works while the app is open,
    whether Lamp is or not (an AI answer opens Lamp in the background, as it does
@@ -51,9 +51,10 @@ for everything else.
   extension frame the page. The page's policy allows scripts only from its own
   files and connections only to its app.
 - **The frame** is sandboxed (no popups, no navigating the sidebar). Above it
-  the extension keeps the app's name, its offer and the consent line the page
-  asks for (`data-lamp-reads`), drawn in the page's own colours, which the page
-  sends (`look`) and the extension takes only as plain colours.
+  the extension keeps the app's name and the consent line the page asks for
+  (`data-lamp-reads`), drawn in the page's own colours, which the page
+  sends (`look`) and the extension takes only as plain colours. The strip makes
+  no offer: the page's own offer row is the only one.
 - **The look is Apple's.** `/lamp.css` is Apple's system look for a narrow Mac
   list pane, light and dark, and the page picks one tint among Apple's system
   colours with `<html data-tint="…">`; the app stands out through that tint and

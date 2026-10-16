@@ -433,7 +433,7 @@ enum Agent {
             code, a web server of your own, or browser automation.
             - Declare it in `browser.json` at the app's root: `{"offer": "Save this recipe to Recipe Box", \
             "fits": [{"site": "allrecipes.com"}, {"selector": ".wprm-recipe-container"}]}`. `offer` is the app's own short \
-            sentence, shown above the page when a page fits. Each fit is a `site` (its subdomains count, with an \
+            sentence for what it does with a page that fits; the page's offer row says it, never Lamp's strip. Each fit is a `site` (its subdomains count, with an \
             optional `path` prefix), a `selector`, or both; Chrome lights Lamp's icon on a matching page without \
             reading it, and one click opens the sidebar on this app. A selector is one compound CSS selector (no \
             spaces, `>` or commas) for something shown on the page: script tags and hidden markup never match. For \

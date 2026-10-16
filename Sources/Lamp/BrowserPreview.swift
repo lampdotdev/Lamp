@@ -164,9 +164,7 @@ enum BrowserPreview {
         var text = notes.joined(separator: "\n\n")
         guard Privacy.sharesPictures else { return (200, ["text": text + (text.isEmpty ? "" : "\n\n") + Privacy.picturesOff]) }
         text += (text.isEmpty ? "" : "\n\n") + (await preview.text())
-        if let offer = BrowserCompanions.Declaration.load(project)?.offer {
-            text += "\n\nAbove the page Chrome shows Lamp's strip: the app's name, then \"\(offer)\" in the page's tint on a page that fits, then a line saying what the page reads."
-        }
+        text += "\n\nAbove the page Chrome shows Lamp's strip: the app's name, then a line saying what the page reads. The page's own offer row is the only offer."
         let picture = Runtime.folder(project).appendingPathComponent("sidebar.png")
         var screenshots: [String] = []
         if let measured = await preview.looks(to: picture) {
@@ -211,7 +209,7 @@ enum BrowserPreview {
             [fit.site.map { "site \($0)" }, fit.path.map { "path \($0)" }, fit.selector.map { "selector \($0) is shown on the page" }].compactMap { $0 }.joined(separator: ", ")
         }
         if let fit = address.first(where: { $0.selector.map(page.shown.contains) ?? true }) {
-            return "This page fits browser.json (\(how(fit))): Lamp's icon lights up on it in Chrome, and the sidebar opens on this app with \"\(declaration.offer)\"."
+            return "This page fits browser.json (\(how(fit))): Lamp's icon lights up on it in Chrome, and the sidebar opens on this app."
         }
         if let hidden = address.first(where: { $0.selector.map(page.present.contains) ?? false })?.selector {
             return "This page doesn't light Lamp's icon: \(hidden) is on it but not shown, and Chrome lights the icon only for a selector that matches something shown. " +
@@ -224,15 +222,13 @@ enum BrowserPreview {
     /// The picture and the sidebar as text, with the notes before them.
     private static func report(_ project: LampProject, notes: [String], what: String) async -> (Int, [String: Any]) {
         guard let state = view(project) else { return (200, ["text": (notes + ["The app's sidebar stopped."]).joined(separator: "\n\n")]) }
-        let declaration = BrowserCompanions.Declaration.load(project)
-        let fits = pages[project.id].flatMap { page in declaration.map { d in URL(string: page.url).map { url in d.fits.contains { $0.fitsAddress(url) && ($0.selector.map(page.present.contains) ?? true) } } ?? false } } ?? false
         let shown = state.surface.fields.map { ($0.id, typed[project.id]?[$0.id] ?? $0.value) }
         var text = notes.joined(separator: "\n\n")
         guard Privacy.sharesPictures else { return (200, ["text": text + (text.isEmpty ? "" : "\n\n") + Privacy.picturesOff]) }
-        text += (text.isEmpty ? "" : "\n\n") + Ids(state.surface).text(app: project.name, offer: fits ? declaration?.offer : nil,
+        text += (text.isEmpty ? "" : "\n\n") + Ids(state.surface).text(app: project.name,
                                                                          values: Dictionary(uniqueKeysWithValues: shown), busy: state.busy)
         let picture = Runtime.folder(project).appendingPathComponent("sidebar.png")
-        let view = SidebarPicture(app: project.name, offer: fits ? declaration?.offer : nil, surface: state.surface,
+        let view = SidebarPicture(app: project.name, surface: state.surface,
                                   values: Dictionary(uniqueKeysWithValues: shown), busy: state.busy)
         let renderer = ImageRenderer(content: view)
         renderer.scale = 2
@@ -256,9 +252,8 @@ enum BrowserPreview {
         func action(_ target: String) -> BrowserCompanions.Surface.Action? {
             surface.actions.enumerated().first { "b\($0.offset + 1)" == target || $0.element.label == target || $0.element.id == target }?.element
         }
-        func text(app: String, offer: String?, values: [String: String], busy: Bool) -> String {
+        func text(app: String, values: [String: String], busy: Bool) -> String {
             var lines = ["The sidebar as text. Act on a field or button with `target` set to its id or exact name:", "app \"\(app)\""]
-            if let offer { lines.append("offer \"\(offer)\" (shown because the page fits)") }
             lines.append("title \"\(surface.title)\"")
             if !surface.detail.isEmpty { lines.append("text \"\(surface.detail)\"") }
             for (i, field) in surface.fields.enumerated() {
@@ -281,7 +276,6 @@ enum BrowserPreview {
 /// The sidebar as the extension draws it, for a picture: plain text and boxes, since ImageRenderer draws no controls.
 private struct SidebarPicture: View {
     let app: String
-    let offer: String?
     let surface: BrowserCompanions.Surface
     let values: [String: String]
     let busy: Bool
@@ -290,7 +284,6 @@ private struct SidebarPicture: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(app).font(.system(size: 15, weight: .semibold))
-            if let offer { Text(offer).font(.system(size: 14, weight: .semibold)).foregroundStyle(Color(red: 0.7, green: 0.4, blue: 0.16)) }
             Text(surface.title).font(.system(size: 24, weight: .semibold, design: .serif)).padding(.top, 6)
             if !surface.detail.isEmpty { Text(surface.detail).foregroundStyle(.secondary) }
             ForEach(Array(surface.fields.enumerated()), id: \.offset) { _, field in
