@@ -3841,9 +3841,7 @@ final class Store: ObservableObject {
         }
         guard LiveReload.eligible(project), let app = macCopies(of: project).first,
               Self.binary(of: project, contains: "reloaded.txt") else { return false }
-        let changed: [String]
-        // Properties moved into spare places by an earlier change are moved again in this fresh copy.
-        LiveSlots.apply(project)
+        var changed: [String]
         switch await LiveReload.verdict(project) {
         case .reload(let files): changed = files
         // The open app already runs these sources (a change that went in before its build): nothing to do.
@@ -3853,21 +3851,23 @@ final class Store: ObservableObject {
             return false
         }
         note("Updating \(project.name) in place…", for: project)
-        // The changed files' compile and the whole code's check go side by side; the check decides.
-        async let compiled = LiveReload.compile(project, changed: changed)
-        let (before, after) = await LiveReload.layouts(project)
+        // The changed files' compile and the whole code's check go side by side; the check decides. With properties
+        // already in spares, the live copy is rewritten before anything is compiled (`LiveSlots.fit`).
+        let spared = !LiveSlots.mapping(project).isEmpty
+        async let early: (url: URL?, problem: String?) = spared ? (nil, nil) : await LiveReload.compile(project, changed: changed)
+        let (before, after, declarations) = await LiveReload.layouts(project)
         var check = LiveReload.layoutProblem(before: before, after: after)
-        var (library, problem) = await compiled
-        // Stored properties added to classes go into their spare places, and the change is compiled again.
-        if check.problem != nil, let before, let after, let moved = LiveSlots.fit(project, before: before, after: after) {
-            async let again = LiveReload.compile(project, changed: changed)
-            let now = await LiveReload.layout(of: LiveReload.sources(project), files: nil, module: project.exe,
-                                              macOS: Template.macMinimum(project))
-            check = LiveReload.layoutProblem(before: before, after: now)
-            (library, problem) = await again
-            if check.problem == nil {
-                log(project, .detail, "Added \(moved.joined(separator: ", ")) without reopening \(project.name).")
+        var (library, problem) = await early
+        // Stored properties added to existing types go into their spares, and the change is compiled with them.
+        if check.problem != nil, let before, let after, let plan = LiveSlots.fit(project, before: before, after: after, declarations: declarations) {
+            changed = Array(Set(changed).union(plan.files)).sorted()
+            check = LiveReload.layoutProblem(before: before, after: plan.layout)
+            (library, problem) = await LiveReload.compile(project, changed: changed)
+            if check.problem == nil, !plan.added.isEmpty {
+                log(project, .detail, "Added \(plan.added.joined(separator: ", ")) without reopening \(project.name).")
             }
+        } else if spared, check.problem == nil {
+            (library, problem) = await LiveReload.compile(project, changed: changed)
         }
         if let why = check.problem {
             log(project, .detail, "Reopening \(project.name) for this change: \(why).")

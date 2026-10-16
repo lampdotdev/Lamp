@@ -510,7 +510,7 @@ built live (a widget or share extension is built from the same copy, and a chang
 every view draws again on a reload with its state kept), and builds that copy unoptimized, testable, with
 `LAMP_LIVE` and `-Xlinker -interposable` (SwiftPM for a Mac app; Xcode for an app for both, from a copy of the
 device project, with its debug library off so the code is in the one binary). After a build, `Store.install` tries
-`reloadInPlace` first: when the app is open, was built live, and the change didn't touch the App (its own declaration, its scenes or its menu commands: what SwiftUI reads only at launch, `LiveReload.launchParts`; a view or helper beside them in the App's file goes in like any code) or Lamp's own files, and leaves every type
+`reloadInPlace` first: when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.launchEntries`, held to what the open app had as part of the layout; a view or helper beside them goes in like any code) or Lamp's own files, and leaves every type
 holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties and cases,
 from `-dump-ast` of just the changed files, compared for the open app's sources and the new ones; no reading of the
 text) (`LiveReload.reloadable`, comparing with the sources the
@@ -537,9 +537,10 @@ through two overloads of the keyed coding containers, which the compiler's Codab
 Left out is what a spare would break: SwiftData and Core Data models, `Sendable` classes, `Equatable` views, the App
 and its scenes, property wrappers, App Intents, and structs in a file that lays memory out by hand (vertex data). When
 the only difference in layout is new stored properties in such types, `LiveSlots.fit` rewrites each one-line
-declaration in the live copy into a computed property kept in a spare (first laying the type's members out one
-to a line, `LiveSlots.membersOnLines`: a one-line struct's members split at `;`, and `var a = 1, b = 2` split into a
-declaration each) (a view's `$name` becomes a binding to its
+declaration in the live copy into a computed property kept in a spare, found by the compiler's own
+source ranges (`SwiftSource.declarations`, from the same `-dump-ast` as the layout), so however it's written (with
+attributes on lines above, in a `var a = 1, b = 2` list, in a type written on one line) it's replaced exactly, with
+no reading of the text (a view's `$name` becomes a binding to its
 box), and the change is compiled again and checked as usual. Being stored, a spare is observed like any property, so
 views redraw. A class's starting value that isn't a literal (`.now`, a call) is worked out on the first read and kept;
 a struct can't keep one from a read, so its new property needs a starting value that comes out the same every time (a
@@ -553,7 +554,8 @@ in a plain collection: Swift uses the numbers after the last case for `nil` in a
 cases that carry it, which a new case would take over. That's looked for in every stored field, static and global of
 the new code and in the types the spares keep (`LiveReload.enumsHeld`), before the change goes in; an app that keeps
 values of any type (`Any`, `AnyObject`, `AnyHashable`, `any P`) reopens instead, since one could hide there. Which property is in which spare
-(`.lamp/live/slots.json`) is put back into each fresh copy (`LiveSlots.apply`) until the app is installed again: the
+(`.lamp/live/slots.json`) is put back into each fresh copy (they come back as additions, and `LiveSlots.fit` puts
+them in the same places) until the app is installed again: the
 whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs
 once it's installed (`LiveReload.markRunning(from:)`). A spare never reaches saved data: `LampSpare` encodes as
 nothing, and a computed property isn't encoded. If spares ever keep an app from building, it's built again without
