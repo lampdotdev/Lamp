@@ -4702,8 +4702,10 @@ enum Template {
             NSLayoutConstraint.activate([
                 chat.card.topAnchor.constraint(equalTo: top),
                 chat.card.bottomAnchor.constraint(equalTo: place.bottomAnchor),
+                // In the column the edge that widens it takes the left 12 points; the right gives the same, so the
+                // chat sits in the middle of its column.
                 chat.card.leadingAnchor.constraint(equalTo: place.leadingAnchor, constant: place is Backing ? 12 : 0),
-                chat.card.trailingAnchor.constraint(equalTo: place.trailingAnchor),
+                chat.card.trailingAnchor.constraint(equalTo: place.trailingAnchor, constant: place is Backing ? -12 : 0),
             ])
             setGlass(chat, on: holder.view.identifier != identifier)
         }
