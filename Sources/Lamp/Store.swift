@@ -3875,11 +3875,12 @@ final class Store: ObservableObject {
             log(project, .detail, "Reopening \(project.name) for this change: \(why).")
             return false
         }
-        guard let library, let layout = check.layout else {
+        guard let layout = check.layout, library != nil || changed.isEmpty else {
             print("Live reload of \(project.name) didn't compile:\n\(problem ?? "")")
             return false
         }
-        guard await LiveReload.send(library, to: project, token: Template.token(for: project)) else { return false }
+        // Files only taken away leave nothing to load: the open app already has what's left.
+        if let library { guard await LiveReload.send(library, to: project, token: Template.token(for: project)) else { return false } }
         LiveReload.markRunning(project)
         LiveReload.keepLayout(layout, for: project)
         watchAfterReload(project, app: app)

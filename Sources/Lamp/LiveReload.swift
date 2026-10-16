@@ -5,9 +5,9 @@ import CryptoKit
 /// While the experiment is on, a Mac app is built live (build.sh with LAMP_LIVE: debug, -interposable, from the
 /// copy of its sources in `.lamp/live` with each view's body wrapped). After a change, the files it touched are
 /// compiled into a library, and the running app loads it (`LampLive` in LampSupport.swift), keeping its state.
-/// What can't go in that way (a stored property or an enum case added, removed or changed, but for a property added
-/// to a class, which `LiveSlots` fits into a spare place; a file removed, the
-/// App itself, Lamp's own file, the app's assets or settings) is installed as before, by reopening the app.
+/// What can't go in that way (a stored property or an enum case removed or changed, or added where `LiveSlots`
+/// has no spare for it; the App itself, Lamp's own file, the package or the app's settings) is installed as
+/// before, by reopening the app.
 enum LiveReload {
     /// Whether the app is built live: a Mac app, or the Mac half of an app for both while Try On points at this Mac.
     @MainActor static func eligible(_ project: LampProject) -> Bool {
@@ -96,9 +96,18 @@ enum LiveReload {
     @MainActor static func verdict(_ project: LampProject) async -> Verdict {
         let built = swiftFiles(in: sources(project)), open = swiftFiles(in: running(project))
         guard !open.isEmpty else { return .reopen("Lamp doesn't know what the open copy was built from") }
-        // A new file only brings new types and functions, which the library holds; one taken away may have held
-        // something the open app still uses.
-        if let gone = Set(open.keys).subtracting(built.keys).sorted().first { return .reopen("\(gone) was removed") }
+        // A new file only brings new types and functions, which the library holds. One taken away leaves its code
+        // in the open app, which the new code no longer calls; what it declared that something still holds shows
+        // as that holder changing (`layoutProblem`). But not the App, which runs once at launch, nor Lamp's own.
+        let gone = Set(open.keys).subtracting(built.keys).sorted()
+        for path in gone {
+            if ["LampSupport.swift", Template.sceneSupportFile].contains((path as NSString).lastPathComponent) {
+                return .reopen("Lamp's own building blocks changed")
+            }
+            if let old = open[path].flatMap({ try? String(contentsOf: $0, encoding: .utf8) }), declaresApp(old) {
+                return .reopen("\(path) was the app's entry point")
+            }
+        }
         if (try? String(contentsOf: runningInputs(project), encoding: .utf8)) != inputs(project) {
             return .reopen("the package, the app's settings, its icon, or its widget or Share item changed")
         }
@@ -118,7 +127,8 @@ enum LiveReload {
             if declaresApp(new) { return .reopen("\(path) is the app's entry point") }
             changed.append(path)
         }
-        return changed.isEmpty ? .unchanged : .reload(changed)
+        // Only files taken away: nothing to load, but the open app's sources are now these (an empty reload).
+        return changed.isEmpty && gone.isEmpty ? .unchanged : .reload(changed)
     }
 
     /// Whether the whole new code type-checks and leaves every type the open app has holding what it did:
@@ -136,14 +146,15 @@ enum LiveReload {
         guard let now = after else { return ("the new code doesn't type-check as a whole", nil) }
         guard let before else { return ("the compiler couldn't say what the open app's types hold", nil) }
         // Type by type, each "Owner<tab>member": a type the open app has must hold just what it did, in order;
-        // a new type (a new view with its own state) is the library's to lay out. A type taken away may still
-        // have objects in the open app.
+        // a new type (a new view with its own state) is the library's to lay out. A type taken away keeps its
+        // objects and their code in the open app, and the new code doesn't touch them: whatever held one either
+        // changed what it holds (and is caught here) or was taken away too.
         func byType(_ entries: [String]) -> [String: [String]] {
             Dictionary(grouping: entries, by: { String($0.prefix { $0 != "\t" }) })
         }
         let old = byType(before), new = byType(now)
         for (type, members) in old.sorted(by: { $0.key < $1.key }) {
-            guard let current = new[type] else { return ("\(type) was taken away", nil) }
+            guard let current = new[type] else { continue }
             if current != members, !LiveSlots.casesAdded(type, members, current) {
                 let what = (current.first { !members.contains($0) } ?? members.first { !current.contains($0) }.map { "no longer " + $0 } ?? "the order of its fields")
                     .replacingOccurrences(of: "\t", with: ".")
@@ -341,6 +352,7 @@ enum LiveReload {
     /// Xcode's for the Mac half of an app for both: both unoptimized, testable, for the app's macOS, named after the app),
     /// and links the changed files' objects into a library for the open app. Nil, with the compiler's words, when it doesn't compile.
     static func compile(_ project: LampProject, changed: [String]) async -> (url: URL?, problem: String?) {
+        guard !changed.isEmpty else { return (nil, nil) }
         let live = folder(project)
         let work = live.appendingPathComponent("hot")
         try? FileManager.default.removeItem(at: work)
@@ -485,7 +497,7 @@ enum LiveSlots {
 
         var planned: [(type: String, name: String, slot: Slot, published: Bool)] = []
         for (type, members) in old.sorted(by: { $0.key < $1.key }) {
-            guard let current = new[type] else { return nil }
+            guard let current = new[type] else { continue }
             guard current != members, !casesAdded(type, members, current) else { continue }
             // Only additions, with what was there still there, in order.
             let extras = current.filter { !members.contains($0) }

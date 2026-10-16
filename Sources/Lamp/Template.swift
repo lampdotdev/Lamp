@@ -3675,9 +3675,20 @@ enum Template {
             guard let app = _dyld_get_image_header(0) else { return }
             let theirs = Dictionary(definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0), local: true), uniquingKeysWith: { first, _ in first })
             let accessors = theirs.filter { $0.key.hasSuffix("CMa") }
-            for (name, address) in definedSymbols(header, slide: slide, local: true) where name.hasSuffix("Wvd") {
+            let mine = definedSymbols(header, slide: slide, local: true)
+            let ownAccessors = Dictionary(mine.filter { $0.0.hasSuffix("CMa") }, uniquingKeysWith: { first, _ in first })
+            for (name, address) in mine where name.hasSuffix("Wvd") {
                 // One the compiler knew is already right, and may be in memory that can't be written.
-                guard address.load(as: Int.self) == 0, let source = theirs[name] else { continue }
+                guard address.load(as: Int.self) == 0 else { continue }
+                guard let source = theirs[name] else {
+                    // A field the app has under no such name: a new class's, or a private one whose code moved to
+                    // another file (a private name carries its file's). The library works its class out itself,
+                    // which lays it out as the app did when it's the same class.
+                    if let accessor = ownAccessors.filter({ name.hasPrefix($0.key.dropLast(2)) }).max(by: { $0.key.count < $1.key.count }) {
+                        _ = unsafeBitCast(accessor.value, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0)
+                    }
+                    continue
+                }
                 if source.load(as: Int.self) == 0,
                    let accessor = accessors.filter({ name.hasPrefix($0.key.dropLast(2)) }).max(by: { $0.key.count < $1.key.count }) {
                     _ = unsafeBitCast(accessor.value, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0)

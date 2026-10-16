@@ -494,7 +494,7 @@ built live (a widget or share extension is built from the same copy, and a chang
 every view draws again on a reload with its state kept), and builds that copy unoptimized, testable, with
 `LAMP_LIVE` and `-Xlinker -interposable` (SwiftPM for a Mac app; Xcode for an app for both, from a copy of the
 device project, with its debug library off so the code is in the one binary). After a build, `Store.install` tries
-`reloadInPlace` first: when the app is open, was built live, and the change only touched or added files (none removed), didn't touch the App, and leaves every type
+`reloadInPlace` first: when the app is open, was built live, and the change didn't touch the App or Lamp's own files, and leaves every type
 holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties and cases,
 from `-dump-ast` of just the changed files, compared for the open app's sources and the new ones; no reading of the
 text) (`LiveReload.reloadable`, comparing with the sources the
@@ -544,7 +544,14 @@ them and stays without (`LiveSlots.giveUp`, `.lamp/live/no-spares`), so the agen
 Where a class's fields are is sometimes worked out at run time (a subclass, or fields after a system type such as
 an `@Observable` class's registrar), kept in a global for each field that the app fills in. A library has its own
 copies, which nothing fills in, so `LampLive` copies the app's values into each library as it loads
-(`takeFieldOffsets`), asking for the class's metadata first when the app hasn't worked it out yet.
+(`takeFieldOffsets`), asking for the class's metadata first when the app hasn't worked it out yet. A field the app
+has under no such name (a new class's, or a private one whose code moved to another file, since a private name
+carries its file's) is laid out by the library itself, which does it as the app did for the same class.
+
+A file taken away doesn't reopen the app: its code stays in the open app, which the new code no longer calls, and a
+type it declared that something still holds shows as that holder changing. A type taken away is therefore no
+reason to reopen by itself (`layoutProblem`). Only removing the App's file or Lamp's own does. With nothing else
+changed there's nothing to load, and the open app's sources are simply marked as the new ones.
 
 A Mac app can also open beside a web page, in Chrome's sidebar (Lamp Dev only, an experiment: Settings →
 Experimental, `BrowserBridge.switchKey`; how it fits together is in `experiments/browser-connector/README.md`).
