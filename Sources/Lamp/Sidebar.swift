@@ -202,8 +202,8 @@ final class SidebarServer {
     /// Bumped when the draft is changed anywhere but the sidebar itself, which then takes it up.
     private var draftVersions: [String: Int] = [:]
     private var draftsFromSidebar: [String: String] = [:]
-    /// The draft's version given when the sidebar's words were last sent (`submit`).
-    private var takenDrafts: [String: Int] = [:]
+    /// How many times the sidebar's words were taken to be sent (`submit`), by app.
+    private var sends: [String: Int] = [:]
     private var shownDrafts: [String: String] = [:]
 
     fileprivate func state(for project: LampProject) -> SidebarState {
@@ -249,6 +249,7 @@ final class SidebarServer {
             SidebarProblem(title: $0.title, message: $0.message, settingsButton: $0.settingsURL == nil ? nil : $0.settingsButton)
         }
         state.submitting = store.pendingSubmissions.contains(project.id)
+        state.sends = sends[project.id, default: 0]
         // As Lamp's window offers it: not while anything waits to go after the change.
         state.undoChange = busy || !(store.queued[project.id] ?? []).isEmpty ? nil : store.undoOffers[project.id]
         return state
@@ -428,10 +429,9 @@ final class SidebarServer {
         guard !submitted.isEmpty else { return }
         let replaced = submitted.replacing.flatMap { id in store.logs[project.id]?.first { $0.id == id } }
         guard replaced == nil || !store.busy.contains(project.id), let token = store.beginSubmission(project) else { return }
-        // The box's words are taken: the sidebar is given a new version of the draft, and a send made over an
-        // earlier one, before it heard, isn't sent again.
-        draftVersions[project.id, default: 0] += 1
-        takenDrafts[project.id] = draftVersions[project.id]
+        // The box's words are taken: a Send the sidebar made before it heard so isn't sent again.
+        sends[project.id, default: 0] += 1
+        scheduleUpdate()
         dictations[project.id]?.cancel()
         store.endArrival(for: project.id)
         func finish(sent: Bool) {
@@ -497,9 +497,9 @@ final class SidebarServer {
         let store = Store.shared
         guard let project = store.projects.first(where: { $0.id == projectID }) else { return }
         switch command {
-        case .send(let text, let version):
+        case .send(let text, let seen):
             // Sent already: the box still showed these words when Return was pressed again.
-            if let version, let taken = takenDrafts[project.id], version < taken { return }
+            if let seen, seen < sends[project.id, default: 0] { return }
             // The words as the sidebar has them, in case its last edit is still on its way.
             var draft = store.draft(for: project)
             if draft.text != text {
