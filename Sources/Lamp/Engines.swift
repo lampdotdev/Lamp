@@ -245,11 +245,14 @@ struct AgentRun {
 
 extension Agent {
     /// Said at the end of a request while the app has no description Lamp can use, so an app gets one from
-    /// the request that first builds it, and an app made before descriptions existed from its next request.
+    /// the request that first builds it, and an app made before descriptions existed from its next request;
+    /// and while its description is too long for the desk, so it's shortened rather than cut off there.
     static func undescribed(_ project: LampProject) -> String {
-        AppDescription.description(of: project) == nil
-            ? "\n\n---\nThis app has no description yet (from Lamp, not part of the request above): once your work is done, write it in \(AppDescription.file), one short sentence saying what the app is."
-            : ""
+        guard let words = AppDescription.description(of: project) else {
+            return "\n\n---\nThis app has no description yet (from Lamp, not part of the request above): once your work is done, write it in \(AppDescription.file), one short sentence saying what the app is."
+        }
+        guard words.count > AppDescription.limit else { return "" }
+        return "\n\n---\nThis app's description in \(AppDescription.file) is \(words.count) characters (from Lamp, not part of the request above): once your work is done, shorten it to \(AppDescription.limit) at most, still one sentence saying what the app is."
     }
 
     /// The user's own pi config (logins, subscriptions, settings).
