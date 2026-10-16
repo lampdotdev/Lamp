@@ -175,6 +175,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     var fromCard: Bool? = nil         // for a request: it was clicked on the agent's card, which shows it
     var result: Talk.Result? = nil    // what a request made, as the agent put it
     var noted: NoteReceipt? = nil     // what a save of Lamp's notes changed, with Undo
+    var pointed: PointedAt? = nil     // for a request: what was pointed at in the app, one of its attachments
 
     /// The offer a setup card is about, for this line and for the older key card.
     var setupOffer: SetupOffer? {
@@ -250,6 +251,8 @@ struct QueuedMessage: Identifiable {
     var replaces: String? = nil
     /// Every request that left the chat when this one was sent, oldest first.
     var tookBack: [String] = []
+    /// What was pointed at in the app, its picture going with the message besides `attachments`.
+    var pointed: PointedAt? = nil
 }
 
 extension QueuedMessage {
@@ -377,6 +380,9 @@ final class Store: ObservableObject {
     @Published var naming: VersionNaming?
     /// Bumped when a version is named, so open version lists reload.
     @Published var versionsRevision = 0
+    /// For each app, the change Undo Last Change is offered under in its chat (`UndoOffer`), by the version it made.
+    @Published private(set) var undoOffers: [String: String] = [:]
+    private var undoOfferReads: [String: Int] = [:]
     /// One span of Lamp owning an app: a chat turn, a rebuild, an undo, an icon redesign. Everything that
     /// belongs to that span lives here and goes with it, so Stop, Delete and quit have one thing to cancel,
     /// and nothing has to be kept in step across a dozen dictionaries. `busy` is the set of apps that have
@@ -437,7 +443,21 @@ final class Store: ObservableObject {
         turns[project.id] = turn
         agentTokens[turn.agentToken] = project.id
         busy.insert(project.id)
+        undoOffers[project.id] = nil
         return turn
+    }
+
+    /// Works out again which change the chat offers Undo Last Change under: when a turn ends, and when a chat is
+    /// shown. Only the latest look counts: one started earlier can end after it.
+    func refreshUndoOffer(_ project: LampProject) {
+        let read = undoOfferReads[project.id, default: 0] + 1
+        undoOfferReads[project.id] = read
+        Task {
+            let offer = busy.contains(project.id) ? nil : await UndoOffer.version(for: project, chat: logs[project.id] ?? [])
+            guard undoOfferReads[project.id] == read else { return }
+            let shown = busy.contains(project.id) ? nil : offer
+            if undoOffers[project.id] != shown { undoOffers[project.id] = shown }
+        }
     }
 
     /// Gives the app back, without starting anything queued (see `finish`).
@@ -705,12 +725,18 @@ final class Store: ObservableObject {
     struct Draft: Equatable {
         var text = ""
         var attachments: [URL] = []
+        /// What was pointed at in the app, shown as its own pill in the box rather than among `attachments`.
+        var pointed: PointedAt?
         /// The request in the chat this takes the place of when it's sent (see `sendAgain`).
         var replacing: UUID?
         /// What was in the message box before that request was taken back into it, put back if it isn't
         /// sent again after all.
         var setAsideText = ""
         var setAsideAttachments: [URL] = []
+        var setAsidePointed: PointedAt?
+
+        /// Something to send: words, files, or what was pointed at.
+        var isEmpty: Bool { text.trimmed.isEmpty && attachments.isEmpty && pointed == nil }
 
         /// This draft with a wish from the site as its words: all of the wish at once, and everything else
         /// the draft holds (files dropped into the box) kept.
@@ -730,6 +756,7 @@ final class Store: ObservableObject {
                 kept.replacing = nil
                 kept.setAsideText = ""
                 kept.setAsideAttachments = []
+                kept.setAsidePointed = nil
             }
             return kept
         }
@@ -760,6 +787,14 @@ final class Store: ObservableObject {
         updateDraft(latest, for: current)
     }
 
+    /// What was pointed at in the app goes with the message being written, in place of anything pointed at before.
+    func point(at pointed: PointedAt, in project: LampProject) {
+        guard let current = current(project) else { return }
+        var latest = draft(for: current)
+        latest.pointed = pointed
+        updateDraft(latest, for: current)
+    }
+
     /// Each app keeps its own draft, so it's still there after switching apps. The text also survives a
     /// restart (.lamp/draft.txt), and so do the request it replaces and the text that was set aside for it;
     /// attached files are only remembered while Lamp runs, so after a restart a replaced request has the
@@ -773,8 +808,8 @@ final class Store: ObservableObject {
             return Draft(text: text ?? "")
         }
         let setAside = try? String(contentsOf: lamp.appendingPathComponent("draft-set-aside.txt"), encoding: .utf8)
-        return Draft(text: text ?? "", attachments: Attachments.urls(line.attachments ?? [], in: project), replacing: line.id,
-                     setAsideText: setAside ?? "")
+        let (attachments, pointed) = line.draftAttachments(in: project)
+        return Draft(text: text ?? "", attachments: attachments, pointed: pointed, replacing: line.id, setAsideText: setAside ?? "")
     }
 
     func saveDraft(_ draft: Draft, for project: LampProject) {
@@ -1713,9 +1748,15 @@ final class Store: ObservableObject {
 
     /// Sends a message, or queues it while the app is busy. Everything queued goes out together
     /// as the next turn, so several quick follow-ups cost one agent run and one rebuild.
-    func send(_ prompt: String, attachments: [URL] = [], answering card: UUID? = nil, to project: LampProject) {
+    func send(_ prompt: String, attachments: [URL] = [], pointed: PointedAt? = nil, answering card: UUID? = nil, to project: LampProject) {
         // Waiting for setup can outlast this run, and the files may be temporary (a pasted screenshot):
-        // keep copies, so the request still has them after a relaunch.
+        // keep copies, so the request still has them after a relaunch. What was pointed at goes as a plain
+        // picture then, since waiting requests are kept as words and files.
+        var attachments = attachments, pointed = pointed
+        if !setup.ready, let picture = pointed?.url {
+            attachments.append(picture)
+            pointed = nil
+        }
         let files = setup.ready ? attachments : keepForLater(attachments)
         // Typed while a card waits, the message is its answer, even if it has to wait behind the agent's
         // turn: the card folds as it's sent, so it can't be answered a second time by a click meanwhile.
@@ -1726,7 +1767,7 @@ final class Store: ObservableObject {
             card = open.id
             saveChat(project)
         }
-        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, card: card))
+        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, card: card, pointed: pointed))
         startQueued(project)
         saveWaiting()
     }
@@ -1969,6 +2010,7 @@ final class Store: ObservableObject {
         release(project)
         offerHeldDrawing(project)
         startQueued(project)
+        refreshUndoOffer(project)
         // An icon that was waiting for the app to close, when the app closed while this had it: the moment
         // it closed came and went with the app taken, so it's looked at again now the app is free.
         installHeldIcons(for: [project.id])
@@ -2056,8 +2098,21 @@ final class Store: ObservableObject {
     private func post(_ messages: [QueuedMessage], to project: LampProject) -> [String] {
         var saved: [String] = []
         for message in messages {
-            let names = message.kept + Attachments.save(message.attachments, to: project)
+            var names = message.kept + Attachments.save(message.attachments, to: project)
+            // The picture of what was pointed at is one of the request's files, and the line says which.
+            var pointed = message.pointed
+            if let picture = pointed?.url {
+                let folder = project.dir.appendingPathComponent(Attachments.folder).standardizedFileURL
+                let name = picture.standardizedFileURL.deletingLastPathComponent() == folder
+                    ? picture.lastPathComponent : Attachments.save([picture], to: project).first
+                pointed?.picture = name ?? ""
+                if let name { if !names.contains(name) { names.append(name) } } else { pointed = nil }
+            }
             log(project, .user, message.text, attachments: names.isEmpty ? nil : names)
+            if let pointed, let last = logs[project.id]?.indices.last {
+                logs[project.id]?[last].pointed = pointed
+                saveChat(project)
+            }
             if let card = message.card, Talk.shows(logs[project.id]?.first { $0.id == card }), let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].fromCard = true
                 saveChat(project)
@@ -2106,7 +2161,8 @@ final class Store: ObservableObject {
         // After a request is sent again the build on disk is still of the code that was just taken back, so
         // its picture and its crashes say nothing about the files the agent has now.
         let sentAgain = messages.contains { $0.replaces != nil || !$0.tookBack.isEmpty }
-        let notes = Attachments.note(for: saved) + Versions.note(for: project)
+        let pointed = asked.compactMap { id in logs[project.id]?.first { $0.id == id }?.pointed }
+        let notes = Attachments.note(for: saved) + PointedAt.note(for: pointed) + Versions.note(for: project)
             + (sentAgain ? "" : Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project))
         turns[project.id]?.request = prompt
         let ran = await runAgent(prompt + notes, files: files, on: project)
@@ -2236,7 +2292,7 @@ final class Store: ObservableObject {
     /// request's attachments before the agent starts.
     private func agentChangedFiles(_ project: LampProject) async -> Bool {
         var output = ""
-        let ignored = "':!Sources/LampSupport.swift' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)' ':!\(Template.shareFolder)/\(Template.shareSupportFile)' ':!icon.json' ':!\(Attachments.folder)'"
+        let ignored = "':!Sources/LampSupport.swift' ':!\(Template.sceneSupportPath)' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)' ':!\(Template.shareFolder)/\(Template.shareSupportFile)' ':!icon.json' ':!\(Attachments.folder)'"
             + Template.watchSupportPaths.map { " ':!\($0)'" }.joined()
         _ = await Versions.git("git status --porcelain -- . \(ignored)", cwd: project.dir) {
             output += $0
@@ -2809,7 +2865,14 @@ final class Store: ObservableObject {
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name(Edition.notificationPrefix + "useApp.\(project.id)"), object: nil,
             userInfo: ["actions": json, "id": id, "lampUseAppSignature": signature], deliverImmediately: true)
-        let waits = actions.reduce(0.0) { $0 + (($1["action"] as? String) == "wait" ? min($1["amount"] as? Double ?? 1, 10) : 0) }
+        // Waits, and keys held down (a Mac app's `key` with `amount`), each up to 10 seconds, as the app takes them.
+        let waits = actions.reduce(0.0) { total, action in
+            switch action["action"] as? String {
+            case "wait": total + min(action["amount"] as? Double ?? 1, 10)
+            case "key": total + min(max(action["amount"] as? Double ?? 0, 0), 10)
+            default: total
+            }
+        }
         let wait = Double(actions.count) * 0.4 + waits + 5
         guard let report = await Runtime.useReport(of: project, id: id, waiting: wait, while: { !app.isTerminated }) else {
             guard app.isTerminated else {
@@ -2939,7 +3002,8 @@ final class Store: ObservableObject {
             switch name {
             case "look_at_app":
                 (status, answer) = arguments["sidebar"] as? Bool == true
-                    ? await lookAtSidebar(project, page: arguments["page"] as? String) : await look(at: project)
+                    ? await lookAtSidebar(project, page: arguments["page"] as? String)
+                    : await look(at: project, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false)
             case "use_app":
                 let actions = (try? JSONSerialization.data(withJSONObject: arguments)) ?? Data("{}".utf8)
                 (status, answer) = await use(project, request: actions)
@@ -2963,6 +3027,7 @@ final class Store: ObservableObject {
             case "make_art": (status, answer) = await makeArt(arguments, for: project)
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             case "make_app_for": (status, answer) = await agentKind(arguments, for: project)
+            case "connectors": (status, answer) = Connectors.answer(arguments, for: project)
             case "ask", "show_result", "write_wish": (status, answer) = talk(name, arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
@@ -3023,7 +3088,7 @@ final class Store: ObservableObject {
             ? String(target.path.dropFirst((target.path.hasPrefix(root.path + "/") ? root.path : project.dir.path).count + 1)) : ""
         guard !relative.isEmpty else { return (400, ["error": "Only files inside the app's folder can be deleted."]) }
         // Compared without regard to case: the Mac's usual file system treats "package.swift" as the same file.
-        let protected = [".lamp", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/LampSupport.swift",
+        let protected = [".lamp", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/LampSupport.swift", Template.sceneSupportPath,
                          Template.widgetFolder + "/" + Template.widgetSupportFile, Template.shareFolder + "/" + Template.shareSupportFile] + Template.watchSupportPaths
         let lowered = relative.lowercased()
         if protected.contains(where: { lowered == $0.lowercased() || lowered.hasPrefix($0.lowercased() + "/") }) {
@@ -3411,12 +3476,19 @@ final class Store: ObservableObject {
     }
 
     /// Goes back to the version before the current one. Like any restore, this is itself a new version.
-    func undo(_ project: LampProject) async {
+    /// `change` is the version Undo Last Change in the chat was offered under: when the app has moved on from it
+    /// since, nothing is undone, rather than a change the person wasn't looking at.
+    func undo(_ project: LampProject, change: String? = nil) async {
         guard begin(project) != nil else { return }
         defer { finish(project) }
         let versions = await Versions.list(project)
+        let unsaved = await Versions.hasUnsavedChanges(project)
+        if let change, unsaved || versions.first?.id != change || Versions.undoTarget(in: versions)?.undoing.id != change {
+            log(project, .status, "The app has changed since, so nothing was undone")
+            return
+        }
         // A turn that was stopped, or never got the app building, leaves its changes unsaved: Undo discards those first.
-        if let current = versions.first, await Versions.hasUnsavedChanges(project) {
+        if let current = versions.first, unsaved {
             _ = await Versions.restoreFiles(project, to: current)
             let restored = followRestoredKind(project)
             log(restored, .status, "Discarded the unfinished change")
@@ -3464,7 +3536,7 @@ final class Store: ObservableObject {
     /// engines can't all be wound back to an earlier message, and a note works the same for each of them.
     /// `attachments` are the files to send with it: the request's own, already in the app's folder, and any added.
     /// False when the app couldn't be taken back, and nothing was sent.
-    func sendAgain(_ line: LogLine, as text: String, attachments: [URL], in project: LampProject) async -> Bool {
+    func sendAgain(_ line: LogLine, as text: String, attachments: [URL], pointed: PointedAt? = nil, in project: LampProject) async -> Bool {
         guard busy.insert(project.id).inserted else { return false }
         defer { finish(project) }   // which starts the turn queued below
         let versions = await Versions.list(project)
@@ -3486,7 +3558,8 @@ final class Store: ObservableObject {
         while first > chat.startIndex, chat[first - 1].kind == .user { first -= 1 }
         // They keep what they had taken back themselves: it's the chat's only record of it.
         var again = chat[first..<index].map {
-            QueuedMessage(text: $0.text, kept: $0.attachments ?? [], replaces: $0.replaced, tookBack: $0.tookBack ?? [])
+            QueuedMessage(text: $0.text, kept: $0.attachments ?? [], replaces: $0.replaced, tookBack: $0.tookBack ?? [],
+                          pointed: $0.pointed?.waiting(in: project))
         }
         let folder = project.dir.appendingPathComponent(Attachments.folder).standardizedFileURL
         let own = attachments.filter { $0.standardizedFileURL.deletingLastPathComponent() == folder }
@@ -3503,7 +3576,7 @@ final class Store: ObservableObject {
             (request.tookBack ?? []) + (Self.reachedAgent(request.id, in: chat) ? [Self.label(for: request)] : [])
         }.filter { $0 != text }
         again.append(QueuedMessage(text: text, attachments: attachments.filter { !own.contains($0) },
-                                   kept: own.map(\.lastPathComponent), replaces: replaces, tookBack: gone))
+                                   kept: own.map(\.lastPathComponent), replaces: replaces, tookBack: gone, pointed: pointed))
         logs[project.id] = Array(chat[..<first])
         saveChat(project)
         progress[project.id] = nil   // a new app's build card belongs to the request that's gone
@@ -3758,6 +3831,8 @@ final class Store: ObservableObject {
         guard LiveReload.eligible(project), let app = macCopies(of: project).first,
               Self.binary(of: project, contains: "reloaded.txt") else { return false }
         let changed: [String]
+        // Properties moved into spare places by an earlier change are moved again in this fresh copy.
+        LiveSlots.apply(project)
         switch await LiveReload.verdict(project) {
         case .reload(let files): changed = files
         // The open app already runs these sources (a change that went in before its build): nothing to do.
@@ -3769,8 +3844,20 @@ final class Store: ObservableObject {
         note("Updating \(project.name) in place…", for: project)
         // The changed files' compile and the whole code's check go side by side; the check decides.
         async let compiled = LiveReload.compile(project, changed: changed)
-        let check = await LiveReload.layoutProblem(project)
-        let (library, problem) = await compiled
+        let (before, after) = await LiveReload.layouts(project)
+        var check = LiveReload.layoutProblem(before: before, after: after)
+        var (library, problem) = await compiled
+        // Stored properties added to classes go into their spare places, and the change is compiled again.
+        if check.problem != nil, let before, let after, let moved = LiveSlots.fit(project, before: before, after: after) {
+            async let again = LiveReload.compile(project, changed: changed)
+            let now = await LiveReload.layout(of: LiveReload.sources(project), files: nil, module: project.exe,
+                                              macOS: Template.macMinimum(project))
+            check = LiveReload.layoutProblem(before: before, after: now)
+            (library, problem) = await again
+            if check.problem == nil {
+                log(project, .detail, "Added \(moved.joined(separator: ", ")) without reopening \(project.name).")
+            }
+        }
         if let why = check.problem {
             log(project, .detail, "Reopening \(project.name) for this change: \(why).")
             return false
@@ -4428,7 +4515,14 @@ final class Store: ObservableObject {
         }
         // What the app now runs when it opens is this build's sources (LiveReload compares a change with them).
         LiveReload.installed(project)
-        if LiveReload.eligible(project) { LiveReload.markRunning(project) } else { LiveReload.forget(project) }
+        // The installed app's classes hold every property it was built with, and its spare places are empty.
+        LiveSlots.clear(project)
+        if LiveReload.eligible(project) {
+            let built = LiveReload.built(project)
+            LiveReload.markRunning(project, from: FileManager.default.fileExists(atPath: built.path) ? built : nil)
+        } else {
+            LiveReload.forget(project)
+        }
         // Nudge Finder, the Dock and Launchpad to pick up the new icon.
         try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: project.installedURL.path)
         _ = await Shell.run(
@@ -4873,7 +4967,7 @@ final class Store: ObservableObject {
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/kind", "/agent/art", "/agent/talk", "/mcp", "/pi/key", "/app/secrets"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/art", "/agent/talk", "/mcp", "/pi/key", "/app/secrets"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -4950,8 +5044,7 @@ final class Store: ObservableObject {
             }
             return AppSecrets.save(value, as: name, app: project.instance) ? (200, ["ok": true]) : (500, ["error": "Lamp couldn't keep it."])
         case "delete":
-            AppSecrets.delete(name, app: project.instance)
-            return (200, ["ok": true])
+            return AppSecrets.delete(name, app: project.instance) ? (200, ["ok": true]) : (500, ["error": "Lamp couldn't forget it."])
         default:
             return (400, ["error": "Unknown request."])
         }
@@ -4989,7 +5082,8 @@ final class Store: ObservableObject {
         if request.path == "/agent/look" {
             let arguments = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             return arguments["sidebar"] as? Bool == true
-                ? await lookAtSidebar(project, page: arguments["page"] as? String) : await look(at: project)
+                ? await lookAtSidebar(project, page: arguments["page"] as? String)
+                : await look(at: project, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false)
         }
         if request.path == "/agent/use" { return await use(project, request: request.body) }
         if request.path.hasPrefix("/agent/versions") {
@@ -5012,6 +5106,9 @@ final class Store: ObservableObject {
         }
         if route == "/agent/kind" {
             return await agentKind((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
+        }
+        if route == "/agent/connectors" {
+            return Connectors.answer((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
         }
         if route == "/agent/approve" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
@@ -5392,8 +5489,10 @@ final class Store: ObservableObject {
         """
 
     /// The agent's `look_at_app` tool: builds what it has written so far, opens the app behind the
-    /// user's windows, and reports what happened. The pictures are sent as file paths for pi to read.
-    private func look(at project: LampProject) async -> (Int, [String: Any]) {
+    /// user's windows, and reports what happened. The pictures are sent as file paths for pi to read. For a Mac
+    /// app it can instead show one of the app's 3D props from four sides (`prop`), or watch the window for a
+    /// couple of seconds and say what moved and what flickered (`motion`).
+    private func look(at project: LampProject, prop: String? = nil, motion: Bool = false) async -> (Int, [String: Any]) {
         // Only for the agent Lamp is running right now. The app knows the same token and must not
         // be able to rebuild itself.
         guard let turn = turns[project.id], turn.agent != nil else {
@@ -5450,6 +5549,7 @@ final class Store: ObservableObject {
                 }
             }
             if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
+            if prop != nil || motion { text += "\n\nprop and motion are for Mac apps; this look is the usual one." }
             return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
         }
         // The copy on screen is an earlier build the person kept open: not shown as the agent's work, and not
@@ -5480,9 +5580,33 @@ final class Store: ObservableObject {
             if !changed { note = "The app is running your latest code; it was reopened without rebuilding." }
             screenshots = await Runtime.screenshots(of: project, since: launched)
         }
-        var text = note + " " + (screenshots.isEmpty
+        var lead = ""
+        if let prop, !prop.isEmpty, !screenshots.isEmpty {
+            // One prop on its own: the app shows it from four sides over its scene, pictures it, and goes back.
+            let asked = Date()
+            Runtime.requestProp(prop, of: project)
+            switch await Runtime.propAnswer(of: project) {
+            case "shown"?:
+                let pictures = await Runtime.screenshots(of: project, since: asked, waiting: 3)
+                if !pictures.isEmpty { screenshots = pictures }
+                lead = "The prop \"\(prop)\" on its own, from the front, the right, above at three quarters and the back. "
+            case let why?:
+                lead = why + " "
+            case nil:
+                lead = "The app didn't show the prop: only a LampSceneView given `props` can. "
+            }
+        }
+        if motion, !screenshots.isEmpty {
+            if Privacy.sharesPictures, let watched = await Runtime.motion(of: project) {
+                lead += watched.text + " "
+                if !watched.pictures.isEmpty { screenshots = watched.pictures }
+            } else if Privacy.sharesPictures {
+                lead += "The app didn't answer the request to watch it; it may need rebuilding. "
+            }
+        }
+        var text = lead + note + " " + (screenshots.isEmpty
             ? "It has no window open, so there's no picture. If it lives in the menu bar, use_app's bar_icon opens its panel."
-            : Privacy.sharesPictures ? "Pictures of its windows follow, frontmost first; x and y for use_app are pixels in the first." : Privacy.picturesOff)
+            : Privacy.sharesPictures ? (lead.isEmpty ? "Pictures of its windows follow, frontmost first; x and y for use_app are pixels in the first." : "") : Privacy.picturesOff)
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         text += Self.handingHint(for: project)
         text += await Self.intentsHint(for: project)

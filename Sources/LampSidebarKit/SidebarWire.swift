@@ -6,7 +6,7 @@ import Foundation
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
     /// What this side reads and writes; see `SidebarCommand.hello`.
-    public static let version = 4
+    public static let version = 5
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -64,6 +64,11 @@ public struct SidebarState: Codable, Equatable {
     public var dictationProblem: SidebarProblem?
     /// A message is on its way in (Lamp's window or this one sent it): nothing else is sent meanwhile.
     public var submitting: Bool?
+    /// What was pointed at in the app, on its own pill in the message box. Its picture counts as the attachment
+    /// after the last of `attachments`, for `SidebarCommand.preview` and `removeAttachment`.
+    public var pointed: SidebarPointed?
+    /// The version the latest change made, when Undo Last Change is offered under it (`SidebarCommand.undoChange`).
+    public var undoChange: String?
 
     public init(app: String, lines: [SidebarLine], working: String?, workingSince: Date?, empty: Bool, busy: Bool,
                 draft: String, draftVersion: Int, attachments: [SidebarAttachment]) {
@@ -122,6 +127,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var canGoBack: Bool?
     public var canSendAgain: Bool?
     public var isLatest: Bool?
+    /// What a request pointed at in the app, its picture counting as the attachment after the last of `attachments`.
+    public var pointed: SidebarPointed?
 
     public init(id: UUID, kind: Kind, text: String, gap: Double = 0, running: Bool = false, attachments: [SidebarAttachment]? = nil,
                 growing: Bool = false, questions: [SidebarQuestion]? = nil) {
@@ -152,6 +159,7 @@ public struct SidebarQueued: Codable, Equatable, Identifiable {
     public var id: UUID
     public var text: String
     public var attachments: [SidebarAttachment]
+    public var pointed: SidebarPointed?
 
     public init(id: UUID, text: String, attachments: [SidebarAttachment]) {
         self.id = id
@@ -174,6 +182,20 @@ public struct SidebarApproval: Codable, Equatable {
     }
 }
 
+/// What was pointed at in the app: what it is, what it's part of, and whether it can be pointed at again now
+/// (the app is open on this Mac). Its picture stays in Lamp and is shown from there (`SidebarCommand.preview`).
+public struct SidebarPointed: Codable, Equatable {
+    public var title: String
+    public var detail: String?
+    public var canChooseAgain: Bool?
+
+    public init(title: String, detail: String?, canChooseAgain: Bool? = nil) {
+        self.title = title
+        self.detail = detail
+        self.canChooseAgain = canChooseAgain
+    }
+}
+
 public struct SidebarAttachment: Codable, Equatable {
     public var name: String
     /// A small picture: of the picture itself, or the file's icon.
@@ -191,16 +213,21 @@ public struct SidebarAttachment: Codable, Equatable {
 /// What the person did in the sidebar.
 public enum SidebarCommand: Codable, Equatable {
     /// The first thing a sidebar says: which shape of `SidebarState` it reads. One that says nothing is from
-    /// before the summary line, which it can't read; one before 3, from before the notes receipt; one before 4, from before offers.
+    /// before the summary line, which it can't read; one before 3, from before the notes receipt; one before 4, from before offers;
+    /// one before 5, from before what was pointed at had a pill of its own.
     case hello(Int)
     case send(String)
     case answer(UUID, [String])
     case draft(String)
     case removeAttachment(Int)
+    /// Point at something else in the app for the message box's card.
+    case pointAgain
     /// How far an open card has been answered, as it changes, so the other chat carries on from there.
     case askProgress(UUID, AskProgress)
     /// Takes back the save of Lamp's notes this receipt is for.
     case undoNote(UUID)
+    /// Undo Last Change, under the change that made this version.
+    case undoChange(String)
     /// The button on an offer's card or line: what it does is Lamp's to know, by the line.
     case offer(UUID)
     /// Back to how the app was after the request with this id, or before it.

@@ -20,7 +20,7 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `ask`, `show_result`, `write_wish`, the version tools, the notes tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `show_result`, `write_wish`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
@@ -31,7 +31,7 @@ A capability given to one engine must be given to all of them that can take it, 
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `ask`, `show_result`, `write_wish`, the version tools and the notes tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `show_result`, `write_wish`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **How the agent talks** (`Talk`, `TalkCards.swift`): in short sentences and in cards, not paragraphs, so building
   feels like a short wizard. A vague wish gets a good first attempt built from sensible guesses, not questions: the
@@ -108,6 +108,12 @@ A capability given to one engine must be given to all of them that can take it, 
   refused, and the agent may use git on it as it likes. On Lamp's own runs signing, hooks and the
   file-watcher command are off (`Versions.environment`): the sandbox closes the person's keys, and a hook
   could only stall a save.
+  Undo Last Change also sits under the latest change in both chats (`UndoOffer`, `ChatLook.UndoChange`): it is
+  `Store.undo`, given the version it was shown for and refusing when the app has moved on. It shows only when that
+  Undo would take back just this change, and when the older code can still read what the newer saves: the compiler's
+  layout of each type with coding keys (`LiveReload.layout` with raw values) is compared by the keys and values
+  actually written: a removed, renamed or retyped required field, a retyped optional one, or an enum value the older
+  code doesn't know hides it. Undo puts back code, never data.
 - **Pictures the agent is shown** (`look_at_app`, `use_app`, `make_art`): the conversation is sent whole with
   every request, so its pictures add up until the provider refuses the request (Anthropic takes 30 MB of images
   in one; OpenRouter drops the connection at about 5 MB of body). Every engine is handed a JPEG copy
@@ -477,7 +483,9 @@ at part of the app: the app lays a clear window over its own (`LampMagic.Picker`
 thing under the pointer from its own accessibility tree (`LampDriver.elements`), a click where nothing is named (a game's
 ball, a drawing) takes the area around it, and a drag draws a box of the person's own; it then leaves a cropped
 picture in its runtime folder and says what it is (an area is named by where it is, "Top left area"); Lamp attaches that picture to the message, named after the
-thing ("Save button.png", `MagicPanel.name`), and takes a picture only from that folder.
+thing ("Save button.png", `MagicPanel.name`), and takes a picture only from that folder. In both chats' message boxes it is
+one pill (`ChatLook.PointedPill`: what it is and what it's part of, from the app's own row or the heading above it),
+which a click points again and its × lets go; pointing again replaces it, and nothing is left drawn over the app.
 
 Whether the change was asked for beside the app or in Lamp's window, a change goes into the open app without a restart when it can (`LiveReload`). The
 Mac app, or the Mac half of an app for both while Try On points at this Mac, is
@@ -503,15 +511,42 @@ from its Assets folder rather than its bundle (`LampAssets`), so a new picture g
 app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which asks for
 new state in new views rather than new stored properties in existing types, when that's as clear.
 
+A stored property added to a class goes in live too (`LiveSlots`, in LiveReload.swift). The copy step gives every
+class of the app's (not `@Model`, Core Data or `Sendable` ones) a few empty spare places, `__lampSpare_<Class>_0`…
+of `LampSpare?` (named after the class, so a subclass's don't clash with what it inherits; `@Published` when the
+header says `ObservableObject`), so the open app's objects already have room. A starting value that isn't a literal
+(`.now`, a call) is worked out on the first read and kept; a `@Published` property in a class whose places aren't
+published (conforming in an extension) reopens the app instead. When the only
+difference in layout is new stored properties in such classes, `LiveSlots.fit` rewrites each one-line declaration in
+the live copy into a computed property kept in a free place, and the change is compiled again and checked as usual.
+Being stored, a place is observed like any property, so views redraw. Which property is in which place
+(`.lamp/live/slots.json`) is put back into each fresh copy (`LiveSlots.apply`) until the app is installed again: the
+whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs
+once it's installed (`LiveReload.markRunning(from:)`). A place never reaches saved data: `LampSpare` encodes as
+nothing, and a computed property isn't encoded.
+
 A Mac app can also open beside a web page, in Chrome's sidebar (Lamp Dev only, an experiment: Settings →
 Experimental, `BrowserBridge.switchKey`; how it fits together is in `experiments/browser-connector/README.md`).
-One extension draws every app's sidebar from data the app publishes (`LampBrowser` in LampSupport.swift), and the
-app declares where it fits in `browser.json` (`BrowserCompanions.Declaration`): a click on Lamp's toolbar icon opens
-the sidebar on the app that fits the page, with its offer. The icon looks the same on every page: with many apps,
-lighting it where one fits would light it almost everywhere, so nothing reads or matches a page before that click. The builder decides from the wish (`Agent.Rules.browserCompanion`) and tries the
-sidebar with `look_at_app` and `use_app` given `sidebar` and `page`: Lamp draws it itself (`BrowserPreview`) and is
-one more tab of it, so every engine tries it the same way. Each Chrome tab has its own sidebar and its own surface
-from the app, so what one page prepared never shows on another; keep that when changing either side.
+The sidebar is a web page of the app's own (`Assets/Sidebar/`), which the app serves itself on this Mac's own
+address (`LampBrowser.startPage` in LampSupport.swift), at a name under `.localhost` and a port of its own
+(`Template.sidebarHost`, `sidebarPort`, trying the next few when another program has it), so it works while the app
+is open whether Lamp is or not. One extension frames every app's page: it keeps the app's name, offer and consent
+line above the frame, gives the page no browser powers, and is the page's only way to the person's tab (a read only
+when the page's file declares it, once per click in it). The page asks its app for everything else (`lamp.call`,
+with a key Lamp hands the extension, which passes it on only once the page proves it's the app's: the key's
+signature over a nonce and the port); the app answers only its own name, only that key, never a request another
+site made, and lets only the extension frame the page, whose own policy keeps it talking to the app alone. Lamp's
+`/lamp.css` gives the page the Mac window's look, which the app makes its own. Apps built before pages still
+publish a surface as data (`LampBrowser.start`), which the extension still draws. The app declares where it fits in
+`browser.json` (`BrowserCompanions.Declaration`): a click on Lamp's toolbar icon opens the sidebar on the app that
+fits the page, with its offer. The icon looks the same on every page: with many apps, lighting it where one fits would
+light it almost everywhere, so nothing reads or matches a page before that click. The
+builder decides from the wish (`Agent.Rules.browserCompanion`) and tries the sidebar with `look_at_app` and
+`use_app` given `sidebar` and `page`: Lamp opens the app's page itself, out of sight at the sidebar's width
+(`PagePreview`), and hands it the page beside it, so every engine tries it the same way; it's the one thing the
+builder uses in a new app, since it isn't the person's Chrome. Each Chrome tab has its own sidebar and the app
+keeps what one tab prepared by its tab (`call.tab`), so what one page prepared never shows on another; keep that
+when changing either side.
 
 A build asks the app to quit before it replaces it, and the app's answer decides (`AppQuit`). An app may ask
 about unsaved work first: Lamp sends the quit request itself and reads the reply macOS carries back, which is
@@ -548,6 +583,27 @@ With one, that command works, and `look_at_app` gives the agent the exact line (
 installed copy's path, since the copy in build/ or the bundle id starts a second copy beside the one Lamp
 opened. `Agent.sandboxNote` says which failures are the sandbox's and not the app's; keep it true when the
 profile changes.
+
+### 3D scenes and games
+
+Games have two recipes in the prompt: `Agent.Rules.game2D` (SpriteKit, every kind of app) and `Agent.Rules.scene3D`
+(RealityKit, Mac apps, given only on a Mac with macOS 15, where RealityView begins). A Mac app whose own code
+imports RealityKit gets `Sources/LampScene.swift` (`Template.lampSceneSwift`, written by `writeSceneSupport`
+beside LampSupport.swift and taken away with the last such import), and its Package.swift and build.sh ask for
+macOS 15 (`Template.withScene`). It's Lamp's like LampSupport.swift: protected, left out of versions' diffs and of
+shared `.lampapp` files, and part of `BuildStamp`. It holds `LampSceneView` (sky, camera rig, keys, the frame
+loop), `LampMesh` (lathe, extrude, sweep, tube and boxes with textures laid on in metres), `LampMaterial`
+(materials with their detail drawn in code, no image files), parts that press, turn, slide and are grabbed, and
+`LampScene.copies` (instancing), `scene.place` (a prop by name, so a live change to it shows) and `scene.stream` (a big world built a tile at a time around the player, a few milliseconds a frame, so it opens at once). It carries what cost time to find: no sun shadows (with them RealityKit drops
+the sunlight on some frames and the whole picture flickers), a camera near plane of 10 cm, and instance batches
+split below a few million vertices (a bigger batch isn't drawn, silently).
+
+Props are made in code and checked by eye: `LampSceneView(props:)` names them, and `look_at_app` with `prop`
+asks the running app to show one from four sides (`LampPropStudio`, answered in `.lamp/runtime/prop.txt`) for the
+agent to compare with a reference picture. `look_at_app` with `motion` works for every Mac app: `LampRuntime`
+watches the front window for about two seconds and writes what changed frame to frame (`motion.json`, the two
+most different frames beside it), and `Runtime.motion` puts that in words; it's how flicker is caught, which a
+single picture hides.
 
 ### Widgets
 
@@ -764,9 +820,20 @@ modifier, since an app has no other place that's told. The rules are `Agent.Rule
 
 ### Services the person already uses
 
-A Mac app reaches the person's Notion, Linear, Todoist, Jira and Confluence or monday.com through that service's own
-MCP server (`LampService` in LampSupport.swift, one `static let` per service, and `LampServiceButton`). Nobody
-registers anything beforehand: Connect finds the service's sign-in addresses the way MCP
+An app reaches the person's account on a service they use (Notion, Linear, Airtable, GitHub, Readwise…) in one of two
+ways, and every service an app can connect to is one entry in `Connectors.all` (Sources/Lamp/Connectors.swift): its
+name, what people keep there, how it connects, its API's documentation and a few lines on the calls that matter.
+The builder finds them through the `connectors` tool, which lists them and, given one, says how to build on it
+(`Connectors.answer`), so the system prompt has one line about connectors however many there are
+(`Agent.connectorRules`, which keeps the Mac's own accounts first and `LampComputer` after). Each entry's
+declaration in LampSupport.swift (`LampService.<id>`, `LampAPI.<id>`) is written from the same entry
+(`Connectors.fill`, in place of `{{SIGN_IN_SERVICES}}` and `{{TOKEN_SERVICES}}`), so what the builder is told is what
+the app has. A service is added only when the person can connect without anyone registering an app first; one that
+needs a developer app, a secret key that can spend money, or whose terms forbid an app collecting its tokens (Jira
+and Confluence's API tokens) doesn't belong.
+
+**Signing in on the service's page** (`LampService`, `LampServiceButton`; Mac apps only): through the service's own
+MCP server. Nobody registers anything beforehand: Connect finds the service's sign-in addresses the way MCP
 describes them (the server's 401 names its resource description, which names the authorization server), registers
 the app with the service under its own name (dynamic client registration, no secret), and opens the service's page
 in the browser with PKCE. Each address is trusted only as far as the document before it vouches for it (`discover`):
@@ -774,34 +841,53 @@ the resource description must be on the service's own https origin and name that
 must be https and its description must name itself as `issuer`, and every sign-in address must be on that server's
 origin; anything else stops the sign-in before the browser opens. No request of the sign-in follows a redirect, its
 description fetches included, so each document comes from the address that was vouched for.
-`ServiceSignInTests` runs this against the five services' recorded answers and against changed copies of them.
+`ServiceSignInTests` runs this against the services' recorded answers and against changed copies of them.
 The service sends the person back to this Mac's own address (`127.0.0.1`, a listener open
 only while that sign-in waits, which ignores anything that isn't the answer to it), and the app trades the code for
-its sign-in. The registration and the sign-in are kept by Lamp for the app, not in the app's own Keychain
-(`LampSecrets` in LampSupport.swift, `AppSecrets` and `/app/secrets` in Lamp): Lamp's certificate has no Apple team,
-so macOS ties an item an app makes to the one build that made it and asks for the login password after every
-rebuild, while Lamp is the same program from build to build. Lamp keeps them as it keeps its own keys (the Keychain
-when it is signed for a team, else a file only this user can read), each app's under its instance (so an app made
-later under the same folder name doesn't inherit them), and forgets them when
-the app is deleted. The app's token is in its folder, where the agent can read it, so Lamp answers only the app
-itself (`PeerProcess.isApp`): the process on the other end of the connection must run from where Lamp installed the
-app and pass that installed copy's designated requirement; `AppSecretsTests` runs real processes against it.
-Two things keep that check from being passed by a process the builder's shell starts as the app: every Mac app
-is built with a `__RESTRICT` segment (buildSh), so dyld ignores `DYLD_INSERT_LIBRARIES` and the like for it —
-LiveReload's `dlopen` from inside the app is unaffected — and the agent's sandbox refuses `process-exec` under
-the apps folder, since exec needs no read the profile closes. A
-connection therefore opens only while Lamp is open. On iPhone `LampSecrets` stays the device's Keychain, which asks
-nothing, and an app that keeps its own secrets again is one line (`LampSecrets.store`). They are never in the
-app's folder, so a shared copy arrives disconnected and is flagged in the review (`Sharing.checklist`). Disconnect
-forgets the sign-in here and asks the service to end both its keys, writing each answer (never a key) to the app's log. A service is
-added only when its server lets an app register itself this way; one that needs a developer app or a pasted token
-doesn't belong here. What a service says when it refuses is cut to one short line before the app shows it (`brief`). Calls are the
+its sign-in. Disconnect forgets the sign-in here and asks the service to end both its keys, writing each answer
+(never a key) to the app's log. What a service says when it refuses is cut to one short line before the app shows it
+(`brief`). Calls are the
 service's own MCP tools (`call`, `tools`); after a sign-in the app writes the tool
-list, with no account data, to `.lamp/runtime/services/` for the builder. The builder's rule (`Agent.Rules.services`,
-after the Mac's own accounts and before `LampComputer`) is a short pointer, as the sidebar's is: it names the services,
-sends the builder to `LampService`'s doc comment in LampSupport.swift, rules out asking for keys and keeps Disconnect
-reachable. How to build on it is in that doc comment, which the builder reads only when a wish needs it. Not on iPhone yet: a phone can't keep the listener open while
-the browser is in front.
+list, with no account data, to `.lamp/runtime/services/` for the builder. Not on iPhone yet: a phone can't keep the
+listener open while the browser is in front.
+
+**A personal token** (`LampAPI`, `LampAPIButton`; every kind of app): for a service whose own site lets the person make
+one. Connect opens a sheet with one sentence on what to do, a link to the service's page and a field for each thing
+to paste (the token, and for Harvest the account number); the app asks the service's address for checking a token
+before keeping it. Calls are the service's REST API (`get`, `post`, `patch`, …)
+with paths relative to its `base`: a path that leads anywhere else (another site, a scheme, above the base) is
+refused before anything is sent, and no request follows a redirect, so the token goes only to the service.
+A 401 means the token is over and it's forgotten; a 403 is asked of the check address again, since Toggl Track says
+403 for a token it doesn't take where others say it of one thing the token may not see. Disconnect forgets the
+token here; it still works until the person deletes it on the service. `TokenServiceTests` runs this against each
+service's recorded answer to a wrong token.
+
+Both kinds are kept by Lamp for the app, not in the app's own Keychain (`LampSecrets` in LampSupport.swift,
+`AppSecrets` and `/app/secrets` in Lamp): Lamp's certificate has no Apple team, so macOS ties an item an app makes to
+the one build that made it and asks for the login password after every rebuild, while Lamp is the same program from
+build to build. Lamp keeps them as it keeps its own keys (the Keychain when it is signed for a team, else a file only
+this user can read), each app's under its instance (so an app made later under the same folder name doesn't inherit
+them), and forgets them when the app is deleted. The app's token is in its folder, where the agent can read it, so
+Lamp answers only the app itself (`PeerProcess.isApp`): the process on the other end of the connection must run from
+where Lamp installed the app and pass that installed copy's designated requirement; `AppSecretsTests` runs real
+processes against it. Two things keep that check from being passed by a process the builder's shell starts as the
+app: every Mac app is built with a `__RESTRICT` segment (buildSh), so dyld ignores `DYLD_INSERT_LIBRARIES` and the like
+for it — LiveReload's `dlopen` from inside the app is unaffected — and the agent's sandbox refuses `process-exec` under
+the apps folder, since exec needs no read the profile closes. A connection therefore opens only while Lamp is open. On
+iPhone `LampSecrets` stays the device's Keychain, which asks nothing, and an app that keeps its own secrets again is
+one line (`LampSecrets.store`). Neither kind is ever in the app's folder, so a shared copy arrives disconnected and is
+flagged in the review (`Sharing.checklist`). How to build on each is in its doc comment in LampSupport.swift, which the tool's answer
+sends the builder to.
+
+**A service that isn't listed** can still be called from the app's own code. When it needs a key, the app declares
+it with `LampAPI.own` (its API's address, the page where the key is made, one sentence of steps, how the key is
+sent: a header or a query parameter, and a path to check it) and uses `LampAPIButton`, so the person pastes the key
+on the same Connect sheet as a listed service's, it is checked, kept in `LampSecrets` under a name of its own
+(`own-…`, so it can't stand in for a listed service's token), and sent only to that address. No key field or dialog
+of the app's own, and never UserDefaults, LampStore or a Keychain item of the app's own: the first two are the app's
+settings and folder, and the last asks for the password after every rebuild. Both `Agent.connectorRules` and the
+tool's list (`Connectors.list`, also its answer to a name it doesn't know) say so. The review counts `LampAPI` and
+`LampSecrets.` in the app's code as connecting an account.
 
 ## Naming: Lamp and Lamp
 

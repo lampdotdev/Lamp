@@ -170,6 +170,7 @@ final class SidebarServer {
         let connection = Connection(socket: socket, projectID: project.id, server: self)
         connections[ObjectIdentifier(connection)] = connection
         MagicPanel.shared.follow(project.id)
+        Store.shared.refreshUndoOffer(project)
         connection.push(force: true)
     }
 
@@ -217,9 +218,12 @@ final class SidebarServer {
                                  working: progress?.activity, workingSince: progress?.started, empty: log.isEmpty, busy: busy,
                                  draft: draft.text, draftVersion: draftVersions[project.id] ?? 0,
                                  attachments: draft.attachments.map { Self.attachment($0) })
+        state.pointed = draft.pointed.map { Self.pointed($0, canChooseAgain: store.canPoint(in: project)) }
         state.queued = (store.queued[project.id] ?? []).map { message in
-            SidebarQueued(id: message.id, text: message.text,
-                          attachments: message.attachments.map { Self.attachment($0) })
+            var queued = SidebarQueued(id: message.id, text: message.text,
+                                       attachments: message.attachments.map { Self.attachment($0) })
+            queued.pointed = message.pointed.map { Self.pointed($0) }
+            return queued
         }
         state.waitingForSetup = !store.setup.ready
         state.approval = store.approvals[project.id].map {
@@ -235,6 +239,8 @@ final class SidebarServer {
             SidebarProblem(title: $0.title, message: $0.message, settingsButton: $0.settingsURL == nil ? nil : $0.settingsButton)
         }
         state.submitting = store.pendingSubmissions.contains(project.id)
+        // As Lamp's window offers it: not while anything waits to go after the change.
+        state.undoChange = busy || !(store.queued[project.id] ?? []).isEmpty ? nil : store.undoOffers[project.id]
         return state
     }
 
@@ -267,9 +273,10 @@ final class SidebarServer {
             case .line(let line):
                 switch line.kind {
                 case .user:
-                    let files = (line.attachments ?? []).map { dir.appendingPathComponent(Attachments.folder).appendingPathComponent($0) }
+                    let (files, pointed) = line.draftAttachments(in: project)
                     var request = SidebarLine(id: line.id, kind: .user, text: line.text, gap: gap,
                                               attachments: files.isEmpty ? nil : files.map { attachment($0) })
+                    request.pointed = pointed.map { Self.pointed($0) }
                     request.canGoBack = line.version != nil
                     request.canSendAgain = canSendAgain && line.canSendAgain
                     request.isLatest = line.id == latestRequest
@@ -410,7 +417,7 @@ final class SidebarServer {
     private func submit(_ project: LampProject) {
         let store = Store.shared
         let submitted = store.draft(for: project)
-        guard !submitted.text.trimmed.isEmpty || !submitted.attachments.isEmpty else { return }
+        guard !submitted.isEmpty else { return }
         let replaced = submitted.replacing.flatMap { id in store.logs[project.id]?.first { $0.id == id } }
         guard replaced == nil || !store.busy.contains(project.id), let token = store.beginSubmission(project) else { return }
         dictations[project.id]?.cancel()
@@ -424,10 +431,10 @@ final class SidebarServer {
         PhoneSetup.shared.perform(for: project, in: store, cancelled: { finish(sent: false) }) { current in
             let text = submitted.text.trimmed
             guard let replaced else {
-                store.send(text, attachments: submitted.attachments, to: current)
+                store.send(text, attachments: submitted.attachments, pointed: submitted.pointed, to: current)
                 return finish(sent: true)
             }
-            Task { finish(sent: await store.sendAgain(replaced, as: text, attachments: submitted.attachments, in: current)) }
+            Task { finish(sent: await store.sendAgain(replaced, as: text, attachments: submitted.attachments, pointed: submitted.pointed, in: current)) }
         }
     }
 
@@ -449,6 +456,11 @@ final class SidebarServer {
     /// What went wrong taking back a save of the notes from the sidebar, by its receipt, as Lamp's window shows it
     /// under the receipt.
     fileprivate static var noteProblems: [UUID: String] = [:]
+
+    /// What was pointed at, as the sidebar shows it.
+    fileprivate static func pointed(_ pointed: PointedAt, canChooseAgain: Bool? = nil) -> SidebarPointed {
+        SidebarPointed(title: pointed.title, detail: pointed.detail, canChooseAgain: canChooseAgain)
+    }
 
     private static var thumbnails: [URL: Data] = [:]
     fileprivate static func thumbnail(_ url: URL) -> Data? {
@@ -492,23 +504,26 @@ final class SidebarServer {
             if draft.replacing == nil {
                 draft.setAsideText = draft.text
                 draft.setAsideAttachments = draft.attachments
+                draft.setAsidePointed = draft.pointed
             }
             dictations[project.id]?.cancel()
             // Lamp's change, not the sidebar's, even when the box held these words before: the sidebar takes it up.
             draftsFromSidebar[project.id] = nil
             draft.text = line.text
-            draft.attachments = Attachments.urls(line.attachments ?? [], in: project)
+            (draft.attachments, draft.pointed) = line.draftAttachments(in: project)
             draft.replacing = line.id
             store.updateDraft(draft, for: project)
         case .putBack:
             var draft = store.draft(for: project)
             guard draft.replacing != nil, !store.pendingSubmissions.contains(project.id) else { return }
-            draft = Store.Draft(text: draft.setAsideText, attachments: draft.setAsideAttachments)
+            draft = Store.Draft(text: draft.setAsideText, attachments: draft.setAsideAttachments, pointed: draft.setAsidePointed)
             draftsFromSidebar[project.id] = nil
             store.updateDraft(draft, for: project)
         case .preview(let id, let index):
-            let files = id.flatMap { id in store.logs[project.id]?.first(where: { $0.id == id }) }
-                .map { Attachments.urls($0.attachments ?? [], in: project) } ?? store.draft(for: project).attachments
+            // What was pointed at comes after the other files, as the sidebar counts them.
+            let (others, pointed) = id.flatMap { id in store.logs[project.id]?.first(where: { $0.id == id }) }
+                .map { $0.draftAttachments(in: project) } ?? { let draft = store.draft(for: project); return (draft.attachments, draft.pointed) }()
+            let files = others + (pointed?.url.map { [$0] } ?? [])
             guard files.indices.contains(index) else { return }
             // Quick Look's own window, over the app, without bringing Lamp forward.
             let preview = Process()
@@ -560,14 +575,22 @@ final class SidebarServer {
         case .undoNote(let id):
             Self.noteProblems[id] = store.undoNote(id, in: project)
             scheduleUpdate()
+        case .undoChange(let version):
+            Task { await store.undo(project, change: version) }
         case .askProgress(let id, let progress):
             Self.progressFromSidebar[id] = progress
             AskProgresses.shared.set(progress, for: id)
         case .removeAttachment(let index):
             var draft = store.draft(for: project)
-            guard draft.attachments.indices.contains(index) else { return }
-            draft.attachments.remove(at: index)
+            if index == draft.attachments.count, draft.pointed != nil {
+                draft.pointed = nil
+            } else {
+                guard draft.attachments.indices.contains(index) else { return }
+                draft.attachments.remove(at: index)
+            }
             store.updateDraft(draft, for: project)
+        case .pointAgain:
+            MagicPanel.shared.pointAgain(in: project)
         case .stop:
             store.stop(project)
         case .unqueue(let id):
@@ -681,6 +704,21 @@ final class SidebarServer {
             // Nor one from before the notes receipt a receipt.
             if version < 3 { state.lines.removeAll { $0.kind == .note } }
             if version < 4 { state.lines.removeAll { $0.kind == .offer || $0.kind == .action } }
+            // What was pointed at, as the file it was before it had a pill of its own.
+            if version < 5 {
+                func asFile(_ pointed: SidebarPointed?) -> [SidebarAttachment] {
+                    pointed.map { [SidebarAttachment(name: $0.title + ".png", thumbnail: nil)] } ?? []
+                }
+                state.attachments += asFile(state.pointed)
+                for index in state.lines.indices where state.lines[index].pointed != nil {
+                    state.lines[index].attachments = (state.lines[index].attachments ?? []) + asFile(state.lines[index].pointed)
+                }
+                state.queued = state.queued?.map { message in
+                    var message = message
+                    message.attachments += asFile(message.pointed)
+                    return message
+                }
+            }
             guard let data = SidebarWire.encode(state), force || data != last else { return }
             last = data
             outbox.send(data)

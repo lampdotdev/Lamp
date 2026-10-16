@@ -244,6 +244,8 @@ struct ProjectView: View {
     @State private var draft = ""
     @State private var hasMicrophone = true
     @State private var attachments: [URL] = []
+    /// What was pointed at in the app, on its own card in the message box.
+    @State private var pointed: PointedAt?
     @State private var composerHeight = Composer.lineHeight
     @State private var focusRequest = 0
     @State private var dropTargeted = false
@@ -319,6 +321,21 @@ struct ProjectView: View {
     private var shownSuggestion: String? {
         guard suggestionTurn != nil, let suggestion, suggestion != dismissedSuggestion else { return nil }
         return suggestion
+    }
+
+    /// What was pointed at in the app, going with the next message, as its pill in the message box.
+    private func pointedPill(_ pointed: PointedAt) -> some View {
+        ChatLook.PointedPill(title: pointed.title, detail: pointed.detail,
+                             chooseAgain: store.canPoint(in: project) ? { MagicPanel.shared.pointAgain(in: project) } : nil,
+                             remove: removePointed)
+    }
+
+    /// Lets what was pointed at go, and says so to the chat beside the app at once: words typed here are saved
+    /// without telling it, but a pill it still showed would be sent from there as if it were still wanted.
+    private func removePointed() {
+        pointed = nil
+        saveDraft()
+        if let current = store.current(project) { store.announceDraft(of: current) }
     }
 
     /// The files going with the next message, above the message box.
@@ -402,7 +419,9 @@ struct ProjectView: View {
 
     /// How the chat keeps to its end, or to a request just sent, as things are added.
     private func following(_ content: some View, _ lines: [LogLine], pin: UUID?, proxy: ScrollViewProxy) -> some View {
-        content
+        // Undo Last Change comes a moment after the turn ends, once Lamp knows it can be offered. (Apart from the
+        // rest: as one expression it's more than the type checker will take on in reasonable time.)
+        content.onChange(of: undoChange) { followEnd(proxy, lines, pin: pin) }
         // A chat opens on its latest messages: the scroll view starts at the bottom, with
         // no scrolling to get there.
         // It stays at its end as the chat grows, except while a request just sent glides to the top
@@ -497,11 +516,17 @@ struct ProjectView: View {
             transcript(lines, busy: busy, progressShown: progress != nil, pin: pin)
             if let progress { ActivityRow(progress: progress).padding(.top, 12) }
         }
+        if let change = undoChange {
+            ChatLook.UndoChange { Task { await store.undo(project, change: change) } }.padding(.top, 12)
+        }
         if store.notResponding[project.id] != nil {
             ChatLook.UnresponsiveNotice(text: ErrorMessages.notResponding(project.name)) { store.forceQuit(project) }.padding(.top, 12)
         }
         ForEach(queued) { message in
             ChatLook.QueuedRow(text: message.text, waitingForSetup: !store.setup.ready, onRemove: { store.unqueue(message, from: project) }) {
+                if let pointed = message.pointed {
+                    ChatLook.PointedPill(title: pointed.title, detail: pointed.detail)
+                }
                 ForEach(message.attachments, id: \.self) { AttachmentChip(url: $0, siblings: message.attachments) }
             }
                 .padding(.top, lines.isEmpty ? 0 : 32)
@@ -511,7 +536,7 @@ struct ProjectView: View {
     /// The message box with the buttons around it, floating at the foot of the chat in the chat's own column.
     private func composerRow(_ lines: [LogLine]) -> some View {
         // A request sent again starts from the app as it was, so it can't wait behind other work.
-        let canSend = !(submissionPending || draft.trimmed.isEmpty && attachments.isEmpty || replacing != nil && busy)
+        let canSend = !(submissionPending || draft.trimmed.isEmpty && attachments.isEmpty && pointed == nil || replacing != nil && busy)
         return ChatLook.MessageBar(busy: busy, canSend: canSend,
                                    attachHelp: "Attach files. You can also paste or drop images and files here.",
                                    attach: chooseFiles, send: send, stop: { store.stop(project) },
@@ -528,6 +553,7 @@ struct ProjectView: View {
                      onSubmit: send, onFiles: attach)
                 .frame(height: composerHeight)
         } above: {
+            if let pointed { pointedPill(pointed).padding(.top, 4) }
             if !attachments.isEmpty { pendingAttachments }
         } beside: {
             if hasMicrophone {
@@ -567,6 +593,8 @@ struct ProjectView: View {
                            saved: made || versions.count > 1)
         }
     }
+    /// The change Undo Last Change is offered under, at the end of the chat: not while anything waits to go after it.
+    private var undoChange: String? { busy || !queued.isEmpty ? nil : store.undoOffers[project.id] }
     /// The history is read again whenever a turn starts or ends and whenever the chat changes (a rename, an Undo).
     private var historyKey: String { "\(project.id) \(busy) \(store.logs[project.id]?.count ?? 0)" }
     private var undoable: Bool { history?.undoable ?? true }
@@ -636,6 +664,7 @@ struct ProjectView: View {
         .onChange(of: project.platform) { PhoneSetup.shared.refreshIfVisible() }
         .onChange(of: draft) { saveDraft() }
         .onChange(of: attachments) { saveDraft() }
+        .onChange(of: pointed) { saveDraft() }
         .onChange(of: replacing) { saveDraft() }
         .onAppear { hasMicrophone = Dictation.hasMicrophone }
         // A microphone plugged in (or taken away) while the chat is open shows or hides the button.
@@ -662,6 +691,7 @@ struct ProjectView: View {
         .task(id: historyKey) {
             // A read can outlast the change that started it (the git commands it runs finish even when it's
             // cancelled), so one started before a turn ended mustn't land after the read that followed.
+            store.refreshUndoOffer(project)
             let read = await History.read(project)
             guard !Task.isCancelled else { return }
             history = read
@@ -704,26 +734,28 @@ struct ProjectView: View {
         let saved = store.draft(for: store.current(project) ?? project)
         draft = saved.text
         attachments = saved.attachments
+        pointed = saved.pointed
         replacing = saved.replacing
         setAside = saved.replacing == nil ? nil
-            : Store.Draft(text: saved.setAsideText, attachments: saved.setAsideAttachments)
+            : Store.Draft(text: saved.setAsideText, attachments: saved.setAsideAttachments, pointed: saved.setAsidePointed)
     }
 
     private func saveDraft() {
         guard let current = store.current(project) else { return }
-        store.saveDraft(Store.Draft(text: draft, attachments: attachments, replacing: replacing,
-                                    setAsideText: setAside?.text ?? "", setAsideAttachments: setAside?.attachments ?? []),
+        store.saveDraft(Store.Draft(text: draft, attachments: attachments, pointed: pointed, replacing: replacing,
+                                    setAsideText: setAside?.text ?? "", setAsideAttachments: setAside?.attachments ?? [],
+                                    setAsidePointed: setAside?.pointed),
                         for: current)
     }
 
     /// Takes a request out of the chat and into the message box, with the files it was sent with.
     private func takeBack(_ line: LogLine) {
         guard !submissionPending else { return }
-        if replacing == nil { setAside = Store.Draft(text: draft, attachments: attachments) }
+        if replacing == nil { setAside = Store.Draft(text: draft, attachments: attachments, pointed: pointed) }
         dictation.cancel()
         sendProblem = nil
         draft = line.text
-        attachments = Attachments.urls(line.attachments ?? [], in: project)
+        (attachments, pointed) = line.draftAttachments(in: project)
         replacing = line.id
         focusRequest += 1
     }
@@ -737,6 +769,7 @@ struct ProjectView: View {
         sendProblem = nil
         draft = setAside?.text ?? ""
         attachments = setAside?.attachments ?? []
+        pointed = setAside?.pointed
         setAside = nil
     }
 
@@ -874,12 +907,13 @@ struct ProjectView: View {
     }
 
     private func send() {
-        guard !submissionPending, !draft.trimmed.isEmpty || !attachments.isEmpty else { return }
+        guard !submissionPending, !draft.trimmed.isEmpty || !attachments.isEmpty || pointed != nil else { return }
         let replaced = replacing.flatMap { id in store.logs[project.id]?.first { $0.id == id } }
         guard replaced == nil || !busy else { return }
         dictation.cancel()
-        let submitted = Store.Draft(text: draft, attachments: attachments, replacing: replacing,
-                                    setAsideText: setAside?.text ?? "", setAsideAttachments: setAside?.attachments ?? [])
+        let submitted = Store.Draft(text: draft, attachments: attachments, pointed: pointed, replacing: replacing,
+                                    setAsideText: setAside?.text ?? "", setAsideAttachments: setAside?.attachments ?? [],
+                                    setAsidePointed: setAside?.pointed)
         guard let token = store.beginSubmission(project) else { return }
         store.endArrival(for: project.id)
         // Decided now: sending makes the app busy at once, so by the time the chat hears of it, it can't tell
@@ -899,7 +933,7 @@ struct ProjectView: View {
         let text = submitted.text.trimmed
         let files = submitted.attachments
         guard let replaced else {
-            store.send(text, attachments: files, to: current)
+            store.send(text, attachments: files, pointed: submitted.pointed, to: current)
             finishSubmission(token, captured: submitted, sent: true)
             return
         }
@@ -908,7 +942,7 @@ struct ProjectView: View {
         Task {
             // Nothing was sent: the words go back in the box, so they aren't lost with it, and the chat
             // keeps saying why.
-            let sent = await store.sendAgain(replaced, as: text, attachments: files, in: current)
+            let sent = await store.sendAgain(replaced, as: text, attachments: files, pointed: submitted.pointed, in: current)
             if !sent { sendProblem = store.logs[current.id]?.last { $0.kind == .error }?.id }
             sendingAgain = nil
             finishSubmission(token, captured: submitted, sent: sent)

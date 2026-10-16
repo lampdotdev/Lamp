@@ -148,6 +148,7 @@ struct TurnProgress {
         case .art: return "Painting a picture"
         case .offer: return "Suggesting a better setup"
         case .kind: return "Making it for other devices"
+        case .connectors: return "Looking up a connector"
         case .ask: return "Asking you"
         case .result: return "Wrapping up"
         case .wish: return "Writing your wish"

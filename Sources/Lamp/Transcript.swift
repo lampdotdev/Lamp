@@ -4,7 +4,7 @@ import LampSidebarKit
 /// A tool call as logged by the engines ("Read App.swift", "Bash: ./build.sh", "Run: ls"), split into
 /// what the agent did and what it did it to.
 struct ToolCall {
-    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, remember, art, offer, kind, ask, result, wish, other }
+    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, remember, art, offer, kind, connectors, ask, result, wish, other }
 
     let name: String
     let argument: String
@@ -36,7 +36,7 @@ struct ToolCall {
         "ls": .list, "list": .list,
         "webfetch": .web, "web_fetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
-        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "save_notes": .remember, "make_art": .art, "offer_setup": .offer, "make_app_for": .kind, "ask": .ask, "show_result": .result, "write_wish": .wish,
+        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "save_notes": .remember, "make_art": .art, "offer_setup": .offer, "make_app_for": .kind, "connectors": .connectors, "ask": .ask, "show_result": .result, "write_wish": .wish,
     ]
 
     var icon: String {
@@ -58,6 +58,7 @@ struct ToolCall {
         case .art: "paintbrush"
         case .offer: "sparkles"
         case .kind: "laptopcomputer.and.iphone"
+        case .connectors: "link"
         case .ask: "questionmark.bubble"
         case .result: "checkmark.rectangle.stack"
         case .wish: "sparkles"
@@ -84,6 +85,7 @@ struct ToolCall {
         case .art: "Painted a picture"
         case .offer: "Suggested a setup"
         case .kind: "Changed what it runs on"
+        case .connectors: "Looked up a connector"
         case .ask: "Asked you"
         case .result: "Summed it up"
         case .wish: "Wrote your wish"
@@ -112,6 +114,7 @@ struct ToolCall {
         case .art: "painted \(n("picture", "pictures"))"
         case .offer: "suggested a setup"
         case .kind: "changed what it runs on"
+        case .connectors: "looked up \(n("connector", "connectors"))"
         case .ask: "asked you"
         case .result: "summed it up"
         case .wish: "wrote your wish"
@@ -357,7 +360,13 @@ struct LogRow: View, Equatable {
             ChatLook.UserRow(text: line.text, busy: busy, goBack: line.version != nil ? goBack.map { goBack in { goBack(line, $0) } } : nil,
                              sendAgain: line.canSendAgain ? sendAgain.map { sendAgain in { sendAgain(line) } } : nil,
                              isLatest: isLatestRequest) {
-                ForEach(urls, id: \.self) { url in
+                // What was pointed at keeps its pill, and its picture isn't shown a second time beside it.
+                if let pointed = line.pointed, let url = urls.first(where: { $0.lastPathComponent == pointed.picture }) {
+                    AttachmentPreview(url: url, siblings: urls) {
+                        ChatLook.PointedPill(title: pointed.title, detail: pointed.detail)
+                    }
+                }
+                ForEach(urls.filter { $0.lastPathComponent != line.pointed?.picture }, id: \.self) { url in
                     if Attachments.isImage(url) {
                         AttachmentPreview(url: url, siblings: urls) { AttachmentThumbnail(url: url, size: 72) }
                     } else {

@@ -113,11 +113,15 @@ async function refresh() {
     const saved = await chrome.storage.session.get([keys.tab, keys.pick, keys.draft]);
     info = saved[keys.tab] || {}; drafts = saved[keys.draft] || {};
     if (!selected && saved[keys.pick]) selected = saved[keys.pick];
-    ({apps} = await call({op: 'surface-list'}));
+    const listed = await call({op: 'surface-list'});
+    apps = listed.apps; lampClosed = !!listed.lampClosed;
     const app = choose();
     $('empty').hidden = apps.length > 0;
     if (transportProblem) { error(); transportProblem = false; }
-    if (!app) { document.querySelector('main').hidden = true; note(''); return; }
+    if (!app) { document.querySelector('main').hidden = true; showPage(null); note(''); return; }
+    if (app.page?.urls?.length) return showPage(app);
+    showPage(null);
+    if (lampClosed) throw new Error('Open Lamp on this Mac, then try again.');
     const state = await call({op: 'surface-view', app: app.id});
     if (!state.surface) {
       // An app that isn't open on the Mac is opened when chosen, once; it shows here as soon as it's up.
@@ -133,5 +137,98 @@ async function refresh() {
   } catch (e) { document.querySelector('main').hidden = true; transportProblem = true; error(e); }
   finally { refreshing = false; }
 }
+// An app that serves its own page: the sidebar frames it, keeps the app's name and the consent line above it, and
+// is the page's only way to the person's tab. A frame that fails to load says nothing, so the page says hello.
+let lampClosed = false, framed = '', frameReady = false, frameAsked = 0, tabKey = '', tried = 0;
+function showPage(app) {
+  const frame = $('page');
+  document.body.classList.toggle('framed', !!app);
+  if (!app) { if (framed) { frame.src = 'about:blank'; framed = ''; } frame.hidden = true; return; }
+  document.querySelector('main').hidden = true;
+  const now = Date.now();
+  // Not answering: the app's next port is tried (another program may have its first), and round again every few
+  // seconds, so the page shows once the app is open. Only the app answers its own name, on whichever port it has.
+  if (framed !== app.id || (!frameReady && now - frameAsked > 2500)) {
+    if (framed !== app.id) { frameReady = false; tried = 0; } else tried++;
+    framed = app.id; frameAsked = now;
+    const url = app.page.urls[tried % app.page.urls.length];
+    frame.dataset.origin = new URL(url).origin;
+    frame.src = url + '#' + new URLSearchParams({tab: tabKey}).toString();
+    readSpent = true; if (document.activeElement === frame) takeFocusBack();
+  }
+  // A page that stopped answering (its app quit, or reopened at another of its ports) is looked for again.
+  if (frameReady && now - lastAlive > 8000) { frameReady = false; pageToken = ''; frameAsked = 0; }
+  if (frameReady) { frame.hidden = false; note(info.moved ? 'This tab is on a new page. Click Lamp in Chrome’s toolbar to use it here.' : ''); return; }
+  frame.hidden = true;
+  if (tried < app.page.urls.length && !opening[app.id]) return;
+  if (!lampClosed) opening[app.id] ??= {at: now, asked: call({op: 'surface-open', app: app.id}).catch(() => {})};
+  note(lampClosed || (opening[app.id] && now - opening[app.id].at > 30000) ? `Open ${app.name} on your Mac to use it here.` : `Opening ${app.name}…`);
+}
+// What a page may read is what Lamp found its file declares (`page.reads`), never what the page says as it runs, and
+// the consent line says the same. One read per click in the page.
+// `nonces`: one per hello still waiting for its proof. `pageToken`: given to the page that proved itself, held only in
+// that page's memory, and asked of every read, so a document that replaced it (it navigated, the app went and
+// another program took its port) can't read on what the app's page proved.
+let readSpent = false, nonces = new Set(), pageToken = '';
+// Every document the frame loads proves itself again, so a page that replaced the app's (the app gone, another
+// program on its port) can't use what the app's page proved.
+$('page').addEventListener('load', () => {
+  pageToken = '';
+  if (!frameReady) return;
+  frameReady = false; frameAsked = Date.now();
+  $('page').contentWindow.postMessage({lamp: 'prove'}, $('page').dataset.origin);
+});
+// A click in the page gives one read. Presses inside the frame never reach this document, but the focus moving into
+// the frame does: that is a click (or a tab) into the page, and arms one read. After a read the sidebar takes focus
+// back, so the next click in the page arms the next one. A press on the sidebar's own parts (the app menu, the strip)
+// isn't a click in the page and arms nothing.
+let lastAlive = 0;
+window.addEventListener('blur', () => setTimeout(() => { if (document.activeElement === $('page')) readSpent = false; }));
+for (const kind of ['pointerdown', 'keydown']) document.addEventListener(kind, () => { readSpent = true; }, true);
+function takeFocusBack() { $('top').tabIndex = -1; $('top').focus({preventScroll: true}); }
+const hex = bytes => [...new Uint8Array(bytes)].map(b => b.toString(16).padStart(2, '0')).join('');
+async function proves(app, origin, nonce, proof) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(app.page.key), {name: 'HMAC', hash: 'SHA-256'}, false, ['sign']);
+  return proof === hex(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${nonce}:${new URL(origin).port}`)));
+}
+window.addEventListener('message', async event => {
+  const frame = $('page');
+  if (event.source !== frame.contentWindow || event.origin !== frame.dataset.origin) return;
+  const message = event.data || {};
+  // Bound to the app and page that asked: if the sidebar moves to another app meanwhile, the answer is dropped.
+  const app = apps.find(a => a.id === framed), origin = frame.dataset.origin, asker = framed;
+  const answer = value => { if (framed === asker && frame.dataset.origin === origin) frame.contentWindow.postMessage({lamp: 'answer', id: message.id, ...value}, origin); };
+  // The page says hello and gets a nonce; it shows the app's signature over it and its port, and only then is it
+  // the app's page: another program that took one of the app's ports can't make that, and is passed over.
+  if (message.lamp === 'alive') { if (frameReady) lastAlive = Date.now(); return; }
+  if (message.lamp === 'hello') {
+    const nonce = crypto.randomUUID();
+    nonces.add(nonce); if (nonces.size > 8) nonces.delete(nonces.values().next().value);
+    return answer({nonce});
+  }
+  if (message.lamp === 'proof') {
+    const nonce = String(message.nonce || ''), had = nonces.delete(nonce);   // each nonce is good for one try
+    const ok = !!app && had && await proves(app, origin, nonce, String(message.proof || ''));
+    // Only for the frame that asked: the sidebar may have moved to another address or app meanwhile.
+    if (framed !== asker || frame.dataset.origin !== origin) return;
+    if (!ok) { frameAsked = 0; return answer({}); }
+    frameReady = true; delete opening[framed]; frame.hidden = false; note(info.moved ? 'This tab is on a new page. Click Lamp in Chrome’s toolbar to use it here.' : '');
+    const reads = app.page.reads, name = app.name;
+    $('consent-top').textContent = reads === 'selection' ? `Using a selection shares only that passage with ${name}.`
+      : reads === 'page' ? `Using this page shares its text with ${name}.` : '';
+    pageToken = crypto.randomUUID(); lastAlive = Date.now();
+    return answer({key: app.page.key, token: pageToken});
+  }
+  if (message.lamp !== 'read' || !frameReady || !pageToken || message.token !== pageToken) return answer({error: 'Open the app’s sidebar again, then try again.'});
+  const reads = app?.page?.reads;
+  if (!reads) return answer({error: 'This sidebar doesn’t read pages.'});
+  // A click in the frame counts here too (Chrome passes a click's activation up to the frames above it).
+  // Refused, the sidebar takes focus back too, so the person's next click in the page arms a read.
+  if (!navigator.userActivation.isActive || readSpent) { takeFocusBack(); return answer({error: 'Reading the page needs a click.'}); }
+  readSpent = true;
+  try { answer({page: await call({op: 'page-read', scope: reads === 'selection' ? 'selection' : message.scope})}); } catch (e) { answer({error: e.message}); }
+  finally { takeFocusBack(); }
+});
+
 chrome.storage.session.onChanged.addListener(changes => { if (changes[keys.tab]) void refresh(); });
-void refresh(); setInterval(refresh, 750);
+call({op: 'tab-key'}).then(r => { tabKey = r.key; }).catch(() => {}).finally(() => { void refresh(); setInterval(refresh, 750); });

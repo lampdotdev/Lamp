@@ -18,16 +18,17 @@ enum Sharing {
     /// The newest kind of file this Lamp opens. 2: the app's own files travel in Assets/ (1 bundled the chat's
     /// attachments the code named). 3: the file also carries a widget's code, in Widget/. 4: it also carries
     /// what the app declares in capabilities.json. 6: it may be an iPhone app or an app for both (`platform`),
-    /// with an Apple Watch app's code in Watch/. 7: it also carries a share extension's code, in Share/.
-    static let formatVersion = 7
+    /// with an Apple Watch app's code in Watch/. 7: it also carries a share extension's code, in Share/. 8: its
+    /// code builds a 3D scene on LampScene.swift, which the Lamp that opens it writes.
+    static let formatVersion = 8
 
     /// What a file says it is: the oldest number a Lamp must know to open it whole. Only a file with a widget
     /// is a 3, only one that declares capabilities a 4, only an iPhone app, an app for both or one with a watch
-    /// app a 6 and only one with a share extension a 7, so an app with none of them still opens in an older
+    /// app a 6, only one with a share extension a 7 and only one with a 3D scene an 8, so an app with none of them still opens in an older
     /// Lamp, and a Lamp that would build the app without one of them says to update instead.
     static func format(withWidget: Bool, capabilities: Bool = false, platform: Platform = .mac, watch: Bool = false,
-                       share: Bool = false) -> Int {
-        share ? 7 : platform != .mac || watch ? 6 : capabilities ? 4 : withWidget ? 3 : 2
+                       share: Bool = false, scene: Bool = false) -> Int {
+        scene ? 8 : share ? 7 : platform != .mac || watch ? 6 : capabilities ? 4 : withWidget ? 3 : 2
     }
 
     @MainActor private static var picker: NSSharingServicePicker?
@@ -152,7 +153,7 @@ enum Sharing {
         try fm.createDirectory(at: stage, withIntermediateDirectories: true)
 
         for file in swiftSources(in: project.dir.appendingPathComponent("Sources"))
-        where file.lastPathComponent != "LampSupport.swift" {
+        where file.lastPathComponent != "LampSupport.swift" && file.lastPathComponent != Template.sceneSupportFile {
             let relative = relativePath(of: file, in: project.dir)
             let target = stage.appendingPathComponent(relative)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -208,7 +209,8 @@ enum Sharing {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(Manifest(format: format(withWidget: !widgetCode.isEmpty, capabilities: !capabilities.isEmpty,
-                                                    platform: project.platform, watch: !watchCode.isEmpty, share: !shareCode.isEmpty),
+                                                    platform: project.platform, watch: !watchCode.isEmpty, share: !shareCode.isEmpty,
+                                                    scene: Template.usesScene(project)),
                                     name: project.name, exportedAt: Date(),
                                     app: identity(of: project), description: AppDescription.description(of: project),
                                     platform: project.platform, family: project.platform.hasIOS ? project.family : nil))
@@ -370,7 +372,7 @@ enum Sharing {
         try? fm.removeItem(at: project.dir.appendingPathComponent(Template.shareFolder))
         // Code comes from the one list the review read (`Package.sources`), and lands only in the code folders.
         let codeFolders = ["Sources/", Template.widgetFolder + "/", Template.watchFolder + "/", Template.shareFolder + "/"]
-        let lampsOwn = ["LampSupport.swift", Template.widgetSupportFile, Template.shareSupportFile]
+        let lampsOwn = ["LampSupport.swift", Template.sceneSupportFile, Template.widgetSupportFile, Template.shareSupportFile]
         for file in package.sources where !lampsOwn.contains(file.lastPathComponent) {
             let relative = package.path(of: file)
             guard !relative.contains(".."), codeFolders.contains(where: { relative.hasPrefix($0) }),
@@ -587,8 +589,8 @@ extension Sharing {
                    patterns: ["LampMail.", "LampContacts.", "LampCalendar.", "LampReminders."]),
         Capability(label: "Reads or uses your other apps (Slack, Mail, your browser…)", icon: "macwindow.on.rectangle", level: .powerful,
                    patterns: ["LampComputer."]),
-        Capability(label: "Asks you to connect your Notion, Linear, Todoist, Jira or monday.com account", icon: "person.badge.key", level: .powerful,
-                   patterns: ["LampService"]),
+        Capability(label: "Asks you to connect an account you use elsewhere (Notion, Airtable, GitHub…)", icon: "person.badge.key", level: .powerful,
+                   patterns: ["LampService", "LampAPI", "LampSecrets."]),
         Capability(label: "Controls other apps with AppleScript", icon: "applescript", level: .powerful,
                    patterns: ["NSAppleScript", "osascript", "OSAScript"]),
         Capability(label: "Uses the camera or microphone", icon: "mic", level: .powerful,
@@ -706,17 +708,19 @@ extension Sharing {
         from documents and pictures, on the Mac), LampCalendar, LampReminders, LampContacts and LampMail (the \
         reader's accounts, each asked for by macOS), LampNotifications, LampAssets (files sent with the app), \
         LampFolders, LampFolderWatcher, LampClipboardWatcher, LampHotKey, LampLoginItem, LampPermissions, \
-        LampMenuBar, LampDrop, LampWindows, LampWidget and LampService (the reader connects their own Notion, Linear, \
-        Todoist, Jira and Confluence or monday.com account on that service's own page; the sign-in stays on the \
-        reader's Mac, never comes with a shared app, and goes only to that service). Using these is normal and expected: they are Lamp's code, not the \
+        LampMenuBar, LampDrop, LampWindows, LampWidget, LampService and LampAPI (the reader connects their own account \
+        on a service such as Notion, Airtable or GitHub, by signing in on that service's own page or pasting a token \
+        they make there; it stays on the reader's device, never comes with a shared app, and goes only to that \
+        service), and LampSecrets (where the app keeps a key the reader types in for a service, on the reader's \
+        device; it never comes with a shared app). Using these is normal and expected: they are Lamp's code, not the \
         sender's, not hidden, and not a concern in themselves, and Lamp lists them to the reader separately. One \
         thing about them does matter: what goes to LampAI (its prompts, data and pictures) and what LampComputer \
         reads from other apps is sent to the AI provider the reader has set up in Lamp, which may be a service on \
         the internet. So judge what the app's own code does with the blocks and beyond them: which of the reader's \
         data it hands to the AI (a mention of their own notes is ordinary; their mail, documents, passwords or \
         other people's data deserve a word), where else it sends data, what it deletes or changes, whether it \
-        does more than its description says, and whether anything is obscured. With LampService the app acts as the \
-        reader on that service: say what it reads there, and name anything it changes, deletes or posts.
+        does more than its description says, and whether anything is obscured. With LampService or LampAPI the app acts \
+        as the reader on that service: say what it reads there, and name anything it changes, deletes or posts.
 
         An app may declare things in capabilities.json, which Lamp acts on for it: "background": true means Lamp \
         opens the app at login and keeps it running after its windows close (what a watcher needs; say so, and \

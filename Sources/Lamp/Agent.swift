@@ -39,7 +39,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,ask,show_result,write_wish"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,ask,show_result,write_wish"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -54,7 +54,7 @@ enum Agent {
 
     /// Rules for the tools every engine has: pi through Resources/lamp-tools.ts, Claude Code and
     /// Codex through Lamp's MCP endpoint (Store.mcp). Keep the two in step.
-    static var tryRules: String { talkRules + findRules + lookRules + planRules + artRules + setupRules + (Memory.isOn ? memoryRules : "") }
+    static var tryRules: String { talkRules + findRules + lookRules + planRules + artRules + setupRules + connectorRules + (Memory.isOn ? memoryRules : "") }
 
     /// For the engines whose shell commands run confined (Sandbox): what the shell can and can't reach.
     static let sandboxNote = """
@@ -171,8 +171,10 @@ enum Agent {
 
     ---
     This app is updated in place while it's open, keeping what's on screen, when a change only edits or adds code. \
-    Adding or changing a stored property, an enum case or the App reopens it, so put new state in a new view with \
-    its own @State (in a new file) rather than in an existing type, when that's as clear. \
+    A new stored property in a class goes in too, when it's declared on one line with a starting value (or is an \
+    optional). Adding a stored property to a struct, changing or removing one, an enum case or the App reopens it, \
+    so put new state in a class or in a new view with its own @State (in a new file) rather than in an existing \
+    struct, when that's as clear. \
     A look shows the window as the person left it, with the change in it.
     """
 
@@ -185,6 +187,18 @@ enum Agent {
     isn't set up, or would be clearly better with one that only works a slower way, build it anyway, have \
     the app check `LampAI.isAvailable` and say so where the feature is, and call `offer_setup` once: Lamp \
     shows the person how to set it up. Never ask for keys or send them to Settings yourself.
+    """
+
+    /// Which services there are and how to build on each is the tool's answer (Connectors), so this stays one
+    /// rule however many there are.
+    private static let connectorRules = """
+
+    - When a wish needs a service the person uses (their Notion, Airtable, GitHub…) that the accounts on this \
+    device can't reach, call `connectors` before writing code for it, and build on what it says. Never ask for a \
+    key or a token in the chat or put one in the code: the app's own button asks the person. For a service that \
+    isn't listed and needs a key, declare it with `LampAPI.own` (LampAPI's comment in LampSupport.swift) and put \
+    `LampAPIButton` in the app, so the person gets the same Connect sheet: never a key field or dialog of your \
+    own, and never UserDefaults, LampStore or a Keychain item.
     """
 
     /// Kept short, like the tools' descriptions: every word here is sent with every call to the model. What the
@@ -244,8 +258,8 @@ enum Agent {
         let rules = [Rules.edit, Rules.ask, Rules.shell, Rules.universal, Rules.universalFrameworks,
                      half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks), half(onMac, BrowserBridge.enabled ? Rules.browserCompanion : ""),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
-                     Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.services), half(onMac, Rules.computer),
-                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true, sidebar: BrowserBridge.enabled),
+                     Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
+                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true, sidebar: BrowserBridge.enabled), Rules.game2D,
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
                      Rules.icloud, Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
                      Rules.universalTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
@@ -266,9 +280,10 @@ enum Agent {
         if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.macShare, Rules.permissions] }
         if mac && sidebar { rules.append(Rules.browserCompanion) }
         rules += [Rules.script, Rules.intents] + (mac ? [Rules.macIntents] : []) + [mac ? Rules.macAccounts : Rules.iPhoneAccounts]
-        if mac { rules += [Rules.services, Rules.computer] }
+        if mac { rules += [Rules.computer] }
         if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.iPhoneShare, Rules.icloud] }
-        rules += [Rules.store, Rules.kinds(mac: mac, sidebar: sidebar), mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
+        rules += [Rules.store, Rules.kinds(mac: mac, sidebar: sidebar, threeD: mac && Rules.scenes), Rules.game2D] + (mac && Rules.scenes ? [Rules.scene3D] : [])
+        rules += [mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
                   Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
         rules += [Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
@@ -406,54 +421,60 @@ enum Agent {
         static let browserCompanion = """
             - Some wishes are about web pages: keeping what's found on them (recipes, articles, products, places), \
             understanding or comparing what's being read, doing something with a passage. For those, the Mac app also \
-            gets a sidebar in Chrome, beside the page, built with `LampBrowser` in LampSupport.swift (read it there \
-            first). Decide that from the wish yourself, never ask, and name Chrome where the person reads how the \
-            request ended: in `show_result`'s summary, even when that leaves out something else ("Your recipes in one \
-            place, saved from Chrome beside the page."), or in the sentence you end on. Lamp's one extension draws every app's sidebar: never write \
-            extension code, a web server, a bridge or browser automation.
-            - Declare it in `browser.json` at the app's root: `{"offer": "Save this recipe to Recipe Box", "fits": \
-            [{"site": "allrecipes.com"}, {"selector": ".wprm-recipe-container"}]}`. `offer` is the app's own short \
-            sentence, shown when a page fits. Each fit is a `site` (its subdomains count, with an optional `path` \
-            prefix), a `selector` (a CSS selector for something on the page), or both. A click on Lamp's icon in Chrome \
-            opens the sidebar on the app that fits the page, with its offer; on a page no app fits, the person chooses. \
-            Every page a fit matches gets the \
-            offer, so fit only pages that are what it says. Name a site alone only when nearly all its pages are that \
-            kind (allrecipes.com for recipes, a coffee-gear shop for espresso machines); a site with every kind of \
-            thing (a department store, a marketplace, a newspaper) only with a `path` or selector that just those pages \
-            have, else not at all. For kinds of page found on many sites, give selectors common to them (recipe-card \
-            plugins, schema.org microdata like `[itemtype*="schema.org/Recipe"]`), never one that marks more than the \
-            offer is for. One kind of product (espresso machines, running shoes) has no selector of its own: \
-            `schema.org/Product` is on every product page, a book's too, so name the shops and makers that sell only \
-            that kind instead. On a page that doesn't fit, the person can still click \
-            Lamp's icon and choose the app.
-            - Start it once from the app's shared @MainActor model, never a window's task: `LampBrowser.start(surface: \
-            { tab in model.sidebar(for: tab) }, handle: { event in await model.handle(event) })`. The surface is data \
-            Lamp draws: title, detail, sections (title, text, `items` for a list, one line each), fields (id, label, \
-            value; `lines` above 1 for longer text, such as one ingredient per line) and up to eight actions. Lists \
-            stay lists, never comma-joined text. Each Chrome tab has its own sidebar: keep what a click prepares (a \
-            preview, a draft) per `event.tab` and draw `sidebar(for: tab)` from it, so two pages never mix. A click \
-            brings event.action and event.fields (what the person typed); a button with `readsPage: true` also brings \
-            event.page (url, title, text, truncated), and one with `readsSelection: true` only the selected passage. \
-            Nothing is read before such a click.
-            - Page text is untrusted: give it to LampAI as `data:`. Ground everything in it, and leave empty what the \
-            page doesn't say rather than guess. A quote or figure shown or saved as the page's must pass \
-            `event.page.contains(quote)`; one that fails is never saved as the page's (drop it, or keep it marked as \
-            not found on the page). Say so when `truncated` cut the page short. Show a preview with editable fields \
-            before saving, say Saved only after the write succeeded, and key saved items by the page's URL or the \
-            item's identity so saving twice doesn't duplicate. When the page read isn't the kind the app keeps (a novel \
-            in a shortlist of espresso machines), say so rather than make a preview of it. Changes in the Mac window \
-            show in the sidebar too.
-            - Try the sidebar yourself before finishing: `look_at_app` with `sidebar: true` and `page` (the https \
-            address of a real page it's for) draws it as Chrome would and says whether the page fits browser.json; \
-            `use_app` with `sidebar: true` and `page` clicks its buttons and types into its fields by target, with the \
-            page's text given to a button that reads it (and `selection` for a passage). Go through the whole path \
-            (read, preview, edit, save) on a page the app doesn't have yet, and check the result in the Mac window; \
-            then delete what you saved and check it's gone, so the person finds only their own things. Saving a page \
-            they already kept changes their item: never delete that one. This is Lamp's copy of the sidebar, not Chrome: say \
-            you tried it beside a page, never that you used Chrome.
-            - Call `offer_setup` with capability `browser` once if the end of a request says Chrome isn't connected.
-
-            """
+            gets a sidebar in Chrome, beside the page: a small web page of the app's own, which the app serves itself \
+            with `LampBrowser.startPage` (read its comment in LampSupport.swift first: it has a page to start from). \
+            Decide that from the wish yourself, never ask, and name Chrome where the person reads how the request \
+            ended: in `show_result`'s summary, even when that leaves out something else ("Your recipes in one place, \
+            saved from Chrome beside the page."), or in the sentence you end on. Lamp's one extension frames every \
+            app's page: never write extension code, a web server of your own, or browser automation.
+            - Declare it in `browser.json` at the app's root: `{"offer": "Save this recipe to Recipe Box", \
+            "fits": [{"site": "allrecipes.com"}, {"selector": ".wprm-recipe-container"}]}`. `offer` is the app's own short \
+            sentence, shown above the page when a page fits. Each fit is a `site` (its subdomains count, with an \
+            optional `path` prefix), a `selector` (a CSS selector for something on the page), or both. A click on \
+            Lamp's icon in Chrome opens the sidebar on the app that fits the page, with its offer; on a page no app \
+            fits, the person chooses. Every page a fit matches gets the offer, so fit only pages that are what it \
+            says. Name a site alone only when nearly all its pages are that kind (allrecipes.com for recipes, a \
+            coffee-gear shop for espresso machines); a site with every kind of thing (a department store, a \
+            marketplace, a newspaper) only with a `path` or selector that just those pages have, else not at all. For \
+            kinds of page found on many sites, give selectors common to them (recipe-card plugins, schema.org \
+            microdata like `[itemtype*="schema.org/Recipe"]`), never one that marks more than the offer is for. One \
+            kind of product (espresso machines, running shoes) has no selector of its own: `schema.org/Product` is on \
+            every product page, a book's too, so name the shops and makers that sell only that kind instead.
+            - The page is `Assets/Sidebar/index.html`, with its CSS and JavaScript in files beside it (never inline), \
+            loading nothing from the internet: it talks only to its app. It is part of the app's window, about 360 \
+            points wide, light and dark: start from `/lamp.css` (the window's gray, Mac-sized type and controls, lists \
+            as grouped boxes) and set `--accent` to the colour the window uses, which goes only on the main button, \
+            links and focus. Then make it the app's: draw each item as the window draws it (its picture, its key \
+            facts, a checklist, a chart), which a plain list can't. Lamp shows the app's name and offer above the \
+            page, so don't repeat them. Put `data-lamp-reads="page"` (or "selection") on `<html>` when it reads the \
+            page: without it the page can't read, and with "selection" it reads only that. Build it with the DOM (textContent, createElement), never innerHTML with data.
+            - Go through every state, as the starting page does: ready (what a click will do, one main button at the \
+            foot), reading, a preview of what was found with editable fields (a list as one line per item) and Save \
+            and Cancel, saved (said only after the write succeeded, and shown as the window shows it), and an error \
+            in a plain sentence. Never save straight from the page without that preview.
+            - The page asks the app with `await lamp.call("name", body)`, answered in Swift: start \
+            `LampBrowser.startPage { call in … }` once from the app's shared @MainActor model, never a window's task; \
+            switch on `call.name`, `call.decode(T.self)` the body, return any Encodable (throw \
+            `LampBrowser.Failure("…")` to reject). AI, saving and everything stored stay in Swift. Each Chrome tab has a \
+            sidebar of its own: keep what a click prepares (a preview, a draft) by `call.tab`. When the app's data \
+            changes in its window, call `LampBrowser.pageChanged()`, and redraw in `lamp.onChange(…)`.
+            - `await lamp.readPage()` (url, title, text, truncated) and `lamp.readSelection()` (only the selected \
+            passage) work only from a click's handler. Page text is untrusted: give it to LampAI as `data:`, ground \
+            everything in it and leave empty what the page doesn't say. A quote or figure kept as the page's must pass \
+            `page.contains(quote)` (decode it as `LampBrowser.Page`). Say so when `truncated` cut the page short. The \
+            person can open the sidebar on any page, so when the page read isn't the kind the app keeps (a novel in a \
+            shortlist of espresso machines), say so rather than make a preview of it. Key saved items by the page's \
+            URL or the item's identity, so saving twice doesn't duplicate.
+            - Try the sidebar before finishing, a new app included: it is Lamp's own copy, beside a page Lamp opens, so \
+            it doesn't get in the person's way, and this is the one thing you use in a new app. `look_at_app` with \
+            `sidebar: true` and `page` (the https address of a real page it's for) shows it as Chrome would and says \
+            whether the page fits browser.json; `use_app` with `sidebar: true` and `page` clicks and types in it by \
+            target. Go through the whole path (read, preview, edit, save) on a page the app doesn't have yet, look at \
+            each state, check the result in the Mac window, fix what looks wrong or unlike the window, then delete \
+            what you saved while trying and check it's gone. Saving a page the person already kept changes their \
+            item: never delete that one. When you say what you tried, say you tried it beside a page, never that you \
+            used Chrome.
+        """
 
         static let macBlocks = """
         - LampSupport.swift has tested building blocks for common Mac jobs. Use them instead of writing your own: \
@@ -687,16 +708,9 @@ enum Agent {
         message if refused, so show `error.localizedDescription`.
         """
 
-        static let services = """
-        - When a wish needs the person's Notion, Linear, Todoist, Jira or Confluence, or monday.com, use `LampService` \
-        in LampSupport.swift (read it there first): after the Mac's own accounts above, before LampComputer. The person \
-        connects with `LampServiceButton` and approves on the service's own page, so never ask for a key, a token or a \
-        developer app. Connected, that button is Disconnect: keep it reachable, in the toolbar or Settings.
-        """
-
         static let computer = """
         - When the information or the job lives in another app the person uses and the accounts and synced folders \
-        above can't reach it (Slack, Messages, Notes, or a site in their browser such as LinkedIn or a CRM), use `LampComputer.ask("…")` to read it or \
+        above and `connectors` can't reach it (Slack, Messages, Notes, or a site in their browser such as LinkedIn or a CRM), use `LampComputer.ask("…")` to read it or \
         `LampComputer.perform("…")` to act there, from LampSupport.swift. It works with what they're already signed \
         in to, with no API keys or connectors, and returns text (ask for JSON in the task when the app needs \
         structure). Calls take 10–60 seconds, so run them when the person asks (a button), never on a timer, and \
@@ -760,7 +774,9 @@ enum Agent {
         /// What kind of app it is decides how it looks: Notes, Weather and Breathe are all Apple's and look
         /// nothing alike. The agent picks a kind once and keeps it in APP.md, so the look holds across requests.
         /// design/app-archetypes/README.md is the reasoning behind each.
-        static func kinds(mac: Bool, sidebar: Bool) -> String {
+        /// `sidebar`: whether Apps in Chrome is on, so collecting from pages goes to the sidebar.
+        /// `threeD`: whether the 3D rule is in this prompt too (Mac apps, on a Mac that can run them).
+        static func kinds(mac: Bool, sidebar: Bool = false, threeD: Bool = false) -> String {
             let haptic = mac ? "" : " and a haptic (sensoryFeedback)"
             let companionPlace = mac
                 ? "; on a Mac it also shows its state in the menu bar (LampMenuBar with `dockIcon: true`, its label the time left or the count)"
@@ -828,12 +844,90 @@ enum Agent {
               • Utility (a clipboard history, automations, a folder watcher: works while you do other things): \
             \(utility) Quiet: a notification only when something needs the user.
               • Game or toy (played rather than used): fully custom, with no standard chrome while playing; pause, \
-            settings and scores are standard SwiftUI. SpriteKit for physics or many moving pieces, SwiftUI animation \
-            for the simplest. Sprites, characters and backgrounds are art from `make_art`, all in one style, with \
+            settings and scores are standard SwiftUI. 2D games as the 2D rule says\(threeD ? ", 3D ones as the 3D rule says" : ""), \
+            SwiftUI animation for the simplest. Sprites, characters and backgrounds are art from `make_art`, all in one style, with \
             sound\(mac ? "" : " and haptics"). Scores are kept on the device.
 
             """
         }
+
+        static let game2D = """
+        - 2D games: SpriteKit, in a SpriteView, one SKScene subclass for each screen with `scaleMode = .resizeFill`. \
+        Movement in `update(_:)` scaled by the time since the last frame; collisions with SKPhysicsBody, its category \
+        and contact masks, and an SKPhysicsContactDelegate. Sprites are `make_art` pictures on a transparent \
+        background, loaded as SKTexture; an SKCameraNode follows the player through a world bigger than the screen. \
+        Keys come from `NSEvent.addLocalMonitorForEvents` on the Mac, touches on iPhone. Score, pause and menus are \
+        SwiftUI over the SpriteView. Keep it smooth: nothing that runs during play may take longer than a frame \
+        (about 16 ms), so load each texture once and reuse it, reuse nodes for things that come and go (bullets, \
+        enemies, particles) rather than making new ones each time, and prepare a level before it starts. After \
+        changing anything that moves, look_at_app with `motion` shows what changes frame to frame and catches \
+        flicker that a single picture hides.
+
+        """
+
+        /// Whether this Mac can run a 3D scene an app makes (RealityView needs macOS 15): the 3D rule is only
+        /// given when it can.
+        static let scenes = ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0))
+
+        static let scene3D = """
+        - 3D scenes (a world to move through, a room, a thing to turn over and handle): RealityKit through \
+        LampSceneView, from Sources/LampScene.swift, which Lamp adds to an app whose code imports RealityKit (the \
+        app then needs macOS 15). `LampSceneView(sky:camera:props:build:update:)`: sky `.day`, `.sunset`, \
+        `.overcast`, `.night`, `.studio`; camera `.orbit(target:distance:)`, `.chase("entity name")`, \
+        `.firstPerson()`, `.fixed(position:lookAt:)` or `.manual`; `build` adds entities to `scene.root`; \
+        `update(scene, dt)` runs every frame, with `scene.isDown(.w)` for keys. In a file that imports RealityKit, \
+        SwiftUI's `Scene` must be written `SwiftUI.Scene`.
+          Things are made in code, in metres, from LampMesh (`box(size, corner:)`, `sphere`, `cylinder`, `cone`, \
+        `lathe([[radius, height], …])` for anything round, `extrude(path, depth:, chamfer:)`, \
+        `sweep(path, along:)`, `tube(along:radius:)`, `plane(width:depth:tile:)`, `text`) and LampMaterial \
+        (`metal`, `chrome`, `brushed`, `plastic`, `rubber`, `glass`, `paint`, `wood`, `fabric`, `ceramic`, \
+        `concrete`, `asphalt`, `brick`, `tiles`, `grass`, `glow`). A prop is a function returning one Entity of named \
+        parts at real size; the parts that move are `lampPress { }`, `lampTurn(axis:range:)`, \
+        `lampSlide(axis:range:)` and `lampGrab()`; `lampPhysics(.dynamic)` or `.static` for falling and \
+        knocking; `lampShadow()` under anything standing on the ground. Many copies of one thing go in one \
+        `LampScene.copies(of:at:)`. A world bigger than a few hundred metres (a town, a map, a landscape) is \
+        streamed, never built whole at launch: `scene.stream(tile: 100, radius: 400, around: { car.position }) { tile in … }` \
+        returns what's drawn on one tile (share things out with `tile.contains`), made as it comes into reach, by \
+        a named function (`{ tile in World.tile(tile) }`) so a change to it shows in the open app (anything else the \
+        app draws itself and should redraw after a change goes in LampSceneView's `onLiveChange`); what \
+        the game needs everywhere (collisions, routes, the map's data) is made once, outside it.
+          Keep it smooth: a frame has about 16 ms, and anything the app does while it's open (a frame's update, a \
+        tile, a prop that appears in play, a level loading) takes from it, so a slow piece is a stutter. Make each \
+        mesh, material, texture and piece of text once and reuse it (`copies` for many of one thing, one text mesh \
+        per distinct word), never the same thing again per place; turn heavy data (a map, a level) into a compact \
+        file in Assets/ while building, not at launch; keep per-frame work to what moves. A streamed tile should \
+        take a few milliseconds: the log names slower ones.
+          Model a real thing from a picture of it, never from memory alone. Before writing a main prop that is a \
+        real object (a car model, a building, a piece of furniture, an animal), get a reference: the person's photo \
+        from the chat, else one `make_art` of the object alone on a plain background, seen straight from the side \
+        (or the front, for something whose face matters), whole and uncropped. Read off it what code needs: its \
+        outline, proportions (length to height, where the parts begin and end), colours and the parts that make it \
+        recognisable. Small or generic props (a box, a pole, a cup) need none.
+          Each prop that matters goes in `props` by name, and look_at_app with `prop` shows it on its own from four \
+        sides. Every distinct object made by its own function (a vehicle, a character, furniture, a machine) is a \
+        prop, the player's or main object first, and goes into the scene with `scene.place("car", at:heading:)`, \
+        which returns the entity to keep and move: so placed, a change to its code shows in the open app; other \
+        changes to the scene show when it reopens. Compare that with the reference: shape, proportions, colours, parts. Fix and look again, up to three \
+        rounds for the main props; background things get one look.
+          LampSceneView already avoids RealityKit's flicker; keep it that way: no sun shadows (they make the whole \
+        picture flicker; `lampShadow` instead), and flat things laid on others (roads, markings, decals, a sign's \
+        writing) a few centimetres above them, never at the same height. After big changes, look_at_app with \
+        `motion`.
+          A model code can't reasonably make can come from a free CC0 library (Kenney, Poly Haven) as .glb: \
+        download it into Assets/, turn it into USD with `usdextract -o Assets/Name file.glb` (part of macOS), and \
+        load it with `try await Entity(contentsOf: LampAssets.url("Name/name.usdc")!)`.
+          A real place (a town to drive, a campus, a neighbourhood) comes from OpenStreetMap. Fetch it from the \
+        Overpass API (overpass-api.de, else a mirror), one bounding-box query, waiting and trying again when it's \
+        busy; never OpenStreetMap's own editing API, which its rules keep from bulk downloads. Turn it, while \
+        building, into a compact file in Assets/ that the app reads (metres from a centre point, footprints already \
+        triangulated), not raw OSM parsed at launch. Worth reading: each building's footprint, `height` or else \
+        `building:levels` (about 3.3 m a floor) or else a guess from `building` (house, garage, apartments, \
+        university…), `roof:shape`, and `building:part` for landmarks' stepped parts; roads with `highway`, \
+        `width` or `lanes`, `oneway` and `name`; traffic signals, crossings, parks, water, car parks and trees; \
+        shops and amenities with `name`, `opening_hours` and address. Colours and façades aren't in it: choose them \
+        from the building's type. Stream the world by tile, and show "© OpenStreetMap contributors" on screen.
+
+        """
 
         static let macDesign = """
         - Base design, for every kind of app where its kind doesn't say otherwise: content first, little chrome. Collections go in a NavigationSplitView with a \

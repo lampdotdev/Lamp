@@ -188,6 +188,9 @@ private struct Chat: View {
                         ForEach(state.lines) { line in
                             LineView(line: line, busy: state.busy).padding(.top, line.gap).id(line.id)
                         }
+                        if let change = state.undoChange {
+                            ChatLook.UndoChange { link.send(.undoChange(change)) }.padding(.top, 12)
+                        }
                         if let working = state.working, let since = state.workingSince {
                             ChatLook.ActivityLine(working, started: since).padding(.top, 12)
                         }
@@ -197,6 +200,7 @@ private struct Chat: View {
                         ForEach(state.queued ?? []) { message in
                             ChatLook.QueuedRow(text: message.text, waitingForSetup: state.waitingForSetup ?? false,
                                                onRemove: { link.send(.unqueue(message.id)) }) {
+                                if let pointed = message.pointed { PointedPill(pointed: pointed) }
                                 ForEach(message.attachments.indices, id: \.self) { index in
                                     AttachmentChip(attachment: message.attachments[index])
                                 }
@@ -224,6 +228,7 @@ private struct Chat: View {
                 .onChange(of: state.lines.last?.text) { follow(scroller) }
                 .onChange(of: state.working) { follow(scroller) }
                 .onChange(of: state.queued?.count) { follow(scroller) }
+                .onChange(of: state.undoChange) { follow(scroller) }
                 // Once the lines are laid out: scrolled before then, the chat opens partway up.
                 .onAppear {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -280,6 +285,10 @@ private struct LineView: View {
                              sendAgain: line.canSendAgain == true ? { link.send(.takeBack(line.id)) } : nil,
                              isLatest: line.isLatest ?? false) {
                 let attachments = line.attachments ?? []
+                // What was pointed at keeps its pill; its picture counts after the other files.
+                if let pointed = line.pointed {
+                    PointedPill(pointed: pointed, preview: { link.send(.preview(line.id, attachments.count)) })
+                }
                 ForEach(attachments.indices, id: \.self) { index in
                     // A click shows it in Quick Look, as in Lamp's window.
                     Button { link.send(.preview(line.id, index)) } label: {
@@ -387,6 +396,18 @@ private struct Thumbnail: View {
     }
 }
 
+/// What was pointed at, as Lamp's window shows it.
+private struct PointedPill: View {
+    let pointed: SidebarPointed
+    var chooseAgain: (() -> Void)?
+    var preview: (() -> Void)?
+    var remove: (() -> Void)?
+
+    var body: some View {
+        ChatLook.PointedPill(title: pointed.title, detail: pointed.detail, chooseAgain: chooseAgain, preview: preview, remove: remove)
+    }
+}
+
 /// An attachment as Lamp's window shows it in a chip.
 private struct AttachmentChip: View {
     let attachment: SidebarAttachment
@@ -458,6 +479,12 @@ private struct ComposerRow: View {
                      isEnabled: true, focusRequest: focus, onSubmit: submit, onFiles: attach)
                 .frame(height: height)
         } above: {
+            if let pointed = state.pointed {
+                // Its picture counts after the other files (`SidebarState.pointed`).
+                PointedPill(pointed: pointed, chooseAgain: pointed.canChooseAgain == true ? { link.send(.pointAgain) } : nil,
+                            remove: { link.send(.removeAttachment(state.attachments.count)) })
+                    .padding(.top, 4)
+            }
             if !state.attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -496,7 +523,7 @@ private struct ComposerRow: View {
 
     /// As in Lamp's window: not while a message is on its way in, and a request sent again can't wait behind a turn.
     private var canSend: Bool {
-        (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !state.attachments.isEmpty)
+        (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !state.attachments.isEmpty || state.pointed != nil)
             && state.submitting != true && !(state.replacing == true && state.busy)
     }
 
