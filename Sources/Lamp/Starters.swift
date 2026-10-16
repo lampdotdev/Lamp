@@ -4,8 +4,8 @@ import LampSidebarKit
 /// The wishes Lamp comes with: working apps on a new person's desk from the start, to use as they are and to
 /// change into their own, which shows what Lamp does better than a question about what to make. Each is a
 /// folder in Resources/Starters: the app's code (Sources/, Widget/), APP.md for the agent that changes it,
-/// icon.json, about.json, capabilities.json when it needs one, and starter.md, which is Lamp's: the wish's name
-/// and what the sidebar offers to change first. They're copied once, on the first launch, and from then on
+/// icon.json, about.json, capabilities.json when it needs one, preview.png (the picture the desk shows on hover),
+/// and starter.md, which is Lamp's: the wish's name and what the sidebar offers to change first. They're copied once, on the first launch, and from then on
 /// they're the person's like any other wish; a later Lamp with other starters gives those only to new people.
 /// `scripts/check-starters.sh` type-checks them against this checkout's LampSupport.swift.
 enum Starters {
@@ -47,6 +47,15 @@ enum Starters {
     /// set up pictures in the chat of an app the person hasn't asked anything of yet.
     static func isStarter(_ project: LampProject) -> Bool {
         FileManager.default.fileExists(atPath: file(of: project).path)
+    }
+
+    /// The picture a starter shipped with, for one copied before starters had pictures, or whose own was lost: found
+    /// by the name in its starter.md, which stays the starter's even when the app is renamed.
+    static func shippedPreview(of project: LampProject) -> URL? {
+        guard let name = starter(of: project)?.name,
+              let shipped = bundled.first(where: { $0.name == name })?.folder.appendingPathComponent("preview.png"),
+              FileManager.default.fileExists(atPath: shipped.path) else { return nil }
+        return shipped
     }
 
     /// The first time a starter is used, once: true then and never again. A starter that opens no window (the
@@ -189,5 +198,12 @@ enum Starters {
         }
         let spec = icon.appendingPathComponent("icon.json")
         if fm.fileExists(atPath: spec.path) { try fm.copyItem(at: spec, to: drawnFrom(project)) }
+        // A picture of it for the desk, since it's built out of sight and nobody has opened it yet: its first
+        // launch replaces it.
+        let preview = starter.folder.appendingPathComponent("preview.png")
+        if fm.fileExists(atPath: preview.path) {
+            try? fm.createDirectory(at: Runtime.macFolder(project), withIntermediateDirectories: true)
+            try? fm.copyItem(at: preview, to: Runtime.previewURL(project))
+        }
     }
 }

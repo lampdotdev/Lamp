@@ -233,12 +233,22 @@ desk doesn't say it has a question and using it still opens it. Each
 folder holds the app's code, APP.md (which the agent reads first, so it knows the app it's changing), icon.json
 (a symbol icon: Lamp paints no art for a starter, which would offer to set up pictures in its chat), the icon drawn
 from it in icon/ (`StarterIconsTests` draws them again, with Xcode set up for the Liquid Glass one), so the desk
-shows them at once and Lamp draws one again only once its icon.json changes (`Starters.hasShippedIcon`), and
-starter.md, Lamp's own: the wish's name and what its chat offers to change first, a line and three changes, each
+shows them at once and Lamp draws one again only once its icon.json changes (`Starters.hasShippedIcon`),
+preview.png, a picture of its window that the desk shows in place of its headline while the pointer is on the icon (`WishStage`; every
+Mac app saves a fresh one at each launch, `LampRuntime.preview`, and Lamp takes one of the simulator for an iPhone
+app, both at `Runtime.previewURL`), and starter.md, Lamp's own: the wish's name and what its chat offers to change first, a line and three changes, each
 with its tile's symbol (`- drop: Add a water counter`): changes the app doesn't do already, that the agent can make in
 one request with no key, account or pictures to draw. They
 are Mac apps that need no key or account, use the AI the person builds with when they use any, and come with
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
+
+**A starter added or changed in how it looks ships a new preview.png in the same change** (`StartersTests` fails
+without one). Take it from the app itself, not a mock-up: open the starter's build in Lamp Dev with its chat closed,
+and once its window has settled its `.lamp/runtime/preview.png` is the picture (the app writes it at each launch,
+without Lamp's chat). Shrink it to at most 800 px on the long side (`sips -Z 800`) and copy it to
+`Resources/Starters/<folder>/preview.png`. Look at it before committing: example content only, nothing from the Mac
+it was taken on (names, folders, accounts). A starter that opens no window (the menu bar) is pictured with its
+panel open.
 
 ## Two Lamps on one Mac
 

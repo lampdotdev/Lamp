@@ -4916,6 +4916,11 @@ enum Template {
             LampDriver.keepBarPanel()
             let windows = windowsOnScreen
             guard !windows.isEmpty else { return }   // nothing on screen: keep the last pictures
+            // The app's own window, not a dialog or sheet in front of it (a menu bar app's panel when that's all it has):
+            // the desk keeps this picture until the next launch.
+            if !previewTaken, let window = windows.first(where: { !$0.isSheet && !($0 is NSPanel) }) ?? windows.first(where: LampDriver.isBarPanel) {
+                preview(of: window)
+            }
             for index in 0..<3 {
                 let url = folder.appendingPathComponent(index == 0 ? "screenshot.png" : "screenshot-\(index + 1).png")
                 if index < windows.count, let png = picture(of: windows[index]) {
@@ -4931,6 +4936,24 @@ enum Template {
             } else {
                 try? FileManager.default.removeItem(at: text)
             }
+        }
+
+        @MainActor private static var previewTaken = false
+
+        /// The picture Lamp's desk shows when the pointer rests on this app's icon: the first window it shows after
+        /// each launch, without Lamp's chat beside it, so it keeps up with the app as it changes.
+        @MainActor
+        private static func preview(of window: NSWindow) {
+            guard let png = picture(of: window), var image = NSBitmapImageRep(data: png)?.cgImage,
+                  let view = window.contentView?.superview ?? window.contentView, view.bounds.width > 0 else { return }
+            previewTaken = true
+            let chat = LampSidebar.openWidth(in: window)
+            if chat > 0 {
+                let kept = Int((Double(image.width) * (view.bounds.width - chat) / view.bounds.width).rounded())
+                if kept > 40, let cropped = image.cropping(to: CGRect(x: 0, y: 0, width: kept, height: image.height)) { image = cropped }
+            }
+            try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
+                .write(to: folder.appendingPathComponent("preview.png"), options: .atomic)
         }
 
         /// Open windows, frontmost first. A dialog or sheet comes before the window it's attached to: it's
@@ -5724,7 +5747,7 @@ enum Template {
         private static func isDialog(_ window: NSWindow) -> Bool { window.isSheet || window is NSPanel }
 
         /// The panel SwiftUI shows for a MenuBarExtra with the window style.
-        private static func isBarPanel(_ window: NSWindow) -> Bool { String(describing: type(of: window)).contains("MenuBarExtra") }
+        static func isBarPanel(_ window: NSWindow) -> Bool { String(describing: type(of: window)).contains("MenuBarExtra") }
 
         /// The system's open and save panels are drawn by another process, so they can't be clicked from here.
         private static func filePanel(_ panel: NSSavePanel) -> String {
