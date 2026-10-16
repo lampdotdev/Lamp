@@ -170,6 +170,17 @@ enum Template {
         if executable { try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path) }
     }
 
+    /// `writeOwnedFiles` and `writeSupport` away from the main thread, for a turn and a build. Filling in the support
+    /// file's template copies several hundred kilobytes once for each placeholder and asks the system for this Mac's
+    /// network name, which held the main thread, and so the chat, for about a tenth of a second at every agent run.
+    /// Both only read and write the app's own files.
+    static func writeOwnedFilesInBackground(for project: LampProject) async throws {
+        try await Task.detached(priority: .userInitiated) { try writeOwnedFiles(for: project) }.value
+    }
+    static func writeSupportInBackground(for project: LampProject) async throws {
+        try await Task.detached(priority: .userInitiated) { try writeSupport(for: project) }.value
+    }
+
     /// Lamp owns LampSupport.swift and rewrites it before every agent turn and build,
     /// so existing apps pick up helper improvements automatically.
     static func writeSupport(for project: LampProject) throws {
