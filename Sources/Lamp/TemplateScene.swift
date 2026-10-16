@@ -62,7 +62,8 @@ extension Template {
     //  Materials: LampMaterial.metal, chrome, brushed, plastic, rubber, glass, paint, wood, fabric, ceramic,
     //             concrete, asphalt, brick, tiles, grass, glow.
     //  Parts: entity.lampPress { }, lampTurn(axis:range:), lampSlide(axis:range:), lampGrab(), lampPhysics(), lampShadow().
-    //  Many copies of one thing: LampScene.copies(of:at:). A big world: scene.stream(tile:radius:) { tile in … }.
+    //  Many copies of one thing: LampScene.copies(of:at:). A big world: scene.stream(tile:radius:) { tile in … },
+    //  or with prepare: (off the main thread, LampMeshBuilders) and make: (entities, LampMesh.make).
     //  Props: a dictionary of name to a function making the prop; `scene.place(name, at:)` puts one in the scene.
 
     import SwiftUI
@@ -385,6 +386,12 @@ extension Template {
             var radius: Float
             var focus: (@MainActor () -> SIMD3<Float>)?
             var make: @MainActor (LampTile) -> Entity?
+            /// With `prepare`: what's worked out off the main thread for a tile, and what makes its entities from it.
+            var prepare: (@Sendable (LampTile) -> Prepared)?
+            var finish: (@MainActor (LampTile, Prepared) -> Entity?)?
+            var ready: [LampTile: Prepared] = [:]
+            var preparing = Set<LampTile>()
+            var generation = 0
             var built: [LampTile: Entity] = [:]
             /// Built by code a live change has since replaced: made again, and swapped in once made.
             var stale = Set<LampTile>()
@@ -392,6 +399,9 @@ extension Template {
             var first = true
         }
         private var streaming: Streaming?
+        private var streamGeneration = 0
+        /// A tile's plan, worked out off the main thread (nil for an empty tile).
+        struct Prepared: @unchecked Sendable { let plan: Any? }
         private var slowTiles = 0
         private let streamRoot = Entity()
 
@@ -406,7 +416,41 @@ extension Template {
                     make: @escaping @MainActor (LampTile) -> Entity?) {
             for entity in streaming?.built.values ?? [:].values { entity.removeFromParent() }
             if streamRoot.parent == nil { root.addChild(streamRoot) }
-            streaming = Streaming(size: max(size, 1), radius: max(radius, size), focus: around, make: make)
+            streamGeneration += 1
+            streaming = Streaming(size: max(size, 1), radius: max(radius, size), focus: around, make: make, generation: streamGeneration)
+        }
+
+        /// The same, with a tile's work in two steps so the main thread only does what must be done there.
+        /// `prepare` works out what's on a tile (its shapes as filled `LampMeshBuilder`s, where things go,
+        /// what they look like) off the main thread, several tiles at once; it may not touch entities, materials or
+        /// anything of the app's that the main thread changes. `make` then turns that into entities on the main
+        /// thread, which should take a millisecond or two. At launch the nearest tiles are prepared on every core
+        /// together. Have both call named functions, so a live change reaches them.
+        func stream<Plan: Sendable>(tile size: Float = 100, radius: Float = 400, around: (@MainActor () -> SIMD3<Float>)? = nil,
+                                    prepare: @escaping @Sendable (LampTile) -> Plan?,
+                                    make: @escaping @MainActor (LampTile, Plan) -> Entity?) {
+            stream(tile: size, radius: radius, around: around) { _ in nil }
+            streaming?.prepare = { tile in Prepared(plan: prepare(tile)) }
+            streaming?.finish = { tile, prepared in (prepared.plan as? Plan).flatMap { make(tile, $0) } }
+        }
+
+        /// Off the main thread, as many at once as the Mac has cores to spare; the result comes back to `ready`,
+        /// unless the world was streamed anew or remade since.
+        private func startPreparing(_ tile: LampTile, in s: inout Streaming) {
+            guard let prepare = s.prepare else { return }
+            s.preparing.insert(tile)
+            let generation = s.generation
+            Task.detached(priority: .userInitiated) { [weak self] in
+                let result = prepare(tile)
+                await self?.receive(result, for: tile, generation: generation)
+            }
+        }
+
+        private func receive(_ result: Prepared, for tile: LampTile, generation: Int) {
+            guard var s = streaming, s.generation == generation else { return }
+            s.preparing.remove(tile)
+            s.ready[tile] = result
+            streaming = s
         }
 
         /// Whether a tile is built right now.
@@ -437,6 +481,38 @@ extension Template {
                 }
             }
             wanted.sort { $0.1 < $1.1 }
+            if s.prepare != nil {
+                // Prepared tiles: what's ready goes in, nearest first; at the start the nearest are prepared on every
+                // core together before the first frame, and from then on a few at a time off the main thread.
+                let near = Set(wanted.map(\.0))
+                s.ready = s.ready.filter { near.contains($0.key) }
+                if s.first, let prepare = s.prepare {
+                    let first = wanted.filter { $0.1 <= s.radius / 2 && s.ready[$0.0] == nil }.map(\.0)
+                    var results = [Prepared?](repeating: nil, count: first.count)
+                    results.withUnsafeMutableBufferPointer { out in
+                        let slots = LampSlots(base: out.baseAddress!)
+                        DispatchQueue.concurrentPerform(iterations: first.count) { i in slots.base[i] = prepare(first[i]) }
+                    }
+                    for (tile, result) in zip(first, results) { s.ready[tile] = result }
+                }
+                let started = Date(), budget: Double = s.first ? 3 : 0.006
+                for (tile, _) in wanted {
+                    guard let prepared = s.ready.removeValue(forKey: tile) else { continue }
+                    let began = Date()
+                    let entity = s.finish?(tile, prepared) ?? Entity()
+                    note(tile, took: Date().timeIntervalSince(began), step: "make its entities from what was prepared")
+                    install(entity, at: tile, in: &s)
+                    if Date().timeIntervalSince(started) > budget { break }
+                }
+                let spare = max(2, ProcessInfo.processInfo.activeProcessorCount - 2)
+                for (tile, _) in wanted where s.preparing.count < spare && !s.preparing.contains(tile) && s.ready[tile] == nil
+                    && (s.built[tile] == nil || s.stale.contains(tile)) {
+                    startPreparing(tile, in: &s)
+                }
+                s.first = false
+                streaming = s
+                return
+            }
             // At the start, everything within half the reach, before the first frame: one pause while the app opens
             // rather than a stutter once it's moving. After that, nearest first within a few milliseconds a frame.
             let budget: Double = s.first ? 3 : 0.006
@@ -445,38 +521,42 @@ extension Template {
                 if s.first, distance > s.radius / 2 { break }
                 let began = Date()
                 let entity = s.make(tile) ?? Entity()
-                let took = Date().timeIntervalSince(began)
-                // A tile that takes longer than a frame stalls the app however it's scheduled: said in the log, where
-                // the builder sees it, so it can make the tile cheaper (meshes and text made once and reused).
-                if took > 0.02 {
-                    slowTiles += 1
-                    if slowTiles <= 3 { print("LampScene: tile \(tile.x),\(tile.z) took \(Int(took * 1000)) ms to build; a tile should take a few.") }
-                }
-                entity.name = "tile \(tile.x),\(tile.z)"
-                func empty(_ e: Entity) -> Bool { e.children.isEmpty && e.components[ModelComponent.self] == nil }
-                var keepOld = false
-                if let old = s.built[tile] {
-                    // A tile made again after a live change goes in once made, so nothing vanishes meanwhile; and if
-                    // the new code makes nothing where the old made something, the old stays.
-                    s.stale.remove(tile)
-                    if empty(entity) && !empty(old) {
-                        keepOld = true
-                        if !s.warnedEmpty {
-                            s.warnedEmpty = true
-                            print("LampScene: the new code built tile \(tile.x),\(tile.z) empty, so the old one stays. Check what it makes.")
-                        }
-                    } else {
-                        old.removeFromParent()
-                    }
-                }
-                if !keepOld {
-                    streamRoot.addChild(entity)
-                    s.built[tile] = entity
-                }
+                note(tile, took: Date().timeIntervalSince(began), step: "build")
+                install(entity, at: tile, in: &s)
                 if Date().timeIntervalSince(started) > budget { break }
             }
             s.first = false
             streaming = s
+        }
+
+        /// A tile that takes longer than a frame stalls the app however it's scheduled: said in the log, where the
+        /// builder sees it, so it can make the tile cheaper (meshes and text made once and reused, or the work moved
+        /// to `prepare`).
+        private func note(_ tile: LampTile, took: TimeInterval, step: String) {
+            guard took > 0.02 else { return }
+            slowTiles += 1
+            if slowTiles <= 3 { print("LampScene: tile \(tile.x),\(tile.z) took \(Int(took * 1000)) ms to \(step); a tile should take a few.") }
+        }
+
+        /// A tile's new entity in the world, in place of what was there.
+        private func install(_ entity: Entity, at tile: LampTile, in s: inout Streaming) {
+            entity.name = "tile \(tile.x),\(tile.z)"
+            func empty(_ e: Entity) -> Bool { e.children.isEmpty && e.components[ModelComponent.self] == nil }
+            if let old = s.built[tile] {
+                // A tile made again after a live change goes in once made, so nothing vanishes meanwhile; and if
+                // the new code makes nothing where the old made something, the old stays.
+                s.stale.remove(tile)
+                if empty(entity) && !empty(old) {
+                    if !s.warnedEmpty {
+                        s.warnedEmpty = true
+                        print("LampScene: the new code built tile \(tile.x),\(tile.z) empty, so the old one stays. Check what it makes.")
+                    }
+                    return
+                }
+                old.removeFromParent()
+            }
+            streamRoot.addChild(entity)
+            s.built[tile] = entity
         }
 
         /// Makes every built tile again, nearest first, each swapped in once it's made, so the world never goes blank. After a live change, the new code
@@ -485,6 +565,11 @@ extension Template {
         func restream() {
             guard var s = streaming else { return }
             s.stale = Set(s.built.keys)
+            // What was being prepared, or is ready, came from the code before: prepared again.
+            streamGeneration += 1
+            s.generation = streamGeneration
+            s.ready = [:]
+            s.preparing = []
             streaming = s
         }
 
@@ -805,7 +890,13 @@ extension Template {
                 image = CGImageSourceCreateImageAtIndex(source, 0, nil)
             }
             let c = colors
-            if let sky = try? await EnvironmentResource(equirectangular: image ?? LampSky.panorama(c, sun: sun)) {
+            let drawn: CGImage
+            if let image { drawn = image } else {
+                // The sky drawn once for its colours and sun, off the main thread, and kept for the next launch.
+                let key = "sky-" + [c.zenith, c.horizon, c.ground, c.sun, sun].map { "\($0.x),\($0.y),\($0.z)" }.joined(separator: ";") + "-\(c.strength)"
+                drawn = await Task.detached(priority: .userInitiated) { LampTexture.stored(key) { LampSky.panorama(c, sun: sun) } }.value
+            }
+            if let sky = try? await EnvironmentResource(equirectangular: drawn) {
                 content.environment = .skybox(sky)
                 // The sky lights everything, which on its own washes a scene out: turned down so the sun shapes it.
                 let light = Entity()
@@ -820,9 +911,9 @@ extension Template {
             content.add(sunlight)
         }
 
-        private static func panorama(_ c: (zenith: SIMD3<Float>, horizon: SIMD3<Float>, ground: SIMD3<Float>, sun: SIMD3<Float>, strength: Float),
+        nonisolated fileprivate static func panorama(_ c: (zenith: SIMD3<Float>, horizon: SIMD3<Float>, ground: SIMD3<Float>, sun: SIMD3<Float>, strength: Float),
                                      sun: SIMD3<Float>) -> CGImage {
-            LampTexture.draw(1024, 512) { u, v in
+            LampTexture.drawInParallel(1024, 512) { u, v in
                 let phi = (0.5 - v) * .pi, lam = u * 2 * .pi - .pi
                 let dir = SIMD3<Float>(cos(phi) * sin(lam), sin(phi), -cos(phi) * cos(lam))
                 var col: SIMD3<Float>
@@ -841,6 +932,13 @@ extension Template {
     enum LampMesh {
         /// A box centred on its middle. Square-edged, its texture is laid on in metres, so a brick wall's bricks are
         /// brick-sized however long the wall; with rounded corners (`corner`, for props) each face holds one copy.
+        /// Meshes shaped off the main thread (`LampMeshBuilder`s filled in a stream's `prepare`), made on it as one
+        /// mesh with a part for each builder.
+        static func make(_ builders: [LampMeshBuilder]) -> MeshResource? {
+            let descriptors = builders.compactMap { $0.descriptor() }
+            return descriptors.isEmpty ? nil : try? MeshResource.generate(from: descriptors)
+        }
+
         static func box(_ size: SIMD3<Float>, corner: Float = 0) -> MeshResource {
             guard corner <= 0 else { return .generateBox(size: size, cornerRadius: corner) }
             var b = LampMeshBuilder()
@@ -957,7 +1055,7 @@ extension Template {
     }
 
     /// Builds a mesh from triangles, for shapes RealityKit doesn't make.
-    struct LampMeshBuilder {
+    struct LampMeshBuilder: Sendable {
         var positions: [SIMD3<Float>] = []
         var normals: [SIMD3<Float>] = []
         var uvs: [SIMD2<Float>] = []
@@ -974,15 +1072,19 @@ extension Template {
             indices += [base, base + 1, base + 2, base, base + 2, base + 3]
         }
 
-        func mesh() -> MeshResource? {
+        /// The shape as RealityKit describes a mesh. A builder is plain numbers, so it can be filled on any thread
+        /// (in a stream's `prepare`) and handed to the main thread, where `LampMesh.make` turns it into a mesh.
+        func descriptor() -> MeshDescriptor? {
             guard !indices.isEmpty else { return nil }
             var d = MeshDescriptor()
             d.positions = MeshBuffers.Positions(positions)
             d.normals = MeshBuffers.Normals(normals)
             d.textureCoordinates = MeshBuffers.TextureCoordinates(uvs)
             d.primitives = .triangles(indices)
-            return try? MeshResource.generate(from: [d])
+            return d
         }
+
+        func mesh() -> MeshResource? { descriptor().flatMap { try? MeshResource.generate(from: [$0]) } }
     }
 
     // MARK: - Materials
@@ -998,7 +1100,7 @@ extension Template {
         /// Brushed steel or aluminium: fine streaks along the texture's width.
         static func brushed(_ color: NSColor = NSColor(white: 0.75, alpha: 1), repeat r: Float = 1) -> PhysicallyBasedMaterial {
             var m = base(color, rough: 0.3, metal: 1, texture: LampTexture.brushed, repeat: r)
-            m.roughness = .init(texture: .init(LampTexture.cached("brushed-rough") { LampTexture.gray(LampTexture.brushedRough) }, sampler: LampTexture.sampler))
+            m.roughness = .init(texture: .init(LampTexture.cached("brushed-rough") { LampTexture.stored("brushed-rough") { LampTexture.gray(LampTexture.brushedRough) } }, sampler: LampTexture.sampler))
             return m
         }
         static func plastic(_ color: NSColor, gloss: Float = 0.5) -> PhysicallyBasedMaterial { base(color, rough: 0.65 - gloss * 0.5) }
@@ -1057,7 +1159,7 @@ extension Template {
 
         private static func base(_ color: NSColor, rough: Float, metal: Float = 0, texture: String? = nil, repeat r: Float = 1) -> PhysicallyBasedMaterial {
             var m = PhysicallyBasedMaterial()
-            let tex = texture.map { name in MaterialParameters.Texture(LampTexture.cached(name) { LampTexture.named(name) }, sampler: LampTexture.sampler) }
+            let tex = texture.map { name in MaterialParameters.Texture(LampTexture.cached(name) { LampTexture.stored(name) { LampTexture.named(name) } }, sampler: LampTexture.sampler) }
             m.baseColor = .init(tint: color.usingColorSpace(.sRGB) ?? color, texture: tex)
             m.roughness = .init(floatLiteral: rough)
             m.metallic = .init(floatLiteral: metal)
@@ -1068,7 +1170,7 @@ extension Template {
         /// Colour detail and a matching bumpiness (a normal map from the same height field).
         private static func detailed(_ tint: NSColor, rough: Float, color: String, height: String, repeat r: Float) -> PhysicallyBasedMaterial {
             var m = base(tint, rough: rough, texture: color, repeat: r)
-            m.normal = .init(texture: .init(LampTexture.cached(height + "-normal", semantic: .normal) { LampTexture.normalMap(height) }, sampler: LampTexture.sampler))
+            m.normal = .init(texture: .init(LampTexture.cached(height + "-normal", semantic: .normal) { LampTexture.stored(height + "-normal") { LampTexture.normalMap(height) } }, sampler: LampTexture.sampler))
             return m
         }
     }
@@ -1097,18 +1199,18 @@ extension Template {
 
         static func named(_ name: String) -> CGImage {
             switch name {
-            case brushed: return draw(512, 512) { u, v in let s = 0.85 + 0.15 * fbm(u * 2, v * 160, seed: 3); return [s, s, s, 1] }
-            case wood: return draw(512, 512) { u, v in
+            case brushed: return drawInParallel(512, 512) { u, v in let s = 0.85 + 0.15 * fbm(u * 2, v * 160, seed: 3); return [s, s, s, 1] }
+            case wood: return drawInParallel(512, 512) { u, v in
                 let rings = sin((u * 9 + fbm(u * 3, v * 0.6, seed: 7) * 2.5) * 2 * .pi) * 0.5 + 0.5
                 let s = 0.75 + 0.25 * pow(rings, 3) - 0.08 * fbm(u * 40, v * 3, seed: 2)
                 return [s, s * 0.97, s * 0.93, 1] }
-            case weave: return draw(256, 256) { u, v in
+            case weave: return drawInParallel(256, 256) { u, v in
                 let a = sin(u * 64 * .pi), b = sin(v * 64 * .pi)
                 let s = 0.82 + 0.1 * (a * b > 0 ? 1 : -1) + 0.08 * fbm(u * 20, v * 20, seed: 4)
                 return [s, s, s, 1] }
-            case concrete: return draw(512, 512) { u, v in let s = 0.8 + 0.2 * fbm(u * 12, v * 12, seed: 5); return [s, s, s * 0.99, 1] }
-            case speckle: return draw(256, 256) { u, v in let s = 0.75 + 0.25 * fbm(u * 30, v * 30, seed: 6); return [s * 0.95, s, s * 0.9, 1] }
-            default: return draw(512, 512) { u, v in
+            case concrete: return drawInParallel(512, 512) { u, v in let s = 0.8 + 0.2 * fbm(u * 12, v * 12, seed: 5); return [s, s, s * 0.99, 1] }
+            case speckle: return drawInParallel(256, 256) { u, v in let s = 0.75 + 0.25 * fbm(u * 30, v * 30, seed: 6); return [s * 0.95, s, s * 0.9, 1] }
+            default: return drawInParallel(512, 512) { u, v in
                 let h = height(name, u, v)
                 let s = h < 0.5 ? 0.78 : 0.85 + 0.15 * fbm(u * 18, v * 18, seed: 9)
                 return [s, s, s, 1] }
@@ -1116,7 +1218,7 @@ extension Template {
         }
 
         static func gray(_ name: String) -> CGImage {
-            draw(512, 512, gray: true) { u, v in let s = 0.25 + 0.2 * fbm(u * 2, v * 160, seed: 8); return [s, s, s, 1] }
+            drawInParallel(512, 512, gray: true) { u, v in let s = 0.25 + 0.2 * fbm(u * 2, v * 160, seed: 8); return [s, s, s, 1] }
         }
 
         /// Bumps for bricks, tiles, weave and concrete: 1 on the face, 0 in the joints.
@@ -1141,7 +1243,9 @@ extension Template {
             let n = 512
             var h = [Float](repeating: 0, count: n * n)
             for y in 0..<n { for x in 0..<n { h[y * n + x] = height(name, Float(x) / Float(n), Float(y) / Float(n)) } }
-            return draw(n, n) { u, v in
+            let heights = h
+            return drawInParallel(n, n) { u, v in
+                let h = heights
                 let x = Int(u * Float(n)) % n, y = Int(v * Float(n)) % n
                 let dx = h[y * n + (x + 1) % n] - h[y * n + (x + n - 1) % n]
                 let dy = h[((y + 1) % n) * n + x] - h[((y + n - 1) % n) * n + x]
@@ -1169,16 +1273,53 @@ extension Template {
             return (a + (b - a) * sx) + ((c + (d - c) * sx) - (a + (b - a) * sx)) * sy
         }
 
+        /// One of Lamp's own images (its textures, the sky), drawn once and kept in the app's cache folder, so later
+        /// launches read it rather than draw it again. Only Lamp's: an app's own may change while it's open. The
+        /// version is in the folder's name, so images Lamp draws differently are drawn again.
+        nonisolated static func stored(_ key: String, _ make: () -> CGImage) -> CGImage {
+            let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent(Bundle.main.bundleIdentifier ?? "app").appendingPathComponent("lamp-textures-1")
+            let safe = key.map { $0.isLetter || $0.isNumber || $0 == "-" ? String($0) : "_" }.joined()
+            // A long key (the sky's colours) shortened with a hash that's the same at every launch.
+            let hash = key.utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
+            let name = safe.count > 80 ? String(safe.prefix(40)) + "-" + String(hash, radix: 16) : safe
+            let url = folder.appendingPathComponent(name + ".png")
+            if let source = CGImageSourceCreateWithURL(url as CFURL, nil), let image = CGImageSourceCreateImageAtIndex(source, 0, nil) { return image }
+            let image = make()
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            if let out = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) {
+                CGImageDestinationAddImage(out, image, nil)
+                CGImageDestinationFinalize(out)
+            }
+            return image
+        }
+
         /// An image from a function of where in it (u and v from 0 to 1, v down) to RGBA from 0 to 1.
         nonisolated static func draw(_ w: Int, _ h: Int, gray: Bool = false, _ pixel: (Float, Float) -> SIMD4<Float>) -> CGImage {
+            image(w, h, gray: gray, parallel: false, pixel)
+        }
+
+        /// The same, with rows drawn on every core at once: a texture is a few hundred thousand pixels of noise. Only
+        /// for a function that works from u and v alone, keeping nothing between pixels (no random generator, nothing
+        /// it adds to), since it runs on several rows together.
+        nonisolated static func drawInParallel(_ w: Int, _ h: Int, gray: Bool = false, _ pixel: @Sendable (Float, Float) -> SIMD4<Float>) -> CGImage {
+            image(w, h, gray: gray, parallel: true, pixel)
+        }
+
+        nonisolated private static func image(_ w: Int, _ h: Int, gray: Bool, parallel: Bool, _ pixel: (Float, Float) -> SIMD4<Float>) -> CGImage {
             let comps = gray ? 1 : 4
             var data = [UInt8](repeating: 0, count: w * h * comps)
-            for y in 0..<h {
-                for x in 0..<w {
-                    let p = simd_clamp(pixel((Float(x) + 0.5) / Float(w), (Float(y) + 0.5) / Float(h)), .zero, .one) * 255
-                    let i = (y * w + x) * comps
-                    if gray { data[i] = UInt8(p.x) } else { data[i] = UInt8(p.x); data[i + 1] = UInt8(p.y); data[i + 2] = UInt8(p.z); data[i + 3] = UInt8(p.w) }
+            data.withUnsafeMutableBufferPointer { out in
+                let slots = LampSlots(base: out.baseAddress!)
+                func row(_ y: Int) {
+                    let base = slots.base
+                    for x in 0..<w {
+                        let p = simd_clamp(pixel((Float(x) + 0.5) / Float(w), (Float(y) + 0.5) / Float(h)), .zero, .one) * 255
+                        let i = (y * w + x) * comps
+                        if gray { base[i] = UInt8(p.x) } else { base[i] = UInt8(p.x); base[i + 1] = UInt8(p.y); base[i + 2] = UInt8(p.z); base[i + 3] = UInt8(p.w) }
+                    }
                 }
+                if parallel { DispatchQueue.concurrentPerform(iterations: h) { y in row(y) } } else { for y in 0..<h { row(y) } }
             }
             let space = gray ? CGColorSpaceCreateDeviceGray() : CGColorSpace(name: CGColorSpace.sRGB)!
             let info = gray ? CGImageAlphaInfo.none.rawValue : CGImageAlphaInfo.premultipliedLast.rawValue
@@ -1333,5 +1474,9 @@ extension Template {
             content.add(fill)
         }
     }
+
+    /// Where each of a parallel loop's iterations writes its own element: the loop waits for all of them, so the
+    /// buffer outlives every write and no two touch the same place.
+    struct LampSlots<T>: @unchecked Sendable { let base: UnsafeMutablePointer<T> }
     """#
 }
