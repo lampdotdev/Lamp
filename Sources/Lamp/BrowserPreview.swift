@@ -40,7 +40,8 @@ enum BrowserPreview {
                 _ = Store.shared.offerSetup(project, SetupOffer(capability: .browser), because: "\(project.name) also works in Chrome. Connect Lamp to Chrome to use it beside a page.")
             }
             let preview = PagePreview.of(project)
-            if let trouble = await preview.load(project) { return (200, ["text": (notes + [trouble]).joined(separator: "\n\n")]) }
+            // The page as it stands (a preview made, fields typed into) unless the app reopened or its page changed.
+            if preview.needsLoad(project), let trouble = await preview.load(project) { return (200, ["text": (notes + [trouble]).joined(separator: "\n\n")]) }
             return await pageReport(project, notes: notes, what: "The sidebar, drawn as Chrome shows it")
         }
         guard await waitForSidebar(project) else {
@@ -132,7 +133,7 @@ enum BrowserPreview {
         let preview = PagePreview.of(project)
         preview.selection = selection
         preview.page = { pages[project.id] }
-        if !preview.hasLoaded, let trouble = await preview.load(project) { return (200, ["text": trouble]) }
+        if preview.needsLoad(project), let trouble = await preview.load(project) { return (200, ["text": trouble]) }
         let printed = Runtime.logSize(project)
         _ = await preview.text()   // ids for the controls as they are now
         for (index, action) in actions.enumerated() {
@@ -445,7 +446,17 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
     private var loaded: CheckedContinuation<Error?, Never>?
     var page: (() -> PageReader.Page?) = { nil }
     var selection: String?
-    var hasLoaded: Bool { web.url != nil }
+    /// What the page was loaded from: the app's process and its page's files. Either changing means the page shown
+    /// isn't the app's as it is now.
+    private var loadedFrom = ""
+    private static func source(_ project: LampProject) -> String {
+        let pid = Store.shared.macCopies(of: project).first.map { String($0.processIdentifier) } ?? ""
+        let folder = project.dir.appendingPathComponent("Assets/Sidebar")
+        let files = (FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])?.allObjects as? [URL]) ?? []
+        let newest = files.compactMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }.max()
+        return pid + ":" + String(newest?.timeIntervalSince1970 ?? 0) + ":" + String(files.count)
+    }
+    func needsLoad(_ project: LampProject) -> Bool { web.url == nil || loadedFrom != Self.source(project) }
 
     static func of(_ project: LampProject) -> PagePreview {
         if let known = open[project.id] { return known }
@@ -495,7 +506,7 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
             if let error { trouble = error.localizedDescription; continue }
             let asked = Date()
             while !helloed && Date().timeIntervalSince(asked) < 3 { try? await Task.sleep(for: .milliseconds(100)) }
-            if helloed { await settle(); return nil }
+            if helloed { loadedFrom = Self.source(project); await settle(); return nil }
             trouble = "the page there didn't load /lamp.js"
         }
         return "The app's sidebar page didn't load from the app (\(trouble)). Call LampBrowser.startPage once when the app launches, from its shared model, put the page in Assets/Sidebar/index.html, and load /lamp.js first."

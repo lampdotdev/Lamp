@@ -7937,7 +7937,7 @@ enum Template {
         ///       $("main").disabled = true; $("status").textContent = draft ? "Saving…" : "Reading the page…";
         ///       try {
         ///         if (!draft) {
-        ///           draft = await lamp.call("preview", {page: await lamp.readPage()});   // {title, items}
+        ///           draft = await lamp.call("preview", await lamp.readPage());   // {title, items, url}
         ///           $("title").value = draft.title; $("items").value = draft.items.join("\n");
         ///           $("status").textContent = "";
         ///         } else {
@@ -8179,17 +8179,21 @@ enum Template {
             if (!answer || answer.error) throw new Error((answer && answer.error) || 'The page couldn’t be read.');
             return answer.page;
           }
+          // Every second: what changed in the app, and to the sidebar, that the app still answers here (when it
+          // doesn't, the sidebar looks for it again, at whichever of its ports it reopened).
           const watchers = []; let version = null;
           async function poll() {
             try {
               await ready;
               const reply = await fetch('/lamp/version', {headers: {'X-Lamp-Key': key}});
               const value = await reply.json();
+              if (reply.ok && !preview && framer) parent.postMessage({lamp: 'alive'}, framer);
               if (version !== null && value.version !== version) watchers.forEach(f => { try { f(); } catch {} });
               version = value.version;
             } catch {}
             setTimeout(poll, 1000);
           }
+          poll();
           window.lamp = {
             tab, call,
             /// The readable text of the page the person is on: {url, title, text, truncated}. Call it from a click.
@@ -8197,7 +8201,7 @@ enum Template {
             /// Only the passage the person selected on the page. Call it from a click.
             readSelection: () => read('selection'),
             /// Called when the app says what the page shows changed (LampBrowser.pageChanged()).
-            onChange(f) { watchers.push(f); if (watchers.length === 1) poll(); },
+            onChange(f) { watchers.push(f); },
           };
         })();
         """

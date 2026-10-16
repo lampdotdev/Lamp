@@ -154,8 +154,10 @@ function showPage(app) {
     const url = app.page.urls[tried % app.page.urls.length];
     frame.dataset.origin = new URL(url).origin;
     frame.src = url + '#' + new URLSearchParams({tab: tabKey}).toString();
-    readSpent = true;
+    readSpent = true; if (document.activeElement === frame) takeFocusBack();
   }
+  // A page that stopped answering (its app quit, or reopened at another of its ports) is looked for again.
+  if (frameReady && now - lastAlive > 8000) { frameReady = false; pageToken = ''; frameAsked = 0; }
   if (frameReady) { frame.hidden = false; note(info.moved ? 'This tab is on a new page. Click Lamp in Chrome’s toolbar to use it here.' : ''); return; }
   frame.hidden = true;
   if (tried < app.page.urls.length && !opening[app.id]) return;
@@ -163,7 +165,7 @@ function showPage(app) {
   note(lampClosed || (opening[app.id] && now - opening[app.id].at > 30000) ? `Open ${app.name} on your Mac to use it here.` : `Opening ${app.name}…`);
 }
 // What a page may read is what Lamp found its file declares (`page.reads`), never what the page says as it runs, and
-// the consent line says the same. One read per click: a second needs the person to click again.
+// the consent line says the same. One read per click in the page.
 // `nonces`: one per hello still waiting for its proof. `pageToken`: given to the page that proved itself, held only in
 // that page's memory, and asked of every read, so a document that replaced it (it navigated, the app went and
 // another program took its port) can't read on what the app's page proved.
@@ -176,10 +178,14 @@ $('page').addEventListener('load', () => {
   frameReady = false; frameAsked = Date.now();
   $('page').contentWindow.postMessage({lamp: 'prove'}, $('page').dataset.origin);
 });
-setInterval(() => { if (!navigator.userActivation.isActive) readSpent = false; }, 200);
-// A press on the sidebar's own parts (the app menu, the strip) isn't a click in the page: presses inside the frame
-// don't reach this document, so only those leave a read to spend.
+// A click in the page gives one read. Presses inside the frame never reach this document, but the focus moving into
+// the frame does: that is a click (or a tab) into the page, and arms one read. After a read the sidebar takes focus
+// back, so the next click in the page arms the next one. A press on the sidebar's own parts (the app menu, the strip)
+// isn't a click in the page and arms nothing.
+let lastAlive = 0;
+window.addEventListener('blur', () => setTimeout(() => { if (document.activeElement === $('page')) readSpent = false; }));
 for (const kind of ['pointerdown', 'keydown']) document.addEventListener(kind, () => { readSpent = true; }, true);
+function takeFocusBack() { $('top').tabIndex = -1; $('top').focus({preventScroll: true}); }
 const hex = bytes => [...new Uint8Array(bytes)].map(b => b.toString(16).padStart(2, '0')).join('');
 async function proves(app, origin, nonce, proof) {
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(app.page.key), {name: 'HMAC', hash: 'SHA-256'}, false, ['sign']);
@@ -194,6 +200,7 @@ window.addEventListener('message', async event => {
   const answer = value => { if (framed === asker && frame.dataset.origin === origin) frame.contentWindow.postMessage({lamp: 'answer', id: message.id, ...value}, origin); };
   // The page says hello and gets a nonce; it shows the app's signature over it and its port, and only then is it
   // the app's page: another program that took one of the app's ports can't make that, and is passed over.
+  if (message.lamp === 'alive') { if (frameReady) lastAlive = Date.now(); return; }
   if (message.lamp === 'hello') {
     const nonce = crypto.randomUUID();
     nonces.add(nonce); if (nonces.size > 8) nonces.delete(nonces.values().next().value);
@@ -209,16 +216,18 @@ window.addEventListener('message', async event => {
     const reads = app.page.reads, name = app.name;
     $('consent-top').textContent = reads === 'selection' ? `Using a selection shares only that passage with ${name}.`
       : reads === 'page' ? `Using this page shares its text with ${name}.` : '';
-    pageToken = crypto.randomUUID();
+    pageToken = crypto.randomUUID(); lastAlive = Date.now();
     return answer({key: app.page.key, token: pageToken});
   }
   if (message.lamp !== 'read' || !frameReady || !pageToken || message.token !== pageToken) return answer({error: 'Open the app’s sidebar again, then try again.'});
   const reads = app?.page?.reads;
   if (!reads) return answer({error: 'This sidebar doesn’t read pages.'});
   // A click in the frame counts here too (Chrome passes a click's activation up to the frames above it).
-  if (!navigator.userActivation.isActive || readSpent) return answer({error: 'Reading the page needs a click.'});
+  // Refused, the sidebar takes focus back too, so the person's next click in the page arms a read.
+  if (!navigator.userActivation.isActive || readSpent) { takeFocusBack(); return answer({error: 'Reading the page needs a click.'}); }
   readSpent = true;
   try { answer({page: await call({op: 'page-read', scope: reads === 'selection' ? 'selection' : message.scope})}); } catch (e) { answer({error: e.message}); }
+  finally { takeFocusBack(); }
 });
 
 chrome.storage.session.onChanged.addListener(changes => { if (changes[keys.tab]) void refresh(); });

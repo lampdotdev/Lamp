@@ -19,7 +19,7 @@ button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-vis
 body.framed{display:flex;flex-direction:column;height:100vh;--bg:#eff1f2;--line:#dadcde;--ink:#1d1d1f;--muted:#6e6e73;font-size:13px}
 @media (prefers-color-scheme:dark){body.framed{--bg:#1e1f20;--line:#3a3b3d;--ink:#f5f5f7;--muted:#98989d}}
 body.framed #top{padding:12px 16px 9px;border-bottom:1px solid var(--line)}body.framed #chooser{font-size:13px}body.framed #offer{font-weight:500;font-size:12px;margin-top:3px}
-#page{flex:1;width:100%;border:0;background:var(--bg)}#page[hidden]{display:none}
+#top:focus{outline:none}#page{flex:1;width:100%;border:0;background:var(--bg)}#page[hidden]{display:none}
 </style></head><body>
 <div id="top"><div id="chooser"></div><p id="offer" hidden></p><p id="consent-top"></p></div>
 <p id="error" role="alert"></p>
