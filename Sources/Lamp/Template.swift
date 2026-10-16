@@ -3894,7 +3894,11 @@ enum Template {
             guard Date().timeIntervalSince(made) < 600, frame.width > 0, frame.height > 0,
                   NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) }) else { return }
             window.setFrame(frame, display: true)
+            putBackWindow = window
         }
+
+        /// The window put back where the last copy's was, with the chat's width if it had the chat open then.
+        @MainActor static weak var putBackWindow: NSWindow?
 
         /// Pointing at part of the window for Lamp's chat: the named thing under the pointer is outlined, and a
         /// click sends what it is and a picture of it to Lamp; a click where nothing is named (a game's ball, a
@@ -13452,8 +13456,15 @@ enum Template {
             LampSidebar.forget()
             showWindow()
             guard let window else { return }
-            // Once the window is in front and has its wand.
-            DispatchQueue.main.async { MainActor.assumeIsolated { LampSidebar.open(window) } }
+            // Once the window is in front and has its wand. Put back where the copy before a change left it, its
+            // frame already holds the chat.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    let putBack = LampMagic.putBackWindow === window
+                    LampMagic.putBackWindow = nil
+                    LampSidebar.open(window, grow: !putBack)
+                }
+            }
         }
 
         /// Opens the app's Settings scene and brings it in front of other apps, however often it's asked.
@@ -13748,9 +13759,14 @@ enum Template {
                 made.isReleasedWhenClosed = false
                 made.center()
                 window = made
-                // Closed, it takes the chat with it: the app doesn't open as a window with it next time.
-                NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: made, queue: .main) { _ in
-                    MainActor.assumeIsolated { LampSidebar.forget() }
+                // Closed, it takes the chat with it: the app doesn't open as a window with it next time, and the
+                // window, which would still hold the chat, is made afresh when it's next shown.
+                NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: made, queue: .main) { [weak made] _ in
+                    MainActor.assumeIsolated {
+                        guard let made, LampSidebar.isOpen(in: made) else { return }
+                        LampSidebar.forget()
+                        if window === made { window = nil }
+                    }
                 }
                 print("LampMenuBar: the app's menu bar icon is hidden, so its panel opened as a window instead")
             }
