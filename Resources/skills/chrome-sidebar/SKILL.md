@@ -221,7 +221,7 @@ lamp.onMenu(async () => {
     draft = await lamp.call("preview", await lamp.readPage());
     b.textContent = "Saving…";
     const item = await lamp.call("save", draft);
-    draft = null; await show();
+    draft = null; checking(false); await show();
     status(item.name + " saved to My Plants.");
     document.querySelector(`[data-id="${CSS.escape(String(item.id))}"]`)?.focus();
   } catch (e) {

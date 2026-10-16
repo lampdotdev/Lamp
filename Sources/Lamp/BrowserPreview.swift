@@ -145,8 +145,12 @@ enum BrowserPreview {
             }
             if kind == "menu" {
                 // The app's right-click item, chosen as in Chrome: the page's `lamp.onMenu` runs, and may read the page.
-                guard let menu = BrowserCompanions.Declaration.load(project)?.menu else { happened.append("\(number): this app has no right-click item (`menu` in browser.json)."); break }
-                guard pages[project.id] != nil else { happened.append("\(number): give use_app a `page` to choose \"\(menu)\" on."); break }
+                guard let declaration = BrowserCompanions.Declaration.load(project), let menu = declaration.menu else { happened.append("\(number): this app has no right-click item (`menu` in browser.json)."); break }
+                guard let page = pages[project.id] else { happened.append("\(number): give use_app a `page` to choose \"\(menu)\" on."); break }
+                // Only where Chrome would offer it: an address a fit names without a selector.
+                guard let url = URL(string: page.url), declaration.menuFits.contains(where: { $0.fitsAddress(url) }) else {
+                    happened.append("\(number): Chrome doesn't offer \"\(menu)\" on \(page.url); it shows only on \(declaration.menuFits.map { $0.site! + ($0.path ?? "") }.joined(separator: ", "))."); break
+                }
                 let asked = Date()
                 if let trouble = await preview.chooseMenu() { happened.append("\(number): \(trouble)"); break }
                 await preview.settle()

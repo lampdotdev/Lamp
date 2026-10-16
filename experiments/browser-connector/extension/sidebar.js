@@ -180,8 +180,9 @@ async function deliverMenu() {
   menuSeen = menu.at;
   const {menu: _, ...rest} = info; info = rest;
   await chrome.storage.session.set({[keys.tab]: rest});
-  if (info.moved || Date.now() - menu.at > 30000) return;
-  menuRead = {token: pageToken, url: menu.url, until: Date.now() + 15000};
+  // 15 seconds from the click on the item, however long the app took to open its page.
+  if (info.moved || Date.now() >= menu.at + 15000) return;
+  menuRead = {token: pageToken, url: menu.url, until: menu.at + 15000};
   frame.contentWindow.postMessage({lamp: 'menu'}, frame.dataset.origin);
 }
 // Every document the frame loads proves itself again, so a page that replaced the app's (the app gone, another

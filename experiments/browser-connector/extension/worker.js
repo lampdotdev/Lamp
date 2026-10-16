@@ -163,6 +163,7 @@ function openFor(tab, chosen, fromMenu = false) {
   // Opening has to happen inside the click, before anything is awaited, or Chrome refuses it.
   chrome.sidePanel.setOptions({tabId: tab.id, path: `sidebar.html?tab=${tab.id}`, enabled: true});
   chrome.sidePanel.open({tabId: tab.id}).catch(() => {});
+  const chosenAt = Date.now();   // the moment of the click: the item's read is counted from here, not from after the awaits
   (async () => {
     const {apps} = await list().catch(() => ({apps: []}));
     const site = (() => { try { return new URL(tab.url).hostname; } catch { return ''; } })();
@@ -170,7 +171,7 @@ function openFor(tab, chosen, fromMenu = false) {
     let fits = await fitting(tab, apps);
     if (chosen && apps.some(app => app.id === chosen)) fits = [chosen, ...fits.filter(id => id !== chosen)];
     const at = Date.now(), chose = fromMenu && fits[0] === chosen;
-    await chrome.storage.session.set({['tab:' + tab.id]: {fitting: fits, site, origin, at, ...(chose ? {menu: {app: chosen, at, url: tab.url}} : {})}});
+    await chrome.storage.session.set({['tab:' + tab.id]: {fitting: fits, site, origin, at, ...(chose ? {menu: {app: chosen, at: chosenAt, url: tab.url}} : {})}});
   })();
 }
 chrome.action.onClicked.addListener(tab => openFor(tab));
