@@ -136,14 +136,23 @@ chrome.action.onClicked.addListener(tab => {
   (async () => {
     const {apps} = await list().catch(() => ({apps: []}));
     const site = (() => { try { return new URL(tab.url).hostname; } catch { return ''; } })();
-    await chrome.storage.session.set({['tab:' + tab.id]: {fitting: await fitting(tab, apps), site, at: Date.now()}});
+    const origin = (() => { try { return new URL(tab.url).origin; } catch { return ''; } })();
+    await chrome.storage.session.set({['tab:' + tab.id]: {fitting: await fitting(tab, apps), site, origin, at: Date.now()}});
   })();
 });
-// A tab that moves on loses the click's access; its sidebar says to click Lamp again to use the new page.
-chrome.tabs.onUpdated.addListener((tabId, change) => {
+// A tab that moves to another site loses the click's access; its sidebar says to click Lamp again to use the new
+// page. Chrome keeps the access while the tab stays on the same site (a reload, another page there), and once it's
+// gone the tab's address isn't given to the extension at all.
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
   if (change.status !== 'loading') return;
   const key = 'tab:' + tabId;
-  chrome.storage.session.get(key).then(saved => { if (saved[key] && !saved[key].moved) chrome.storage.session.set({[key]: {...saved[key], moved: true}}); });
+  chrome.storage.session.get(key).then(saved => {
+    const info = saved[key];
+    if (!info || info.moved) return;
+    const origin = (() => { try { return new URL(tab?.url).origin; } catch { return ''; } })();
+    if (origin && origin === info.origin) return;
+    chrome.storage.session.set({[key]: {...info, moved: true}});
+  });
 });
 chrome.tabs.onRemoved.addListener(tabId => { chrome.storage.session.remove(['tab:' + tabId, 'draft:' + tabId, 'pick:' + tabId]); });
 
