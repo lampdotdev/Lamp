@@ -819,8 +819,11 @@ enum Agent {
         and contact masks, and an SKPhysicsContactDelegate. Sprites are `make_art` pictures on a transparent \
         background, loaded as SKTexture; an SKCameraNode follows the player through a world bigger than the screen. \
         Keys come from `NSEvent.addLocalMonitorForEvents` on the Mac, touches on iPhone. Score, pause and menus are \
-        SwiftUI over the SpriteView. After changing anything that moves, look_at_app with `motion` shows what \
-        changes frame to frame and catches flicker that a single picture hides.
+        SwiftUI over the SpriteView. Keep it smooth: nothing that runs during play may take longer than a frame \
+        (about 16 ms), so load each texture once and reuse it, reuse nodes for things that come and go (bullets, \
+        enemies, particles) rather than making new ones each time, and prepare a level before it starts. After \
+        changing anything that moves, look_at_app with `motion` shows what changes frame to frame and catches \
+        flicker that a single picture hides.
 
         """
 
@@ -849,10 +852,13 @@ enum Agent {
         returns what's drawn on one tile (share things out with `tile.contains`), made as it comes into reach, by \
         a named function (`{ tile in World.tile(tile) }`) so a change to it shows in the open app (anything else the \
         app draws itself and should redraw after a change goes in LampSceneView's `onLiveChange`); what \
-        the game needs everywhere (collisions, routes, the map's data) is made once, outside it. A tile should take a few \
-        milliseconds to build (the log names any slower one, and each slow tile is a stutter): make each kind of \
-        mesh once and reuse it (`copies`, or one text mesh per distinct word), never rebuilding the same thing per \
-        place.
+        the game needs everywhere (collisions, routes, the map's data) is made once, outside it.
+          Keep it smooth: a frame has about 16 ms, and anything the app does while it's open (a frame's update, a \
+        tile, a prop that appears in play, a level loading) takes from it, so a slow piece is a stutter. Make each \
+        mesh, material, texture and piece of text once and reuse it (`copies` for many of one thing, one text mesh \
+        per distinct word), never the same thing again per place; turn heavy data (a map, a level) into a compact \
+        file in Assets/ while building, not at launch; keep per-frame work to what moves. A streamed tile should \
+        take a few milliseconds: the log names slower ones.
           Model a real thing from a picture of it, never from memory alone. Before writing a main prop that is a \
         real object (a car model, a building, a piece of furniture, an animal), get a reference: the person's photo \
         from the chat, else one `make_art` of the object alone on a plain background, seen straight from the side \
