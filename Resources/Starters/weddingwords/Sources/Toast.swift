@@ -81,6 +81,8 @@ struct ToastView: View {
     }
     @MainActor func assess() async {
         busy = true; error = ""; coach.speech.stop(); defer { busy = false }
+        // The toggle can change while the coach answers: the answer belongs to what was submitted.
+        let full = self.full
         do {
             guard await LampAI.isAvailable(.text) else { error = "Connect AI in Lamp to rehearse with your coach."; return }
             let target = full ? coach.state.lines.map(\.italian).joined(separator: "\n") : coach.state.lines[min(line, coach.state.lines.count - 1)].italian

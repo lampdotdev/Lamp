@@ -53,9 +53,10 @@ struct WeddingState: Codable {
         state.lastPractice = Date(); save(); scheduleNotifications()
     }
     func scheduleNotifications() {
-        for d in 1...60 { LampNotifications.cancel("wedding-\(d)") }
+        for d in 0...60 { LampNotifications.cancel("wedding-\(d)") }
         guard state.reminders, days > 0 else { return }
-        for d in 1...min(days, 60) {
+        // Today's reminder too, while its hour is still ahead: a refresh mustn't skip it.
+        for d in 0...min(days, 60) {
             let base = Calendar.current.date(byAdding: .day, value: d, to: Date())!
             let date = Calendar.current.date(bySettingHour: state.hour, minute: 0, second: 0, of: base)!
             let remaining = Calendar.current.dateComponents([.day], from: base, to: state.wedding).day ?? 0
@@ -64,6 +65,7 @@ struct WeddingState: Codable {
             let quietDays = Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: last), to: Calendar.current.startOfDay(for: date)).day ?? 0
             if quietDays == 2 { body = "Two quiet days? Come back for one sentence. The pasta won’t judge. \(state.phrase)" }
             if remaining <= 21 && d % 2 == 0 { body = "120 guests. One proud sister. Stand up and rehearse your whole toast today." }
+            guard date > Date() else { continue }
             LampNotifications.send("A little Italian for the wedding", body: body, at: date, id: "wedding-\(d)")
         }
     }

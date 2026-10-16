@@ -4,6 +4,8 @@ struct ConversationTurn: Codable, Identifiable {
     var id = UUID()
     let who: String
     let text: String
+    /// Her line in English, for Show English when the conversation is opened again.
+    var english: String? = nil
 }
 struct RoleReply: Decodable {
     let italian: String
@@ -32,7 +34,7 @@ struct PracticeView: View {
                 ForEach(0..<3, id: \.self) { Text(WeddingCoach.milestones[$0]).tag($0) }
             }.pickerStyle(.menu).onChange(of: coach.selected) { _, value in
                 turns = LampStore.load([ConversationTurn].self, from: "conversation-\(value)") ?? []
-                feedback = ""; translation = ""
+                feedback = ""; translation = turns.last?.english ?? ""
                 speech.stop(); speech.stopPlayback(); input = ""
             }.disabled(busy || speech.speaking || speech.listening)
             if busy {
@@ -87,6 +89,7 @@ struct PracticeView: View {
         .task {
             if coach.selected > 2 { coach.selected = coach.weakest < 3 ? coach.weakest : 0 }
             turns = LampStore.load([ConversationTurn].self, from: "conversation-\(coach.selected)") ?? []
+            translation = turns.last?.english ?? ""
         }
         .onDisappear { requestID = UUID(); busy = false; speech.stop(); speech.stopPlayback() }
     }
@@ -102,7 +105,7 @@ struct PracticeView: View {
             let context = "Milestone: \(WeddingCoach.milestones[min(coach.selected, 2)]). Coach confidence: \(coach.state.scores[coach.selected] ?? 0)/5. Mother: \(coach.state.mother). Sister: \(coach.state.sister). Conversation: \(turns.map { $0.who + ": " + $0.text }.joined(separator: "\n"))"
             let result = try await LampAI.ask("Play a fictional warm Italian-speaking mother of Marco at his wedding rehearsal dinner. Family from Naples; use natural standard Italian, no stereotypes or invented personal facts. Speak only Italian in character, short beginner-accessible turns, one question each. Adapt to demonstrated ability and current milestone; gradually reduce scaffolding. If starting, greet the user. Otherwise gently explain one useful correction in English and offer a usable Italian alternative; distinguish transcription uncertainty from language errors. Score this reply’s functional readiness 1–5 (not a completed milestone). Return JSON {italian:String, translation:String, coaching:String, score:Int, phrase:String, meaning:String}. On opening, coaching is a short encouraging English hint. phrase is a useful short Italian phrase for today and meaning its English meaning.", data: context, as: RoleReply.self)
             guard requestID == id else { return }
-            turns.append(ConversationTurn(who: coach.state.mother, text: result.italian))
+            turns.append(ConversationTurn(who: coach.state.mother, text: result.italian, english: result.translation))
             translation = result.translation; feedback = result.coaching
             coach.state.phrase = result.phrase; coach.state.meaning = result.meaning
             if !start { coach.record(coach.selected, score: result.score) } else { coach.save() }
