@@ -22,6 +22,7 @@ struct CountdownWidgetView: View {
                 }
             }
         }
+        .lampWand(edgeToEdge: true)
         .containerBackground(for: .widget) {
             if family == .systemSmall, let first = upcoming.first {
                 colorGradient(first.countdown.tint)

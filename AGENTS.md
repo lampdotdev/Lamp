@@ -494,7 +494,16 @@ width); the app menu's Customize with Lamp… (⇧⌘E) opens it too (`LampSideb
 when the app has no window to put it beside. In a window with a title bar the wand is a title bar accessory. A
 window whose content runs under a title bar with nothing in it (a game, `.hiddenTitleBar`) has no bar for it, and an
 accessory would give it one: there the wand floats at the top right over the content, level with the traffic
-lights, on a dark disc of its own so it shows over any content (`LampMagic.isFullBleed`, `float`, `FloatingWand`). This is how a new app is changed from its first build on:
+lights, on a dark disc of its own so it shows over any content (`LampMagic.isFullBleed`, `float`, `FloatingWand`). The wand
+is wherever the app shows itself, so people can count on finding it: a menu bar app's panel has it at its top right,
+in a strip of its own above the app's content (`LampMenuBar.PanelWand`), and a menu has Customize with Lamp… with the
+wand's symbol beside Settings… and Quit. Either opens the panel as a window of the app's (the one shown when the icon
+is hidden) with the chat beside it (`LampMenuBar.customize`, which Customize with Lamp… does too when there's no
+window), since a panel closes at any click elsewhere; a change that reopens the app opens that window and its chat
+again, only just after such a quit (`chatQuitKey`). A Mac widget has it in its top right corner (`.lampWand()` in
+Lamp's own widget file, which the widget rule asks for): a link the app takes as Customize with Lamp…
+(`LampWidgetLinks`, which passes every other link to SwiftUI, or for a widget-only app to whatever opens it).
+This is how a new app is changed from its first build on:
 after the turn that first builds and opens a Mac app with windows, its chat window closes and the app opens the
 chat beside its content (`MagicPanel.handOff`, once per app, marked by `.lamp/sidebar-handed-off`; the chat window
 closes only once the sidebar has connected, so Lamp neither quits nor leaves the chat nowhere). Lamp asks the app

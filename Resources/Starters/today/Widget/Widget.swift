@@ -9,6 +9,7 @@ struct TodayWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "TodayWidget", provider: Provider()) { entry in
             TodayWidgetView(entry: entry)
+                .lampWand()
                 .containerBackground(for: .widget) { Color.paper }
         }
         .configurationDisplayName("Today")
@@ -133,6 +134,7 @@ private struct MediumView: View {
                 Text("\(summary.doneCount) of \(summary.items.count) done")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .padding(.trailing, 14)   // the wand's corner
             }
             ForEach(summary.items, id: \.id) { item in
                 HStack(spacing: 8) {
