@@ -629,6 +629,8 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
         const over = (top, under) => [0, 1, 2].map(i => top[i] * top[3] + under[i] * (1 - top[3])).concat(1);
         const light = c => { const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
         const ratio = (a, b) => { const x = light(a), y = light(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+        // With no background of its own the page shows the browser's canvas, dark only when the page allows it.
+        const darkCanvas = matchMedia('(prefers-color-scheme: dark)').matches && /dark/.test(getComputedStyle(document.documentElement).colorScheme);
         const background = el => {
           const layers = [];
           for (let e = el; e; e = e.parentElement) {
@@ -637,12 +639,12 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
             const c = parse(style.backgroundColor);
             if (c && c[3] > 0) { layers.push(c); if (c[3] >= 1) break; }
           }
-          return layers.reverse().reduce((under, top) => over(top, under), matchMedia('(prefers-color-scheme: dark)').matches ? [0, 0, 0, 1] : [255, 255, 255, 1]);
+          return layers.reverse().reduce((under, top) => over(top, under), darkCanvas ? [0, 0, 0, 1] : [255, 255, 255, 1]);
         };
         const words = el => [...el.childNodes].filter(n => n.nodeType === 3 && n.textContent.trim()).map(n => n.textContent.trim()).join(' ');
         const quote = text => '"' + text.replace(/\\s+/g, ' ').slice(0, 40) + '"';
-        const canvas = document.createElement('canvas').getContext('2d');
-        const width = font => { canvas.font = font; return canvas.measureText('Hamburgefonstiv 0123456789').width; };
+        // The face the page asks for first, as the browser computed it: the system's own names, or SF by name.
+        const systemFace = family => /^(system-ui|-apple-system|blinkmacsystemfont|sf pro\\b.*|sf compact\\b.*)$/.test(family);
         for (const el of document.body.querySelectorAll('*')) {
           const text = words(el);
           if (!text || !el.checkVisibility({opacityProperty: true, visibilityProperty: true})) continue;
@@ -655,8 +657,8 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
             }
           }
           if (!zoomed && size < 11) found.add(size + 'px words, under 11px: ' + quote(text));
-          const shape = style.fontStyle + ' ' + weight + ' ' + size + 'px ';
-          if (Math.abs(width(shape + style.fontFamily) - width(shape + 'system-ui')) > 0.5) found.add('not the system font (' + style.fontFamily + ') on ' + quote(text));
+          const first = (style.fontFamily.split(',')[0] || '').trim().replace(/^["']|["']$/g, '').toLowerCase();
+          if (!systemFace(first)) found.add('not the system font (' + style.fontFamily + ') on ' + quote(text));
           if (style.overflowX !== 'visible' && el.scrollWidth > el.clientWidth + 1 && style.textOverflow !== 'ellipsis' && style.webkitLineClamp === 'none') found.add('words cut off: ' + quote(text));
         }
         for (const img of document.images) if (img.checkVisibility() && img.complete && img.naturalWidth === 0) found.add("a picture that didn't load: " + (img.getAttribute('src') || '').slice(0, 80));
