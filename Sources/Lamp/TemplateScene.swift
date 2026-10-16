@@ -236,32 +236,47 @@ extension Template {
                     if handles(old) { continue }
                     let fresh = make()
                     if handles(fresh) { continue }
-                    for child in Array(old.children) { child.removeFromParent() }
-                    for child in Array(fresh.children) { old.addChild(child, preservingWorldTransform: false) }
-                    // What the prop's code sets on the entity itself goes over too: its look, its collision shape,
-                    // its physics and what it does when clicked or dragged. Where it is, how it's moving and how
-                    // far a part has been turned or slid stay the running app's.
-                    for kind in [ModelComponent.self, CollisionComponent.self] as [any Component.Type] {
-                        if let new = fresh.components[kind] { old.components.set(new) } else { old.components.remove(kind) }
-                    }
-                    if var body = fresh.components[PhysicsBodyComponent.self] {
-                        if let mode = old.components[PhysicsBodyComponent.self]?.mode, mode == .kinematic { body.mode = mode }
-                        old.components.set(body)
-                    } else {
-                        old.components.remove(PhysicsBodyComponent.self)
-                    }
-                    if var part = fresh.components[LampPart.self] {
-                        if let was = old.components[LampPart.self] {
-                            part.rest = was.rest
-                            part.restPosition = was.restPosition
-                            part.value = was.value
-                        }
-                        old.components.set(part)
-                    } else {
-                        old.components.remove(LampPart.self)
-                    }
+                    adopt(old, fresh, isProp: true)
                 }
             }
+        }
+
+        /// Makes `old` what `fresh` is while keeping every entity in it: the app's code may hold any of them (a
+        /// walker's legs, to swing them), and one taken out would go on moving out of sight. Parts are matched in
+        /// order and changed where they are, new ones added and ones gone taken off. What the prop's code sets
+        /// on each goes over: its look, its collision shape, its physics, what it does when clicked or dragged,
+        /// and a part's place in the prop. Where the prop itself is, how it's moving and how far a part has been
+        /// turned or slid stay the running app's; what the app moves every frame it moves again.
+        private func adopt(_ old: Entity, _ fresh: Entity, isProp: Bool) {
+            // A moving part's place is where the person left it, as its value says.
+            if !isProp {
+                old.name = fresh.name
+                if old.components[LampPart.self] == nil { old.transform = fresh.transform }
+            }
+            for kind in [ModelComponent.self, CollisionComponent.self] as [any Component.Type] {
+                if let new = fresh.components[kind] { old.components.set(new) } else { old.components.remove(kind) }
+            }
+            if var body = fresh.components[PhysicsBodyComponent.self] {
+                if let mode = old.components[PhysicsBodyComponent.self]?.mode, mode == .kinematic { body.mode = mode }
+                old.components.set(body)
+            } else {
+                old.components.remove(PhysicsBodyComponent.self)
+            }
+            if var part = fresh.components[LampPart.self] {
+                if let was = old.components[LampPart.self] {
+                    part.rest = was.rest
+                    part.restPosition = was.restPosition
+                    part.value = was.value
+                }
+                old.components.set(part)
+            } else {
+                old.components.remove(LampPart.self)
+            }
+            let olds = Array(old.children), news = Array(fresh.children)
+            for (index, new) in news.enumerated() {
+                if index < olds.count { adopt(olds[index], new, isProp: false) } else { old.addChild(new, preservingWorldTransform: false) }
+            }
+            for gone in olds.dropFirst(news.count) { gone.removeFromParent() }
         }
 
         /// The first entity with this name anywhere in the scene.
