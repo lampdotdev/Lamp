@@ -81,4 +81,24 @@ final class SandboxTests: XCTestCase {
         let plain = try run("/bin/echo fine", in: project)
         XCTAssertEqual(plain.output.trimmingCharacters(in: .whitespacesAndNewlines), "fine")
     }
+
+    /// Nor the copies Lamp opens to run an app's checks: they're signed as their app, so a command that could put
+    /// a program there and start it would run as that app, with its permissions and sign-ins.
+    func testCheckCopiesCantBeTouched() throws {
+        let (project, _) = try project()
+        let fm = FileManager.default
+        let existed = fm.fileExists(atPath: Checks.folder.path)
+        let place = Checks.folder.appendingPathComponent("sandbox-test-\(UUID().uuidString)")
+        try fm.createDirectory(at: place, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: existed ? place : Checks.folder) }
+        let program = place.appendingPathComponent("hello")
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: "/usr/bin/true"), to: program)
+
+        let started = try run(Sandbox.quoted(program.path), in: project)
+        XCTAssertNotEqual(started.status, 0, started.output)
+        XCTAssertTrue(started.output.contains("not permitted"), started.output)
+        let written = try run("echo x > \(Sandbox.quoted(place.appendingPathComponent("planted").path))", in: project)
+        XCTAssertNotEqual(written.status, 0, written.output)
+        XCTAssertFalse(fm.fileExists(atPath: place.appendingPathComponent("planted").path))
+    }
 }

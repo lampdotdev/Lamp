@@ -191,9 +191,12 @@ enum PeerProcess {
     /// program, valid by the app's designated requirement as it is on disk. Where Lamp installs apps is closed to
     /// the agent's commands, and the requirement names the certificate Lamp (or the person's team) signed with,
     /// so a copy of the program elsewhere, a re-signed one, or `curl` with the app's token is not the app.
-    static func isApp(at app: URL, connectedFrom port: UInt16, to lampPort: UInt16) -> Bool {
+    /// `copy` is where the caller runs from when it isn't the installed app itself: the copy Lamp opened to run the
+    /// app's checks (`Checks`). It's held to the installed app's requirement all the same, so only a copy signed as
+    /// the app passes, whatever is put at that place.
+    static func isApp(at app: URL, runningFrom copy: URL? = nil, connectedFrom port: UInt16, to lampPort: UInt16) -> Bool {
         // The kernel gives a program's real path; Foundation's own resolving drops "/private" from it, so `realpath`.
-        guard let real = realpath(app.path, nil) else { return false }
+        guard let real = realpath((copy ?? app).path, nil) else { return false }
         let bundle = String(cString: real) + "/Contents/MacOS/"
         free(real)
         guard let pid = find(connectedFrom: port, to: lampPort, path: { $0.hasPrefix(bundle) }) else { return false }

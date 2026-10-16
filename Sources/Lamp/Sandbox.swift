@@ -146,6 +146,8 @@ enum Sandbox {
             // app's secrets out of Lamp through it (PeerProcess). The app's own build is unaffected: it's
             // built in its folder, not here.
             lines.append("(deny process-exec* (subpath \(quotedPath(real(home + "/Applications/" + name + " Apps")))))")
+            // Nor the copies Lamp opens to run an app's checks (`Checks.folder`), which are signed as their apps.
+                        lines.append("(deny process-exec* (subpath \(quotedPath(real(support + "/" + name + "/Checks")))))")
             // The caller check (PeerProcess.isApp) would also accept a whole bundle replaced at the installed
             // path, signature valid by that copy's own requirement. That's safe only while this folder stays
             // unwritable from the command's sandbox (the file denies above), so nothing the builder makes can

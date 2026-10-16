@@ -524,9 +524,12 @@ code: it does one thing the app promises with the app's code and throws when it 
 knows a change is done: after every turn that changed the app, and before it's opened, `Store.turn` runs them all
 (`Checks.run`); what fails goes back to the agent as build errors do, three times at most, and still failing, the turn
 ends as not finished and the chat names each promise that doesn't work yet. The agent runs them itself
-with `run_checks`. They run in the app as built, never in the agent's shell, whose sandbox hides what the app could
-reach: a copy of the build in a temporary folder, signed as `deploy` signs the app so macOS gives it the app's
-permissions (and asks for them, in the app's name), is opened hidden with `-LampChecks <results>` (`LampChecks` in
+with `run_checks`, which builds without putting the change into the open app or counting it as built, so the next
+look or the request's end installs it as usual. They run in the app as built, never in the agent's shell, whose sandbox hides what the app could
+reach: a copy of the build in Lamp's own folder (`Checks.folder`, which the agent's commands can't read, write or
+run anything in: anything put there would be signed as the app), checked to carry the app's id and signed as
+`deploy` signs the app so macOS gives it the app's permissions (and asks for them, in the app's name), and while it
+runs it may read the app's sign-ins (`Store.appSecrets`, held to the installed app's requirement), is opened hidden with `-LampChecks <results>` (`LampChecks` in
 LampSupport.swift: no Dock icon, windows, chat or anything else a launch starts), writes what each check found and quits. A check that this Mac can't try (no microphone) calls `skip`: not a pass, and the chat says it wasn't tried, where returning early would pass it. A check has a minute; one that stops the app answering is
 named and the copy ended (the `running` file beside the results). The person's own copy, open or not, isn't
 touched, and `macCopies` and `MagicPanel` don't count the check copy. Checks run for Mac apps and the Mac half of

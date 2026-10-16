@@ -4180,8 +4180,9 @@ final class Store: ObservableObject {
         }
     }
 
-    /// `inPlace` false builds the whole app without putting the change into the open copy first.
-    private func build(_ project: LampProject, inPlace: Bool = true) async -> String? {
+    /// `inPlace` false builds the whole app without putting the change into the open copy first; `counts` false
+    /// leaves the sources counted as unbuilt, for a build nothing installs (`run_checks`).
+    private func build(_ project: LampProject, inPlace: Bool = true, counts: Bool = true) async -> String? {
         guard exists(project) else { return "The app was deleted." }
         log(project, .status, "Building…")
         // Lamp's own files first, and no build without them: the build runs build.sh and Package.swift.
@@ -4233,7 +4234,7 @@ final class Store: ObservableObject {
         turns[project.id]?.build = nil
         guard exists(project) else { return "The app was deleted." }
         guard status != 0 else {
-            Runtime.markBuilt(project, from: fingerprint)
+            if counts { Runtime.markBuilt(project, from: fingerprint) }
             BuildStamp.write(to: project.builtURL)   // deploy signs the app afterwards
             return nil
         }
@@ -5636,8 +5637,10 @@ final class Store: ObservableObject {
     /// `LampSecrets` in a Mac app: what it keeps secret, kept here (AppSecrets). Only the app itself is answered, the
     /// program Lamp installed, on this Mac: the token is in the app's folder, where the agent can read it.
     private func appSecrets(_ request: Gateway.Request, for project: LampProject) -> (Int, [String: Any]) {
+        // The copy running the app's checks reads them too: a check of a connected app needs its sign-in.
         guard !request.fromNetwork, let port = request.peerPort,
-              PeerProcess.isApp(at: project.installedURL, connectedFrom: port, to: Gateway.port) else {
+              PeerProcess.isApp(at: project.installedURL, connectedFrom: port, to: Gateway.port)
+                || Checks.running[project.id].map({ PeerProcess.isApp(at: project.installedURL, runningFrom: $0, connectedFrom: port, to: Gateway.port) }) == true else {
             return (403, ["error": "Only the app itself, as Lamp installed it, can do that."])
         }
         let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
@@ -6115,8 +6118,11 @@ final class Store: ObservableObject {
         turn.look.inProgress = true
         defer { turn.look.inProgress = false }
         try? Template.writeSupport(for: project)
-        // Built whole, never put into the open app: the person's copy isn't the agent's to change mid-work.
-        if Runtime.sourcesChanged(project), let errors = await build(project, inPlace: false) {
+        guard Checks.canRun(project) else { return (200, ["text": Checks.report(await runChecks(project))]) }
+        // Built whole, never put into the open app: the person's copy isn't the agent's to change mid-work. Nor is
+        // it counted as built: these sources are still new to the app on screen, so the next look or the end of the
+        // request builds and installs them as usual, whichever request that is.
+        if Runtime.sourcesChanged(project), let errors = await build(project, inPlace: false, counts: false) {
             return (200, ["text": "The app doesn't build yet. Fix these compiler errors:\n\n\(errors)"])
         }
         return (200, ["text": Checks.report(await runChecks(project))])

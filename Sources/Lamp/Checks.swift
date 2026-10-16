@@ -32,12 +32,16 @@ enum Checks {
         case none
     }
 
-    /// Where the copies run, outside the app's folder: the agent can write there, and the copy is signed as the app.
-    /// Each Lamp has its own, since each clears its own at launch.
-    static let folder = FileManager.default.temporaryDirectory.appendingPathComponent("\(Edition.name) checks")
+    /// Where the copies run: in Lamp's own folder, which no agent's commands can read, write or run anything in
+    /// (`Sandbox`). The copy is signed as the app, so anything put in it would get the app's permissions and
+    /// sign-ins. Each Lamp has its own, and clears it at launch.
+    static let folder = Edition.supportFolder.appendingPathComponent("Checks")
     /// How long a whole run may take, however many checks: each has a minute of its own (`LampChecks.patience`),
     /// and one that stops the app answering is ended sooner (the `running` file).
     static let patience: TimeInterval = 600
+
+    /// The copy running each app's checks right now, by app: it may read that app's sign-ins (`Store.appSecrets`).
+    @MainActor static var running: [String: URL] = [:]
 
     /// A copy opened to run the checks, which isn't the app the person has open.
     static func isCheckCopy(_ url: URL?) -> Bool {
@@ -91,7 +95,16 @@ enum Checks {
             try? FileManager.default.removeItem(at: run)
             return .notRun("Lamp couldn't make a copy of the app to run its checks: \(error.localizedDescription)")
         }
+        // Only a build that is this app: Lamp signs the copy as the app, and an id the agent changed would have it
+        // sign something as another app.
+        let id = NSDictionary(contentsOf: copy.appendingPathComponent("Contents/Info.plist"))?["CFBundleIdentifier"] as? String
+        guard id == project.bundleID else {
+            await forget(run, copy: copy)
+            return .notRun("The app's build doesn't carry its own id (\(id ?? "none")), so Lamp won't run it as the app.")
+        }
         await sign(copy, for: project)
+        running[project.id] = copy
+        defer { running[project.id] = nil }
         let config = NSWorkspace.OpenConfiguration()
         config.activates = false
         config.hides = true
