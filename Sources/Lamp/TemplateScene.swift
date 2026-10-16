@@ -913,7 +913,7 @@ extension Template {
 
         nonisolated fileprivate static func panorama(_ c: (zenith: SIMD3<Float>, horizon: SIMD3<Float>, ground: SIMD3<Float>, sun: SIMD3<Float>, strength: Float),
                                      sun: SIMD3<Float>) -> CGImage {
-            LampTexture.draw(1024, 512) { u, v in
+            LampTexture.drawInParallel(1024, 512) { u, v in
                 let phi = (0.5 - v) * .pi, lam = u * 2 * .pi - .pi
                 let dir = SIMD3<Float>(cos(phi) * sin(lam), sin(phi), -cos(phi) * cos(lam))
                 var col: SIMD3<Float>
@@ -1199,18 +1199,18 @@ extension Template {
 
         static func named(_ name: String) -> CGImage {
             switch name {
-            case brushed: return draw(512, 512) { u, v in let s = 0.85 + 0.15 * fbm(u * 2, v * 160, seed: 3); return [s, s, s, 1] }
-            case wood: return draw(512, 512) { u, v in
+            case brushed: return drawInParallel(512, 512) { u, v in let s = 0.85 + 0.15 * fbm(u * 2, v * 160, seed: 3); return [s, s, s, 1] }
+            case wood: return drawInParallel(512, 512) { u, v in
                 let rings = sin((u * 9 + fbm(u * 3, v * 0.6, seed: 7) * 2.5) * 2 * .pi) * 0.5 + 0.5
                 let s = 0.75 + 0.25 * pow(rings, 3) - 0.08 * fbm(u * 40, v * 3, seed: 2)
                 return [s, s * 0.97, s * 0.93, 1] }
-            case weave: return draw(256, 256) { u, v in
+            case weave: return drawInParallel(256, 256) { u, v in
                 let a = sin(u * 64 * .pi), b = sin(v * 64 * .pi)
                 let s = 0.82 + 0.1 * (a * b > 0 ? 1 : -1) + 0.08 * fbm(u * 20, v * 20, seed: 4)
                 return [s, s, s, 1] }
-            case concrete: return draw(512, 512) { u, v in let s = 0.8 + 0.2 * fbm(u * 12, v * 12, seed: 5); return [s, s, s * 0.99, 1] }
-            case speckle: return draw(256, 256) { u, v in let s = 0.75 + 0.25 * fbm(u * 30, v * 30, seed: 6); return [s * 0.95, s, s * 0.9, 1] }
-            default: return draw(512, 512) { u, v in
+            case concrete: return drawInParallel(512, 512) { u, v in let s = 0.8 + 0.2 * fbm(u * 12, v * 12, seed: 5); return [s, s, s * 0.99, 1] }
+            case speckle: return drawInParallel(256, 256) { u, v in let s = 0.75 + 0.25 * fbm(u * 30, v * 30, seed: 6); return [s * 0.95, s, s * 0.9, 1] }
+            default: return drawInParallel(512, 512) { u, v in
                 let h = height(name, u, v)
                 let s = h < 0.5 ? 0.78 : 0.85 + 0.15 * fbm(u * 18, v * 18, seed: 9)
                 return [s, s, s, 1] }
@@ -1218,7 +1218,7 @@ extension Template {
         }
 
         static func gray(_ name: String) -> CGImage {
-            draw(512, 512, gray: true) { u, v in let s = 0.25 + 0.2 * fbm(u * 2, v * 160, seed: 8); return [s, s, s, 1] }
+            drawInParallel(512, 512, gray: true) { u, v in let s = 0.25 + 0.2 * fbm(u * 2, v * 160, seed: 8); return [s, s, s, 1] }
         }
 
         /// Bumps for bricks, tiles, weave and concrete: 1 on the face, 0 in the joints.
@@ -1243,7 +1243,9 @@ extension Template {
             let n = 512
             var h = [Float](repeating: 0, count: n * n)
             for y in 0..<n { for x in 0..<n { h[y * n + x] = height(name, Float(x) / Float(n), Float(y) / Float(n)) } }
-            return draw(n, n) { u, v in
+            let heights = h
+            return drawInParallel(n, n) { u, v in
+                let h = heights
                 let x = Int(u * Float(n)) % n, y = Int(v * Float(n)) % n
                 let dx = h[y * n + (x + 1) % n] - h[y * n + (x + n - 1) % n]
                 let dy = h[((y + 1) % n) * n + x] - h[((y + n - 1) % n) * n + x]
@@ -1294,12 +1296,22 @@ extension Template {
 
         /// An image from a function of where in it (u and v from 0 to 1, v down) to RGBA from 0 to 1.
         nonisolated static func draw(_ w: Int, _ h: Int, gray: Bool = false, _ pixel: (Float, Float) -> SIMD4<Float>) -> CGImage {
+            image(w, h, gray: gray, parallel: false, pixel)
+        }
+
+        /// The same, with rows drawn on every core at once: a texture is a few hundred thousand pixels of noise. Only
+        /// for a function that works from u and v alone, keeping nothing between pixels (no random generator, nothing
+        /// it adds to), since it runs on several rows together.
+        nonisolated static func drawInParallel(_ w: Int, _ h: Int, gray: Bool = false, _ pixel: @Sendable (Float, Float) -> SIMD4<Float>) -> CGImage {
+            image(w, h, gray: gray, parallel: true, pixel)
+        }
+
+        nonisolated private static func image(_ w: Int, _ h: Int, gray: Bool, parallel: Bool, _ pixel: (Float, Float) -> SIMD4<Float>) -> CGImage {
             let comps = gray ? 1 : 4
             var data = [UInt8](repeating: 0, count: w * h * comps)
-            // Rows on every core at once: a texture is a few hundred thousand pixels of noise.
             data.withUnsafeMutableBufferPointer { out in
                 let slots = LampSlots(base: out.baseAddress!)
-                DispatchQueue.concurrentPerform(iterations: h) { y in
+                func row(_ y: Int) {
                     let base = slots.base
                     for x in 0..<w {
                         let p = simd_clamp(pixel((Float(x) + 0.5) / Float(w), (Float(y) + 0.5) / Float(h)), .zero, .one) * 255
@@ -1307,6 +1319,7 @@ extension Template {
                         if gray { base[i] = UInt8(p.x) } else { base[i] = UInt8(p.x); base[i + 1] = UInt8(p.y); base[i + 2] = UInt8(p.z); base[i + 3] = UInt8(p.w) }
                     }
                 }
+                if parallel { DispatchQueue.concurrentPerform(iterations: h) { y in row(y) } } else { for y in 0..<h { row(y) } }
             }
             let space = gray ? CGColorSpaceCreateDeviceGray() : CGColorSpace(name: CGColorSpace.sRGB)!
             let info = gray ? CGImageAlphaInfo.none.rawValue : CGImageAlphaInfo.premultipliedLast.rawValue
