@@ -161,7 +161,7 @@ enum Sharing {
         // Only the finished file is left in the folder, and whoever takes it out removes the folder: nothing
         // empties the temporary folder while Lamp runs, and a file that can't be made leaves nothing at all.
         var made = false
-        defer { try? fm.removeItem(at: made ? stage : work) }
+        defer { removeStaged(made ? stage : work) }
 
         for file in swiftSources(in: project.dir.appendingPathComponent("Sources"))
         where file.lastPathComponent != "LampSupport.swift" && file.lastPathComponent != Template.sceneSupportFile {
@@ -288,6 +288,19 @@ enum Sharing {
     /// The files in the app's Assets/ folder, subfolders included (`LampAssets.image("images/logo.png")`).
     static func assetFiles(of project: LampProject) -> [URL] {
         filesUnder(project.dir.appendingPathComponent(Assets.folder))
+    }
+
+    /// Removes a folder `export` made. A copy keeps the flags of the file it was copied from, and one the person
+    /// locked in Finder can't be deleted, nor the folders around it, until the copy is unlocked. Only Lamp's copies
+    /// are unlocked: a link is passed over, since unlocking it would unlock the file it points to.
+    private static func removeStaged(_ folder: URL) {
+        let fm = FileManager.default
+        if let items = fm.enumerator(at: folder, includingPropertiesForKeys: [.isSymbolicLinkKey]) {
+            for case let item as URL in items where (try? item.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink != true {
+                try? fm.setAttributes([.immutable: false, .appendOnly: false], ofItemAtPath: item.path)
+            }
+        }
+        try? fm.removeItem(at: folder)
     }
 
     /// Where a file sits inside a folder ("images/logo.png"), for copying it somewhere else at the same spot.

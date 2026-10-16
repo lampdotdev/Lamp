@@ -1542,16 +1542,27 @@ final class Store: ObservableObject {
         defer { sharing.unlock() }
         let exported = try Sharing.export(project, icon: icon)
         let file = file ?? sharedFolder.appendingPathComponent(exported.lastPathComponent)
-        defer { try? FileManager.default.removeItem(at: exported.deletingLastPathComponent()) }
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? FileManager.default.removeItem(at: file)
-        try FileManager.default.moveItem(at: exported, to: file)
+        let fm = FileManager.default
+        defer { try? fm.removeItem(at: exported.deletingLastPathComponent()) }
+        try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // The new file is first put whole on the same disk as the old one, which stays as it was if that fails
+        // (a full disk), and then takes the old one's place in one step: whatever was handed the old file (a paste,
+        // the picker, a drop) finds a file there at every moment.
+        let nearby = try fm.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: file, create: true)
+        defer { try? fm.removeItem(at: nearby) }
+        let staged = nearby.appendingPathComponent(file.lastPathComponent)
+        try fm.moveItem(at: exported, to: staged)
+        if fm.fileExists(atPath: file.path) {
+            _ = try fm.replaceItemAt(file, withItemAt: staged)
+        } else {
+            try fm.moveItem(at: staged, to: file)
+        }
         return file
     }
 
     /// One shared file is made at a time. Shares of one wish go to the same file, so two at once could leave the
-    /// copy that began first, or fail when one moves its file in between the other's removing and moving. Made one
-    /// after the other, the file left is the one that read the app last. Nothing made under it waits for the main
+    /// copy that began first, or trip over each other putting it in place. Made one after the other, the file left
+    /// is the one that read the app last. Nothing made under it waits for the main
     /// thread, which may be waiting here.
     nonisolated private static let sharing = NSLock()
 
