@@ -4349,6 +4349,9 @@ enum Template {
         @MainActor final class Chat {
             let host: EXHostViewController
             let card: NSView
+            /// What the bar and the chat are laid out in, and the glass it's held in beside the window (nil before macOS 26).
+            var pane: NSView = NSView()
+            var glass: NSView?
             weak var window: NSWindow?
             var panel: Beside?
             var side: Side = .right
@@ -4499,7 +4502,10 @@ enum Template {
                 let host = EXHostViewController()
                 host.delegate = Placing.shared
                 host.configuration = .init(appExtension: identity, sceneID: "chat")
-                let chat = Chat(host: host, card: card(for: host, in: window), window: window)
+                let made = card(for: host, in: window)
+                let chat = Chat(host: host, card: made.card, window: window)
+                chat.pane = made.pane
+                chat.glass = made.glass
                 chats[ObjectIdentifier(window)] = chat
                 follow(window, chat)
                 watchClicks()
@@ -4644,17 +4650,42 @@ enum Template {
             let place = holder.view
             chat.card.translatesAutoresizingMaskIntoConstraints = false
             place.addSubview(chat.card)
-            // On glass inside the window, the card is inset from its top, right and bottom edges and rounded to sit
-            // inside its corner; in its panel it fills it; on paper it runs up to the window's top.
-            let inside = holder.view.identifier == identifier
-            let inset: CGFloat = inside && floats ? 8 : 0
+            // It fills where it's put: its panel, or the column. From macOS 26 the column still reaches up under the
+            // window's toolbar, so the card starts below it (its safe area); before it, it runs up behind the title bar.
+            let top = holder.view.identifier == identifier && floats ? place.safeAreaLayoutGuide.topAnchor : place.topAnchor
             NSLayoutConstraint.activate([
-                chat.card.topAnchor.constraint(equalTo: inside && floats ? place.safeAreaLayoutGuide.topAnchor : place.topAnchor,
-                                               constant: inset / 2),
-                chat.card.bottomAnchor.constraint(equalTo: place.bottomAnchor, constant: -inset),
-                chat.card.leadingAnchor.constraint(equalTo: place.leadingAnchor, constant: inset / 2),
-                chat.card.trailingAnchor.constraint(equalTo: place.trailingAnchor, constant: -inset),
+                chat.card.topAnchor.constraint(equalTo: top),
+                chat.card.bottomAnchor.constraint(equalTo: place.bottomAnchor),
+                chat.card.leadingAnchor.constraint(equalTo: place.leadingAnchor),
+                chat.card.trailingAnchor.constraint(equalTo: place.trailingAnchor),
             ])
+            setGlass(chat, on: holder.view.identifier != identifier)
+        }
+
+        /// Glass beside the window, where what's behind it shows through; none inside it, where the chat sits on the
+        /// column's solid paper as the rest of the window does on its own background. The pane goes into the glass, or
+        /// straight onto the card.
+        @MainActor private static func setGlass(_ chat: Chat, on: Bool) {
+            guard #available(macOS 26, *), let glass = chat.glass as? NSGlassEffectView else { return }
+            let inGlass = glass.contentView === chat.pane
+            guard on != inGlass else { return }
+            chat.pane.removeFromSuperview()
+            if on {
+                glass.isHidden = false
+                glass.contentView = chat.pane
+            } else {
+                glass.contentView = nil
+                glass.isHidden = true
+                // Pinned, not sized by its mask: the glass lays its content out by constraints and leaves it so.
+                chat.pane.translatesAutoresizingMaskIntoConstraints = false
+                chat.card.addSubview(chat.pane)
+                NSLayoutConstraint.activate([
+                    chat.pane.topAnchor.constraint(equalTo: chat.card.topAnchor),
+                    chat.pane.bottomAnchor.constraint(equalTo: chat.card.bottomAnchor),
+                    chat.pane.leadingAnchor.constraint(equalTo: chat.card.leadingAnchor),
+                    chat.pane.trailingAnchor.constraint(equalTo: chat.card.trailingAnchor),
+                ])
+            }
         }
 
         /// What happens to the window decides where its chat goes: a move or a size that leaves no room on its side
@@ -4776,24 +4807,27 @@ enum Template {
             override var canBecomeMain: Bool { false }
         }
 
-        /// The chat with the bar above it, as one view that goes wherever the chat is shown (`move`): on a pane of
-        /// Liquid Glass from macOS 26 (`NSGlassEffectView`), on the column's paper before it. The bar has a round
+        /// The chat with the bar above it, as one view that goes wherever the chat is shown (`move`): on Liquid Glass
+        /// (`NSGlassEffectView`) in its panel beside the window, on the column's paper inside it (`setGlass`). The bar has a round
         /// button closing the chat at the left and what the chat is for beside it; it does only what the app could
         /// do anyway (close its own chat). What changes the wish (undo, versions, sharing…) is in the chat under it,
         /// which only Lamp speaks to.
-        @MainActor private static func card(for host: EXHostViewController, in window: NSWindow) -> NSView {
-            let outer: NSView
-            let pane: NSView
+        @MainActor private static func card(for host: EXHostViewController, in window: NSWindow) -> (card: NSView, pane: NSView, glass: NSView?) {
+            let outer = Passing()
+            let pane = Passing()
+            var glassView: NSView?
             if #available(macOS 26, *) {
                 let glass = Glass()
                 glass.cornerRadius = 20
-                let content = Passing()
-                glass.contentView = content
-                outer = glass
-                pane = content
+                glass.frame = outer.bounds
+                glass.autoresizingMask = [.width, .height]
+                glass.contentView = pane
+                outer.addSubview(glass)
+                glassView = glass
             } else {
-                outer = Passing()
-                pane = outer
+                pane.frame = outer.bounds
+                pane.autoresizingMask = [.width, .height]
+                outer.addSubview(pane)
             }
             host.view.translatesAutoresizingMaskIntoConstraints = false
             host.view.identifier = chatIdentifier
@@ -4836,7 +4870,7 @@ enum Template {
             centred.priority = .defaultHigh
             constraints.append(centred)
             NSLayoutConstraint.activate(constraints)
-            return outer
+            return (outer, pane, glassView)
         }
 
         /// The column inside the window that the chat goes into where it can't float beside it: the app's content and
@@ -4864,6 +4898,9 @@ enum Template {
             side.maximumThickness = 640
             side.canCollapse = true
             side.isCollapsed = true
+            // From macOS 26 the window's toolbar runs across the whole window, the column under it, as the app had it
+            // before the chat opened. Before it, the column runs up behind the title bar, its bar there.
+            if floats { side.allowsFullHeightLayout = false }
             // No line under the bar: it floats on the paper or the glass, as the message box's row does.
             side.titlebarSeparatorStyle = .none
             split.addSplitViewItem(side)
@@ -4943,14 +4980,11 @@ enum Template {
         }
 
         /// The chat's paper, as the chat draws it (`ChatLook.paper`): a warm off-white, a warm near-black in the dark.
-        /// Clear under the glass.
+        /// The column's ground on every macOS: the chat draws none of its own from macOS 26 (it's on glass beside the
+        /// window), so this is what shows behind it inside the window.
         private final class Backing: NSView {
             override var wantsUpdateLayer: Bool { true }
             override func updateLayer() {
-                if #available(macOS 26, *) {
-                    layer?.backgroundColor = nil
-                    return
-                }
                 let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
                 layer?.backgroundColor = dark ? CGColor(srgbRed: 0x1F / 255, green: 0x1E / 255, blue: 0x1C / 255, alpha: 1)
                                               : CGColor(srgbRed: 0xF7 / 255, green: 0xF5 / 255, blue: 0xF1 / 255, alpha: 1)

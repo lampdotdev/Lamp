@@ -584,10 +584,12 @@ and other Spaces with the window, holding the chat on a card of Liquid Glass (`N
 what's behind the window showing through; the chat draws no paper of its own there (`chatGround`). It never covers the
 app or changes its window's width: it goes on the right, or the left when only the left has room, and a window opened
 where neither has room moves over on its screen to make room, as it does on leaving full screen. In full screen, or when
-the window is too wide for its screen to hold the chat beside it, the same card goes inside the window as a column on
-glass (the inspector of an `NSSplitViewController` around the window's content), taking its width from the window; a
-move, a resize or leaving full screen takes it back out when there's room (`replace`). Before macOS 26 it's always that
-column, on a solid background that runs up to the window's top, and the window grows by its width. The panel takes the
+the window is too wide for its screen to hold the chat beside it, the same card goes inside the window as a column (the
+inspector of an `NSSplitViewController` around the window's content), taking its width from the window: no glass there
+(`setGlass` takes the chat out of it), the chat on the column's solid paper, and the window's toolbar running across the
+whole window with the column under it (`allowsFullHeightLayout` off), so the app looks as it did before the chat opened;
+a move, a resize or leaving full screen takes it back out when there's room (`replace`). Before macOS 26 it's always that
+column, on the same paper, running up behind the title bar, and the window grows by its width. The panel takes the
 keyboard for the message box without becoming the main window. The chat's close button sits in the bar at the top of the
 card, drawn by the app since it does only what the app could do anyway; inside the window it can't be a title bar
 accessory: with the chat a full-height inspector, the window's split view lies over the title bar there and takes the
