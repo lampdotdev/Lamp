@@ -823,7 +823,13 @@ enum SwiftText {
         let quotes = multiline ? 3 : 1
         var end = at + quotes
         while end < chars.count {
-            if hashes == 0, chars[end] == "\\" { end += 2; continue }
+            // An escape: `\` and, in a raw string, its hashes. `\(…)` is an interpolation, code with strings of its
+            // own, read to its closing parenthesis.
+            if chars[end] == "\\", end + hashes < chars.count, chars[(end + 1)..<(end + 1 + hashes)].allSatisfy({ $0 == "#" }) {
+                let after = end + 1 + hashes
+                if after < chars.count, chars[after] == "(" { end = interpolationEnd(chars, from: after + 1); continue }
+                if hashes == 0 { end += 2; continue }
+            }
             if !multiline, chars[end] == "\n" { return end }
             if chars[end] == "\"", end + quotes - 1 < chars.count, chars[end..<(end + quotes)].allSatisfy({ $0 == "\"" }) {
                 let after = end + quotes
@@ -832,6 +838,17 @@ enum SwiftText {
             end += 1
         }
         return end
+    }
+
+    /// Just past the `)` that closes an interpolation whose code starts at `index`.
+    private static func interpolationEnd(_ chars: [Character], from index: Int) -> Int {
+        var depth = 1, at = index
+        while at < chars.count {
+            if let skipped = skip(chars, at: at) { at = skipped; continue }
+            if chars[at] == "(" { depth += 1 } else if chars[at] == ")" { depth -= 1; if depth == 0 { return at + 1 } }
+            at += 1
+        }
+        return at
     }
 
     /// The first `character` at or after `index` that isn't in a string or comment.
