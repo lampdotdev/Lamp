@@ -175,6 +175,10 @@ extension Template {
         var hasFocus = false
         private var subscription: EventSubscription?
         private var monitor: Any?
+        /// Whether the app's `build` has run. SwiftUI can make the RealityView again with the scene's state kept (a
+        /// live change that alters the views around it does): the new view gets the world already built, since
+        /// building it twice leaves the app holding what it made the first time beside what it makes the second.
+        private var built = false
         private var update: ((LampScene, Float) -> Void)?
         private var drag: Drag?
         private var orbitYaw: Float = 0.6, orbitPitch: Float = 0.35, orbitDistance: Float = 4
@@ -311,10 +315,14 @@ extension Template {
             content.add(camera)
             content.camera = .virtual
             await sky.apply(to: &content, lighting: root)
-            await build(self)
+            if !built {
+                built = true
+                await build(self)
+            }
             subscription = content.subscribe(to: SceneEvents.Update.self) { [weak self] event in
                 MainActor.assumeIsolated { self?.tick(min(Float(event.deltaTime), 1 / 20)) }
             }
+            if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .scrollWheel, .leftMouseDown, .rightMouseDown]) { [weak self] event in
                 guard let self else { return event }
                 if event.type == .keyUp {
