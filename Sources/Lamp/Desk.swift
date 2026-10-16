@@ -4,8 +4,7 @@ import AVFoundation
 import UniformTypeIdentifiers
 
 /// Lamp's home: the person's wishes laid out like a desktop, and the place to make a new one, by typing it,
-/// saying it, or finding it with the agent's help. A click on a wish uses it; changing it is what its chat is
-/// for, a right-click away.
+/// saying it, or finding it with the agent's help. A click on a wish opens it, with its chat beside it.
 struct WishDesk: View {
     @EnvironmentObject private var store: Store
     @StateObject private var dictation = Dictation()
@@ -404,9 +403,8 @@ struct TalkButton: View {
     private static let glow = Color(red: 1.0, green: 0.62, blue: 0.3)
 }
 
-/// One wish on the desk: its icon, its name, and under it where it lives or what it's waiting for. A click
-/// opens its chat in a window of its own, to change it; a double click uses it (`Store.use`), as a document's
-/// icon in Finder opens it.
+/// One wish on the desk: its icon, its name, and under it where it lives or what it's waiting for. A click opens
+/// it, with its chat beside it to change it (`Store.open(fromDesk:)`).
 struct DeskIcon: View {
     @EnvironmentObject private var store: Store
     let project: LampProject
@@ -417,8 +415,12 @@ struct DeskIcon: View {
 
     /// What's under the name: what's going on with it, else where it lives.
     private var caption: String? {
+        // A wish Lamp came with, built for the first time out of sight: nothing shows until it's clicked, and then it
+        // says it's opening, which it does by itself once it's ready.
+        if store.openWhenReady.contains(project.id) { return "Opening…" }
+        if store.preparing.contains(project.id) { return place?.caption }
         if busy { return store.progress[project.id]?.newApp == true || project.untitled ? "Coming true…" : "Changing…" }
-        if Talk.open(in: store.logs[project.id] ?? []) != nil { return "Has a question" }
+        if Talk.waiting(in: store.logs[project.id] ?? []) != nil { return "Has a question" }
         if store.queued[project.id]?.isEmpty == false { return "Waiting to start" }
         if project.finding { return "Finding a wish" }
         if store.unread.contains(project.id) { return "Ready" }
@@ -429,7 +431,7 @@ struct DeskIcon: View {
         VStack(spacing: 6) {
             AppIcon(project: project, size: 76)
                 .overlay(alignment: .topTrailing) {
-                    if busy {
+                    if busy && !store.preparing.contains(project.id) || store.openWhenReady.contains(project.id) {
                         ProgressView().controlSize(.small)
                             .padding(3)
                             .background(.regularMaterial, in: Circle())
@@ -458,24 +460,21 @@ struct DeskIcon: View {
         .padding(.vertical, 8).padding(.horizontal, 4)
         .background(Color.primary.opacity(hovered ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(Rectangle())
-        // The double click first, so a single one waits to be sure it isn't one.
-        .onTapGesture(count: 2) { store.use(project) }
-        .onTapGesture { store.change(project) }
+        .onTapGesture { store.open(fromDesk: project) }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
-        .accessibilityAction { store.change(project) }
+        .accessibilityAction { store.open(fromDesk: project) }
         .accessibilityAction(named: "Use") { store.use(project) }
-        // With keyboard navigation on, Tab reaches it as it reached the button: Space changes it, Return uses it.
+        // With keyboard navigation on, Tab reaches it, and Return opens it.
         .focusable(interactions: .activate)
-        .onKeyPress(.space) { store.change(project); return .handled }
-        .onKeyPress(.return) { store.use(project); return .handled }
+        .onKeyPress(.return) { store.open(fromDesk: project); return .handled }
         .onHover { hovered = $0 }
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hovered)
         .background(ShareAnchor(origin: .app(project.id)))
         .background(WishDrag(project: project))
         .contextMenu {
+            Button("Open") { store.open(fromDesk: project) }
             Button("Change…") { store.change(project) }
-            Button("Use") { store.use(project) }
             Divider()
             AppMenu(project: project)
         }
@@ -832,10 +831,11 @@ enum WishPlace: Equatable {
         }
         if Template.isWidgetOnly(project) { return .widget }
         let code = sources(of: project)
-        if code.contains("LampMenuBar(") { return .menuBar }
-        if Template.Capabilities.load(project).background == true, !code.contains("WindowGroup"), !code.contains("Window(") {
-            return .background
-        }
+        // An app with a window lives there, whatever else it has: one with a menu bar item beside its window opens
+        // its window, and its chat goes beside it.
+        let hasWindow = code.contains("WindowGroup") || code.contains("Window(")
+        if code.contains("LampMenuBar("), !hasWindow { return .menuBar }
+        if Template.Capabilities.load(project).background == true, !hasWindow { return .background }
         return .window
     }
 
@@ -1023,8 +1023,28 @@ extension Store {
             // A copy built before the chat could be asked for this way keeps its chat in Lamp's window.
             guard !running || MagicPanel.runningCopiesTakeTheChat(project) else { return showChat(project.id) }
             unread.remove(project.id)
-            MagicPanel.shared.openChat(in: project)
+            // A wish Lamp came with, opened for the first time, is seen on its own a moment before its chat comes.
+            if running || !MagicPanel.shared.startWithChat(project) { MagicPanel.shared.openChat(in: project) }
             if !running { openPrepared(project) }
+        }
+    }
+
+    /// A wish clicked on the desk: it opens with its chat beside it, to use
+    /// and to change at once, as a document opens ready to edit (`change`). A wish that opens no window (the menu
+    /// bar, a widget, the background, a phone) is used instead (`use`), and the desk says where it is. A wish Lamp
+    /// came with that isn't built yet spins and opens when it's ready.
+    func open(fromDesk project: LampProject) {
+        let made = FileManager.default.fileExists(atPath: project.installedURL.path)
+            || FileManager.default.fileExists(atPath: project.builtURL.path)
+        if !made, setup.hasBuildTools, preparing.contains(project.id) || needsPreparing(project) {
+            openWhenReady.insert(project.id)
+            prepareStarters()
+            return
+        }
+        Task {
+            let place = await Task.detached { WishPlace.of(project) }.value
+            guard place == .window, project.platform == .mac else { return use(project) }
+            change(project)
         }
     }
 
@@ -1034,14 +1054,25 @@ extension Store {
     func use(_ project: LampProject) {
         let made = FileManager.default.fileExists(atPath: project.installedURL.path)
             || FileManager.default.fileExists(atPath: project.builtURL.path)
-        guard made, !project.finding, !busy.contains(project.id), Talk.open(in: logs[project.id] ?? []) == nil,
+        // A wish Lamp came with that hasn't been built yet, or is being built now: its icon spins, and it
+        // opens as soon as it's ready, without its chat in between.
+        if !made, setup.hasBuildTools, preparing.contains(project.id) || needsPreparing(project) {
+            openWhenReady.insert(project.id)
+            prepareStarters()
+            return
+        }
+        guard made, !project.finding, !busy.contains(project.id), Talk.waiting(in: logs[project.id] ?? []) == nil,
               queued[project.id]?.isEmpty != false else {
             return showChat(project.id)
         }
         unread.remove(project.id)
+        let firstUse = Starters.isFirstUse(project)
         Task {
             let place = await Task.detached { WishPlace.of(project) }.value
             let icon = icons[project.id]
+            // A window's chat opens beside it (`MagicPanel.startWithChat`); anything else has its chat opened here, behind
+            // the app, the first time it's used.
+            if firstUse, place != .window { showChat(project.id) }
             switch place {
             case .widget:
                 // Nothing to open: the widget is the wish.

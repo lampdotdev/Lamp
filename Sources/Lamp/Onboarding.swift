@@ -1,17 +1,16 @@
 import SwiftUI
 import AppKit
 
-/// The first-launch welcome: what Lamp is, the user's first idea, getting set up, then straight into
-/// building it. It lives in the main window, dressed up without the usual window chrome, and the window
-/// grows into Lamp itself at the end.
+/// The first-launch welcome: what Lamp is and getting set up, then the desk, where the wishes Lamp comes
+/// with (`Starters`) are waiting to be used and changed. A wish brought from the site skips the hello and is
+/// made once setup is done. It lives in the main window, dressed up without the usual window chrome, and the
+/// window grows into Lamp itself at the end.
 enum Onboarding {
     static let key = "onboarded"
-    /// The first idea and how far the welcome got. Saved, so that quitting during setup, or losing the
-    /// window while away at an installer or a sign-in in the browser, comes back to setup with the idea intact.
+    /// A wish from the site and how far the welcome got. Saved, so that quitting during setup, or losing the
+    /// window while away at an installer or a sign-in in the browser, comes back to setup with the wish intact.
     static let ideaKey = "welcomeIdea"
     static let stepKey = "welcomeStep"
-    /// What the first app is made as, kept with the idea.
-    static let kindKey = "welcomeKind"
     /// When the welcome was first shown, for how long it took (`Analytics`).
     static let startedKey = "welcomeStarted"
 
@@ -30,10 +29,12 @@ enum Onboarding {
 }
 
 private enum Step: Int, CaseIterable {
-    case hello, idea, setup
+    // The numbers are the backdrop's pictures (`LampBackdrop`): setup keeps the one it had when a step for
+    // the first idea came between.
+    case hello = 0, setup = 2
 
     /// Where the welcome opens: at setup if that's where it was left, otherwise from the start.
-    /// `-onboardingStep 2` on the command line opens on a later step, for checking the welcome.
+    /// `-onboardingStep 2` on the command line opens on setup, for checking the welcome.
     static var opening: Step {
         let defaults = UserDefaults.standard
         if defaults.object(forKey: "onboardingStep") != nil { return Step(rawValue: defaults.integer(forKey: "onboardingStep")) ?? .hello }
@@ -58,9 +59,6 @@ struct OnboardingView: View {
     @AppStorage(Onboarding.ideaKey) private var prompt = ""
     @State private var leaving = false
     @State private var window: NSWindow?
-    /// The wish that came from the site this run (`Wish`), and whether it has yet to be written into the box.
-    @State private var wish: String?
-    @State private var wishUnwritten = false
     @State private var dawn = 0.0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -68,21 +66,14 @@ struct OnboardingView: View {
         ZStack {
             ZStack {
                 switch step {
-                case .hello: HelloStep { go(to: .idea) }
-                case .idea: IdeaStep(prompt: $prompt, wish: wish, unwritten: $wishUnwritten, paste: { receive($0) },
-                                     back: { go(to: .hello) }) { go(to: .setup) }
-                case .setup: SetupStep(back: { go(to: .idea) }, start: finish)
+                case .hello: HelloStep { go(to: .setup) }
+                case .setup: SetupStep(back: { go(to: .hello) }, start: finish)
                 }
             }
             .id(step)
             .transition(.asymmetric(insertion: .stage(from: forward ? 1 : -1), removal: .stage(from: forward ? -1 : 1)))
             .opacity(leaving ? 0 : 1)
             .scaleEffect(leaving ? 1.03 : 1)
-
-            Dots(current: step)
-                .frame(maxHeight: .infinity, alignment: .bottom)
-                .padding(.bottom, 22)
-                .opacity(step == .hello || leaving ? 0 : 1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
@@ -144,14 +135,12 @@ struct OnboardingView: View {
         if let found { receive(found, animated: animated) }
     }
 
-    /// Opens on the first-app step with the wish, with no hello in between: they have already said what they
-    /// want. The words come in as the site's did, under a dawn that fades.
+    /// Goes on to setup with the wish, with no hello in between: they have already said what they want, and
+    /// it's made as soon as Lamp is ready. A dawn that fades meets them, as the site left off.
     private func receive(_ text: String, animated: Bool = true) {
         prompt = text
-        wish = text
-        wishUnwritten = true
-        if step != .idea {
-            if animated { go(to: .idea) } else { step = .idea }
+        if step != .setup {
+            if animated { go(to: .setup) } else { step = .setup }
         }
         guard !reduceMotion else { return }
         Task {
@@ -161,7 +150,7 @@ struct OnboardingView: View {
         }
     }
 
-    /// Fades the welcome out, grows the window into Lamp's, and starts the first app on the user's idea.
+    /// Fades the welcome out and grows the window into Lamp's desk, with a wish from the site started there.
     private func finish() {
         withAnimation(.easeIn(duration: 0.3)) { leaving = true }
         Task {
@@ -178,7 +167,6 @@ struct OnboardingView: View {
             // The welcome is over: nothing to come back to.
             UserDefaults.standard.removeObject(forKey: Onboarding.ideaKey)
             UserDefaults.standard.removeObject(forKey: Onboarding.stepKey)
-            UserDefaults.standard.removeObject(forKey: Onboarding.kindKey)
             UserDefaults.standard.removeObject(forKey: Onboarding.startedKey)
             withAnimation(.easeOut(duration: 0.4)) {
                 onboarded = true
@@ -188,13 +176,11 @@ struct OnboardingView: View {
             // Once Lamp's own view is in, so the welcome's fixed size doesn't hold the window back.
             try? await Task.sleep(for: .seconds(0.05))
             if let window { Chrome.restore(window, to: Onboarding.appSize) }
-            let importing = store.openWaitingImport()
-            // Skipping the idea still leaves Lamp on a new app, ready for one, unless a shared app is
-            // being opened instead: that's what the person came for.
-            if idea.isEmpty && importing { return }
+            store.openWaitingImport()
+            // Without a wish from the site, the desk is where they land: Lamp's own wishes are there to use.
+            guard !idea.isEmpty else { return }
             store.create(fromWelcome: true)
             guard let project = store.selected else { return }
-            guard !idea.isEmpty else { return }
             // An iPhone or iPad app needs Xcode and a simulator first, checked as the chat's Send does, and the
             // idea is kept the same way while that runs: in the message box (so it's on disk if Lamp quits) and
             // as a pending submission (so the new app isn't discarded as unused). Cancelled, it stays there.
@@ -255,348 +241,11 @@ private struct HelloStep: View {
     }
 }
 
-/// 2. The first idea: in their own words, or from a tile.
-private struct IdeaStep: View {
-    @Binding var prompt: String
-    /// The wish that came from the site, if one did, and whether it still has to be written into the box.
-    let wish: String?
-    @Binding var unwritten: Bool
-    /// The person pasted their wish with the button in the box.
-    let paste: (String) -> Void
-    let back: () -> Void
-    let next: () -> Void
-    /// An arriving wish while it is written in; the whole wish is in `prompt` from the start.
-    @State private var arrival: Wish.Arrival?
-    /// A browser's copy is waiting that Lamp can't read without macOS asking: the box offers to paste it.
-    @State private var pasteOffered = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @StateObject private var dictation = Dictation()
-    @StateObject private var deck = IdeaDeck()
-    @State private var chosen: String?
-    @State private var flip = 0
-    @FocusState private var focused: Bool
-    /// What the idea came from, for `Analytics`: the tile last picked (even if then changed), and dictation.
-    @State private var picked = false
-    @State private var dictated = false
-    /// The dictated phrase the box last gave an Undo step to (`Dictation.phrase`).
-    @State private var undoPhrase = 0
-    @Environment(\.undoManager) private var undoManager
-    @State private var shiftReturn: Any?
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Centered in the window, like the first step; the buttons sit along the bottom, and the space kept
-            // below stops the content running into them when the window is small.
-            Spacer(minLength: 40)
-            // The site's own sentence over the wish it wrote, so this reads as the same moment.
-            // Mac, iPhone or both is worked out from what they ask for (Store.chooseKind), so nobody chooses.
-            Heading(title: wish == nil ? "What would make your day easier, or more fun?" : "Here's your wish. Change anything you like.")
-
-            HStack(alignment: .top, spacing: 10) {
-                TextField("", text: box,
-                          prompt: Text("Describe what you'd like…").foregroundStyle(.tertiary), axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 17))
-                    .lineSpacing(3)
-                    .lineLimit(3...5)
-                    .focused($focused)
-                    .allowsHitTesting(arrival == nil)
-                    .onChange(of: prompt) { if prompt != deck.ideas.first(where: { $0.id == chosen })?.blurb { chosen = nil } }
-                    // Return continues, as in the chat; Shift-Return (`newLineOnShiftReturn`) and Option-Return
-                    // start a new line.
-                    .onSubmit { if !prompt.trimmed.isEmpty { done() } }
-                Button(action: toggleDictation) {
-                    Image(systemName: dictation.isListening ? "waveform" : "mic")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(dictation.isListening ? Palette.accent : .secondary)
-                        .symbolEffect(.variableColor.iterative, isActive: dictation.isListening)
-                        .frame(width: 30, height: 30)
-                        .background(.black.opacity(dictation.isListening ? 0.06 : 0), in: Circle())
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .focusEffectDisabled()
-                .help(dictation.isListening ? "Stop dictating" : "Describe it out loud")
-            }
-            .padding(.horizontal, 20).padding(.vertical, 16)
-            .frame(width: 720)
-            .background(.white, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(focused ? Palette.accent.opacity(0.55) : .black.opacity(0.08), lineWidth: focused ? 1.5 : 1))
-            .shadow(color: .black.opacity(0.06), radius: 18, y: 8)
-            .overlay(alignment: .bottomTrailing) {
-                if pasteOffered && prompt.isEmpty {
-                    Button {
-                        if let text = Wish.pasted() { paste(text) }
-                        pasteOffered = false
-                    } label: {
-                        Text("Paste my wish")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 14).frame(height: 30)
-                            .background(Palette.accentDeep, in: Capsule())
-                            .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .focusEffectDisabled()
-                    .padding(12)
-                    .transition(.opacity)
-                }
-            }
-            .padding(.top, 18)
-
-            HStack {
-                Text("Need inspiration?").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    deck.more()
-                    Analytics.capture(.welcomeMoreIdeas)
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: IdeaDeck.moreSymbol)
-                        Text("Show me others")
-                    }
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Palette.accentDeep)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            .frame(width: 720)
-            .padding(.top, 26)
-
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
-                ForEach(Array(deck.ideas.enumerated()), id: \.element.id) { index, idea in
-                    IdeaTile(idea: idea, selected: chosen == idea.id) { choose(idea) }
-                        .transition(.asymmetric(
-                            insertion: .opacity.combined(with: .scale(scale: 0.92)).animation(.spring(response: 0.5, dampingFraction: 0.8).delay(Double(index) * 0.04)),
-                            removal: .opacity.animation(.easeOut(duration: 0.15))))
-                }
-            }
-            .frame(width: 720)
-            .padding(.top, 10)
-            Spacer(minLength: 110)
-        }
-        .frame(maxWidth: .infinity)
-        .overlay(alignment: .bottom) {
-            Footer(back: back) {
-                BigButton(title: "Continue", action: done)
-                    .disabled(prompt.trimmed.isEmpty)
-            } aside: {
-                if prompt.trimmed.isEmpty {
-                    Button("Skip") {
-                        Analytics.capture(.welcomeIdeaSkipped)
-                        next()
-                    }
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
-                }
-            }
-        }
-        .onAppear {
-            newLineOnShiftReturn()
-            deck.prefetch()
-            pasteOffered = Wish.offersPaste()
-            // After the step has slid in: focus can't land while the old step still holds it.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { if !unwritten { focused = true } }
-        }
-        .onDisappear {
-            dictation.cancel()
-            shiftReturn.map(NSEvent.removeMonitor)
-            shiftReturn = nil
-        }
-        // Back from the browser with something copied there.
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            pasteOffered = Wish.offersPaste()
-        }
-        .task(id: unwritten) { await write() }
-    }
-
-    /// The text field reports Shift-Return as a plain Return, which would continue: the key is turned into a new
-    /// line before the field sees it, at the insertion point, unless an input method is composing.
-    private func newLineOnShiftReturn() {
-        guard shiftReturn == nil else { return }
-        shiftReturn = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.keyCode == 36 || event.keyCode == 76, event.modifierFlags.contains(.shift),
-                  let editor = event.window?.firstResponder as? NSTextView, editor.isFieldEditor, !editor.hasMarkedText()
-            else { return event }
-            editor.insertNewlineIgnoringFieldEditor(nil)
-            return nil
-        }
-    }
-
-    private func done() {
-        let source = chosen != nil ? "picked" : picked ? "edited" : wish != nil ? "site" : "typed"
-        Analytics.capture(.welcomeIdeaDone, ["source": source, "dictated": dictated])
-        next()
-    }
-
-    /// The box shows the wish as far as it has been written; typing is theirs from the first key.
-    private var box: Binding<String> {
-        Binding { arrival?.text(over: prompt) ?? prompt } set: { typed in
-            if let arrival {
-                guard typed != arrival.text(over: prompt) else { return }
-                self.arrival = nil
-            }
-            prompt = typed
-        }
-    }
-
-    /// Writes an arriving wish into the box a word at a time, once.
-    private func write() async {
-        guard unwritten, let wish else { return }
-        defer { unwritten = false }
-        if !reduceMotion {
-            let steps = Wish.steps(wish)
-            let pace = Wish.pace(words: steps.count)
-            arrival = Wish.Arrival(wish)
-            try? await Task.sleep(for: .seconds(0.45))   // the step slides in first
-            // An idea picked or words dictated meanwhile take the box: the writing stops there.
-            for step in steps where !Task.isCancelled && arrival != nil && prompt == wish {
-                arrival?.advance(to: step)
-                try? await Task.sleep(for: pace)
-            }
-            arrival = nil
-        }
-        focused = true
-        // Focus selects everything in the box, and the next key would then replace the wish: put the caret
-        // at its end instead, ready to add to it.
-        try? await Task.sleep(for: .seconds(0.1))
-        if let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
-            editor.setSelectedRange(NSRange(location: editor.string.utf16.count, length: 0))
-        }
-    }
-
-    private func choose(_ idea: Idea) {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { chosen = idea.id }
-        prompt = idea.blurb
-        picked = true
-        Analytics.capture(.welcomeIdeaPicked, ["idea": Analytics.idea(idea)])
-        focused = true
-    }
-
-    private func toggleDictation() {
-        if dictation.isListening { return dictation.stop() }
-        let typed = prompt.trimmed
-        let separator = typed.isEmpty ? "" : " "
-        dictated = true
-        Analytics.capture(.welcomeDictation)
-        Task {
-            await dictation.start { heard, before in
-                if dictation.phrase != undoPhrase {
-                    undoPhrase = dictation.phrase
-                    registerUndo(restoring: before.isEmpty ? typed : typed + separator + before)
-                }
-                prompt = typed + separator + heard
-            }
-        }
-    }
-
-    /// Each dictated phrase is one Undo step, as in the chat's message box (`Composer`): it puts back the box
-    /// as it was before the phrase, and stops listening so the next words don't write over it.
-    private func registerUndo(restoring earlier: String) {
-        guard let undoManager else { return }
-        undoManager.registerUndo(withTarget: dictation) { dictation in
-            dictation.cancel()
-            registerUndo(restoring: prompt)
-            prompt = earlier
-        }
-        undoManager.setActionName("Dictation")
-    }
-}
-
-private struct IdeaTile: View {
-    let idea: Idea
-    let selected: Bool
-    let action: () -> Void
-    @State private var hovering = false
-    /// How far the hover outline has swept: 0 none, 1 all the way round, 2 gone again (see `SweepOutline`).
-    @State private var sweep = 0.0
-
-    var body: some View {
-        Button(action: action) {
-            HStack(alignment: .top, spacing: 12) {
-                // The symbol alone, without the icon's tile, to leave the wish more room. Gray until hovered
-                // or chosen, when it takes the outline's blue.
-                Image(systemName: idea.symbol)
-                    .font(.system(size: 17, weight: .regular))
-                    .foregroundStyle(hovering || selected ? Color.blue : Color(white: 0.45))
-                    .frame(width: 24, height: 20)
-                    // Its top level with the top of the wish's first line.
-                    .padding(.top, 3)
-                    .animation(.easeOut(duration: 0.2), value: hovering || selected)
-                // Just the wish, in the person's words: the name and kind of app are Lamp's business.
-                // Room for the same number of lines in every tile, so the grid holds still as ideas change.
-                Text(idea.blurb).font(.system(size: 13)).foregroundStyle(Palette.ink)
-                    .lineLimit(4, reservesSpace: true)
-                    .padding(.top, 1)
-                Spacer(minLength: 0)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(selected ? Color.white : (hovering ? Color.white.opacity(0.9) : Palette.card),
-                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(selected ? Palette.accent : .black.opacity(0.06), lineWidth: selected ? 1.5 : 1))
-            .overlay(SweepOutline(progress: sweep, cornerRadius: 14, color: .blue))
-            .shadow(color: .black.opacity(hovering || selected ? 0.08 : 0.03), radius: hovering ? 12 : 6, y: hovering ? 6 : 3)
-            .scaleEffect(hovering ? 1.015 : 1)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .focusEffectDisabled()
-        .onHover { over in
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { hovering = over }
-            // The color comes in from the top left and leaves towards the bottom right. Back over a tile it
-            // has left, or is still leaving, it starts in again from the top left.
-            if over, sweep >= 1 { sweep = 0 }
-            withAnimation(.easeInOut(duration: 0.35)) { sweep = over ? 1 : 2 }
-        }
-    }
-}
-
-/// A tile's outline in `color`, drawn as far as `progress` says along the diagonal from the top left to the
-/// bottom right: from 0 (none) it fills in to 1 (all of it), and from 1 to 2 it empties the same way, so the
-/// color passes through the tile rather than going back where it came from.
-private struct SweepOutline: View, Animatable {
-    var progress: Double
-    let cornerRadius: CGFloat
-    let color: Color
-
-    var animatableData: Double {
-        get { progress }
-        set { progress = newValue }
-    }
-
-    /// How far along the diagonal each edge of the color fades, so it reads as a sweep and not a wipe.
-    private static let soft = 0.35
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .strokeBorder(LinearGradient(stops: stops, startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1.5)
-            .opacity(progress > 0 && progress < 2 ? 1 : 0)
-            .allowsHitTesting(false)
-    }
-
-    /// The outline's color at points along the diagonal: past the leading edge it hasn't arrived, behind
-    /// the trailing edge it has already gone.
-    private var stops: [Gradient.Stop] {
-        let soft = Self.soft
-        let lead = progress * (1 + soft)
-        let trail = (progress - 1) * (1 + soft) - soft
-        return (0...16).map { step in
-            let at = Double(step) / 16
-            let arrived = min(max((lead - at) / soft, 0), 1)
-            let remaining = min(max((at - trail) / soft, 0), 1)
-            return .init(color: color.opacity(arrived * remaining), location: at)
-        }
-    }
-}
-
-/// 3. Apple's tools, and what builds the apps.
+/// 2. Apple's tools, and what builds the apps.
 private struct SetupStep: View {
     @EnvironmentObject private var store: Store
     let back: () -> Void
-    /// Leaves the welcome and starts the first app.
+    /// Leaves the welcome for the desk.
     let start: () -> Void
     @AppStorage("engine") private var engine = Engine.pi.rawValue
     @AppStorage("piProvider") private var piProvider = "openrouter"
@@ -629,7 +278,7 @@ private struct SetupStep: View {
         }
         .overlay(alignment: .bottom) {
             Footer(back: back) {
-                BigButton(title: "Start building", action: start).disabled(!ready)
+                BigButton(title: "Continue", action: start).disabled(!ready)
             } aside: {
                 EmptyView()
             }
@@ -1392,21 +1041,6 @@ private struct BigButton: View {
         .buttonStyle(.plain)
         .focusEffectDisabled()
         .onHover { over in withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { hovering = over } }
-    }
-}
-
-private struct Dots: View {
-    let current: Step
-
-    var body: some View {
-        HStack(spacing: 7) {
-            ForEach(Step.allCases.dropFirst(), id: \.self) { step in
-                Capsule()
-                    .fill(step == current ? Palette.accent : Color.black.opacity(0.13))
-                    .frame(width: step == current ? 20 : 7, height: 7)
-            }
-        }
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: current)
     }
 }
 

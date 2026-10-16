@@ -230,7 +230,12 @@ enum Template {
             INTENTS=1
             mkdir -p .build
             echo '\(appIntentsProtocols)' > .build/appintents-protocols.json
-            FLAGS+=(-Xswiftc -emit-const-values -Xswiftc -const-gather-protocols-list -Xswiftc "$PWD/.build/appintents-protocols.json")
+            # The compiler's own option for the protocols' list, named as this compiler names it: Swift 6.2 (Xcode 26.0)
+            # knows only `-const-gather-protocols-file`, and only in the frontend.
+            GATHER=-const-gather-protocols-list
+            swiftc -frontend -help-hidden 2>/dev/null | grep -q -- "$GATHER" || GATHER=-const-gather-protocols-file
+            FLAGS+=(-Xswiftc -emit-const-values -Xswiftc -Xfrontend -Xswiftc "$GATHER"
+                    -Xswiftc -Xfrontend -Xswiftc "$PWD/.build/appintents-protocols.json")
           else
             echo "warning: Xcode isn't installed, so Siri, Shortcuts and Spotlight won't see this app's App Intents." >&2
           fi
@@ -3497,6 +3502,34 @@ enum Template {
         func decode(_ type: LampSpare.Type, forKey key: Key) throws -> LampSpare { LampSpare(nil) }
     }
 
+    /// A constant (a static or global `let`) whose value changed while the app is open (LiveSlots): the open app
+    /// keeps the value it made at first, so the live copy reads it from here instead, made once for each value it's
+    /// been given (`key` names the value too).
+    enum LampConstants {
+        private static var values: [String: Any] = [:]
+        private static var making: [String: NSRecursiveLock] = [:]
+        private static let lock = NSLock()
+        /// Each value is made once, as Swift makes a constant: a second reader waits for the first to finish. One
+        /// constant's value may read another's while it's made.
+        static func value<T>(_ key: String, _ make: () -> T) -> T {
+            lock.lock()
+            if let value = values[key] as? T { lock.unlock(); return value }
+            let own = making[key] ?? NSRecursiveLock()
+            making[key] = own
+            lock.unlock()
+            own.lock()
+            defer { own.unlock() }
+            lock.lock()
+            if let value = values[key] as? T { lock.unlock(); return value }
+            lock.unlock()
+            let value = make()
+            lock.lock()
+            values[key] = value
+            lock.unlock()
+            return value
+        }
+    }
+
     /// A view's spare state (LiveSlots): `@State` added to a view while the app is open is kept here by name, so the
     /// view holds what it did. A starting value is worked out on the first read and kept without redrawing anything;
     /// a change redraws the views that read any of it.
@@ -4275,7 +4308,16 @@ enum Template {
             restored = true
             // A window that had the chat open last time comes back at a size that already holds it.
             let wasOpen = UserDefaults.standard.bool(forKey: openKey)
-            if askedToOpen() { open(window, grow: !wasOpen) }
+            if let wait = askedToOpen() {
+                // A wish Lamp came with, opened for the first time, is seen on its own a moment before its chat
+                // comes in beside it: the file says how long (`MagicPanel.startWithChat`).
+                guard wait > 0 else { return open(window, grow: !wasOpen) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
+                    MainActor.assumeIsolated {
+                        if window.isVisible, !isOpen(in: window) { open(window, grow: !wasOpen) }
+                    }
+                }
+            }
             else if wasOpen { open(window, grow: false) }
         }
 
@@ -4284,10 +4326,12 @@ enum Template {
         /// file is taken once, so the chat isn't opened again on the next launch by it.
         private static var handOff: URL { LampRuntime.folder.appendingPathComponent("open-sidebar") }
 
-        @MainActor private static func askedToOpen() -> Bool {
-            guard FileManager.default.fileExists(atPath: handOff.path) else { return false }
+        /// How long to wait before opening the chat, when Lamp asked for it: nothing written means at once.
+        @MainActor private static func askedToOpen() -> TimeInterval? {
+            guard FileManager.default.fileExists(atPath: handOff.path) else { return nil }
+            let wait = (try? String(contentsOf: handOff, encoding: .utf8)).flatMap { TimeInterval($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
             try? FileManager.default.removeItem(at: handOff)
-            return true
+            return max(0, min(wait ?? 0, 5))
         }
 
         /// The window the chat goes beside: the one in front, else the frontmost of the app's own windows.

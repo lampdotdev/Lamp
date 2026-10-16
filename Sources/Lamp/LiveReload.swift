@@ -154,7 +154,7 @@ enum LiveReload {
             Dictionary(grouping: entries, by: { String($0.prefix { $0 != "\t" }) })
         }
         let old = byType(before), new = byType(now)
-        for (type, members) in old.sorted(by: { $0.key < $1.key }) {
+        for (type, members) in old.sorted(by: { $0.key < $1.key }) where type != "\u{2}constant" {
             guard let current = new[type] else { continue }
             if type == "\u{1}launch", current != members {
                 let what = (current.first { !members.contains($0) } ?? members.first { !current.contains($0) } ?? "")
@@ -180,7 +180,7 @@ enum LiveReload {
         }
         let old = byType(before), new = byType(after)
         return old.keys.sorted().filter { type in
-            guard let current = new[type], current != old[type] else { return false }
+            guard !type.hasPrefix("\u{1}"), !type.hasPrefix("\u{2}"), let current = new[type], current != old[type] else { return false }
             return LiveSlots.casesAdded(type, old[type]!, current)
         }
     }
@@ -308,7 +308,9 @@ enum LiveReload {
                                      cwd: folder) { output.append($0) }
         guard status == 0 else { return nil }
         let dump = output.joined(separator: "\n")
-        return (members(inDump: dump) + SwiftSource.launchEntries(inDump: dump, folder: folder), SwiftSource.declarations(inDump: dump))
+        let declarations = SwiftSource.declarations(inDump: dump)
+        return (members(inDump: dump) + SwiftSource.launchEntries(inDump: dump, folder: folder) + SwiftSource.constantEntries(declarations),
+                declarations)
     }
 
     /// The stored members of every type in a `-dump-ast` printout: each line's indent says what it's inside, so
@@ -372,6 +374,11 @@ enum LiveReload {
     /// Compiles the whole module from the live copy, the way the live build does (SwiftPM's for a Mac app,
     /// Xcode's for the Mac half of an app for both: both unoptimized, testable, for the app's macOS, named after the app),
     /// and links the changed files' objects into a library for the open app. Nil, with the compiler's words, when it doesn't compile.
+    /// Every file of the app's in the live copy, but Lamp's own.
+    static func appFiles(_ project: LampProject) -> [String] {
+        swiftFiles(in: sources(project)).keys.filter { !["LampSupport.swift", Template.sceneSupportFile].contains(($0 as NSString).lastPathComponent) }.sorted()
+    }
+
     static func compile(_ project: LampProject, changed: [String]) async -> (url: URL?, problem: String?) {
         guard !changed.isEmpty else { return (nil, nil) }
         let live = folder(project)
@@ -468,7 +475,10 @@ enum LiveSlots {
     }
 
     /// The app was installed: its objects are the new build's, with every property stored, and its places empty.
-    static func clear(_ project: LampProject) { try? FileManager.default.removeItem(at: url(project)) }
+    static func clear(_ project: LampProject) {
+        try? FileManager.default.removeItem(at: url(project))
+        try? FileManager.default.removeItem(at: constantsURL(project))
+    }
 
     /// Whether an enum only gained cases, at the end, with none of its cases carrying anything: a value of it is
     /// then its case's number, which the cases it had keep, in the same size (up to 256 cases; one case takes no
@@ -494,6 +504,31 @@ enum LiveSlots {
         var added: [String]
         var layout: [String]
         var files: [String]
+        /// The constants given their new values for the first time ("Car.topSpeed").
+        var constants: [String] = []
+    }
+
+    private static func constantsURL(_ project: LampProject) -> URL { LiveReload.folder(project).appendingPathComponent("constants.json") }
+
+    /// Whether a constant's new value was given at an earlier change: the live copy is then rewritten before anything
+    /// is compiled.
+    static func hasConstants(_ project: LampProject) -> Bool {
+        ((try? JSONDecoder().decode([String].self, from: Data(contentsOf: constantsURL(project)))) ?? []).isEmpty == false
+    }
+
+    /// The constants (static or global `let`s, "Type<tab>name") whose value changed since the app opened: those that
+    /// differ now, and those that did at an earlier change, which the fresh live copy has as they're written again.
+    static func changedConstants(_ project: LampProject, before: [String], after: [String]) -> [String] {
+        func values(_ entries: [String]) -> [String: String] {
+            Dictionary(entries.filter { $0.hasPrefix("\u{2}constant\t") }.compactMap { entry -> (String, String)? in
+                let field = entry.dropFirst("\u{2}constant\t".count)
+                guard let colon = field.range(of: ": ", options: .backwards) else { return nil }
+                return (String(field[..<colon.lowerBound]), String(field[colon.upperBound...]))
+            }, uniquingKeysWith: { first, _ in first })
+        }
+        let old = values(before), new = values(after)
+        let earlier = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: constantsURL(project)))) ?? []
+        return Set(new.keys.filter { key in old[key].map { $0 != new[key] } ?? false } + earlier.filter { new[$0] != nil }).sorted()
     }
 
     /// When every way the new code's types differ from the open app's is a stored property added to a type with a
@@ -502,7 +537,8 @@ enum LiveSlots {
     /// each time, so the properties already in spares (`mapping`) come back as additions too, and are put back in
     /// the same places. Where each is declared comes from the compiler (`declarations`), so however it's written
     /// (with attributes, across lines, in a list with others, in a type written on one line), it's found exactly.
-    static func fit(_ project: LampProject, before: [String], after: [String], declarations: SwiftSource.Declarations) -> Plan? {
+    static func fit(_ project: LampProject, before: [String], after: [String], declarations: SwiftSource.Declarations,
+                    constants: [String] = []) -> Plan? {
         func byType(_ entries: [String]) -> [String: [String]] {
             Dictionary(grouping: entries, by: { String($0.prefix { $0 != "\t" }) })
         }
@@ -516,7 +552,7 @@ enum LiveSlots {
         }
         var planned: [(type: String, name: String, slot: Slot, published: Bool, isNew: Bool)] = []
         var moved = Set<String>()
-        for (type, members) in old.sorted(by: { $0.key < $1.key }) where !type.hasPrefix("\u{1}") {
+        for (type, members) in old.sorted(by: { $0.key < $1.key }) where !type.hasPrefix("\u{1}") && !type.hasPrefix("\u{2}") {
             guard let current = new[type] else { continue }
             guard current != members, !casesAdded(type, members, current) else { continue }
             // Only additions, with what was there still there, in order.
@@ -578,16 +614,23 @@ enum LiveSlots {
             }
         }
         // Every type the open app doesn't have is the library's to lay out; one it has that changed must be fitted.
-        guard !planned.isEmpty else { return nil }
+        guard !planned.isEmpty || !constants.isEmpty else { return nil }
 
         // Each declaration rewritten in its file, the last first so the earlier places stay where they are.
-        var byFile: [String: [(binding: Int, items: [(type: String, name: String, slot: Slot, published: Bool, isNew: Bool)])]] = [:]
+        var byFile: [String: [(binding: Int, items: [(type: String, name: String, slot: Slot, published: Bool, isNew: Bool)], constant: String?)]] = [:]
         for item in planned {
             guard let variable = declarations.variables[item.type + "\t" + item.name] else { return nil }
             let file = variable.position.file
             var list = byFile[file] ?? []
-            if let at = list.firstIndex(where: { $0.binding == variable.binding }) { list[at].items.append(item) } else { list.append((variable.binding, [item])) }
+            if let at = list.firstIndex(where: { $0.binding == variable.binding }) { list[at].items.append(item) } else { list.append((variable.binding, [item], nil)) }
             byFile[file] = list
+        }
+        // A constant whose value is made from a changed one is made again too (`half = size / 2`), and so on.
+        let constants = withDependents(constants, in: declarations)
+        let byType = Dictionary(grouping: after, by: { String($0.prefix { $0 != "\t" }) })
+        for key in constants {
+            guard let variable = declarations.constants[key] else { return nil }
+            byFile[variable.position.file, default: []].append((variable.binding, [], key))
         }
         var written: [(path: String, text: String)] = []
         for (file, edits) in byFile {
@@ -598,8 +641,9 @@ enum LiveSlots {
                 || (declarations.bindings[$0.binding].start.line == declarations.bindings[$1.binding].start.line
                     && declarations.bindings[$0.binding].start.column > declarations.bindings[$1.binding].start.column) }
             for edit in ordered {
-                guard let (range, text) = rewrite(declarations.bindings[edit.binding], items: edit.items, in: original,
-                                                  declarations: declarations, cases: cases) else { return nil }
+                let made = edit.constant.map { rewriteConstant($0, in: original, declarations: declarations, rewritten: Set(constants), layout: byType) }
+                    ?? rewrite(declarations.bindings[edit.binding], items: edit.items, in: original, declarations: declarations, cases: cases)
+                guard let (range, text) = made else { return nil }
                 bytes.replaceSubrange(range, with: Array(text.utf8))
                 for item in edit.items where item.slot.holder == .view { views.append(item.name) }
             }
@@ -621,10 +665,87 @@ enum LiveSlots {
         }
         let base = LiveReload.sources(project).standardizedFileURL.path + "/"
         for file in written { try? file.text.write(toFile: file.path, atomically: true, encoding: .utf8) }
+        let earlier = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: constantsURL(project)))) ?? []
         save(map, for: project)
+        try? JSONEncoder().encode(constants).write(to: constantsURL(project), options: .atomic)
         return Plan(added: planned.filter(\.isNew).map { $0.type + "." + $0.name },
                     layout: after.filter { !moved.contains($0) },
-                    files: written.map { URL(fileURLWithPath: $0.path).standardizedFileURL.path }.map { $0.hasPrefix(base) ? String($0.dropFirst(base.count)) : $0 })
+                    files: written.map { URL(fileURLWithPath: $0.path).standardizedFileURL.path }.map { $0.hasPrefix(base) ? String($0.dropFirst(base.count)) : $0 },
+                    constants: constants.filter { !earlier.contains($0) }.map(displayName))
+    }
+
+    /// A constant whose value changed, rewritten to give the new one: `static let size: Float = 200` becomes a
+    /// computed `static var` that makes the value once (`LampConstants`) and keeps it. The open app made the old
+    /// value once and keeps it in storage the new code no longer reads. Its name in `LampConstants` carries its
+    /// text and the texts of the rewritten constants it's made from, so a change to any of them makes it again. Not
+    /// for one that holds an object of the app's own classes, however wrapped (`[Model]`, `Session<Int>`, a struct
+    /// holding one): new objects there would split the app's state in two, so that reopens.
+    private static func rewriteConstant(_ key: String, in text: SwiftSource.Text, declarations: SwiftSource.Declarations,
+                                        rewritten: Set<String>, layout: [String: [String]]) -> (Range<Int>, String)? {
+        guard let variable = declarations.constants[key] else { return nil }
+        let binding = declarations.bindings[variable.binding]
+        guard binding.entries.count == 1, let from = text.offset(binding.start), let end = text.tokenEnd(binding.last),
+              let at = text.offset(variable.position), let initial = initialText(of: variable, in: declarations) else { return nil }
+        // The declaration may start at `static` (or `class`): the `let` is the last word before the name.
+        let lead = text.slice(from, at)
+        guard let keyword = lead.range(of: #"\blet\b"#, options: [.regularExpression, .backwards]) else { return nil }
+        let start = from + lead[..<keyword.lowerBound].utf8.count
+        var seen = Set<String>()
+        guard !holdsObject(variable.type, classes: declarations.classes, layout: layout, seen: &seen) else { return nil }
+        // Its own text, and those of the rewritten constants it's made from, however far back.
+        // Walked and hashed in name order, each with its name, so the same inputs always give the same name.
+        var sources: [String: String] = [key: initial], queue = [initial]
+        while let next = queue.popLast() {
+            for other in rewritten.sorted() where sources[other] == nil && SwiftText.mentions(constantName(other), in: next) {
+                guard let made = declarations.constants[other].flatMap({ initialText(of: $0, in: declarations) }) else { continue }
+                sources[other] = made
+                queue.append(made)
+            }
+        }
+        // Named by its key, the file of a private one included: two files' `private let spacing` are two values.
+        let name = key.replacingOccurrences(of: "\t", with: ".") + "#" + SwiftSource.digest(sources.keys.sorted().map { $0 + "=" + sources[$0]! }.joined(separator: "\n"))
+        let quoted = name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        return (start..<end, "var \(variable.name): \(variable.type) { LampConstants.value(\"\(quoted)\") { () -> \(variable.type) in \(initial) } }")
+    }
+
+    /// The changed constants and every constant whose starting value names one of them, however far back.
+    private static func withDependents(_ changed: [String], in declarations: SwiftSource.Declarations) -> [String] {
+        var set = Set(changed), grew = true
+        while grew {
+            grew = false
+            for (key, variable) in declarations.constants where !set.contains(key) {
+                guard let made = initialText(of: variable, in: declarations) else { continue }
+                if set.contains(where: { SwiftText.mentions(constantName($0), in: made) }) { set.insert(key); grew = true }
+            }
+        }
+        return set.sorted()
+    }
+
+    /// A constant's own name, from its key ("Type<tab>name", "@File.swift" after a private one's).
+    private static func constantName(_ key: String) -> String {
+        String(key.split(separator: "\t", omittingEmptySubsequences: false).last?.prefix { $0 != "@" } ?? "")
+    }
+
+    /// A constant's name as people read it: "Car.topSpeed", or "topSpeed" for a global.
+    private static func displayName(_ key: String) -> String {
+        let owner = key.split(separator: "\t", omittingEmptySubsequences: false).first.map(String.init) ?? ""
+        return (owner.isEmpty ? "" : owner + ".") + constantName(key)
+    }
+
+    /// Whether a value of this type can hold an object of the app's own classes: one of them named in it, or a type
+    /// of the app's named in it that holds one, as far down as it goes.
+    private static func holdsObject(_ type: String, classes: Set<String>, layout: [String: [String]], seen: inout Set<String>) -> Bool {
+        let names = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
+        for match in names.matches(in: type, range: NSRange(type.startIndex..., in: type)) {
+            let name = String(type[Range(match.range, in: type)!])
+            if classes.contains(name) || classes.contains(String(name.split(separator: ".").last ?? "")) { return true }
+            guard let members = layout[name], seen.insert(name).inserted else { continue }
+            for member in members {
+                guard let colon = member.range(of: ": ") else { continue }
+                if holdsObject(String(member[colon.upperBound...]), classes: classes, layout: layout, seen: &seen) { return true }
+            }
+        }
+        return false
     }
 
     /// The text of a property's starting value, when it has one.
@@ -813,6 +934,40 @@ enum SwiftText {
             at += 1
         }
         return at
+    }
+
+    /// Whether `identifier` is used in `text`'s code (not in a string's text or a comment, nor as part of a longer
+    /// name), the code of a string's interpolations included.
+    static func mentions(_ identifier: String, in text: String) -> Bool {
+        let code = codeOnly(Array(text))
+        return !identifier.isEmpty && replacing(identifier: identifier, with: "\u{0}", in: code) != code
+    }
+
+    /// `chars` with comments and strings' text taken out, and the code of strings' interpolations kept.
+    static func codeOnly(_ chars: [Character]) -> String {
+        var out = "", at = 0
+        while at < chars.count {
+            guard let end = skip(chars, at: at) else { out.append(chars[at]); at += 1; continue }
+            out += " "
+            if chars[at] != "/" {
+                // A string: what's inside each `\(…)` (`\#(…)` in a raw one) is code.
+                var hashes = 0
+                while at + hashes < end, chars[at + hashes] == "#" { hashes += 1 }
+                var inside = at + hashes
+                while inside < end {
+                    if chars[inside] == "\\", inside + 1 + hashes < end,
+                       chars[(inside + 1)..<(inside + 1 + hashes)].allSatisfy({ $0 == "#" }), chars[inside + 1 + hashes] == "(" {
+                        let open = inside + 2 + hashes, close = interpolationEnd(chars, from: open)
+                        out += codeOnly(Array(chars[open..<max(open, close - 1)])) + " "
+                        inside = close
+                        continue
+                    }
+                    inside += hashes == 0 && chars[inside] == "\\" ? 2 : 1
+                }
+            }
+            at = end
+        }
+        return out
     }
 
     /// `text` with each use of `identifier` in its code (not in a string or comment, nor part of a longer name)

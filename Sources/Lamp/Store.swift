@@ -529,7 +529,9 @@ final class Store: ObservableObject {
         reload()
         restoreWaiting()
         for project in projects { discardIfUnused(project.id) }
-        Onboarding.settle(hasApps: !projects.isEmpty)
+        // The wishes Lamp comes with don't count: they're there before the welcome is.
+        Onboarding.settle(hasApps: projects.contains { !Starters.isStarter($0) })
+        if !Onboarding.isDone { installStarters() }
         // Lamp opens on the desk (`WishDesk`), not on a wish's chat.
         selection = nil
         startGateway()
@@ -567,7 +569,7 @@ final class Store: ObservableObject {
         }
         // During the welcome, Apple's installer waits for the step that explains it.
         if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone { requestBuildTools() }
-        if !setup.hasBuildTools { pollSetup() }
+        if !setup.hasBuildTools { pollSetup() } else { prepareStarters() }
         if setup.ready && !wasReady { await becameReady() }
     }
 
@@ -611,6 +613,7 @@ final class Store: ObservableObject {
                 try? await Task.sleep(for: .seconds(5))
                 setup = await SetupCheck.run(keeping: setup).keeping(setup)
             }
+            prepareStarters()
             if setup.ready { await becameReady() }
         }
     }
@@ -937,6 +940,7 @@ final class Store: ObservableObject {
     /// Brings Lamp to the front on an app's chat, in its own window, ready to type.
     func showChat(_ id: String) {
         reload()
+        offerStarterChanges(id, after: 0.5)
         selection = id
         chatFocusRequest += 1
         NSApp.activate()
@@ -3478,6 +3482,134 @@ final class Store: ObservableObject {
         return true
     }
 
+    // MARK: - Starters
+
+    /// The wishes Lamp comes with (`Starters`), copied onto the desk on the first launch. Saved as their first
+    /// version and built afterwards (`prepareStarters`), once Apple's tools are there: git is one of them.
+    private func installStarters() {
+        guard !UserDefaults.standard.bool(forKey: Starters.installedKey) else { return }
+        UserDefaults.standard.set(true, forKey: Starters.installedKey)
+        var made: [LampProject] = []
+        for starter in Starters.bundled {
+            do {
+                let project = try Template.draft(name: uniqueName(starter.name), in: root)
+                do {
+                    try Template.fill(project)
+                    try Starters.copy(starter, into: project)
+                    try Template.writeOwnedFiles(for: project)   // again, now it's known whether it has a widget
+                    made.append(project)
+                } catch {
+                    try? FileManager.default.removeItem(at: project.dir)
+                    throw error
+                }
+            } catch {
+                NSLog("Lamp couldn't add the wish \(starter.name): \(error.localizedDescription)")
+            }
+        }
+        guard !made.isEmpty else { return }
+        reload()
+        startersInstall = Task {
+            // Drawn only for a starter shipped without its icon: the others' are on the desk already.
+            for project in made where !Starters.hasShippedIcon(project) {
+                if let spec = Icons.load(project) { await renderIcon(project, spec: spec) }
+            }
+        }
+    }
+    private var startersInstall: Task<Void, Never>?
+
+    /// A starter's chat begins with what it offers to change first (`Starters.card`), added a moment after the chat
+    /// is first shown, beside the app or in Lamp's window, so it arrives there rather than being there already.
+    /// Once: a chat with anything in it is left as it is.
+    func offerStarterChanges(_ id: String, after delay: Double) {
+        guard (logs[id] ?? []).isEmpty, let project = projects.first(where: { $0.id == id }), Starters.isStarter(project),
+              let starter = Starters.starter(of: project), let card = Starters.card(for: starter),
+              offeringStarter.insert(id).inserted else { return }
+        Task {
+            try? await Task.sleep(for: .seconds(delay))
+            offeringStarter.remove(id)
+            guard let current = current(project), (logs[id] ?? []).isEmpty else { return }
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { logs[id] = [card] }
+            saveChat(current)
+        }
+    }
+    private var offeringStarter: Set<String> = []
+
+    /// Starters being built for the first time, out of sight: their icons spin on the desk.
+    @Published private(set) var preparing: Set<String> = []
+    /// Starters used while they were still being built: each opens when its build is done.
+    @Published var openWhenReady: Set<String> = []
+    private var preparingStarters = false
+    /// Starters whose first build failed this time: not tried again until Lamp next starts, and opening one
+    /// shows its chat, which has the failure.
+    private var unpreparedStarters: Set<String> = []
+
+    /// Builds the starters nobody has opened yet, one at a time, as soon as Apple's tools are there, so each
+    /// opens at once when used. One that's being waited for goes first.
+    func prepareStarters() {
+        guard setup.hasBuildTools, !preparingStarters else { return }
+        preparingStarters = true
+        Task {
+            defer { preparingStarters = false }
+            await startersInstall?.value
+            await saveStartersFirstVersions()
+            while let next = nextStarterToPrepare() { await prepare(next) }
+        }
+    }
+
+    /// Each starter's first version, "From Lamp", which Undo and Versions go back to: made once Apple's tools are
+    /// there, since git is one of them, and tried again on a later launch for one where it didn't take.
+    private func saveStartersFirstVersions() async {
+        for project in projects where Starters.isStarter(project)
+            && !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(".git").path) {
+            if !(await initRepo(project, message: "From Lamp")) {
+                try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(".git"))
+                NSLog("Lamp couldn't save the first version of \(project.name)")
+            }
+        }
+    }
+
+    /// A starter that's never been built and that nothing else is working on.
+    func needsPreparing(_ project: LampProject) -> Bool {
+        Starters.isStarter(project) && !unpreparedStarters.contains(project.id) && !busy.contains(project.id)
+            && !FileManager.default.fileExists(atPath: project.installedURL.path)
+    }
+
+    private func nextStarterToPrepare() -> LampProject? {
+        let waiting = projects.filter(needsPreparing)
+        return waiting.first { openWhenReady.contains($0.id) } ?? waiting.first
+    }
+
+    /// A starter's first build and install, without opening it and without a word in its chat: its chat stays
+    /// empty for the person's first change. A failure stays in the chat, for the agent that is asked to fix it.
+    private func prepare(_ project: LampProject) async {
+        guard begin(project) != nil else { return }
+        preparing.insert(project.id)
+        let before = Set((logs[project.id] ?? []).map(\.id))
+        var made = false
+        if await build(project) == nil {
+            await prepareIcon(project)
+            do {
+                try await deploy(project)
+                heldInstalls.installed(project.id)
+                Runtime.releaseBuild(project)
+                stamps[project.id] = BuildStamp.read(project.installedURL)
+                made = true
+            } catch {
+                log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
+            }
+        }
+        // Only what the build said goes: the card its chat may have been given meanwhile stays.
+        if made, let lines = logs[project.id] {
+            logs[project.id] = lines.filter { before.contains($0.id) || $0.kind == .ask }
+            saveChat(project)
+        }
+        if !made { unpreparedStarters.insert(project.id) }
+        preparing.remove(project.id)
+        finish(project)
+        guard openWhenReady.remove(project.id) != nil, let current = current(project) else { return }
+        if made { open(fromDesk: current) } else { showChat(current.id) }
+    }
+
     func run(_ project: LampProject) async {
         guard begin(project) != nil else { return }
         defer { finish(project) }
@@ -3864,19 +3996,31 @@ final class Store: ObservableObject {
         note("Updating \(project.name) in place…", for: project)
         // The changed files' compile and the whole code's check go side by side; the check decides. With properties
         // already in spares, the live copy is rewritten before anything is compiled (`LiveSlots.fit`).
-        let spared = !LiveSlots.mapping(project).isEmpty
+        let spared = !LiveSlots.mapping(project).isEmpty || LiveSlots.hasConstants(project)
         async let early: (url: URL?, problem: String?) = spared ? (nil, nil) : await LiveReload.compile(project, changed: changed)
         let (before, after, declarations) = await LiveReload.layouts(project)
         var check = LiveReload.layoutProblem(before: before, after: after)
+        let constants = before.flatMap { before in after.map { LiveSlots.changedConstants(project, before: before, after: $0) } } ?? []
         var (library, problem) = await early
-        // Stored properties added to existing types go into their spares, and the change is compiled with them.
-        if check.problem != nil, let before, let after, let plan = LiveSlots.fit(project, before: before, after: after, declarations: declarations) {
+        // Stored properties added to existing types go into their spares, constants whose value changed give the new
+        // one, and the change is compiled with them.
+        if check.problem != nil || !constants.isEmpty, let before, let after,
+           let plan = LiveSlots.fit(project, before: before, after: after, declarations: declarations, constants: constants) {
             changed = Array(Set(changed).union(plan.files)).sorted()
+            // A constant newly read through its new code is read so everywhere: the open app's own reads go to storage
+            // that keeps the first value. Afterwards every caller reads through it, so later changes need no more.
+            if !plan.constants.isEmpty { changed = LiveReload.appFiles(project) }
             check = LiveReload.layoutProblem(before: before, after: plan.layout)
             (library, problem) = await LiveReload.compile(project, changed: changed)
             if check.problem == nil, !plan.added.isEmpty {
                 log(project, .detail, "Added \(plan.added.joined(separator: ", ")) without reopening \(project.name).")
             }
+            if check.problem == nil, !plan.constants.isEmpty {
+                log(project, .detail, "Gave \(plan.constants.joined(separator: ", ")) \(plan.constants.count == 1 ? "its" : "their") new value without reopening \(project.name).")
+            }
+        } else if !constants.isEmpty, check.problem == nil {
+            log(project, .detail, "Reopening \(project.name) for this change: a constant's new value can't be given in place.")
+            return false
         } else if spared, check.problem == nil {
             (library, problem) = await LiveReload.compile(project, changed: changed)
         }
@@ -4582,6 +4726,8 @@ final class Store: ObservableObject {
             spec = await Icons.design(for: project)
             Icons.save(spec!, for: project)
         }
+        // A wish Lamp came with has its icon already, drawn when Lamp was made, until its design changes.
+        if Starters.hasShippedIcon(project), icons[project.id] != nil { return }
         await renderIcon(project, spec: spec!)
     }
 
@@ -4657,7 +4803,7 @@ final class Store: ObservableObject {
     /// Generates artwork for the icon's object in the background (best of a few candidates) and swaps it in
     /// when ready, with whatever can make pictures. With nothing, the first app asks for a key instead.
     private func upgradeIconArt(_ project: LampProject) {
-        guard let spec = Icons.load(project), !spec.subject.trimmed.isEmpty,
+        guard !Starters.isStarter(project), let spec = Icons.load(project), !spec.subject.trimmed.isEmpty,
               Icons.cachedArt(project, spec: spec) == nil else { return }
         // The person chose to draw icons themselves: Lamp draws nothing, key or no key, and asks for no key.
         guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
