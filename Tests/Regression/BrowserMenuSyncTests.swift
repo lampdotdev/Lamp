@@ -6,7 +6,7 @@ import JavaScriptCore
 /// as registered, or it stays missing until the app's fits change. Runs the extension's own worker.js with a stand-in
 /// for Chrome's APIs that refuses, then accepts, and a clock the test moves.
 final class BrowserMenuSyncTests: XCTestCase {
-    func testARefusedItemIsRegisteredOnceChromeTakesIt() throws {
+    private func worker() throws -> JSContext {
         let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("experiments/browser-connector/extension/worker.js")
         let context = JSContext()!
@@ -44,6 +44,11 @@ final class BrowserMenuSyncTests: XCTestCase {
             };
             """)
         context.evaluateScript(try String(contentsOf: source, encoding: .utf8))
+        return context
+    }
+
+    func testARefusedItemIsRegisteredOnceChromeTakesIt() throws {
+        let context = try worker()
         context.evaluateScript("""
             var apps = [{id: 'plainwords', menu: 'Explain in Plain Words', fits: [{site: 'wikipedia.org'}]}], done = 0, soon;
             syncMenus(apps)
@@ -56,6 +61,25 @@ final class BrowserMenuSyncTests: XCTestCase {
         XCTAssertEqual(context.evaluateScript("done").toInt32(), 1)
         // Asked again within half a minute of the refusal, it waits; after that, Chrome takes it.
         XCTAssertEqual(context.evaluateScript("soon").toString(), "[]")
+        XCTAssertEqual(context.evaluateScript("JSON.stringify(installed)").toString(), #"["Explain in Plain Words"]"#)
+    }
+
+    /// A replacement Chrome refuses leaves nothing registered (the old items went first), so going back to the old
+    /// items must register them again, not find them in the cache.
+    func testGoingBackAfterARefusedReplacementRegistersAgain() throws {
+        let context = try worker()
+        context.evaluateScript("""
+            refuse = false;
+            var a = [{id: 'plainwords', menu: 'Explain in Plain Words', fits: [{site: 'wikipedia.org'}]}];
+            var b = [{id: 'plainwords', menu: 'Translate to Spanish', fits: [{site: 'wikipedia.org'}]}], done = 0;
+            syncMenus(a)
+              .then(() => { refuse = true; clock += 1000; return syncMenus(b); })
+              .then(() => { refuse = false; clock += 31000; return syncMenus(a); })
+              .then(() => { done = 1; });
+            """)
+        let end = Date().addingTimeInterval(2)
+        while context.evaluateScript("done").toInt32() == 0 && Date() < end { RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
+        XCTAssertEqual(context.evaluateScript("done").toInt32(), 1)
         XCTAssertEqual(context.evaluateScript("JSON.stringify(installed)").toString(), #"["Explain in Plain Words"]"#)
     }
 }

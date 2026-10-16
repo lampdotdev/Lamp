@@ -124,6 +124,9 @@ async function replaceMenus(apps) {
   if (key === menusKey) return;
   if (menusOwed && key === menusTried && Date.now() - menusAsked < 30000) return;
   menusTried = key; menusAsked = Date.now();
+  // From here Chrome no longer has what the cache says (removeAll goes first), so the cache is cleared until it does.
+  menusKey = '';
+  await chrome.storage.local.remove('menusKey');
   let refused = !!await menuCall('removeAll');
   for (const app of withMenu)
     if (await menuCall('create', {id: 'app:' + app.id, title: app.menu, contexts: ['page', 'selection'], documentUrlPatterns: menuPatterns(app)}))
@@ -139,7 +142,8 @@ let fitsSeen = '';
 async function hello() {
   try {
     const reply = await native({op: 'companion-hello', version: 3});
-    if (reply.fits !== fitsSeen || menusOwed) { await list(); fitsSeen = reply.fits; }
+    const retry = menusOwed && Date.now() - menusAsked >= 30000;
+    if (reply.fits !== fitsSeen || retry) { await list(); fitsSeen = reply.fits; }
   } catch {}
 }
 
