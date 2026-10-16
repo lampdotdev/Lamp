@@ -175,10 +175,14 @@ extension Template {
         var hasFocus = false
         private var subscription: EventSubscription?
         private var monitor: Any?
-        /// Whether the app's `build` has run. SwiftUI can make the RealityView again with the scene's state kept (a
-        /// live change that alters the views around it does): the new view gets the world already built, since
-        /// building it twice leaves the app holding what it made the first time beside what it makes the second.
-        private var built = false
+        /// The app's `build`, run once. SwiftUI can make the RealityView again with the scene's state kept (a live
+        /// change that alters the views around it does): the new view gets the world already built, or waits for
+        /// the build still going, since building it twice leaves the app holding what it made the first time beside
+        /// what it makes the second.
+        private var building: Task<Void, Never>?
+        /// Which start is the latest: only it goes on to tick, so an earlier one finishing its wait late doesn't
+        /// tie the frames to content that's gone.
+        private var starts = 0
         private var update: ((LampScene, Float) -> Void)?
         private var drag: Drag?
         private var orbitYaw: Float = 0.6, orbitPitch: Float = 0.35, orbitDistance: Float = 4
@@ -300,7 +304,9 @@ extension Template {
         }
 
         func start(_ content: inout RealityViewCameraContent, sky: LampSky, rig: LampCameraRig, props: [String: @MainActor () -> Entity],
-                   build: (LampScene) async -> Void, update: ((LampScene, Float) -> Void)?) async {
+                   build: @escaping (LampScene) async -> Void, update: ((LampScene, Float) -> Void)?) async {
+            starts += 1
+            let start = starts
             self.rig = rig
             self.update = update
             self.props = props
@@ -315,10 +321,9 @@ extension Template {
             content.add(camera)
             content.camera = .virtual
             await sky.apply(to: &content, lighting: root)
-            if !built {
-                built = true
-                await build(self)
-            }
+            if building == nil { building = Task { await build(self) } }
+            await building?.value
+            guard start == starts else { return }
             subscription = content.subscribe(to: SceneEvents.Update.self) { [weak self] event in
                 MainActor.assumeIsolated { self?.tick(min(Float(event.deltaTime), 1 / 20)) }
             }
