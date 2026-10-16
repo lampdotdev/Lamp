@@ -470,7 +470,7 @@ private struct ComposerRow: View {
 
     var body: some View {
         ChatLook.MessageBar(busy: state.busy, canSend: canSend, attachHelp: "Attach files. You can also paste images and files here.",
-                            attach: chooseFiles, send: submit, stop: { link.send(.stop) }, focus: { focus += 1 }) {
+                            attach: chooseFiles, point: { link.send(.point) }, send: submit, stop: { link.send(.stop) }, focus: { focus += 1 }) {
             Composer(text: $text, height: $height, placeholder: ChatLook.placeholder(busy: state.busy, empty: state.empty),
                      // No suggestion while a request from the chat is in the box, as in Lamp's window.
                      suggestion: state.replacing == true ? nil : state.suggestion,

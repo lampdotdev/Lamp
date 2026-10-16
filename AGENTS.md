@@ -200,8 +200,10 @@ one place to make a new one. Everything someone makes with Lamp is a **wish** in
 be made of an app, a widget, a menu bar item, a watch app, so "app" stays where it means that piece. A wish is
 typed in the bar, or said with the talk button beside it (`TalkButton`, moving with `Dictation.level`); either
 way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so it passes the same
-setup checks as anything typed in a chat. A click on a wish uses it (`Store.use`); one still coming true, or
-waiting on an answer, opens its chat instead, and Change… on its menu always does. Under each icon is what's
+setup checks as anything typed in a chat. A double click on a wish uses it (`Store.use`); one still coming true, or
+waiting on an answer, opens its chat instead. A single click, or Change… on its menu, changes it (`Store.change`):
+a Mac app with windows that has been made opens with its chat beside it (below), anything else opens its chat in
+Lamp's window. Under each icon is what's
 going on with it or where it lives (`WishPlace`, read from its files), and when it's used where nothing comes
 forward (the menu bar, a widget, the background, the person's own phone) the desk says so in `WishHUD`, a
 large translucent square like macOS's old volume display. Its chat has a back button (⌘[) to the desk.
@@ -462,8 +464,19 @@ heading in its binary (`Store.screenTextMarker`): such an app is told to be rebu
 
 A Mac app can be changed while it's in use (apps show the wand while the file `MagicPanel.flag`, which Lamp writes
 at launch, is beside their folders, checked each time a window comes forward): `LampMagic` in LampSupport.swift puts a
-wand in each of its windows' title bars, which opens the app's chat inside that window, as its inspector
-(`LampSidebar`: an `NSSplitViewController` around the window's content, the window growing by the chat's width). The
+wand at the top right of each of its windows, which opens and closes the app's chat inside that window, as its
+inspector (`LampSidebar`: an `NSSplitViewController` around the window's content, the window growing by the chat's
+width); the app menu's Customize with Lamp… (⇧⌘E) opens it too (`LampSidebar.openFromMenu`), and in Lamp's window
+when the app has no window to put it beside. In a window with a title bar the wand is a title bar accessory. A
+window whose content runs under a title bar with nothing in it (a game, `.hiddenTitleBar`) has no bar for it, and an
+accessory would give it one: there the wand floats at the top right over the content, level with the traffic
+lights, on a dark disc of its own so it shows over any content (`LampMagic.isFullBleed`, `float`, `FloatingWand`). This is how a new app is changed from its first build on:
+after the turn that first builds and opens a Mac app with windows, its chat window closes and the app opens the
+chat beside its content (`MagicPanel.handOff`, once per app, marked by `.lamp/sidebar-handed-off`; the chat window
+closes only once the sidebar has connected, so Lamp neither quits nor leaves the chat nowhere). Lamp asks the app
+with a file in its runtime folder for a copy still starting and a notification for one already running
+(`MagicPanel.openChat`, `LampSidebar.openForLamp`). The first time the person closes the chat, a popover points at
+the wand to say how to get back (`LampSidebar.coach`, once per app). The
 chat is an ExtensionKit extension Lamp puts in every Mac app it installs (`Sidebar.install`: Sources/LampSidebar,
 built with Lamp and copied into `Contents/Extensions/LampSidebar.appex`, with an extension point of the app's own,
 `<bundle id>.lamp-sidebar`): macOS shows an extension bundled in the app without asking the person, in a sandboxed
@@ -492,10 +505,12 @@ the app's turn is going, Lamp shows that picture where the window was (`MagicPan
 marked "Updating…"), the new copy opens its first window in the same place (`putBack`), and the picture fades out
 once the new copy reports its window (or goes when the turn ends without it). The chat's two buttons sit in
 the strip above it where the title bar is, as the column's own (`LampSidebar.embed`), drawn by the app since they do
-only what the app could do anyway: open the chat in Lamp's window, and point. They can't be title bar accessories:
+only what the app could do anyway: close the chat, and open it in Lamp's window. They can't be title bar accessories:
 with the chat a full-height inspector, the window's split view lies over the title bar there and takes the clicks.
-The chat sits below the strip, on a solid background that runs up behind them. The crosshair lets the person point
-at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), outlines the smallest named
+The chat sits below the strip, on a solid background that runs up behind them. The + by the message box offers
+Point at Something in the App beside Add Files (`ChatLook.MessageBar`'s `point`, `PlusMenu`), in the sidebar and in
+Lamp's window while the app is open on this Mac (`MagicPanel.point`; from Lamp's window, Lamp comes back in front
+when it's done). It lets the person point at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), outlines the smallest named
 thing under the pointer from its own accessibility tree (`LampDriver.elements`), a click where nothing is named (a game's
 ball, a drawing) takes the area around it, and a drag draws a box of the person's own; it then leaves a cropped
 picture in its runtime folder and says what it is (an area is named by where it is, "Top left area"); Lamp attaches that picture to the message, named after the
@@ -965,7 +980,7 @@ open data alone as going online.
 ## Naming: Lamp and Lamp
 
 The app is called **Lamp**: that's the name in everything the user reads (the interface, Help, the agent's
-words to the user, the "Edit with Lamp" command in generated apps, the bundle and the DMG). **Lamp** is its
+words to the user, the "Customize with Lamp" command in generated apps, the bundle and the DMG). **Lamp** is its
 code name and stays in code, comments, type names (`LampSupport`, `LampAI`, …) and in everything existing
 installs depend on: the bundle ID `dev.lamp.host`, `~/Library/Application Support/Lamp`,
 `~/Applications/Lamp Apps`, the `lamp://` scheme, the `.lampapp` extension and the signing certificates.

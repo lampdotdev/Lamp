@@ -3410,9 +3410,10 @@ enum Template {
     }
 
     #if os(macOS)
-    // Mac only: the Edit with Lamp command, windows, and what Lamp needs to watch and try the app.
+    // Mac only: the Customize with Lamp command, windows, and what Lamp needs to watch and try the app.
 
-    /// Adds "Edit with Lamp…" (⇧⌘E), which jumps back to this app's chat in Lamp.
+    /// Adds "Customize with Lamp…" (⇧⌘E), which opens this app's chat beside the window in front
+    /// (`LampSidebar.openFromMenu`); its button up top opens the same chat in Lamp's own window.
     struct LampCommands: Commands {
         init() {
             LampRuntime.start
@@ -3426,8 +3427,8 @@ enum Template {
 
         var body: some Commands {
             CommandGroup(after: .appInfo) {
-                Button("Edit with Lamp…") {
-                    NSWorkspace.shared.open(URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!)
+                Button("Customize with Lamp…") {
+                    LampSidebar.openFromMenu()
                 }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
             }
@@ -3770,7 +3771,13 @@ enum Template {
                 center.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
                     MainActor.assumeIsolated { leaveCover() }
                 }
-                // Lamp's panel asks for something on the screen to be pointed at.
+                // Lamp hands the chat over to the app (`LampSidebar.openForLamp`).
+                DistributedNotificationCenter.default().addObserver(
+                    forName: Notification.Name("{{NOTE}}openSidebar"), object: Bundle.main.bundleIdentifier, queue: .main
+                ) { _ in
+                    MainActor.assumeIsolated { if isOn { LampSidebar.openForLamp() } }
+                }
+                // Lamp's chat asks for something on the screen to be pointed at.
                 DistributedNotificationCenter.default().addObserver(
                     forName: Notification.Name("{{NOTE}}pick"), object: Bundle.main.bundleIdentifier, queue: .main
                 ) { _ in
@@ -3867,6 +3874,9 @@ enum Template {
                     glass.orderOut(nil)
                 }
                 if Picker.current === self { Picker.current = nil }
+                // Pointing may have been asked for from Lamp's window, which then comes back in front: macOS lets
+                // Lamp do that only when the app in front hands it over.
+                NSApp.yieldActivation(toApplicationWithBundleIdentifier: "{{HOST}}")
                 if tell {
                     DistributedNotificationCenter.default().postNotificationName(
                         Notification.Name("{{NOTE}}pickEnded"), object: Bundle.main.bundleIdentifier, userInfo: nil, deliverImmediately: true)
@@ -4036,16 +4046,17 @@ enum Template {
         }
 
         /// Whether Lamp's experiment is on (Settings → Experimental): a file Lamp keeps beside the apps' folders.
-        private static var isOn: Bool { FileManager.default.fileExists(atPath: "{{APPS}}/.magic") }
+        static var isOn: Bool { FileManager.default.fileExists(atPath: "{{APPS}}/.magic") }
 
         @MainActor private static func detach(from window: NSWindow) {
             while let index = window.titlebarAccessoryViewControllers.firstIndex(where: { $0.view.identifier == identifier }) {
                 window.removeTitlebarAccessoryViewController(at: index)
             }
+            floating(in: window)?.removeFromSuperview()
         }
 
         /// A window of the app's own: not a panel (menus, popovers, the menu bar's), a sheet or an alert.
-        @MainActor private static func isAppWindow(_ window: NSWindow) -> Bool {
+        @MainActor static func isAppWindow(_ window: NSWindow) -> Bool {
             !(window is NSPanel) && window.styleMask.contains(.titled) && window.canBecomeMain && window.sheetParent == nil
         }
 
@@ -4053,12 +4064,19 @@ enum Template {
         /// toolbar has a tall one, one without a short one). SwiftUI may add its toolbar after the window first
         /// shows, so it's sized again each time the window comes to the front (`fit`).
         @MainActor private static func attach(to window: NSWindow) {
+            if isFullBleed(window) {
+                while let index = window.titlebarAccessoryViewControllers.firstIndex(where: { $0.view.identifier == identifier }) {
+                    window.removeTitlebarAccessoryViewController(at: index)
+                }
+                return float(in: window)
+            }
+            floating(in: window)?.removeFromSuperview()
             if let holder = window.titlebarAccessoryViewControllers.first(where: { $0.view.identifier == identifier })?.view {
                 return fit(holder, in: window)
             }
             let holder = NSView()
             holder.identifier = identifier
-            holder.addSubview(button("wand.and.sparkles", "Change This App", "Change this app with Lamp", #selector(Opener.open(_:))))
+            holder.addSubview(button("wand.and.sparkles", "Customize This App", "Customize this app with Lamp", #selector(Opener.open(_:))))
             let accessory = NSTitlebarAccessoryViewController()
             accessory.view = holder
             accessory.layoutAttribute = .trailing
@@ -4076,6 +4094,77 @@ enum Template {
             let side = buttonSide(titlebar)
             holder.frame.size = NSSize(width: side + 14 + LampSidebar.openWidth(in: window), height: titlebar)
             button.frame = NSRect(x: 4, y: ((titlebar - side) / 2).rounded(), width: side, height: side)
+        }
+
+        /// A window whose content runs under a title bar with nothing drawn in it (a game, a full-bleed app) has no
+        /// bar to hold the wand: an accessory would give it one, a strip across the top it asked not to have. There
+        /// the wand floats at the top right, over the content, level with the window's own close, minimize and zoom
+        /// buttons. SwiftUI may add a toolbar after the window first shows, so this is asked again each time the
+        /// window comes to the front.
+        @MainActor private static func isFullBleed(_ window: NSWindow) -> Bool {
+            window.toolbar == nil && window.styleMask.contains(.fullSizeContentView)
+                && (window.titlebarAppearsTransparent || window.titleVisibility == .hidden)
+        }
+
+        /// The wand floating beside the traffic lights, in the view that holds them.
+        @MainActor private static func floating(in window: NSWindow) -> NSButton? {
+            window.standardWindowButton(.zoomButton)?.superview?.subviews.first { $0.identifier == identifier } as? NSButton
+        }
+
+        @MainActor private static func float(in window: NSWindow) {
+            guard let zoom = window.standardWindowButton(.zoomButton), let bar = zoom.superview else { return }
+            let wand = floating(in: window) ?? {
+                let made = FloatingWand()
+                made.identifier = identifier
+                bar.addSubview(made)
+                return made
+            }()
+            // At the top right, where the title bar's wand is in other windows: a touch larger than the traffic
+            // lights, level with them, as far from the right edge as they are from the left, and left of the chat
+            // while it's open. It keeps to the right edge as the window is resized.
+            let side = (zoom.frame.height + 6).rounded()
+            let inset = window.standardWindowButton(.closeButton)?.frame.minX ?? 12
+            let right = bar.bounds.width - LampSidebar.openWidth(in: window) - inset
+            wand.autoresizingMask = [.minXMargin]
+            wand.frame = NSRect(x: (right - side).rounded(), y: (zoom.frame.midY - side / 2).rounded(), width: side, height: side)
+        }
+
+        /// The wand floating over the app's own content: a dark disc with a white wand, legible over a game's night
+        /// sky and a bright canvas alike, as the controls over a playing video are. The title bar's glass takes its
+        /// colours from the window's appearance, and over content of the other shade it all but disappeared.
+        @MainActor private final class FloatingWand: NSButton {
+            convenience init() {
+                let image = NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: "Customize This App")!
+                    .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))!
+                self.init(image: image, target: Opener.shared, action: #selector(Opener.open(_:)))
+                toolTip = "Customize this app with Lamp"
+                isBordered = false
+                imagePosition = .imageOnly
+                contentTintColor = .white
+                wantsLayer = true
+            }
+
+            override var wantsUpdateLayer: Bool { true }
+            override func updateLayer() {
+                guard let layer else { return }
+                layer.cornerRadius = bounds.height / 2
+                layer.backgroundColor = NSColor.black.withAlphaComponent(isHighlighted ? 0.62 : 0.45).cgColor
+                layer.borderWidth = 1
+                layer.borderColor = NSColor.white.withAlphaComponent(0.25).cgColor
+            }
+            override func layout() {
+                super.layout()
+                needsDisplay = true
+            }
+            override var isHighlighted: Bool { didSet { needsDisplay = true } }
+            // One click works in a window in the back too, as it does on the traffic lights beside it.
+            override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        }
+
+        /// The wand in this window, wherever it is, for what points at it (`LampSidebar.coach`).
+        @MainActor static func wand(in window: NSWindow) -> NSButton? {
+            floating(in: window) ?? window.titlebarAccessoryViewControllers
+                .first { $0.view.identifier == identifier }?.view.subviews.first as? NSButton
         }
 
         /// As tall as the toolbar's buttons when there's a toolbar, smaller in a plain title bar.
@@ -4099,8 +4188,16 @@ enum Template {
 
         private static let identifier = NSUserInterfaceItemIdentifier("lampMagic")
 
-        /// The wand placed again, when the chat beside the content opens, closes or is resized.
+        /// The wand placed again, when the chat beside the content opens, closes or is resized. Floating, it's put
+        /// back: the window's title bar is laid out anew when the chat's split view becomes its content, and the
+        /// wand goes with the old one.
         @MainActor static func refit(_ window: NSWindow) {
+            if isOn, isFullBleed(window) {
+                float(in: window)
+                // Again once AppKit has finished laying out the new title bar.
+                DispatchQueue.main.async { MainActor.assumeIsolated { float(in: window) } }
+                return
+            }
             guard let holder = window.titlebarAccessoryViewControllers.first(where: { $0.view.identifier == identifier })?.view else { return }
             fit(holder, in: window)
         }
@@ -4123,7 +4220,10 @@ enum Template {
                 guard let window = sender.window ?? NSApp.keyWindow ?? NSApp.mainWindow, isAppWindow(window) else { return }
                 LampSidebar.toggle(window)
             }
-            @objc func point(_ sender: NSButton) { Picker.start() }
+            @objc func close(_ sender: NSButton) {
+                guard let window = sender.window else { return }
+                LampSidebar.close(window)
+            }
             @objc func openInLamp(_ sender: NSButton) {
                 NSWorkspace.shared.open(URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!)
             }
@@ -4139,11 +4239,14 @@ enum Template {
     }
 
     enum LampSidebar {
-        private static let width: CGFloat = 360
+        private static let width: CGFloat = 420
         private static let openKey = "LampSidebarOpen"
+        private static let coachedKey = "LampSidebarCoached"
         private static let identifier = NSUserInterfaceItemIdentifier("lampSidebar")
         private static var pointID: String { (Bundle.main.bundleIdentifier ?? "") + ".lamp-sidebar" }
         @MainActor private static var restored = false
+        /// Lamp asked for the chat while every window was closed: it opens beside the next one to come forward.
+        @MainActor private static var openWhenShown = false
 
         @MainActor private static func item(in window: NSWindow) -> NSSplitViewItem? {
             (window.contentViewController as? NSSplitViewController)?.splitViewItems.first { $0.viewController.view.identifier == identifier }
@@ -4163,9 +4266,65 @@ enum Template {
         /// A change that reopens the app brings its sidebar back with its first window, which macOS (or Lamp,
         /// putting it back where it was) opens at its size with the sidebar: it isn't made wider again.
         @MainActor static func restore(_ window: NSWindow) {
+            if openWhenShown {
+                openWhenShown = false
+                _ = askedToOpen()
+                return open(window)
+            }
             guard !restored else { return }
             restored = true
-            if UserDefaults.standard.bool(forKey: openKey) { open(window, grow: false) }
+            // A window that had the chat open last time comes back at a size that already holds it.
+            let wasOpen = UserDefaults.standard.bool(forKey: openKey)
+            if askedToOpen() { open(window, grow: !wasOpen) }
+            else if wasOpen { open(window, grow: false) }
+        }
+
+        /// Lamp hands a new app's chat over to the app once it's first built (`Store.handOff`): it leaves a file in
+        /// the runtime folder for a copy that is only starting, and says so to one already running. Either way the
+        /// file is taken once, so the chat isn't opened again on the next launch by it.
+        private static var handOff: URL { LampRuntime.folder.appendingPathComponent("open-sidebar") }
+
+        @MainActor private static func askedToOpen() -> Bool {
+            guard FileManager.default.fileExists(atPath: handOff.path) else { return false }
+            try? FileManager.default.removeItem(at: handOff)
+            return true
+        }
+
+        /// The window the chat goes beside: the one in front, else the frontmost of the app's own windows.
+        @MainActor private static func frontWindow() -> NSWindow? {
+            [NSApp.keyWindow, NSApp.mainWindow].compactMap({ $0 }).first(where: { LampMagic.isAppWindow($0) && $0.isVisible })
+                ?? NSApp.orderedWindows.first(where: { LampMagic.isAppWindow($0) && $0.isVisible })
+        }
+
+        /// Customize with Lamp… in the app's menu: the chat beside the window in front, left open when it is already.
+        /// An app with no window to put it beside (one that lives in the menu bar, or a window in the Dock) has its
+        /// chat in Lamp's window instead.
+        @MainActor static func openFromMenu() {
+            guard LampMagic.isOn, let window = frontWindow(), !window.isMiniaturized else {
+                NSWorkspace.shared.open(URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!)
+                return
+            }
+            window.makeKeyAndOrderFront(nil)
+            open(window)
+        }
+
+        /// Lamp asks for the chat: in the window in front, which comes forward with it.
+        @MainActor static func openForLamp() {
+            guard let window = frontWindow() else {
+                // A copy still starting has no window yet: the file stays for its first one (`restore`). One that's
+                // running with every window closed opens one, as a click in the Dock would, and the chat goes beside
+                // it as it comes forward.
+                if restored {
+                    openWhenShown = true
+                    LampWindows.show()
+                }
+                return
+            }
+            _ = askedToOpen()
+            restored = true
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            open(window)
         }
 
         @MainActor static func open(_ window: NSWindow, grow: Bool = true) {
@@ -4186,9 +4345,22 @@ enum Template {
                 return
             }
             Task { @MainActor in
-                var identity: AppExtensionIdentity?
-                if let found = try? AppExtensionIdentity.matching(appExtensionPointIDs: pointID) {
-                    for try await list in found { identity = list.first; break }
+                // Just after Lamp installs a new build, macOS may not have registered its chat yet: the first
+                // answer can be an empty list with the chat a moment behind it. A few seconds are given before
+                // the chat goes to Lamp's window instead.
+                let identity: AppExtensionIdentity? = await withTaskGroup(of: AppExtensionIdentity?.self) { group in
+                    group.addTask {
+                        guard let found = try? AppExtensionIdentity.matching(appExtensionPointIDs: pointID) else { return nil }
+                        for await list in found { if let first = list.first { return first } }
+                        return nil
+                    }
+                    group.addTask {
+                        try? await Task.sleep(for: .seconds(6))
+                        return nil
+                    }
+                    let first = await group.next() ?? nil
+                    group.cancelAll()
+                    return first
                 }
                 guard let identity else { return fallback() }
                 let host = EXHostViewController()
@@ -4206,6 +4378,40 @@ enum Template {
             item.isCollapsed = true
             resize(window, by: -thickness)
             LampMagic.refit(window)
+            coach(window)
+        }
+
+        /// The first time the chat is closed, a note points at the wand, so the way back is known: the chat may have
+        /// opened by itself after the app's first build, and nothing else says where it went. Once for each app.
+        @MainActor private static func coach(_ window: NSWindow) {
+            guard !UserDefaults.standard.bool(forKey: coachedKey) else { return }
+            UserDefaults.standard.set(true, forKey: coachedKey)
+            DispatchQueue.main.async {
+                guard let wand = LampMagic.wand(in: window), wand.window != nil else { return }
+                let label = NSTextField(wrappingLabelWithString: "To change \(appName) any time, click here.")
+                label.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
+                label.preferredMaxLayoutWidth = 220
+                let content = NSViewController()
+                let box = NSView()
+                label.translatesAutoresizingMaskIntoConstraints = false
+                box.addSubview(label)
+                NSLayoutConstraint.activate([
+                    label.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 14),
+                    label.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -14),
+                    label.topAnchor.constraint(equalTo: box.topAnchor, constant: 10),
+                    label.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -10),
+                    label.widthAnchor.constraint(lessThanOrEqualToConstant: 220),
+                ])
+                content.view = box
+                // A popover is as big as its content says: the label's wrapped size, with the margins around it.
+                box.layoutSubtreeIfNeeded()
+                content.preferredContentSize = box.fittingSize
+                let popover = NSPopover()
+                popover.contentViewController = content
+                popover.behavior = .transient
+                popover.show(relativeTo: wand.bounds, of: wand, preferredEdge: wand.isFlipped ? .maxY : .minY)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8) { popover.performClose(nil) }
+            }
         }
 
         /// The app's content and the chat side by side, the chat as the window's inspector; the window grows by
@@ -4224,7 +4430,7 @@ enum Template {
             let split = NSSplitViewController()
             split.splitView.isVertical = true
             split.addSplitViewItem(NSSplitViewItem(viewController: content))
-            // The chat below the title bar, on a solid background that runs up behind the title bar's buttons.
+            // The chat on the chat's own paper, which runs up behind the bar above it to the window's top edge.
             let column = NSViewController()
             column.view = Backing()
             column.view.wantsLayer = true
@@ -4232,41 +4438,59 @@ enum Template {
             column.addChild(host)
             host.view.translatesAutoresizingMaskIntoConstraints = false
             column.view.addSubview(host.view)
-            // The chat's own buttons in the strip above it, where the title bar is: pointing at the left, opening
-            // in Lamp at the right. They're the column's, not the title bar's, which the window's split view
-            // covers above the chat. They do only what the app could do anyway (point at itself, open Lamp), so
-            // they needn't be the chat's.
+            // The bar above the chat, drawn as the message box's row is at its foot: round buttons floating on the
+            // paper with nothing behind them, closing the chat at the left (as an inspector closes) and opening it
+            // in Lamp at the right, with what the chat is for between them. They're the column's, not the title
+            // bar's, which the window's split view covers above the chat. They do only what the app could do
+            // anyway (close its own inspector, open Lamp), so they needn't be the chat's. Pointing at part of the
+            // app is in the message box's + menu.
             let titlebar = max(window.frame.height - window.contentLayoutRect.height, 28)
-            let size = LampMagic.buttonSide(titlebar)
-            let point = LampMagic.button("scope", "Point at Something", "Point at what you want to change", #selector(LampMagic.Opener.point(_:)))
-            let expand = LampMagic.button("arrow.up.left.and.arrow.down.right", "Open in Lamp", "Open this chat in Lamp",
-                                          #selector(LampMagic.Opener.openInLamp(_:)))
+            let size = RoundButton.side
+            let close = RoundButton("sidebar.trailing", "Close Chat", "Close the chat", #selector(LampMagic.Opener.close(_:)))
+            let expand = RoundButton("arrow.up.left.and.arrow.down.right", "Open in Lamp", "Open this chat in Lamp",
+                                     #selector(LampMagic.Opener.openInLamp(_:)))
+            let title = Caption(labelWithString: "Customize \(appName)")
+            title.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+            title.textColor = .labelColor
+            title.alignment = .center
+            title.lineBreakMode = .byTruncatingTail
+            title.maximumNumberOfLines = 1
+            title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            title.translatesAutoresizingMaskIntoConstraints = false
+            column.view.addSubview(title)
             let strip = NSLayoutGuide()
             column.view.addLayoutGuide(strip)
             var constraints = [
-                host.view.topAnchor.constraint(equalTo: column.view.safeAreaLayoutGuide.topAnchor),
+                strip.topAnchor.constraint(equalTo: column.view.topAnchor),
+                strip.heightAnchor.constraint(equalToConstant: max(titlebar, size + 20)),
+                host.view.topAnchor.constraint(equalTo: strip.bottomAnchor),
                 host.view.bottomAnchor.constraint(equalTo: column.view.bottomAnchor),
                 host.view.leadingAnchor.constraint(equalTo: column.view.leadingAnchor),
                 host.view.trailingAnchor.constraint(equalTo: column.view.trailingAnchor),
-                strip.topAnchor.constraint(equalTo: column.view.topAnchor),
-                strip.bottomAnchor.constraint(equalTo: column.view.safeAreaLayoutGuide.topAnchor),
             ]
-            for button in [point, expand] {
+            for button in [close, expand] {
                 button.translatesAutoresizingMaskIntoConstraints = false
                 column.view.addSubview(button)
                 constraints += [button.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
                                 button.widthAnchor.constraint(equalToConstant: size), button.heightAnchor.constraint(equalToConstant: size)]
             }
-            constraints += [point.leadingAnchor.constraint(equalTo: column.view.leadingAnchor, constant: 10),
-                            expand.trailingAnchor.constraint(equalTo: column.view.trailingAnchor, constant: -10)]
+            // The same 12 points from the edges as the message box's row.
+            constraints += [close.leadingAnchor.constraint(equalTo: column.view.leadingAnchor, constant: 12),
+                            expand.trailingAnchor.constraint(equalTo: column.view.trailingAnchor, constant: -12),
+                            title.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
+                            title.leadingAnchor.constraint(greaterThanOrEqualTo: close.trailingAnchor, constant: 10),
+                            title.trailingAnchor.constraint(lessThanOrEqualTo: expand.leadingAnchor, constant: -10)]
+            // Centred in the column while there's room, else as much as fits between the buttons.
+            let centred = title.centerXAnchor.constraint(equalTo: column.view.centerXAnchor)
+            centred.priority = .defaultHigh
+            constraints.append(centred)
             NSLayoutConstraint.activate(constraints)
             let side = NSSplitViewItem(inspectorWithViewController: column)
-            side.minimumThickness = 300
+            side.minimumThickness = 320
             side.maximumThickness = 640
             side.canCollapse = true
-            // Always the line under the title bar, as over the app's content: macOS shows it only when it sees
-            // something scrolled beneath, and the chat's scrolling, in a process of its own, is out of its sight.
-            side.titlebarSeparatorStyle = .line
+            // No line under the bar: it floats on the paper, as the message box's row does.
+            side.titlebarSeparatorStyle = .none
             host.view.alphaValue = 0
             split.addSplitViewItem(side)
             window.contentViewController = split
@@ -4292,18 +4516,69 @@ enum Template {
             guard let split = window.contentViewController as? NSSplitViewController else { return }
             split.splitView.layoutSubtreeIfNeeded()
             let position = content ?? (window.frame.width - width)
-            split.splitView.setPosition(min(position, window.frame.width - 300), ofDividerAt: 0)
+            split.splitView.setPosition(min(position, window.frame.width - 320), ofDividerAt: 0)
         }
 
+        /// The chat's paper, as the chat draws it (`ChatLook.paper`): a warm off-white, a warm near-black in the dark.
         private final class Backing: NSView {
             override var wantsUpdateLayer: Bool { true }
-            override func updateLayer() { layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor }
-            // It only paints behind the title bar: a click there is the title bar's, for its buttons above the
-            // chat and for moving the window.
+            override func updateLayer() {
+                let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                layer?.backgroundColor = dark ? CGColor(srgbRed: 0x1F / 255, green: 0x1E / 255, blue: 0x1C / 255, alpha: 1)
+                                              : CGColor(srgbRed: 0xF7 / 255, green: 0xF5 / 255, blue: 0xF1 / 255, alpha: 1)
+            }
+            // It only paints behind the bar: a click there is the title bar's, for moving the window.
             override func hitTest(_ point: NSPoint) -> NSView? {
                 let hit = super.hitTest(point)
                 return hit === self ? nil : hit
             }
+        }
+
+        /// The bar's title, which takes no clicks: the window moves by it as by its title bar.
+        private final class Caption: NSTextField {
+            override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        }
+
+        /// A round button as the message box's row draws its own (`ChatLook.Round`): as tall as a one-line box, a
+        /// text background ringed by a separator, its symbol in the secondary colour.
+        private final class RoundButton: NSButton {
+            static let side = (NSLayoutManager().defaultLineHeight(for: .systemFont(ofSize: NSFont.systemFontSize)) + 20).rounded()
+
+            convenience init(_ symbol: String, _ name: String, _ tip: String, _ action: Selector) {
+                let image = NSImage(systemSymbolName: symbol, accessibilityDescription: name)!
+                    .withSymbolConfiguration(.init(pointSize: 14, weight: .semibold))!
+                self.init(image: image, target: LampMagic.Opener.shared, action: action)
+                toolTip = tip
+                isBordered = false
+                imagePosition = .imageOnly
+                contentTintColor = .secondaryLabelColor
+                wantsLayer = true
+            }
+
+            override var wantsUpdateLayer: Bool { true }
+            override func updateLayer() {
+                guard let layer else { return }
+                layer.cornerRadius = bounds.height / 2
+                layer.borderWidth = 1
+                effectiveAppearance.performAsCurrentDrawingAppearance {
+                    layer.backgroundColor = NSColor.textBackgroundColor.cgColor
+                    layer.borderColor = NSColor.separatorColor.cgColor
+                }
+                layer.opacity = isHighlighted ? 0.7 : 1
+            }
+            override func layout() {
+                super.layout()
+                needsDisplay = true
+            }
+            override var isHighlighted: Bool { didSet { needsDisplay = true } }
+            // One click works in a window in the back too, as it does on the traffic lights beside it.
+            override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        }
+
+        /// The app's name as the person knows it, for what the chat says about it.
+        static var appName: String {
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+                ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ProcessInfo.processInfo.processName
         }
 
         @MainActor private static func fadeIn(_ view: NSView) {
@@ -5143,7 +5418,7 @@ enum Template {
                     let alert = NSAlert()
                     alert.messageText = "Some saved data couldn't be opened"
                     alert.informativeText = "This version of the app can't read some data saved by an earlier one. Your data "
-                        + "is safe and won't be overwritten. Choose Edit with Lamp (⇧⌘E) and ask Lamp to fix it."
+                        + "is safe and won't be overwritten. Choose Customize with Lamp (⇧⌘E) and ask Lamp to fix it."
                     alert.runModal()
                     #endif
                 }
@@ -13409,7 +13684,7 @@ enum Template {
     ## Structure
     - `Sources/App.swift`: entry point and window.
     - `Sources/ContentView.swift`: main UI.
-    - `Sources/LampSupport.swift`: generated by Lamp ("Edit with Lamp" command and `LampAI`). Don't edit.
+    - `Sources/LampSupport.swift`: generated by Lamp ("Customize with Lamp" command and `LampAI`). Don't edit.
     - `build.sh`: builds `build/{{EXE}}.app`.
 
     """

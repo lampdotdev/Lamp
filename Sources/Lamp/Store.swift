@@ -312,6 +312,8 @@ final class Store: ObservableObject {
     /// Which Lamp built each installed app (see BuildStamp). Missing for apps that aren't built yet.
     @Published var stamps: [String: BuildStamp] = [:]
     @Published var chatFocusRequest = 0
+    /// Wishes whose chat window should close, its chat having moved into the app's own window (`MagicPanel.handOff`).
+    @Published var chatsHandedOff: Set<String> = []
     /// A wish from the site's link that came while the welcome is up, for the welcome to take (`take(wish:)`).
     @Published var arrivedWish: String?
     /// The wishes being written into a message box right now, by app (`Wish.Arrival`). The drafts hold them whole.
@@ -2279,6 +2281,8 @@ final class Store: ObservableObject {
             logs[project.id, default: []].append(LogLine(kind: .result, text: result.text, result: result))
             saveChat(project)
         }
+        // A new app that opened in a window of its own: its chat goes on beside it from now on.
+        if !failed, edited, !owner.didNotOpen, !owner.keptOpen { Task { await MagicPanel.shared.handOff(project) } }
         return TurnResult(end: failed ? .failed : edited ? .changed : .replied, watched: watched)
     }
 

@@ -539,7 +539,10 @@ struct ProjectView: View {
         let canSend = !(submissionPending || draft.trimmed.isEmpty && attachments.isEmpty && pointed == nil || replacing != nil && busy)
         return ChatLook.MessageBar(busy: busy, canSend: canSend,
                                    attachHelp: "Attach files. You can also paste or drop images and files here.",
-                                   attach: chooseFiles, send: send, stop: { store.stop(project) },
+                                   attach: chooseFiles,
+                                   // Pointing at part of the app, while it's open here with something to point at.
+                                   point: store.canPoint(in: project) ? { MagicPanel.shared.point(in: project, fromLamp: true) } : nil,
+                                   send: send, stop: { store.stop(project) },
                                    focus: { focusRequest += 1 }) {
             Composer(text: shownDraft, height: $composerHeight,
                      placeholder: ChatLook.placeholder(busy: busy, empty: lines.isEmpty),
