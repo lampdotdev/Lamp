@@ -2808,7 +2808,8 @@ final class Store: ObservableObject {
         }
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
-        config.arguments = frontArguments(for: project)   // see install
+        config.arguments = ["-LampInFront", "YES"]   // see install
+        MagicPanel.shared.startWithChat(project)
         do {
             _ = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
             noteOpened(true, for: project)
@@ -3496,6 +3497,10 @@ final class Store: ObservableObject {
                     try Template.fill(project)
                     try Starters.copy(starter, into: project)
                     try Template.writeOwnedFiles(for: project)   // again, now it's known whether it has a widget
+                    // Its chat opens on what it offers to change first, for a click or a message of their own.
+                    if let card = Starters.card(for: starter) {
+                        try JSONEncoder().encode([card]).write(to: project.dir.appendingPathComponent(".lamp/chat.json"))
+                    }
                     made.append(project)
                 } catch {
                     try? FileManager.default.removeItem(at: project.dir)
@@ -3576,18 +3581,6 @@ final class Store: ObservableObject {
         finish(project)
         guard openWhenReady.remove(project.id) != nil, let current = current(project) else { return }
         if made { use(current) } else { showChat(current.id) }
-    }
-
-    /// What an app is opened with in front of the person: `-LampInFront` (see install), and for a wish Lamp came
-    /// with, `-LampOpenChat` until its chat has been opened or closed once (the app's own `LampSidebarOpen`), so
-    /// it opens ready to be changed.
-    private func frontArguments(for project: LampProject) -> [String] {
-        var arguments = ["-LampInFront", "YES"]
-        if project.platform == .mac, Starters.isStarter(project),
-           CFPreferencesCopyAppValue("LampSidebarOpen" as CFString, project.bundleID as CFString) == nil {
-            arguments += ["-LampOpenChat", "YES"]
-        }
-        return arguments
     }
 
     func run(_ project: LampProject) async {
@@ -4132,7 +4125,10 @@ final class Store: ObservableObject {
         let config = NSWorkspace.OpenConfiguration()
         config.activates = inFront
         // An app that lives in the menu bar opens its panel, so there's something to see (LampMenuBar).
-        if inFront { config.arguments = frontArguments(for: project) }
+        if inFront {
+            config.arguments = ["-LampInFront", "YES"]
+            MagicPanel.shared.startWithChat(project)
+        }
         note("Opening \(project.name)…", for: project)
         var crash: String?
         do {

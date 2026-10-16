@@ -223,11 +223,16 @@ once setup is done). They're copied once, on the first launch, each saved as its
 and from then on they're the person's: a later Lamp with other starters gives those only to new people. As soon
 as Apple's tools are there they're built one by one out of sight (`Store.prepareStarters`), with nothing in
 their chats; one used before its build is done spins on the desk and opens when it's ready (`openWhenReady`). A
-starter opens with its chat beside it (`-LampOpenChat`, read by `LampSidebar.restore`) until its chat has been
-opened or closed once; one that opens no window has its chat opened in Lamp the first time it's used. Each
+starter opens with its chat beside it the first time (`MagicPanel.startWithChat`, the hand-off a new app gets after
+its first build); one that opens no window has its chat opened in Lamp the first time it's used. The chat opens on
+Lamp's own card (`Starters.card`, an `ask` marked `offer`): the starter's line and its three changes, each sent as
+the first request when clicked, with the message box answering it too. Nothing waits on it (`Talk.waiting`), so the
+desk doesn't say it has a question and using it still opens it. Each
 folder holds the app's code, APP.md (which the agent reads first, so it knows the app it's changing), icon.json
 (a symbol icon: Lamp paints no art for a starter, which would offer to set up pictures in its chat) and
-starter.md, Lamp's own: the wish's name and what its chat offers to change first, a line and three changes. They
+starter.md, Lamp's own: the wish's name and what its chat offers to change first, a line and three changes, each
+with its tile's symbol (`- drop: Add a water counter`): changes the app doesn't do already, that the agent can make in
+one request with no key, account or pictures to draw. They
 are Mac apps that need no key or account, use the AI the person builds with when they use any, and come with
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
 

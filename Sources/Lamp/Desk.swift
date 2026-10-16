@@ -422,7 +422,7 @@ struct DeskIcon: View {
             return store.openWhenReady.contains(project.id) ? "Opening…" : "Getting ready…"
         }
         if busy { return store.progress[project.id]?.newApp == true || project.untitled ? "Coming true…" : "Changing…" }
-        if Talk.open(in: store.logs[project.id] ?? []) != nil { return "Has a question" }
+        if Talk.waiting(in: store.logs[project.id] ?? []) != nil { return "Has a question" }
         if store.queued[project.id]?.isEmpty == false { return "Waiting to start" }
         if project.finding { return "Finding a wish" }
         if store.unread.contains(project.id) { return "Ready" }
@@ -1045,7 +1045,7 @@ extension Store {
             prepareStarters()
             return
         }
-        guard made, !project.finding, !busy.contains(project.id), Talk.open(in: logs[project.id] ?? []) == nil,
+        guard made, !project.finding, !busy.contains(project.id), Talk.waiting(in: logs[project.id] ?? []) == nil,
               queued[project.id]?.isEmpty != false else {
             return showChat(project.id)
         }
@@ -1054,7 +1054,7 @@ extension Store {
         Task {
             let place = await Task.detached { WishPlace.of(project) }.value
             let icon = icons[project.id]
-            // A window's chat opens beside it (`frontArguments`); anything else has its chat opened here, behind
+            // A window's chat opens beside it (`MagicPanel.startWithChat`); anything else has its chat opened here, behind
             // the app, the first time it's used.
             if firstUse, place != .window { showChat(project.id) }
             switch place {

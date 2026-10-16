@@ -1,4 +1,5 @@
-import Foundation
+import AppKit
+import LampSidebarKit
 
 /// The wishes Lamp comes with: working apps on a new person's desk from the start, to use as they are and to
 /// change into their own, which shows what Lamp does better than a question about what to make. Each is a
@@ -15,7 +16,14 @@ enum Starters {
         let name: String
         /// The first thing the app's chat offers: a line inviting a change, and three changes to choose from.
         let offer: String
-        let tweaks: [String]
+        let tweaks: [Tweak]
+    }
+
+    /// A change the chat offers, with the symbol on its tile (`- drop.fill: Add a water counter` in starter.md;
+    /// the symbol may be left out).
+    struct Tweak: Equatable {
+        let title: String
+        var symbol: String?
     }
 
     static var folder: URL? { Bundle.main.resourceURL?.appendingPathComponent("Starters") }
@@ -61,12 +69,12 @@ enum Starters {
         var lines = text.components(separatedBy: .newlines)[...]
         guard lines.first?.trimmed == "---" else { return nil }
         lines = lines.dropFirst()
-        var name = "", offer = "", tweaks: [String] = []
+        var name = "", offer = "", tweaks: [Tweak] = []
         for line in lines {
             let trimmed = line.trimmed
             if trimmed == "---" { break }
             if trimmed.hasPrefix("- ") {
-                tweaks.append(unquoted(String(trimmed.dropFirst(2))))
+                tweaks.append(tweak(unquoted(String(trimmed.dropFirst(2)))))
             } else if let colon = trimmed.firstIndex(of: ":") {
                 let value = unquoted(String(trimmed[trimmed.index(after: colon)...]))
                 switch trimmed[..<colon] {
@@ -78,6 +86,25 @@ enum Starters {
         }
         guard !name.isEmpty else { return nil }
         return Starter(folder: folder, name: name, offer: offer, tweaks: tweaks)
+    }
+
+    /// A symbol's name is lowercase words joined by dots, so `Group: by client` stays words.
+    private static func tweak(_ text: String) -> Tweak {
+        guard let colon = text.firstIndex(of: ":") else { return Tweak(title: text) }
+        let symbol = String(text[..<colon])
+        guard !symbol.isEmpty, symbol.allSatisfy({ $0.isLowercase || $0.isNumber || $0 == "." }) else { return Tweak(title: text) }
+        return Tweak(title: unquoted(String(text[text.index(after: colon)...])), symbol: symbol)
+    }
+
+    /// The card a starter's chat opens with: its line, and its changes to click, each sent as the person's first
+    /// request (`Store.answer`). Typing something else answers it as well.
+    static func card(for starter: Starter) -> LogLine? {
+        guard !starter.offer.isEmpty, !starter.tweaks.isEmpty else { return nil }
+        let options = starter.tweaks.map { tweak in
+            TalkCard.Option(title: tweak.title, symbol: tweak.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) == nil ? nil : $0 })
+        }
+        let ask = TalkCard.Ask(layout: .steps, questions: [TalkCard.Question(question: starter.offer, options: options)], offer: true)
+        return LogLine(kind: .ask, text: ask.text, ask: ask)
     }
 
     private static func unquoted(_ value: String) -> String {

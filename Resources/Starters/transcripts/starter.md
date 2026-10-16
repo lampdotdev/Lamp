@@ -2,7 +2,7 @@
 name: Transcripts
 offer: Make Transcripts yours
 tweaks:
-  - Label who's speaking
-  - A template for one-on-ones
-  - Email me the action items
+  - person.2: Label who's speaking
+  - person.crop.rectangle.stack: A template for one-on-ones
+  - envelope: Email me the action items
 ---

@@ -2,7 +2,7 @@
 name: Pet
 offer: Make the pet yours
 tweaks:
-  - Turn it into a thirsty cactus
-  - Give it a little house
-  - Feed it when I close tasks
+  - leaf: Turn it into a thirsty cactus
+  - house: Give it a little house
+  - checklist: Feed it when I finish reminders
 ---

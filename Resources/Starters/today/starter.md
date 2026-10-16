@@ -2,7 +2,7 @@
 name: Today
 offer: Make Today yours
 tweaks:
-  - Five priorities instead of three
-  - Add a water counter
-  - Remind me to plan at 8
+  - list.number: Five priorities instead of three
+  - drop: Add a water counter
+  - bell: Remind me to plan at 8
 ---

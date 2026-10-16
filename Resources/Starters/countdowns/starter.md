@@ -2,7 +2,7 @@
 name: Countdowns
 offer: Make Countdowns yours
 tweaks:
-  - Count working days only
-  - Add birthdays from Contacts
-  - Show weeks instead of days
+  - briefcase: Count working days only
+  - gift: Add birthdays from Contacts
+  - calendar: Show weeks instead of days
 ---

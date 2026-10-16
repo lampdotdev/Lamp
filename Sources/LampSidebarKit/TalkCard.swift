@@ -55,12 +55,16 @@ public enum TalkCard {
         /// Answered in the message box instead. Noted as the message is sent, since it may wait in line
         /// behind the agent's turn: the card folds then, not when the message gets its turn.
         public var typed: Bool?
+        /// Lamp's own card, not the agent's: what a wish Lamp came with offers to change first (`Starters`).
+        /// It's answered the same way, but nothing waits on it: the wish is there to use meanwhile.
+        public var offer: Bool?
 
-        public init(layout: Layout, questions: [Question], answers: [String]? = nil, typed: Bool? = nil) {
+        public init(layout: Layout, questions: [Question], answers: [String]? = nil, typed: Bool? = nil, offer: Bool? = nil) {
             self.layout = layout
             self.questions = questions
             self.answers = answers
             self.typed = typed
+            self.offer = offer
         }
 
         private enum Earlier: String, CodingKey { case questions, dismissed }
@@ -75,6 +79,7 @@ public enum TalkCard {
             layout = (try? values.decode(Layout.self, forKey: .layout)) ?? .together
             questions = try values.decode([Question].self, forKey: .questions)
             typed = try values.decodeIfPresent(Bool.self, forKey: .typed)
+            offer = try values.decodeIfPresent(Bool.self, forKey: .offer)
             let chosen = ((try? earlier.decode([Chosen].self, forKey: .questions)) ?? []).map(\.chosen)
             let given = try values.decodeIfPresent([String?].self, forKey: .answers)
             let assumed = !chosen.isEmpty && chosen.allSatisfy { $0 != nil }

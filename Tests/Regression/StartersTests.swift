@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 @testable import Lamp
 
 /// The wishes Lamp comes with are the first thing a new person uses, so each one must be whole: its own
@@ -16,15 +17,24 @@ final class StartersTests: XCTestCase {
         name: Tidy Up
         offer: "Make it tidy your way"
         tweaks:
-          - Group my invoices by client
+          - doc.text: Group my invoices by client
           - 'Never touch design files'
+          - Group: by client
         ---
         Anything after it is ignored.
         """
         let starter = try XCTUnwrap(Starters.parse(text, folder: starters))
         XCTAssertEqual(starter.name, "Tidy Up")
         XCTAssertEqual(starter.offer, "Make it tidy your way")
-        XCTAssertEqual(starter.tweaks, ["Group my invoices by client", "Never touch design files"])
+        XCTAssertEqual(starter.tweaks, [Starters.Tweak(title: "Group my invoices by client", symbol: "doc.text"),
+                                        Starters.Tweak(title: "Never touch design files"),
+                                        Starters.Tweak(title: "Group: by client")])
+        // Its chat opens on a card of Lamp's own, which doesn't hold the wish up.
+        let card = try XCTUnwrap(Starters.card(for: starter))
+        XCTAssertEqual(card.ask?.offer, true)
+        XCTAssertEqual(card.ask?.questions.first?.options.map(\.title).first, "Group my invoices by client")
+        XCTAssertNotNil(Talk.open(in: [card]))
+        XCTAssertNil(Talk.waiting(in: [card]))
         XCTAssertNil(Starters.parse("name: No front matter", folder: starters))
     }
 
@@ -39,8 +49,12 @@ final class StartersTests: XCTestCase {
             let starter = try XCTUnwrap(Starters.parse(text, folder: folder), name)
             XCTAssertFalse(starter.offer.isEmpty, name)
             XCTAssertEqual(starter.tweaks.count, 3, name)
-            for tweak in starter.tweaks + [starter.offer] {
-                XCTAssertLessThanOrEqual(tweak.split(separator: " ").count, 6, "\(name): \(tweak)")
+            for words in starter.tweaks.map(\.title) + [starter.offer] {
+                XCTAssertLessThanOrEqual(words.split(separator: " ").count, 6, "\(name): \(words)")
+            }
+            for tweak in starter.tweaks {
+                let symbol = try XCTUnwrap(tweak.symbol, "\(name): \(tweak.title) has no symbol")
+                XCTAssertNotNil(NSImage(systemSymbolName: symbol, accessibilityDescription: nil), "\(name): \(symbol)")
             }
             XCTAssertTrue(fm.fileExists(atPath: folder.appendingPathComponent("APP.md").path), name)
             XCTAssertTrue(fm.fileExists(atPath: folder.appendingPathComponent("Sources/App.swift").path), name)

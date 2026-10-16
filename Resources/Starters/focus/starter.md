@@ -2,7 +2,7 @@
 name: Focus
 offer: Make Focus yours
 tweaks:
-  - Play rain sounds while focusing
-  - Log what I finished each session
-  - Fifty-minute sessions on weekdays
+  - cloud.rain: Play soft rain while I focus
+  - checklist: Log what I finished each session
+  - calendar: Fifty-minute sessions on weekdays
 ---

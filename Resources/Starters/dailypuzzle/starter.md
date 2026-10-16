@@ -2,7 +2,7 @@
 name: Daily Puzzle
 offer: Make Daily Puzzle yours
 tweaks:
-  - Make it about space words
-  - Add a timer and best times
-  - Five-letter words on weekends
+  - flame: Harder puzzles on Sundays
+  - book: Show what each word means
+  - stopwatch: Add a timer and best times
 ---

@@ -102,6 +102,18 @@ final class MagicPanel {
         }
     }
 
+    /// A wish Lamp came with opens with its chat beside it the first time it's opened, ready to be changed, as a new
+    /// app does after its first build (`handOff`), and once only: a chat the person closes stays closed.
+    func startWithChat(_ project: LampProject) {
+        guard project.platform == .mac, Starters.isStarter(project),
+              !FileManager.default.fileExists(atPath: Self.handedOff(project).path) else { return }
+        FileManager.default.createFile(atPath: Self.handedOff(project).path, contents: nil)
+        let folder = Runtime.macFolder(project)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: folder.appendingPathComponent("open-sidebar").path, contents: nil)
+        follow(project.id)
+    }
+
     /// The chat opened in the app's window: by a file in its runtime folder for a copy that's still starting
     /// (`LampSidebar.restore`), and by a word to one that's already running (`LampSidebar.openForLamp`).
     func openChat(in project: LampProject) {
