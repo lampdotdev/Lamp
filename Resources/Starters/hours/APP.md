@@ -54,8 +54,9 @@ Saved with LampStore: clients in the `clients` collection, entries in `entries`,
 On first launch `SampleData.addOnce` writes three clients (Crumb & Co. Bakery and Night Shift Podcast in USD,
 Studio Fern in EUR) and about five weeks of weekday entries up to now, all marked `isExample: true`. The
 `examplesAdded` value records that it ran, so examples never come back. Clear Examples (Timer menu, and a link
-at the foot of the week's list while examples remain) deletes the example clients, their entries and any entry
-marked as an example, and nothing else. The person's details start empty; the invoice sheet points to Settings
+at the foot of the week's list while examples remain) deletes the entries marked as examples and the example
+clients nobody has tracked their own time for; an example client with the person's own entries is kept, unmarked.
+A sample entry or client the person edits loses its mark (`HoursModel.save`), so it's theirs and stays. The person's details start empty; the invoice sheet points to Settings
 until they're filled in.
 
 ## Easy to change

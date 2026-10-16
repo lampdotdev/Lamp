@@ -104,12 +104,17 @@ final class TidyModel: ObservableObject {
         guard let folder = folder(id), folder.rules.auto != .off else { return }
         let namer = ContentNamer.shared
         var plan = Planner.plan(folder, contentName: namer.name(of:), canName: !namer.unavailable)
+        var current = folder
         if !plan.unnamed.isEmpty {
             await namer.readNames(of: plan.unnamed)
-            plan = Planner.plan(folder, contentName: namer.name(of:), canName: false)
+            // Reading names can take a while, and the folder may have been removed, its automatic tidying turned
+            // off or its rules changed meanwhile: what's done is what its rules say now.
+            guard !Task.isCancelled, let now = self.folder(id), now.rules.auto != .off else { return }
+            current = now
+            plan = Planner.plan(current, contentName: namer.name(of:), canName: false)
         }
-        let moves = Mover.apply(plan.changes, rules: folder.rules)
-        record(moves, in: folder, automatic: true)
+        let moves = Mover.apply(plan.changes, rules: current.rules)
+        record(moves, in: current, automatic: true)
         refresh(id)
     }
 
@@ -165,6 +170,10 @@ final class TidyModel: ObservableObject {
     func remove(_ id: UUID) {
         folders.removeAll { $0.id == id }
         plans[id] = nil
+        // A tidy waiting to happen, or reading names, isn't done for a folder that's gone.
+        autoTidies.removeValue(forKey: id)?.cancel()
+        refreshes.removeValue(forKey: id)?.cancel()
+        watchers[id] = nil
     }
 
     func skip(_ change: PlannedChange, in id: UUID) {

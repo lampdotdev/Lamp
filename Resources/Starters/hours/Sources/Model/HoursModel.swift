@@ -92,7 +92,10 @@ final class HoursModel: ObservableObject {
 
     // MARK: Changing things
 
+    /// A sample entry or client the person has changed is theirs from then on: Clear Examples leaves it.
     func save(_ entry: TimeEntry) {
+        var entry = entry
+        if let old = entries.first(where: { $0.id == entry.id }), old != entry { entry.isExample = nil }
         entryStore.put(entry)
         reload()
     }
@@ -103,6 +106,8 @@ final class HoursModel: ObservableObject {
     }
 
     func save(_ client: Client) {
+        var client = client
+        if let old = clients.first(where: { $0.id == client.id }), old != client { client.isExample = nil }
         clientStore.put(client)
         reload()
     }
@@ -116,14 +121,21 @@ final class HoursModel: ObservableObject {
         reload()
     }
 
-    /// Removes the sample clients and entries, and nothing the person added. They don't come back.
+    /// Removes the sample clients and entries, and nothing the person added. They don't come back. A sample
+    /// client the person has tracked their own time for is kept, as theirs now, with that time.
     func clearExamples() {
-        let exampleClients = Set(clients.filter { $0.isExample == true }.map(\.id))
+        let theirs = Set(entries.filter { $0.isExample != true }.map(\.clientID))
         LampStore.transaction {
-            for entry in entries where entry.isExample == true || exampleClients.contains(entry.clientID) {
-                entryStore.delete(entry.id)
+            for entry in entries where entry.isExample == true { entryStore.delete(entry.id) }
+            for client in clients where client.isExample == true {
+                if theirs.contains(client.id) {
+                    var kept = client
+                    kept.isExample = nil
+                    clientStore.put(kept)
+                } else {
+                    clientStore.delete(client.id)
+                }
             }
-            exampleClients.forEach(clientStore.delete)
         }
         reload()
     }

@@ -3484,8 +3484,8 @@ final class Store: ObservableObject {
 
     // MARK: - Starters
 
-    /// The wishes Lamp comes with (`Starters`), copied onto the desk on the first launch, each saved as its
-    /// first version. Built afterwards (`prepareStarters`), once Apple's tools are there.
+    /// The wishes Lamp comes with (`Starters`), copied onto the desk on the first launch. Saved as their first
+    /// version and built afterwards (`prepareStarters`), once Apple's tools are there: git is one of them.
     private func installStarters() {
         guard !UserDefaults.standard.bool(forKey: Starters.installedKey) else { return }
         UserDefaults.standard.set(true, forKey: Starters.installedKey)
@@ -3509,10 +3509,9 @@ final class Store: ObservableObject {
         guard !made.isEmpty else { return }
         reload()
         startersInstall = Task {
-            for project in made {
-                await initRepo(project, message: "From Lamp")
-                // Drawn only for a starter shipped without its icon: the others' are on the desk already.
-                if !Starters.hasShippedIcon(project), let spec = Icons.load(project) { await renderIcon(project, spec: spec) }
+            // Drawn only for a starter shipped without its icon: the others' are on the desk already.
+            for project in made where !Starters.hasShippedIcon(project) {
+                if let spec = Icons.load(project) { await renderIcon(project, spec: spec) }
             }
         }
     }
@@ -3552,7 +3551,20 @@ final class Store: ObservableObject {
         Task {
             defer { preparingStarters = false }
             await startersInstall?.value
+            await saveStartersFirstVersions()
             while let next = nextStarterToPrepare() { await prepare(next) }
+        }
+    }
+
+    /// Each starter's first version, "From Lamp", which Undo and Versions go back to: made once Apple's tools are
+    /// there, since git is one of them, and tried again on a later launch for one where it didn't take.
+    private func saveStartersFirstVersions() async {
+        for project in projects where Starters.isStarter(project)
+            && !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(".git").path) {
+            if !(await initRepo(project, message: "From Lamp")) {
+                try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(".git"))
+                NSLog("Lamp couldn't save the first version of \(project.name)")
+            }
         }
     }
 

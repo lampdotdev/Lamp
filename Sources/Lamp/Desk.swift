@@ -831,10 +831,11 @@ enum WishPlace: Equatable {
         }
         if Template.isWidgetOnly(project) { return .widget }
         let code = sources(of: project)
-        if code.contains("LampMenuBar(") { return .menuBar }
-        if Template.Capabilities.load(project).background == true, !code.contains("WindowGroup"), !code.contains("Window(") {
-            return .background
-        }
+        // An app with a window lives there, whatever else it has: one with a menu bar item beside its window opens
+        // its window, and its chat goes beside it.
+        let hasWindow = code.contains("WindowGroup") || code.contains("Window(")
+        if code.contains("LampMenuBar("), !hasWindow { return .menuBar }
+        if Template.Capabilities.load(project).background == true, !hasWindow { return .background }
         return .window
     }
 
