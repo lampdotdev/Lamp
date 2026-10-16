@@ -449,8 +449,10 @@ struct IPhoneSetupLine: View {
     @ObservedObject private var store = Store.shared
 
     /// Apps whose setup is under way: one click per app, so a second can't queue the same conversion again.
-    /// Once setup is done the request is the app's turn, queued or running, which keeps the button off until
-    /// it ends; an app still only for the Mac then (the turn failed, was stopped or undone) can try again.
+    /// Once setup is done the conversion is a request of the app's, waiting or running, which keeps the button
+    /// off until it ends; an app still only for the Mac then (the turn failed, was stopped or undone) can try
+    /// again. Any other turn leaves it on: the line shows during the app's first build, and neither Apple's setup
+    /// nor the conversion, which waits its turn, needs that build to be over.
     static func text(_ app: String) -> String { "\(app) is a Mac app for now. This Mac needs a few things from Apple to make iPhone apps." }
 
     @MainActor final class Asked: ObservableObject {
@@ -460,8 +462,20 @@ struct IPhoneSetupLine: View {
 
     var body: some View {
         ChatLook.ActionLine(symbol: "iphone", text: Self.text(project.name), button: "See What's Needed…",
-                            disabled: asked.ids.contains(project.id) || store.busy.contains(project.id) || !(store.queued[project.id] ?? []).isEmpty,
+                            disabled: asked.ids.contains(project.id) || Self.isOff(for: project),
                             action: setUp)
+    }
+
+    /// What the button asks of the agent once setup is done.
+    static let requests = ["Make it work on my iPhone too.", "Make it an iPhone app instead."]
+
+    /// Whether the button is off for this app: its setup is under way, or the conversion it asked for is
+    /// waiting or running. The in-app chat's line asks the same.
+    @MainActor static func isOff(for project: LampProject) -> Bool {
+        let store = Store.shared
+        return Asked.shared.ids.contains(project.id)
+            || (store.queued[project.id] ?? []).contains { requests.contains($0.text) }
+            || (store.busy.contains(project.id) && requests.contains { store.isRunning($0, for: project) })
     }
 
     private func setUp() {
@@ -475,7 +489,7 @@ struct IPhoneSetupLine: View {
         }, cancelled: { Asked.shared.ids.remove(id) }) {
             Asked.shared.ids.remove(id)
             guard let current = Store.shared.current(project), current.platform == .mac else { return }
-            Store.shared.send(both ? "Make it work on my iPhone too." : "Make it an iPhone app instead.", to: current)
+            Store.shared.send(both ? Self.requests[0] : Self.requests[1], to: current)
         }
     }
 }

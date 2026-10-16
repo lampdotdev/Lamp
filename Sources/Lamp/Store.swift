@@ -438,6 +438,9 @@ final class Store: ObservableObject {
     }
     private var turns: [String: Turn] = [:]
 
+    /// Whether the app's running turn is this request.
+    func isRunning(_ request: String, for project: LampProject) -> Bool { turns[project.id]?.request == request }
+
     /// Takes the app for a span of work. Nil when something else has it.
     private func begin(_ project: LampProject) -> Turn? {
         guard turns[project.id] == nil else { return nil }
