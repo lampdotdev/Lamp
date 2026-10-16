@@ -86,8 +86,16 @@ async function replaceRules(apps) {
   rulesKey = key;
   await chrome.storage.local.set({rulesKey});
 }
+// The list is kept for when Lamp is closed: an app that serves its own page works while it's open, Lamp or not.
 async function list() {
-  const state = await native({op: 'surface-list'});
+  let state;
+  try { state = await native({op: 'surface-list'}); }
+  catch (error) {
+    const saved = (await chrome.storage.local.get('apps')).apps;
+    if (!saved) throw error;
+    return {apps: saved, lampClosed: true};
+  }
+  await chrome.storage.local.set({apps: state.apps});
   await syncRules(state.apps).catch(() => {});
   return state;
 }
@@ -128,14 +136,23 @@ chrome.action.onClicked.addListener(tab => {
   (async () => {
     const {apps} = await list().catch(() => ({apps: []}));
     const site = (() => { try { return new URL(tab.url).hostname; } catch { return ''; } })();
-    await chrome.storage.session.set({['tab:' + tab.id]: {fitting: await fitting(tab, apps), site, at: Date.now()}});
+    const origin = (() => { try { return new URL(tab.url).origin; } catch { return ''; } })();
+    await chrome.storage.session.set({['tab:' + tab.id]: {fitting: await fitting(tab, apps), site, origin, at: Date.now()}});
   })();
 });
-// A tab that moves on loses the click's access; its sidebar says to click Lamp again to use the new page.
-chrome.tabs.onUpdated.addListener((tabId, change) => {
+// A tab that moves to another site loses the click's access; its sidebar says to click Lamp again to use the new
+// page. Chrome keeps the access while the tab stays on the same site (a reload, another page there), and once it's
+// gone the tab's address isn't given to the extension at all.
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
   if (change.status !== 'loading') return;
   const key = 'tab:' + tabId;
-  chrome.storage.session.get(key).then(saved => { if (saved[key] && !saved[key].moved) chrome.storage.session.set({[key]: {...saved[key], moved: true}}); });
+  chrome.storage.session.get(key).then(saved => {
+    const info = saved[key];
+    if (!info || info.moved) return;
+    const origin = (() => { try { return new URL(tab?.url).origin; } catch { return ''; } })();
+    if (origin && origin === info.origin) return;
+    chrome.storage.session.set({[key]: {...info, moved: true}});
+  });
 });
 chrome.tabs.onRemoved.addListener(tabId => { chrome.storage.session.remove(['tab:' + tabId, 'draft:' + tabId, 'pick:' + tabId]); });
 
@@ -164,6 +181,14 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   (async () => {
     const tab = Number(message.tab);
     if (message.op === 'surface-list') return list();
+    // The name an app's page is told for this tab: opaque, the same for one tab in one run of this profile.
+    if (message.op === 'tab-key') {
+      const {profile, run} = await profileReady;
+      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${profile}:${run}:${tab}`)));
+      return {key: 't' + [...digest.slice(0, 6)].map(b => b.toString(16).padStart(2, '0')).join('')};
+    }
+    // An app's own page asks for the page the person is on; the sidebar passes that on only right after a click.
+    if (message.op === 'page-read') return capture(tab, message.scope === 'selection' ? 'selection' : 'page');
     if (message.op === 'surface-open') return native({op: 'surface-open', app: message.app});
     if (message.op === 'surface-view') return native({op: 'surface-view', app: message.app, tab});
     if (message.op !== 'surface-action') throw new Error('Unknown action.');
