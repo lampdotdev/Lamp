@@ -144,7 +144,7 @@ enum LiveReload {
         let old = byType(before), new = byType(now)
         for (type, members) in old.sorted(by: { $0.key < $1.key }) {
             guard let current = new[type] else { return ("\(type) was taken away", nil) }
-            if current != members {
+            if current != members, !LiveSlots.casesAdded(members, current) {
                 let what = (current.first { !members.contains($0) } ?? members.first { !current.contains($0) }.map { "no longer " + $0 } ?? "the order of its fields")
                     .replacingOccurrences(of: "\t", with: ".")
                 return ("\(type) changed what it holds (\(what))", nil)
@@ -333,21 +333,28 @@ enum LiveReload {
     }
 }
 
-/// A stored property added to a class while the app is open, put in without reopening it. A live build gives every
-/// class of the app's `count` spare places (`__lampSpare_<Class>_0`…, of `LampSpare?`, written by build.sh's copy step), so
-/// the open app's objects already have room. When the only thing keeping a change out is new stored properties in
-/// such classes, each one's declaration in the live copy becomes a computed property kept in a free spare place:
-/// the class then holds what it did, and the change goes in like any other. Being stored, a spare place is observed
-/// like the rest (`@Observable`'s tracking, `@Published` in an `ObservableObject`), so a view that reads the new
-/// property is redrawn when it changes. Which property is in which place is kept until the app is next installed,
-/// and put back into every live copy made meanwhile (`apply`), so later changes see the same layout.
+/// A stored property added while the app is open, put in without reopening it. A live build gives every class of the
+/// app's `count` spare places (`__lampSpare_<Class>_0`…), every other struct one that holds any number of properties
+/// by name (`__lampSpare_<Struct>`), and every view a `@State` box (`__lampState_<View>`), all written by the
+/// copy step (`Template.sparesPerl`), so the open app's objects and values already have room. When the only thing
+/// keeping a change out is new stored properties in such types, each one's declaration in the live copy becomes a
+/// computed property kept in a spare: the type then holds what it did, and the change goes in like any other. Being
+/// stored, a spare is observed like the rest (`@Observable`'s tracking, `@Published` in an `ObservableObject`, a
+/// view's state), so what reads the new property is redrawn when it changes. Which property is where is kept until
+/// the app is next installed, and put back into every live copy made meanwhile (`apply`), so later changes see the
+/// same layout. Cases added at the end of an enum without payloads need nothing: its values keep their size.
 enum LiveSlots {
     static let count = 4
+
+    /// What keeps a property: a class's own place, a struct's shared one, or a view's state box.
+    enum Holder: String, Codable { case object, value, view }
 
     struct Slot: Codable, Equatable {
         var index: Int
         /// The property's type as the compiler worked it out, for a declaration that doesn't spell it.
         var type: String
+        /// Nil in what was saved before structs and views had spares: a class's.
+        var holder: Holder?
     }
 
     private static func url(_ project: LampProject) -> URL { LiveReload.folder(project).appendingPathComponent("slots.json") }
@@ -359,6 +366,19 @@ enum LiveSlots {
 
     private static func save(_ mapping: [String: [String: Slot]], for project: LampProject) {
         try? JSONEncoder().encode(mapping).write(to: url(project), options: .atomic)
+    }
+
+    /// Whether a live build's errors are about the spares rather than the app's own code.
+    static func brokeBuild(_ output: String) -> Bool {
+        ["__lampSpare_", "__lampState_", "LampSpare", "LampStateBox"].contains { output.contains($0) }
+    }
+
+    /// Live copies of the app have no spares from now on (build.sh skips them while the file is there). True the
+    /// first time, so the build is tried once more.
+    static func giveUp(_ project: LampProject) -> Bool {
+        let marker = LiveReload.folder(project).appendingPathComponent("no-spares")
+        guard !FileManager.default.fileExists(atPath: marker.path) else { return false }
+        return FileManager.default.createFile(atPath: marker.path, contents: Data())
     }
 
     /// The app was installed: its objects are the new build's, with every property stored, and its places empty.
@@ -374,9 +394,23 @@ enum LiveSlots {
         }
     }
 
-    /// When every way the new code's types differ from the open app's is a stored property added to a class that
-    /// has places to spare, moves each into a place and answers what it moved ("Game.onFoot"); else nothing
-    /// changes and it answers nil.
+    /// Whether an enum only gained cases, at the end, with none of its cases carrying anything: a value of it is
+    /// then its case's number, which the cases it had keep, in the same size (up to 256 cases; one case takes no
+    /// room, so it needs two to begin with). The code that reads the new cases is the change's.
+    static func casesAdded(_ old: [String], _ new: [String]) -> Bool {
+        func plain(_ entry: String) -> Bool {
+            guard let field = entry.split(separator: "\t", maxSplits: 1).last, field.hasPrefix("case ") else { return false }
+            return field.components(separatedBy: "->").count == 2
+        }
+        // Each type's list starts with the type itself ("Mood<tab>"), which holds nothing.
+        let old = old.filter { !$0.hasSuffix("\t") }, new = new.filter { !$0.hasSuffix("\t") }
+        return old.count >= 2 && new.count > old.count && new.count <= 256
+            && old.allSatisfy(plain) && new.allSatisfy(plain) && Array(new.prefix(old.count)) == old
+    }
+
+    /// When every way the new code's types differ from the open app's is a stored property added to a type with a
+    /// spare for it, moves each into its spare and answers what it moved ("Game.onFoot"); else nothing changes
+    /// and it answers nil.
     static func fit(_ project: LampProject, before: [String], after: [String]) -> [String]? {
         func byType(_ entries: [String]) -> [String: [String]] {
             Dictionary(grouping: entries, by: { String($0.prefix { $0 != "\t" }) })
@@ -386,29 +420,56 @@ enum LiveSlots {
         var planned: [(type: String, name: String, slot: Slot, published: Bool)] = []
         for (type, members) in old.sorted(by: { $0.key < $1.key }) {
             guard let current = new[type] else { return nil }
-            guard current != members else { continue }
+            guard current != members, !casesAdded(members, current) else { continue }
             // Only additions, with what was there still there, in order.
             let extras = current.filter { !members.contains($0) }
             guard current.filter({ members.contains($0) }) == members, !extras.isEmpty else { return nil }
-            // The places as the class keeps them: plain, behind @Observable's `_`, or in @Published's wrapper.
+            // The spares as the type keeps them: a class's plain, behind @Observable's `_`, or in @Published's
+            // wrapper; a struct's plain; a view's in its State.
             let first = place(0, in: type)
             let observed = members.contains(type + "\t_\(first): LampSpare?")
             let published = members.contains(type + "\t_\(first): Published<LampSpare?>")
-            guard observed || published || members.contains(type + "\t\(first): LampSpare?") else { return nil }
+            let holder: Holder
+            if observed || published || members.contains(type + "\t\(first): LampSpare?") {
+                holder = .object
+            } else if members.contains(type + "\t\(place(in: type, holder: .value)): LampSpare?") {
+                holder = .value
+            } else if members.contains(type + "\t_\(place(in: type, holder: .view)): State<LampStateBox>")
+                        || members.contains(type + "\t__\(place(in: type, holder: .view)): LazyState<LampStateBox>") {
+                holder = .view
+            } else {
+                return nil
+            }
             var taken = Set((map[type] ?? [:]).values.map(\.index))
             for extra in extras {
                 let field = extra.dropFirst(type.count + 1)
                 guard !field.hasPrefix("case "), let colon = field.range(of: ": ") else { return nil }
                 var name = String(field[..<colon.lowerBound]), kind = String(field[colon.upperBound...])
-                // @Observable keeps a property in `_name`, @Published in `_name: Published<T>`.
-                if observed, name.hasPrefix("_") { name.removeFirst() }
-                if kind.hasPrefix("Published<"), kind.hasSuffix(">"), name.hasPrefix("_") {
-                    name.removeFirst()
-                    kind = String(kind.dropFirst("Published<".count).dropLast())
+                // A wrapper's storage: `_name: Wrapper<T>`, or `__name: LazyState<T>` where @State is a macro.
+                func unwrap(_ wrapper: String, underscores: Int = 1) -> Bool {
+                    guard name.hasPrefix(String(repeating: "_", count: underscores)), kind.hasPrefix(wrapper + "<"), kind.hasSuffix(">") else { return false }
+                    name.removeFirst(underscores)
+                    kind = String(kind.dropFirst(wrapper.count + 1).dropLast())
+                    return true
                 }
-                guard map[type]?[name] == nil, let free = (0..<count).first(where: { !taken.contains($0) }) else { return nil }
-                taken.insert(free)
-                planned.append((type, name, Slot(index: free, type: kind), published))
+                switch holder {
+                case .object:
+                    // @Observable keeps a property in `_name`, @Published in `_name: Published<T>`.
+                    if !unwrap("Published"), observed, name.hasPrefix("_") { name.removeFirst() }
+                case .value:
+                    // A wrapper's storage (`_name`) isn't a plain property.
+                    guard !name.hasPrefix("_") else { return nil }
+                case .view:
+                    guard unwrap("State") || unwrap("LazyState", underscores: 2) else { return nil }
+                }
+                guard map[type]?[name] == nil else { return nil }
+                var index = 0
+                if holder == .object {
+                    guard let free = (0..<count).first(where: { !taken.contains($0) }) else { return nil }
+                    taken.insert(free)
+                    index = free
+                }
+                planned.append((type, name, Slot(index: index, type: kind, holder: holder), published))
             }
         }
         // Every type the open app doesn't have is the library's to lay out; one it has that changed must be fitted.
@@ -428,8 +489,15 @@ enum LiveSlots {
 
     /// A class's spare place: named after the class, since a subclass has its own beside those it inherits.
     static func place(_ index: Int, in type: String) -> String {
-        "__lampSpare_\(type.split(separator: ".").last.map(String.init) ?? type)_\(index)"
+        "__lampSpare_\(simpleName(type))_\(index)"
     }
+
+    /// A struct's one spare, or a view's state box.
+    static func place(in type: String, holder: Holder) -> String {
+        holder == .view ? "__lampState_\(simpleName(type))" : "__lampSpare_\(simpleName(type))"
+    }
+
+    private static func simpleName(_ type: String) -> String { type.split(separator: ".").last.map(String.init) ?? type }
 
     /// A starting value that's the same every time it's worked out: answered as it is until something is set.
     /// Anything else (`.now`, a call, another property) is worked out once and kept, as a stored property would be.
@@ -437,29 +505,41 @@ enum LiveSlots {
         value.range(of: #"^(-?[0-9][0-9_.eE+-]*|true|false|nil|\[\]|\[:\]|"[^"\\]*")$"#, options: .regularExpression) != nil
     }
 
-    /// Turns `var name = value` in the class `type` of the live copy into a computed property kept in the place.
-    /// Only a one-line declaration with nothing but access words, `@Published` or `@ObservationIgnored` before it,
-    /// and a type or a starting value (an optional may have neither): anything else (a `didSet`, `lazy`, `weak`,
-    /// another wrapper) isn't moved, and the change goes in by reopening. Answers the file changed.
+    /// A struct can't keep a value the first time it's read (its getter can't change it), so its new property's
+    /// starting value must come out the same every time: a literal, a case or a constant (`.sedan`, `Color.red`),
+    /// or an empty value made fresh (`[Item]()`, `Settings()`), but not `.now`, `Date()` or `UUID()`.
+    private static func isSteady(_ value: String) -> Bool {
+        if isLiteral(value) { return true }
+        if value.range(of: #"(^|\.)now$|^(UUID|Date)\(\)$|random"#, options: .regularExpression) != nil { return false }
+        return value.range(of: #"^([A-Z]\w*)?\.[A-Za-z_]\w*$|^[A-Z][\w.<>, \[\]:?]*\(\)$|^\[[\w.<>, :?]+\]\(\)$"#, options: .regularExpression) != nil
+    }
+
+    /// Turns `var name = value` in the type `type` of the live copy into a computed property kept in its spare.
+    /// Only a one-line declaration with nothing but access words, `@Published`, `@ObservationIgnored` or (in a
+    /// view) `@State` before it, and a type or a starting value (an optional may have neither): anything else (a
+    /// `didSet`, `lazy`, `weak`, another wrapper) isn't moved, and the change goes in by reopening. A view's
+    /// `$name` becomes a binding to the box, through the whole file. Answers the file changed.
     /// `published` is whether the class's places are @Published, when known: a declaration marked @Published in a
     /// class whose places aren't (its ObservableObject is declared in an extension) would stop telling views, so it isn't moved.
     private static func rewrite(_ name: String, as slot: Slot, in type: String, published: Bool?, project: LampProject,
                                 keeping originals: inout [URL: Data]) -> URL? {
-        let simple = String(type.split(separator: ".").last ?? Substring(type))
+        let holder = slot.holder ?? .object
+        let simple = simpleName(type)
         let files = (FileManager.default.enumerator(at: LiveReload.sources(project), includingPropertiesForKeys: nil)?
             .compactMap { $0 as? URL } ?? []).filter { $0.pathExtension == "swift" }.sorted { $0.path < $1.path }
         let header = try! NSRegularExpression(
-            pattern: #"^([ \t]*)(?:@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated)\s+)*class\s+"#
+            pattern: #"^([ \t]*)(?:@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated)\s+)*"#
+                + (holder == .object ? "class" : "struct") + #"\s+"#
                 + NSRegularExpression.escapedPattern(for: simple) + #"\b[^{\n]*\{"#, options: .anchorsMatchLines)
         let escaped = NSRegularExpression.escapedPattern(for: name)
         let declaration = try! NSRegularExpression(
-            pattern: #"^([ \t]*)((?:@(?:Published|ObservationIgnored)[ \t]+)*)((?:(?:public|private|fileprivate|internal|nonisolated)(?:\(set\))?[ \t]+)*)(var|let)[ \t]+"#
+            pattern: #"^([ \t]*)((?:@(?:Published|ObservationIgnored|State)[ \t]+)*)((?:(?:public|private|fileprivate|internal|nonisolated)(?:\(set\))?[ \t]+)*)(var|let)[ \t]+"#
                 + escaped + #"[ \t]*(?::[ \t]*([^={}\n]+?))?[ \t]*(?:=[ \t]*([^{}\n]+?))?[ \t]*(?://[^\n]*)?$"#, options: .anchorsMatchLines)
         for file in files where !["LampSupport.swift", Template.sceneSupportFile].contains(file.lastPathComponent) {
             guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
             let ns = text as NSString
             for found in header.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
-                // The class's body: from its header to the first line that closes at the header's indent or less.
+                // The type's body: from its header to the first line that closes at the header's indent or less.
                 let indent = ns.substring(with: found.range(at: 1)).count
                 let start = found.range.location + found.range.length
                 var end = ns.length
@@ -470,19 +550,42 @@ enum LiveSlots {
                 func group(_ i: Int) -> String? {
                     m.range(at: i).location == NSNotFound ? nil : ns.substring(with: m.range(at: i)).trimmingCharacters(in: .whitespaces)
                 }
-                if published == false, (group(2) ?? "").contains("@Published") { return nil }
+                let attributes = group(2) ?? ""
+                if published == false, attributes.contains("@Published") { return nil }
+                // @State is a view's, and a view's new property is only ever its state.
+                guard attributes.contains("@State") == (holder == .view) else { return nil }
                 let lead = ns.substring(with: m.range(at: 1)), access = group(3) ?? "", isLet = group(4) == "let"
                 let declared = group(5) ?? slot.type
                 guard !declared.isEmpty else { return nil }
                 let optional = declared.hasSuffix("?") || declared.hasPrefix("Optional<")
-                guard let start = group(6) ?? (optional ? "nil" : nil) else { return nil }
-                let place = place(slot.index, in: type)
-                let first = !isLiteral(start) ? "let v: \(declared) = \(start); \(place) = LampSpare(v); return v" : "return \(start)"
-                let getter = "get { if let v = \(place)?.value as? \(declared) { return v }; \(first) }"
-                let setter = isLet ? "" : " set { \(place) = LampSpare(newValue) }"
-                let line = "\(lead)\(access.isEmpty ? "" : access + " ")var \(name): \(declared) { \(getter)\(setter) }"
+                guard let initial = group(6) ?? (optional ? "nil" : nil) else { return nil }
+                let opening = "\(lead)\(access.isEmpty ? "" : access + " ")var "
+                var replacement: String
+                switch holder {
+                case .object:
+                    let place = place(slot.index, in: type)
+                    let first = !isLiteral(initial) ? "let v: \(declared) = \(initial); \(place) = LampSpare(v); return v" : "return \(initial)"
+                    let getter = "get { if let v = \(place)?.value as? \(declared) { return v }; \(first) }"
+                    let setter = isLet ? "" : " set { \(place) = LampSpare(newValue) }"
+                    replacement = "\(opening)\(name): \(declared) { \(getter)\(setter) }"
+                case .value:
+                    guard isSteady(initial) else { return nil }
+                    let place = place(in: type, holder: .value)
+                    let getter = "get { if let v = \(place)?.field(\"\(name)\") as? \(declared) { return v }; return \(initial) }"
+                    let setter = isLet ? "" : " set { \(place) = LampSpare.setting(\"\(name)\", to: newValue, in: \(place)) }"
+                    replacement = "\(opening)\(name): \(declared) { \(getter)\(setter) }"
+                case .view:
+                    let box = place(in: type, holder: .view)
+                    let read = "\(box).get(\"\(name)\") { () -> \(declared) in \(initial) }"
+                    replacement = "\(opening)\(name): \(declared) { get { \(read) } nonmutating set { \(box).set(\"\(name)\", newValue) } }\n"
+                        + "\(opening)__lampBinding_\(name): Binding<\(declared)> { Binding(get: { \(read) }, set: { \(box).set(\"\(name)\", $0) }) }"
+                }
+                var changed = ns.replacingCharacters(in: m.range, with: replacement)
+                if holder == .view {
+                    changed = changed.replacingOccurrences(of: #"\$"# + escaped + #"\b"#, with: "__lampBinding_" + name, options: .regularExpression)
+                }
                 if originals[file] == nil { originals[file] = Data(text.utf8) }
-                try? ns.replacingCharacters(in: m.range, with: line).write(to: file, atomically: true, encoding: .utf8)
+                try? changed.write(to: file, atomically: true, encoding: .utf8)
                 return file
             }
         }

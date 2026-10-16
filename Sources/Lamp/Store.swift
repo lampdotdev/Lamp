@@ -3734,8 +3734,15 @@ final class Store: ObservableObject {
         await liveBuilds[project.id]?.value
         liveBuildFailed.remove(project.id)
         if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1" }   // a change can go into the open app (LiveReload)
-        let status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: env,
+        var status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: env,
                                      started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
+        // The live copy's spare places must never be what keeps an app from building: if they are, it's built
+        // without them from now on, and the agent only ever sees errors in its own code.
+        if status != 0, env["LAMP_LIVE"] == "1", LiveSlots.brokeBuild(output.joined(separator: "\n")), LiveSlots.giveUp(project) {
+            output = []
+            status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: env,
+                                     started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
+        }
         turns[project.id]?.build = nil
         guard exists(project) else { return "The app was deleted." }
         guard status != 0 else {

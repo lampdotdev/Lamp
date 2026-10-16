@@ -3378,16 +3378,50 @@ enum Template {
     }
 
     #if LAMP_LIVE
-    /// A spare place in a class, for a stored property added while the app is open (LiveReload's slots): live
-    /// builds give every class of the app's a few, empty, and a new property kept in one leaves the object's
-    /// layout as the open app has it. Saved data never holds one (it encodes as nothing and decodes empty).
-    struct LampSpare: Codable, @unchecked Sendable {
+    /// A spare place for a stored property added while the app is open (LiveSlots): live builds give every class of
+    /// the app's a few, and every struct one that holds any number by name, empty, so a new property kept in one
+    /// leaves the type's layout as the open app has it. Saved data never holds one (it encodes as nothing and
+    /// decodes empty), and it compares and hashes by what it holds that can, so a struct's own Equatable and
+    /// Hashable still see a new property.
+    struct LampSpare: Codable, Hashable, @unchecked Sendable {
         var value: Any?
         init(_ value: Any?) { self.value = value }
         init(from decoder: Decoder) throws { value = nil }
         func encode(to encoder: Encoder) throws {
             var container = encoder.singleValueContainer()
             try container.encodeNil()
+        }
+        /// A struct's property, by name.
+        func field(_ name: String) -> Any? { (value as? [String: Any])?[name] }
+        static func setting(_ name: String, to new: Any, in spare: LampSpare?) -> LampSpare {
+            var fields = (spare?.value as? [String: Any]) ?? [:]
+            fields[name] = new
+            return LampSpare(fields)
+        }
+        private var comparable: [String: AnyHashable] {
+            if let fields = value as? [String: Any] { return fields.compactMapValues { $0 as? AnyHashable } }
+            return (value as? AnyHashable).map { ["": $0] } ?? [:]
+        }
+        static func == (a: LampSpare, b: LampSpare) -> Bool { a.comparable == b.comparable }
+        func hash(into hasher: inout Hasher) { hasher.combine(comparable) }
+    }
+
+    /// A view's spare state (LiveSlots): `@State` added to a view while the app is open is kept here by name, so the
+    /// view holds what it did. A starting value is worked out on the first read and kept without redrawing anything;
+    /// a change redraws the views that read any of it.
+    @Observable final class LampStateBox {
+        @ObservationIgnored private var values: [String: Any] = [:]
+        private var changes = 0
+        func get<T>(_ name: String, _ initial: () -> T) -> T {
+            _ = changes
+            if let value = values[name] as? T { return value }
+            let value = initial()
+            values[name] = value
+            return value
+        }
+        func set<T>(_ name: String, _ value: T) {
+            values[name] = value
+            changes += 1
         }
     }
 
@@ -12599,19 +12633,55 @@ enum Template {
 
 """#
 
+    /// The copy step's spare places (LiveSlots), written beside the live copy and run on each file copied: every class
+    /// of the app's gets `LiveSlots.count` (named after the class, so a subclass's don't clash with what it inherits;
+    /// `@Published` when it says it's an ObservableObject), every view one `@State` box, and every other struct one
+    /// place for any number of properties. Left out: what a spare would break (SwiftData and Core Data models,
+    /// Sendable classes, Equatable views, the App and its scenes, property wrappers, App Intents) and structs in a
+    /// file that lays memory out by hand (vertex data for the GPU), whose size must be what it says.
+    static let sparesPerl = #"""
+    use strict; use warnings;
+    my $count = shift @ARGV;
+    local $/;
+    for my $file (@ARGV) {
+        open(my $in, '<', $file) or die "$file: $!"; my $s = <$in>; close($in);
+        my $raw = $s =~ /MemoryLayout|withUnsafe|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
+        $s =~ s#^([ \t]*)(((?:@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated|indirect)\s+)*)(class|struct)\s+(?!(?:func|var|let|subscript|override|class)\b)(\w+)([^{\n]*)\{)#$1 . spares($1, $2, $3 . $6, $4, $5, $raw)#gme;
+        open(my $out, '>', $file) or die "$file: $!"; print $out $s; close($out);
+    }
+    sub spares {
+        my ($i, $whole, $header, $kind, $name, $raw) = @_;
+        my $pad = "\n$i    ";
+        if ($kind eq 'class') {
+            return $whole if $header =~ /\@Model\b|NSManagedObject|(?<!unchecked )\bSendable\b/;
+            my $published = $header =~ /ObservableObject/ ? '@Published ' : '';
+            return $whole . join('', map { "${pad}${published}var __lampSpare_${name}_$_: LampSpare? = nil;" } 0 .. $count - 1);
+        }
+        return $whole if $header =~ /\@propertyWrapper|\@frozen|\b(?:App|Scene|Commands|DynamicProperty|AppIntent|\w*Intent|AppEntity|\w*Query|TimelineProvider|TimelineEntry|Widget\w*)\b/;
+        if ($header =~ /\bView\b/) {
+            return $whole if $header =~ /\b(?:Equatable|Hashable)\b/;
+            return "${whole}${pad}\@State private var __lampState_${name} = LampStateBox();";
+        }
+        return $whole if $raw;
+        return "${whole}${pad}var __lampSpare_${name}: LampSpare? = nil;";
+    }
+    """#
+
     /// The live copy of the sources (LiveReload): each file copied into .lamp/live with its views' bodies wrapped,
     /// so a body's type stays the same from one change to the next (`LampLive`), and only when it differs, so the
     /// build stays incremental; files gone from Sources go from the copy too. Indented for the scripts' `if`.
     static let liveCopySteps = """
       LIVE=.lamp/live
       mkdir -p "$LIVE/Sources"
+      cat > "$LIVE/spares.pl" <<'LAMPSPARES'
+    \(sparesPerl)
+    LAMPSPARES
       for f in Sources/**/*.swift(N); do
         out="$LIVE/$f"
         mkdir -p "${out:h}"
         perl -0pe 's/var body: some View \\{/var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\\n    \\@ViewBuilder var __lampBody: some View {/g' "$f" > "$out.new"
-        # Every class of the app's gets \(LiveSlots.count) spare places for properties added while it's open (LiveSlots),
-        # named after the class, so a subclass's don't clash with those it inherits.
-        case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) perl -0pi -e 's#^([ \\t]*)((?:@[\\w.]+(?:\\([^)\\n]*\\))?\\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated)\\s+)*class\\s+(?!(?:func|var|let|subscript|override|class)\\b)(\\w+)[^{\\n]*\\{)#my ($i, $h, $n) = ($1, $2, $3); ($h =~ /\\@Model\\b|NSManagedObject|(?<!unchecked )\\bSendable\\b/) ? "$i$h" : "$i$h" . join("", map { "\\n$i    " . ($h =~ /ObservableObject/ ? "\\@Published " : "") . "var __lampSpare_${n}_$_: LampSpare? = nil;" } 0 .. \(LiveSlots.count - 1))#gme' "$out.new" ;; esac
+        # Spare places for properties added while the app is open (LiveSlots), unless they kept the app from building.
+        case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) [[ -e "$LIVE/no-spares" ]] || perl "$LIVE/spares.pl" \(LiveSlots.count) "$out.new" ;; esac
         if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi
       done
       for f in "$LIVE"/Sources/**/*.swift(N); do [[ -f "${f#$LIVE/}" ]] || rm "$f"; done
