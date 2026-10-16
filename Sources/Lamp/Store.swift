@@ -1508,8 +1508,12 @@ final class Store: ObservableObject {
 
     func copyAppFile(_ project: LampProject) {
         guard canShare(project) else { return }
+        Task { await copyAppFile(project, icon: Sharing.sharedIcon(of: project)) }
+    }
+
+    private func copyAppFile(_ project: LampProject, icon: Data?) {
         do {
-            let file = try Self.sharedFile(of: project)
+            let file = try Self.sharedFile(of: project, icon: icon)
             // Two files, as Finder copies them, so every app that takes a pasted file takes both.
             let items = ([Self.sharePicture(for: file), file].compactMap { $0 }) as [NSURL]
             NSPasteboard.general.clearContents()
@@ -1530,8 +1534,8 @@ final class Store: ObservableObject {
 
     /// The app's .lampapp, written where it outlives the paste or the drop that hands it on: another app may
     /// read it after Lamp has moved on.
-    nonisolated static func sharedFile(of project: LampProject, at file: URL? = nil) throws -> URL {
-        let exported = try Sharing.export(project)
+    nonisolated static func sharedFile(of project: LampProject, at file: URL? = nil, icon: Data? = nil) throws -> URL {
+        let exported = try Sharing.export(project, icon: icon)
         let file = file ?? sharedFolder.appendingPathComponent(exported.lastPathComponent)
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? FileManager.default.removeItem(at: file)

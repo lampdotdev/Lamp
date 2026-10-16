@@ -56,8 +56,9 @@ enum Sharing {
         Task {
             do {
                 // Copying assets and compressing the file must leave the interface free to respond.
+                let icon = await sharedIcon(of: project)
                 let (file, picture) = try await Task.detached(priority: .userInitiated) {
-                    let file = try export(project)
+                    let file = try export(project, icon: icon)
                     return (file, Store.sharePicture(for: file))
                 }.value
                 guard shareRequest == request, window.isVisible else { return }
@@ -150,8 +151,9 @@ enum Sharing {
         }
     }
 
-    /// Writes `<Name>.lampapp` to a temporary folder and returns its URL.
-    static func export(_ project: LampProject) throws -> URL {
+    /// Writes `<Name>.lampapp` to a temporary folder and returns its URL. `icon` is the drawn icon to carry
+    /// (`sharedIcon`); without one, Lamp's own drawing of the same design goes in.
+    static func export(_ project: LampProject, icon: Data? = nil) throws -> URL {
         let fm = FileManager.default
         let work = fm.temporaryDirectory.appendingPathComponent("forge-share-\(UUID().uuidString)")
         let stage = work.appendingPathComponent("app")
@@ -213,7 +215,7 @@ enum Sharing {
         }
         // The icon as drawn here, for Quick Look and the picture sent with the file. The Mac that opens the file
         // draws its own from icon.json; an older Lamp leaves this one unread.
-        if let icon = drawnIcon(of: project) {
+        if let icon = icon ?? drawnIcon(of: project) {
             try icon.write(to: stage.appendingPathComponent(LampFile.iconEntry))
         }
         let encoder = JSONEncoder()
@@ -241,12 +243,32 @@ enum Sharing {
         return output
     }
 
-    /// The app's icon at 512 px as a PNG: from the .icns Lamp wrote, else the desk's smaller one. Nil before it has one.
+    /// The icon a shared file carries, drawn from the design and artwork being shared, as the Mac that opens it
+    /// will draw it. Not the .icns: artwork that arrives during a turn reaches that only when the turn ends.
+    static func sharedIcon(of project: LampProject) async -> Data? {
+        guard Icons.load(project) != nil, let url = await Icons.largePreview(project),
+              let image = NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            return drawnIcon(of: project)
+        }
+        return png(image, side: 512)
+    }
+
+    /// The same without waiting, for a drag: Lamp's own drawing of the design (`Icons.drawnTile`), or for an app
+    /// with no design the icon Lamp last wrote. Nil before it has one.
     static func drawnIcon(of project: LampProject) -> Data? {
+        if let spec = Icons.load(project) {
+            let art = NSImage(contentsOf: Icons.artURL(project, spec: spec))
+            let tile = Icons.drawnTile(spec, foreground: Icons.foregroundLayer(spec, art: art))
+            return tile.cgImage.flatMap { png($0, side: 512) }
+        }
         let largest = NSImage(contentsOf: Icons.icnsURL(project))?.representations
             .compactMap { $0 as? NSBitmapImageRep }.max { $0.pixelsWide < $1.pixelsWide }
-        guard let largest, let image = largest.cgImage else { return try? Data(contentsOf: Icons.previewURL(project)) }
-        let side = min(512, largest.pixelsWide)
+        guard let image = largest?.cgImage else { return try? Data(contentsOf: Icons.previewURL(project)) }
+        return png(image, side: 512)
+    }
+
+    private static func png(_ image: CGImage, side: Int) -> Data? {
+        let side = min(side, image.width)
         guard let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
                                       space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }

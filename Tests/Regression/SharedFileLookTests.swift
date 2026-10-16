@@ -57,6 +57,42 @@ final class SharedFileLookTests: XCTestCase {
         XCTAssertEqual(image.pixelsHigh, 1260)
     }
 
+    /// Artwork that arrives during a turn reaches the .icns only when the turn ends, so a file shared then must
+    /// carry the icon drawn from its design, not the one in the .icns.
+    func testTheIconIsDrawnFromTheDesignNotAnOlderIcns() async throws {
+        let project = try project(icon: false)
+        let spec = IconSpec(subject: "a wave", symbol: "water.waves", background: "blue", tint: "#0A84FF")
+        try JSONEncoder().encode(spec).write(to: Icons.specURL(project))
+        try writeIcns(of: .systemRed, to: Icons.icnsURL(project))
+
+        for icon in [Sharing.drawnIcon(of: project), await Sharing.sharedIcon(of: project)] {
+            let file = try Sharing.export(project, icon: icon)
+            let image = try XCTUnwrap(LampFile(contentsOf: file)?.icon)
+            let middle = try XCTUnwrap(NSBitmapImageRep(cgImage: image).colorAt(x: image.width / 2, y: image.height / 5))
+            XCTAssertLessThan(middle.redComponent, middle.blueComponent, "the .icns's red, not the design's blue")
+        }
+    }
+
+    private func writeIcns(of color: NSColor, to url: URL) throws {
+        let fm = FileManager.default
+        let set = root!.appendingPathComponent("stale.iconset")
+        try fm.createDirectory(at: set, withIntermediateDirectories: true)
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1024, pixelsHigh: 1024, bitsPerSample: 8, samplesPerPixel: 4,
+                                   hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        color.setFill()
+        NSRect(x: 0, y: 0, width: 1024, height: 1024).fill()
+        NSGraphicsContext.restoreGraphicsState()
+        try rep.representation(using: .png, properties: [:])!.write(to: set.appendingPathComponent("icon_512x512@2x.png"))
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
+        process.arguments = ["-c", "icns", set.path, "-o", url.path]
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try process.run()
+        process.waitUntilExit()
+    }
+
     func testAnythingElseIsNotALampFile() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-look-\(UUID().uuidString)")
         self.root = root
