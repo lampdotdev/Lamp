@@ -32,6 +32,7 @@ enum AgentEvent {
     case compacted         // the engine summed up the conversation so far to make room
     case plan([PlanPart])  // the agent's checklist for the build card
     case finished          // the engine has answered: a message written to it now would start another answer
+    case received          // the engine gave the model a message of the person's (the request, or one sent mid-turn)
 }
 
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.
@@ -1334,7 +1335,9 @@ enum Agent {
             }
             return events
         case "message_end":
-            guard let message = obj["message"] as? [String: Any], message["role"] as? String == "assistant" else { return [] }
+            guard let message = obj["message"] as? [String: Any] else { return [] }
+            if message["role"] as? String == "user" { return [.received] }
+            guard message["role"] as? String == "assistant" else { return [] }
             var events: [AgentEvent] = []
             for block in message["content"] as? [[String: Any]] ?? [] where block["type"] as? String == "text" {
                 if let text = (block["text"] as? String)?.trimmed, !text.isEmpty { events.append(.text(text)) }

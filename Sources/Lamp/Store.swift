@@ -424,6 +424,8 @@ final class Store: ObservableObject {
         /// The chat lines of the requests the agent took while it worked (`handOver`), which go with the turn's
         /// own to the version it makes.
         var midTurn: [UUID] = []
+        /// Requests handed to the engine that its output hasn't yet shown reaching the model (`received`).
+        var handed: [UUID] = []
         /// The engine running now, when it takes messages while it works (pi, Claude Code); nil otherwise.
         var steering: Engine?
         /// Claude Code's input, from its start until it has answered.
@@ -2443,7 +2445,8 @@ final class Store: ObservableObject {
                 case .text, .textPiece, .step, .finished: turn.toolRunning = false
                 default: break
                 }
-                if case .raw = event {} else if case .failed = event {} else { answered = true }
+                // Not the engine saying it passed a message of the person's on: that isn't the model answering.
+                if case .raw = event {} else if case .failed = event {} else if case .received = event {} else { answered = true }
                 // The model carrying on after a failed attempt means the engine recovered from it (pi sends again
                 // after a dropped connection, after compacting a conversation that overflowed, and after its
                 // extension drops the pictures of a request that was too big: lamp-tools.ts), so that attempt is
@@ -2510,6 +2513,8 @@ final class Store: ObservableObject {
                     }
                     failure = text
                 case .raw(let text): log(project, .detail, text)
+                case .received:
+                    received(project)
                 case .finished:
                     // Claude Code has answered. A message sent from now on is the next request.
                     turn.input?.close()
@@ -2529,6 +2534,7 @@ final class Store: ObservableObject {
         turn.input = nil
         turn.steering = nil
         turn.toolRunning = false
+        takeBackHanded(project)
         if answered { Memory.delivered(to: project); AIStatus.delivered(to: project); Skills.delivered(to: project) }
         endApprovals(for: project)
         // A message cut short (the run was stopped, or failed) keeps what was written of it.
@@ -2576,8 +2582,8 @@ final class Store: ObservableObject {
     /// A message sent while the agent works goes to it in the same turn: the engine gives it to the model after
     /// the tools it is running, before the model goes on, rather than leaving it for the next request. pi asks
     /// for it after each of its turns (`/agent/steer`, lamp-tools.ts); Claude Code is written to while a tool
-    /// runs (`steer`). Each goes into the chat as it's handed over, a request of this turn: its version is the
-    /// turn's. Answers to a card and requests sent again wait, as they change what the turn is for; so does
+    /// runs (`steer`). Each goes into the chat as it's handed over, and is a request of this turn (its version is the
+    /// turn's) once the engine's output shows the model has it (`received`); until then it can still go back in line. Answers to a card and requests sent again wait, as they change what the turn is for; so does
     /// everything while a wish is being found, or once the agent has asked its questions. Returns what the
     /// agent is sent, nil when nothing can go.
     private func handOver(_ project: LampProject) -> String? {
@@ -2596,11 +2602,34 @@ final class Store: ObservableObject {
         }
         logs[project.id] = chat
         saveChat(project)
-        turn.midTurn += lines.map { chat[$0].id }
-        turn.messages += taken.map(\.text)
+        turn.handed += lines.map { chat[$0].id }
         let words = taken.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
         return (words.isEmpty ? Self.onlyFiles(saved.count) : words)
-            + Attachments.note(for: saved) + PointedAt.note(for: lines.compactMap { chat[$0].pointed })
+            + Attachments.note(for: saved, inlined: false) + PointedAt.note(for: lines.compactMap { chat[$0].pointed })
+    }
+
+    /// The engine's output shows the model has the requests handed to it: from now on they're the turn's.
+    private func received(_ project: LampProject) {
+        guard let turn = turns[project.id], !turn.handed.isEmpty else { return }
+        let lines = logs[project.id] ?? []
+        turn.midTurn += turn.handed
+        turn.messages += turn.handed.compactMap { id in lines.first { $0.id == id }?.text }
+        turn.handed = []
+    }
+
+    /// Requests handed to an engine that ended without giving them to the model (it failed, was stopped, or Lamp's
+    /// answer never reached it) leave the chat and wait at the front of the line again, as the next request.
+    private func takeBackHanded(_ project: LampProject) {
+        guard let turn = turns[project.id], !turn.handed.isEmpty, var chat = logs[project.id] else { return }
+        let handed = Set(turn.handed)
+        turn.handed = []
+        let again = chat.filter { handed.contains($0.id) }.map {
+            QueuedMessage(text: $0.text, kept: $0.attachments ?? [], pointed: $0.pointed?.waiting(in: project))
+        }
+        chat.removeAll { handed.contains($0.id) }
+        logs[project.id] = chat
+        saveChat(project)
+        queued[project.id, default: []].insert(contentsOf: again, at: 0)
     }
 
     /// Claude Code takes the person's messages on its input: written while a tool runs, a message is there when

@@ -378,7 +378,7 @@ extension Agent {
             // sends meanwhile is written there too, and Claude Code hands it to the model after the tools it is
             // running (Store.steer), in the same turn. Lamp closes the input once Claude Code has answered.
             var command = """
-            "$LAMP_TOOL" -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages \\
+            "$LAMP_TOOL" -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --replay-user-messages \\
               --restricted --strict-mcp-config --mcp-config "$LAMP_CLAUDE_MCP" --disable-slash-commands \\
               --tools 'Read,Edit,Write,Glob,Grep,Bash,WebFetch,WebSearch' \\
               --permission-mode "$LAMP_CLAUDE_MODE" --allowedTools "$LAMP_CLAUDE_ALLOWED" \\
@@ -557,6 +557,8 @@ extension Agent {
             default: break
             }
         case "user":
+            // A message Lamp wrote to its input, said back as Claude Code hands it to the model.
+            if obj["isReplay"] as? Bool == true { return [.received] }
             // A tool result: the tool has finished and the model is thinking about what's next.
             let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
             if content.contains(where: { $0["type"] as? String == "tool_result" }) { return [.step("")] }
