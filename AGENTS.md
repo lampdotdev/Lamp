@@ -530,7 +530,10 @@ once the new copy reports its window (or goes when the turn ends without it). Th
 the strip above it where the title bar is, as the column's own (`LampSidebar.embed`), drawn by the app since they do
 only what the app could do anyway: close the chat, and open it in Lamp's window. They can't be title bar accessories:
 with the chat a full-height inspector, the window's split view lies over the title bar there and takes the clicks.
-The chat sits below the strip, on a solid background that runs up behind them. The + by the message box offers
+The chat sits below the strip, on a solid background that runs up behind them. A window with a toolbar lays the toolbar over the strip too, and the chat is
+drawn by another process, which AppKit's focus doesn't follow (what had the keyboard, a list say, keeps it through a
+click in the chat), so `LampSidebar.watchClicks` does both as each click arrives: a click on one of the strip's
+buttons presses it, and once a click in the chat has landed the keyboard goes to the chat. The + by the message box offers
 Point at Something in the App beside Add Files (`ChatLook.MessageBar`'s `point`, `PlusMenu`), in the sidebar and in
 Lamp's window while the app is open on this Mac (`MagicPanel.point`; from Lamp's window, Lamp comes back in front
 when it's done). It lets the person point at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), outlines the smallest named
