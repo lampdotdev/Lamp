@@ -2587,8 +2587,10 @@ final class Store: ObservableObject {
     /// everything while a wish is being found, or once the agent has asked its questions. Returns what the
     /// agent is sent, nil when nothing can go.
     private func handOver(_ project: LampProject) -> String? {
+        // Nothing more while a handover is unconfirmed: a receipt confirms everything handed over, so one that
+        // never arrived could otherwise be counted by the next one's receipt instead of going back in line.
         guard let turn = turns[project.id], turn.agent != nil, turn.steering != nil, !turn.asked, !turn.stopped,
-              current(project)?.finding == false, let waiting = queued[project.id] else { return nil }
+              turn.handed.isEmpty, current(project)?.finding == false, let waiting = queued[project.id] else { return nil }
         let taken = Array(waiting.prefix { $0.card == nil && $0.replaces == nil && $0.tookBack.isEmpty })
         guard !taken.isEmpty else { return nil }
         queued[project.id] = taken.count == waiting.count ? nil : Array(waiting.dropFirst(taken.count))
