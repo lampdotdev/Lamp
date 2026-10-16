@@ -4313,7 +4313,9 @@ enum Template {
                 LampSidebar.toggle(window)
             }
             @objc func close(_ sender: NSButton) {
-                guard let window = sender.window else { return }
+                // Beside the window, the button is in the chat's own panel: it closes the chat of the window the panel
+                // belongs to.
+                guard let window = sender.window?.parent ?? sender.window else { return }
                 LampSidebar.close(window)
             }
         }
@@ -4510,10 +4512,12 @@ enum Template {
             guard isOpen(in: window) else { return }
             if let chat = chat(in: window), chat.inPanel { hidePanel(chat) }
             if let item = item(in: window), !item.isCollapsed {
+                // What the window grew by, or before macOS 26 the column's width as it is now, dragged or not.
+                let thickness = item.viewController.view.frame.width
                 window.disableScreenUpdatesUntilFlush()
                 item.isCollapsed = true
                 if let chat = chat(in: window), chat.grew > 0 {
-                    resize(window, by: -chat.grew)
+                    resize(window, by: -(floats ? chat.grew : thickness))
                     chat.grew = 0
                 }
             }
@@ -4622,6 +4626,10 @@ enum Template {
                 let before = window.frame.width
                 resize(window, by: width)
                 chat.grew = window.frame.width - before
+            } else if !floats {
+                // Before macOS 26 a window that comes back with the chat open (`restore`) already has its width: closing
+                // takes it off again, as it would have had the window grown now.
+                chat.grew = width
             }
             item.isCollapsed = false
             keep(content: grow ? content : nil, in: window)
@@ -4660,8 +4668,9 @@ enum Template {
                 })
             }
             on(NSWindow.didResizeNotification) { chat in
-                guard let window = chat.window, chat.inPanel, let panel = chat.panel else { return }
-                panel.setFrame(panelFrame(for: window, side: chat.side), display: true)
+                guard let window = chat.window else { return }
+                if chat.inPanel, let panel = chat.panel { panel.setFrame(panelFrame(for: window, side: chat.side), display: true) }
+                // A size set all at once (zoom, a tile, a size the app sets) may leave room beside it, or take it away.
                 if !window.inLiveResize { replace(chat) }
             }
             on(NSWindow.didEndLiveResizeNotification) { replace($0) }
