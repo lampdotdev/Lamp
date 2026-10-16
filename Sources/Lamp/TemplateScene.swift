@@ -226,12 +226,15 @@ extension Template {
                 visit(root)
                 // The entity itself stays (the app's code holds it, and moves it); what it's made of is the new code's.
                 for old in found {
-                    // A prop whose own handlers (a press action, a change handler) may refer to it or its parts is left
-                    // as it is: they'd go on acting on what the refresh replaces. It's made anew at the next launch.
+                    // A prop with handlers anywhere in it (a press action, a change handler) is left as it is: they
+                    // refer to the parts the new code just made, which aren't the ones on screen. It's made anew at the
+                    // next launch.
                     func handles(_ e: Entity) -> Bool {
-                        guard let part = e.components[LampPart.self] else { return false }
-                        if case .press = part.kind { return true }
-                        return part.changed != nil
+                        if let part = e.components[LampPart.self] {
+                            if case .press = part.kind { return true }
+                            if part.changed != nil { return true }
+                        }
+                        return e.children.contains { handles($0) }
                     }
                     if handles(old) { continue }
                     let fresh = make()
@@ -253,7 +256,10 @@ extension Template {
                 old.name = fresh.name
                 if old.components[LampPart.self] == nil { old.transform = fresh.transform }
             }
-            for kind in [ModelComponent.self, CollisionComponent.self] as [any Component.Type] {
+            // Everything a prop's code builds into a part, from its look to its copies and shadow.
+            var built: [any Component.Type] = [ModelComponent.self, CollisionComponent.self, GroundingShadowComponent.self, OpacityComponent.self]
+            if #available(macOS 26.0, *) { built.append(MeshInstancesComponent.self) }
+            for kind in built {
                 if let new = fresh.components[kind] { old.components.set(new) } else { old.components.remove(kind) }
             }
             if var body = fresh.components[PhysicsBodyComponent.self] {
