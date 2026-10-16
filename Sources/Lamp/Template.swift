@@ -4330,7 +4330,18 @@ enum Template {
     }
 
     enum LampSidebar {
-        fileprivate static let width: CGFloat = 400
+        /// How wide the chat is, beside the window or in its column: dragged wider or narrower by its edge, and kept for
+        /// the app, so it comes back at the width the person left it.
+        fileprivate static let narrowest: CGFloat = 320
+        fileprivate static let widest: CGFloat = 640
+        private static let widthKey = "LampSidebarWidth"
+        fileprivate static var width: CGFloat {
+            get {
+                let kept = UserDefaults.standard.double(forKey: widthKey)
+                return kept > 0 ? min(max(kept, narrowest), widest) : 400
+            }
+            set { UserDefaults.standard.set(Double(min(max(newValue, narrowest), widest)), forKey: widthKey) }
+        }
         private static let openKey = "LampSidebarOpen"
         private static let coachedKey = "LampSidebarCoached"
         private static let identifier = NSUserInterfaceItemIdentifier("lampSidebar")
@@ -4566,19 +4577,26 @@ enum Template {
         /// fits there, else the right, else the left. None in full screen, where the window is the whole screen.
         @MainActor private static func side(for window: NSWindow, preferring preferred: Side) -> Side? {
             guard floats, !window.styleMask.contains(.fullScreen), let screen = (window.screen ?? NSScreen.main)?.visibleFrame else { return nil }
-            let need = width + gap
-            let fits: [Side: Bool] = [.right: window.frame.maxX + need <= screen.maxX + 1,
-                                      .left: window.frame.minX - need >= screen.minX - 1]
-            if fits[preferred] == true { return preferred }
-            return [Side.right, .left].first { fits[$0] == true }
+            // A side with room for the chat at its width first, else one with room for it at its narrowest: beside the
+            // window and a little narrower is better than inside it.
+            let order = preferred == .right ? [Side.right, .left] : [Side.left, .right]
+            for need in [width, narrowest] {
+                if let side = order.first(where: { room(on: $0, of: window.frame, in: screen) >= need }) { return side }
+            }
+            return nil
+        }
+
+        /// The room beside the window on one side, up to its screen's edge, less the gap between them.
+        private static func room(on side: Side, of frame: NSRect, in screen: NSRect) -> CGFloat {
+            (side == .right ? screen.maxX - frame.maxX : frame.minX - screen.minX) - gap
         }
 
         /// Where the window would go to leave room for the chat on its right, kept on its screen; nil when it can't: in
         /// full screen, or wider than its screen leaves room for.
         @MainActor private static func roomBeside(_ window: NSWindow) -> NSRect? {
             guard floats, !window.styleMask.contains(.fullScreen), let screen = (window.screen ?? NSScreen.main)?.visibleFrame else { return nil }
-            let need = width + gap
-            guard window.frame.width + need <= screen.width else { return nil }
+            // Room for the chat at its width when the screen has it, else at its narrowest.
+            guard let need = [width + gap, narrowest + gap].first(where: { window.frame.width + $0 <= screen.width }) else { return nil }
             var frame = window.frame
             frame.origin.x = max(screen.minX, min(frame.minX, screen.maxX - need - frame.width))
             return frame
@@ -4586,8 +4604,13 @@ enum Template {
 
         @MainActor private static func panelFrame(for window: NSWindow, side: Side) -> NSRect {
             let frame = window.frame
-            let x = side == .right ? frame.maxX + gap : frame.minX - gap - width
-            return NSRect(x: x, y: frame.minY, width: width, height: frame.height)
+            // As wide as it's kept, or the room there is on that side when that's less.
+            var shown = width
+            if let screen = (window.screen ?? NSScreen.main)?.visibleFrame {
+                shown = max(narrowest, min(width, room(on: side, of: frame, in: screen)))
+            }
+            let x = side == .right ? frame.maxX + gap : frame.minX - gap - shown
+            return NSRect(x: x, y: frame.minY, width: shown, height: frame.height)
         }
 
         /// Into its panel beside the window, out of the column if it was there.
@@ -4603,7 +4626,9 @@ enum Template {
             }
             let panel = chat.panel ?? Beside()
             chat.panel = panel
+            panel.side = chat.side
             move(chat, into: panel.holder)
+            panel.holder.view.needsLayout = true
             panel.setFrame(panelFrame(for: window, side: chat.side), display: true)
             if panel.parent == nil { window.addChildWindow(panel, ordered: .above) }
             panel.orderFront(nil)
@@ -4648,15 +4673,26 @@ enum Template {
             chat.card.removeFromSuperview()
             holder.addChild(chat.host)
             let place = holder.view
+            if let ground = place as? PanelGround {
+                // In its panel the card leaves the edge that widens it clear (`PanelGround.layout`).
+                chat.card.translatesAutoresizingMaskIntoConstraints = true
+                ground.card = chat.card
+                ground.addSubview(chat.card)
+                ground.addSubview(ground.edge)
+                ground.needsLayout = true
+                setGlass(chat, on: true)
+                return
+            }
             chat.card.translatesAutoresizingMaskIntoConstraints = false
             place.addSubview(chat.card)
             // It fills where it's put: its panel, or the column. From macOS 26 the column still reaches up under the
             // window's toolbar, so the card starts below it (its safe area); before it, it runs up behind the title bar.
             let top = holder.view.identifier == identifier && floats ? place.safeAreaLayoutGuide.topAnchor : place.topAnchor
+            if let backing = place as? Backing { place.addSubview(backing.edge) }
             NSLayoutConstraint.activate([
                 chat.card.topAnchor.constraint(equalTo: top),
                 chat.card.bottomAnchor.constraint(equalTo: place.bottomAnchor),
-                chat.card.leadingAnchor.constraint(equalTo: place.leadingAnchor),
+                chat.card.leadingAnchor.constraint(equalTo: place.leadingAnchor, constant: place is Backing ? 12 : 0),
                 chat.card.trailingAnchor.constraint(equalTo: place.trailingAnchor),
             ])
             setGlass(chat, on: holder.view.identifier != identifier)
@@ -4738,7 +4774,14 @@ enum Template {
             guard let window = chat.window, isOpen(in: window), !window.inLiveResize else { return }
             let side = side(for: window, preferring: chat.side)
             if let side {
-                guard !chat.inPanel || side != chat.side else { return }
+                if chat.inPanel, side == chat.side {
+                    // Same side: only its width may change, back towards the kept width when there's more room now.
+                    if let panel = chat.panel {
+                        let fitted = panelFrame(for: window, side: side)
+                        if abs(fitted.width - panel.frame.width) > 0.5 { panel.setFrame(fitted, display: true) }
+                    }
+                    return
+                }
                 chat.side = side
                 window.disableScreenUpdatesUntilFlush()
                 putInPanel(chat)
@@ -4789,6 +4832,8 @@ enum Template {
         /// inspector panel.
         @MainActor final class Beside: NSPanel {
             let holder = NSViewController()
+            /// Which side of the window it's on: its outer edge, away from the window, is the one that widens it.
+            var side: Side = .right
 
             init() {
                 super.init(contentRect: NSRect(x: 0, y: 0, width: LampSidebar.width, height: 400), styleMask: [.borderless],
@@ -4796,11 +4841,40 @@ enum Template {
                 isOpaque = false
                 backgroundColor = .clear
                 hasShadow = true
+                // Its glass is drawn by the window server, so the panel's own pixels are clear almost everywhere, and a
+                // clear window lets clicks on clear pixels through to whatever is behind it. Said outright, the whole
+                // panel takes them: blank glass in the chat, and the edge that widens it.
+                ignoresMouseEvents = false
                 isMovable = false
                 hidesOnDeactivate = false
                 isReleasedWhenClosed = false
-                holder.view = Passing()
+                let ground = PanelGround()
+                ground.panel = self
+                holder.view = ground
                 contentViewController = holder
+                ground.edge.began = { [weak self] in self?.dragStart = self?.frame }
+                ground.edge.moved = { [weak self] change in
+                    guard let self, let start = self.dragStart else { return }
+                    self.widen(from: start, by: change)
+                }
+            }
+
+            private var dragStart: NSRect?
+
+            /// Wider or narrower by its outer edge, between the chat's narrowest and widest and never past the screen's
+            /// edge; the width is kept for next time.
+            func widen(from start: NSRect, by change: CGFloat) {
+                var target = start.width + (side == .right ? change : -change)
+                if let screen = (parent?.screen ?? screen ?? NSScreen.main)?.visibleFrame {
+                    let room = side == .right ? screen.maxX - start.minX : start.maxX - screen.minX
+                    target = min(target, room)
+                }
+                target = min(max(target, LampSidebar.narrowest), LampSidebar.widest)
+                var frame = start
+                frame.size.width = target
+                if side == .left { frame.origin.x = start.maxX - target }
+                setFrame(frame, display: true)
+                LampSidebar.width = target
             }
 
             override var canBecomeKey: Bool { true }
@@ -4890,12 +4964,13 @@ enum Template {
             split.splitView.isVertical = true
             split.addSplitViewItem(NSSplitViewItem(viewController: content))
             let column = NSViewController()
-            column.view = Backing()
+            let backing = Backing()
+            column.view = backing
             column.view.wantsLayer = true
             column.view.identifier = identifier
             let side = NSSplitViewItem(inspectorWithViewController: column)
-            side.minimumThickness = 320
-            side.maximumThickness = 640
+            side.minimumThickness = narrowest
+            side.maximumThickness = widest
             side.canCollapse = true
             side.isCollapsed = true
             // From macOS 26 the window's toolbar runs across the whole window, the column under it, as the app had it
@@ -4905,6 +4980,14 @@ enum Template {
             side.titlebarSeparatorStyle = .none
             split.addSplitViewItem(side)
             window.contentViewController = split
+            // Dragged by its edge: the divider moves, and the width is kept as the divider's own drag keeps it.
+            var startWidth: CGFloat = 0
+            backing.edge.began = { [weak side] in startWidth = side?.viewController.view.frame.width ?? 0 }
+            backing.edge.moved = { [weak split] change in
+                guard let split else { return }
+                let target = min(max(startWidth - change, narrowest), widest)
+                split.splitView.setPosition(split.splitView.bounds.width - target - split.splitView.dividerThickness, ofDividerAt: 0)
+            }
             window.setFrame(frame, display: false)
             NotificationCenter.default.addObserver(forName: NSSplitView.didResizeSubviewsNotification, object: split.splitView,
                                                    queue: .main) { [weak window] _ in
@@ -4912,6 +4995,10 @@ enum Template {
                     guard let window else { return }
                     LampMagic.refit(window)
                     LampSidebar.Placing.shared.place(in: window)
+                    // Its divider dragged: the width is kept, as the panel's is.
+                    if NSApp.currentEvent?.type == .leftMouseDragged, let item = item(in: window), !item.isCollapsed {
+                        LampSidebar.width = item.viewController.view.frame.width
+                    }
                 }
             }
             return column
@@ -4969,7 +5056,7 @@ enum Template {
             guard let split = window.contentViewController as? NSSplitViewController else { return }
             split.splitView.layoutSubtreeIfNeeded()
             let position = content ?? (window.frame.width - width)
-            split.splitView.setPosition(min(position, window.frame.width - 320), ofDividerAt: 0)
+            split.splitView.setPosition(min(position, window.frame.width - narrowest), ofDividerAt: 0)
         }
 
         /// Where the chat beside a window is now, for the picture Lamp shows in the app's place while a change reopens
@@ -4983,6 +5070,15 @@ enum Template {
         /// The column's ground on every macOS: the chat draws none of its own from macOS 26 (it's on glass beside the
         /// window), so this is what shows behind it inside the window.
         private final class Backing: NSView {
+            /// The column's own edge for widening it, a strip just inside its left side: the split view keeps clicks right
+            /// at its thin divider, and the chat, which another process draws, takes every click on its part of the window.
+            let edge = WidenEdge()
+
+            override func layout() {
+                super.layout()
+                edge.frame = NSRect(x: 4, y: 0, width: 8, height: bounds.height)
+            }
+
             override var wantsUpdateLayer: Bool { true }
             override func updateLayer() {
                 let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
@@ -5011,6 +5107,49 @@ enum Template {
                 let hit = super.hitTest(point)
                 return hit === self ? nil : hit
             }
+        }
+
+        /// The panel's ground, which keeps the edge that widens it along the side away from the window.
+        @MainActor final class PanelGround: NSView {
+            weak var panel: Beside?
+            weak var card: NSView?
+            let edge = WidenEdge()
+
+            /// The card beside the strip that widens it, never under it: the chat is drawn by another process, which
+            /// takes every click on its part of the window, so a strip laid over the chat would never be dragged.
+            override func layout() {
+                super.layout()
+                let side: CGFloat = 8
+                let onLeft = panel?.side == .left
+                edge.frame = NSRect(x: onLeft ? 0 : bounds.width - side, y: 0, width: side, height: bounds.height)
+                card?.frame = NSRect(x: onLeft ? side : 0, y: 0, width: bounds.width - side, height: bounds.height)
+            }
+
+            override func hitTest(_ point: NSPoint) -> NSView? {
+                let hit = super.hitTest(point)
+                return hit === self ? nil : hit
+            }
+        }
+
+        /// The strip along the panel's outer edge: the pointer turns into the resize arrows over it, and a drag makes the
+        /// chat wider or narrower, as a window's own edge does.
+        @MainActor final class WidenEdge: NSView {
+            /// A drag began, and how far it has gone sideways since, in points.
+            var began: (() -> Void)?
+            var moved: ((CGFloat) -> Void)?
+            private var start: CGFloat?
+
+            override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeLeftRight) }
+            override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+            override func mouseDown(with event: NSEvent) {
+                start = NSEvent.mouseLocation.x
+                began?()
+            }
+            override func mouseDragged(with event: NSEvent) {
+                guard let start else { return }
+                moved?(NSEvent.mouseLocation.x - start)
+            }
+            override func mouseUp(with event: NSEvent) { start = nil }
         }
 
         /// The bar's title, which takes no clicks: the window moves by it as by its title bar.

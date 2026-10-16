@@ -589,7 +589,13 @@ inspector of an `NSSplitViewController` around the window's content), taking its
 (`setGlass` takes the chat out of it), the chat on the column's solid paper, and the window's toolbar running across the
 whole window with the column under it (`allowsFullHeightLayout` off), so the app looks as it did before the chat opened;
 a move, a resize or leaving full screen takes it back out when there's room (`replace`). Before macOS 26 it's always that
-column, on the same paper, running up behind the title bar, and the window grows by its width. The panel takes the
+column, on the same paper, running up behind the title bar, and the window grows by its width. The chat is dragged
+wider or narrower by an edge of its own (`WidenEdge`: the panel's outer side, a strip just inside the column's left side),
+between `LampSidebar.narrowest` and `widest`, and the width is kept for the app (`LampSidebar.width`) for both places. The
+edge sits beside the chat, never over it: the chat is drawn by another process, which takes every click on its part of the
+window. Beside the window the chat takes the room there is, down to its narrowest, before it goes inside. The panel is
+told outright to take mouse events (`ignoresMouseEvents` off): its glass is drawn by the window server, so its own pixels
+are clear, and a clear window lets clicks on clear pixels through. The panel takes the
 keyboard for the message box without becoming the main window. The chat's close button sits in the bar at the top of the
 card, drawn by the app since it does only what the app could do anyway; inside the window it can't be a title bar
 accessory: with the chat a full-height inspector, the window's split view lies over the title bar there and takes the
