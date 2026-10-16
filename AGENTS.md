@@ -601,10 +601,10 @@ keyboard for the message box without becoming the main window. The chat's close 
 card, drawn by the app since it does only what the app could do anyway; inside the window it can't be a title bar
 accessory: with the chat a full-height inspector, the window's split view lies over the title bar there and takes the
 clicks. What Lamp's window has in
-its toolbar is the chat's own, drawn by the extension above the chat (`ChatToolbar`): Undo Last Change, Share (the file is
-made by Lamp and handed over whole, `SidebarState.sharing`, since the extension can't read it; sent once, so the
-extension keeps it as it's read, `Link.sharing`), Delete, Agent Details, and Versions and Wish Info as panels in place of
-the chat (`VersionsPanel`, a page of versions at a time with the rest a click away; `InfoPanel`; the info rows are
+its toolbar is the chat's own, drawn by the extension above the chat (`ChatToolbar`), three a side: Undo Last Change, More and
+Delete, then Point at Something, Agent Details and Versions. More holds what's used least, Share (the file is made by
+Lamp and handed over whole, `SidebarState.sharing`, since the extension can't read it; sent once, so the extension keeps
+it as it's read, `Link.sharing`) and Wish Info. Versions and Wish Info show as panels in place of the chat (`VersionsPanel`, a page of versions at a time with the rest a click away; `InfoPanel`; the info rows are
 `AppInfoView.sections`, the same list Lamp's window draws). An app's chat is in one place at a time: when it opens beside
 the app, its window in Lamp closes, unless Lamp is in front with that window (`MagicPanel.chatOpenedInApp`). Lamp's window
 keeps the chat where there's no app window to put it beside: a wish not yet made or being found, a menu bar app, a widget,

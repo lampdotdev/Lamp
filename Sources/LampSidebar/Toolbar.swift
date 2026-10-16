@@ -10,8 +10,9 @@ extension View {
     }
 }
 
-/// The buttons Lamp's window has in its toolbar, above the chat: what changes the wish (Undo, Share, Delete) on the
-/// left, and what shows more of it (Agent Details, Versions, Wish Info) on the right, as the toolbar groups them.
+/// The buttons Lamp's window has in its toolbar, above the chat: what changes the wish (Undo, More, Delete) on the
+/// left, and pointing and what shows more of it (Point at Something, Agent Details, Versions) on the right, three on
+/// each side. More holds what's used least: sharing the wish, and its info.
 /// Each does what its button in Lamp's window does: the sidebar only passes the click on.
 struct ChatToolbar: View {
     @EnvironmentObject private var link: Link
@@ -28,19 +29,26 @@ struct ChatToolbar: View {
                     .disabled(!toolbar.canUndo)
                     .help(toolbar.canUndo ? "Go back to the version before this one" : "Nothing to undo yet")
                 Menu {
-                    Button("Copy Wish File") { link.send(.copyWishFile) }
-                    Button("Share…") { link.send(.share) }
-                    Button("Export…") { link.send(.export) }
+                    Group {
+                        Button("Copy Wish File") { link.send(.copyWishFile) }
+                        Button("Share…") { link.send(.share) }
+                        Button("Export…") { link.send(.export) }
+                    }
+                    .disabled(!toolbar.canShare)
+                    Divider()
+                    Button(state.panel == .info ? "Hide Wish Info" : "Wish Info") {
+                        link.send(.panel(state.panel == .info ? nil : .info))
+                    }
                 } label: {
-                    ToolSymbol("square.and.arrow.up", "Share Wish")
+                    ToolSymbol("ellipsis.circle", "More", on: state.panel == .info)
                 }
                 .menuStyle(.button)
                 .buttonStyle(.plain)
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .background(AnchorView(anchor: shareAnchor))
-                .disabled(!toolbar.canShare)
-                .help(toolbar.canShare ? "Send this wish to someone with Lamp" : "Nothing to share until it's made")
+                .help(toolbar.usage.map { "Share this wish, or see its usage, cost and models. \($0)" }
+                      ?? "Share this wish, or see its usage, cost and models")
                 ToolButton("trash", "Delete Wish") { deleting = true }
                     .help("Delete this wish")
             }
@@ -58,10 +66,6 @@ struct ChatToolbar: View {
                 .disabled(!toolbar.hasVersions)
                 .help(toolbar.hasVersions ? "See earlier versions of this wish, name them, and go back to one"
                       : "No versions yet: each change Lamp makes is saved as one")
-                ToolButton("info.circle", "Wish Info", on: state.panel == .info) {
-                    link.send(.panel(state.panel == .info ? nil : .info))
-                }
-                .help(toolbar.usage.map { "Show usage, cost and models for this wish. \($0)" } ?? "Show usage, cost and models for this wish")
             }
         }
         .padding(.horizontal, 12)
