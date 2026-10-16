@@ -1539,6 +1539,7 @@ final class Store: ObservableObject {
     nonisolated static func sharedFile(of project: LampProject, at file: URL? = nil, icon: Data? = nil) throws -> URL {
         let exported = try Sharing.export(project, icon: icon)
         let file = file ?? sharedFolder.appendingPathComponent(exported.lastPathComponent)
+        defer { try? FileManager.default.removeItem(at: exported.deletingLastPathComponent()) }
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? FileManager.default.removeItem(at: file)
         try FileManager.default.moveItem(at: exported, to: file)
@@ -1555,9 +1556,7 @@ final class Store: ObservableObject {
         panel.nameFieldStringValue = "\(project.name).lampapp"
         guard panel.runModal() == .OK, let destination = panel.url else { return }
         do {
-            let file = try Sharing.export(project)
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.moveItem(at: file, to: destination)
+            _ = try Self.sharedFile(of: project, at: destination)
         } catch {
             NSAlert(error: error).runModal()
         }

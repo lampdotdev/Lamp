@@ -58,7 +58,7 @@ enum Sharing {
                 // Copying assets and compressing the file must leave the interface free to respond.
                 let icon = await sharedIcon(of: project)
                 let (file, picture) = try await Task.detached(priority: .userInitiated) {
-                    let file = try export(project, icon: icon)
+                    let file = try Store.sharedFile(of: project, icon: icon)
                     return (file, Store.sharePicture(for: file))
                 }.value
                 guard shareRequest == request, window.isVisible else { return }
@@ -158,6 +158,10 @@ enum Sharing {
         let work = fm.temporaryDirectory.appendingPathComponent("forge-share-\(UUID().uuidString)")
         let stage = work.appendingPathComponent("app")
         try fm.createDirectory(at: stage, withIntermediateDirectories: true)
+        // Only the finished file is left in the folder, and whoever takes it out removes the folder: nothing
+        // empties the temporary folder while Lamp runs, and a file that can't be made leaves nothing at all.
+        var made = false
+        defer { try? fm.removeItem(at: made ? stage : work) }
 
         for file in swiftSources(in: project.dir.appendingPathComponent("Sources"))
         where file.lastPathComponent != "LampSupport.swift" && file.lastPathComponent != Template.sceneSupportFile {
@@ -240,6 +244,7 @@ enum Sharing {
         // Media is already compressed, so the archive can be as big as what went in: make sure it's one Lamp opens.
         let size = (try? output.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         guard size <= maxArchiveBytes else { throw ImportError("\(project.name) is too big to share.") }
+        made = true
         return output
     }
 
