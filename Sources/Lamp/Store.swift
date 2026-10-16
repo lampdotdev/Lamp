@@ -407,6 +407,9 @@ final class Store: ObservableObject {
         var keptOpen = false
         /// The chat has said this turn closed the open app and opened it again (`ChatLook.reloaded`).
         var saidReloaded = false
+        /// The turn's last install put the change into the open app without reopening it: its end says the app
+        /// is updated, not ready, whether that install was the agent's look or the turn's own.
+        var updatedInPlace = false
         /// Nil for a simulator/Mac turn; false until the chosen phone acknowledges opening the app.
         var phoneReady: Bool?
         var allowAll = false                // "Allow all for this turn"
@@ -2282,7 +2285,7 @@ final class Store: ObservableObject {
                     DistributedNotificationCenter.default().postNotificationName(
                         Notification.Name(Edition.notificationPrefix + "showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
                     app.activate()
-                    log(project, .status, "\(project.name) is ready")
+                    log(project, .status, "\(project.name) is \(owner.updatedInPlace ? "updated" : "ready")")
                 } else {
                     crash = await install(project)
                 }
@@ -2334,9 +2337,14 @@ final class Store: ObservableObject {
         // card would say it's ready next to the line saying it didn't open.
         if !failed, edited, !owner.didNotOpen, var result = owner.pendingResult {
             result.version = await Versions.head(project)
-            // The card is the word that it's ready: the line saying so just above it would say it twice.
-            if let last = logs[project.id]?.last, last.kind == .status, last.text == "\(project.name) is ready" {
+            // The card is the word that it's ready, and says so first: the line saying it just above would say it
+            // twice. A change that went into the open app says it was updated instead.
+            let said = ["\(project.name) is ready", "\(project.name) is updated"]
+            if let last = logs[project.id]?.last, last.kind == .status, said.contains(last.text) {
                 logs[project.id]?.removeLast()
+                result.status = last.text
+            } else {
+                result.status = said[0]
             }
             logs[project.id, default: []].append(LogLine(kind: .result, text: result.text, result: result))
             saveChat(project)
@@ -4259,7 +4267,10 @@ final class Store: ObservableObject {
         }
         // A change that can go into the open app goes in there, keeping what's on screen; the build waits to be
         // installed until the app closes (LiveReload).
-        if !fresh, await reloadInPlace(project, inFront: inFront) { return nil }
+        if !fresh, await reloadInPlace(project, inFront: inFront) {
+            owner?.updatedInPlace = true
+            return nil
+        }
         // A whole build after an early change may still be writing build/: what's installed is what it makes,
         // and nothing when it failed (build/ is the version before the change).
         await liveBuilds[project.id]?.value
@@ -4287,6 +4298,7 @@ final class Store: ObservableObject {
         }
         guard exists(project) else { return nil }   // deleted while its old copy was quitting
         owner?.didNotOpen = false
+        owner?.updatedInPlace = false
         do {
             WidgetCard.forget(project)
             try await deploy(project)

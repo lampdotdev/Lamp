@@ -446,7 +446,7 @@ struct ChipRow: View {
 /// window. It says one thing, in the agent's own words: what changed and where to find it. A picture of the app
 /// beside it, and a row offering to have Lamp test what it hadn't, left people unsure how the two went together and
 /// what the row's words were; the app is open beside the chat, and with changes going in live people try them
-/// themselves. What wasn't tried stays, as a plain sentence, so they know what to look at.
+/// themselves. It's headed by the word that the request is done, which it stands in for.
 public struct ResultCardView: View {
     let result: TalkCard.Result
 
@@ -456,7 +456,15 @@ public struct ResultCardView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(result.summary).font(.headline).fixedSize(horizontal: false, vertical: true)
+            if let status = result.status {
+                Label {
+                    Text(status).fontWeight(.semibold)
+                } icon: {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                }
+                .font(.callout)
+            }
+            Text(result.summary).font(result.status == nil ? .headline : .body).fixedSize(horizontal: false, vertical: true)
             // A card saved while it had rows of what's new: where to find each, as part of its sentence.
             ForEach(Array((result.news ?? []).enumerated()), id: \.offset) { _, news in
                 Text("\(news.what): \(news.place)").foregroundStyle(.secondary)
@@ -473,24 +481,9 @@ public struct ResultCardView: View {
                     }
                 }
             }
-            if let untried = result.untried {
-                Text(Self.notTried(untried)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
         }
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// "Saving a bill, viewing History" after the sentence that says what it is: "Lamp hasn't tried this yet:
-    /// saving a bill, viewing History." A first word in capitals throughout (a name like "PDF") keeps them.
-    static func notTried(_ untried: String) -> String {
-        var words = untried.trimmingCharacters(in: .whitespacesAndNewlines)
-        while let last = words.last, ".!".contains(last) { words.removeLast() }
-        let first = words.prefix { !$0.isWhitespace }
-        if first.dropFirst().contains(where: \.isUppercase) == false {
-            words = words.prefix(1).lowercased() + words.dropFirst()
-        }
-        return "Lamp hasn't tried this yet: \(words)."
     }
 }
 

@@ -170,15 +170,18 @@ public enum TalkCard {
         public var idea: Idea?
         /// Only on cards saved while there were rows of what's new (see `News`).
         public var news: [News]?
-        /// What the agent built and didn't try in the running app, for the person to look at.
+        /// Read from cards saved by an earlier Lamp; not shown.
         public var untried: String?
+        /// The word that the request is finished ("Ann Arbor Drive is ready"), heading the card: it takes the
+        /// place of the status line that would say it. Missing on cards saved before it was.
+        public var status: String?
         /// The version this request made.
         public var version: String?
         /// The guesses the person turned the other way on the card, by their place in `guesses`.
         public var switched: [Int]?
 
         public init(summary: String, guesses: [Guess] = [], idea: Idea? = nil, news: [News]? = nil, untried: String? = nil,
-                    version: String? = nil, switched: [Int]? = nil) {
+                    version: String? = nil, switched: [Int]? = nil, status: String? = nil) {
             self.summary = summary
             self.guesses = guesses
             self.idea = idea
@@ -186,6 +189,7 @@ public enum TalkCard {
             self.untried = untried
             self.version = version
             self.switched = switched
+            self.status = status
         }
 
         public var text: String {

@@ -225,6 +225,12 @@ enum ChatItem: Identifiable {
                 let kept = run.filter { !$0.text.hasSuffix("…") }
                 items[items.count - 1] = .statuses(kept + [line])
             case (.status, _): items.append(.statuses([line]))
+            case (.result, .statuses(let run)?):
+                // The card comes once the app is built and open, so a step still saying it's building is over.
+                // The line that would have followed it ("… is ready") is left out for the card (Store.turn).
+                let kept = run.filter { !$0.text.hasSuffix("…") }
+                if kept.isEmpty { items.removeLast() } else { items[items.count - 1] = .statuses(kept) }
+                items.append(.line(line))
             default: items.append(.line(line))
             }
         }
