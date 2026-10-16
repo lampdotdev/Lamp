@@ -841,6 +841,8 @@ final class SidebarServer {
             if count < 0, errno == EAGAIN || errno == EINTR { return }
             guard count > 0 else { return end() }
             buffer.append(contentsOf: chunk[0..<count])
+            // A long line (files attached) comes in many pieces: the buffer is looked through only once one ends a line.
+            guard chunk[0..<count].contains(0x0A) else { return }
             for line in SidebarWire.lines(from: &buffer) {
                 guard let command = try? JSONDecoder().decode(SidebarCommand.self, from: line) else { continue }
                 if case .hello(let version) = command {

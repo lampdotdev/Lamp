@@ -94,6 +94,8 @@ final class Link: ObservableObject {
         if count < 0, errno == EAGAIN || errno == EINTR { return }
         guard count > 0 else { return drop() }
         buffer.append(contentsOf: chunk[0..<count])
+        // A long line (a shared file) comes in many pieces: the buffer is looked through only once one ends a line.
+        guard chunk[0..<count].contains(0x0A) else { return }
         for line in SidebarWire.lines(from: &buffer) {
             if let state = try? JSONDecoder().decode(SidebarState.self, from: line) { self.state = state }
         }

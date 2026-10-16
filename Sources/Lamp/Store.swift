@@ -652,12 +652,9 @@ final class Store: ObservableObject {
         if let selection, NSApp?.isActive ?? true { unread.remove(selection) }
     }
 
-    /// This app's chat is on screen in front: in Lamp's window, or beside the app while the app is in front.
+    /// Lamp is in front with this app's chat on screen.
     func isWatching(_ id: String?) -> Bool {
-        guard let id else { return false }
-        if selection == id && NSApp.isActive { return true }
-        guard SidebarServer.shared.isConnected(id), let project = projects.first(where: { $0.id == id }) else { return false }
-        return macCopies(of: project).contains { $0.isActive }
+        id != nil && selection == id && NSApp.isActive
     }
 
     func reload() {

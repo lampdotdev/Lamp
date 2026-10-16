@@ -78,7 +78,12 @@ struct ChatToolbar: View {
     private func share(_ sharing: SidebarSharing) {
         guard shared != sharing.id else { return }
         shared = sharing.id
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("share-\(sharing.id.uuidString)")
+        // Only the latest file is kept: the one shared before has been handed to its service by now.
+        let temporary = FileManager.default.temporaryDirectory
+        for old in (try? FileManager.default.contentsOfDirectory(atPath: temporary.path)) ?? [] where old.hasPrefix("share-") {
+            try? FileManager.default.removeItem(at: temporary.appendingPathComponent(old))
+        }
+        let folder = temporary.appendingPathComponent("share-\(sharing.id.uuidString)")
         let name = (sharing.file.name as NSString).lastPathComponent
         let url = folder.appendingPathComponent(name.isEmpty ? "Wish.lampapp" : name)
         guard (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil,

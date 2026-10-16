@@ -104,7 +104,9 @@ final class MagicPanel {
     /// the Window menu) and may be typing in.
     func chatOpenedInApp(_ project: LampProject) {
         let store = Store.shared
-        guard !(NSApp.isActive && store.selection == project.id) else { return }
+        // Only once the chat Lamp checked is there (`SidebarServer.accepted`): the app's word that it's opening is a
+        // notification anything could send, and a window closed with no chat to take its place would leave it nowhere.
+        guard SidebarServer.shared.isConnected(project.id), !(NSApp.isActive && store.selection == project.id) else { return }
         Self.closeChatWindow(of: project)
     }
 
