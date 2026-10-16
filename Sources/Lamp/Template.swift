@@ -4916,7 +4916,11 @@ enum Template {
             LampDriver.keepBarPanel()
             let windows = windowsOnScreen
             guard !windows.isEmpty else { return }   // nothing on screen: keep the last pictures
-            if !previewTaken { preview(of: windows[0]) }
+            // The app's own window, not a dialog or sheet in front of it (a menu bar app's panel when that's all it has):
+            // the desk keeps this picture until the next launch.
+            if !previewTaken, let window = windows.first(where: { !$0.isSheet && !($0 is NSPanel) }) ?? windows.first(where: LampDriver.isBarPanel) {
+                preview(of: window)
+            }
             for index in 0..<3 {
                 let url = folder.appendingPathComponent(index == 0 ? "screenshot.png" : "screenshot-\(index + 1).png")
                 if index < windows.count, let png = picture(of: windows[index]) {
@@ -5743,7 +5747,7 @@ enum Template {
         private static func isDialog(_ window: NSWindow) -> Bool { window.isSheet || window is NSPanel }
 
         /// The panel SwiftUI shows for a MenuBarExtra with the window style.
-        private static func isBarPanel(_ window: NSWindow) -> Bool { String(describing: type(of: window)).contains("MenuBarExtra") }
+        static func isBarPanel(_ window: NSWindow) -> Bool { String(describing: type(of: window)).contains("MenuBarExtra") }
 
         /// The system's open and save panels are drawn by another process, so they can't be clicked from here.
         private static func filePanel(_ panel: NSSavePanel) -> String {
