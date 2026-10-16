@@ -144,6 +144,7 @@ struct TurnProgress {
         case .look: return "Checking how it looks"
         case .use: return "Trying it out"
         case .recall: return "Checking its notes"
+        case .learn: return "Reading up"
         case .remember: return "Taking notes for next time"
         case .art: return "Painting a picture"
         case .offer: return "Suggesting a better setup"

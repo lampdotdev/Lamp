@@ -2438,6 +2438,7 @@ final class Store: ObservableObject {
                 case .compacted:
                     Memory.compacted(project)
                     AIStatus.compacted(project)
+                    Skills.compacted(project)
                 case .tool(let text, let fullCall):
                     log(project, .tool, text)
                     let call = ToolCall(text)
@@ -2467,12 +2468,13 @@ final class Store: ObservableObject {
                         try? id.write(to: sessionFile, atomically: true, encoding: .utf8)
                         Memory.delivered(to: project, session: id)
                         AIStatus.delivered(to: project, session: id)
+                        Skills.delivered(to: project, session: id)
                     }
                 }
             }
         }
         turn.agent = nil
-        if answered { Memory.delivered(to: project); AIStatus.delivered(to: project) }
+        if answered { Memory.delivered(to: project); AIStatus.delivered(to: project); Skills.delivered(to: project) }
         endApprovals(for: project)
         // A message cut short (the run was stopped, or failed) keeps what was written of it.
         showWritten(for: project)
@@ -2532,6 +2534,7 @@ final class Store: ObservableObject {
         try? FileManager.default.removeItem(at: file)
         Memory.compacted(project)
         AIStatus.compacted(project)
+        Skills.compacted(project)
     }
 
     /// One pi conversation per app, so the agent remembers earlier requests, including ones that were undone.
@@ -3031,6 +3034,7 @@ final class Store: ObservableObject {
             case "name_version": (status, answer) = await versions("/name", arguments, of: project)
             case "restore_version": (status, answer) = await versions("/restore", arguments, of: project)
             case "read_notes", "save_notes": (status, answer) = notes(name, arguments, for: project)
+            case "read_skill": (status, answer) = Skills.read(arguments)
             case "make_art": (status, answer) = await makeArt(arguments, for: project)
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             case "make_app_for": (status, answer) = await agentKind(arguments, for: project)
@@ -3741,8 +3745,15 @@ final class Store: ObservableObject {
         await liveBuilds[project.id]?.value
         liveBuildFailed.remove(project.id)
         if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1" }   // a change can go into the open app (LiveReload)
-        let status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: env,
+        var status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: env,
                                      started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
+        // The live copy's spare places must never be what keeps an app from building: if they are, it's built
+        // without them from now on, and the agent only ever sees errors in its own code.
+        if status != 0, env["LAMP_LIVE"] == "1", LiveSlots.brokeBuild(output.joined(separator: "\n")), LiveSlots.giveUp(project) {
+            output = []
+            status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: env,
+                                     started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
+        }
         turns[project.id]?.build = nil
         guard exists(project) else { return "The app was deleted." }
         guard status != 0 else {
@@ -3837,9 +3848,7 @@ final class Store: ObservableObject {
         }
         guard LiveReload.eligible(project), let app = macCopies(of: project).first,
               Self.binary(of: project, contains: "reloaded.txt") else { return false }
-        let changed: [String]
-        // Properties moved into spare places by an earlier change are moved again in this fresh copy.
-        LiveSlots.apply(project)
+        var changed: [String]
         switch await LiveReload.verdict(project) {
         case .reload(let files): changed = files
         // The open app already runs these sources (a change that went in before its build): nothing to do.
@@ -3849,31 +3858,40 @@ final class Store: ObservableObject {
             return false
         }
         note("Updating \(project.name) in place…", for: project)
-        // The changed files' compile and the whole code's check go side by side; the check decides.
-        async let compiled = LiveReload.compile(project, changed: changed)
-        let (before, after) = await LiveReload.layouts(project)
+        // The changed files' compile and the whole code's check go side by side; the check decides. With properties
+        // already in spares, the live copy is rewritten before anything is compiled (`LiveSlots.fit`).
+        let spared = !LiveSlots.mapping(project).isEmpty
+        async let early: (url: URL?, problem: String?) = spared ? (nil, nil) : await LiveReload.compile(project, changed: changed)
+        let (before, after, declarations) = await LiveReload.layouts(project)
         var check = LiveReload.layoutProblem(before: before, after: after)
-        var (library, problem) = await compiled
-        // Stored properties added to classes go into their spare places, and the change is compiled again.
-        if check.problem != nil, let before, let after, let moved = LiveSlots.fit(project, before: before, after: after) {
-            async let again = LiveReload.compile(project, changed: changed)
-            let now = await LiveReload.layout(of: LiveReload.sources(project), files: nil, module: project.exe,
-                                              macOS: Template.macMinimum(project))
-            check = LiveReload.layoutProblem(before: before, after: now)
-            (library, problem) = await again
-            if check.problem == nil {
-                log(project, .detail, "Added \(moved.joined(separator: ", ")) without reopening \(project.name).")
+        var (library, problem) = await early
+        // Stored properties added to existing types go into their spares, and the change is compiled with them.
+        if check.problem != nil, let before, let after, let plan = LiveSlots.fit(project, before: before, after: after, declarations: declarations) {
+            changed = Array(Set(changed).union(plan.files)).sorted()
+            check = LiveReload.layoutProblem(before: before, after: plan.layout)
+            (library, problem) = await LiveReload.compile(project, changed: changed)
+            if check.problem == nil, !plan.added.isEmpty {
+                log(project, .detail, "Added \(plan.added.joined(separator: ", ")) without reopening \(project.name).")
             }
+        } else if spared, check.problem == nil {
+            (library, problem) = await LiveReload.compile(project, changed: changed)
         }
         if let why = check.problem {
             log(project, .detail, "Reopening \(project.name) for this change: \(why).")
             return false
         }
-        guard let library, let layout = check.layout else {
+        // An enum that only gained cases goes in when nothing holds it where a new case would change what's there.
+        if let before, let layout = check.layout, case let grown = LiveReload.grownEnums(before: before, after: layout), !grown.isEmpty,
+           let why = await LiveReload.enumsHeld(project, grown: grown) {
+            log(project, .detail, "Reopening \(project.name) for this change: \(why).")
+            return false
+        }
+        guard let layout = check.layout, library != nil || changed.isEmpty else {
             print("Live reload of \(project.name) didn't compile:\n\(problem ?? "")")
             return false
         }
-        guard await LiveReload.send(library, to: project, token: Template.token(for: project)) else { return false }
+        // Files only taken away leave nothing to load: the open app already has what's left.
+        if let library { guard await LiveReload.send(library, to: project, token: Template.token(for: project)) else { return false } }
         LiveReload.markRunning(project)
         LiveReload.keepLayout(layout, for: project)
         watchAfterReload(project, app: app)
@@ -4974,7 +4992,7 @@ final class Store: ObservableObject {
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/art", "/agent/talk", "/mcp", "/pi/key", "/app/secrets"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/art", "/agent/talk", "/mcp", "/pi/key", "/app/secrets"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -5100,6 +5118,9 @@ final class Store: ObservableObject {
         if route == "/agent/memory" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             return notes(body["tool"] as? String ?? "", body["arguments"] as? [String: Any] ?? [:], for: project)
+        }
+        if route == "/agent/skill" {
+            return Skills.read((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:])
         }
         if route == "/agent/art" {
             return await makeArt((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)

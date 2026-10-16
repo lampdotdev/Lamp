@@ -391,7 +391,7 @@
   {
     "name": "connectors",
     "label": "Connectors",
-    "description": "Lists the services an app can connect to with the person's own account (Notion, Linear, Airtable, GitHub, Readwise and more), or, with service set, how to build on one. Call it before writing code for a service the person uses that the accounts on this device can't reach.",
+    "description": "Lists the services an app can connect to: the person's own accounts (Notion, Linear, Airtable, GitHub, Home Assistant and more) and open data (weather, exchange rates, food products), or, with service set, how to build on one. Call it before writing code for a service the person uses that the accounts on this device can't reach, or for weather, exchange rates or food data.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -506,6 +506,24 @@
           "description": "The wish as they'd ask Lamp for it, one or two sentences and 40 words at most, saying what it does for them and where it lives when that matters (menu bar, widget, iPhone, watch, in the background): “Remind me which bins go out each week, on my iPhone, the evening before.”"
         }
       }
+    }
+  },
+  {
+    "name": "read_skill",
+    "label": "Read skill",
+    "description": "Opens a skill: guidance for one kind of work, kept out of the rules until it's needed. Open the ones the rules list or Lamp names with a request before starting that work, once per conversation.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "The skill's name, as listed",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
     }
   }
 ]

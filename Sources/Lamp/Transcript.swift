@@ -4,7 +4,7 @@ import LampSidebarKit
 /// A tool call as logged by the engines ("Read App.swift", "Bash: ./build.sh", "Run: ls"), split into
 /// what the agent did and what it did it to.
 struct ToolCall {
-    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, remember, art, offer, kind, connectors, ask, result, wish, other }
+    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, learn, remember, art, offer, kind, connectors, ask, result, wish, other }
 
     let name: String
     let argument: String
@@ -36,7 +36,7 @@ struct ToolCall {
         "ls": .list, "list": .list,
         "webfetch": .web, "web_fetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
-        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "save_notes": .remember, "make_art": .art, "offer_setup": .offer, "make_app_for": .kind, "connectors": .connectors, "ask": .ask, "show_result": .result, "write_wish": .wish,
+        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "save_notes": .remember, "make_art": .art, "offer_setup": .offer, "make_app_for": .kind, "connectors": .connectors, "ask": .ask, "show_result": .result, "write_wish": .wish,
     ]
 
     var icon: String {
@@ -54,6 +54,7 @@ struct ToolCall {
         case .look: "eye"
         case .use: "cursorarrow.click.2"
         case .recall: "note.text"
+        case .learn: "book"
         case .remember: "square.and.pencil"
         case .art: "paintbrush"
         case .offer: "sparkles"
@@ -81,6 +82,7 @@ struct ToolCall {
         case .look: "Looked at the app"
         case .use: "Tried the app"
         case .recall: "Read its notes"
+        case .learn: "Read up"
         case .remember: "Updated its notes"
         case .art: "Painted a picture"
         case .offer: "Suggested a setup"
@@ -110,6 +112,7 @@ struct ToolCall {
         case .look: "looked at the app" + (count == 1 ? "" : " \(count) times")
         case .use: "tried the app" + (count == 1 ? "" : " \(count) times")
         case .recall: "read its notes"
+        case .learn: "read up"
         case .remember: "updated its notes"
         case .art: "painted \(n("picture", "pictures"))"
         case .offer: "suggested a setup"

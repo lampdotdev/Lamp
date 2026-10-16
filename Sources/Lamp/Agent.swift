@@ -39,7 +39,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,ask,show_result,write_wish"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,ask,show_result,write_wish,read_skill"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -171,10 +171,9 @@ enum Agent {
 
     ---
     This app is updated in place while it's open, keeping what's on screen, when a change only edits or adds code. \
-    A new stored property in a class goes in too, when it's declared on one line with a starting value (or is an \
-    optional). Adding a stored property to a struct, changing or removing one, an enum case or the App reopens it, \
-    so put new state in a class or in a new view with its own @State (in a new file) rather than in an existing \
-    struct, when that's as clear. \
+    New stored properties go in too, in a class, a struct or (as @State) a view, when each is declared on one line \
+    with a starting value (or is an optional); so do new cases at the end of an enum whose cases carry nothing. \
+    Changing or removing a stored property, the App, or a case anywhere else reopens it. \
     A look shows the window as the person left it, with the change in it.
     """
 
@@ -193,8 +192,9 @@ enum Agent {
     /// rule however many there are.
     private static let connectorRules = """
 
-    - When a wish needs a service the person uses (their Notion, Airtable, GitHub…) that the accounts on this \
-    device can't reach, call `connectors` before writing code for it, and build on what it says. Never ask for a \
+    - When a wish needs a service the person uses (their Notion, Airtable, GitHub, Home Assistant…) that the \
+    accounts on this device can't reach, or open data from the web (weather, exchange rates, food products), \
+    call `connectors` before writing code for it, and build on what it says. Never ask for a \
     key or a token in the chat or put one in the code: the app's own button asks the person. For a service that \
     isn't listed and needs a key, declare it with `LampAPI.own` (LampAPI's comment in LampSupport.swift) and put \
     `LampAPIButton` in the app, so the person gets the same Connect sheet: never a key field or dialog of your \
@@ -282,7 +282,7 @@ enum Agent {
         rules += [Rules.script, Rules.intents] + (mac ? [Rules.macIntents] : []) + [mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules += [Rules.computer] }
         if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.iPhoneShare, Rules.icloud] }
-        rules += [Rules.store, Rules.kinds(mac: mac, threeD: mac && Rules.scenes), Rules.game2D] + (mac && Rules.scenes ? [Rules.scene3D] : [])
+        rules += [Rules.store, Rules.kinds(mac: mac, threeD: mac && Rules.scenes), Rules.game2D, Skills.index(Skills.offered(mac: mac))]
         rules += [mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
                   Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
@@ -507,7 +507,7 @@ enum Agent {
         person stops and for how long, which needs `"backgroundModes": ["location"]`). Weather: `LampWeather` \
         (`now(latitude:longitude:)`, `hours`, `days`, `here()`), after `{"weather": true}` in capabilities.json, \
         for apps with an iPhone half only; the team also turns WeatherKit on for the app at developer.apple.com \
-        once, and the call's message says so until then. Apple's terms ask for `LampWeatherAttribution()` (its \
+        once, and the call's message says so until then (otherwise, Open-Meteo through `connectors`). Apple's terms ask for `LampWeatherAttribution()` (its \
         Weather mark, linking to its sources) wherever its weather is shown, allow forecasts to be kept only \
         briefly (never saved with the app's data), and rule out apps meant for emergencies or safety. Music: `LampMusic` (`authorize()`, `recentlyPlayed()`, \
         `library()`, `search(_:)`, `play(_:)`, `pause()`, and on the iPhone `nowPlaying`), Apple Music only, with \
@@ -766,7 +766,7 @@ enum Agent {
         /// What kind of app it is decides how it looks: Notes, Weather and Breathe are all Apple's and look
         /// nothing alike. The agent picks a kind once and keeps it in APP.md, so the look holds across requests.
         /// design/app-archetypes/README.md is the reasoning behind each.
-        /// `threeD`: whether the 3D rule is in this prompt too (Mac apps, on a Mac that can run them).
+        /// `threeD`: whether the 3D skill is offered in this prompt too (Mac apps, on a Mac that can run them).
         static func kinds(mac: Bool, threeD: Bool = false) -> String {
             let haptic = mac ? "" : " and a haptic (sensoryFeedback)"
             let companionPlace = mac
@@ -835,7 +835,7 @@ enum Agent {
               • Utility (a clipboard history, automations, a folder watcher: works while you do other things): \
             \(utility) Quiet: a notification only when something needs the user.
               • Game or toy (played rather than used): fully custom, with no standard chrome while playing; pause, \
-            settings and scores are standard SwiftUI. 2D games as the 2D rule says\(threeD ? ", 3D ones as the 3D rule says" : ""), \
+            settings and scores are standard SwiftUI. 2D games as the 2D rule says\(threeD ? ", 3D ones with the scene-3d skill" : ""), \
             SwiftUI animation for the simplest. Sprites, characters and backgrounds are art from `make_art`, all in one style, with \
             sound\(mac ? "" : " and haptics"). Scores are kept on the device.
 
@@ -856,69 +856,9 @@ enum Agent {
 
         """
 
-        /// Whether this Mac can run a 3D scene an app makes (RealityView needs macOS 15): the 3D rule is only
-        /// given when it can.
+        /// Whether this Mac can run a 3D scene an app makes (RealityView needs macOS 15): the 3D skill is only
+        /// offered when it can (Resources/skills/scene-3d).
         static let scenes = ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0))
-
-        static let scene3D = """
-        - 3D scenes (a world to move through, a room, a thing to turn over and handle): RealityKit through \
-        LampSceneView, from Sources/LampScene.swift, which Lamp adds to an app whose code imports RealityKit (the \
-        app then needs macOS 15). `LampSceneView(sky:camera:props:build:update:)`: sky `.day`, `.sunset`, \
-        `.overcast`, `.night`, `.studio`; camera `.orbit(target:distance:)`, `.chase("entity name")`, \
-        `.firstPerson()`, `.fixed(position:lookAt:)` or `.manual`; `build` adds entities to `scene.root`; \
-        `update(scene, dt)` runs every frame, with `scene.isDown(.w)` for keys. In a file that imports RealityKit, \
-        SwiftUI's `Scene` must be written `SwiftUI.Scene`.
-          Things are made in code, in metres, from LampMesh (`box(size, corner:)`, `sphere`, `cylinder`, `cone`, \
-        `lathe([[radius, height], …])` for anything round, `extrude(path, depth:, chamfer:)`, \
-        `sweep(path, along:)`, `tube(along:radius:)`, `plane(width:depth:tile:)`, `text`) and LampMaterial \
-        (`metal`, `chrome`, `brushed`, `plastic`, `rubber`, `glass`, `paint`, `wood`, `fabric`, `ceramic`, \
-        `concrete`, `asphalt`, `brick`, `tiles`, `grass`, `glow`). A prop is a function returning one Entity of named \
-        parts at real size; the parts that move are `lampPress { }`, `lampTurn(axis:range:)`, \
-        `lampSlide(axis:range:)` and `lampGrab()`; `lampPhysics(.dynamic)` or `.static` for falling and \
-        knocking; `lampShadow()` under anything standing on the ground. Many copies of one thing go in one \
-        `LampScene.copies(of:at:)`. A world bigger than a few hundred metres (a town, a map, a landscape) is \
-        streamed, never built whole at launch: `scene.stream(tile: 100, radius: 400, around: { car.position }) { tile in … }` \
-        returns what's drawn on one tile (share things out with `tile.contains`), made as it comes into reach, by \
-        a named function (`{ tile in World.tile(tile) }`) so a change to it shows in the open app (anything else the \
-        app draws itself and should redraw after a change goes in LampSceneView's `onLiveChange`); what \
-        the game needs everywhere (collisions, routes, the map's data) is made once, outside it.
-          Keep it smooth: a frame has about 16 ms, and anything the app does while it's open (a frame's update, a \
-        tile, a prop that appears in play, a level loading) takes from it, so a slow piece is a stutter. Make each \
-        mesh, material, texture and piece of text once and reuse it (`copies` for many of one thing, one text mesh \
-        per distinct word), never the same thing again per place; turn heavy data (a map, a level) into a compact \
-        file in Assets/ while building, not at launch; keep per-frame work to what moves. A streamed tile should \
-        take a few milliseconds: the log names slower ones.
-          Model a real thing from a picture of it, never from memory alone. Before writing a main prop that is a \
-        real object (a car model, a building, a piece of furniture, an animal), get a reference: the person's photo \
-        from the chat, else one `make_art` of the object alone on a plain background, seen straight from the side \
-        (or the front, for something whose face matters), whole and uncropped. Read off it what code needs: its \
-        outline, proportions (length to height, where the parts begin and end), colours and the parts that make it \
-        recognisable. Small or generic props (a box, a pole, a cup) need none.
-          Each prop that matters goes in `props` by name, and look_at_app with `prop` shows it on its own from four \
-        sides. Every distinct object made by its own function (a vehicle, a character, furniture, a machine) is a \
-        prop, the player's or main object first, and goes into the scene with `scene.place("car", at:heading:)`, \
-        which returns the entity to keep and move: so placed, a change to its code shows in the open app; other \
-        changes to the scene show when it reopens. Compare that with the reference: shape, proportions, colours, parts. Fix and look again, up to three \
-        rounds for the main props; background things get one look.
-          LampSceneView already avoids RealityKit's flicker; keep it that way: no sun shadows (they make the whole \
-        picture flicker; `lampShadow` instead), and flat things laid on others (roads, markings, decals, a sign's \
-        writing) a few centimetres above them, never at the same height. After big changes, look_at_app with \
-        `motion`.
-          A model code can't reasonably make can come from a free CC0 library (Kenney, Poly Haven) as .glb: \
-        download it into Assets/, turn it into USD with `usdextract -o Assets/Name file.glb` (part of macOS), and \
-        load it with `try await Entity(contentsOf: LampAssets.url("Name/name.usdc")!)`.
-          A real place (a town to drive, a campus, a neighbourhood) comes from OpenStreetMap. Fetch it from the \
-        Overpass API (overpass-api.de, else a mirror), one bounding-box query, waiting and trying again when it's \
-        busy; never OpenStreetMap's own editing API, which its rules keep from bulk downloads. Turn it, while \
-        building, into a compact file in Assets/ that the app reads (metres from a centre point, footprints already \
-        triangulated), not raw OSM parsed at launch. Worth reading: each building's footprint, `height` or else \
-        `building:levels` (about 3.3 m a floor) or else a guess from `building` (house, garage, apartments, \
-        university…), `roof:shape`, and `building:part` for landmarks' stepped parts; roads with `highway`, \
-        `width` or `lanes`, `oneway` and `name`; traffic signals, crossings, parks, water, car parks and trees; \
-        shops and amenities with `name`, `opening_hours` and address. Colours and façades aren't in it: choose them \
-        from the building's type. Stream the world by tile, and show "© OpenStreetMap contributors" on screen.
-
-        """
 
         static let macDesign = """
         - Base design, for every kind of app where its kind doesn't say otherwise: content first, little chrome. Collections go in a NavigationSplitView with a \
@@ -1438,6 +1378,7 @@ enum Agent {
         if let pattern = args["pattern"] as? String { return "\(name) \(pattern)" }
         if let actions = args["actions"] as? [[String: Any]] { return "\(name) \(summary(of: actions))" }
         if let note = noteArgument(name, args) { return "\(name) \(note)" }
+        if name == "read_skill", let skill = args["name"] as? String { return "\(name) \(skill)" }
         return name
     }
 

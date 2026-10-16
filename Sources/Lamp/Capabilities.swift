@@ -352,46 +352,18 @@ enum AIStatus {
 
     @MainActor static func brief(for project: LampProject, engine: Engine, session: String?, offered: Set<SetupOffer>) -> String {
         let now = line(for: project, offered: offered)
-        let known = session.flatMap { session in
-            shown(in: project)[engine.rawValue].flatMap { $0.session == session || $0.session.isEmpty ? $0 : nil }
+        switch note.telling(now, for: project, engine: engine, session: session) {
+        case .fresh: return "\n\n---\nAI this app can use right now (from Lamp, not part of the request above):\n\(now)"
+        case .changed: return "\n\n---\nThe AI this app can use has changed (from Lamp, not part of the request above):\n\(now)"
+        case .nothing: return ""
         }
-        // Codex doesn't say when it compacts, so its conversations are told again every so many requests.
-        let stale = engine == .codex && (known?.requests ?? 0) >= 8
-        let fresh = known == nil || known?.forgot == true || stale
-        pending[project.id] = Shown(engine: engine.rawValue, session: session ?? "", line: now,
-                                    requests: fresh ? 1 : (known?.requests ?? 0) + 1)
-        if fresh {
-            return "\n\n---\nAI this app can use right now (from Lamp, not part of the request above):\n\(now)"
-        }
-        guard known?.line != now else { return "" }
-        return "\n\n---\nThe AI this app can use has changed (from Lamp, not part of the request above):\n\(now)"
     }
 
     /// The agent answered, so the request and the line in it arrived.
-    @MainActor static func delivered(to project: LampProject, session: String? = nil) {
-        guard var run = pending[project.id] else { return }
-        if let session { run.session = session; pending[project.id] = run }
-        var all = shown(in: project)
-        all[run.engine] = run
-        try? JSONEncoder().encode(all).write(to: file(project), options: .atomic)
-    }
+    @MainActor static func delivered(to project: LampProject, session: String? = nil) { note.delivered(to: project, session: session) }
 
     /// The engine summed up its conversation: the line may be gone from it, so the next request says it again.
-    @MainActor static func compacted(_ project: LampProject) { pending[project.id]?.forgot = true }
+    @MainActor static func compacted(_ project: LampProject) { note.compacted(project) }
 
-    private struct Shown: Codable {
-        var engine: String
-        var session: String
-        var line: String
-        var requests: Int
-        var forgot: Bool?
-    }
-
-    @MainActor private static var pending: [String: Shown] = [:]
-
-    private static func file(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/ai-shown.json") }
-
-    private static func shown(in project: LampProject) -> [String: Shown] {
-        (try? Data(contentsOf: file(project))).flatMap { try? JSONDecoder().decode([String: Shown].self, from: $0) } ?? [:]
-    }
+    @MainActor private static let note = RequestNote(file: ".lamp/ai-shown.json")
 }

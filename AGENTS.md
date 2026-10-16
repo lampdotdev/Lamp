@@ -20,7 +20,7 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `show_result`, `write_wish`, the version tools, the notes tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `show_result`, `write_wish`, `read_skill`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
@@ -31,7 +31,7 @@ A capability given to one engine must be given to all of them that can take it, 
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `show_result`, `write_wish`, the version tools and the notes tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `show_result`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **How the agent talks** (`Talk`, `TalkCards.swift`): in short sentences and in cards, not paragraphs, so building
   feels like a short wizard. A vague wish gets a good first attempt built from sensible guesses, not questions: the
@@ -84,6 +84,22 @@ A capability given to one engine must be given to all of them that can take it, 
   What is worth saving is said in `save_notes`'s description: every word there is paid for on every call.
   When to think of saving is said in the rule (`Agent.memoryRules`): at the end of each request, without waiting to be told to remember, and nothing when nothing lasting came up; an instruction for the one request (“don't test it”) is not a preference and isn't noted. No second call to a model decides it.
   A save that changes what the notes say leaves a receipt in the chat (`NoteReceipt`, a `.noted` line, logged in `Store.notes` for every engine): one line that opens to the lines added and removed, and Undo (`Store.undoNote`), which takes that save back out even when the notes have changed since. What was taken back is told to the agent with its next request (`Memory.tookBack`, beside the summaries), so the conversation that learned it doesn't note it again: each engine keeps its own conversation about an app, so each one is told (`Memory.Undone`). Undoing a later save never brings back a line taken back on an earlier receipt. An Undo that leaves notes neither as they were before the save nor as they are now gives them a summary made from their own lines (`NoteReceipt.summary(of:)`): the summary is all the agent is told, so it must be true of what is left.
+- **Skills** (`Skills`, `Resources/skills`): guidance only some requests need lives in a skill, not in the system
+  prompt, so the prompt keeps what nearly every request uses. A skill is a folder with a `SKILL.md` in the Agent
+  Skills format (a one-line `name` and `description` between `---` lines, then the instructions), copied into
+  the bundle by build.sh. The prompt lists the skills it offers by name and description (`Skills.index`, offered
+  by `Skills.offered` the way a rule is given only to the prompts it fits), and the agent opens one with
+  `read_skill`, a tool like any other, so every engine reads skills the same way. Lamp answers from its own bundle,
+  so a skill changed in an update reaches a conversation that began before it. Each engine can load skills of its own,
+  and Lamp keeps that off where it can (pi's `--no-skills`; Claude Code's `--disable-slash-commands`, without which
+  it loads its own skills for coding work; Codex's sandbox keeps the person's out of reach): those are for other
+  work, and the same file for every engine is one place to keep up to date. When an app's own code
+  shows a skill applies (`Skills.applying`: it imports RealityKit, it uses OpenStreetMap data), Lamp names it at
+  the end of the request (`Skills.brief`), sent like `AIStatus.brief` through `RequestNote`: once per
+  conversation, again when it changes or the conversation was compacted. What's remembered as told carries each
+  skill's revision (`Skills.revision`, a hash of its instructions), so a conversation told of a skill before an
+  update changed it is asked to open it again. A new skill is a folder there, its name
+  in `Skills.offered`, and, when an app's code can show it applies, a check in `Skills.applying`.
 - **Approvals and privacy**: shell commands go through `/agent/approve` for every engine (pi's extension,
   Claude Code's hooks, Codex's hooks); file access outside the app's folder is checked the same way.
   Claude Code's and pi's approved commands come back confined (`Sandbox`: `sandbox-exec` with a profile
@@ -494,7 +510,7 @@ built live (a widget or share extension is built from the same copy, and a chang
 every view draws again on a reload with its state kept), and builds that copy unoptimized, testable, with
 `LAMP_LIVE` and `-Xlinker -interposable` (SwiftPM for a Mac app; Xcode for an app for both, from a copy of the
 device project, with its debug library off so the code is in the one binary). After a build, `Store.install` tries
-`reloadInPlace` first: when the app is open, was built live, and the change only touched or added files (none removed), didn't touch the App, and leaves every type
+`reloadInPlace` first: when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.launchEntries`, held to what the open app had as part of the layout; a view or helper beside them goes in like any code) or Lamp's own files, and leaves every type
 holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties and cases,
 from `-dump-ast` of just the changed files, compared for the open app's sources and the new ones; no reading of the
 text) (`LiveReload.reloadable`, comparing with the sources the
@@ -508,22 +524,57 @@ details (`LiveReload.Verdict`), so the rules can be tuned by what happens. The p
 quiet status line in both chats (`ChatLook.reloaded`), once a turn, when a request's change closed the open app and
 opened it again, never for Open App or Undo. A live build reads the app's own files
 from its Assets folder rather than its bundle (`LampAssets`), so a new picture goes in live too; the package, the
-app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which asks for
-new state in new views rather than new stored properties in existing types, when that's as clear.
+app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which tells the
+agent what goes in without reopening.
 
-A stored property added to a class goes in live too (`LiveSlots`, in LiveReload.swift). The copy step gives every
-class of the app's (not `@Model`, Core Data or `Sendable` ones) a few empty spare places, `__lampSpare_<Class>_0`…
-of `LampSpare?` (named after the class, so a subclass's don't clash with what it inherits; `@Published` when the
-header says `ObservableObject`), so the open app's objects already have room. A starting value that isn't a literal
-(`.now`, a call) is worked out on the first read and kept; a `@Published` property in a class whose places aren't
-published (conforming in an extension) reopens the app instead. When the only
-difference in layout is new stored properties in such classes, `LiveSlots.fit` rewrites each one-line declaration in
-the live copy into a computed property kept in a free place, and the change is compiled again and checked as usual.
-Being stored, a place is observed like any property, so views redraw. Which property is in which place
-(`.lamp/live/slots.json`) is put back into each fresh copy (`LiveSlots.apply`) until the app is installed again: the
+New stored properties go in live too (`LiveSlots`, in LiveReload.swift). The copy step (`Template.sparesPerl`) gives
+each type of the app's spare room the open app's values already have: every class a few places,
+`__lampSpare_<Class>_0`… of `LampSpare?` (named after the class, so a subclass's don't clash with what it inherits;
+`@Published` when the header says `ObservableObject`), every view one `@State` box (`__lampState_<View>`, a
+`LampStateBox`), and every other struct one place holding any number of properties by name (`__lampSpare_<Struct>`, not optional,
+so its own `==` and hash run: they take a property never set as its starting value; saved data leaves it out
+through two overloads of the keyed coding containers, which the compiler's Codable code takes over the general ones).
+Left out is what a spare would break: SwiftData and Core Data models, `Sendable` classes, `Equatable` views, the App
+and its scenes, property wrappers, App Intents, and structs in a file that lays memory out by hand (vertex data). When
+the only difference in layout is new stored properties in such types, `LiveSlots.fit` rewrites each one-line
+declaration in the live copy into a computed property kept in a spare, found by the compiler's own
+source ranges (`SwiftSource.declarations`, from the same `-dump-ast` as the layout), so however it's written (with
+attributes on lines above, in a `var a = 1, b = 2` list, in a type written on one line) it's replaced exactly, with
+no reading of the text (a view's `$name` becomes a binding to its
+box), and the change is compiled again and checked as usual. Being stored, a spare is observed like any property, so
+views redraw. A class's starting value that isn't a literal (`.now`, a call) is worked out on the first read and kept;
+a struct can't keep one from a read, so its new property needs a starting value that comes out the same every time (a
+literal, an empty collection, or one of the app's own enum's cases, judged again each time the property is put back;
+anything else, or a different one later, reopens the app, since the spare compares a value that never set the
+property by the starting value it was taken in with); a `@Published` property in a class whose places aren't published (conforming
+in an extension) reopens it too. `@State` is read in both forms the compiler has given it: `_name: State<T>`, and
+`__name: LazyState<T>` where it is a macro. Cases added at the end of an enum whose cases carry nothing need no
+spare: its values keep their size (`LiveSlots.casesAdded`). Only while nothing the app keeps holds it but as itself or
+in a plain collection: Swift uses the numbers after the last case for `nil` in an optional of it and for other enums'
+cases that carry it, which a new case would take over. That's looked for in every stored field, static and global of
+the new code and in the types the spares keep (`LiveReload.enumsHeld`), before the change goes in; an app that keeps
+values of any type (`Any`, `AnyObject`, `AnyHashable`, `any P`) reopens instead, since one could hide there. Which property is in which spare
+(`.lamp/live/slots.json`) is put back into each fresh copy (they come back as additions, and `LiveSlots.fit` puts
+them in the same places) until the app is installed again: the
 whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs
-once it's installed (`LiveReload.markRunning(from:)`). A place never reaches saved data: `LampSpare` encodes as
-nothing, and a computed property isn't encoded.
+once it's installed (`LiveReload.markRunning(from:)`). A spare never reaches saved data: `LampSpare` encodes as
+nothing, and a computed property isn't encoded. If spares ever keep an app from building, it's built again without
+them and stays without (`LiveSlots.giveUp`, `.lamp/live/no-spares`), so the agent only sees errors in its own code.
+
+Where a class's fields are is sometimes worked out at run time (a subclass, or fields after a system type such as
+an `@Observable` class's registrar), kept in a global for each field that the app fills in. A library has its own
+copies, which nothing fills in, so `LampLive` copies the app's values into each library as it loads
+(`takeFieldOffsets`), asking for the class's metadata first when the app hasn't worked it out yet. A field the app
+has under no such name (a new class's, or a private one whose code moved to another file, since a private name
+carries its file's) is laid out by the library itself, which does it as the app did for the same class.
+
+A file taken away doesn't reopen the app: its code stays in the open app, which the new code no longer calls, and a
+type it declared that something still holds shows as that holder changing. A type taken away is therefore no
+reason to reopen by itself (`layoutProblem`), but its layout is kept with the open app's until it reopens, so a type
+brought back under the same name is held to what it was. Only removing the App's file or Lamp's own reopens. A
+removal can change what an unchanged caller means (a deleted method that stood in for a protocol's default), so
+every file but Lamp's (the App's included, for what else its file holds) is compiled again and every call goes to
+code compiled without it.
 
 A Mac app can also open beside a web page, in Chrome's sidebar (Lamp Dev only, an experiment: Settings →
 Experimental, `BrowserBridge.switchKey`; how it fits together is in `experiments/browser-connector/README.md`).
@@ -587,8 +638,9 @@ profile changes.
 
 ### 3D scenes and games
 
-Games have two recipes in the prompt: `Agent.Rules.game2D` (SpriteKit, every kind of app) and `Agent.Rules.scene3D`
-(RealityKit, Mac apps, given only on a Mac with macOS 15, where RealityView begins). A Mac app whose own code
+Games have two recipes: `Agent.Rules.game2D` in the prompt (SpriteKit, every kind of app), and the `scene-3d` skill
+(RealityKit, Mac apps, offered only on a Mac with macOS 15, where RealityView begins), with the `maps` skill beside it
+for a real place built from OpenStreetMap data. A Mac app whose own code
 imports RealityKit gets `Sources/LampScene.swift` (`Template.lampSceneSwift`, written by `writeSceneSupport`
 beside LampSupport.swift and taken away with the last such import), and its Package.swift and build.sh ask for
 macOS 15 (`Template.withScene`). It's Lamp's like LampSupport.swift: protected, left out of versions' diffs and of
@@ -822,11 +874,13 @@ modifier, since an app has no other place that's told. The rules are `Agent.Rule
 ### Services the person already uses
 
 An app reaches the person's account on a service they use (Notion, Linear, Airtable, GitHub, Readwise…) in one of two
-ways, and every service an app can connect to is one entry in `Connectors.all` (Sources/Lamp/Connectors.swift): its
+ways, or open data that needs no account in a third, and every service an app can connect to is one entry in
+`Connectors.all` (Sources/Lamp/Connectors.swift): its
 name, what people keep there, how it connects, its API's documentation and a few lines on the calls that matter.
 The builder finds them through the `connectors` tool, which lists them and, given one, says how to build on it
 (`Connectors.answer`), so the system prompt has one line about connectors however many there are
-(`Agent.connectorRules`, which keeps the Mac's own accounts first and `LampComputer` after). Each entry's
+(`Agent.connectorRules`, which keeps the Mac's own accounts first and `LampComputer` after, and names open data
+too, since a wish for the weather or exchange rates isn't about an account). Each entry's
 declaration in LampSupport.swift (`LampService.<id>`, `LampAPI.<id>`) is written from the same entry
 (`Connectors.fill`, in place of `{{SIGN_IN_SERVICES}}` and `{{TOKEN_SERVICES}}`), so what the builder is told is what
 the app has. A service is added only when the person can connect without anyone registering an app first; one that
@@ -861,7 +915,16 @@ refused before anything is sent, and no request follows a redirect, so the token
 A 401 means the token is over and it's forgotten; a 403 is asked of the check address again, since Toggl Track says
 403 for a token it doesn't take where others say it of one thing the token may not see. Disconnect forgets the
 token here; it still works until the person deletes it on the service. `TokenServiceTests` runs this against each
-service's recorded answer to a wrong token.
+service's recorded answer to a wrong token. A service that runs on the person's own server (Home Assistant) has
+`{server}` in its base and its token page, and an address field on the sheet: what they type is cut to its scheme,
+host and port (`LampAPI.server`; with no scheme, http for a home-network name or a number, as such servers come,
+https otherwise), kept with the token, and the token goes only there.
+
+**Open data** (`LampAPI` with no fields; Open-Meteo, Open Food Facts, Frankfurter): no account and no key, so no
+Connect, no sheet and no button; it is always connected and the app calls it as it opens. It keeps `LampAPI`'s paths
+relative to its base, plus a full address under one of its own other hosts (`also`: Open-Meteo answers air quality
+and place names elsewhere). Only services free to read without signing up belong here, and their terms (credit,
+limits) go in the entry's notes for the builder.
 
 Both kinds are kept by Lamp for the app, not in the app's own Keychain (`LampSecrets` in LampSupport.swift,
 `AppSecrets` and `/app/secrets` in Lamp): Lamp's certificate has no Apple team, so macOS ties an item an app makes to
@@ -887,8 +950,10 @@ on the same Connect sheet as a listed service's, it is checked, kept in `LampSec
 (`own-…`, so it can't stand in for a listed service's token), and sent only to that address. No key field or dialog
 of the app's own, and never UserDefaults, LampStore or a Keychain item of the app's own: the first two are the app's
 settings and folder, and the last asks for the password after every rebuild. Both `Agent.connectorRules` and the
-tool's list (`Connectors.list`, also its answer to a name it doesn't know) say so. The review counts `LampAPI` and
-`LampSecrets.` in the app's code as connecting an account.
+tool's list (`Connectors.list`, also its answer to a name it doesn't know) say so. Such a service's address must be
+https (`httpsOnly`: nothing is sent otherwise), while a listed one's may be the person's own server on plain http.
+The review counts `LampAPIButton`, `LampAPI.own` and `LampSecrets.` in the app's code as connecting an account, and
+open data alone as going online.
 
 ## Naming: Lamp and Lamp
 
