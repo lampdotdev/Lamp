@@ -432,21 +432,26 @@ extension Template {
                     if slowTiles <= 3 { print("LampScene: tile \(tile.x),\(tile.z) took \(Int(took * 1000)) ms to build; a tile should take a few.") }
                 }
                 entity.name = "tile \(tile.x),\(tile.z)"
+                func empty(_ e: Entity) -> Bool { e.children.isEmpty && e.components[ModelComponent.self] == nil }
+                var keepOld = false
                 if let old = s.built[tile] {
                     // A tile made again after a live change goes in once made, so nothing vanishes meanwhile; and if
                     // the new code makes nothing where the old made something, the old stays.
                     s.stale.remove(tile)
-                    if entity.children.isEmpty && entity.components[ModelComponent.self] == nil && !old.children.isEmpty {
+                    if empty(entity) && !empty(old) {
+                        keepOld = true
                         if !s.warnedEmpty {
                             s.warnedEmpty = true
                             print("LampScene: the new code built tile \(tile.x),\(tile.z) empty, so the old one stays. Check what it makes.")
                         }
-                        continue
+                    } else {
+                        old.removeFromParent()
                     }
-                    old.removeFromParent()
                 }
-                streamRoot.addChild(entity)
-                s.built[tile] = entity
+                if !keepOld {
+                    streamRoot.addChild(entity)
+                    s.built[tile] = entity
+                }
                 if Date().timeIntervalSince(started) > budget { break }
             }
             s.first = false
