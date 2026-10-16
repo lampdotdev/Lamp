@@ -113,6 +113,18 @@ enum Talk {
         return lines[index]
     }
 
+    /// Notes a click's answers on its card, only while it still waits for them. A card stays clickable until
+    /// the chat has drawn it folded, which in the sidebar takes a trip through another process, so while Lamp is
+    /// slow it can be clicked again, and each click would queue the answer once more. Returns the card as
+    /// answered, or nil when it had been answered already, by a click or in words.
+    static func give(_ answers: [String], to card: UUID, in lines: inout [LogLine]) -> Ask? {
+        guard open(in: lines)?.id == card, let index = lines.firstIndex(where: { $0.id == card }),
+              var ask = lines[index].ask else { return nil }
+        ask.answers = answers
+        lines[index].ask = ask
+        return ask
+    }
+
     /// The card that holds the wish up until it's answered: an open one the agent asked. A starter's offer
     /// (`Ask.offer`) is open too, and the message box answers it, but the wish can be used meanwhile.
     static func waiting(in lines: [LogLine]) -> LogLine? {
