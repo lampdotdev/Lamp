@@ -473,8 +473,9 @@ enum Agent {
             `sidebar: true` and `page` (the https address of a real page it's for) shows it as Chrome would, light, dark \
             and at large text, with the app's window beside it, says what it measured, and whether the page fits \
             browser.json; `use_app` with `sidebar: true` and `page` clicks and types in it by target. Go through the \
-            whole path (read, check, save), look at each state, check the result in the Mac window, fix what the look \
-            measured and what the skill's questions find, then delete what you saved while trying.
+            whole path (read, then the answer, or read, check and save), look at each state, check what the app keeps \
+            in the Mac window, fix what the look measured and what the skill's questions find, and when it saves, \
+            delete what you saved while trying.
         """
 
         static let macBlocks = """

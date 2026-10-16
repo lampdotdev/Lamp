@@ -1,6 +1,6 @@
 ---
 name: chrome-sidebar
-description: The app's page in Chrome's side panel on the Mac (Assets/Sidebar/), drawn as if Apple made it - the system look from /lamp.css with one tint, the app's own items, every state from reading to a failed save, and the checks to pass. Read before writing or changing the sidebar page.
+description: The app's page in Chrome's side panel on the Mac (Assets/Sidebar/), drawn as if Apple made it - the system look from /lamp.css with one tint, the app's own items or answer, every state from reading to a failure, and the checks to pass. Read before writing or changing the sidebar page.
 ---
 
 # A sidebar page that looks as if Apple made it
@@ -15,9 +15,11 @@ theirs. It isn't an iPhone layout and it isn't a copy of the window's own theme.
 ## What's above the page
 
 Lamp's strip: the app's name, then a line saying what the page reads. It makes no offer: the page's offer row is
-the only one, and it uses the verb of browser.json's offer ("Save this recipe to Recipe Box"): the button says
-"Save" ("Save…" when a check comes first), not "Read This Recipe", "Add" or "Keep". The page's heading names the
-collection ("My Recipes", "Reading List"), not the app, which the strip already names.
+the only one, and its button uses the verb of browser.json's offer, whatever the page does with the page beside it.
+A page that saves ("Save this recipe to Recipe Box") says "Save" ("Save…" when a check comes first), not "Read This
+Recipe", "Add" or "Keep"; one that answers says its own verb ("Explain", "Translate", "Check"). The page's heading
+names what it shows, not the app, which the strip already names: the collection for a page that keeps things ("My
+Recipes", "Reading List"), what the answer is about for one that answers.
 
 ## Set it up
 
@@ -34,16 +36,23 @@ collection ("My Recipes", "Reading List"), not the app, which the strip already 
 
 ## Lay out the page, top to bottom
 
-1. The offer: one `.group.offer` row 12px under the strip (`<div class="page-top"></div>` first): the page's
-   item as the app will keep it (its picture or symbol in a `.thumb`, its name, where it's from), and one
-   `button.primary.capsule` on the right.
+1. The offer: one `.group.offer` row 12px under the strip (`<div class="page-top"></div>` first): what the page
+   will work on (for a page that saves, the item as the app will keep it: its picture or symbol in a `.thumb`, its
+   name, where it's from), and one `button.primary.capsule` on the right.
 2. A status line (`<p class="status" role="status">`).
+
+A page that keeps things then has:
+
 3. The collection header: `<div class="collection-header"><h1>My Recipes</h1><span class="count">4 recipes</span></div>`.
 4. The items.
 5. An empty state for when nothing is saved yet.
 
 The check before saving replaces the offer and the list while it's open (`hidden` on both), so the draft has the
 pane to itself.
+
+A page that answers (explains, summarises, translates, checks) has the answer in their place: a heading for what it's
+about, then the answer in `.group`s (paragraphs, or rows for a list of points), hidden until there is one, and
+before the first answer one sentence in the empty state on what the button does.
 
 ## Draw the items as the app's window does
 
@@ -126,7 +135,7 @@ The app's nouns ("Saved to My Plants"), never Lamp's workings. Title Case for ti
 - Controls: `button` (grey), `.primary` (the tint), `.tinted`, `.plain`, `.capsule`; `.segmented` with
   `aria-pressed`; `.field` rows; `.bottom-bar`; `.selectable` on words people may copy (the rest isn't selectable,
   as in a Mac app).
-- Type: `h1` the collection (20px bold), row titles 13px semibold, body 13px, meta 12px, nothing under 11px;
+- Type: `h1` the collection or the answer's subject (20px bold), row titles 13px semibold, body 13px, meta 12px, nothing under 11px;
   `.secondary`, `.tint`, `.num` for counts and dates.
 
 Large text rearranges by itself: at 200% zoom or a bigger font the offer's button goes under its words, fields put
@@ -134,6 +143,8 @@ their label above, trailing values go under the title and a grid becomes one col
 it (no fixed heights, no `white-space: nowrap` on titles, no widths in px wider than 150).
 
 ## A page to start from
+
+This one keeps things (a plant care app); a page that answers comes after it.
 
 ```html
 <!doctype html><html lang="en" data-tint="green" data-lamp-reads="page"><head><meta charset="utf-8">
@@ -260,12 +271,14 @@ lamp.onMenu(explain);
 app's window, and lists what Lamp measured: words under 4.5:1 contrast, a face that isn't the system's, words under
 11px, pictures that didn't load, sideways scrolling, clipped words at 200%, and a part out of line with the
 groups. Fix every one. Then go through
-every state with `use_app` (read, check, cancel, read, save, saved, the item in the window), look at each, and judge
+every state with `use_app` (a page that saves: read, check, cancel, read, save, saved, the item in the window; a page
+that answers: read, the answer, a failure; with a right-click item, also `use_app`'s `menu`), look at each, and judge
 the pictures as Apple would:
 
 1. Squint: a Mac list pane (grey ground, white rounded groups) or a web page (borders, boxes in boxes, a coloured
    page, a big button bar)?
-2. Under the strip: one action, browser.json's verb, obvious what it saves, little height before the first item?
+2. Under the strip: one action, browser.json's verb, obvious what it does with the page, little height before the
+   first item or the answer?
 3. Does every picture show the item it's on? Would a symbol be more honest?
 4. Separators start at the words, rows at least 44px, group edges in line with the titles?
 5. Each item as the window shows it, the urgent ones first?
