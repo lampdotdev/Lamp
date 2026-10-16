@@ -80,6 +80,10 @@ extension Template {
         var props: [String: @MainActor () -> Entity] = [:]
         var build: @MainActor (LampScene) async -> Void
         var update: (@MainActor (LampScene, Float) -> Void)? = nil
+        /// Runs after Lamp puts a code change into the open app: redraw here what the app built itself and wants to
+        /// show the new code (its own tiles, a level's scenery), keeping the game's state. Call named functions, as
+        /// a closure written out in place keeps the code it was made with.
+        var onLiveChange: (@MainActor (LampScene) -> Void)? = nil
 
         @State private var scene = LampScene()
         @State private var studio: String?
@@ -117,7 +121,10 @@ extension Template {
                 // closure it was first given, which still runs the old code: it takes this view's, so a changed game
                 // rule shows at once, and remakes each prop in place. Building the whole scene again would cost a big
                 // world seconds of a stalled app and reset it, so a change to the rest shows at the next launch.
-                .onChange(of: LampLive.generation) { _, _ in scene.refresh(update: update, props: props) }
+                .onChange(of: LampLive.generation) { _, _ in
+                    scene.refresh(update: update, props: props)
+                    onLiveChange?(scene)
+                }
                 #endif
                 .onChange(of: geometry.size) { _, size in scene.viewSize = size }
             }
@@ -358,9 +365,13 @@ extension Template {
             var focus: (@MainActor () -> SIMD3<Float>)?
             var make: @MainActor (LampTile) -> Entity?
             var built: [LampTile: Entity] = [:]
+            /// Built by code a live change has since replaced: made again, and swapped in once made.
+            var stale = Set<LampTile>()
+            var warnedEmpty = false
             var first = true
         }
         private var streaming: Streaming?
+        private var slowTiles = 0
         private let streamRoot = Entity()
 
         /// A big world built a square tile at a time: the tiles within `radius` metres of the camera (or of what
@@ -394,37 +405,65 @@ extension Template {
             for (tile, entity) in s.built where distance(tile) > s.radius * 1.25 {
                 entity.removeFromParent()
                 s.built[tile] = nil
+                s.stale.remove(tile)
             }
             var wanted: [(LampTile, Float)] = []
             for x in (cx - reach)...(cx + reach) {
                 for z in (cz - reach)...(cz + reach) {
                     let tile = LampTile(x: x, z: z, size: s.size)
                     let d = distance(tile)
-                    if d <= s.radius, s.built[tile] == nil { wanted.append((tile, d)) }
+                    if d <= s.radius, s.built[tile] == nil || s.stale.contains(tile) { wanted.append((tile, d)) }
                 }
             }
             wanted.sort { $0.1 < $1.1 }
-            // Nearest first, within a time budget: more at the start, where nothing is on screen yet.
-            let budget: Double = s.first ? 0.25 : 0.006
+            // At the start, everything within half the reach, before the first frame: one pause while the app opens
+            // rather than a stutter once it's moving. After that, nearest first within a few milliseconds a frame.
+            let budget: Double = s.first ? 3 : 0.006
             let started = Date()
-            for (tile, _) in wanted {
+            for (tile, distance) in wanted {
+                if s.first, distance > s.radius / 2 { break }
+                let began = Date()
                 let entity = s.make(tile) ?? Entity()
+                let took = Date().timeIntervalSince(began)
+                // A tile that takes longer than a frame stalls the app however it's scheduled: said in the log, where
+                // the builder sees it, so it can make the tile cheaper (meshes and text made once and reused).
+                if took > 0.02 {
+                    slowTiles += 1
+                    if slowTiles <= 3 { print("LampScene: tile \(tile.x),\(tile.z) took \(Int(took * 1000)) ms to build; a tile should take a few.") }
+                }
                 entity.name = "tile \(tile.x),\(tile.z)"
-                streamRoot.addChild(entity)
-                s.built[tile] = entity
+                func empty(_ e: Entity) -> Bool { e.children.isEmpty && e.components[ModelComponent.self] == nil }
+                var keepOld = false
+                if let old = s.built[tile] {
+                    // A tile made again after a live change goes in once made, so nothing vanishes meanwhile; and if
+                    // the new code makes nothing where the old made something, the old stays.
+                    s.stale.remove(tile)
+                    if empty(entity) && !empty(old) {
+                        keepOld = true
+                        if !s.warnedEmpty {
+                            s.warnedEmpty = true
+                            print("LampScene: the new code built tile \(tile.x),\(tile.z) empty, so the old one stays. Check what it makes.")
+                        }
+                    } else {
+                        old.removeFromParent()
+                    }
+                }
+                if !keepOld {
+                    streamRoot.addChild(entity)
+                    s.built[tile] = entity
+                }
                 if Date().timeIntervalSince(started) > budget { break }
             }
             s.first = false
             streaming = s
         }
 
-        /// Drops every built tile, so they're made again as they come into reach. After a live change, the new code
+        /// Makes every built tile again, nearest first, each swapped in once it's made, so the world never goes blank. After a live change, the new code
         /// is what makes them only if `make` calls a named function (`{ tile in World.tile(tile) }`): a live change
         /// replaces functions, and a closure written out in place keeps running the code it was made with.
         func restream() {
             guard var s = streaming else { return }
-            for entity in s.built.values { entity.removeFromParent() }
-            s.built = [:]
+            s.stale = Set(s.built.keys)
             streaming = s
         }
 
@@ -1205,8 +1244,18 @@ extension Template {
     /// One prop on its own, from four sides, on a plain floor in even light: what Lamp's builder looks at to compare
     /// a prop with the picture it was made from.
     struct LampPropStudio: View {
+        @MainActor private func copy() -> Entity {
+            if let made { return made.clone(recursive: true) }
+            let first = make()
+            made = first
+            return first.clone(recursive: true)
+        }
+
         let name: String
         let make: @MainActor () -> Entity
+        /// One copy for all four views, so a prop whose code varies it (a random rider, a random colour) shows the
+        /// same thing from every side.
+        @State private var made: Entity?
         private let views: [(String, Float, Float)] = [("Front", 0, 0.12), ("Right side", .pi / 2, 0.12),
                                                        ("From above, three quarters", .pi / 4, 0.6), ("Back", .pi, 0.12)]
 
@@ -1217,7 +1266,7 @@ extension Template {
                         ForEach(0..<2, id: \.self) { col in
                             let v = views[row * 2 + col]
                             RealityView { content in
-                                await LampPropStudio.stage(&content, prop: make(), yaw: v.1, pitch: v.2)
+                                await LampPropStudio.stage(&content, prop: copy(), yaw: v.1, pitch: v.2)
                             }
                             .realityViewCameraControls(.none)
                             .overlay(alignment: .topLeading) {
