@@ -220,7 +220,10 @@ public enum SidebarCommand: Codable, Equatable {
     /// before the summary line, which it can't read; one before 3, from before the notes receipt; one before 4, from before offers;
     /// one before 5, from before what was pointed at had a pill of its own.
     case hello(Int)
-    case send(String)
+    /// The message box's words, and the draft's version the box was showing (`SidebarState.draftVersion`): a Return
+    /// pressed again before the box hears that they were sent is for a draft Lamp has already sent, and does nothing.
+    /// A sidebar from before the version sends none.
+    case send(String, draftVersion: Int? = nil)
     case answer(UUID, [String])
     case draft(String)
     case removeAttachment(Int)

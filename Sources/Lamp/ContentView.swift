@@ -965,6 +965,10 @@ struct ProjectView: View {
             store.updateDraft(kept, for: current)
         }
         store.endSubmission(token)
+        // The box takes what's left now, in the same event as the send. Left to the chat hearing of the change
+        // (`draftUpdates`), the sent words stay in it until the chat next draws, and a Return pressed meanwhile
+        // finds them there, with nothing on its way any more, and sends them again.
+        loadDraft()
     }
 
     private func attach(_ files: [URL]) {
