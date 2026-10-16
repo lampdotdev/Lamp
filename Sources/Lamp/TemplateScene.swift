@@ -1212,8 +1212,18 @@ extension Template {
     /// One prop on its own, from four sides, on a plain floor in even light: what Lamp's builder looks at to compare
     /// a prop with the picture it was made from.
     struct LampPropStudio: View {
+        @MainActor private func copy() -> Entity {
+            if let made { return made.clone(recursive: true) }
+            let first = make()
+            made = first
+            return first.clone(recursive: true)
+        }
+
         let name: String
         let make: @MainActor () -> Entity
+        /// One copy for all four views, so a prop whose code varies it (a random rider, a random colour) shows the
+        /// same thing from every side.
+        @State private var made: Entity?
         private let views: [(String, Float, Float)] = [("Front", 0, 0.12), ("Right side", .pi / 2, 0.12),
                                                        ("From above, three quarters", .pi / 4, 0.6), ("Back", .pi, 0.12)]
 
@@ -1224,7 +1234,7 @@ extension Template {
                         ForEach(0..<2, id: \.self) { col in
                             let v = views[row * 2 + col]
                             RealityView { content in
-                                await LampPropStudio.stage(&content, prop: make(), yaw: v.1, pitch: v.2)
+                                await LampPropStudio.stage(&content, prop: copy(), yaw: v.1, pitch: v.2)
                             }
                             .realityViewCameraControls(.none)
                             .overlay(alignment: .topLeading) {
