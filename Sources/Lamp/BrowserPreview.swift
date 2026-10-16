@@ -164,11 +164,15 @@ enum BrowserPreview {
         var text = notes.joined(separator: "\n\n")
         guard Privacy.sharesPictures else { return (200, ["text": text + (text.isEmpty ? "" : "\n\n") + Privacy.picturesOff]) }
         text += (text.isEmpty ? "" : "\n\n") + (await preview.text())
+        if let offer = BrowserCompanions.Declaration.load(project)?.offer {
+            text += "\n\nAbove the page Chrome shows Lamp's strip: the app's name, then \"\(offer)\" in the page's tint on a page that fits, then a line saying what the page reads."
+        }
         let picture = Runtime.folder(project).appendingPathComponent("sidebar.png")
         var screenshots: [String] = []
-        if await preview.picture(to: picture) {
+        if let measured = await preview.looks(to: picture) {
             screenshots = Store.agentPictures([picture], in: project)
-            text += "\n\n\(what) follows as a picture, at the sidebar's width."
+            text += "\n\n\(what) follows as a picture, at the sidebar's width: light, dark, and at 200% zoom (its top)."
+            text += "\n\n" + measured
         }
         return (200, ["text": text, "screenshots": screenshots])
     }
@@ -566,6 +570,115 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
         if let height = value["height"] as? Double { web.frame.size.height = min(max(height, 400), 2400) }
         return out
     }
+
+    /// The page light, dark and at 200% zoom (as Chrome's zoom draws it, at half the width), side by side in one
+    /// picture, and what was measured in each: words under 4.5:1 contrast (3:1 when large), a face that isn't the
+    /// system's, words under 11px, pictures and symbols that didn't load, sideways scrolling, words cut off, and a
+    /// group or control out of line with the rest.
+    /// Measured here in WebKit, which draws the same system font Chrome does on the Mac.
+    func looks(to file: URL) async -> String? {
+        let ways: [(name: String, appearance: NSAppearance.Name, zoom: CGFloat)] = [("light", .aqua, 1), ("dark", .darkAqua, 1), ("200%", .aqua, 2)]
+        var pictures: [NSImage] = [], found: [String] = []
+        defer { window.appearance = nil; web.pageZoom = 1 }
+        for way in ways {
+            window.appearance = NSAppearance(named: way.appearance)
+            web.pageZoom = way.zoom
+            try? await Task.sleep(for: .milliseconds(350))
+            let problems = (try? await web.callAsyncJavaScript(Self.measure, arguments: ["zoomed": way.zoom > 1], in: nil, contentWorld: .page)) as? [String] ?? []
+            found.append(way.name + ": " + (problems.isEmpty ? "nothing found." : problems.joined(separator: "; ")))
+            let configuration = WKSnapshotConfiguration()
+            configuration.afterScreenUpdates = true
+            guard let image = try? await web.takeSnapshot(configuration: configuration) else { return nil }
+            pictures.append(image)
+        }
+        guard let joined = Self.sideBySide(pictures), (try? joined.write(to: file)) != nil else { return nil }
+        return "Measured in each:\n" + found.joined(separator: "\n")
+    }
+
+    private static func sideBySide(_ images: [NSImage]) -> Data? {
+        let gap: CGFloat = 16
+        let width = images.reduce(0) { $0 + $1.size.width } + gap * CGFloat(images.count - 1)
+        let height = images.map(\.size.height).max() ?? 0
+        guard width > 0, height > 0, let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(width * 2), pixelsHigh: Int(height * 2),
+                                                               bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                               colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        rep.size = NSSize(width: width, height: height)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSColor(white: 0.5, alpha: 1).setFill()
+        NSRect(x: 0, y: 0, width: width, height: height).fill()
+        var x: CGFloat = 0
+        for image in images {
+            image.draw(in: NSRect(x: x, y: height - image.size.height, width: image.size.width, height: image.size.height))
+            x += image.size.width + gap
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        return rep.representation(using: .png, properties: [:])
+    }
+
+    /// Run in the page; answers its problems as short lines.
+    private static let measure = """
+        const found = new Set();
+        const parse = value => {
+          let m = /rgba?\\(([^)]*)\\)/.exec(value);
+          if (m) { const p = m[1].split(/[\\s,\\/]+/).filter(Boolean).map(parseFloat); return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1]; }
+          m = /color\\(srgb ([^)]*)\\)/.exec(value);
+          if (m) { const p = m[1].split(/[\\s\\/]+/).filter(Boolean).map(parseFloat); return [p[0] * 255, p[1] * 255, p[2] * 255, p.length > 3 ? p[3] : 1]; }
+          return null;
+        };
+        const over = (top, under) => [0, 1, 2].map(i => top[i] * top[3] + under[i] * (1 - top[3])).concat(1);
+        const light = c => { const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+        const ratio = (a, b) => { const x = light(a), y = light(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+        // With no background of its own the page shows the browser's canvas, dark only when the page allows it.
+        const darkCanvas = matchMedia('(prefers-color-scheme: dark)').matches && /dark/.test(getComputedStyle(document.documentElement).colorScheme);
+        const background = el => {
+          const layers = [];
+          for (let e = el; e; e = e.parentElement) {
+            const style = getComputedStyle(e);
+            if (style.backgroundImage !== 'none') return null;
+            const c = parse(style.backgroundColor);
+            if (c && c[3] > 0) { layers.push(c); if (c[3] >= 1) break; }
+          }
+          return layers.reverse().reduce((under, top) => over(top, under), darkCanvas ? [0, 0, 0, 1] : [255, 255, 255, 1]);
+        };
+        const words = el => [...el.childNodes].filter(n => n.nodeType === 3 && n.textContent.trim()).map(n => n.textContent.trim()).join(' ');
+        const quote = text => '"' + text.replace(/\\s+/g, ' ').slice(0, 40) + '"';
+        // The face the page asks for first, as the browser computed it: the system's own names, or SF by name.
+        const systemFace = family => /^(system-ui|-apple-system|blinkmacsystemfont|sf pro\\b.*|sf compact\\b.*)$/.test(family);
+        for (const el of document.body.querySelectorAll('*')) {
+          const text = words(el);
+          if (!text || !el.checkVisibility({opacityProperty: true, visibilityProperty: true})) continue;
+          const style = getComputedStyle(el), size = parseFloat(style.fontSize), weight = parseInt(style.fontWeight) || 400;
+          if (!el.closest(':disabled')) {
+            const ink = parse(style.color), under = background(el);
+            if (ink && under) {
+              const r = ratio(over(ink, under), under), least = size >= 24 || (size >= 18.6 && weight >= 700) ? 3 : 4.5;
+              if (r < least) found.add('contrast ' + r.toFixed(1) + ':1 (needs ' + least + ') on ' + quote(text));
+            }
+          }
+          if (!zoomed && size < 11) found.add(size + 'px words, under 11px: ' + quote(text));
+          const first = (style.fontFamily.split(',')[0] || '').trim().replace(/^["']|["']$/g, '').toLowerCase();
+          if (!systemFace(first)) found.add('not the system font (' + style.fontFamily + ') on ' + quote(text));
+          if (style.overflowX !== 'visible' && el.scrollWidth > el.clientWidth + 1 && style.textOverflow !== 'ellipsis' && style.webkitLineClamp === 'none') found.add('words cut off: ' + quote(text));
+        }
+        for (const img of document.images) if (img.checkVisibility() && img.complete && img.naturalWidth === 0) found.add("a picture that didn't load: " + (img.getAttribute('src') || '').slice(0, 80));
+        const symbols = new Set();
+        for (const el of document.body.querySelectorAll('*')) {
+          const mask = getComputedStyle(el).webkitMaskImage || '';
+          for (const m of mask.matchAll(/url\\("?([^")]+)"?\\)/g)) symbols.add(m[1]);
+        }
+        for (const url of symbols) {
+          const answer = await fetch(url).catch(() => null);
+          if (!answer || !answer.ok) found.add("a symbol that didn't load (no such SF Symbol?): " + url.replace(location.origin, ''));
+        }
+        // The groups, lists and controls of a Mac list pane share one left edge; a part moved off it reads as a web page.
+        const blocks = [...document.querySelectorAll('.group, .box, .segmented, .grid, ul.list')].filter(e => e.checkVisibility());
+        const lefts = blocks.map(e => Math.round(e.getBoundingClientRect().left));
+        const usual = lefts.slice().sort((a, b) => lefts.filter(x => x === b).length - lefts.filter(x => x === a).length)[0];
+        blocks.forEach((e, i) => { if (Math.abs(lefts[i] - usual) > 1) found.add('out of line with the groups: ' + (e.id ? '#' + e.id : '.' + [...e.classList].join('.')) + ' starts ' + lefts[i] + 'px from the edge, the groups ' + usual + 'px'); });
+        if (document.documentElement.scrollWidth > innerWidth + 1) found.add('the page scrolls sideways (' + document.documentElement.scrollWidth + 'px wide in ' + innerWidth + ')');
+        return [...found].slice(0, 12);
+        """
 
     func picture(to file: URL) async -> Bool {
         let configuration = WKSnapshotConfiguration()

@@ -259,7 +259,7 @@ enum Agent {
                      half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks), half(onMac, BrowserBridge.enabled ? Rules.browserCompanion : ""),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
                      Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
-                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true), Rules.game2D,
+                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true), Rules.game2D, Skills.index(Skills.offered(mac: false, sidebar: BrowserBridge.enabled)),
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
                      Rules.icloud, Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
                      Rules.universalTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
@@ -282,7 +282,7 @@ enum Agent {
         rules += [Rules.script, Rules.intents] + (mac ? [Rules.macIntents] : []) + [mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules += [Rules.computer] }
         if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.iPhoneShare, Rules.icloud] }
-        rules += [Rules.store, Rules.kinds(mac: mac, threeD: mac && Rules.scenes), Rules.game2D, Skills.index(Skills.offered(mac: mac))]
+        rules += [Rules.store, Rules.kinds(mac: mac, threeD: mac && Rules.scenes), Rules.game2D, Skills.index(Skills.offered(mac: mac, sidebar: mac && sidebar))]
         rules += [mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
                   Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
@@ -423,8 +423,7 @@ enum Agent {
             understanding or comparing what's being read, doing something with a passage. A wish that says online, \
             from the web, a site, a link or an article is one, even when it doesn't name Chrome. For those, the Mac app \
             always also gets a sidebar in Chrome, beside the page: a small web page of the app's own, which the app \
-            serves itself with `LampBrowser.startPage` (read its comment in LampSupport.swift first: it has a page to \
-            start from). Decide that from the wish yourself, never ask; make the sidebar one of `plan`'s parts (its \
+            serves itself with `LampBrowser.startPage`. Decide that from the wish yourself, never ask; make the sidebar one of `plan`'s parts (its \
             files: browser.json and Assets/Sidebar/), and say it in one line of your reply, like "Recipe Box also works \
             in Chrome, beside recipe pages." Lamp's one extension frames every app's page: never write extension \
             code, a web server of your own, or browser automation.
@@ -437,27 +436,12 @@ enum Agent {
             kinds of page found on many sites, give selectors common to them (recipe-card plugins, schema.org \
             microdata like `[itemtype*="schema.org/Recipe"]`) as well as the best-known sites by name.
             - The page is `Assets/Sidebar/index.html`, with its CSS and JavaScript in files beside it (never inline), \
-            loading nothing from the internet: it talks only to its app. About 360 points wide, light and dark.
-            - It must look like this app, as if it were a column of its window, not like a web page or a plain Mac \
-            window: read the window's views first and carry their look over. Build on `/lamp.css` (boxes, rows, \
-            cards, fields, buttons, the bar at the foot) and set every one of its variables in your CSS's `:root`, light \
-            and dark, from the window's code: `--bg` the window's background (its colour or gradient, not gray when the \
-            window isn't), `--surface` its cards and rows, `--ink`, `--muted`, `--line`, `--accent` and `--on-accent` \
-            the same colours as hex, `--radius` and `--control-radius` its corners (999px for capsule buttons), \
-            `--control-height` and `--shadow` as its buttons and cards have them, and its type: `--font` and \
-            `--title-font` system-ui for the default and the rounded design (Chrome has no rounded system type), Georgia \
-            for the serif design, Menlo for monospaced; `--title-size` and `--title-weight` as its titles. Draw each item \
-            as the window draws it: the same picture (`/assets/<file>` serves the app's own files from Assets/), the \
-            same symbols (`<img class="symbol" src="/symbols/star.fill.png?color=d9622b&size=16">` is the SF \
-            Symbol, drawn by the app; `weight=` too), the same facts in the same order, a checklist where the window has \
-            one. Lamp shows the app's name and offer above the page in the page's own colours, so don't repeat them. Put \
+            loading nothing from the internet: it talks only to its app. Open the chrome-sidebar skill with \
+            `read_skill` before writing or changing it, and follow it: it says how the page looks (Apple's own, with \
+            one tint and the app's items), every state it goes through, and how to check it. Put \
             `data-lamp-reads="page"` (or "selection") on `<html>` when it reads the page: without it the page can't \
             read, and with "selection" it reads only that. Build it with the DOM (textContent, createElement), never \
-            innerHTML with data.
-            - Go through every state, as the starting page does: ready (what a click will do, one main button at the \
-            foot), reading, a preview of what was found with editable fields (a list as one line per item) and Save \
-            and Cancel, saved (said only after the write succeeded, and shown as the window shows it), and an error \
-            in a plain sentence. Never save straight from the page without that preview.
+            innerHTML with data. Never save straight from the page without a check of what was read.
             - The page asks the app with `await lamp.call("name", body)`, answered in Swift: start \
             `LampBrowser.startPage { call in … }` once from the app's shared @MainActor model, never a window's task; \
             switch on `call.name`, `call.decode(T.self)` the body, return any Encodable (throw \
@@ -471,12 +455,11 @@ enum Agent {
             saved items by the page's URL or the item's identity, so saving twice doesn't duplicate.
             - Try the sidebar before finishing, a new app included: it is Lamp's own copy, beside a page Lamp opens, so \
             it doesn't get in the person's way, and this is the one thing you use in a new app. `look_at_app` with \
-            `sidebar: true` and `page` (the https address of a real page it's for) shows it as Chrome would, with the \
-            app's window beside it, and says whether the page fits browser.json; `use_app` with `sidebar: true` and `page` clicks and types in it by \
-            target. Go through the whole path (read, preview, edit, save), look at each state, check the result in \
-            the Mac window, then delete what you saved while trying. Hold each look of the sidebar against the window \
-            beside it: a background, colour, typeface, corner, button or item drawn differently from the window's is a \
-            fault to fix before finishing, as much as one that doesn't work.
+            `sidebar: true` and `page` (the https address of a real page it's for) shows it as Chrome would, light, dark \
+            and at large text, with the app's window beside it, says what it measured, and whether the page fits \
+            browser.json; `use_app` with `sidebar: true` and `page` clicks and types in it by target. Go through the \
+            whole path (read, check, save), look at each state, check the result in the Mac window, fix what the look \
+            measured and what the skill's questions find, then delete what you saved while trying.
         """
 
         static let macBlocks = """

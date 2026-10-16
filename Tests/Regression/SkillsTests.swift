@@ -36,16 +36,18 @@ final class SkillsTests: XCTestCase {
     /// Every skill a prompt can offer is in the bundle and reads as an Agent Skills file: a folder named as the
     /// skill, a one-line description within the format's limit, and instructions.
     func testEveryOfferedSkillShipsAndReads() {
-        XCTAssertEqual(Set(shipped.keys), ["scene-3d", "maps"])
+        XCTAssertEqual(Set(shipped.keys), ["scene-3d", "maps", "chrome-sidebar"])
         for (name, skill) in shipped {
             XCTAssertFalse(skill.body.isEmpty, name)
             XCTAssertLessThanOrEqual(skill.description.count, 1024, name)
             XCTAssertNil(skill.name.range(of: #"[^a-z0-9-]"#, options: .regularExpression), name)
         }
         if Agent.Rules.scenes {
-            XCTAssertEqual(Set(Skills.offered(mac: true)), Set(shipped.keys))
+            XCTAssertEqual(Set(Skills.offered(mac: true, sidebar: true)), Set(shipped.keys))
         }
         XCTAssertEqual(Skills.offered(mac: false), [])
+        // The sidebar's page is offered wherever the prompt has the sidebar's rule, an app for both included.
+        XCTAssertEqual(Skills.offered(mac: false, sidebar: true), ["chrome-sidebar"])
     }
 
     /// The Mac prompt no longer carries what the 3D and map skills say, and their list names both.
@@ -70,7 +72,7 @@ final class SkillsTests: XCTestCase {
 
         let (missing, error) = Skills.read(["name": "3d"], from: shipped)
         XCTAssertEqual(missing, 400)
-        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: maps, scene-3d.")
+        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: chrome-sidebar, maps, scene-3d.")
     }
 
     func testParsing() {

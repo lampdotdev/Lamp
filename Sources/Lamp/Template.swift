@@ -8018,63 +8018,10 @@ enum Template {
         ///
         /// Call `pageChanged()` when what the page shows changed in the app, so `lamp.onChange` fires there.
         ///
-        /// A page to start from, for a sidebar that keeps something from the page. It goes through every state
-        /// a sidebar has: ready, reading, a preview to edit, saved (shown as the window shows it), and an error.
-        /// Its look is only placeholders: every `:root` value comes from the window's code, and each saved item is
-        /// drawn as the window draws it (here a card with the item's picture, a symbol and its facts).
-        ///
-        ///     <!-- Assets/Sidebar/index.html -->
-        ///     <!doctype html><html data-lamp-reads="page"><head><meta charset="utf-8">
-        ///     <link rel="stylesheet" href="/lamp.css"><link rel="stylesheet" href="app.css">
-        ///     <script src="/lamp.js"></script><script src="app.js" defer></script></head><body>
-        ///     <section id="ready"><p class="muted">Save this page's recipe with its ingredients.</p></section>
-        ///     <section id="preview" hidden><h1>Check it</h1>
-        ///       <label>Title<input id="title"></label>
-        ///       <label>Ingredients, one per line<textarea id="items" rows="8"></textarea></label></section>
-        ///     <h2>Saved</h2><div id="saved"></div><p id="status" class="status" role="status"></p>
-        ///     <div class="actions"><button id="main" class="primary">Read This Recipe</button>
-        ///       <button id="cancel" hidden>Cancel</button></div></body></html>
-        ///
-        ///     /* app.css: the window's own look, light and dark */
-        ///     :root { --bg: #fbf6ef; --surface: #ffffff; --ink: #2b2118; --muted: #8a7a6a; --line: #eadfd2;
-        ///             --accent: #d9622b; --on-accent: #ffffff; --radius: 14px; --control-radius: 999px;
-        ///             --font: system-ui; --title-font: Georgia; --title-size: 22px; }
-        ///     @media (prefers-color-scheme: dark) { :root { --bg: #1f1a16; --surface: #2a241f; --ink: #f3ece4; --line: #3a322b; } }
-        ///
-        ///     // app.js
-        ///     const $ = id => document.getElementById(id); let draft = null;
-        ///     const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
-        ///     function card(item) {   // {title, picture, minutes, count}: drawn as the window's card
-        ///       const c = el("div", "card");
-        ///       if (item.picture) { const img = el("img"); img.src = "/assets/" + encodeURIComponent(item.picture); c.append(img); }
-        ///       const words = el("div", "words"); words.append(el("h3", "", item.title));
-        ///       const facts = el("div", "facts"), time = el("span"), icon = el("img", "symbol");
-        ///       icon.src = "/symbols/clock.png?color=8a7a6a&size=14"; time.append(icon, " " + item.minutes + " min");
-        ///       facts.append(time, el("span", "", item.count + " ingredients")); words.append(facts); c.append(words);
-        ///       return c;
-        ///     }
-        ///     async function show() {
-        ///       const saved = await lamp.call("saved");
-        ///       $("saved").replaceChildren(...saved.map(card));
-        ///       $("ready").hidden = !!draft; $("preview").hidden = !draft; $("cancel").hidden = !draft;
-        ///       $("main").textContent = draft ? "Save" : "Read This Recipe";
-        ///     }
-        ///     $("main").onclick = async () => {
-        ///       $("main").disabled = true; $("status").textContent = draft ? "Saving…" : "Reading the page…";
-        ///       try {
-        ///         if (!draft) {
-        ///           draft = await lamp.call("preview", await lamp.readPage());   // {title, items, url}
-        ///           $("title").value = draft.title; $("items").value = draft.items.join("\n");
-        ///           $("status").textContent = "";
-        ///         } else {
-        ///           await lamp.call("save", {title: $("title").value, items: $("items").value.split("\n"), url: draft.url});
-        ///           $("status").textContent = "Saved."; draft = null;
-        ///         }
-        ///       } catch (error) { $("status").textContent = error.message; }
-        ///       $("main").disabled = false; show();
-        ///     };
-        ///     $("cancel").onclick = () => { draft = null; $("status").textContent = ""; show(); };
-        ///     lamp.onChange(show); show();
+        /// The page itself (Assets/Sidebar/index.html, its CSS and JavaScript beside it) is described, with a page
+        /// to start from that goes through every state, in Lamp's chrome-sidebar skill: open it with `read_skill`.
+        /// A call that fails throws `Failure`, whose message the page shows; the page loads nothing from the
+        /// internet, so a picture of an item reaches it from the app (`/assets/<file>`, or a `data:` URL).
         static func startPage(api: @escaping @MainActor (Call) async throws -> any Encodable) {
             pageAPI = api
             PageServer.queue.async { PageServer.listen() }
@@ -8402,33 +8349,82 @@ enum Template {
         })();
         """
 
-        /// `lamp.css`: the parts a sidebar is made of (boxes, rows, cards, fields, buttons, the bar at the foot), every
-        /// look of which comes from a variable the page sets to its app's own look in `:root`: `--bg`, `--surface`,
-        /// `--ink`, `--muted`, `--line`, `--field`, `--accent`, `--on-accent`, `--danger` (and the same in a dark
-        /// `@media`), `--font`, `--title-font`, `--title-size`, `--title-weight`, `--radius`, `--control-radius`,
-        /// `--control-height`, `--shadow`. Unset, they're a plain Mac window's.
+        /// `lamp.css`: the sidebar drawn as Apple draws a Mac app's narrow list pane, light and dark: the grouped grey
+        /// background, white rounded groups, rows whose separators start at the words, SF, and one tint, which the page
+        /// chooses with `<html data-tint="green">` among Apple's system colours (text and button shades measured to
+        /// read in both appearances). The parts (groups, rows, pictures, symbols as masks, buttons, fields, the bar at
+        /// the foot) are described in the chrome-sidebar skill, and rearrange themselves at large text sizes. The
+        /// variables `--accent`, `--ink`, `--muted`, `--line` and `--bg` are plain colours because the strip above
+        /// the page takes them (`tellLook`).
         nonisolated fileprivate static let style = """
-        :root{color-scheme:light dark;--bg:#eff1f2;--surface:#fdfdfd;--line:#dadcde;--field:#c4c7ca;--ink:#1d1d1f;--muted:#6e6e73;--accent:#0a64d6;--on-accent:#fff;--danger:#c2412a;--font:system-ui,-apple-system,sans-serif;--title-font:var(--font);--title-size:20px;--title-weight:700;--radius:10px;--control-radius:7px;--control-height:28px;--shadow:0 .5px 1.5px rgba(0,0,0,.1)}
-        @media (prefers-color-scheme:dark){:root{--bg:#1e1f20;--surface:#2a2b2c;--line:#3a3b3d;--field:#505255;--ink:#f5f5f7;--muted:#98989d;--danger:#ff7b6b;--shadow:none}}
+        :root{color-scheme:light dark;--bg:#f2f2f7;--surface:#ffffff;--ink:#1d1d1f;--muted:#6e6e73;--line:#dcdce0;--separator:rgba(60,60,67,.2);--tertiary:rgba(60,60,67,.3);--fill:rgba(120,120,128,.12);--fill-strong:rgba(120,120,128,.2);--hairline:rgba(0,0,0,.06);--raised:#ffffff;--raised-shadow:0 .5px 1px rgba(0,0,0,.12),0 2px 6px rgba(0,0,0,.06);--field:#c7c7cc;--danger:#d70015;--accent:var(--tint-text);--on-accent:var(--on-tint);--font:system-ui,-apple-system,BlinkMacSystemFont,sans-serif;--title-font:var(--font);--title-size:1.25rem;--title-weight:700;--radius:12px;--control-radius:7px;--control-height:28px;--shadow:none;--gutter:16px}
+        @media (prefers-color-scheme:dark){:root{--bg:#1c1c1e;--surface:#2c2c2e;--ink:#f5f5f7;--muted:#98989d;--line:#3a3a3c;--separator:rgba(84,84,88,.65);--tertiary:rgba(235,235,245,.3);--fill:rgba(118,118,128,.24);--fill-strong:rgba(118,118,128,.36);--hairline:rgba(255,255,255,.06);--raised:#636366;--raised-shadow:0 1px 2px rgba(0,0,0,.3);--field:#48484a;--danger:#ff6961}}
+        :root,html[data-tint=blue]{--tint:#007aff;--tint-text:#0063d0;--tint-fill:#0071e3;--on-tint:#ffffff;--tint-wash:#dbecff}
+        html[data-tint=green]{--tint:#34c759;--tint-text:#1f7a35;--tint-fill:#1f7a35;--on-tint:#ffffff;--tint-wash:#e3f7e8}
+        html[data-tint=orange]{--tint:#ff9500;--tint-text:#c93400;--tint-fill:#c93400;--on-tint:#ffffff;--tint-wash:#fff0db}
+        html[data-tint=red]{--tint:#ff3b30;--tint-text:#d10014;--tint-fill:#d70015;--on-tint:#ffffff;--tint-wash:#ffe4e2}
+        html[data-tint=pink]{--tint:#ff2d55;--tint-text:#cd0f43;--tint-fill:#d30f45;--on-tint:#ffffff;--tint-wash:#ffe2e7}
+        html[data-tint=purple]{--tint:#af52de;--tint-text:#8944ab;--tint-fill:#8944ab;--on-tint:#ffffff;--tint-wash:#f4e7fa}
+        html[data-tint=indigo]{--tint:#5856d6;--tint-text:#3634a3;--tint-fill:#3634a3;--on-tint:#ffffff;--tint-wash:#e8e7f9}
+        html[data-tint=teal]{--tint:#30b0c7;--tint-text:#0071a4;--tint-fill:#0071a4;--on-tint:#ffffff;--tint-wash:#e2f4f7}
+        html[data-tint=brown]{--tint:#a2845e;--tint-text:#7f6545;--tint-fill:#7f6545;--on-tint:#ffffff;--tint-wash:#f2eee8}
+        @media (prefers-color-scheme:dark){
+        :root,html[data-tint=blue]{--tint:#0a84ff;--tint-text:#51a5ff;--tint-fill:#0071e3;--on-tint:#ffffff;--tint-wash:#27384b}
+        html[data-tint=green]{--tint:#30d158;--tint-text:#30d158;--tint-fill:#30d158;--on-tint:#002e0f;--tint-wash:#2d4334}
+        html[data-tint=orange]{--tint:#ff9f0a;--tint-text:#ffb340;--tint-fill:#ff9f0a;--on-tint:#3a1d00;--tint-wash:#4a3c29}
+        html[data-tint=red]{--tint:#ff453a;--tint-text:#ff7a73;--tint-fill:#d70015;--on-tint:#ffffff;--tint-wash:#4a3030}
+        html[data-tint=pink]{--tint:#ff375f;--tint-text:#ff728d;--tint-fill:#d30f45;--on-tint:#ffffff;--tint-wash:#4a2e35}
+        html[data-tint=purple]{--tint:#bf5af2;--tint-text:#da8fff;--tint-fill:#8944ab;--on-tint:#ffffff;--tint-wash:#413249}
+        html[data-tint=indigo]{--tint:#5e5ce6;--tint-text:#9694ff;--tint-fill:#3634a3;--on-tint:#ffffff;--tint-wash:#333348}
+        html[data-tint=teal]{--tint:#40c8e0;--tint-text:#5de6ff;--tint-fill:#40c8e0;--on-tint:#002a33;--tint-wash:#2f4247}
+        html[data-tint=brown]{--tint:#ac8e68;--tint-text:#bfa37e;--tint-fill:#ac8e68;--on-tint:#2b1d0e;--tint-wash:#3e3a36}
+        }
         *{box-sizing:border-box}html{background:var(--bg)}
-        body{margin:0;padding:12px 16px 84px;background:var(--bg);color:var(--ink);font:13px/1.45 var(--font);-webkit-font-smoothing:antialiased}
-        h1{font:var(--title-weight) var(--title-size)/1.2 var(--title-font);letter-spacing:-.012em;margin:6px 0 4px}h2{font:600 12px/1.3 var(--font);margin:18px 2px 6px}h3{font:600 15px/1.3 var(--title-font);margin:0}
-        p{margin:0 0 8px}.muted{color:var(--muted)}a{color:var(--accent)}
-        .box,.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin:0 0 10px}
-        .box>p{margin:0;padding:9px 12px}.row{display:flex;gap:10px;align-items:center;padding:8px 12px;border-top:1px solid var(--line)}.box>.row:first-child{border-top:0}
-        .row .grow{flex:1;min-width:0}.row .sub{color:var(--muted);font-size:12px}.row img{flex:none}
-        .card>img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;background:var(--line)}.card .words{padding:10px 12px}.card .words p{color:var(--muted);margin:2px 0 0}
-        .facts{display:flex;flex-wrap:wrap;gap:4px 12px;color:var(--muted);font-size:12px}.facts img,.symbol{width:1.1em;height:1.1em;vertical-align:-.15em}
-        ul.list{list-style:none;margin:0;padding:0}ul.list li{padding:7px 12px;border-top:1px solid var(--line)}ul.list li:first-child{border-top:0}
-        label{display:block;margin:12px 0 0;font-weight:500}
-        input,textarea,select{display:block;width:100%;font:400 13px/1.45 var(--font);padding:5px 8px;border:1px solid var(--field);border-radius:calc(var(--control-radius) - 1px);margin-top:4px;background:var(--surface);color:var(--ink)}textarea{resize:vertical}
-        button{font:600 13px/1.3 var(--font);min-height:var(--control-height);padding:5px 14px;border:1px solid var(--line);border-radius:var(--control-radius);background:var(--surface);color:var(--ink);box-shadow:var(--shadow);cursor:pointer}
-        button.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}button:disabled{opacity:.5;cursor:wait}
-        button.link{border:0;background:none;box-shadow:none;color:var(--accent);padding:0;min-height:0}
-        :focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 50%,transparent);outline-offset:1px}
-        .actions{position:fixed;bottom:0;left:0;right:0;display:flex;flex-wrap:wrap;gap:8px;padding:10px 16px 14px;background:var(--bg);border-top:1px solid var(--line)}
-        .status{color:var(--muted);margin:8px 2px}.status:empty{display:none}.error{color:var(--danger)}
-        .empty{color:var(--muted);text-align:center;padding:28px 12px}
+        body{margin:0;padding:0 0 24px;background:var(--bg);color:var(--ink);font:400 .8125rem/1.38 var(--font);-webkit-font-smoothing:antialiased;-webkit-user-select:none;user-select:none;cursor:default}
+        .selectable,input,textarea{-webkit-user-select:text;user-select:text}
+        h1,h2,h3,p{margin:0}h1,.title{font:var(--title-weight) var(--title-size)/1.2 var(--title-font)}h2{font:600 .8125rem/1.3 var(--font)}h3,.headline{font:600 .8125rem/1.3 var(--font)}
+        .muted,.secondary{color:var(--muted)}.tint{color:var(--tint-text)}a{color:var(--tint-text);text-decoration:none}img{-webkit-user-drag:none}
+        .num{font-variant-numeric:tabular-nums}.clamp-1,.clamp-2{display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden}.clamp-1{-webkit-line-clamp:1}.clamp-2{-webkit-line-clamp:2}
+        :focus-visible{outline:3px solid color-mix(in srgb,var(--tint) 50%,transparent);outline-offset:1px}
+        .sym{display:inline-block;flex:none;width:1.15em;height:1.15em;vertical-align:-.2em;background-color:currentColor;-webkit-mask:var(--sym) center/contain no-repeat;mask:var(--sym) center/contain no-repeat}
+        .symbol{width:1.1em;height:1.1em;vertical-align:-.15em}
+        .collection-header{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:20px var(--gutter) 10px calc(var(--gutter) + 2px)}
+        .collection-header .count{color:var(--muted);font-size:.75rem;font-variant-numeric:tabular-nums;white-space:nowrap}
+        .section-header{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font:600 .8125rem/1.3 var(--font);margin:18px calc(var(--gutter) + 4px) 7px}
+        .section-footer{color:var(--muted);font-size:.6875rem;line-height:1.35;margin:7px calc(var(--gutter) + 4px) 0}
+        .group,.box{margin:0 var(--gutter);background:var(--surface);border-radius:var(--radius);corner-shape:superellipse(1.6);box-shadow:0 0 0 .5px var(--hairline);overflow:hidden}
+        .group+.group,.box+.box{margin-top:12px}.box>p{padding:10px 12px}
+        .row{position:relative;display:flex;align-items:center;gap:12px;min-height:44px;padding:9px 12px;--inset:12px}
+        .row.has-thumb{--inset:calc(24px + var(--thumb,44px))}.row.has-dot{--inset:33px;align-items:flex-start;padding-top:11px;padding-bottom:11px}.row.has-dot .dot{margin-top:4px}
+        .row+.row::before,.field+.field::before{content:"";position:absolute;top:0;right:0;left:var(--inset);height:.5px;background:var(--separator)}
+        .row .main,.row .grow{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+        .row .title-line{font:600 .8125rem/1.3 var(--font)}
+        .meta,.row .sub{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;color:var(--muted);font-size:.75rem}.meta>span{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.meta .sym{font-size:.6875rem}
+        .row .trailing{flex:none;display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.75rem;font-variant-numeric:tabular-nums}
+        .row[role=button]:active{background:var(--fill)}.row[role=button]:focus-visible{outline:0;box-shadow:inset 0 0 0 3px color-mix(in srgb,var(--tint) 50%,transparent);border-radius:8px}
+        .facts-line,.facts{display:flex;flex-wrap:wrap;color:var(--muted);font-size:.75rem}.facts-line>span,.facts>span{white-space:nowrap}.facts-line>span:not(:last-child)::after,.facts>span:not(:last-child)::after{content:"·";margin:0 5px}
+        .thumb{flex:none;width:var(--thumb,44px);height:var(--thumb,44px);border-radius:9px;corner-shape:superellipse(1.6);object-fit:cover;background:var(--fill);outline:.5px solid var(--hairline);outline-offset:-.5px}
+        .thumb.placeholder{display:grid;place-items:center;background:var(--tint-wash);color:var(--tint-text);font-size:calc(var(--thumb,44px) * .42)}
+        .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:16px 12px;margin:0 var(--gutter)}
+        .card{display:flex;flex-direction:column;gap:6px;min-width:0}.card .picture,.card>img{display:block;width:100%;aspect-ratio:4/3;border-radius:10px;corner-shape:superellipse(1.6);object-fit:cover;background:var(--fill);outline:.5px solid var(--hairline);outline-offset:-.5px}
+        .card .picture.placeholder{display:grid;place-items:center;color:var(--tint-text);font-size:1.875rem;background:var(--tint-wash)}.card .title-line{font:600 .8125rem/1.3 var(--font)}
+        button,.button{-webkit-appearance:none;appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:var(--control-height);padding:0 12px;border:0;border-radius:var(--control-radius);font:500 .8125rem/1.2 var(--font);white-space:nowrap;cursor:default;background:var(--fill-strong);color:var(--ink)}
+        button:active{filter:brightness(.92)}button:disabled{opacity:.45}
+        button.primary{background:var(--tint-fill);color:var(--on-tint);font-weight:600}button.tinted{background:var(--tint-wash);color:var(--tint-text);font-weight:600}button.plain,button.link{background:none;color:var(--tint-text);padding:0 4px;min-height:0}button.capsule{border-radius:999px;padding:0 14px}
+        .offer{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;padding:12px}.offer .main{flex:1 1 120px;min-width:0}.offer>button{margin-left:auto}.offer .thumb{--thumb:40px}
+        .page-top{height:12px}
+        .segmented{display:flex;margin:0 var(--gutter) 10px;padding:2px;border-radius:8px;background:var(--fill)}.segmented button{flex:1;min-height:24px;border-radius:6px;background:transparent;font-size:.75rem}.segmented button[aria-pressed=true]{background:var(--raised);box-shadow:var(--raised-shadow)}
+        .pill{display:inline-flex;align-items:center;gap:3px;height:20px;padding:0 8px;border-radius:999px;font:600 .6875rem/1 var(--font);background:var(--tint-wash);color:var(--tint-text);white-space:nowrap}.pill.neutral{background:var(--fill);color:var(--muted)}
+        .dot{flex:none;width:9px;height:9px;border-radius:50%;background:var(--tint)}.dot.off{background:transparent}
+        .status,.status-line{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.75rem;margin:10px calc(var(--gutter) + 4px) 0}.status:empty,.status-line:empty{display:none}.error{color:var(--danger)}
+        .empty{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;padding:36px 28px;color:var(--muted)}.empty .sym{font-size:2.5rem;color:var(--tertiary);margin-bottom:6px}.empty .title{font-size:1.0625rem;font-weight:600;color:var(--ink)}
+        .field{position:relative;display:flex;align-items:center;gap:12px;min-height:40px;padding:0 12px;--inset:12px}.field>label{flex:none;width:84px;margin:0;color:var(--ink)}
+        input,textarea,select{display:block;flex:1;width:100%;min-width:0;margin:6px 0;padding:4px 8px;border:0;border-radius:6px;background:var(--fill);color:var(--ink);font:400 .8125rem/1.38 var(--font)}textarea{resize:vertical}
+        input:focus,textarea:focus,select:focus{outline:3px solid color-mix(in srgb,var(--tint) 50%,transparent);outline-offset:0;background:var(--surface);box-shadow:inset 0 0 0 .5px var(--field)}input::placeholder,textarea::placeholder{color:var(--tertiary)}
+        label{display:block}
+        .bottom-bar,.actions{position:sticky;bottom:0;display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-top:18px;padding:10px var(--gutter) 14px;background:color-mix(in srgb,var(--bg) 85%,transparent);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border-top:.5px solid var(--separator)}
+        ul.list{list-style:none;margin:0 var(--gutter);padding:0;background:var(--surface);border-radius:var(--radius);overflow:hidden}ul.list li{position:relative;padding:11px 12px}ul.list li+li::before{content:"";position:absolute;top:0;right:0;left:12px;height:.5px;background:var(--separator)}
+        @media (max-width:19em){.offer{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start}.offer>button{grid-column:2;justify-self:start;margin:0}.row{flex-wrap:wrap;align-items:flex-start;--thumb:32px}.row .trailing{flex-basis:100%;padding-left:calc(var(--inset) - 12px)}.meta>span,.facts-line>span,.facts>span{white-space:normal}.clamp-1{-webkit-line-clamp:3}.collection-header{flex-wrap:wrap}.field{display:block;padding:8px 12px}.field>label{width:auto}.grid{grid-template-columns:1fr}}
         [hidden]{display:none!important}
         """
     }

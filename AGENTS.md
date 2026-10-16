@@ -94,7 +94,7 @@ A capability given to one engine must be given to all of them that can take it, 
   and Lamp keeps that off where it can (pi's `--no-skills`; Claude Code's `--disable-slash-commands`, without which
   it loads its own skills for coding work; Codex's sandbox keeps the person's out of reach): those are for other
   work, and the same file for every engine is one place to keep up to date. When an app's own code
-  shows a skill applies (`Skills.applying`: it imports RealityKit, it uses OpenStreetMap data), Lamp names it at
+  shows a skill applies (`Skills.applying`: it imports RealityKit, it uses OpenStreetMap data, it has a Chrome sidebar page), Lamp names it at
   the end of the request (`Skills.brief`), sent like `AIStatus.brief` through `RequestNote`: once per
   conversation, again when it changes or the conversation was compacted. What's remembered as told carries each
   skill's revision (`Skills.revision`, a hash of its instructions), so a conversation told of a skill before an
@@ -587,16 +587,23 @@ when the page's file declares it, once per click in it). The page asks its app f
 with a key Lamp hands the extension, which passes it on only once the page proves it's the app's: the key's
 signature over a nonce and the port); the app answers only its own name, only that key, never a request another
 site made, and lets only the extension frame the page, whose own policy keeps it talking to the app alone. The page
-looks like its app, not like a web page: `/lamp.css` gives it the parts a sidebar is made of, each look a variable
-the page sets from the window's code (colours, type, corners, controls), the app serves its own pictures
-(`/assets/`) and the SF Symbols its window shows (`/symbols/`, drawn by the app), and the extension draws its
-strip above the page in the page's colours (`look`, plain colours only). Apps built before pages still publish a
+looks as if Apple made it, not like a web page and not like a copy of the window's own theme: `/lamp.css` is
+Apple's system look for a narrow Mac list pane, light and dark (grouped grey ground, rounded groups, inset
+separators, SF, parts that rearrange at large text), and an app stands out only through one tint, chosen among
+Apple's system colours with `data-tint` (each shade measured to read, `SidebarTintTests`), and its own content.
+How a page is built (layout, pictures, every state from reading to a failed save, what to check) is the
+`chrome-sidebar` skill, which the builder opens before writing the page. The app serves its own pictures
+(`/assets/`, or hands one it keeps with an item to the page as a `data:` URL) and SF Symbols (`/symbols/`, drawn by
+the app, used as masks), and the extension draws its strip above the page in the page's colours (`look`, plain
+colours only). Apps built before pages still publish a
 surface as data (`LampBrowser.start`), which the extension still draws. The app declares where it fits in
 `browser.json` (`BrowserCompanions.Declaration`), which Chrome matches without the extension reading the page. The
 builder decides from the wish (`Agent.Rules.browserCompanion`) and tries the sidebar with `look_at_app` and
 `use_app` given `sidebar` and `page`: Lamp opens the app's page itself, out of sight at the sidebar's width
-(`PagePreview`), shows it with the app's window beside it to compare, and hands it the page beside it, so every
-engine tries it the same way; it's the one thing the builder uses in a new app, since it isn't the person's Chrome.
+(`PagePreview`), shows it light, dark and at 200% zoom with the app's window beside it, says what it measured there
+(contrast, the system font, small words, pictures and symbols that didn't load, sideways scrolling, words cut off,
+parts out of line),
+and hands it the page beside it, so every engine tries it the same way; it's the one thing the builder uses in a new app, since it isn't the person's Chrome.
 Each Chrome tab has its own sidebar and the app keeps what one tab prepared by its tab (`call.tab`), so what one
 page prepared never shows on another; keep that when changing either side.
 
