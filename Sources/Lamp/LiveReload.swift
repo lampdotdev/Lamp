@@ -684,8 +684,12 @@ enum LiveSlots {
                                         rewritten: Set<String>, layout: [String: [String]]) -> (Range<Int>, String)? {
         guard let variable = declarations.constants[key] else { return nil }
         let binding = declarations.bindings[variable.binding]
-        guard binding.entries.count == 1, let start = text.offset(binding.start), let end = text.tokenEnd(binding.last),
-              text.slice(start, start + 3) == "let", let initial = initialText(of: variable, in: declarations) else { return nil }
+        guard binding.entries.count == 1, let from = text.offset(binding.start), let end = text.tokenEnd(binding.last),
+              let at = text.offset(variable.position), let initial = initialText(of: variable, in: declarations) else { return nil }
+        // The declaration may start at `static` (or `class`): the `let` is the last word before the name.
+        let lead = text.slice(from, at)
+        guard let keyword = lead.range(of: #"\blet\b"#, options: [.regularExpression, .backwards]) else { return nil }
+        let start = from + lead[..<keyword.lowerBound].utf8.count
         var seen = Set<String>()
         guard !holdsObject(variable.type, classes: declarations.classes, layout: layout, seen: &seen) else { return nil }
         // Its own text, and those of the rewritten constants it's made from, however far back.
