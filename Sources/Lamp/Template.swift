@@ -3393,17 +3393,30 @@ enum Template {
         }
         /// A struct's property, by name.
         func field(_ name: String) -> Any? { (value as? [String: Any])?[name] }
-        static func setting(_ name: String, to new: Any, in spare: LampSpare?) -> LampSpare {
+        /// A property set back to its starting value is taken out, as if never set: a value that has it and one
+        /// that never did are alike, as they would be with the property stored.
+        static func setting(_ name: String, to new: Any, initial: Any, in spare: LampSpare?) -> LampSpare? {
             var fields = (spare?.value as? [String: Any]) ?? [:]
-            fields[name] = new
-            return LampSpare(fields)
+            fields[name] = same(new, initial) ? nil : new
+            return fields.isEmpty ? nil : LampSpare(fields)
         }
-        private var comparable: [String: AnyHashable] {
-            if let fields = value as? [String: Any] { return fields.compactMapValues { $0 as? AnyHashable } }
-            return (value as? AnyHashable).map { ["": $0] } ?? [:]
+        private static func same(_ a: Any?, _ b: Any?) -> Bool {
+            guard let a, let b else { return a == nil && b == nil }
+            guard let equatable = a as? any Equatable else { return false }
+            func compare<T: Equatable>(_ x: T) -> Bool { (b as? T) == x }
+            return compare(equatable)
         }
-        static func == (a: LampSpare, b: LampSpare) -> Bool { a.comparable == b.comparable }
-        func hash(into hasher: inout Hasher) { hasher.combine(comparable) }
+        private var fields: [String: Any] { (value as? [String: Any]) ?? (value.map { ["": $0] } ?? [:]) }
+        static func == (a: LampSpare, b: LampSpare) -> Bool {
+            let left = a.fields, right = b.fields
+            return Set(left.keys) == Set(right.keys) && left.allSatisfy { same($0.value, right[$0.key]) }
+        }
+        func hash(into hasher: inout Hasher) {
+            for (name, value) in fields.sorted(by: { $0.key < $1.key }) {
+                hasher.combine(name)
+                if let value = value as? AnyHashable { hasher.combine(value) }
+            }
+        }
     }
 
     /// A view's spare state (LiveSlots): `@State` added to a view while the app is open is kept here by name, so the

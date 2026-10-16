@@ -522,11 +522,14 @@ the only difference in layout is new stored properties in such types, `LiveSlots
 declaration in the live copy into a computed property kept in a spare (a view's `$name` becomes a binding to its
 box), and the change is compiled again and checked as usual. Being stored, a spare is observed like any property, so
 views redraw. A class's starting value that isn't a literal (`.now`, a call) is worked out on the first read and kept;
-a struct can't keep one from a read, so its new property needs a starting value that comes out the same every time
-(the change reopens the app otherwise); a `@Published` property in a class whose places aren't published (conforming
+a struct can't keep one from a read, so its new property needs a starting value that comes out the same every time (a
+literal, an empty collection, or one of the app's own enum's cases; anything else reopens the app), and set back to
+that value it's taken out of the spare, so its synthesized `Equatable` and `Hashable` treat it as never set; a `@Published` property in a class whose places aren't published (conforming
 in an extension) reopens it too. `@State` is read in both forms the compiler has given it: `_name: State<T>`, and
 `__name: LazyState<T>` where it is a macro. Cases added at the end of an enum whose cases carry nothing need no
-spare: its values keep their size (`LiveSlots.casesAdded`). Which property is in which spare
+spare: its values keep their size (`LiveSlots.casesAdded`). Only while nothing the app keeps holds it but as itself or
+in a plain collection: Swift uses the numbers after the last case for `nil` in an optional of it and for other enums'
+cases that carry it, which a new case would take over. Which property is in which spare
 (`.lamp/live/slots.json`) is put back into each fresh copy (`LiveSlots.apply`) until the app is installed again: the
 whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs
 once it's installed (`LiveReload.markRunning(from:)`). A spare never reaches saved data: `LampSpare` encodes as

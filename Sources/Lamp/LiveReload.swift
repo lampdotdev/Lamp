@@ -144,7 +144,7 @@ enum LiveReload {
         let old = byType(before), new = byType(now)
         for (type, members) in old.sorted(by: { $0.key < $1.key }) {
             guard let current = new[type] else { return ("\(type) was taken away", nil) }
-            if current != members, !LiveSlots.casesAdded(members, current) {
+            if current != members, !LiveSlots.casesAdded(type, members, current, all: now) {
                 let what = (current.first { !members.contains($0) } ?? members.first { !current.contains($0) }.map { "no longer " + $0 } ?? "the order of its fields")
                     .replacingOccurrences(of: "\t", with: ".")
                 return ("\(type) changed what it holds (\(what))", nil)
@@ -389,15 +389,29 @@ enum LiveSlots {
         for (type, properties) in mapping(project) {
             for (name, slot) in properties {
                 var unused: [URL: Data] = [:]
-                _ = rewrite(name, as: slot, in: type, published: nil, project: project, keeping: &unused)
+                _ = rewrite(name, as: slot, in: type, published: nil, cases: nil, project: project, keeping: &unused)
             }
         }
     }
 
     /// Whether an enum only gained cases, at the end, with none of its cases carrying anything: a value of it is
     /// then its case's number, which the cases it had keep, in the same size (up to 256 cases; one case takes no
-    /// room, so it needs two to begin with). The code that reads the new cases is the change's.
-    static func casesAdded(_ old: [String], _ new: [String]) -> Bool {
+    /// room, so it needs two to begin with). The code that reads the new cases is the change's. But the numbers
+    /// after the last case mean something too: Swift uses the first one free for `nil` in an optional of it, and
+    /// the next for another enum's cases that carry it, so a new case would read an existing `nil` as itself.
+    /// So it's only when nothing the app keeps holds the enum but as itself or in a plain collection of it (`all`,
+    /// the new code's whole layout).
+    static func casesAdded(_ type: String, _ old: [String], _ new: [String], all: [String]) -> Bool {
+        let name = NSRegularExpression.escapedPattern(for: type)
+        let mention = try! NSRegularExpression(pattern: #"(?<![\w.])"# + name + #"(?![\w])"#)
+        let plainly = try! NSRegularExpression(pattern: #"^(\[(\w[\w.]*: )?"# + name + #"\]|Set<"# + name + #">|"# + name + #")$"#)
+        for entry in all where !entry.hasPrefix(type + "\t") {
+            guard let colon = entry.range(of: ": ") else { continue }
+            let held = String(entry[colon.upperBound...]), range = NSRange(held.startIndex..., in: held)
+            guard mention.firstMatch(in: held, range: range) != nil else { continue }
+            let carried = entry.split(separator: "\t", maxSplits: 1).last?.hasPrefix("case ") == true
+            if carried || plainly.firstMatch(in: held, range: range) == nil { return false }
+        }
         func plain(_ entry: String) -> Bool {
             guard let field = entry.split(separator: "\t", maxSplits: 1).last, field.hasPrefix("case ") else { return false }
             return field.components(separatedBy: "->").count == 2
@@ -420,7 +434,7 @@ enum LiveSlots {
         var planned: [(type: String, name: String, slot: Slot, published: Bool)] = []
         for (type, members) in old.sorted(by: { $0.key < $1.key }) {
             guard let current = new[type] else { return nil }
-            guard current != members, !casesAdded(members, current) else { continue }
+            guard current != members, !casesAdded(type, members, current, all: after) else { continue }
             // Only additions, with what was there still there, in order.
             let extras = current.filter { !members.contains($0) }
             guard current.filter({ members.contains($0) }) == members, !extras.isEmpty else { return nil }
@@ -474,9 +488,15 @@ enum LiveSlots {
         }
         // Every type the open app doesn't have is the library's to lay out; one it has that changed must be fitted.
         guard !planned.isEmpty else { return nil }
+        var cases: [String: Set<String>] = [:]
+        for entry in after {
+            let parts = entry.split(separator: "\t", maxSplits: 1)
+            guard parts.count == 2, parts[1].hasPrefix("case "), let colon = parts[1].range(of: ": ") else { continue }
+            cases[String(parts[0]), default: []].insert(String(parts[1][parts[1].index(parts[1].startIndex, offsetBy: 5)..<colon.lowerBound]))
+        }
         var originals: [URL: Data] = [:]
         for item in planned {
-            guard rewrite(item.name, as: item.slot, in: item.type, published: item.published, project: project, keeping: &originals) != nil else {
+            guard rewrite(item.name, as: item.slot, in: item.type, published: item.published, cases: cases, project: project, keeping: &originals) != nil else {
                 // Put back what was already rewritten: the change goes in by reopening, from the copy as it was.
                 for (url, data) in originals { try? data.write(to: url) }
                 return nil
@@ -506,12 +526,15 @@ enum LiveSlots {
     }
 
     /// A struct can't keep a value the first time it's read (its getter can't change it), so its new property's
-    /// starting value must come out the same every time: a literal, a case or a constant (`.sedan`, `Color.red`),
-    /// or an empty value made fresh (`[Item]()`, `Settings()`), but not `.now`, `Date()` or `UUID()`.
-    private static func isSteady(_ value: String) -> Bool {
-        if isLiteral(value) { return true }
-        if value.range(of: #"(^|\.)now$|^(UUID|Date)\(\)$|random"#, options: .regularExpression) != nil { return false }
-        return value.range(of: #"^([A-Z]\w*)?\.[A-Za-z_]\w*$|^[A-Z][\w.<>, \[\]:?]*\(\)$|^\[[\w.<>, :?]+\]\(\)$"#, options: .regularExpression) != nil
+    /// starting value must come out the same every time: a literal, an empty collection (`[Item]()`), or one of
+    /// the app's own enum's cases (`.sedan`, by the enum's cases in `cases`). Nothing judged by its spelling alone:
+    /// `Session()` may make something new each time, and `.shared` or `.now` may be worked out on each read.
+    private static func isSteady(_ value: String, type: String, cases: [String: Set<String>]) -> Bool {
+        if isLiteral(value) || value.range(of: #"^\[[\w.<>, :?]+\]\(\)$"#, options: .regularExpression) != nil { return true }
+        let enumName = type.hasSuffix("?") ? String(type.dropLast()) : type
+        let parts = value.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 2, parts[0].isEmpty || parts[0] == Substring(enumName) else { return false }
+        return cases[enumName]?.contains(String(parts[1])) == true
     }
 
     /// Turns `var name = value` in the type `type` of the live copy into a computed property kept in its spare.
@@ -521,7 +544,9 @@ enum LiveSlots {
     /// `$name` becomes a binding to the box, through the whole file. Answers the file changed.
     /// `published` is whether the class's places are @Published, when known: a declaration marked @Published in a
     /// class whose places aren't (its ObservableObject is declared in an extension) would stop telling views, so it isn't moved.
-    private static func rewrite(_ name: String, as slot: Slot, in type: String, published: Bool?, project: LampProject,
+    /// `cases` (each enum's cases, in the new code) is for judging a struct's starting value; nil when putting back
+    /// what was judged before.
+    private static func rewrite(_ name: String, as slot: Slot, in type: String, published: Bool?, cases: [String: Set<String>]?, project: LampProject,
                                 keeping originals: inout [URL: Data]) -> URL? {
         let holder = slot.holder ?? .object
         let simple = simpleName(type)
@@ -569,10 +594,11 @@ enum LiveSlots {
                     let setter = isLet ? "" : " set { \(place) = LampSpare(newValue) }"
                     replacement = "\(opening)\(name): \(declared) { \(getter)\(setter) }"
                 case .value:
-                    guard isSteady(initial) else { return nil }
+                    if let cases { guard isSteady(initial, type: declared, cases: cases) else { return nil } }
                     let place = place(in: type, holder: .value)
                     let getter = "get { if let v = \(place)?.field(\"\(name)\") as? \(declared) { return v }; return \(initial) }"
-                    let setter = isLet ? "" : " set { \(place) = LampSpare.setting(\"\(name)\", to: newValue, in: \(place)) }"
+                    // Set back to its starting value, it's as if never set, so two values alike compare alike.
+                    let setter = isLet ? "" : " set { \(place) = LampSpare.setting(\"\(name)\", to: newValue, initial: { () -> \(declared) in \(initial) }(), in: \(place)) }"
                     replacement = "\(opening)\(name): \(declared) { \(getter)\(setter) }"
                 case .view:
                     let box = place(in: type, holder: .view)
