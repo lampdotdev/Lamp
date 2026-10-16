@@ -3831,6 +3831,8 @@ final class Store: ObservableObject {
         guard LiveReload.eligible(project), let app = macCopies(of: project).first,
               Self.binary(of: project, contains: "reloaded.txt") else { return false }
         let changed: [String]
+        // Properties moved into spare places by an earlier change are moved again in this fresh copy.
+        LiveSlots.apply(project)
         switch await LiveReload.verdict(project) {
         case .reload(let files): changed = files
         // The open app already runs these sources (a change that went in before its build): nothing to do.
@@ -3842,8 +3844,20 @@ final class Store: ObservableObject {
         note("Updating \(project.name) in place…", for: project)
         // The changed files' compile and the whole code's check go side by side; the check decides.
         async let compiled = LiveReload.compile(project, changed: changed)
-        let check = await LiveReload.layoutProblem(project)
-        let (library, problem) = await compiled
+        let (before, after) = await LiveReload.layouts(project)
+        var check = LiveReload.layoutProblem(before: before, after: after)
+        var (library, problem) = await compiled
+        // Stored properties added to classes go into their spare places, and the change is compiled again.
+        if check.problem != nil, let before, let after, let moved = LiveSlots.fit(project, before: before, after: after) {
+            async let again = LiveReload.compile(project, changed: changed)
+            let now = await LiveReload.layout(of: LiveReload.sources(project), files: nil, module: project.exe,
+                                              macOS: Template.macMinimum(project))
+            check = LiveReload.layoutProblem(before: before, after: now)
+            (library, problem) = await again
+            if check.problem == nil {
+                log(project, .detail, "Added \(moved.joined(separator: ", ")) without reopening \(project.name).")
+            }
+        }
         if let why = check.problem {
             log(project, .detail, "Reopening \(project.name) for this change: \(why).")
             return false
@@ -4501,7 +4515,14 @@ final class Store: ObservableObject {
         }
         // What the app now runs when it opens is this build's sources (LiveReload compares a change with them).
         LiveReload.installed(project)
-        if LiveReload.eligible(project) { LiveReload.markRunning(project) } else { LiveReload.forget(project) }
+        // The installed app's classes hold every property it was built with, and its spare places are empty.
+        LiveSlots.clear(project)
+        if LiveReload.eligible(project) {
+            let built = LiveReload.built(project)
+            LiveReload.markRunning(project, from: FileManager.default.fileExists(atPath: built.path) ? built : nil)
+        } else {
+            LiveReload.forget(project)
+        }
         // Nudge Finder, the Dock and Launchpad to pick up the new icon.
         try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: project.installedURL.path)
         _ = await Shell.run(

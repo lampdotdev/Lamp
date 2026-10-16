@@ -488,6 +488,8 @@ enum Template {
         \(liveCopySteps)
           # Lamp only wants the live copy, to put a change into the open app before building the whole of it.
           [[ "${LAMP_LIVE_COPY:-}" == 1 ]] && exit 0
+          # What this build compiles, which is what the app runs once it's installed (LiveReload.markRunning).
+          rsync -a --delete "$LIVE/Sources/" "$LIVE/built/"
           mkdir -p "$LIVE/xcode"
           rsync -a --delete --exclude DerivedData .lamp/device/ "$LIVE/xcode/device/"
           ln -sfn ../../Assets "$LIVE/Assets"
@@ -3376,6 +3378,19 @@ enum Template {
     }
 
     #if LAMP_LIVE
+    /// A spare place in a class, for a stored property added while the app is open (LiveReload's slots): live
+    /// builds give every class of the app's a few, empty, and a new property kept in one leaves the object's
+    /// layout as the open app has it. Saved data never holds one (it encodes as nothing and decodes empty).
+    struct LampSpare: Codable, @unchecked Sendable {
+        var value: Any?
+        init(_ value: Any?) { self.value = value }
+        init(from decoder: Decoder) throws { value = nil }
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encodeNil()
+        }
+    }
+
     /// Changes made while the app is open, put into it without a restart (live builds only: debug, linked
     /// -interposable, from Lamp's copy of the sources with each view's body wrapped). Lamp compiles the files a
     /// change touched into a library in `.lamp/live`; asked with the app's token, this loads it and points the
@@ -12594,6 +12609,9 @@ enum Template {
         out="$LIVE/$f"
         mkdir -p "${out:h}"
         perl -0pe 's/var body: some View \\{/var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\\n    \\@ViewBuilder var __lampBody: some View {/g' "$f" > "$out.new"
+        # Every class of the app's gets \(LiveSlots.count) spare places for properties added while it's open (LiveSlots),
+        # named after the class, so a subclass's don't clash with those it inherits.
+        case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) perl -0pi -e 's#^([ \\t]*)((?:@[\\w.]+(?:\\([^)\\n]*\\))?\\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated)\\s+)*class\\s+(?!(?:func|var|let|subscript|override|class)\\b)(\\w+)[^{\\n]*\\{)#my ($i, $h, $n) = ($1, $2, $3); ($h =~ /\\@Model\\b|NSManagedObject|(?<!unchecked )\\bSendable\\b/) ? "$i$h" : "$i$h" . join("", map { "\\n$i    " . ($h =~ /ObservableObject/ ? "\\@Published " : "") . "var __lampSpare_${n}_$_: LampSpare? = nil;" } 0 .. \(LiveSlots.count - 1))#gme' "$out.new" ;; esac
         if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi
       done
       for f in "$LIVE"/Sources/**/*.swift(N); do [[ -f "${f#$LIVE/}" ]] || rm "$f"; done
@@ -12625,6 +12643,8 @@ enum Template {
       cmp -s Package.swift "$LIVE/Package.swift" || cp Package.swift "$LIVE/Package.swift"
       # Lamp only wants the live copy, to put a change into the open app before building the whole of it.
       [[ "${LAMP_LIVE_COPY:-}" == 1 ]] && exit 0
+      # What this build compiles, which is what the app runs once it's installed (LiveReload.markRunning).
+      rsync -a --delete "$LIVE/Sources/" "$LIVE/built/"
       FLAGS=(-c debug --package-path "$LIVE" --scratch-path "$LIVE/.build" -Xswiftc -DLAMP_LIVE -Xswiftc -enable-testing -Xlinker -interposable "${RESTRICT[@]}")
     fi
     \(appIntentsSetup(ios: false))
