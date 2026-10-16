@@ -4481,7 +4481,9 @@ enum Template {
             column.view.identifier = identifier
             column.addChild(host)
             host.view.translatesAutoresizingMaskIntoConstraints = false
+            host.view.identifier = chatIdentifier
             column.view.addSubview(host.view)
+            watchClicks()
             // The bar above the chat, drawn as the message box's row is at its foot: round buttons floating on the
             // paper with nothing behind them, closing the chat at the left (as an inspector closes) and opening it
             // in Lamp at the right, with what the chat is for between them. They're the column's, not the title
@@ -4552,6 +4554,39 @@ enum Template {
             }
             LampMagic.refit(window)
             fadeIn(host.view)
+        }
+
+        private static let chatIdentifier = NSUserInterfaceItemIdentifier("lampSidebarChat")
+        nonisolated(unsafe) private static var clicks: Any?
+
+        /// Two things AppKit doesn't do for the chat beside the app, done as each click arrives. The bar's buttons
+        /// sit where the window's title bar is, and a window with a toolbar lays the toolbar over them, which takes
+        /// their clicks: a click on one presses it. And the chat is drawn by another process, which AppKit's focus
+        /// doesn't follow, so what had the keyboard before (a list, a field) keeps it through a click in the chat:
+        /// once the click has landed, the keyboard goes to the chat.
+        @MainActor private static func watchClicks() {
+            guard clicks == nil else { return }
+            clicks = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+                MainActor.assumeIsolated {
+                    guard let window = event.window, let item = item(in: window), !item.isCollapsed else { return event }
+                    let column = item.viewController.view
+                    let point = column.convert(event.locationInWindow, from: nil)
+                    guard column.bounds.contains(point) else { return event }
+                    for case let button as RoundButton in column.subviews where !button.isHidden && button.isEnabled && button.frame.contains(point) {
+                        button.performClick(nil)
+                        return nil
+                    }
+                    if let chat = column.subviews.first(where: { $0.identifier == chatIdentifier }), chat.frame.contains(point) {
+                        let location = event.locationInWindow
+                        DispatchQueue.main.async {
+                            guard let hit = chat.hitTest(chat.superview?.convert(location, from: nil) ?? .zero) else { return }
+                            let target = sequence(first: hit, next: \.superview).first { $0.acceptsFirstResponder && $0.isDescendant(of: chat) }
+                            if let target, window.firstResponder !== target { window.makeFirstResponder(target) }
+                        }
+                    }
+                    return event
+                }
+            }
         }
 
         /// The app's content as wide as it was before the chat opened (`content`), or else the chat at its own
