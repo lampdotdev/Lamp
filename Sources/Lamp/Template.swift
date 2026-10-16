@@ -4813,6 +4813,7 @@ enum Template {
             }
         }()
 
+        // begin LampWindows.reopen
         @MainActor private final class ReopenHandler: NSObject {
             static let shared = ReopenHandler()
 
@@ -4822,10 +4823,18 @@ enum Template {
                     forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEReopenApplication))
             }
 
+            /// After the Apple Event is handled, not inside it. A new window is the app's own code (its views' first
+            /// `makeNSView`), which may throw an Objective-C exception, such as WebKit's for a script message handler
+            /// added twice. Thrown inside the Apple Event it's caught there and the app goes on, but Swift can't be
+            /// unwound by one: what the skipped code had set, such as SwiftUI's record of what a view is reading, is
+            /// never put back, and the app crashes later, somewhere unrelated, with a report that names neither the
+            /// exception nor the code that threw it. Thrown here, it ends the app with a report that names both
+            /// (`Runtime.crash`).
             @objc func reopen(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
-                LampWindows.show()
+                DispatchQueue.main.async { MainActor.assumeIsolated { LampWindows.show() } }
             }
         }
+        // end LampWindows.reopen
 
         @MainActor static func show() {
             NSApp.unhide(nil)
