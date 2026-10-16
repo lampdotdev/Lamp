@@ -144,13 +144,53 @@ enum LiveReload {
         let old = byType(before), new = byType(now)
         for (type, members) in old.sorted(by: { $0.key < $1.key }) {
             guard let current = new[type] else { return ("\(type) was taken away", nil) }
-            if current != members, !LiveSlots.casesAdded(type, members, current, all: now) {
+            if current != members, !LiveSlots.casesAdded(type, members, current) {
                 let what = (current.first { !members.contains($0) } ?? members.first { !current.contains($0) }.map { "no longer " + $0 } ?? "the order of its fields")
                     .replacingOccurrences(of: "\t", with: ".")
                 return ("\(type) changed what it holds (\(what))", nil)
             }
         }
         return (nil, now)
+    }
+
+    /// The enums that only gained cases at the end (`LiveSlots.casesAdded`), which the layout check let through.
+    static func grownEnums(before: [String], after: [String]) -> [String] {
+        func byType(_ entries: [String]) -> [String: [String]] {
+            Dictionary(grouping: entries, by: { String($0.prefix { $0 != "\t" }) })
+        }
+        let old = byType(before), new = byType(after)
+        return old.keys.sorted().filter { type in
+            guard let current = new[type], current != old[type] else { return false }
+            return LiveSlots.casesAdded(type, old[type]!, current)
+        }
+    }
+
+    /// Why a grown enum can't go in, if it can't: something the app keeps holds it other than as itself or in a
+    /// plain collection of it (an optional, another enum's case, a wrapper), where Swift gives its unused numbers
+    /// meanings that a new case takes over. Looked for in every stored field, static and global of the new code,
+    /// and in what the spares keep, whose types the compiler no longer sees.
+    @MainActor static func enumsHeld(_ project: LampProject, grown: [String]) async -> String? {
+        let primaries = swiftFiles(in: sources(project)).keys.filter { ($0 as NSString).lastPathComponent != "LampSupport.swift" }.sorted()
+        var output: [String] = []
+        let status = await Shell.run(frontend("-dump-ast", in: sources(project), primaries: primaries, module: project.exe,
+                                              macOS: Template.macMinimum(project)) + " 2>/dev/null", cwd: sources(project)) { output.append($0) }
+        guard status == 0 else { return "the compiler couldn't say what holds the enums that grew" }
+        let held = members(inDump: output.joined(separator: "\n"), held: true).compactMap { entry -> (String, String)? in
+            guard let colon = entry.range(of: ": ") else { return nil }
+            return (String(entry.prefix { $0 != "\t" }), String(entry[colon.upperBound...]))
+        } + LiveSlots.mapping(project).flatMap { type, properties in properties.map { (type, $0.value.type) } }
+        for type in grown {
+            let name = NSRegularExpression.escapedPattern(for: type)
+            let mention = try! NSRegularExpression(pattern: #"(?<![\w.])"# + name + #"(?![\w])"#)
+            let plainly = try! NSRegularExpression(pattern: #"^(\[(\w[\w.]*: )?"# + name + #"\]|Set<"# + name + #">|"# + name + #"|\("# + name + #"\.Type\) -> "# + name + #")$"#)
+            for (owner, kind) in held {
+                let range = NSRange(kind.startIndex..., in: kind)
+                if mention.firstMatch(in: kind, range: range) != nil, plainly.firstMatch(in: kind, range: range) == nil {
+                    return "\(owner.isEmpty ? "a global" : owner) holds \(type) as \(kind), which a new case would change"
+                }
+            }
+        }
+        return nil
     }
 
     /// What the open app's types hold (kept from the last time, or worked out from the sources it runs) and what
@@ -232,7 +272,8 @@ enum LiveReload {
 
     /// The stored members of every type in a `-dump-ast` printout: each line's indent says what it's inside, so
     /// a function's locals (inside a func or closure) never count, nor a static or a computed property.
-    static func members(inDump dump: String, rawValues: Bool = false) -> [String] {
+    /// `held` adds what the app keeps beyond its types' own fields: static properties, and globals (under "").
+    static func members(inDump dump: String, rawValues: Bool = false, held: Bool = false) -> [String] {
         let typeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|actor)_decl\b[^"]*"([^"]+)""#)
         let scopeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|accessor_decl|constructor_decl|destructor_decl|closure_expr|subscript_decl|top_level_code_decl)\b"#)
         // A declaration's position (decl_context=…, range=[…]) comes before its name; neither holds a quote.
@@ -268,7 +309,8 @@ enum LiveReload {
                 if seen.insert(type + "\t").inserted { out.append(type + "\t") }
             } else if let m = varDecl.firstMatch(in: line, range: range) {
                 let rest = String(line[Range(m.range(at: 4), in: line)!])
-                if let owner, rest.contains("readImpl=stored"), !rest.contains(" static") {
+                let global = held && scopes.isEmpty
+                if let owner = owner ?? (global ? "" : nil), rest.contains("readImpl=stored"), held || !rest.contains(" static") {
                     let entry = owner + "\t" + String(line[Range(m.range(at: 2), in: line)!]) + ": " + String(line[Range(m.range(at: 3), in: line)!])
                     if seen.insert(entry).inserted { out.append(entry) }
                 }
@@ -405,19 +447,8 @@ enum LiveSlots {
     /// room, so it needs two to begin with). The code that reads the new cases is the change's. But the numbers
     /// after the last case mean something too: Swift uses the first one free for `nil` in an optional of it, and
     /// the next for another enum's cases that carry it, so a new case would read an existing `nil` as itself.
-    /// So it's only when nothing the app keeps holds the enum but as itself or in a plain collection of it (`all`,
-    /// the new code's whole layout).
-    static func casesAdded(_ type: String, _ old: [String], _ new: [String], all: [String]) -> Bool {
-        let name = NSRegularExpression.escapedPattern(for: type)
-        let mention = try! NSRegularExpression(pattern: #"(?<![\w.])"# + name + #"(?![\w])"#)
-        let plainly = try! NSRegularExpression(pattern: #"^(\[(\w[\w.]*: )?"# + name + #"\]|Set<"# + name + #">|"# + name + #")$"#)
-        for entry in all where !entry.hasPrefix(type + "\t") {
-            guard let colon = entry.range(of: ": ") else { continue }
-            let held = String(entry[colon.upperBound...]), range = NSRange(held.startIndex..., in: held)
-            guard mention.firstMatch(in: held, range: range) != nil else { continue }
-            let carried = entry.split(separator: "\t", maxSplits: 1).last?.hasPrefix("case ") == true
-            if carried || plainly.firstMatch(in: held, range: range) == nil { return false }
-        }
+    /// That's checked before the change goes in (`LiveReload.enumsHeld`).
+    static func casesAdded(_ type: String, _ old: [String], _ new: [String]) -> Bool {
         func plain(_ entry: String) -> Bool {
             guard let field = entry.split(separator: "\t", maxSplits: 1).last, field.hasPrefix("case ") else { return false }
             return field.components(separatedBy: "->").count == 2
@@ -447,7 +478,7 @@ enum LiveSlots {
         var planned: [(type: String, name: String, slot: Slot, published: Bool)] = []
         for (type, members) in old.sorted(by: { $0.key < $1.key }) {
             guard let current = new[type] else { return nil }
-            guard current != members, !casesAdded(type, members, current, all: after) else { continue }
+            guard current != members, !casesAdded(type, members, current) else { continue }
             // Only additions, with what was there still there, in order.
             let extras = current.filter { !members.contains($0) }
             guard current.filter({ members.contains($0) }) == members, !extras.isEmpty else { return nil }
@@ -459,7 +490,7 @@ enum LiveSlots {
             let holder: Holder
             if observed || published || members.contains(type + "\t\(first): LampSpare?") {
                 holder = .object
-            } else if members.contains(type + "\t\(place(in: type, holder: .value)): LampSpare?") {
+            } else if members.contains(type + "\t\(place(in: type, holder: .value)): LampSpare") {
                 holder = .value
             } else if members.contains(type + "\t_\(place(in: type, holder: .view)): State<LampStateBox>")
                         || members.contains(type + "\t__\(place(in: type, holder: .view)): LazyState<LampStateBox>") {
@@ -607,7 +638,7 @@ enum LiveSlots {
                 case .value:
                     if let cases { guard isSteady(initial, type: declared, cases: cases) else { return nil } }
                     let place = place(in: type, holder: .value)
-                    let getter = "get { if let v = \(place)?.field(\"\(name)\") as? \(declared) { return v }; return \(initial) }"
+                    let getter = "get { if let v = \(place).field(\"\(name)\") as? \(declared) { return v }; return \(initial) }"
                     // Set back to its starting value, it's as if never set, so two values alike compare alike.
                     let setter = isLet ? "" : " set { \(place) = LampSpare.setting(\"\(name)\", to: newValue, initial: { () -> \(declared) in \(initial) }(), in: \(place)) }"
                     replacement = "\(opening)\(name): \(declared) { \(getter)\(setter) }"

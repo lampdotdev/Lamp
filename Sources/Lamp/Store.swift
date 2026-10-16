@@ -3869,6 +3869,12 @@ final class Store: ObservableObject {
             log(project, .detail, "Reopening \(project.name) for this change: \(why).")
             return false
         }
+        // An enum that only gained cases goes in when nothing holds it where a new case would change what's there.
+        if let before, let layout = check.layout, case let grown = LiveReload.grownEnums(before: before, after: layout), !grown.isEmpty,
+           let why = await LiveReload.enumsHeld(project, grown: grown) {
+            log(project, .detail, "Reopening \(project.name) for this change: \(why).")
+            return false
+        }
         guard let library, let layout = check.layout else {
             print("Live reload of \(project.name) didn't compile:\n\(problem ?? "")")
             return false
