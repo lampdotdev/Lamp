@@ -226,42 +226,63 @@ extension Template {
                 visit(root)
                 // The entity itself stays (the app's code holds it, and moves it); what it's made of is the new code's.
                 for old in found {
-                    // A prop whose own handlers (a press action, a change handler) may refer to it or its parts is left
-                    // as it is: they'd go on acting on what the refresh replaces. It's made anew at the next launch.
+                    // A prop with handlers anywhere in it (a press action, a change handler) is left as it is: they
+                    // refer to the parts the new code just made, which aren't the ones on screen. It's made anew at the
+                    // next launch.
                     func handles(_ e: Entity) -> Bool {
-                        guard let part = e.components[LampPart.self] else { return false }
-                        if case .press = part.kind { return true }
-                        return part.changed != nil
+                        if let part = e.components[LampPart.self] {
+                            if case .press = part.kind { return true }
+                            if part.changed != nil { return true }
+                        }
+                        return e.children.contains { handles($0) }
                     }
                     if handles(old) { continue }
                     let fresh = make()
                     if handles(fresh) { continue }
-                    for child in Array(old.children) { child.removeFromParent() }
-                    for child in Array(fresh.children) { old.addChild(child, preservingWorldTransform: false) }
-                    // What the prop's code sets on the entity itself goes over too: its look, its collision shape,
-                    // its physics and what it does when clicked or dragged. Where it is, how it's moving and how
-                    // far a part has been turned or slid stay the running app's.
-                    for kind in [ModelComponent.self, CollisionComponent.self] as [any Component.Type] {
-                        if let new = fresh.components[kind] { old.components.set(new) } else { old.components.remove(kind) }
-                    }
-                    if var body = fresh.components[PhysicsBodyComponent.self] {
-                        if let mode = old.components[PhysicsBodyComponent.self]?.mode, mode == .kinematic { body.mode = mode }
-                        old.components.set(body)
-                    } else {
-                        old.components.remove(PhysicsBodyComponent.self)
-                    }
-                    if var part = fresh.components[LampPart.self] {
-                        if let was = old.components[LampPart.self] {
-                            part.rest = was.rest
-                            part.restPosition = was.restPosition
-                            part.value = was.value
-                        }
-                        old.components.set(part)
-                    } else {
-                        old.components.remove(LampPart.self)
-                    }
+                    adopt(old, fresh, isProp: true)
                 }
             }
+        }
+
+        /// Makes `old` what `fresh` is while keeping every entity in it: the app's code may hold any of them (a
+        /// walker's legs, to swing them), and one taken out would go on moving out of sight. Parts are matched in
+        /// order and changed where they are, new ones added and ones gone taken off. What the prop's code sets
+        /// on each goes over: its look, its collision shape, its physics, what it does when clicked or dragged,
+        /// and a part's place in the prop. Where the prop itself is, how it's moving and how far a part has been
+        /// turned or slid stay the running app's; what the app moves every frame it moves again.
+        private func adopt(_ old: Entity, _ fresh: Entity, isProp: Bool) {
+            // A moving part's place is where the person left it, as its value says.
+            if !isProp {
+                old.name = fresh.name
+                if old.components[LampPart.self] == nil { old.transform = fresh.transform }
+            }
+            // Everything a prop's code builds into a part, from its look to its copies and shadow.
+            var built: [any Component.Type] = [ModelComponent.self, CollisionComponent.self, GroundingShadowComponent.self, OpacityComponent.self]
+            if #available(macOS 26.0, *) { built.append(MeshInstancesComponent.self) }
+            for kind in built {
+                if let new = fresh.components[kind] { old.components.set(new) } else { old.components.remove(kind) }
+            }
+            if var body = fresh.components[PhysicsBodyComponent.self] {
+                if let mode = old.components[PhysicsBodyComponent.self]?.mode, mode == .kinematic { body.mode = mode }
+                old.components.set(body)
+            } else {
+                old.components.remove(PhysicsBodyComponent.self)
+            }
+            if var part = fresh.components[LampPart.self] {
+                if let was = old.components[LampPart.self] {
+                    part.rest = was.rest
+                    part.restPosition = was.restPosition
+                    part.value = was.value
+                }
+                old.components.set(part)
+            } else {
+                old.components.remove(LampPart.self)
+            }
+            let olds = Array(old.children), news = Array(fresh.children)
+            for (index, new) in news.enumerated() {
+                if index < olds.count { adopt(olds[index], new, isProp: false) } else { old.addChild(new, preservingWorldTransform: false) }
+            }
+            for gone in olds.dropFirst(news.count) { gone.removeFromParent() }
         }
 
         /// The first entity with this name anywhere in the scene.
@@ -365,6 +386,9 @@ extension Template {
             var focus: (@MainActor () -> SIMD3<Float>)?
             var make: @MainActor (LampTile) -> Entity?
             var built: [LampTile: Entity] = [:]
+            /// Built by code a live change has since replaced: made again, and swapped in once made.
+            var stale = Set<LampTile>()
+            var warnedEmpty = false
             var first = true
         }
         private var streaming: Streaming?
@@ -402,13 +426,14 @@ extension Template {
             for (tile, entity) in s.built where distance(tile) > s.radius * 1.25 {
                 entity.removeFromParent()
                 s.built[tile] = nil
+                s.stale.remove(tile)
             }
             var wanted: [(LampTile, Float)] = []
             for x in (cx - reach)...(cx + reach) {
                 for z in (cz - reach)...(cz + reach) {
                     let tile = LampTile(x: x, z: z, size: s.size)
                     let d = distance(tile)
-                    if d <= s.radius, s.built[tile] == nil { wanted.append((tile, d)) }
+                    if d <= s.radius, s.built[tile] == nil || s.stale.contains(tile) { wanted.append((tile, d)) }
                 }
             }
             wanted.sort { $0.1 < $1.1 }
@@ -428,21 +453,38 @@ extension Template {
                     if slowTiles <= 3 { print("LampScene: tile \(tile.x),\(tile.z) took \(Int(took * 1000)) ms to build; a tile should take a few.") }
                 }
                 entity.name = "tile \(tile.x),\(tile.z)"
-                streamRoot.addChild(entity)
-                s.built[tile] = entity
+                func empty(_ e: Entity) -> Bool { e.children.isEmpty && e.components[ModelComponent.self] == nil }
+                var keepOld = false
+                if let old = s.built[tile] {
+                    // A tile made again after a live change goes in once made, so nothing vanishes meanwhile; and if
+                    // the new code makes nothing where the old made something, the old stays.
+                    s.stale.remove(tile)
+                    if empty(entity) && !empty(old) {
+                        keepOld = true
+                        if !s.warnedEmpty {
+                            s.warnedEmpty = true
+                            print("LampScene: the new code built tile \(tile.x),\(tile.z) empty, so the old one stays. Check what it makes.")
+                        }
+                    } else {
+                        old.removeFromParent()
+                    }
+                }
+                if !keepOld {
+                    streamRoot.addChild(entity)
+                    s.built[tile] = entity
+                }
                 if Date().timeIntervalSince(started) > budget { break }
             }
             s.first = false
             streaming = s
         }
 
-        /// Drops every built tile, so they're made again as they come into reach. After a live change, the new code
+        /// Makes every built tile again, nearest first, each swapped in once it's made, so the world never goes blank. After a live change, the new code
         /// is what makes them only if `make` calls a named function (`{ tile in World.tile(tile) }`): a live change
         /// replaces functions, and a closure written out in place keeps running the code it was made with.
         func restream() {
             guard var s = streaming else { return }
-            for entity in s.built.values { entity.removeFromParent() }
-            s.built = [:]
+            s.stale = Set(s.built.keys)
             streaming = s
         }
 

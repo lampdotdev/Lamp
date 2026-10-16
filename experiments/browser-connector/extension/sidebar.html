@@ -13,11 +13,19 @@ button{font:600 14px/1.3 -apple-system,sans-serif;border:1px solid var(--field);
 #actions button:first-child{background:var(--green);color:var(--on-green);border-color:var(--green)}button:disabled{opacity:.55;cursor:wait}
 button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 #actions{display:flex;flex-wrap:wrap;gap:9px}#error{margin:8px 20px 0;color:#c2412a}#error:empty{display:none}#empty,#note{padding:4px 20px}
+#consent-top{color:var(--muted);font-size:12px;margin:4px 0 0}#consent-top:empty{display:none}
+/* Above an app's own page: the window's gray and Mac-sized type, as the page's /lamp.css draws, so the strip and
+   the page read as one sidebar. */
+body.framed{display:flex;flex-direction:column;height:100vh;--bg:#eff1f2;--line:#dadcde;--ink:#1d1d1f;--muted:#6e6e73;font-size:13px}
+@media (prefers-color-scheme:dark){body.framed{--bg:#1e1f20;--line:#3a3b3d;--ink:#f5f5f7;--muted:#98989d}}
+body.framed #top{padding:12px 16px 9px;border-bottom:1px solid var(--line)}body.framed #chooser{font-size:13px}body.framed #offer{font-weight:500;font-size:12px;margin-top:3px}
+#top:focus{outline:none}#page{flex:1;width:100%;border:0;background:var(--bg)}#page[hidden]{display:none}
 </style></head><body>
-<div id="top"><div id="chooser"></div><p id="offer" hidden></p></div>
+<div id="top"><div id="chooser"></div><p id="offer" hidden></p><p id="consent-top"></p></div>
 <p id="error" role="alert"></p>
 <p id="note" role="status" hidden></p>
 <p id="empty" hidden>None of your Lamp apps work beside web pages yet. Ask Lamp for one, like “Keep the recipes I find.”</p>
+<iframe id="page" hidden sandbox="allow-scripts allow-forms allow-same-origin" title="App"></iframe>
 <main hidden><h1 id="title"></h1><p id="detail" role="status"></p><div id="fields"></div><div id="sections"></div>
 <div id="controls"><p id="consent"></p><div id="actions"></div></div></main>
 <script src="sidebar.js"></script></body></html>

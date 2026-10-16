@@ -527,14 +527,40 @@ from its Assets folder rather than its bundle (`LampAssets`), so a new picture g
 app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which asks for
 new state in new views rather than new stored properties in existing types, when that's as clear.
 
+A stored property added to a class goes in live too (`LiveSlots`, in LiveReload.swift). The copy step gives every
+class of the app's (not `@Model`, Core Data or `Sendable` ones) a few empty spare places, `__lampSpare_<Class>_0`…
+of `LampSpare?` (named after the class, so a subclass's don't clash with what it inherits; `@Published` when the
+header says `ObservableObject`), so the open app's objects already have room. A starting value that isn't a literal
+(`.now`, a call) is worked out on the first read and kept; a `@Published` property in a class whose places aren't
+published (conforming in an extension) reopens the app instead. When the only
+difference in layout is new stored properties in such classes, `LiveSlots.fit` rewrites each one-line declaration in
+the live copy into a computed property kept in a free place, and the change is compiled again and checked as usual.
+Being stored, a place is observed like any property, so views redraw. Which property is in which place
+(`.lamp/live/slots.json`) is put back into each fresh copy (`LiveSlots.apply`) until the app is installed again: the
+whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs
+once it's installed (`LiveReload.markRunning(from:)`). A place never reaches saved data: `LampSpare` encodes as
+nothing, and a computed property isn't encoded.
+
 A Mac app can also open beside a web page, in Chrome's sidebar (Lamp Dev only, an experiment: Settings →
 Experimental, `BrowserBridge.switchKey`; how it fits together is in `experiments/browser-connector/README.md`).
-One extension draws every app's sidebar from data the app publishes (`LampBrowser` in LampSupport.swift), and the
-app declares where it fits in `browser.json` (`BrowserCompanions.Declaration`), which Chrome matches without the
-extension reading the page. The builder decides from the wish (`Agent.Rules.browserCompanion`) and tries the
-sidebar with `look_at_app` and `use_app` given `sidebar` and `page`: Lamp draws it itself (`BrowserPreview`) and is
-one more tab of it, so every engine tries it the same way. Each Chrome tab has its own sidebar and its own surface
-from the app, so what one page prepared never shows on another; keep that when changing either side.
+The sidebar is a web page of the app's own (`Assets/Sidebar/`), which the app serves itself on this Mac's own
+address (`LampBrowser.startPage` in LampSupport.swift), at a name under `.localhost` and a port of its own
+(`Template.sidebarHost`, `sidebarPort`, trying the next few when another program has it), so it works while the app
+is open whether Lamp is or not. One extension frames every app's page: it keeps the app's name, offer and consent
+line above the frame, gives the page no browser powers, and is the page's only way to the person's tab (a read only
+when the page's file declares it, once per click in it). The page asks its app for everything else (`lamp.call`,
+with a key Lamp hands the extension, which passes it on only once the page proves it's the app's: the key's
+signature over a nonce and the port); the app answers only its own name, only that key, never a request another
+site made, and lets only the extension frame the page, whose own policy keeps it talking to the app alone. Lamp's
+`/lamp.css` gives the page the Mac window's look, which the app makes its own. Apps built before pages still
+publish a surface as data (`LampBrowser.start`), which the extension still draws. The app declares where it fits in
+`browser.json` (`BrowserCompanions.Declaration`), which Chrome matches without the extension reading the page. The
+builder decides from the wish (`Agent.Rules.browserCompanion`) and tries the sidebar with `look_at_app` and
+`use_app` given `sidebar` and `page`: Lamp opens the app's page itself, out of sight at the sidebar's width
+(`PagePreview`), and hands it the page beside it, so every engine tries it the same way; it's the one thing the
+builder uses in a new app, since it isn't the person's Chrome. Each Chrome tab has its own sidebar and the app
+keeps what one tab prepared by its tab (`call.tab`), so what one page prepared never shows on another; keep that
+when changing either side.
 
 A build asks the app to quit before it replaces it, and the app's answer decides (`AppQuit`). An app may ask
 about unsaved work first: Lamp sends the quit request itself and reads the reply macOS carries back, which is
@@ -867,6 +893,16 @@ iPhone `LampSecrets` stays the device's Keychain, which asks nothing, and an app
 one line (`LampSecrets.store`). Neither kind is ever in the app's folder, so a shared copy arrives disconnected and is
 flagged in the review (`Sharing.checklist`). How to build on each is in its doc comment in LampSupport.swift, which the tool's answer
 sends the builder to.
+
+**A service that isn't listed** can still be called from the app's own code. When it needs a key, the app declares
+it with `LampAPI.own` (its API's address, the page where the key is made, one sentence of steps, how the key is
+sent: a header or a query parameter, and a path to check it) and uses `LampAPIButton`, so the person pastes the key
+on the same Connect sheet as a listed service's, it is checked, kept in `LampSecrets` under a name of its own
+(`own-…`, so it can't stand in for a listed service's token), and sent only to that address. No key field or dialog
+of the app's own, and never UserDefaults, LampStore or a Keychain item of the app's own: the first two are the app's
+settings and folder, and the last asks for the password after every rebuild. Both `Agent.connectorRules` and the
+tool's list (`Connectors.list`, also its answer to a name it doesn't know) say so. The review counts `LampAPI` and
+`LampSecrets.` in the app's code as connecting an account.
 
 ## Naming: Lamp and Lamp
 

@@ -186,6 +186,11 @@ enum Template {
             .replacingOccurrences(of: "{{PHONE_SECRET}}", with: project.platform.hasIOS ? phoneSecret(for: project) : "")
             .replacingOccurrences(of: "{{WIDGET_PORT}}", with: String(widgetPort(for: project)))
             .replacingOccurrences(of: "{{WIDGET_TOKEN}}", with: project.platform == .mac ? widgetToken(for: project) : "")
+            .replacingOccurrences(of: "{{SIDEBAR_PORT}}", with: String(sidebarPort(for: project)))
+            .replacingOccurrences(of: "{{SIDEBAR_TRIES}}", with: String(sidebarPortTries))
+            .replacingOccurrences(of: "{{SIDEBAR_HOST}}", with: sidebarHost(for: project))
+            .replacingOccurrences(of: "{{SIDEBAR_KEY}}", with: project.platform.hasMac ? sidebarKey(for: project) : "")
+            .replacingOccurrences(of: "{{SIDEBAR_FRAMER}}", with: sidebarFramer)
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
         let url = project.dir.appendingPathComponent("Sources/LampSupport.swift")
         if (try? String(contentsOf: url, encoding: .utf8)) != contents {
@@ -488,6 +493,8 @@ enum Template {
         \(liveCopySteps)
           # Lamp only wants the live copy, to put a change into the open app before building the whole of it.
           [[ "${LAMP_LIVE_COPY:-}" == 1 ]] && exit 0
+          # What this build compiles, which is what the app runs once it's installed (LiveReload.markRunning).
+          rsync -a --delete "$LIVE/Sources/" "$LIVE/built/"
           mkdir -p "$LIVE/xcode"
           rsync -a --delete --exclude DerivedData .lamp/device/ "$LIVE/xcode/device/"
           ln -sfn ../../Assets "$LIVE/Assets"
@@ -2316,6 +2323,58 @@ enum Template {
         return 49_152 + Int(hash % 16_000)
     }
 
+    /// Where an app serves its own sidebar page for Chrome (`LampBrowser.startPage`): a port of its own below the
+    /// range macOS hands out, the same for every build, since Chrome's sidebar keeps it for when Lamp isn't open.
+    static func sidebarPort(for project: LampProject) -> Int {
+        var hash: UInt32 = 2_166_136_261
+        for byte in ("sidebar:" + project.bundleID).utf8 { hash = (hash ^ UInt32(byte)) &* 16_777_619 }
+        return 40_000 + Int(hash % 9_000)
+    }
+    /// How many ports from `sidebarPort` an app tries when another program has the first.
+    static let sidebarPortTries = 4
+    /// Every address an app's sidebar page may be at, first port first.
+    static func sidebarURLs(for project: LampProject) -> [String] {
+        (0..<sidebarPortTries).map { "http://\(sidebarHost(for: project)):\(sidebarPort(for: project) + $0)/" }
+    }
+    /// A name of the app's own under .localhost, which Chrome sends to this Mac by itself: each app's page is then
+    /// its own origin, so one app's page can't read another's storage.
+    static func sidebarHost(for project: LampProject) -> String {
+        let readable = String(project.id.lowercased().unicodeScalars.map { ("a"..."z").contains($0) || ("0"..."9").contains($0) ? Character($0) : "-" }.prefix(40))
+        // The bundle id's hash keeps two apps whose names read the same here ("Recipe Box", "recipe_box") apart.
+        var hash: UInt32 = 2_166_136_261
+        for byte in project.bundleID.utf8 { hash = (hash ^ UInt32(byte)) &* 16_777_619 }
+        let label = readable.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return (label.isEmpty ? "app" : label) + "-" + String(hash % 0xFFFFFF, radix: 16) + ".localhost"
+    }
+    /// What the app's page says it reads (`data-lamp-reads` on its `<html>`), read from the page's file by Lamp,
+    /// never from the page as it runs: it decides what Chrome's sidebar lets the page read and the consent line.
+    static func sidebarReads(_ project: LampProject) -> String {
+        let file = project.dir.appendingPathComponent("Assets/Sidebar/index.html")
+        guard let head = (try? String(contentsOf: file, encoding: .utf8))?.prefix(4000),
+              let tag = head.range(of: #"<html\b[^>]*>"#, options: [.regularExpression, .caseInsensitive]) else { return "" }
+        let value = head[tag].range(of: #"data-lamp-reads\s*=\s*["']?(page|selection)"#, options: [.regularExpression, .caseInsensitive])
+            .map { String(head[tag][$0]).lowercased() } ?? ""
+        return value.hasSuffix("selection") ? "selection" : value.hasSuffix("page") ? "page" : ""
+    }
+    /// The key the sidebar page's calls carry: Lamp hands it to Chrome's sidebar with the page's address.
+    static func sidebarKey(for project: LampProject) -> String {
+        let url = project.dir.appendingPathComponent(".lamp/sidebar-key")
+        if let key = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !key.isEmpty { return key }
+        let key = UUID().uuidString + UUID().uuidString
+        try? key.write(to: url, atomically: true, encoding: .utf8)
+        return key
+    }
+    /// Only Lamp's extension may frame an app's sidebar page.
+    static var sidebarFramer: String {
+        let id = (try? String(contentsOf: Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/BrowserCompanion/extension-id.txt"), encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return id.count == 32 ? "chrome-extension://\(id)" : "'none'"
+    }
+    /// Whether the app has a sidebar page of its own, rather than a surface Lamp's extension draws.
+    static func hasSidebarPage(_ project: LampProject) -> Bool {
+        FileManager.default.fileExists(atPath: project.dir.appendingPathComponent("Assets/Sidebar/index.html").path)
+    }
+
     /// The secret an app and its widget are both built with, so the app answers its own widget and nobody else.
     static func widgetToken(for project: LampProject) -> String {
         let url = project.dir.appendingPathComponent(".lamp/widget-token")
@@ -3376,6 +3435,19 @@ enum Template {
     }
 
     #if LAMP_LIVE
+    /// A spare place in a class, for a stored property added while the app is open (LiveReload's slots): live
+    /// builds give every class of the app's a few, empty, and a new property kept in one leaves the object's
+    /// layout as the open app has it. Saved data never holds one (it encodes as nothing and decodes empty).
+    struct LampSpare: Codable, @unchecked Sendable {
+        var value: Any?
+        init(_ value: Any?) { self.value = value }
+        init(from decoder: Decoder) throws { value = nil }
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encodeNil()
+        }
+    }
+
     /// Changes made while the app is open, put into it without a restart (live builds only: debug, linked
     /// -interposable, from Lamp's copy of the sources with each view's body wrapped). Lamp compiles the files a
     /// change touched into a library in `.lamp/live`; asked with the app's token, this loads it and points the
@@ -7691,8 +7763,9 @@ enum Template {
     #endif
 
     #if os(macOS)
-    /// This app's sidebar in Chrome, beside the page the person is on. Lamp's extension draws it from the Surface
-    /// you publish (data, never HTML) and sends each click back to `handle`. Every Chrome tab has a sidebar of its
+    /// This app's sidebar in Chrome, beside the page the person is on: a page of the app's own (`startPage`, below).
+    /// An app built before pages publishes a Surface instead, which Lamp's extension draws, sending each click back
+    /// to `handle`. Every Chrome tab has a sidebar of its
     /// own: `surface(tab)` draws one tab's, and `event.tab` says which tab a click came from, so keep what a click
     /// prepares (a preview, a draft) by tab and two pages never mix. Declare where it fits in browser.json at the
     /// app's root. Start it once, from the app's shared model:
@@ -7809,6 +7882,372 @@ enum Template {
                 do { try await Task.sleep(for: .seconds(pause)) } catch { return }
             }
         }
+
+        // MARK: The sidebar as the app's own page
+
+        /// A call from the sidebar page's script, `lamp.call(name, body)`: its name, the Chrome tab it came from
+        /// (keep what one tab prepares apart from another's), and the JSON it sent.
+        struct Call: Sendable {
+            var name: String
+            var tab: String
+            var body: Data
+            func decode<T: Decodable>(_ type: T.Type) throws -> T {
+                try JSONDecoder().decode(T.self, from: body.isEmpty ? Data("null".utf8) : body)
+            }
+        }
+        /// Thrown from a page call: its message is what the page's `lamp.call` rejects with.
+        struct Failure: Error, LocalizedError {
+            var message: String
+            init(_ message: String) { self.message = message }
+            var errorDescription: String? { message }
+        }
+
+        /// The app serves its sidebar page itself (Assets/Sidebar, index.html first) on this Mac's own address, at a
+        /// name and port of its own, so its sidebar works while the app is open whether Lamp is or not. Chrome's
+        /// sidebar frames it; the page asks the app for its data and actions with `lamp.call`, and for the page the
+        /// person is on with `lamp.readPage()` after a click. `api` answers the calls, on the main actor:
+        ///
+        ///     LampBrowser.startPage { call in
+        ///         switch call.name {
+        ///         case "list": return model.saved
+        ///         case "preview": return try await model.preview(call.decode(LampBrowser.Page.self), tab: call.tab)
+        ///         default: throw LampBrowser.Failure("Unknown call \(call.name).")
+        ///         }
+        ///     }
+        ///
+        /// Call `pageChanged()` when what the page shows changed in the app, so `lamp.onChange` fires there.
+        ///
+        /// A page to start from, for a sidebar that keeps something from the page. It goes through every state
+        /// a sidebar has: ready, reading, a preview to edit, saved (shown as the window shows it), and an error.
+        /// Make it the app's own: its colour, and each item drawn as its window draws it.
+        ///
+        ///     <!-- Assets/Sidebar/index.html -->
+        ///     <!doctype html><html data-lamp-reads="page"><head><meta charset="utf-8">
+        ///     <link rel="stylesheet" href="/lamp.css"><link rel="stylesheet" href="app.css">
+        ///     <script src="/lamp.js"></script><script src="app.js" defer></script></head><body>
+        ///     <section id="ready"><p class="muted">Save this page's recipe with its ingredients.</p></section>
+        ///     <section id="preview" hidden><h1>Check it</h1>
+        ///       <label>Title<input id="title"></label>
+        ///       <label>Ingredients, one per line<textarea id="items" rows="8"></textarea></label></section>
+        ///     <h2>Saved</h2><div id="saved" class="box"></div><p id="status" class="status" role="status"></p>
+        ///     <div class="actions"><button id="main" class="primary">Read This Recipe</button>
+        ///       <button id="cancel" hidden>Cancel</button></div></body></html>
+        ///
+        ///     /* app.css */  :root { --accent: #d9622b; }
+        ///
+        ///     // app.js
+        ///     const $ = id => document.getElementById(id); let draft = null;
+        ///     async function show() {
+        ///       const saved = await lamp.call("saved");   // [{title, detail}]
+        ///       $("saved").replaceChildren(...saved.map(item => {
+        ///         const row = document.createElement("div"); row.className = "row";
+        ///         const words = document.createElement("div"); words.className = "grow"; words.textContent = item.title;
+        ///         const sub = document.createElement("div"); sub.className = "sub"; sub.textContent = item.detail;
+        ///         words.append(sub); row.append(words); return row;
+        ///       }));
+        ///       $("ready").hidden = !!draft; $("preview").hidden = !draft; $("cancel").hidden = !draft;
+        ///       $("main").textContent = draft ? "Save" : "Read This Recipe";
+        ///     }
+        ///     $("main").onclick = async () => {
+        ///       $("main").disabled = true; $("status").textContent = draft ? "Saving…" : "Reading the page…";
+        ///       try {
+        ///         if (!draft) {
+        ///           draft = await lamp.call("preview", await lamp.readPage());   // {title, items, url}
+        ///           $("title").value = draft.title; $("items").value = draft.items.join("\n");
+        ///           $("status").textContent = "";
+        ///         } else {
+        ///           await lamp.call("save", {title: $("title").value, items: $("items").value.split("\n"), url: draft.url});
+        ///           $("status").textContent = "Saved."; draft = null;
+        ///         }
+        ///       } catch (error) { $("status").textContent = error.message; }
+        ///       $("main").disabled = false; show();
+        ///     };
+        ///     $("cancel").onclick = () => { draft = null; $("status").textContent = ""; show(); };
+        ///     lamp.onChange(show); show();
+        static func startPage(api: @escaping @MainActor (Call) async throws -> any Encodable) {
+            pageAPI = api
+            PageServer.queue.async { PageServer.listen() }
+        }
+        static func pageChanged() { PageServer.queue.async { PageServer.version += 1 } }
+        fileprivate static var pageAPI: (@MainActor (Call) async throws -> any Encodable)?
+
+        /// A small HTTP server for the one page. Only requests naming the app's own host get anything (a website
+        /// that points a name of its own at this Mac is refused), the page's data only with the key Chrome's
+        /// sidebar was given, and only the extension may frame the page.
+        fileprivate enum PageServer {
+            /// The first of the ports the app may use; when another program has it, the next few are tried, as
+            /// Chrome's sidebar and Lamp's preview do. Only this app answers its own name on any of them.
+            static let firstPort: UInt16 = {{SIDEBAR_PORT}}
+            static let tries: UInt16 = {{SIDEBAR_TRIES}}
+            nonisolated(unsafe) static var port: UInt16 = firstPort
+            static let host = "{{SIDEBAR_HOST}}"
+            static let key = "{{SIDEBAR_KEY}}"
+            static let queue = DispatchQueue(label: "LampBrowser.page")
+            nonisolated(unsafe) static var listeners: [NWListener] = []
+            nonisolated(unsafe) static var version = 0
+            static let policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors {{SIDEBAR_FRAMER}}"
+
+            static var folder: URL? { LampAssets.folder?.appendingPathComponent("Sidebar") }
+
+            /// Both of this Mac's own addresses, since Chrome tries `::1` first for a `.localhost` name: a program
+            /// holding either one at a port would otherwise get the page's address, and its key, there. When either is
+            /// taken, the next port is tried for both.
+            static func listen(offset: UInt16 = 0) {
+                guard listeners.isEmpty else { return }
+                guard offset < tries, let endpoint = NWEndpoint.Port(rawValue: firstPort + offset) else {
+                    return print("The sidebar page couldn't be served: other programs have ports \(firstPort)–\(firstPort + tries - 1).")
+                }
+                var made: [NWListener] = []
+                for address in [IPv4Address.loopback as IPAddress, IPv6Address.loopback as IPAddress] {
+                    let parameters = NWParameters.tcp
+                    parameters.requiredLocalEndpoint = .hostPort(host: address is IPv4Address ? .ipv4(.loopback) : .ipv6(.loopback), port: endpoint)
+                    // Network won't hold both addresses at one port without it; another program still can't share it.
+                    parameters.allowLocalEndpointReuse = true
+                    guard let listener = try? NWListener(using: parameters) else { made.forEach { $0.cancel() }; return listen(offset: offset + 1) }
+                    made.append(listener)
+                }
+                listeners = made
+                port = firstPort + offset
+                for listener in made {
+                    listener.newConnectionHandler = { accept($0) }
+                    listener.stateUpdateHandler = { state in
+                        switch state {
+                        case .failed, .waiting:
+                            // One address taken is the port taken: both move on together.
+                            guard listeners.contains(where: { $0 === listener }) else { return }
+                            listeners.forEach { $0.cancel() }
+                            listeners = []
+                            listen(offset: offset + 1)
+                        default: break
+                        }
+                    }
+                    listener.start(queue: queue)
+                }
+            }
+
+            struct Request {
+                var method: String, path: String, headers: [String: String], body: Data
+                /// Nil until the whole request has arrived.
+                init?(_ data: Data) {
+                    guard let end = data.range(of: Data("\r\n\r\n".utf8)),
+                          let head = String(data: data[..<end.lowerBound], encoding: .utf8) else { return nil }
+                    var lines = head.components(separatedBy: "\r\n")
+                    let first = lines.removeFirst().split(separator: " ")
+                    guard first.count >= 2 else { return nil }
+                    method = String(first[0]); path = String(first[1]); headers = [:]
+                    for line in lines {
+                        guard let colon = line.firstIndex(of: ":") else { continue }
+                        headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+                    }
+                    let length = Int(headers["content-length"] ?? "0") ?? 0
+                    guard length >= 0, data.count - end.upperBound >= length else { return nil }
+                    body = data[end.upperBound..<(end.upperBound + length)]
+                }
+            }
+
+            static func accept(_ connection: NWConnection) {
+                connection.start(queue: queue)
+                var received = Data()
+                var arrived = false
+                // A request has a few seconds to arrive whole; the app's answer (an AI answer can take a minute) has
+                // as long as it needs.
+                queue.asyncAfter(deadline: .now() + 15) { if !arrived { connection.cancel() } }
+                func read() {
+                    connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, complete, error in
+                        if let data { received.append(data) }
+                        if received.count > 1_100_000 { return connection.cancel() }
+                        if let request = Request(received) { arrived = true; return respond(request, on: connection) }
+                        if complete || error != nil { return connection.cancel() }
+                        read()
+                    }
+                }
+                read()
+            }
+
+            static func send(_ status: Int, _ type: String, _ body: Data, on connection: NWConnection) {
+                let reason = [200: "OK", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 421: "Misdirected Request", 503: "Unavailable"][status] ?? "Error"
+                let head = "HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\n" +
+                    "Content-Security-Policy: \(policy)\r\nX-Content-Type-Options: nosniff\r\nCross-Origin-Resource-Policy: same-origin\r\n" +
+                    "Referrer-Policy: no-referrer\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+                connection.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in connection.cancel() })
+            }
+            static func json(_ status: Int, _ value: [String: Any], on connection: NWConnection) {
+                send(status, "application/json", (try? JSONSerialization.data(withJSONObject: value)) ?? Data("{}".utf8), on: connection)
+            }
+
+            static func respond(_ request: Request, on connection: NWConnection) {
+                // A website can point any name at this Mac, and another program may have taken the app's first
+                // port: only the app's own name, at the port it has, is answered.
+                guard request.headers["host"] == "\(host):\(port)" else { return json(421, ["error": "Wrong host."], on: connection) }
+                let path = request.path.split(separator: "?", maxSplits: 1).first.map(String.init) ?? "/"
+                // Proof that this is the app, not another program that took one of its ports: the key's signature
+                // over the sidebar's nonce and the port asked, which only the app can make and which fits only the
+                // address it was asked at. Chrome's sidebar hands the page its key only after checking it.
+                if path == "/lamp/proof", request.method == "GET" {
+                    let query = request.path.split(separator: "?", maxSplits: 1).dropFirst().first.map(String.init) ?? ""
+                    guard let nonce = URLComponents(string: "?" + query)?.queryItems?.first(where: { $0.name == "nonce" })?.value,
+                          !nonce.isEmpty, nonce.count <= 100 else { return json(400, ["error": "No nonce."], on: connection) }
+                    let code = HMAC<SHA256>.authenticationCode(for: Data("\(nonce):\(port)".utf8), using: SymmetricKey(data: Data(key.utf8)))
+                    return json(200, ["proof": code.map { String(format: "%02x", $0) }.joined()], on: connection)
+                }
+                if path.hasPrefix("/lamp/") {
+                    // The page's data: only for the key Chrome's sidebar (or Lamp's preview) was given, and never
+                    // for a request another site made.
+                    let site = request.headers["sec-fetch-site"]
+                    guard request.headers["x-lamp-key"] == key, site == nil || site == "same-origin" else {
+                        return json(403, ["error": "Not for this page."], on: connection)
+                    }
+                    if path == "/lamp/version" { return json(200, ["version": version], on: connection) }
+                    guard request.method == "POST", path.hasPrefix("/lamp/call/"),
+                          let name = String(path.dropFirst("/lamp/call/".count)).removingPercentEncoding, !name.isEmpty, name.count <= 100 else {
+                        return json(404, ["error": "Not found."], on: connection)
+                    }
+                    let call = Call(name: name, tab: String((request.headers["x-lamp-tab"] ?? "").prefix(40)), body: request.body)
+                    Task { @MainActor in
+                        guard let api = LampBrowser.pageAPI else { return queue.async { json(503, ["error": "The app isn't ready."], on: connection) } }
+                        do {
+                            let value = try await api(call)
+                            let data = try JSONEncoder().encode(value)
+                            queue.async { send(200, "application/json", data, on: connection) }
+                        } catch {
+                            let message = error is DecodingError ? "The app couldn't read what the page sent."
+                                : (error as? LocalizedError)?.errorDescription ?? "The app couldn't do that."
+                            queue.async { json(400, ["error": message], on: connection) }
+                        }
+                    }
+                    return
+                }
+                guard request.method == "GET" else { return json(404, ["error": "Not found."], on: connection) }
+                if path == "/lamp.js" { return send(200, "text/javascript; charset=utf-8", Data(LampBrowser.script.utf8), on: connection) }
+                if path == "/lamp.css" { return send(200, "text/css; charset=utf-8", Data(LampBrowser.style.utf8), on: connection) }
+                // The page's own files, and nothing outside its folder.
+                let parts = (path == "/" ? "/index.html" : path).split(separator: "/").map { String($0).removingPercentEncoding ?? "" }
+                guard let folder, !parts.isEmpty, parts.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") && !$0.contains("/") }) else {
+                    return json(404, ["error": "Not found."], on: connection)
+                }
+                // Links are followed before the check, so one pointing out of the folder is refused like `..`.
+                let root = folder.resolvingSymlinksInPath().path + "/"
+                let file = parts.reduce(folder) { $0.appendingPathComponent($1) }.resolvingSymlinksInPath()
+                guard file.path.hasPrefix(root), let data = try? Data(contentsOf: file) else {
+                    return send(404, "text/plain", Data("Not found".utf8), on: connection)
+                }
+                let types = ["html": "text/html; charset=utf-8", "js": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8",
+                             "json": "application/json", "svg": "image/svg+xml", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                             "gif": "image/gif", "webp": "image/webp", "woff2": "font/woff2", "woff": "font/woff", "ttf": "font/ttf"]
+                send(200, types[file.pathExtension.lowercased()] ?? "application/octet-stream", data, on: connection)
+            }
+        }
+
+        /// `lamp.js`, which the page loads first: `lamp.call`, `lamp.readPage`, `lamp.readSelection`, `lamp.onChange`.
+        nonisolated fileprivate static let script = """
+        // Lamp's bridge for this app's sidebar page. The page sits in Chrome's sidebar, framed by Lamp's extension;
+        // what it knows of the person's tab comes only through that frame, after a click.
+        (() => {
+          const tab = new URLSearchParams(location.hash.slice(1)).get('tab') || sessionStorage.getItem('lamp.tab') || 'preview';
+          sessionStorage.setItem('lamp.tab', tab);
+          if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+          // The key for the app's data comes from the sidebar, and only once the app has proved it serves this page.
+          let key = '';
+          const preview = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampPreview;
+          const framer = (location.ancestorOrigins && location.ancestorOrigins[0]) || '';
+          let next = 0; const waiting = {};
+          addEventListener('message', event => {
+            if (event.source !== parent || event.origin !== framer || !event.data || event.data.lamp !== 'answer') return;
+            const done = waiting[event.data.id]; delete waiting[event.data.id]; if (done) done(event.data);
+          });
+          function ask(body) {
+            if (preview) return preview.postMessage(body);
+            if (parent === window || !framer) return Promise.resolve({error: 'Open this in Chrome’s sidebar.'});
+            return new Promise(resolve => { const id = ++next; waiting[id] = resolve; parent.postMessage({...body, id}, framer); });
+          }
+          let token = '', proving = null;
+          function prove() {
+            proving = proving || (async () => {
+              const hello = await ask({lamp: 'hello'});
+              if (hello && hello.key) { key = hello.key; return; }
+              if (!hello || !hello.nonce) return;
+              const proof = await fetch('/lamp/proof?nonce=' + encodeURIComponent(hello.nonce)).then(r => r.json()).catch(() => ({}));
+              const answer = await ask({lamp: 'proof', nonce: hello.nonce, proof: proof.proof || ''});
+              if (answer && answer.key) { key = answer.key; token = answer.token || ''; }
+            })().finally(() => { proving = null; });
+            return proving;
+          }
+          const ready = prove();
+          // The sidebar asks each document it loads to prove itself again.
+          addEventListener('message', event => {
+            if (event.source === parent && event.origin === framer && event.data && event.data.lamp === 'prove') prove();
+          });
+          async function call(name, body) {
+            await ready;
+            let reply;
+            try {
+              reply = await fetch('/lamp/call/' + encodeURIComponent(name), {method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-Lamp-Key': key, 'X-Lamp-Tab': tab}, body: JSON.stringify(body === undefined ? null : body)});
+            } catch { throw new Error('Open the app on your Mac, then try again.'); }
+            const value = await reply.json().catch(() => null);
+            if (!reply.ok) throw new Error((value && value.error) || 'The app couldn’t do that.');
+            return value;
+          }
+          async function read(scope) {
+            await ready;
+            const answer = await ask({lamp: 'read', scope, token});
+            if (!answer || answer.error) throw new Error((answer && answer.error) || 'The page couldn’t be read.');
+            return answer.page;
+          }
+          // Every second: what changed in the app, and to the sidebar, that the app still answers here (when it
+          // doesn't, the sidebar looks for it again, at whichever of its ports it reopened).
+          const watchers = []; let version = null;
+          async function poll() {
+            try {
+              await ready;
+              const reply = await fetch('/lamp/version', {headers: {'X-Lamp-Key': key}});
+              const value = await reply.json();
+              if (reply.ok && !preview && framer) parent.postMessage({lamp: 'alive'}, framer);
+              if (version !== null && value.version !== version) watchers.forEach(f => { try { f(); } catch {} });
+              version = value.version;
+            } catch {}
+            setTimeout(poll, 1000);
+          }
+          poll();
+          window.lamp = {
+            tab, call,
+            /// The readable text of the page the person is on: {url, title, text, truncated}. Call it from a click.
+            readPage: () => read('page'),
+            /// Only the passage the person selected on the page. Call it from a click.
+            readSelection: () => read('selection'),
+            /// Called when the app says what the page shows changed (LampBrowser.pageChanged()).
+            onChange(f) { watchers.push(f); },
+          };
+        })();
+        """
+
+        /// `lamp.css`: the sidebar as a part of the app's Mac window. The window's gray, Mac-sized type and controls,
+        /// lists as grouped boxes, and the app's colour only where a Mac window puts it: the main button, links and
+        /// focus. A page sets its colour with `:root { --accent: … }` in its own CSS and builds the rest on top.
+        nonisolated fileprivate static let style = """
+        :root{color-scheme:light dark;--bg:#eff1f2;--card:#fdfdfd;--line:#dadcde;--field:#c4c7ca;--ink:#1d1d1f;--muted:#6e6e73;--accent:#0a64d6;--on-accent:#fff;--danger:#c2412a;--radius:10px;--shadow:0 .5px 1.5px rgba(0,0,0,.1);--face:-apple-system,BlinkMacSystemFont,system-ui,sans-serif}
+        @media (prefers-color-scheme:dark){:root{--bg:#1e1f20;--card:#2a2b2c;--line:#3a3b3d;--field:#505255;--ink:#f5f5f7;--muted:#98989d;--danger:#ff7b6b;--shadow:none}}
+        *{box-sizing:border-box}html{background:var(--bg)}
+        body{margin:0;padding:12px 16px 84px;background:var(--bg);color:var(--ink);font:13px/1.45 var(--face);-webkit-font-smoothing:antialiased}
+        h1{font:700 20px/1.2 var(--face);letter-spacing:-.012em;margin:6px 0 4px}h2{font:600 12px/1.3 var(--face);margin:18px 2px 6px}h3{font:600 15px/1.3 var(--face);margin:0}
+        p{margin:0 0 8px}.muted{color:var(--muted)}a{color:var(--accent)}
+        .box{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin:0 0 10px}
+        .box>p{margin:0;padding:9px 12px}.row{display:flex;gap:10px;align-items:center;padding:8px 12px;border-top:1px solid var(--line)}.box>.row:first-child{border-top:0}
+        .row .grow{flex:1;min-width:0}.row .sub{color:var(--muted);font-size:12px}
+        .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin:0 0 10px}
+        .card>img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;background:var(--line)}.card .words{padding:10px 12px}.card .words p{color:var(--muted);margin:2px 0 0}
+        ul.list{list-style:none;margin:0;padding:0}ul.list li{padding:7px 12px;border-top:1px solid var(--line)}ul.list li:first-child{border-top:0}
+        label{display:block;margin:12px 0 0;font-weight:500}
+        input,textarea,select{display:block;width:100%;font:400 13px/1.45 var(--face);padding:5px 8px;border:1px solid var(--field);border-radius:6px;margin-top:4px;background:var(--card);color:var(--ink)}textarea{resize:vertical}
+        button{font:600 13px/1.3 var(--face);min-height:28px;padding:5px 14px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--ink);box-shadow:var(--shadow);cursor:pointer}
+        button.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}button:disabled{opacity:.5;cursor:wait}
+        button.link{border:0;background:none;box-shadow:none;color:var(--accent);padding:0;min-height:0}
+        :focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 50%,transparent);outline-offset:1px}
+        .actions{position:fixed;bottom:0;left:0;right:0;display:flex;flex-wrap:wrap;gap:8px;padding:10px 16px 14px;background:var(--bg);border-top:1px solid var(--line)}
+        .status{color:var(--muted);margin:8px 2px}.status:empty{display:none}.error{color:var(--danger)}
+        .empty{color:var(--muted);text-align:center;padding:28px 12px}
+        [hidden]{display:none!important}
+        """
     }
     #endif
 
@@ -7821,6 +8260,10 @@ enum Template {
     /// answers only the app it built, running from where Lamp installed it, and only while Lamp is open. On an
     /// iPhone the device's Keychain (`.keychain`) asks nothing, so it's kept there. Both ways sit behind the same
     /// three calls, so an app that keeps its own secrets again is one line: `store`.
+    ///
+    /// A key for a service that isn't one of Lamp's connectors goes through `LampAPI.own`, which keeps it here and
+    /// asks for it on the same sheet as the listed services: don't draw a key field of your own. Names starting
+    /// "lamp-" are Lamp's.
     enum LampSecrets {
         enum Store { case lamp, keychain }
         #if os(macOS)
@@ -8691,6 +9134,19 @@ enum Template {
     ///         _ = try await LampAPI.readwise.post("v3/save/", ["url": link])
     ///     }
     ///
+    /// A service that isn't listed but needs a key gets the same sheet and the same care: the app declares it once
+    /// with `own`, saying where its API is, where the person makes the key, one sentence on what to do there, how the
+    /// key is sent (a header, or a query parameter as NASA's and many free APIs take it) and a cheap path that
+    /// answers 2xx to a working key.
+    ///
+    ///     extension LampAPI {
+    ///         static let nasa = LampAPI.own("nasa", name: "NASA", base: "https://api.nasa.gov/",
+    ///             keyPage: "https://api.nasa.gov", steps: "Sign up for a free API key, then paste it here.",
+    ///             query: ["api_key": "{key}"], check: "neo/rest/v1/feed/today")
+    ///     }
+    ///     LampAPIButton(api: .nasa)
+    ///     let feed = try await LampAPI.nasa.get("neo/rest/v1/feed", query: ["start_date": day])
+    ///
     /// Paths are the service's own, relative to its API's address (`base`); `get`, `post`, `put`, `patch` and
     /// `delete` send JSON and return what came back. A path that leads anywhere else is refused, so the token can't
     /// be sent to another site. A call made while not connected, or once the service no longer takes the token (the person
@@ -8749,6 +9205,9 @@ enum Template {
         /// The headers each request carries, with `{key}` standing for what the person pasted under that key. A
         /// value beginning "Basic " has the rest sent as Basic authentication.
         private let headers: [String: String]
+        /// Query parameters each request carries, written the same way, for a service that takes its key in the
+        /// address. They win over a parameter of the same name in a call, so a call can't send another key.
+        private let keyQuery: [String: String]
         /// A path that answers 2xx to a token that works: it's asked before the token is kept.
         private let check: String
         @Published private(set) var isConnected = false
@@ -8757,7 +9216,7 @@ enum Template {
         private var attempt = 0
 
         fileprivate init(id: String, name: String, base: String, page: String, steps: String, fields: [Field],
-                         headers: [String: String], check: String) {
+                         headers: [String: String], check: String, query: [String: String] = [:]) {
             self.id = id
             self.name = name
             self.base = URL(string: base)!
@@ -8765,8 +9224,21 @@ enum Template {
             self.steps = steps
             self.fields = fields
             self.headers = headers
+            keyQuery = query
             self.check = check
             isConnected = Saved.read(id) != nil
+        }
+
+        /// A service that isn't one of Lamp's connectors, declared by the app, with the same Connect sheet, check
+        /// and keeping as the listed ones. Declare it once (a `static let`), since the button and the calls must
+        /// share one. `base` is the API's https address; `{key}` in `headers` or `query` stands for what's pasted
+        /// under that field's key.
+        static func own(_ id: String, name: String, base: String, keyPage: String, steps: String,
+                        fields: [Field] = [Field(key: "key", label: "API Key")],
+                        headers: [String: String] = [:], query: [String: String] = [:], check: String) -> LampAPI {
+            // Its own name, so it can't take the place of a listed service's token in this app.
+            LampAPI(id: "own-" + id, name: name, base: base, page: keyPage, steps: steps, fields: fields,
+                    headers: headers, check: check, query: query)
         }
 
         /// Checks what the person pasted with the service and keeps it when the service takes it. Throws the reason
@@ -8856,7 +9328,10 @@ enum Template {
             guard var parts = URLComponents(string: relative) else { return nil }
             guard parts.scheme == nil, parts.host == nil else { return nil }
             if !query.isEmpty {
-                parts.queryItems = (parts.queryItems ?? []) + query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
+                // A parameter given here takes the place of one of the same name already in the path, so a key in a
+                // path can't ride beside the saved one.
+                let kept = (parts.queryItems ?? []).filter { query[$0.name] == nil }
+                parts.queryItems = kept + query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
                 // A plus in a value would read as a space at the other end.
                 parts.percentEncodedQuery = parts.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
             }
@@ -8867,6 +9342,15 @@ enum Template {
         }
 
         private func request(_ method: String, _ path: String, query: [String: String], body: Data?, values: [String: String]) async throws -> Reply {
+            var query = query
+            for (name, template) in keyQuery {
+                var value = template
+                for (key, pasted) in values { value = value.replacingOccurrences(of: "{\(key)}", with: pasted) }
+                query[name] = value
+            }
+            // A key goes only over https: an app's own service names its address itself, and http would send the key
+            // as plain text.
+            guard base.scheme == "https" else { throw Failure(message: "\(name)'s address must start with https://.") }
             guard let url = address(of: path, query: query) else {
                 throw Failure(message: "\(path) isn't part of \(name)'s API.")
             }
@@ -12549,6 +13033,9 @@ enum Template {
         out="$LIVE/$f"
         mkdir -p "${out:h}"
         perl -0pe 's/var body: some View \\{/var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\\n    \\@ViewBuilder var __lampBody: some View {/g' "$f" > "$out.new"
+        # Every class of the app's gets \(LiveSlots.count) spare places for properties added while it's open (LiveSlots),
+        # named after the class, so a subclass's don't clash with those it inherits.
+        case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) perl -0pi -e 's#^([ \\t]*)((?:@[\\w.]+(?:\\([^)\\n]*\\))?\\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated)\\s+)*class\\s+(?!(?:func|var|let|subscript|override|class)\\b)(\\w+)[^{\\n]*\\{)#my ($i, $h, $n) = ($1, $2, $3); ($h =~ /\\@Model\\b|NSManagedObject|(?<!unchecked )\\bSendable\\b/) ? "$i$h" : "$i$h" . join("", map { "\\n$i    " . ($h =~ /ObservableObject/ ? "\\@Published " : "") . "var __lampSpare_${n}_$_: LampSpare? = nil;" } 0 .. \(LiveSlots.count - 1))#gme' "$out.new" ;; esac
         if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi
       done
       for f in "$LIVE"/Sources/**/*.swift(N); do [[ -f "${f#$LIVE/}" ]] || rm "$f"; done
@@ -12580,6 +13067,8 @@ enum Template {
       cmp -s Package.swift "$LIVE/Package.swift" || cp Package.swift "$LIVE/Package.swift"
       # Lamp only wants the live copy, to put a change into the open app before building the whole of it.
       [[ "${LAMP_LIVE_COPY:-}" == 1 ]] && exit 0
+      # What this build compiles, which is what the app runs once it's installed (LiveReload.markRunning).
+      rsync -a --delete "$LIVE/Sources/" "$LIVE/built/"
       FLAGS=(-c debug --package-path "$LIVE" --scratch-path "$LIVE/.build" -Xswiftc -DLAMP_LIVE -Xswiftc -enable-testing -Xlinker -interposable "${RESTRICT[@]}")
     fi
     \(appIntentsSetup(ios: false))
