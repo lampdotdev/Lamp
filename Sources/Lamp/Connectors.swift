@@ -7,9 +7,10 @@ import Foundation
 /// always what the app has.
 ///
 /// A service belongs here when the person can connect without anyone registering an app first: through its
-/// own MCP server with a sign-in that lets an app register itself (`signIn`), or with a personal token the
-/// person makes on the service's own site (`token`). One that needs a developer app, a secret key that can
-/// spend money, or forbids collecting its tokens doesn't.
+/// own MCP server with a sign-in that lets an app register itself (`signIn`), with a personal token the
+/// person makes on the service's own site (`token`), or with nothing at all, for open data anyone may read
+/// (`open`). One that needs a developer app, a secret key that can spend money, or forbids collecting its
+/// tokens doesn't.
 enum Connectors {
     enum Kind {
         /// The service's MCP server, with its own sign-in page (`LampService`). Mac apps only: the service
@@ -17,20 +18,44 @@ enum Connectors {
         case signIn(mcp: String, scope: String?)
         /// A token the person makes on the service's page and pastes into the app (`LampAPI`). Every kind of app.
         case token(Token)
+        /// Open data with no account (`LampAPI` with nothing to paste): the app calls it straight away, with no
+        /// Connect and no sheet. Every kind of app.
+        case open(Open)
+    }
+
+    /// One thing the person pastes into the sheet.
+    struct Field {
+        let key: String
+        let label: String
+        /// Shown as dots while typed: a token. An account number or an address isn't.
+        var secret = true
+        /// What the empty field shows.
+        var prompt = "Paste here"
     }
 
     struct Token {
-        /// The API's address; every path is relative to it, and the token goes nowhere else.
+        /// The API's address; every path is relative to it, and the token goes nowhere else. A service that runs
+        /// on the person's own server has `{server}` here, filled from the address they type on the sheet.
         let base: String
         /// Where the person makes the token, and what to do there, in one plain sentence for the app's sheet.
         let page: String
         let steps: String
-        /// What the person pastes: the token, and for some services an account number.
-        var fields: [(key: String, label: String, secret: Bool)] = [("token", "Token", true)]
+        /// What the person pastes: the token, and for some services an account number or their server's address.
+        var fields: [Field] = [Field(key: "token", label: "Token")]
         /// Headers with `{key}` for a pasted value; "Basic …" is sent as Basic authentication.
         let headers: [String: String]
         /// A path that answers 2xx to a working token.
         let check: String
+        /// A call to show in the agent's example.
+        let example: String
+    }
+
+    struct Open {
+        /// The API's address; paths are relative to it.
+        let base: String
+        /// The same service's other addresses (Open-Meteo answers air quality and place names from hosts of their
+        /// own): a call may name a full address under one of these, and nothing else.
+        var also: [String] = []
         /// A call to show in the agent's example.
         let example: String
     }
@@ -144,7 +169,7 @@ enum Connectors {
         Connector(id: "harvest", name: "Harvest", holds: "timesheets, projects and invoices",
                   kind: .token(Token(base: "https://api.harvestapp.com/v2/", page: "https://id.getharvest.com/developers",
                                      steps: "Create a personal access token, then paste the token and the account ID it shows here.",
-                                     fields: [("token", "Token", true), ("account", "Account ID", false)],
+                                     fields: [Field(key: "token", label: "Token"), Field(key: "account", label: "Account ID", secret: false)],
                                      headers: ["Authorization": "Bearer {token}", "Harvest-Account-Id": "{account}"],
                                      check: "users/me", example: "get(\"time_entries\", query: [\"from\": \"2026-01-01\"])")),
                   docs: "https://help.getharvest.com/api-v2/",
@@ -167,6 +192,77 @@ enum Connectors {
                   notes: "There's no list of the person's files: the app asks for a file's link, and the key is the part " +
                     "after /design/ or /file/. files/{key} (depth keeps it small), files/{key}/comments and post the same " +
                     "{message}, images/{key} with ids and format=png answers addresses of rendered pictures."),
+        // Home Assistant runs on the person's own server, so its address is pasted with the token and the token goes
+        // only there. On the home network that's often plain http, which is how Home Assistant comes.
+        Connector(id: "homeassistant", name: "Home Assistant", holds: "lights, thermostats, switches and sensors at home",
+                  kind: .token(Token(base: "{server}/api/", page: "{server}/profile/security",
+                                     steps: "Type your Home Assistant's address, then under your profile's Security tab create a long-lived access token and paste it here.",
+                                     fields: [Field(key: "server", label: "Address", secret: false, prompt: "http://homeassistant.local:8123"),
+                                              Field(key: "token", label: "Token")],
+                                     headers: ["Authorization": "Bearer {token}"], check: "", example: "get(\"states\")")),
+                  docs: "https://developers.home-assistant.io/docs/api/rest/",
+                  notes: "states lists every entity ({entity_id such as light.kitchen, state, attributes: friendly_name, " +
+                    "unit_of_measurement, device_class, brightness, current_temperature…}); states/{entity_id} one. post " +
+                    "services/{domain}/{service} {entity_id, …} acts and answers the states it changed: light/turn_on " +
+                    "(brightness_pct, rgb_color), light/toggle, switch/turn_off, climate/set_temperature (temperature), " +
+                    "cover/open_cover, scene/turn_on. history/period/{ISO time} with filter_entity_id for past states. " +
+                    "Group entities by the domain before the dot and name them by friendly_name. It answers only while " +
+                    "the server can be reached: at home, or through the person's own remote address."),
+        Connector(id: "intervals", name: "Intervals.icu", holds: "workouts, training load, and wellness such as sleep, HRV and resting heart rate",
+                  kind: .token(Token(base: "https://intervals.icu/api/v1/", page: "https://intervals.icu/settings",
+                                     steps: "Under Developer Settings near the bottom of the page, copy your API key, then paste it here.",
+                                     fields: [Field(key: "token", label: "API Key")],
+                                     headers: ["Authorization": "Basic API_KEY:{token}"], check: "athlete/0",
+                                     example: "get(\"athlete/0/wellness\", query: [\"oldest\": \"2026-01-01\", \"newest\": \"2026-01-07\"])")),
+                  docs: "https://intervals.icu/api-docs.html",
+                  notes: "0 stands for the person's own athlete id in every path. Dates are YYYY-MM-DD. " +
+                    "athlete/0/activities (oldest, newest): name, type, start_date_local, moving_time (seconds), distance " +
+                    "(meters), icu_training_load, average_heartrate. athlete/0/events (oldest, newest, category=WORKOUT): " +
+                    "planned workouts. athlete/0/wellness (oldest, newest): a record a day whose id is its date, with " +
+                    "sleepSecs, sleepScore, hrv, restingHR, readiness, weight, ctl (fitness) and atl (fatigue), form being " +
+                    "ctl − atl; put athlete/0/wellness/{date} with the fields changes a day. Activities synced from Strava " +
+                    "aren't in the API."),
+
+        Connector(id: "openmeteo", name: "Open-Meteo", holds: "weather forecasts, past weather and air quality anywhere",
+                  kind: .open(Open(base: "https://api.open-meteo.com/v1/",
+                                   also: ["https://air-quality-api.open-meteo.com/v1/", "https://geocoding-api.open-meteo.com/v1/",
+                                          "https://archive-api.open-meteo.com/v1/"],
+                                   example: "get(\"forecast\", query: [\"latitude\": \"52.52\", \"longitude\": \"13.41\", \"current\": \"temperature_2m,weather_code\", \"timezone\": \"auto\"])")),
+                  docs: "https://open-meteo.com/en/docs",
+                  notes: "forecast takes latitude, longitude, timezone=auto and the variables as comma lists in current, " +
+                    "hourly and daily (temperature_2m, apparent_temperature, precipitation_probability, weather_code, " +
+                    "wind_speed_10m; daily temperature_2m_max and _min, sunrise, sunset), forecast_days up to 16. hourly " +
+                    "and daily come as arrays beside a time array, each with its units in hourly_units or daily_units. " +
+                    "weather_code is WMO's: 0 clear, 1–3 cloud, 45 and 48 fog, 51–67 drizzle and rain, 71–77 snow, 80–82 " +
+                    "showers, 95–99 thunder. Air quality: https://air-quality-api.open-meteo.com/v1/air-quality " +
+                    "(european_aqi, us_aqi, pm2_5, pm10, ozone, uv_index; pollen in Europe). Places to coordinates: " +
+                    "https://geocoding-api.open-meteo.com/v1/search with name and count ({results: [{name, latitude, " +
+                    "longitude, country, admin1}]}). Past days: https://archive-api.open-meteo.com/v1/archive with " +
+                    "start_date and end_date. LampLocation.current() gives where the person is. Free for personal use, " +
+                    "about 10,000 calls a day: keep an answer for a while rather than ask on every view. Show " +
+                    "\"Weather data by Open-Meteo.com\" where its data is shown (its licence, CC BY 4.0, asks for it)."),
+        Connector(id: "openfoodfacts", name: "Open Food Facts", holds: "groceries by barcode or name: ingredients, nutrition, allergens and scores",
+                  kind: .open(Open(base: "https://world.openfoodfacts.org/", also: ["https://search.openfoodfacts.org/"],
+                                   example: "get(\"api/v2/product/3017624010701.json\", query: [\"fields\": \"product_name,brands,nutriments,nutrition_grades\"])")),
+                  docs: "https://openfoodfacts.github.io/openfoodfacts-server/api/",
+                  notes: "api/v2/product/{barcode}.json answers {status, product}; status 0, still with HTTP 200, is a " +
+                    "barcode it doesn't know. Always pass fields, since a whole product is large: product_name, brands, " +
+                    "quantity, ingredients_text, allergens_tags (en:milk…), nutriments (per 100 g: energy-kcal_100g, " +
+                    "sugars_100g, fat_100g, salt_100g, proteins_100g), nutrition_grades (Nutri-Score a–e), nova_group " +
+                    "(1–4), image_front_small_url. Search by words: https://search.openfoodfacts.org/search with q, " +
+                    "page_size and fields ({hits, page_count}); the older cgi/search.pl is often down. About 100 product " +
+                    "reads and 10 searches a minute: search when the person asks, not as they type. People add the data, " +
+                    "so some is missing or wrong: show what's there and say when something isn't. Adding products needs " +
+                    "an account and isn't for these apps."),
+        Connector(id: "frankfurter", name: "Frankfurter", holds: "exchange rates for about 200 currencies, today's and past days'",
+                  kind: .open(Open(base: "https://api.frankfurter.dev/v2/",
+                                   example: "get(\"rates\", query: [\"base\": \"USD\", \"quotes\": \"EUR,GBP\"])")),
+                  docs: "https://frankfurter.dev/",
+                  notes: "rates (base, quotes as a comma list; date=YYYY-MM-DD for a past day, from and to for a range, " +
+                    "group=week or month) answers a list of {date, base, quote, rate}; rate/{base}/{quote} one pair as " +
+                    "{date, base, quote, rate}; currencies a list of {iso_code, name, symbol}. Rates come from central " +
+                    "banks once a working day, so there's no live rate and no conversion call: multiply by rate, and say " +
+                    "which day it is. v1 is older and being retired."),
     ]
 
     // MARK: - The agent's tool
@@ -177,7 +273,9 @@ enum Connectors {
         guard let asked = (arguments["service"] as? String)?.trimmingCharacters(in: .whitespaces).lowercased(), !asked.isEmpty else {
             return (200, ["text": list(mac: mac)])
         }
-        guard let connector = all.first(where: { $0.id == asked || $0.name.lowercased() == asked }) else {
+        // By id or by name as it's written ("home-assistant", "Intervals.icu"): only letters and digits count.
+        func plain(_ text: String) -> String { String(text.lowercased().filter { $0.isLetter || $0.isNumber }) }
+        guard let connector = all.first(where: { plain($0.id) == plain(asked) || plain($0.name) == plain(asked) }) else {
             return (200, ["text": "No connector is called \(asked). " + list(mac: mac)])
         }
         return (200, ["text": guide(connector, mac: mac, phone: project.platform.hasIOS)])
@@ -186,7 +284,7 @@ enum Connectors {
     static func list(mac: Bool) -> String {
         func line(_ c: Connector) -> String { "- \(c.id): \(c.name), \(c.holds)" }
         var text = """
-        Services an app can connect to with the person's own account. Before these, use what's already on the \
+        Services an app can connect to: the person's own accounts, and open data anyone may read. Before these, use what's already on the \
         device (LampCalendar, LampReminders, LampContacts, LampMail, synced folders); after them, LampComputer on \
         the Mac for anything not here. Call connectors again with service set to an id for how to build on it.
 
@@ -199,9 +297,11 @@ enum Connectors {
         """
         let signIns = all.filter { if case .signIn = $0.kind { true } else { false } }
         let tokens = all.filter { if case .token = $0.kind { true } else { false } }
+        let open = all.filter { if case .open = $0.kind { true } else { false } }
         text += "\nThe person signs in on the service's own page (Mac apps\(mac ? "" : " only, so not this app")):\n"
             + signIns.map(line).joined(separator: "\n")
         text += "\n\nThe person pastes a token they make on the service's own site:\n" + tokens.map(line).joined(separator: "\n")
+        text += "\n\nOpen data, nothing to connect:\n" + open.map(line).joined(separator: "\n")
         return text
     }
 
@@ -225,7 +325,8 @@ enum Connectors {
             """
         case .token(let t):
             return """
-            \(c.name) connects with a token the person makes at \(t.page) and pastes into the app: use `LampAPI.\(c.id)` \
+            \(c.name) connects with a token the person makes \(t.page.contains("{server}") ? "on their own server" : "at \(t.page)") \
+            and pastes into the app: use `LampAPI.\(c.id)` \
             in LampSupport.swift, and read LampAPI's comment there first. LampAPIButton's sheet takes the token and \
             checks it: never ask for it in the chat or anywhere else, and never put one in the code.
 
@@ -233,7 +334,19 @@ enum Connectors {
                 LampAPIButton(api: .\(c.id))
                 let reply = try await LampAPI.\(c.id).\(t.example)
 
-            Paths are relative to \(t.base). Its API: \(c.docs). \(c.notes)
+            Paths are relative to \(t.base)\(t.base.contains("{server}") ? ", {server} being the address the person typed on the sheet" : ""). \
+            Its API: \(c.docs). \(c.notes)
+            """
+        case .open(let o):
+            return """
+            \(c.name) is open data: no account, no key, nothing to connect, so no button and no sheet. Use \
+            `LampAPI.\(c.id)` in LampSupport.swift, and read LampAPI's comment there first. It answers straight away, \
+            so the app shows real data as soon as it opens.
+
+                let reply = try await LampAPI.\(c.id).\(o.example)
+
+            Paths are relative to \(o.base)\(o.also.isEmpty ? "" : "; a full address under \(o.also.joined(separator: ", ")) works too"). \
+            Its API: \(c.docs). \(c.notes)
             """
         }
     }
@@ -263,18 +376,27 @@ enum Connectors {
         return lines + "        static let all = [\(ids.joined(separator: ", "))]\n"
     }
 
+    /// Token services and open data are both `LampAPI`: open data has nothing to paste, so it's always connected.
     static var tokenDeclarations: String {
         var ids: [String] = []
         var lines = ""
         for c in all {
-            guard case .token(let t) = c.kind else { continue }
+            let base: String, page: String, steps: String, fields: [Field], headers: [String: String], check: String, also: [String]
+            switch c.kind {
+            case .signIn: continue
+            case .token(let t):
+                (base, page, steps, fields, headers, check, also) = (t.base, t.page, t.steps, t.fields, t.headers, t.check, [])
+            case .open(let o):
+                (base, page, steps, fields, headers, check, also) = (o.base, c.docs, "", [], [:], "", o.also)
+            }
             ids.append(c.id)
-            let fields = t.fields.map { "Field(key: \(quoted($0.key)), label: \(quoted($0.label)), secret: \($0.secret))" }
-            let headers = t.headers.sorted { $0.key < $1.key }.map { "\(quoted($0.key)): \(quoted($0.value))" }
-            lines += "        static let \(c.id) = LampAPI(id: \(quoted(c.id)), name: \(quoted(c.name)), base: \(quoted(t.base)), "
-                + "page: \(quoted(t.page)),\n            steps: \(quoted(t.steps)),\n"
-                + "            fields: [\(fields.joined(separator: ", "))],\n"
-                + "            headers: [\(headers.joined(separator: ", "))], check: \(quoted(t.check)))\n"
+            let declared = fields.map { "Field(key: \(quoted($0.key)), label: \(quoted($0.label)), secret: \($0.secret), prompt: \(quoted($0.prompt)))" }
+            let sent = headers.sorted { $0.key < $1.key }.map { "\(quoted($0.key)): \(quoted($0.value))" }
+            lines += "        static let \(c.id) = LampAPI(id: \(quoted(c.id)), name: \(quoted(c.name)), base: \(quoted(base)), "
+                + "page: \(quoted(page)),\n            steps: \(quoted(steps)),\n"
+                + "            fields: [\(declared.joined(separator: ", "))],\n"
+                + "            headers: [\(sent.isEmpty ? ":" : sent.joined(separator: ", "))], check: \(quoted(check))"
+                + (also.isEmpty ? "" : ",\n            also: [\(also.map(quoted).joined(separator: ", "))]") + ")\n"
         }
         return lines + "        static let all = [\(ids.joined(separator: ", "))]\n"
     }
