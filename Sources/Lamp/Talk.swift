@@ -81,8 +81,7 @@ enum Talk {
         let summary = (arguments["summary"] as? String)?.trimmed ?? ""
         guard !summary.isEmpty else { return .failure(.message("Say in `summary` what the person now has, in one sentence.")) }
         if let trouble = tooLong(summary, Words.summary, as: "`summary`") { return .failure(trouble) }
-        return .success(Result(summary: summary, guesses: [],
-                               untried: (arguments["untried"] as? String)?.trimmed.nilIfEmpty))
+        return .success(Result(summary: summary, guesses: []))
     }
 
     static func hasSymbol(_ name: String) -> Bool {

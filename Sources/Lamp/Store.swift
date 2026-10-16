@@ -2334,9 +2334,14 @@ final class Store: ObservableObject {
         // card would say it's ready next to the line saying it didn't open.
         if !failed, edited, !owner.didNotOpen, var result = owner.pendingResult {
             result.version = await Versions.head(project)
-            // The card is the word that it's ready: the line saying so just above it would say it twice.
-            if let last = logs[project.id]?.last, last.kind == .status, last.text == "\(project.name) is ready" {
+            // The card is the word that it's ready, and says so first: the line saying it just above would say it
+            // twice. A change that went into the open app says it was updated instead.
+            let said = ["\(project.name) is ready", "\(project.name) is updated"]
+            if let last = logs[project.id]?.last, last.kind == .status, said.contains(last.text) {
                 logs[project.id]?.removeLast()
+                result.status = last.text
+            } else {
+                result.status = said[0]
             }
             logs[project.id, default: []].append(LogLine(kind: .result, text: result.text, result: result))
             saveChat(project)
