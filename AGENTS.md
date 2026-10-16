@@ -662,6 +662,13 @@ Each Chrome tab has its own sidebar and the app keeps what one tab prepared by i
 page prepared never shows on another; keep that when changing either side. The builder may also give an app a
 right-click item (`menu` in browser.json) for the one thing its sidebar does with a page: it opens that app's sidebar,
 and shows only on pages a fit names by address, the one thing Chrome can check before its menu opens.
+**The one exception to "once per click in it"**: choosing an app's right-click item counts as the person's click in
+that app's page. The sidebar tells that page once (`lamp.onMenu`) and lets it read once without a click in it, only
+within 15 seconds of the choice, only with the proof the page gave in that sidebar, and only of the page the item was
+chosen on (the extension checks the tab's address before reading). Nothing else stands in for a click: not the
+toolbar icon, not opening the sidebar, not the page asking on its own. From the item a page may also save without
+the person's check step, since choosing "Save to …" already said so; it then shows the saved item where it can be
+changed or removed. Widening this needs the same say-so as making it.
 
 A build asks the app to quit before it replaces it, and the app's answer decides (`AppQuit`). An app may ask
 about unsaved work first: Lamp sends the quit request itself and reads the reply macOS carries back, which is
