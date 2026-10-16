@@ -510,7 +510,7 @@ built live (a widget or share extension is built from the same copy, and a chang
 every view draws again on a reload with its state kept), and builds that copy unoptimized, testable, with
 `LAMP_LIVE` and `-Xlinker -interposable` (SwiftPM for a Mac app; Xcode for an app for both, from a copy of the
 device project, with its debug library off so the code is in the one binary). After a build, `Store.install` tries
-`reloadInPlace` first: when the app is open, was built live, and the change didn't touch the App or Lamp's own files, and leaves every type
+`reloadInPlace` first: when the app is open, was built live, and the change didn't touch the App (its own declaration, its scenes or its menu commands: what SwiftUI reads only at launch, `LiveReload.launchParts`; a view or helper beside them in the App's file goes in like any code) or Lamp's own files, and leaves every type
 holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties and cases,
 from `-dump-ast` of just the changed files, compared for the open app's sources and the new ones; no reading of the
 text) (`LiveReload.reloadable`, comparing with the sources the
@@ -537,7 +537,9 @@ through two overloads of the keyed coding containers, which the compiler's Codab
 Left out is what a spare would break: SwiftData and Core Data models, `Sendable` classes, `Equatable` views, the App
 and its scenes, property wrappers, App Intents, and structs in a file that lays memory out by hand (vertex data). When
 the only difference in layout is new stored properties in such types, `LiveSlots.fit` rewrites each one-line
-declaration in the live copy into a computed property kept in a spare (a view's `$name` becomes a binding to its
+declaration in the live copy into a computed property kept in a spare (first laying the type's members out one
+to a line, `LiveSlots.membersOnLines`: a one-line struct's members split at `;`, and `var a = 1, b = 2` split into a
+declaration each) (a view's `$name` becomes a binding to its
 box), and the change is compiled again and checked as usual. Being stored, a spare is observed like any property, so
 views redraw. A class's starting value that isn't a literal (`.now`, a call) is worked out on the first read and kept;
 a struct can't keep one from a read, so its new property needs a starting value that comes out the same every time (a

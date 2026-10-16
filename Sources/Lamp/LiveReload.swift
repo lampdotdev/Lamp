@@ -124,7 +124,9 @@ enum LiveReload {
             if ["LampSupport.swift", Template.sceneSupportFile].contains((path as NSString).lastPathComponent) {
                 return .reopen("Lamp's own building blocks changed")
             }
-            if declaresApp(new) { return .reopen("\(path) is the app's entry point") }
+            // The App, its scenes and its menu commands are built once, at launch: a change to them needs a reopen.
+            // Anything else beside them in their file (a settings view, a helper) goes in like any other code.
+            if declaresApp(new), launchParts(of: new) != launchParts(of: old) { return .reopen("\(path) is the app's entry point") }
             changed.append(path)
         }
         // A file taken away can change what an unchanged caller means: a method it declared may have stood in for
@@ -353,6 +355,31 @@ enum LiveReload {
     }
 
     /// The App runs once, at launch: a change to it can't show in an app that's already open.
+    /// The declarations at the top of a file that SwiftUI reads only at launch: the App (with its `@main`), and
+    /// the types that are scenes or menu commands, whose bodies aren't wrapped the way a view's is. Each is its text
+    /// from its first line (attributes included) to the brace that closes it, in order.
+    static func launchParts(of source: String) -> [String] {
+        let lines = source.components(separatedBy: "\n")
+        var parts: [String] = [], index = 0
+        let start = try! NSRegularExpression(pattern: #"^(@\w+.*|((public|private|fileprivate|internal|final|open)\s+)*(struct|class|enum|extension|actor)\s.*)$"#)
+        let launch = try! NSRegularExpression(pattern: #"@main\b|:[^{]*\b(App|Scene|Commands)\b"#)
+        while index < lines.count {
+            let line = lines[index]
+            guard start.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) != nil else { index += 1; continue }
+            // A declaration at the left edge runs to the first line after it that closes at the left edge.
+            var end = index
+            if !(line.contains("{") && line.trimmingCharacters(in: .whitespaces).hasSuffix("}")) {
+                while end + 1 < lines.count, !lines[end + 1].hasPrefix("}") { end += 1 }
+                end = min(end + 1, lines.count - 1)
+            }
+            let text = lines[index...end].joined(separator: "\n")
+            let header = String(text.prefix { $0 != "{" })
+            if launch.firstMatch(in: header, range: NSRange(header.startIndex..., in: header)) != nil { parts.append(text) }
+            index = end + 1
+        }
+        return parts
+    }
+
     private static func declaresApp(_ source: String) -> Bool {
         source.range(of: #"@main\b"#, options: .regularExpression) != nil || source.range(of: #":\s*(SwiftUI\.)?App\s*\{"#, options: .regularExpression) != nil
     }
@@ -587,6 +614,73 @@ enum LiveSlots {
         holder == .view ? "__lampState_\(simpleName(type))" : "__lampSpare_\(simpleName(type))"
     }
 
+    /// A type's body with each member on a line of its own: what follows its `{` up to the `}` that closes it,
+    /// with members split at `;`, the closing brace on a line of its own, and each name of a `var a = 1, b = 2`
+    /// given its own declaration (`var a = 1` and `var b = 2`, with the same attributes and access). What's inside
+    /// a member (a function's body, a closure, brackets, a string) is left as it is.
+    static func membersOnLines(_ text: String, after start: Int, lead: String) -> String {
+        let ns = text as NSString
+        let head = ns.substring(to: start), chars = Array(ns.substring(from: start))
+        let memberLead = lead + "    "
+        var out = "", depth = 1, nesting = 0, inString = false, statement = ""
+        let binding = try! NSRegularExpression(pattern: #"^\s*((?:@\w+(?:\([^)]*\))?\s+)*(?:(?:public|private|fileprivate|internal|nonisolated|static|final)(?:\(set\))?\s+)*(?:var|let)\s+)(?!\()"#)
+        var index = 0
+        while index < chars.count {
+            let c = chars[index]
+            index += 1
+            if inString {
+                out.append(c); statement.append(c)
+                if c == "\\", index < chars.count { out.append(chars[index]); statement.append(chars[index]); index += 1 }
+                else if c == "\"" { inString = false }
+                continue
+            }
+            // A comment runs to the end of its line (or its */), as it is.
+            if c == "/", index < chars.count, chars[index] == "/" || chars[index] == "*" {
+                let block = chars[index] == "*"
+                out.append(c)
+                while index < chars.count {
+                    let d = chars[index]
+                    if !block && d == "\n" { break }
+                    out.append(d); index += 1
+                    if block && d == "/" && out.hasSuffix("*/") && out.count > 2 { break }
+                }
+                continue
+            }
+            switch c {
+            case "\"": inString = true
+            case "{": depth += 1
+            case "}":
+                depth -= 1
+                if depth == 0 {
+                    // The type's own closing brace: on a line of its own.
+                    if !statement.trimmingCharacters(in: .whitespaces).isEmpty { out += "\n" + lead }
+                    out.append(c)
+                    return head + out + String(chars[index...])
+                }
+            case "(", "[", "<": if depth == 1 { nesting += 1 }
+            case ")", "]", ">": if depth == 1, nesting > 0 { nesting -= 1 }
+            case ";" where depth == 1 && nesting == 0:
+                out += "\n" + memberLead
+                statement = ""
+                while index < chars.count, chars[index] == " " { index += 1 }
+                continue
+            case "," where depth == 1 && nesting == 0:
+                let range = NSRange(statement.startIndex..., in: statement)
+                if let m = binding.firstMatch(in: statement, range: range) {
+                    let prefix = (statement as NSString).substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
+                    out += "\n" + memberLead + prefix + " "
+                    statement = memberLead + prefix + " "
+                    while index < chars.count, chars[index] == " " { index += 1 }
+                    continue
+                }
+            case "\n": statement = ""; out.append(c); continue
+            default: break
+            }
+            out.append(c); statement.append(c)
+        }
+        return text
+    }
+
     /// The enum a property's type names, an optional's included.
     private static func enumName(_ type: String) -> String { type.hasSuffix("?") ? String(type.dropLast()) : type }
 
@@ -634,9 +728,15 @@ enum LiveSlots {
             pattern: #"^([ \t]*)((?:@(?:Published|ObservationIgnored|State)[ \t]+)*)((?:(?:public|private|fileprivate|internal|nonisolated)(?:\(set\))?[ \t]+)*)(var|let)[ \t]+"#
                 + escaped + #"[ \t]*(?::[ \t]*([^={}\n]+?))?[ \t]*(?:=[ \t]*([^{}\n]+?))?[ \t]*(?://[^\n]*)?$"#, options: .anchorsMatchLines)
         for file in files where !["LampSupport.swift", Template.sceneSupportFile].contains(file.lastPathComponent) {
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
-            let ns = text as NSString
-            for found in header.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            guard let original = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            let count = header.numberOfMatches(in: original, range: NSRange(location: 0, length: (original as NSString).length))
+            for which in 0..<count {
+                // The type's members one to a line first, as the declaration is looked for line by line.
+                let first = header.matches(in: original, range: NSRange(location: 0, length: (original as NSString).length))[which]
+                let text = membersOnLines(original, after: first.range.location + first.range.length,
+                                          lead: (original as NSString).substring(with: first.range(at: 1)))
+                let ns = text as NSString
+                let found = header.matches(in: text, range: NSRange(location: 0, length: ns.length))[which]
                 // The type's body: from its header to the first line that closes at the header's indent or less.
                 let indent = ns.substring(with: found.range(at: 1)).count
                 let start = found.range.location + found.range.length
@@ -684,7 +784,7 @@ enum LiveSlots {
                 if holder == .view {
                     changed = changed.replacingOccurrences(of: #"\$"# + escaped + #"\b"#, with: "__lampBinding_" + name, options: .regularExpression)
                 }
-                if originals[file] == nil { originals[file] = Data(text.utf8) }
+                if originals[file] == nil { originals[file] = Data(original.utf8) }
                 try? changed.write(to: file, atomically: true, encoding: .utf8)
                 return (file, initial)
             }
