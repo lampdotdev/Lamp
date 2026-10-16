@@ -1456,6 +1456,8 @@ final class Store: ObservableObject {
         await quit(old)
         await WidgetProcess.end(for: old)
         try? fm.removeItem(at: old.installedURL)
+        // Lines logged while the copy was made and the old app quit are written to the new folder instead.
+        settleChat(old)
         try? fm.removeItem(at: old.dir)
 
         if let device = old.device {   // the phone chosen before the first message stays chosen
@@ -1464,6 +1466,7 @@ final class Store: ObservableObject {
             try? Template.saveMeta(kept)
         }
         follow(old, to: project)
+        saveChat(project)
         return project
     }
 
@@ -2456,7 +2459,6 @@ final class Store: ObservableObject {
 
     /// Returns false when the agent couldn't run at all (bad key, no credit, …), after telling the user why.
     private func runAgent(_ prompt: String, files: [String] = [], on project: LampProject) async -> Bool {
-        try? await Template.writeSupportInBackground(for: project)
         // A turn started at launch (one waiting from before) may come before the look for the person's own
         // Claude Code or Codex has finished: it waits for it rather than finding no copy.
         if Builder.engine != .pi, EngineInstall.path(for: Builder.engine) == nil, !EngineInstall.hasLooked {
@@ -2494,6 +2496,8 @@ final class Store: ObservableObject {
         let artBefore = turn.artCost
         turn.stopped = false
         let sessionFile = Self.sessionFile(for: project, engine: engine)
+        // After the stopped mark is cleared, so a Stop pressed while the file is written is seen by the check below.
+        try? await Template.writeSupportInBackground(for: project)
         // What the agent is told about the app's AI follows the sign-ins as they are. Checking them can take a
         // while, and Stop pressed meanwhile has no agent to end yet: if the turn was stopped or replaced, or the
         // app deleted, during the wait, the agent isn't started.

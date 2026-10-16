@@ -7,7 +7,8 @@ struct LampApp: App {
     /// Not observed here. A scene that observes the store is built again on every change to it, and every window
     /// with it: a message sent redrew Lamp's window, the desk behind it and each wish's window, twice over. Each
     /// view observes the store itself, and so do the menu commands (`LampCommands`).
-    private let store = Store.shared
+    /// Read when the scenes are built rather than when the App is made, which is before there is an NSApplication.
+    private var store: Store { Store.shared }
 
     var body: some Scene {
         Window(Edition.name, id: "main") {
