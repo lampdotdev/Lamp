@@ -4113,7 +4113,7 @@ enum Template {
         @MainActor private static func float(in window: NSWindow) {
             guard let zoom = window.standardWindowButton(.zoomButton), let bar = zoom.superview else { return }
             let wand = floating(in: window) ?? {
-                let made = button("wand.and.sparkles", "Change This App", "Change this app with Lamp", #selector(Opener.open(_:)), pointSize: 11)
+                let made = FloatingWand()
                 made.identifier = identifier
                 bar.addSubview(made)
                 return made
@@ -4122,6 +4122,36 @@ enum Template {
             let side = (zoom.frame.height + 6).rounded()
             let gap = max(zoom.frame.minX - (window.standardWindowButton(.miniaturizeButton)?.frame.maxX ?? zoom.frame.minX - 6), 6)
             wand.frame = NSRect(x: (zoom.frame.maxX + gap + 2).rounded(), y: (zoom.frame.midY - side / 2).rounded(), width: side, height: side)
+        }
+
+        /// The wand floating over the app's own content: a dark disc with a white wand, legible over a game's night
+        /// sky and a bright canvas alike, as the controls over a playing video are. The title bar's glass takes its
+        /// colours from the window's appearance, and over content of the other shade it all but disappeared.
+        @MainActor private final class FloatingWand: NSButton {
+            convenience init() {
+                let image = NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: "Change This App")!
+                    .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))!
+                self.init(image: image, target: Opener.shared, action: #selector(Opener.open(_:)))
+                toolTip = "Change this app with Lamp"
+                isBordered = false
+                imagePosition = .imageOnly
+                contentTintColor = .white
+                wantsLayer = true
+            }
+
+            override var wantsUpdateLayer: Bool { true }
+            override func updateLayer() {
+                guard let layer else { return }
+                layer.cornerRadius = bounds.height / 2
+                layer.backgroundColor = NSColor.black.withAlphaComponent(isHighlighted ? 0.62 : 0.45).cgColor
+                layer.borderWidth = 1
+                layer.borderColor = NSColor.white.withAlphaComponent(0.25).cgColor
+            }
+            override func layout() {
+                super.layout()
+                needsDisplay = true
+            }
+            override var isHighlighted: Bool { didSet { needsDisplay = true } }
         }
 
         /// The wand in this window, wherever it is, for what points at it (`LampSidebar.coach`).
@@ -4134,9 +4164,9 @@ enum Template {
         static func buttonSide(_ titlebar: CGFloat) -> CGFloat { titlebar > 40 ? 34 : 22 }
 
         /// A round button like the toolbar's own: the wand, and the chat's own buttons above it.
-        @MainActor static func button(_ symbol: String, _ name: String, _ tip: String, _ action: Selector, pointSize: CGFloat = 14) -> NSButton {
+        @MainActor static func button(_ symbol: String, _ name: String, _ tip: String, _ action: Selector) -> NSButton {
             let image = NSImage(systemSymbolName: symbol, accessibilityDescription: name)!
-                .withSymbolConfiguration(.init(pointSize: pointSize, weight: .medium))!
+                .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))!
             let button = NSButton(image: image, target: Opener.shared, action: action)
             button.toolTip = tip
             if #available(macOS 26, *) {
