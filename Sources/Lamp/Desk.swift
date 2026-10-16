@@ -415,10 +415,10 @@ struct DeskIcon: View {
 
     /// What's under the name: what's going on with it, else where it lives.
     private var caption: String? {
-        // A wish Lamp came with, built for the first time: it opens by itself once it's ready, if it was used.
-        if store.preparing.contains(project.id) || store.openWhenReady.contains(project.id) {
-            return store.openWhenReady.contains(project.id) ? "Opening…" : "Getting ready…"
-        }
+        // A wish Lamp came with, built for the first time out of sight: nothing shows until it's clicked, and then it
+        // says it's opening, which it does by itself once it's ready.
+        if store.openWhenReady.contains(project.id) { return "Opening…" }
+        if store.preparing.contains(project.id) { return place?.caption }
         if busy { return store.progress[project.id]?.newApp == true || project.untitled ? "Coming true…" : "Changing…" }
         if Talk.waiting(in: store.logs[project.id] ?? []) != nil { return "Has a question" }
         if store.queued[project.id]?.isEmpty == false { return "Waiting to start" }
@@ -431,7 +431,7 @@ struct DeskIcon: View {
         VStack(spacing: 6) {
             AppIcon(project: project, size: 76)
                 .overlay(alignment: .topTrailing) {
-                    if busy || store.openWhenReady.contains(project.id) {
+                    if busy && !store.preparing.contains(project.id) || store.openWhenReady.contains(project.id) {
                         ProgressView().controlSize(.small)
                             .padding(3)
                             .background(.regularMaterial, in: Circle())

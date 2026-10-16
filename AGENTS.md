@@ -222,7 +222,8 @@ what to make. So the welcome is the hello and setup, and ends on the desk (a wis
 once setup is done). They're copied once, on the first launch, each saved as its first version ("From Lamp"),
 and from then on they're the person's: a later Lamp with other starters gives those only to new people. As soon
 as Apple's tools are there they're built one by one out of sight (`Store.prepareStarters`), with nothing in
-their chats; one used before its build is done spins on the desk and opens when it's ready (`openWhenReady`). A
+their chats; nothing on the desk shows it; one clicked before its build is done spins, says it's opening, and opens when it's
+ready (`openWhenReady`). A
 starter opens with its chat beside it the first time (`MagicPanel.startWithChat`, the hand-off a new app gets after
 its first build); one that opens no window has its chat opened in Lamp the first time it's used. The chat opens on
 Lamp's own card (`Starters.card`, an `ask` marked `offer`): the starter's line and its three changes, each sent as
