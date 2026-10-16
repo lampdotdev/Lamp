@@ -17,10 +17,19 @@ struct WishDesk: View {
     @State private var notSureHovered = false
     /// The room a scroll bar takes: none where scroll bars only show over the content while scrolling.
     @State private var scrollerWidth = WishDesk.scrollerWidth()
-    /// The wish the pointer is on, and the picture of it on the stage where the headline is.
+    /// The wish the pointer is on, and what it is on the stage where the headline is: its picture and the line
+    /// saying what it is.
     @State private var pointedAt: LampProject.ID?
-    @State private var staged: NSImage?
+    @State private var staged: Staged?
     private static let stageHeight: CGFloat = 160
+    /// The most a wish's line holds and still fits the stage's three lines (`AppDescription`, `Agent.Rules.about`).
+    static let describedIn = 90
+
+    private struct Staged: Equatable {
+        let id: LampProject.ID
+        let picture: NSImage?
+        let words: String?
+    }
     /// How the desk moves when the ideas open or close and wishes come and go: everything on it together,
     /// as one change, so nothing jumps ahead of the rest.
     private static let glide = Animation.spring(response: 0.45, dampingFraction: 0.86)
@@ -38,20 +47,30 @@ struct WishDesk: View {
                     // The wishes come first: using one and changing it is where most wishes start, and a new
                     // one is the way on from there.
                     VStack(spacing: 0) {
-                        stage
+                        headline
                         if !wishes.isEmpty {
-                            grid.padding(.top, 12)
+                            grid.padding(.top, 28)
                         }
-                        header.padding(.top, wishes.isEmpty ? 18 : 28)
-                        if showingIdeas && !ideas.isEmpty {
-                            DeskIdeas(ideas: ideas, choose: choose, find: store.findWish)
-                                .padding(.top, 28)
-                                .padding(.horizontal, 32)
-                                .transition(.modifier(active: MiddleOut(shown: 0), identity: MiddleOut(shown: 1)))
+                        // While the pointer is on a wish, what it is takes this place: making a new one and
+                        // looking at one aren't done at once.
+                        VStack(spacing: 0) {
+                            header
+                            if showingIdeas && !ideas.isEmpty {
+                                DeskIdeas(ideas: ideas, choose: choose, find: store.findWish)
+                                    .padding(.top, 28)
+                                    .padding(.horizontal, 32)
+                                    .transition(.modifier(active: MiddleOut(shown: 0), identity: MiddleOut(shown: 1)))
+                            }
                         }
+                        .scaleEffect(shown == nil ? 1 : 0.92, anchor: .top)
+                        .blur(radius: shown == nil ? 0 : 10)
+                        .opacity(shown == nil ? 1 : 0)
+                        .overlay(alignment: .top) { stage }
+                        .padding(.top, wishes.isEmpty ? 18 : 32)
                     }
-                    // The stage starts high, in the clear title bar, so a picture there doesn't push the desk down.
-                    .padding(.top, 12).padding(.bottom, 40)
+                    .padding(.top, 16).padding(.bottom, 40)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.85), value: shown?.id)
+                    .task(id: pointedAt) { await stagePicture() }
                     // Laid out as if the scroll bar were always there: when one comes and goes as the ideas
                     // open, the desk would otherwise move sideways by its width.
                     .frame(width: max(0, area.size.width - scrollerWidth))
@@ -60,7 +79,6 @@ struct WishDesk: View {
                 }
                 .scrollContentBackground(.hidden)
             }
-            .ignoresSafeArea(.container, edges: .top)
         }
         .navigationTitle("Lamp")
         .toolbar {
@@ -78,7 +96,11 @@ struct WishDesk: View {
             if wishes.isEmpty { showingIdeas = true }
             barFocused = true
         }
-        .onChange(of: store.deskFocusRequest) { barFocused = true }
+        .onChange(of: store.deskFocusRequest) {
+            pointedAt = nil
+            staged = nil
+            barFocused = true
+        }
         // Plugging in a mouse, or changing Show Scroll Bars, changes it.
         .onReceive(NotificationCenter.default.publisher(for: NSScroller.preferredScrollerStyleDidChangeNotification)) { _ in
             scrollerWidth = Self.scrollerWidth()
@@ -100,6 +122,11 @@ struct WishDesk: View {
         }
     }
 
+    /// What's on the stage: nothing while a new wish is being typed or said, which the stage would hide.
+    private var shown: Staged? {
+        store.deskDraft.trimmed.isEmpty && !dictation.isListening ? staged : nil
+    }
+
     private var headline: some View {
         Text(wishes.isEmpty ? "What do you wish for?" : "Use one, change one, or wish for something new.")
             .font(.system(size: 30, weight: .semibold, design: .rounded))
@@ -107,26 +134,35 @@ struct WishDesk: View {
             .padding(.horizontal, 32)
     }
 
-    /// The headline, which steps back and fades as a wish's picture comes forward in its place while the pointer
-    /// is on the wish. Its room is kept either way, so nothing below moves.
+    /// A wish's picture and what it is, over the place to make a new one, which steps back and fades while the
+    /// pointer is on the wish. It lies over that place rather than taking room of its own, so nothing moves.
     private var stage: some View {
         ZStack {
-            headline
-                .scaleEffect(staged == nil ? 1 : 0.86)
-                .blur(radius: staged == nil ? 0 : 10)
-                .opacity(staged == nil ? 1 : 0)
-            if let staged {
-                WishStage(image: staged, height: Self.stageHeight - 20)
-                    .id(ObjectIdentifier(staged))
-                    .transition(.asymmetric(
-                        insertion: .scale(scale: 0.92).combined(with: .opacity),
-                        removal: .opacity))
+            if let staged = shown {
+                HStack(spacing: 32) {
+                    if let picture = staged.picture {
+                        WishStage(image: picture, height: Self.stageHeight - 20)
+                    }
+                    if let words = staged.words {
+                        Text(words)
+                            .font(.system(size: 22, weight: .medium, design: .rounded))
+                            .foregroundStyle(.primary.opacity(0.8))
+                            .lineLimit(3)
+                            .minimumScaleFactor(0.75)
+                            .multilineTextAlignment(staged.picture == nil ? .center : .leading)
+                            .frame(maxWidth: 320, alignment: staged.picture == nil ? .center : .leading)
+                    }
+                }
+                .padding(.horizontal, 32)
+                .id(staged.id)
+                .transition(.asymmetric(
+                    insertion: .scale(scale: 0.92).combined(with: .opacity),
+                    removal: .opacity))
+                .accessibilityHidden(true)
             }
         }
-        .frame(height: wishes.isEmpty ? nil : Self.stageHeight)
         .frame(maxWidth: .infinity)
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: staged.map(ObjectIdentifier.init))
-        .task(id: pointedAt) { await stagePicture() }
+        .allowsHitTesting(false)
     }
 
     /// A short rest before the first picture, so crossing the desk on the way somewhere doesn't flash one; from one
@@ -141,11 +177,14 @@ struct WishDesk: View {
             try? await Task.sleep(for: .milliseconds(250))
             if Task.isCancelled { return }
         }
-        // Read afresh each time: the app takes a new picture whenever it opens.
+        // Read afresh each time: the app takes a new picture whenever it opens, and the agent writes the line again
+        // when what the app is changes.
         let url = Runtime.previewURL(project)
         let file = FileManager.default.fileExists(atPath: url.path) ? url : Starters.shippedPreview(of: project)
-        let image = file.flatMap(NSImage.init(contentsOf:))
-        if !Task.isCancelled { staged = image }
+        let picture = file.flatMap(NSImage.init(contentsOf:))
+        let words = AppDescription.description(of: project)
+        guard !Task.isCancelled else { return }
+        staged = picture == nil && words == nil ? nil : Staged(id: project.id, picture: picture, words: words)
     }
 
     private var header: some View {
@@ -503,13 +542,7 @@ struct DeskIcon: View {
 
     private var busy: Bool { store.busy.contains(project.id) }
 
-    /// What's under the name: what's going on with it, else, while the pointer is on it, what a click does,
-    /// else where it lives.
-    private var caption: String? {
-        if let status { return status }
-        return hovered ? "Open and change" : place?.caption
-    }
-
+    /// What's going on with it, for VoiceOver: on screen the spinner and the dot say it.
     private var status: String? {
         // A wish Lamp came with, built for the first time out of sight: nothing shows until it's clicked, and then it
         // says it's opening, which it does by itself once it's ready.
@@ -545,12 +578,6 @@ struct DeskIcon: View {
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
                 .truncationMode(.tail)
-            // Its line is always kept, so the hint coming and going on hover never moves the icons below.
-            Text(caption ?? " ")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .accessibilityHidden(caption == nil)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8).padding(.horizontal, 4)

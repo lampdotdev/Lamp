@@ -204,8 +204,10 @@ way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhen
 setup checks as anything typed in a chat. A click on a wish (or Return, or Open on its menu) opens it to use and
 change at once (`Store.open(fromDesk:)`): a Mac app with windows opens with
 its chat beside it (`Store.change`, below); a wish that opens no window is used (`Store.use`), and one still coming
-true, or waiting on an answer, opens its chat. Change… on its menu changes it the same way, or in Lamp's window. Under each icon is what's
-going on with it or where it lives (`WishPlace`, read from its files), and when it's used where nothing comes
+true, or waiting on an answer, opens its chat. Change… on its menu changes it the same way, or in Lamp's window. Under each icon is only its
+name: a spinner or a dot says what's going on with it, and VoiceOver also hears where it lives (`WishPlace`, read
+from its files). While the pointer is on a wish, its picture and what it is take the place where a new wish is made
+(`WishStage`), which steps back and fades. When it's used where nothing comes
 forward (the menu bar, a widget, the background, the person's own phone) the desk says so in `WishHUD`, a
 large translucent square like macOS's old volume display. Its chat has a back button (⌘[) to the desk.
 
@@ -234,7 +236,8 @@ folder holds the app's code, APP.md (which the agent reads first, so it knows th
 (a symbol icon: Lamp paints no art for a starter, which would offer to set up pictures in its chat), the icon drawn
 from it in icon/ (`StarterIconsTests` draws them again, with Xcode set up for the Liquid Glass one), so the desk
 shows them at once and Lamp draws one again only once its icon.json changes (`Starters.hasShippedIcon`),
-preview.png, a picture of its window that the desk shows in place of its headline while the pointer is on the icon (`WishStage`; every
+preview.png, a picture of its window that the desk shows while the pointer is on the icon,
+with the app's about.json line beside it in large type, 90 characters at most (`WishStage`, `WishDesk.describedIn`; every
 Mac app saves a fresh one at each launch, `LampRuntime.preview`, and Lamp takes one of the simulator for an iPhone
 app, both at `Runtime.previewURL`), and starter.md, Lamp's own: the wish's name and what its chat offers to change first, a line and three changes, each
 with its tile's symbol (`- drop: Add a water counter`): changes the app doesn't do already, that the agent can make in
