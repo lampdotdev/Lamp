@@ -34,6 +34,9 @@ enum SwiftSource {
         var binding: Int
         /// Its attributes, each from its `@` to the start of its name's last token, with that name.
         var attributes: [(start: Position, last: Position, name: String)]
+        /// Something a computed property kept in a spare couldn't do the same: observers (`didSet`, `willSet`),
+        /// `lazy`, or a reference held weakly or unowned.
+        var special = false
     }
 
     struct Declarations {
@@ -98,6 +101,7 @@ enum SwiftSource {
             }
             if let open = variable {
                 // Inside a property: its attributes, each a range followed by the name it uses.
+                if line.contains("(reference_ownership_attr") { out.variables[open.key]?.special = true; continue }
                 if line.contains("(custom_attr"), let r = self.range(in: line) { attribute = r; continue }
                 if let r = attribute, let m = identifier.firstMatch(in: line, range: range) {
                     out.variables[open.key]?.attributes.append((r.start, r.last, String(line[Range(m.range(at: 1), in: line)!])))
@@ -117,8 +121,10 @@ enum SwiftSource {
                 let name = String(line[Range(m.range(at: 2), in: line)!])
                 guard out.bindings[index].entries.contains(where: { $0.name == name }) else { continue }
                 let key = owner + "\t" + name
+                let rest = String(line[Range(m.range(at: 4), in: line)!])
                 out.variables[key] = Variable(name: name, position: r.start, type: String(line[Range(m.range(at: 3), in: line)!]),
-                                              binding: index, attributes: [])
+                                              binding: index, attributes: [],
+                                              special: rest.contains("with_observers") || rest.contains(" lazy "))
                 variable = (indent, key)
             }
         }
@@ -138,7 +144,8 @@ enum SwiftSource {
             guard let m = decl.firstMatch(in: line, range: whole), let r = range(in: line) else { continue }
             let name = String(line[Range(m.range(at: 2), in: line)!])
             let isExtension = line[Range(m.range(at: 1), in: line)!] == "extension"
-            if !isExtension, launch.firstMatch(in: line, range: whole) != nil { launchNames.insert(name) }
+            // A conformance may be declared on the type or on an extension of it (`extension Demo: App`).
+            if launch.firstMatch(in: line, range: whole) != nil { launchNames.insert(name) }
             types.append((name, r, isExtension))
         }
         var files: [String: Text] = [:]

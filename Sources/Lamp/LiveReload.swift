@@ -611,7 +611,11 @@ enum LiveSlots {
         for item in planned {
             var slot = item.slot
             if slot.holder == .value, slot.initial == nil {
-                slot.initial = declarations.variables[item.type + "\t" + item.name].flatMap { initialText(of: $0, in: declarations) }
+                // The starting value as the computed property uses it: an optional with none written starts as nil.
+                slot.initial = declarations.variables[item.type + "\t" + item.name].flatMap { variable in
+                    initialText(of: variable, in: declarations)
+                        ?? (variable.type.hasSuffix("?") || variable.type.hasPrefix("Optional<") ? "nil" : nil)
+                }
             }
             map[item.type, default: [:]][item.name] = slot
         }
@@ -678,7 +682,7 @@ enum LiveSlots {
                 stays.append(piece.contains(":") || piece.contains("=") ? piece : piece + ": " + variable.type)
                 continue
             }
-            guard let made = computed(variable, item: item, keyword: keyword, declarations: declarations, cases: cases) else { return nil }
+            guard !variable.special, let made = computed(variable, item: item, keyword: keyword, declarations: declarations, cases: cases) else { return nil }
             if item.published == false, item.slot.holder ?? .object == .object, attributes.contains(where: { $0.name == "Published" }) { return nil }
             lines += made.map { (plainPrefix.isEmpty ? "" : plainPrefix + " ") + $0 }
         }
