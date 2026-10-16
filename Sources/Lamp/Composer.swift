@@ -145,11 +145,14 @@ enum Attachments {
     /// pi gets the files with the prompt (`@file`), so they're "above"; Claude Code reads them itself, images
     /// included; Codex reads them with Lamp's `read` tool, which shows images too (and `-i` only works on a
     /// first turn, not a resumed one).
-    static func note(for names: [String], engine: Engine = Builder.engine) -> String {
+    /// `inlined`: pi was given the images and small text files with the request itself (`inline`), as it is for a
+    /// request that starts a turn, but not for a message it takes while it works.
+    static func note(for names: [String], engine: Engine = Builder.engine, inlined: Bool = true) -> String {
         guard !names.isEmpty else { return "" }
         let list = names.map { "- \(folder)/\($0)" }.joined(separator: "\n")
         let how: String
         switch engine {
+        case .pi where !inlined: how = "Read each of them with your read tool before you go on; it shows pictures too."
         case .pi: how = "Images and small text files are included above; read the others with your tools if needed."
         case .claude: how = "Read each of them with your Read tool before you start; it shows pictures too."
         case .codex: how = "Read each of them with Lamp's `read` tool before you start; it shows pictures too."

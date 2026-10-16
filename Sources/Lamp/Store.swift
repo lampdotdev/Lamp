@@ -176,6 +176,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     var result: Talk.Result? = nil    // what a request made, as the agent put it
     var noted: NoteReceipt? = nil     // what a save of Lamp's notes changed, with Undo
     var pointed: PointedAt? = nil     // for a request: what was pointed at in the app, one of its attachments
+    var midTurn: Bool? = nil          // for a request: the agent took it while working on the one before (Store.handOver)
 
     /// The offer a setup card is about, for this line and for the older key card.
     var setupOffer: SetupOffer? {
@@ -253,6 +254,8 @@ struct QueuedMessage: Identifiable {
     var tookBack: [String] = []
     /// What was pointed at in the app, its picture going with the message besides `attachments`.
     var pointed: PointedAt? = nil
+    /// The person pressed Send Now: it goes to the agent in the turn that's running (`Store.handOver`).
+    var sendNow = false
 }
 
 extension QueuedMessage {
@@ -418,6 +421,19 @@ final class Store: ObservableObject {
         var artCost = 0.0                   // what make_art's pictures cost, for the turn's summary
         var request: String?                // the user's words, for the command classifiers
         var messages: [String] = []         // each queued message this turn took, as sent, from the moment it took them
+        /// Where the app was when the turn began: a request the agent takes while it works was sent from there too.
+        var sentFrom: String?
+        /// The chat lines of the requests the agent took while it worked (`handOver`), which go with the turn's
+        /// own to the version it makes.
+        var midTurn: [UUID] = []
+        /// Requests handed to the engine that its output hasn't yet shown reaching the model (`received`).
+        var handed: [UUID] = []
+        /// The engine running now, when it takes messages while it works (pi, Claude Code); nil otherwise.
+        var steering: Engine?
+        /// Claude Code's input, from its start until it has answered.
+        var input: AgentInput?
+        /// The engine is running a tool: a message written to it now reaches the model with the tool's result.
+        var toolRunning = false
         var claudeSession: String?          // Claude Code's conversation, as its own output says (Privacy.isOwnOutput)
         var writing: (line: UUID, unshown: String)?   // the message the agent is writing right now
         var showingWritten = false
@@ -1869,6 +1885,34 @@ final class Store: ObservableObject {
         return project
     }
 
+    /// The waiting messages Send Now would hand over: those not already on their way, in the order they were sent.
+    func waitingToSend(in project: LampProject) -> [QueuedMessage] {
+        (queued[project.id] ?? []).filter { !$0.sendNow }
+    }
+
+    /// Whether the waiting messages can be sent to the agent in the turn that's running (Send Now). They go as one
+    /// group, so every one of them must be able to: the engine takes messages while it works (not Codex), and each is
+    /// a plain request. An answer to a card or a request sent again changes what the turn is for, and so does anything
+    /// while a wish is being found or once the agent has asked its questions; then they all wait for the next turn.
+    func canSendNow(in project: LampProject) -> Bool {
+        let waiting = waitingToSend(in: project)
+        guard !waiting.isEmpty, let turn = turns[project.id], Builder.engine != .codex, !turn.asked, !turn.stopped,
+              current(project)?.finding == false else { return false }
+        return waiting.allSatisfy { $0.card == nil && $0.replaces == nil && $0.tookBack.isEmpty }
+    }
+
+    /// Send Now: every waiting message goes to the agent at its next step, in the order they were sent, if it still
+    /// has one; otherwise they start the next turn as any waiting messages do. `latest` is the message the button
+    /// was under: a button drawn for a group that has since gone (sent, taken back) or grown sends nothing, so a
+    /// late click can't send messages the person never saw it offered for.
+    func sendNow(in project: LampProject, latest: UUID) {
+        guard canSendNow(in: project), waitingToSend(in: project).last?.id == latest, var waiting = queued[project.id]
+        else { return }
+        for index in waiting.indices { waiting[index].sendNow = true }
+        queued[project.id] = waiting
+        steer(project)
+    }
+
     func unqueue(_ message: QueuedMessage, from project: LampProject) {
         // A first request waiting for setup has no chat yet: it can still be taken back.
         guard var waiting = queued[project.id] else { return }
@@ -1964,7 +2008,10 @@ final class Store: ObservableObject {
                 project = ready
             }
             // Where the app is as the turn starts, so the request can be changed and sent again from here.
-            if let head = await Versions.head(project) { mark(asked, sentFrom: head, in: project) }
+            if let head = await Versions.head(project) {
+                mark(asked, sentFrom: head, in: project)
+                owner.sentFrom = head
+            }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
             worked = result.end != .failed
         }
@@ -2149,6 +2196,17 @@ final class Store: ObservableObject {
         var watched: Bool
     }
 
+    /// What the agent is told of a request that is only files, with no words.
+    private static func onlyFiles(_ count: Int) -> String {
+        """
+        The user sent only the attached file\(count == 1 ? "" : "s"), with no message. Work out what \
+        they most likely want from it: a screenshot or mockup usually means "make the app look or work like \
+        this" (or, if it shows this app, "fix what's wrong here"); a document or data file usually means \
+        "use this in the app". If it's clear, do it. If it could mean several different things, ask one \
+        short question instead of guessing.
+        """
+    }
+
     /// One turn of the loop: agent edits → build (agent fixes failures) → commit → relaunch.
     /// `asked` are the chat lines of the requests, which are linked to the version the turn makes.
     private func turn(_ messages: [QueuedMessage], attachments saved: [String], asked: [UUID],
@@ -2159,15 +2217,7 @@ final class Store: ObservableObject {
         guard let owner = turns[project.id] else { return TurnResult(end: .failed, watched: true) }
         var prompt = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
         // Attachments with no words: usually a screenshot or mockup meaning "like this", or a file to use.
-        if prompt.isEmpty {
-            prompt = """
-            The user sent only the attached file\(saved.count == 1 ? "" : "s"), with no message. Work out what \
-            they most likely want from it: a screenshot or mockup usually means "make the app look or work like \
-            this" (or, if it shows this app, "fix what's wrong here"); a document or data file usually means \
-            "use this in the app". If it's clear, do it. If it could mean several different things, ask one \
-            short question instead of guessing.
-            """
-        }
+        if prompt.isEmpty { prompt = Self.onlyFiles(saved.count) }
 
         let files = Attachments.inline(saved, in: project).map { "\(Attachments.folder)/\($0)" }
         // After a request is sent again the build on disk is still of the code that was just taken back, so
@@ -2213,7 +2263,7 @@ final class Store: ObservableObject {
         // Opening the app brings it in front of Lamp, so whether the user was watching is decided first.
         let watched = isWatching(project.id)
         // Nothing is committed when the agent changed no files.
-        let label = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n").nilIfEmpty
+        let label = owner.messages.filter { !$0.isEmpty }.joined(separator: "\n\n").nilIfEmpty
             ?? Self.label(attachments: saved)
         let saving = await Versions.commitAll("-qm \"$LAMP_PROMPT\"", in: project.dir, env: ["LAMP_PROMPT": label])
         var committed = saving == .saved
@@ -2272,7 +2322,7 @@ final class Store: ObservableObject {
                 await Versions.name(project, head, name)
             }
             if committed {
-                link(asked, to: head, in: project)
+                link(asked + owner.midTurn, to: head, in: project)
                 // Not of a copy the person kept open: it's the version before this one.
                 if crash == nil, !owner.keptOpen { keepPicture(of: project, version: head) }
                 titleVersions(project, limit: 1)
@@ -2406,11 +2456,26 @@ final class Store: ObservableObject {
         }
         let run = Agent.run(prompt: prompt, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
-        let status = await Shell.run(run.command, cwd: project.dir, env: run.env,
+        let input = run.opening.map { opening in
+            let input = AgentInput()
+            input.write(opening)
+            return input
+        }
+        turn.input = input
+        // Codex's `exec` reads nothing once it has started, so with Codex a message waits for the next turn.
+        turn.steering = engine == .codex ? nil : engine
+        let status = await Shell.run(run.command, cwd: project.dir, env: run.env, input: input,
                                      started: { turn.agent = $0 }) { [weak self] line in
             guard let self else { return }
             for event in Agent.parseLine(line) {
-                if case .raw = event {} else if case .failed = event {} else { answered = true }
+                // A tool is running from the call until the model is heard from again.
+                switch event {
+                case .tool: turn.toolRunning = true
+                case .text, .textPiece, .step, .finished: turn.toolRunning = false
+                default: break
+                }
+                // Not the engine saying it passed a message of the person's on: that isn't the model answering.
+                if case .raw = event {} else if case .failed = event {} else if case .received = event {} else { answered = true }
                 // The model carrying on after a failed attempt means the engine recovered from it (pi sends again
                 // after a dropped connection, after compacting a conversation that overflowed, and after its
                 // extension drops the pictures of a request that was too big: lamp-tools.ts), so that attempt is
@@ -2469,6 +2534,7 @@ final class Store: ObservableObject {
                             : "The model made over 150 changes in one go, so Lamp stopped it."
                         if let process = turn.agent { Subprocess.terminateTree(process) }
                     }
+                    steer(project)
                 case .cost(let amount): cost += amount
                 case .failed(let text):
                     if engine == .pi, Agent.isRequestTooLarge(text), failure.map(Agent.isRequestTooLarge) != true {
@@ -2476,6 +2542,12 @@ final class Store: ObservableObject {
                     }
                     failure = text
                 case .raw(let text): log(project, .detail, text)
+                case .received:
+                    received(project)
+                case .finished:
+                    // Claude Code has answered. A message sent from now on is the next request.
+                    turn.input?.close()
+                    turn.input = nil
                 case .session(let id):
                     if engine == .claude { turn.claudeSession = id }
                     if engine != .pi {
@@ -2488,6 +2560,10 @@ final class Store: ObservableObject {
             }
         }
         turn.agent = nil
+        turn.input = nil
+        turn.steering = nil
+        turn.toolRunning = false
+        takeBackHanded(project)
         if answered { Memory.delivered(to: project); AIStatus.delivered(to: project); Skills.delivered(to: project) }
         endApprovals(for: project)
         // A message cut short (the run was stopped, or failed) keeps what was written of it.
@@ -2530,6 +2606,69 @@ final class Store: ObservableObject {
         }
         log(project, .error, Provider.friendlyError(failure, from: Provider.name(of: engine)))
         return false
+    }
+
+    /// A waiting message the person sent with Send Now goes to the agent in the same turn: the engine gives it to
+    /// the model after the tools it is running, before the model goes on. Any other waiting message is the next
+    /// request, as before. pi asks for them after each of its turns (`/agent/steer`, lamp-tools.ts); Claude Code is
+    /// written to while a tool runs (`steer`). Each goes into the chat as it's handed over, and is a request of this
+    /// turn (its version is the turn's) once the engine's output shows the model has it (`received`); until then
+    /// it can still go back in line. Returns what the agent is sent, nil when nothing can go.
+    private func handOver(_ project: LampProject) -> String? {
+        // Nothing more while a handover is unconfirmed: a receipt confirms everything handed over, so one that
+        // never arrived could otherwise be counted by the next one's receipt instead of going back in line.
+        guard let turn = turns[project.id], turn.agent != nil, turn.steering != nil, !turn.asked, !turn.stopped,
+              turn.handed.isEmpty, current(project)?.finding == false, let waiting = queued[project.id] else { return nil }
+        let taken = waiting.filter { $0.sendNow && $0.card == nil && $0.replaces == nil && $0.tookBack.isEmpty }
+        guard !taken.isEmpty else { return nil }
+        let rest = waiting.filter { message in !taken.contains { $0.id == message.id } }
+        queued[project.id] = rest.isEmpty ? nil : rest
+        saveWaiting()
+        let saved = post(taken, to: project)
+        guard var chat = logs[project.id] else { return nil }
+        let lines = chat.indices.filter { chat[$0].kind == .user }.suffix(taken.count)
+        for index in lines {
+            chat[index].midTurn = true
+            if let head = turn.sentFrom { chat[index].before = head }
+        }
+        logs[project.id] = chat
+        saveChat(project)
+        turn.handed += lines.map { chat[$0].id }
+        let words = taken.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
+        return (words.isEmpty ? Self.onlyFiles(saved.count) : words)
+            + Attachments.note(for: saved, inlined: false) + PointedAt.note(for: lines.compactMap { chat[$0].pointed })
+    }
+
+    /// The engine's output shows the model has the requests handed to it: from now on they're the turn's.
+    private func received(_ project: LampProject) {
+        guard let turn = turns[project.id], !turn.handed.isEmpty else { return }
+        let lines = logs[project.id] ?? []
+        turn.midTurn += turn.handed
+        turn.messages += turn.handed.compactMap { id in lines.first { $0.id == id }?.text }
+        turn.handed = []
+    }
+
+    /// Requests handed to an engine that ended without giving them to the model (it failed, was stopped, or Lamp's
+    /// answer never reached it) leave the chat and wait at the front of the line again, as the next request.
+    private func takeBackHanded(_ project: LampProject) {
+        guard let turn = turns[project.id], !turn.handed.isEmpty, var chat = logs[project.id] else { return }
+        let handed = Set(turn.handed)
+        turn.handed = []
+        let again = chat.filter { handed.contains($0.id) }.map {
+            QueuedMessage(text: $0.text, kept: $0.attachments ?? [], pointed: $0.pointed?.waiting(in: project))
+        }
+        chat.removeAll { handed.contains($0.id) }
+        logs[project.id] = chat
+        saveChat(project)
+        queued[project.id, default: []].insert(contentsOf: again, at: 0)
+    }
+
+    /// Claude Code takes the person's messages on its input: written while a tool runs, a message is there when
+    /// the tool's result is, and the model reads both before it goes on.
+    private func steer(_ project: LampProject) {
+        guard let turn = turns[project.id], turn.steering == .claude, turn.toolRunning, let input = turn.input,
+              let message = handOver(project) else { return }
+        input.write(Agent.claudeMessage(message))
     }
 
     /// Asking ends the turn. The tool says so, and an agent that goes on to another step anyway (it has been
@@ -3705,11 +3844,16 @@ final class Store: ObservableObject {
             Versions.copyPicture(in: project, from: target.id, to: head)
             versionsRevision += 1
         }
-        // Requests that went out together made one change, so the ones just before this one go out with it again.
+        // Requests that went out together made one change, so the ones just before this one go out with it again:
+        // those sent at once, and, for one the agent took while it worked, the requests of its turn before it.
         var first = index
-        while first > chat.startIndex, chat[first - 1].kind == .user { first -= 1 }
+        var midTurn = line.midTurn == true
+        while first > chat.startIndex, chat[first - 1].kind == .user || midTurn {
+            first -= 1
+            if chat[first].kind == .user { midTurn = chat[first].midTurn == true }
+        }
         // They keep what they had taken back themselves: it's the chat's only record of it.
-        var again = chat[first..<index].map {
+        var again = chat[first..<index].filter { $0.kind == .user }.map {
             QueuedMessage(text: $0.text, kept: $0.attachments ?? [], replaces: $0.replaced, tookBack: $0.tookBack ?? [],
                           pointed: $0.pointed?.waiting(in: project))
         }
@@ -5149,7 +5293,7 @@ final class Store: ObservableObject {
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/art", "/agent/talk", "/mcp", "/pi/key", "/app/secrets"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -5291,6 +5435,10 @@ final class Store: ObservableObject {
         }
         if route == "/agent/kind" {
             return await agentKind((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
+        }
+        if route == "/agent/steer" {
+            guard turns[project.id]?.steering == .pi else { return (200, [:]) }
+            return (200, handOver(project).map { ["message": $0] } ?? [:])
         }
         if route == "/agent/connectors" {
             return Connectors.answer((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)

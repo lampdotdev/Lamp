@@ -160,6 +160,10 @@ public struct SidebarQueued: Codable, Equatable, Identifiable {
     public var text: String
     public var attachments: [SidebarAttachment]
     public var pointed: SidebarPointed?
+    /// Send Now, for every waiting message, is offered under it (the latest of them, `Store.canSendNow`); or it was
+    /// sent now and is on its way.
+    public var canSendNow: Bool?
+    public var sendingNow: Bool?
 
     public init(id: UUID, text: String, attachments: [SidebarAttachment]) {
         self.id = id
@@ -250,6 +254,9 @@ public enum SidebarCommand: Codable, Equatable {
     case point
     case stop
     case unqueue(UUID)
+    /// Send Now under the latest waiting message, named by its id: every waiting message goes to the agent in the turn
+    /// that's running, if that is still the latest.
+    case sendNow(UUID)
     /// The answer to the approval with this id.
     case approve(UUID, allow: Bool, allowAll: Bool)
     case forceQuit
