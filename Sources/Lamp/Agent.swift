@@ -180,7 +180,9 @@ enum Agent {
     Code already running keeps the version it started with: a closure given to a Timer, a loop in a Task, an \
     observer. So in a loop or a timer, call a method of the app's each time rather than writing the work in the \
     closure, and a change to that method goes in. \
-    A look shows the window as the person left it, with the change in it.
+    A look shows the window as the person left it, with the change in it. To see the app start from the \
+    beginning (how long it takes to open, what runs once at launch), look with `reopen`; never quit or kill the \
+    app yourself.
     """
 
     /// Short for the same reason. What AI the app has comes at the end of a request (AIStatus.brief), since it
