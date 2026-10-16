@@ -154,10 +154,11 @@ extension LogLine {
     /// app. The agent's working is left out, both its steps and what it says between them, which is where
     /// the file names and code are; the progress line stands in for it. Agent Details shows everything.
     static func visible(_ lines: [LogLine], details: Bool) -> [LogLine] {
-        // What a card shows isn't said again as a message: decided while saved result cards are still there,
-        // since which card a clicked message came from is what decides it.
-        let lines = Talk.withoutCardMessages(lines)
-        if details { return lines }
+        // What a card shows isn't said again as a message: decided from the whole chat, since which card a clicked
+        // message came from decides it, and left out only at the end, since a clicked answer still ends the
+        // request before it for what's chosen below.
+        let hidden = Talk.cardMessages(in: lines)
+        if details { return lines.filter { !hidden.contains($0.id) } }
         // The last thing the agent says in a run is its answer. A run ends with its summary; while one is
         // going, the latest message shows as it's written (it says what the agent is about to do, or is
         // the answer arriving) and gives way to the next.
@@ -181,7 +182,9 @@ extension LogLine {
         }
         if let latest { answers.insert(latest) }
         // A result card saved by an earlier Lamp isn't shown: the agent's last message says what it did.
-        return lines.filter { $0.kind == .agent ? answers.contains($0.id) : !$0.isDetail && $0.kind != .result }
+        return lines.filter {
+            !hidden.contains($0.id) && ($0.kind == .agent ? answers.contains($0.id) : !$0.isDetail && $0.kind != .result)
+        }
     }
 }
 

@@ -149,15 +149,17 @@ enum Talk {
         card?.ask?.answers != nil || card?.result?.switched != nil
     }
 
-    /// The chat without the messages a card shows. A guess turned on a result card saved by an earlier Lamp was
+    /// The messages a card shows, which the chat leaves out. A guess turned on a result card saved by an earlier Lamp was
     /// shown only by that card, which no longer is, so its message shows again: a message clicked on a card
     /// stays hidden only when the card before it is a question card.
-    static func withoutCardMessages<Lines: Collection>(_ lines: Lines) -> [LogLine] where Lines.Element == LogLine {
+    static func cardMessages(in lines: [LogLine]) -> Set<UUID> {
         var lastCard: LogLine.Kind?
-        return lines.filter { line in
+        var hidden: Set<UUID> = []
+        for line in lines {
             if line.kind == .ask || line.kind == .result { lastCard = line.kind }
-            return line.fromCard != true || lastCard != .ask
+            if line.fromCard == true, lastCard == .ask { hidden.insert(line.id) }
         }
+        return hidden
     }
 
     static let asked = "The person now sees your questions as a card and answers by clicking or typing. Your turn ends here: change nothing and call nothing more. Their answer is the next message: one line for each question, in the order you asked, each question followed by its answer, or their own words."

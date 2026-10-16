@@ -31,4 +31,15 @@ final class TalkTests: XCTestCase {
                            answers: ["Both", "Both"])
         XCTAssertEqual(ask.folded, "Where should dinner ideas come from? Both\nWhat else should it do? Both")
     }
+
+    /// A clicked answer is shown by its question card, not again, and still ends the request before the agent's
+    /// reply to it; a guess clicked on a result card saved by an earlier Lamp shows as its message, the card not.
+    func testCardMessagesInTheChat() {
+        var answer = LogLine(kind: .user, text: "answer"); answer.fromCard = true
+        var guess = LogLine(kind: .user, text: "guess"); guess.fromCard = true
+        let lines = [LogLine(kind: .user, text: "wish"), LogLine(kind: .ask, text: "q"), answer,
+                     LogLine(kind: .agent, text: "reply"), LogLine(kind: .summary, text: "s"),
+                     LogLine(kind: .result, text: "card"), guess, LogLine(kind: .agent, text: "changed"), LogLine(kind: .summary, text: "s")]
+        XCTAssertEqual(LogLine.visible(lines, details: false).map(\.text), ["wish", "q", "reply", "guess", "changed"])
+    }
 }
