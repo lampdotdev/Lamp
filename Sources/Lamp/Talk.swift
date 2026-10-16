@@ -113,6 +113,13 @@ enum Talk {
         return lines[index]
     }
 
+    /// The card that holds the wish up until it's answered: an open one the agent asked. A starter's offer
+    /// (`Ask.offer`) is open too, and the message box answers it, but the wish can be used meanwhile.
+    static func waiting(in lines: [LogLine]) -> LogLine? {
+        guard let open = open(in: lines), open.ask?.offer != true else { return nil }
+        return open
+    }
+
     /// Takes a message that was waiting to be sent back out of the line. An answer to a card, clicked or
     /// typed, was noted on it when it was given; taken back before it went out, it was never given, so the
     /// card waits again. Left folded, nothing would be asking the question any more. A guess turned the

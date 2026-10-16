@@ -694,6 +694,8 @@ final class SidebarServer {
                 if case .hello(let version) = command {
                     self.version = version
                     push(force: true)
+                    // A starter's first chat: what it offers to change arrives once the chat is there to see.
+                    Store.shared.offerStarterChanges(projectID, after: 0.9)
                 } else {
                     server?.handle(command, from: projectID)
                 }

@@ -28,16 +28,20 @@ public enum TalkCard {
     public struct Question: Codable, Equatable {
         public var question: String
         public var options: [Option]
+        /// A line under the question, for what it's about: Lamp's own cards have one (`Starters`), the agent's don't.
+        public var detail: String?
 
-        public init(question: String, options: [Option]) {
+        public init(question: String, options: [Option], detail: String? = nil) {
             self.question = question
             self.options = options
+            self.detail = detail
         }
 
         /// A card saved while options were plain words, some with the one the agent had `chosen`, reads too.
         public init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             question = try values.decode(String.self, forKey: .question)
+            detail = try values.decodeIfPresent(String.self, forKey: .detail)
             if let options = try? values.decode([Option].self, forKey: .options) {
                 self.options = options
             } else {
@@ -45,6 +49,10 @@ public enum TalkCard {
             }
         }
     }
+
+    /// Whether "You decide" is one of a question's tiles: beside up to three answers, where the tiles make a row of
+    /// four or two by two. With four of its own there's no room left in the row, and it's a link under them.
+    public static func decidesAsTile(_ question: Question) -> Bool { question.options.count < 4 }
 
     public struct Ask: Codable, Equatable {
         public var layout: Layout
@@ -55,12 +63,16 @@ public enum TalkCard {
         /// Answered in the message box instead. Noted as the message is sent, since it may wait in line
         /// behind the agent's turn: the card folds then, not when the message gets its turn.
         public var typed: Bool?
+        /// Lamp's own card, not the agent's: what a wish Lamp came with offers to change first (`Starters`).
+        /// It's answered the same way, but nothing waits on it: the wish is there to use meanwhile.
+        public var offer: Bool?
 
-        public init(layout: Layout, questions: [Question], answers: [String]? = nil, typed: Bool? = nil) {
+        public init(layout: Layout, questions: [Question], answers: [String]? = nil, typed: Bool? = nil, offer: Bool? = nil) {
             self.layout = layout
             self.questions = questions
             self.answers = answers
             self.typed = typed
+            self.offer = offer
         }
 
         private enum Earlier: String, CodingKey { case questions, dismissed }
@@ -75,6 +87,7 @@ public enum TalkCard {
             layout = (try? values.decode(Layout.self, forKey: .layout)) ?? .together
             questions = try values.decode([Question].self, forKey: .questions)
             typed = try values.decodeIfPresent(Bool.self, forKey: .typed)
+            offer = try values.decodeIfPresent(Bool.self, forKey: .offer)
             let chosen = ((try? earlier.decode([Chosen].self, forKey: .questions)) ?? []).map(\.chosen)
             let given = try values.decodeIfPresent([String?].self, forKey: .answers)
             let assumed = !chosen.isEmpty && chosen.allSatisfy { $0 != nil }

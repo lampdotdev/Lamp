@@ -39,7 +39,7 @@ struct Idea: Identifiable, Equatable {
 /// working other apps. Every one is something Lamp builds well. They come six to a page, and each page mixes
 /// the kinds and the people (a freelancer, a parent, a teacher, a shop owner, a student, a team lead, someone
 /// running a household or a club), with at least one widget and something to play with, which is free to be
-/// just fun. The first six are the welcome's first page, and what a new app's empty chat shows until the
+/// just fun. The first six are the desk's first page of ideas, and what a new app's empty chat shows until the
 /// person has an app of their own.
 enum Ideas {
     static let pool: [Idea] = [
@@ -155,7 +155,7 @@ enum Ideas {
 }
 
 /// The six ideas on show, and the next six on request: made up on this Mac when it can, otherwise the next
-/// page of the built-in ones. The welcome and a new app's empty chat both page through ideas this way.
+/// page of the built-in ones. The desk and a new app's empty chat both page through ideas this way.
 @MainActor
 final class IdeaDeck: ObservableObject {
     @Published private(set) var ideas: [Idea]
@@ -166,7 +166,7 @@ final class IdeaDeck: ObservableObject {
     private var inventing = false
     private var seen: Set<String>
 
-    /// Opens on `first`: the welcome's first page, or the six a new app's chat drew.
+    /// Opens on `first`: the desk's first page, or the six a new app's chat drew.
     init(first: [Idea]? = nil) {
         let first = first ?? Ideas.page(0)
         ideas = first

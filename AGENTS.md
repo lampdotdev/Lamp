@@ -200,10 +200,10 @@ one place to make a new one. Everything someone makes with Lamp is a **wish** in
 be made of an app, a widget, a menu bar item, a watch app, so "app" stays where it means that piece. A wish is
 typed in the bar, or said with the talk button beside it (`TalkButton`, moving with `Dictation.level`); either
 way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so it passes the same
-setup checks as anything typed in a chat. A double click on a wish uses it (`Store.use`); one still coming true, or
-waiting on an answer, opens its chat instead. A single click, or Change… on its menu, changes it (`Store.change`):
-a Mac app with windows that has been made opens with its chat beside it (below), anything else opens its chat in
-Lamp's window. Under each icon is what's
+setup checks as anything typed in a chat. A click on a wish (or Return, or Open on its menu) opens it to use and
+change at once (`Store.open(fromDesk:)`): a Mac app with windows opens with
+its chat beside it (`Store.change`, below); a wish that opens no window is used (`Store.use`), and one still coming
+true, or waiting on an answer, opens its chat. Change… on its menu changes it the same way, or in Lamp's window. Under each icon is what's
 going on with it or where it lives (`WishPlace`, read from its files), and when it's used where nothing comes
 forward (the menu bar, a widget, the background, the person's own phone) the desk says so in `WishHUD`, a
 large translucent square like macOS's old volume display. Its chat has a back button (⌘[) to the desk.
@@ -215,6 +215,29 @@ marked `finding` whose first request is `Agent.findingRequest`. The agent asks a
 send. Until that message, nothing is named, scaffolded, built or saved (`startQueued`, `turn`): the wish it
 becomes may be an iPhone app, which a scaffold already written as a Mac app would rule out. The message that
 isn't an answer to a card names it like any first request and ends `finding`.
+
+A new person's desk isn't empty: Lamp comes with ten wishes (`Starters`, from `Resources/Starters`), working
+apps to use as they are and to change into their own, which shows what Lamp does better than a question about
+what to make. So the welcome is the hello and setup, and ends on the desk (a wish from the site is still made
+once setup is done). They're copied once, on the first launch, each saved as its first version ("From Lamp"),
+and from then on they're the person's: a later Lamp with other starters gives those only to new people. As soon
+as Apple's tools are there they're built one by one out of sight (`Store.prepareStarters`), with nothing in
+their chats; nothing on the desk shows it; one clicked before its build is done spins, says it's opening, and opens when it's
+ready (`openWhenReady`). A
+starter opens with its chat beside it the first time (`MagicPanel.startWithChat`, the hand-off a new app gets after
+its first build); one that opens no window has its chat opened in Lamp the first time it's used. The chat opens on
+Lamp's own card (`Starters.card`, an `ask` marked `offer`): the starter's line and its three changes, each sent as
+the first request when clicked, with the message box answering it too. Nothing waits on it (`Talk.waiting`), so the
+desk doesn't say it has a question and using it still opens it. Each
+folder holds the app's code, APP.md (which the agent reads first, so it knows the app it's changing), icon.json
+(a symbol icon: Lamp paints no art for a starter, which would offer to set up pictures in its chat), the icon drawn
+from it in icon/ (`StarterIconsTests` draws them again, with Xcode set up for the Liquid Glass one), so the desk
+shows them at once and Lamp draws one again only once its icon.json changes (`Starters.hasShippedIcon`), and
+starter.md, Lamp's own: the wish's name and what its chat offers to change first, a line and three changes, each
+with its tile's symbol (`- drop: Add a water counter`): changes the app doesn't do already, that the agent can make in
+one request with no key, account or pictures to draw. They
+are Mac apps that need no key or account, use the AI the person builds with when they use any, and come with
+example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
 
 ## Two Lamps on one Mac
 

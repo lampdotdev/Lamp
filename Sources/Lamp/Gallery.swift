@@ -58,6 +58,12 @@ enum Gallery {
         ask("Together", Talk.Ask(layout: .together, questions: [kind, when, share])),
         ask("Answered by clicking", Talk.Ask(layout: .steps, questions: [kind, when], answers: ["Habits", Talk.youDecide]), isOpen: false),
         ask("Answered by typing", Talk.Ask(layout: .steps, questions: [kind, when], typed: true), isOpen: false),
+        // What a wish Lamp came with offers to change first (`Starters.card`): Lamp's card, worded as a starter.md is.
+        ask("A starter's first changes", Talk.Ask(layout: .steps, questions: [Talk.Question(question: "Make Today yours", options: [
+            option("Five priorities instead of three", "list.number"), option("Add a water counter", "drop"),
+            option("Remind me to plan at 8", "bell"),
+        ], detail: "Today came with Lamp as an example, and it's yours to change. Try one of these, or describe your own.")],
+        offer: true)),
     ]
 
     private static func ask(_ name: String, _ ask: Talk.Ask, isOpen: Bool = true) -> Entry {

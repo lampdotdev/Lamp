@@ -14,7 +14,7 @@ Some things people build with it:
 
 Each Mac app is a real `.app` in `~/Applications/Lamp Apps`, with a wand at its top right and **Customize with Lamp (⇧⌘E)** in its menu, which open its chat beside it for when you want it to work differently. Its data is kept safe through every change, and you can send it to a coworker, who gets their own copy to adapt. iPhone and iPad apps open in the simulator on your Mac, or on your own phone (see [iPhone and iPad apps](#iphone-and-ipad-apps)).
 
-[Download Lamp](https://lamp.dev) and open it. The welcome asks for your first idea, then has you sign in with Claude or ChatGPT (or add a key for Lamp's own agent), and starts building.
+[Download Lamp](https://lamp.dev) and open it. The welcome has you sign in with Claude or ChatGPT (or add a key for Lamp's own agent), then opens on your desk, where ten apps that come with Lamp are ready to use and to change into your own.
 
 ## Requirements
 

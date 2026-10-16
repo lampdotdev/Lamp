@@ -158,13 +158,21 @@ struct AskSteps: View {
             Tallest {
                 ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(question.question)
-                            .font(.title3.weight(.semibold))
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        let widest = OptionTile.widestWord(in: question.options)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(question.question)
+                                .font(.title3.weight(.semibold))
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let detail = question.detail {
+                                Text(detail)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        let tiles = Self.tiles(for: question)
+                        let widest = OptionTile.widestWord(in: tiles)
                         TileRows(least: widest + OptionTile.padding * 2) {
-                            ForEach(Array(question.options.enumerated()), id: \.offset) { _, option in
+                            ForEach(Array(tiles.enumerated()), id: \.offset) { _, option in
                                 OptionTile(option: option, widest: widest, chosen: progress.answers[index] == option.title) {
                                     pick(option.title)
                                 }
@@ -186,7 +194,9 @@ struct AskSteps: View {
                 .onSubmit { if !typed.isEmpty { pick(typed) } }
             HStack(spacing: 16) {
                 Group {
-                    Button(TalkCard.youDecide) { pick(TalkCard.youDecide) }
+                    if !TalkCard.decidesAsTile(ask.questions[step]) {
+                        Button(TalkCard.youDecide) { pick(TalkCard.youDecide) }
+                    }
                     if step > 0 {
                         Button("Back") { progress.step -= 1 }
                     }
@@ -215,6 +225,12 @@ struct AskSteps: View {
 
     private func pick(_ answer: String) {
         if progress.take(answer, of: count) { send(progress.all(count)) }
+    }
+
+    /// A question's answers, and "You decide" as one more where it fits as a tile (`TalkCard.decidesAsTile`).
+    static func tiles(for question: TalkCard.Question) -> [TalkCard.Option] {
+        guard TalkCard.decidesAsTile(question) else { return question.options }
+        return question.options + [TalkCard.Option(title: TalkCard.youDecide, symbol: "wand.and.sparkles")]
     }
 }
 
