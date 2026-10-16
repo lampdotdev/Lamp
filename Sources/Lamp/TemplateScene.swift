@@ -226,42 +226,63 @@ extension Template {
                 visit(root)
                 // The entity itself stays (the app's code holds it, and moves it); what it's made of is the new code's.
                 for old in found {
-                    // A prop whose own handlers (a press action, a change handler) may refer to it or its parts is left
-                    // as it is: they'd go on acting on what the refresh replaces. It's made anew at the next launch.
+                    // A prop with handlers anywhere in it (a press action, a change handler) is left as it is: they
+                    // refer to the parts the new code just made, which aren't the ones on screen. It's made anew at the
+                    // next launch.
                     func handles(_ e: Entity) -> Bool {
-                        guard let part = e.components[LampPart.self] else { return false }
-                        if case .press = part.kind { return true }
-                        return part.changed != nil
+                        if let part = e.components[LampPart.self] {
+                            if case .press = part.kind { return true }
+                            if part.changed != nil { return true }
+                        }
+                        return e.children.contains { handles($0) }
                     }
                     if handles(old) { continue }
                     let fresh = make()
                     if handles(fresh) { continue }
-                    for child in Array(old.children) { child.removeFromParent() }
-                    for child in Array(fresh.children) { old.addChild(child, preservingWorldTransform: false) }
-                    // What the prop's code sets on the entity itself goes over too: its look, its collision shape,
-                    // its physics and what it does when clicked or dragged. Where it is, how it's moving and how
-                    // far a part has been turned or slid stay the running app's.
-                    for kind in [ModelComponent.self, CollisionComponent.self] as [any Component.Type] {
-                        if let new = fresh.components[kind] { old.components.set(new) } else { old.components.remove(kind) }
-                    }
-                    if var body = fresh.components[PhysicsBodyComponent.self] {
-                        if let mode = old.components[PhysicsBodyComponent.self]?.mode, mode == .kinematic { body.mode = mode }
-                        old.components.set(body)
-                    } else {
-                        old.components.remove(PhysicsBodyComponent.self)
-                    }
-                    if var part = fresh.components[LampPart.self] {
-                        if let was = old.components[LampPart.self] {
-                            part.rest = was.rest
-                            part.restPosition = was.restPosition
-                            part.value = was.value
-                        }
-                        old.components.set(part)
-                    } else {
-                        old.components.remove(LampPart.self)
-                    }
+                    adopt(old, fresh, isProp: true)
                 }
             }
+        }
+
+        /// Makes `old` what `fresh` is while keeping every entity in it: the app's code may hold any of them (a
+        /// walker's legs, to swing them), and one taken out would go on moving out of sight. Parts are matched in
+        /// order and changed where they are, new ones added and ones gone taken off. What the prop's code sets
+        /// on each goes over: its look, its collision shape, its physics, what it does when clicked or dragged,
+        /// and a part's place in the prop. Where the prop itself is, how it's moving and how far a part has been
+        /// turned or slid stay the running app's; what the app moves every frame it moves again.
+        private func adopt(_ old: Entity, _ fresh: Entity, isProp: Bool) {
+            // A moving part's place is where the person left it, as its value says.
+            if !isProp {
+                old.name = fresh.name
+                if old.components[LampPart.self] == nil { old.transform = fresh.transform }
+            }
+            // Everything a prop's code builds into a part, from its look to its copies and shadow.
+            var built: [any Component.Type] = [ModelComponent.self, CollisionComponent.self, GroundingShadowComponent.self, OpacityComponent.self]
+            if #available(macOS 26.0, *) { built.append(MeshInstancesComponent.self) }
+            for kind in built {
+                if let new = fresh.components[kind] { old.components.set(new) } else { old.components.remove(kind) }
+            }
+            if var body = fresh.components[PhysicsBodyComponent.self] {
+                if let mode = old.components[PhysicsBodyComponent.self]?.mode, mode == .kinematic { body.mode = mode }
+                old.components.set(body)
+            } else {
+                old.components.remove(PhysicsBodyComponent.self)
+            }
+            if var part = fresh.components[LampPart.self] {
+                if let was = old.components[LampPart.self] {
+                    part.rest = was.rest
+                    part.restPosition = was.restPosition
+                    part.value = was.value
+                }
+                old.components.set(part)
+            } else {
+                old.components.remove(LampPart.self)
+            }
+            let olds = Array(old.children), news = Array(fresh.children)
+            for (index, new) in news.enumerated() {
+                if index < olds.count { adopt(olds[index], new, isProp: false) } else { old.addChild(new, preservingWorldTransform: false) }
+            }
+            for gone in olds.dropFirst(news.count) { gone.removeFromParent() }
         }
 
         /// The first entity with this name anywhere in the scene.
