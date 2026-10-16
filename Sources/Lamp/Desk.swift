@@ -62,14 +62,14 @@ struct WishDesk: View {
                                     .transition(.modifier(active: MiddleOut(shown: 0), identity: MiddleOut(shown: 1)))
                             }
                         }
-                        .scaleEffect(staged == nil ? 1 : 0.92, anchor: .top)
-                        .blur(radius: staged == nil ? 0 : 10)
-                        .opacity(staged == nil ? 1 : 0)
+                        .scaleEffect(shown == nil ? 1 : 0.92, anchor: .top)
+                        .blur(radius: shown == nil ? 0 : 10)
+                        .opacity(shown == nil ? 1 : 0)
                         .overlay(alignment: .top) { stage }
                         .padding(.top, wishes.isEmpty ? 18 : 32)
                     }
                     .padding(.top, 16).padding(.bottom, 40)
-                    .animation(.spring(response: 0.4, dampingFraction: 0.85), value: staged?.id)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.85), value: shown?.id)
                     .task(id: pointedAt) { await stagePicture() }
                     // Laid out as if the scroll bar were always there: when one comes and goes as the ideas
                     // open, the desk would otherwise move sideways by its width.
@@ -96,7 +96,11 @@ struct WishDesk: View {
             if wishes.isEmpty { showingIdeas = true }
             barFocused = true
         }
-        .onChange(of: store.deskFocusRequest) { barFocused = true }
+        .onChange(of: store.deskFocusRequest) {
+            pointedAt = nil
+            staged = nil
+            barFocused = true
+        }
         // Plugging in a mouse, or changing Show Scroll Bars, changes it.
         .onReceive(NotificationCenter.default.publisher(for: NSScroller.preferredScrollerStyleDidChangeNotification)) { _ in
             scrollerWidth = Self.scrollerWidth()
@@ -118,6 +122,11 @@ struct WishDesk: View {
         }
     }
 
+    /// What's on the stage: nothing while a new wish is being typed or said, which the stage would hide.
+    private var shown: Staged? {
+        store.deskDraft.trimmed.isEmpty && !dictation.isListening ? staged : nil
+    }
+
     private var headline: some View {
         Text(wishes.isEmpty ? "What do you wish for?" : "Use one, change one, or wish for something new.")
             .font(.system(size: 30, weight: .semibold, design: .rounded))
@@ -129,7 +138,7 @@ struct WishDesk: View {
     /// pointer is on the wish. It lies over that place rather than taking room of its own, so nothing moves.
     private var stage: some View {
         ZStack {
-            if let staged {
+            if let staged = shown {
                 HStack(spacing: 32) {
                     if let picture = staged.picture {
                         WishStage(image: picture, height: Self.stageHeight - 20)
