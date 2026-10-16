@@ -187,6 +187,7 @@ enum Template {
             .replacingOccurrences(of: "{{WIDGET_PORT}}", with: String(widgetPort(for: project)))
             .replacingOccurrences(of: "{{WIDGET_TOKEN}}", with: project.platform == .mac ? widgetToken(for: project) : "")
             .replacingOccurrences(of: "{{SIDEBAR_PORT}}", with: String(sidebarPort(for: project)))
+            .replacingOccurrences(of: "{{SIDEBAR_TRIES}}", with: String(sidebarPortTries))
             .replacingOccurrences(of: "{{SIDEBAR_HOST}}", with: sidebarHost(for: project))
             .replacingOccurrences(of: "{{SIDEBAR_KEY}}", with: project.platform.hasMac ? sidebarKey(for: project) : "")
             .replacingOccurrences(of: "{{SIDEBAR_FRAMER}}", with: sidebarFramer)
@@ -2327,11 +2328,31 @@ enum Template {
         for byte in ("sidebar:" + project.bundleID).utf8 { hash = (hash ^ UInt32(byte)) &* 16_777_619 }
         return 40_000 + Int(hash % 9_000)
     }
+    /// How many ports from `sidebarPort` an app tries when another program has the first.
+    static let sidebarPortTries = 4
+    /// Every address an app's sidebar page may be at, first port first.
+    static func sidebarURLs(for project: LampProject) -> [String] {
+        (0..<sidebarPortTries).map { "http://\(sidebarHost(for: project)):\(sidebarPort(for: project) + $0)/" }
+    }
     /// A name of the app's own under .localhost, which Chrome sends to this Mac by itself: each app's page is then
     /// its own origin, so one app's page can't read another's storage.
     static func sidebarHost(for project: LampProject) -> String {
-        let label = String(project.id.lowercased().map { $0.isLetter && $0.isASCII || $0.isNumber ? $0 : "-" }.prefix(50))
-        return (label.isEmpty ? "app" : label) + ".localhost"
+        let readable = String(project.id.lowercased().unicodeScalars.map { ("a"..."z").contains($0) || ("0"..."9").contains($0) ? Character($0) : "-" }.prefix(40))
+        // The bundle id's hash keeps two apps whose names read the same here ("Recipe Box", "recipe_box") apart.
+        var hash: UInt32 = 2_166_136_261
+        for byte in project.bundleID.utf8 { hash = (hash ^ UInt32(byte)) &* 16_777_619 }
+        let label = readable.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return (label.isEmpty ? "app" : label) + "-" + String(hash % 0xFFFFFF, radix: 16) + ".localhost"
+    }
+    /// What the app's page says it reads (`data-lamp-reads` on its `<html>`), read from the page's file by Lamp,
+    /// never from the page as it runs: it decides what Chrome's sidebar lets the page read and the consent line.
+    static func sidebarReads(_ project: LampProject) -> String {
+        let file = project.dir.appendingPathComponent("Assets/Sidebar/index.html")
+        guard let head = (try? String(contentsOf: file, encoding: .utf8))?.prefix(4000),
+              let tag = head.range(of: #"<html\b[^>]*>"#, options: [.regularExpression, .caseInsensitive]) else { return "" }
+        let value = head[tag].range(of: #"data-lamp-reads\s*=\s*["']?(page|selection)"#, options: [.regularExpression, .caseInsensitive])
+            .map { String(head[tag][$0]).lowercased() } ?? ""
+        return value.hasSuffix("selection") ? "selection" : value.hasSuffix("page") ? "page" : ""
     }
     /// The key the sidebar page's calls carry: Lamp hands it to Chrome's sidebar with the page's address.
     static func sidebarKey(for project: LampProject) -> String {
@@ -7727,8 +7748,9 @@ enum Template {
     #endif
 
     #if os(macOS)
-    /// This app's sidebar in Chrome, beside the page the person is on. Lamp's extension draws it from the Surface
-    /// you publish (data, never HTML) and sends each click back to `handle`. Every Chrome tab has a sidebar of its
+    /// This app's sidebar in Chrome, beside the page the person is on: a page of the app's own (`startPage`, below).
+    /// An app built before pages publishes a Surface instead, which Lamp's extension draws, sending each click back
+    /// to `handle`. Every Chrome tab has a sidebar of its
     /// own: `surface(tab)` draws one tab's, and `event.tab` says which tab a click came from, so keep what a click
     /// prepares (a preview, a draft) by tab and two pages never mix. Declare where it fits in browser.json at the
     /// app's root. Start it once, from the app's shared model:
@@ -7879,6 +7901,54 @@ enum Template {
         ///     }
         ///
         /// Call `pageChanged()` when what the page shows changed in the app, so `lamp.onChange` fires there.
+        ///
+        /// A page to start from, for a sidebar that keeps something from the page. It goes through every state
+        /// a sidebar has: ready, reading, a preview to edit, saved (shown as the window shows it), and an error.
+        /// Make it the app's own: its colour, and each item drawn as its window draws it.
+        ///
+        ///     <!-- Assets/Sidebar/index.html -->
+        ///     <!doctype html><html data-lamp-reads="page"><head><meta charset="utf-8">
+        ///     <link rel="stylesheet" href="/lamp.css"><link rel="stylesheet" href="app.css">
+        ///     <script src="/lamp.js"></script><script src="app.js" defer></script></head><body>
+        ///     <section id="ready"><p class="muted">Save this page's recipe with its ingredients.</p></section>
+        ///     <section id="preview" hidden><h1>Check it</h1>
+        ///       <label>Title<input id="title"></label>
+        ///       <label>Ingredients, one per line<textarea id="items" rows="8"></textarea></label></section>
+        ///     <h2>Saved</h2><div id="saved" class="box"></div><p id="status" class="status" role="status"></p>
+        ///     <div class="actions"><button id="main" class="primary">Read This Recipe</button>
+        ///       <button id="cancel" hidden>Cancel</button></div></body></html>
+        ///
+        ///     /* app.css */  :root { --accent: #d9622b; }
+        ///
+        ///     // app.js
+        ///     const $ = id => document.getElementById(id); let draft = null;
+        ///     async function show() {
+        ///       const saved = await lamp.call("saved");   // [{title, detail}]
+        ///       $("saved").replaceChildren(...saved.map(item => {
+        ///         const row = document.createElement("div"); row.className = "row";
+        ///         const words = document.createElement("div"); words.className = "grow"; words.textContent = item.title;
+        ///         const sub = document.createElement("div"); sub.className = "sub"; sub.textContent = item.detail;
+        ///         words.append(sub); row.append(words); return row;
+        ///       }));
+        ///       $("ready").hidden = !!draft; $("preview").hidden = !draft; $("cancel").hidden = !draft;
+        ///       $("main").textContent = draft ? "Save" : "Read This Recipe";
+        ///     }
+        ///     $("main").onclick = async () => {
+        ///       $("main").disabled = true; $("status").textContent = draft ? "Saving…" : "Reading the page…";
+        ///       try {
+        ///         if (!draft) {
+        ///           draft = await lamp.call("preview", {page: await lamp.readPage()});   // {title, items}
+        ///           $("title").value = draft.title; $("items").value = draft.items.join("\n");
+        ///           $("status").textContent = "";
+        ///         } else {
+        ///           await lamp.call("save", {title: $("title").value, items: $("items").value.split("\n"), url: draft.url});
+        ///           $("status").textContent = "Saved."; draft = null;
+        ///         }
+        ///       } catch (error) { $("status").textContent = error.message; }
+        ///       $("main").disabled = false; show();
+        ///     };
+        ///     $("cancel").onclick = () => { draft = null; $("status").textContent = ""; show(); };
+        ///     lamp.onChange(show); show();
         static func startPage(api: @escaping @MainActor (Call) async throws -> any Encodable) {
             pageAPI = api
             PageServer.queue.async { PageServer.listen() }
@@ -7890,31 +7960,54 @@ enum Template {
         /// that points a name of its own at this Mac is refused), the page's data only with the key Chrome's
         /// sidebar was given, and only the extension may frame the page.
         fileprivate enum PageServer {
-            static let port: UInt16 = {{SIDEBAR_PORT}}
+            /// The first of the ports the app may use; when another program has it, the next few are tried, as
+            /// Chrome's sidebar and Lamp's preview do. Only this app answers its own name on any of them.
+            static let firstPort: UInt16 = {{SIDEBAR_PORT}}
+            static let tries: UInt16 = {{SIDEBAR_TRIES}}
+            nonisolated(unsafe) static var port: UInt16 = firstPort
             static let host = "{{SIDEBAR_HOST}}"
             static let key = "{{SIDEBAR_KEY}}"
             static let queue = DispatchQueue(label: "LampBrowser.page")
-            nonisolated(unsafe) static var listener: NWListener?
+            nonisolated(unsafe) static var listeners: [NWListener] = []
             nonisolated(unsafe) static var version = 0
             static let policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors {{SIDEBAR_FRAMER}}"
 
             static var folder: URL? { LampAssets.folder?.appendingPathComponent("Sidebar") }
 
-            static func listen() {
-                guard listener == nil, let port = NWEndpoint.Port(rawValue: port) else { return }
-                let parameters = NWParameters.tcp
-                parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: port)
-                guard let made = try? NWListener(using: parameters) else { return }
-                listener = made
-                made.newConnectionHandler = { accept($0) }
-                made.stateUpdateHandler = { state in
-                    if case .failed(let error) = state {
-                        print("The sidebar page couldn't be served on port \(self.port): \(error)")
-                        made.cancel()
-                        if listener === made { listener = nil }
-                    }
+            /// Both of this Mac's own addresses, since Chrome tries `::1` first for a `.localhost` name: a program
+            /// holding either one at a port would otherwise get the page's address, and its key, there. When either is
+            /// taken, the next port is tried for both.
+            static func listen(offset: UInt16 = 0) {
+                guard listeners.isEmpty else { return }
+                guard offset < tries, let endpoint = NWEndpoint.Port(rawValue: firstPort + offset) else {
+                    return print("The sidebar page couldn't be served: other programs have ports \(firstPort)–\(firstPort + tries - 1).")
                 }
-                made.start(queue: queue)
+                var made: [NWListener] = []
+                for address in [IPv4Address.loopback as IPAddress, IPv6Address.loopback as IPAddress] {
+                    let parameters = NWParameters.tcp
+                    parameters.requiredLocalEndpoint = .hostPort(host: address is IPv4Address ? .ipv4(.loopback) : .ipv6(.loopback), port: endpoint)
+                    // Network won't hold both addresses at one port without it; another program still can't share it.
+                    parameters.allowLocalEndpointReuse = true
+                    guard let listener = try? NWListener(using: parameters) else { made.forEach { $0.cancel() }; return listen(offset: offset + 1) }
+                    made.append(listener)
+                }
+                listeners = made
+                port = firstPort + offset
+                for listener in made {
+                    listener.newConnectionHandler = { accept($0) }
+                    listener.stateUpdateHandler = { state in
+                        switch state {
+                        case .failed, .waiting:
+                            // One address taken is the port taken: both move on together.
+                            guard listeners.contains(where: { $0 === listener }) else { return }
+                            listeners.forEach { $0.cancel() }
+                            listeners = []
+                            listen(offset: offset + 1)
+                        default: break
+                        }
+                    }
+                    listener.start(queue: queue)
+                }
             }
 
             struct Request {
@@ -7940,12 +8033,15 @@ enum Template {
             static func accept(_ connection: NWConnection) {
                 connection.start(queue: queue)
                 var received = Data()
-                queue.asyncAfter(deadline: .now() + 30) { connection.cancel() }
+                var arrived = false
+                // A request has a few seconds to arrive whole; the app's answer (an AI answer can take a minute) has
+                // as long as it needs.
+                queue.asyncAfter(deadline: .now() + 15) { if !arrived { connection.cancel() } }
                 func read() {
                     connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, complete, error in
                         if let data { received.append(data) }
                         if received.count > 1_100_000 { return connection.cancel() }
-                        if let request = Request(received) { return respond(request, on: connection) }
+                        if let request = Request(received) { arrived = true; return respond(request, on: connection) }
                         if complete || error != nil { return connection.cancel() }
                         read()
                     }
@@ -7965,10 +8061,9 @@ enum Template {
             }
 
             static func respond(_ request: Request, on connection: NWConnection) {
-                // A website can point any name at this Mac; only the app's own name (or the bare address Lamp's
-                // preview uses) is answered.
-                let named = request.headers["host"] ?? ""
-                guard named == "\(host):\(port)" || named == "127.0.0.1:\(port)" else { return json(421, ["error": "Wrong host."], on: connection) }
+                // A website can point any name at this Mac, and another program may have taken the app's first
+                // port: only the app's own name, at the port it has, is answered.
+                guard request.headers["host"] == "\(host):\(port)" else { return json(421, ["error": "Wrong host."], on: connection) }
                 let path = request.path.split(separator: "?", maxSplits: 1).first.map(String.init) ?? "/"
                 if path.hasPrefix("/lamp/") {
                     // The page's data: only for the key Chrome's sidebar (or Lamp's preview) was given, and never
@@ -7990,7 +8085,8 @@ enum Template {
                             let data = try JSONEncoder().encode(value)
                             queue.async { send(200, "application/json", data, on: connection) }
                         } catch {
-                            let message = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+                            let message = error is DecodingError ? "The app couldn't read what the page sent."
+                                : (error as? LocalizedError)?.errorDescription ?? "The app couldn't do that."
                             queue.async { json(400, ["error": message], on: connection) }
                         }
                     }
@@ -8004,8 +8100,10 @@ enum Template {
                 guard let folder, !parts.isEmpty, parts.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") && !$0.contains("/") }) else {
                     return json(404, ["error": "Not found."], on: connection)
                 }
-                let file = parts.reduce(folder) { $0.appendingPathComponent($1) }
-                guard file.standardizedFileURL.path.hasPrefix(folder.standardizedFileURL.path + "/"), let data = try? Data(contentsOf: file) else {
+                // Links are followed before the check, so one pointing out of the folder is refused like `..`.
+                let root = folder.resolvingSymlinksInPath().path + "/"
+                let file = parts.reduce(folder) { $0.appendingPathComponent($1) }.resolvingSymlinksInPath()
+                guard file.path.hasPrefix(root), let data = try? Data(contentsOf: file) else {
                     return send(404, "text/plain", Data("Not found".utf8), on: connection)
                 }
                 let types = ["html": "text/html; charset=utf-8", "js": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8",
@@ -8071,21 +8169,36 @@ enum Template {
             /// Called when the app says what the page shows changed (LampBrowser.pageChanged()).
             onChange(f) { watchers.push(f); if (watchers.length === 1) poll(); },
           };
-          ask({lamp: 'hello', reads: document.documentElement.dataset.lampReads || ''});
+          ask({lamp: 'hello'});
         })();
         """
 
-        /// `lamp.css`: Lamp's sidebar look, for a page that wants it. A page may use its own instead.
+        /// `lamp.css`: the sidebar as a part of the app's Mac window. The window's gray, Mac-sized type and controls,
+        /// lists as grouped boxes, and the app's colour only where a Mac window puts it: the main button, links and
+        /// focus. A page sets its colour with `:root { --accent: … }` in its own CSS and builds the rest on top.
         nonisolated fileprivate static let style = """
-        :root{color-scheme:light dark;--bg:#fcfcf7;--ink:#252820;--muted:#626858;--line:#e0e3d8;--field:#bbc3ae;--green:#3d5736;--on-green:white;--card:white;--accent:#b26728}
-        @media (prefers-color-scheme:dark){:root{--bg:#1e201b;--ink:#ecefe4;--muted:#a3a995;--line:#3a3d33;--field:#5a6150;--green:#9cc48d;--on-green:#16200f;--card:#272a23}}
-        *{box-sizing:border-box}body{margin:0;padding:12px 20px 24px;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,sans-serif}
-        h1{font:600 26px/1.15 Georgia,serif;margin:6px 0 12px}h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;margin:22px 0 8px;color:var(--green)}
-        p{margin:0 0 12px}.muted{color:var(--muted)}ul{margin:0 0 12px;padding-left:20px}li{margin:2px 0}
-        label{display:block;margin:14px 0}input,textarea,select{display:block;width:100%;font:inherit;padding:8px;border:1px solid var(--field);border-radius:7px;margin-top:5px;background:var(--card);color:var(--ink)}
-        button{font:600 14px/1.3 -apple-system,sans-serif;border:1px solid var(--field);background:var(--card);color:var(--green);border-radius:9px;padding:10px 15px;cursor:pointer}
-        button.primary{background:var(--green);color:var(--on-green);border-color:var(--green)}button:disabled{opacity:.55;cursor:wait}
-        .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin:0 0 10px}.error{color:#c2412a}
+        :root{color-scheme:light dark;--bg:#eff1f2;--card:#fdfdfd;--line:#dadcde;--field:#c4c7ca;--ink:#1d1d1f;--muted:#6e6e73;--accent:#0a64d6;--on-accent:#fff;--danger:#c2412a;--radius:10px;--shadow:0 .5px 1.5px rgba(0,0,0,.1);--face:-apple-system,BlinkMacSystemFont,system-ui,sans-serif}
+        @media (prefers-color-scheme:dark){:root{--bg:#1e1f20;--card:#2a2b2c;--line:#3a3b3d;--field:#505255;--ink:#f5f5f7;--muted:#98989d;--danger:#ff7b6b;--shadow:none}}
+        *{box-sizing:border-box}html{background:var(--bg)}
+        body{margin:0;padding:12px 16px 84px;background:var(--bg);color:var(--ink);font:13px/1.45 var(--face);-webkit-font-smoothing:antialiased}
+        h1{font:700 20px/1.2 var(--face);letter-spacing:-.012em;margin:6px 0 4px}h2{font:600 12px/1.3 var(--face);margin:18px 2px 6px}h3{font:600 15px/1.3 var(--face);margin:0}
+        p{margin:0 0 8px}.muted{color:var(--muted)}a{color:var(--accent)}
+        .box{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin:0 0 10px}
+        .box>p{margin:0;padding:9px 12px}.row{display:flex;gap:10px;align-items:center;padding:8px 12px;border-top:1px solid var(--line)}.box>.row:first-child{border-top:0}
+        .row .grow{flex:1;min-width:0}.row .sub{color:var(--muted);font-size:12px}
+        .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin:0 0 10px}
+        .card>img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;background:var(--line)}.card .words{padding:10px 12px}.card .words p{color:var(--muted);margin:2px 0 0}
+        ul.list{list-style:none;margin:0;padding:0}ul.list li{padding:7px 12px;border-top:1px solid var(--line)}ul.list li:first-child{border-top:0}
+        label{display:block;margin:12px 0 0;font-weight:500}
+        input,textarea,select{display:block;width:100%;font:400 13px/1.45 var(--face);padding:5px 8px;border:1px solid var(--field);border-radius:6px;margin-top:4px;background:var(--card);color:var(--ink)}textarea{resize:vertical}
+        button{font:600 13px/1.3 var(--face);min-height:28px;padding:5px 14px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--ink);box-shadow:var(--shadow);cursor:pointer}
+        button.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}button:disabled{opacity:.5;cursor:wait}
+        button.link{border:0;background:none;box-shadow:none;color:var(--accent);padding:0;min-height:0}
+        :focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 50%,transparent);outline-offset:1px}
+        .actions{position:fixed;bottom:0;left:0;right:0;display:flex;flex-wrap:wrap;gap:8px;padding:10px 16px 14px;background:var(--bg);border-top:1px solid var(--line)}
+        .status{color:var(--muted);margin:8px 2px}.status:empty{display:none}.error{color:var(--danger)}
+        .empty{color:var(--muted);text-align:center;padding:28px 12px}
+        [hidden]{display:none!important}
         """
     }
     #endif

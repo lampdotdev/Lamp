@@ -119,7 +119,7 @@ async function refresh() {
     $('empty').hidden = apps.length > 0;
     if (transportProblem) { error(); transportProblem = false; }
     if (!app) { document.querySelector('main').hidden = true; showPage(null); note(''); return; }
-    if (app.page?.url) return showPage(app);
+    if (app.page?.urls?.length) return showPage(app);
     showPage(null);
     if (lampClosed) throw new Error('Open Lamp on this Mac, then try again.');
     const state = await call({op: 'surface-view', app: app.id});
@@ -139,43 +139,53 @@ async function refresh() {
 }
 // An app that serves its own page: the sidebar frames it, keeps the app's name and the consent line above it, and
 // is the page's only way to the person's tab. A frame that fails to load says nothing, so the page says hello.
-let lampClosed = false, framed = '', frameReady = false, frameAsked = 0, tabKey = '';
+let lampClosed = false, framed = '', frameReady = false, frameAsked = 0, tabKey = '', tried = 0;
 function showPage(app) {
   const frame = $('page');
   document.body.classList.toggle('framed', !!app);
   if (!app) { if (framed) { frame.src = 'about:blank'; framed = ''; } frame.hidden = true; return; }
   document.querySelector('main').hidden = true;
   const now = Date.now();
-  // Not answering: tried again every few seconds, so the page shows once the app is open.
-  if (framed !== app.id || (!frameReady && now - frameAsked > 5000)) {
-    if (framed !== app.id) frameReady = false;
+  // Not answering: the app's next port is tried (another program may have its first), and round again every few
+  // seconds, so the page shows once the app is open. Only the app answers its own name, on whichever port it has.
+  if (framed !== app.id || (!frameReady && now - frameAsked > 2500)) {
+    if (framed !== app.id) { frameReady = false; tried = 0; } else tried++;
     framed = app.id; frameAsked = now;
-    frame.dataset.origin = new URL(app.page.url).origin;
-    frame.src = app.page.url + '#' + new URLSearchParams({key: app.page.key, tab: tabKey}).toString();
+    const url = app.page.urls[tried % app.page.urls.length];
+    frame.dataset.origin = new URL(url).origin;
+    frame.src = url + '#' + new URLSearchParams({key: app.page.key, tab: tabKey}).toString();
   }
   if (frameReady) { frame.hidden = false; note(info.moved ? 'This tab is on a new page. Click Lamp in Chrome’s toolbar to use it here.' : ''); return; }
   frame.hidden = true;
-  if (now - frameAsked < 2500 && !opening[app.id]) return;
+  if (tried < app.page.urls.length && !opening[app.id]) return;
   if (!lampClosed) opening[app.id] ??= {at: now, asked: call({op: 'surface-open', app: app.id}).catch(() => {})};
   note(lampClosed || (opening[app.id] && now - opening[app.id].at > 30000) ? `Open ${app.name} on your Mac to use it here.` : `Opening ${app.name}…`);
 }
+// What a page may read is what Lamp found its file declares (`page.reads`), never what the page says as it runs, and
+// the consent line says the same. One read per click: a second needs the person to click again.
+let readSpent = false;
+setInterval(() => { if (!navigator.userActivation.isActive) readSpent = false; }, 200);
 window.addEventListener('message', async event => {
   const frame = $('page');
   if (event.source !== frame.contentWindow || event.origin !== frame.dataset.origin) return;
   const message = event.data || {};
-  const answer = value => frame.contentWindow.postMessage({lamp: 'answer', id: message.id, ...value}, frame.dataset.origin);
+  // Bound to the app and page that asked: if the sidebar moves to another app meanwhile, the answer is dropped.
+  const app = apps.find(a => a.id === framed), origin = frame.dataset.origin, asker = framed;
+  const answer = value => { if (framed === asker && frame.dataset.origin === origin) frame.contentWindow.postMessage({lamp: 'answer', id: message.id, ...value}, origin); };
   if (message.lamp === 'hello') {
     frameReady = true; delete opening[framed]; frame.hidden = false; note(info.moved ? 'This tab is on a new page. Click Lamp in Chrome’s toolbar to use it here.' : '');
-    const name = apps.find(a => a.id === framed)?.name || 'this app';
-    $('consent-top').textContent = message.reads === 'selection' ? `Using a selection shares only that passage with ${name}.`
-      : message.reads ? `Using this page shares its text with ${name}.` : '';
+    const reads = app?.page?.reads, name = app?.name || 'this app';
+    $('consent-top').textContent = reads === 'selection' ? `Using a selection shares only that passage with ${name}.`
+      : reads === 'page' ? `Using this page shares its text with ${name}.` : '';
     return answer({});
   }
   if (message.lamp !== 'read') return;
-  // A click in the frame counts here too (Chrome passes a click's activation up to the frames above it): the page
-  // can read only right after the person clicked something, never by itself.
-  if (!navigator.userActivation.isActive) return answer({error: 'Reading the page needs a click.'});
-  try { answer({page: await call({op: 'page-read', scope: message.scope})}); } catch (e) { answer({error: e.message}); }
+  const reads = app?.page?.reads;
+  if (!reads) return answer({error: 'This sidebar doesn’t read pages.'});
+  // A click in the frame counts here too (Chrome passes a click's activation up to the frames above it).
+  if (!navigator.userActivation.isActive || readSpent) return answer({error: 'Reading the page needs a click.'});
+  readSpent = true;
+  try { answer({page: await call({op: 'page-read', scope: reads === 'selection' ? 'selection' : message.scope})}); } catch (e) { answer({error: e.message}); }
 });
 
 chrome.storage.session.onChanged.addListener(changes => { if (changes[keys.tab]) void refresh(); });

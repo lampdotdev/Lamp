@@ -1,11 +1,12 @@
 import AppKit
 import CryptoKit
 
-/// Each app's sidebar in Chrome. The extension draws data, never an app's HTML or code: an app publishes what its
-/// sidebar shows (`LampBrowser` in LampSupport.swift) and handles the clicks, and Lamp passes both along. Every
-/// Chrome tab has a sidebar of its own, so what one page prepared never shows on another: the app is told which
-/// tabs are open on it and publishes a surface for each. Lamp's own preview of a sidebar (`BrowserPreview`) is
-/// one more tab, so the builder tries what the person will use.
+/// Each app's sidebar in Chrome. An app's sidebar is a page the app serves itself (`LampBrowser.startPage`), and
+/// Lamp only lists where it is (`surface-list`). An app built before pages publishes its sidebar as data instead
+/// (`LampBrowser.start`), which this keeps and passes to the extension, and the clicks back. Every Chrome tab has a
+/// sidebar of its own, so what one page prepared never shows on another: the app is told which tabs are open on it
+/// and publishes a surface for each. Lamp's own preview of a sidebar (`BrowserPreview`) is one more tab, so the
+/// builder tries what the person will use.
 @MainActor
 final class BrowserCompanions {
     static let shared = BrowserCompanions()
@@ -231,8 +232,8 @@ final class BrowserCompanions {
                 var page: [String: Any] = [:]
                 // An app with a page of its own serves it; Chrome's sidebar frames it, and keeps where for when Lamp is closed.
                 if Template.hasSidebarPage(item.project) {
-                    page = ["url": "http://\(Template.sidebarHost(for: item.project)):\(Template.sidebarPort(for: item.project))/",
-                            "key": Template.sidebarKey(for: item.project)]
+                    page = ["urls": Template.sidebarURLs(for: item.project), "key": Template.sidebarKey(for: item.project),
+                            "reads": Template.sidebarReads(item.project)]
                 }
                 return ["id": item.project.id, "name": item.project.name, "offer": item.declaration.offer, "running": isLive(item.project), "page": page,
                  "fits": item.declaration.fits.map { fit in

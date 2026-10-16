@@ -34,6 +34,10 @@ enum BrowserPreview {
         }
         if let page = pages[project.id], let declaration { notes.append(fitNote(declaration, page)) }
         if Template.hasSidebarPage(project) {
+            // A page app never publishes a surface, which is where a data sidebar's app is offered Chrome's setup.
+            if AppAI.resolve(.browser, for: project).tier == .none {
+                _ = Store.shared.offerSetup(project, SetupOffer(capability: .browser), because: "\(project.name) also works in Chrome. Connect Lamp to Chrome to use it beside a page.")
+            }
             let preview = PagePreview.of(project)
             if let trouble = await preview.load(project) { return (200, ["text": (notes + [trouble]).joined(separator: "\n\n")]) }
             return await pageReport(project, notes: notes, what: "The sidebar, drawn as Chrome shows it")
@@ -438,7 +442,6 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
     private let window: NSWindow
     private let web: WKWebView
     private var loaded: CheckedContinuation<Error?, Never>?
-    private var failure: Error?
     var page: (() -> PageReader.Page?) = { nil }
     var selection: String?
     var hasLoaded: Bool { web.url != nil }
@@ -471,19 +474,28 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
         web.navigationDelegate = self
     }
 
-    /// Loads the app's page afresh, as a sidebar opened again would.
+    /// Loads the app's page afresh, as a sidebar opened again would: at each of the app's addresses in turn, until
+    /// its page says hello (another program may have the first port).
     func load(_ project: LampProject) async -> String? {
-        let url = "http://127.0.0.1:\(Template.sidebarPort(for: project))/#key=\(Template.sidebarKey(for: project))&tab=\(BrowserPreview.tab)"
-        failure = nil
-        web.load(URLRequest(url: URL(string: url)!, timeoutInterval: 10))
-        let error = await withCheckedContinuation { done in
-            loaded = done
-            Task { [weak self] in try? await Task.sleep(for: .seconds(12)); self?.finish(URLError(.timedOut)) }
+        host = Template.sidebarHost(for: project)
+        var trouble = "it didn't answer"
+        for address in Template.sidebarURLs(for: project) {
+            helloed = false
+            web.load(URLRequest(url: URL(string: address + "#key=\(Template.sidebarKey(for: project))&tab=\(BrowserPreview.tab)")!, timeoutInterval: 6))
+            let error = await withCheckedContinuation { done in
+                loaded = done
+                Task { [weak self] in try? await Task.sleep(for: .seconds(8)); self?.finish(URLError(.timedOut)) }
+            }
+            if let error { trouble = error.localizedDescription; continue }
+            let asked = Date()
+            while !helloed && Date().timeIntervalSince(asked) < 3 { try? await Task.sleep(for: .milliseconds(100)) }
+            if helloed { await settle(); return nil }
+            trouble = "the page there didn't load /lamp.js"
         }
-        if let error { return "The app's sidebar page didn't load from the app (\(error.localizedDescription)). Call LampBrowser.startPage once when the app launches, from its shared model, and put the page in Assets/Sidebar/index.html." }
-        await settle()
-        return nil
+        return "The app's sidebar page didn't load from the app (\(trouble)). Call LampBrowser.startPage once when the app launches, from its shared model, put the page in Assets/Sidebar/index.html, and load /lamp.js first."
     }
+    private var host = ""
+    private var helloed = false
 
     /// Until the page's calls to its app have come back (an AI answer can take a minute), then a beat for drawing.
     func settle(limit: TimeInterval = 150) async {
@@ -561,12 +573,15 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finish(error) }
     /// Only the app's own page, nothing it links to.
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
-        decisionHandler(navigationAction.request.url?.host == "127.0.0.1" || navigationAction.targetFrame?.isMainFrame == false ? .allow : .cancel)
+        decisionHandler(navigationAction.request.url?.host == host || navigationAction.targetFrame?.isMainFrame == false ? .allow : .cancel)
     }
 
     /// What the page's `lamp.readPage` and `lamp.readSelection` get here: the page Lamp opened beside the preview.
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping @MainActor (Any?, String?) -> Void) {
-        guard let body = message.body as? [String: Any], body["lamp"] as? String == "read" else { return replyHandler([:], nil) }
+        // Only the app's own page: anything it frames is left unanswered.
+        guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any] else { return replyHandler([:], nil) }
+        if body["lamp"] as? String == "hello" { helloed = true }
+        guard body["lamp"] as? String == "read" else { return replyHandler([:], nil) }
         guard let page = page() else { return replyHandler(["error": "No page is open beside the sidebar: give look_at_app or use_app a `page`."], nil) }
         var text = page.text
         if body["scope"] as? String == "selection" {

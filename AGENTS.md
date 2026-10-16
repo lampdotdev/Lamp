@@ -513,12 +513,22 @@ new state in new views rather than new stored properties in existing types, when
 
 A Mac app can also open beside a web page, in Chrome's sidebar (Lamp Dev only, an experiment: Settings →
 Experimental, `BrowserBridge.switchKey`; how it fits together is in `experiments/browser-connector/README.md`).
-One extension draws every app's sidebar from data the app publishes (`LampBrowser` in LampSupport.swift), and the
-app declares where it fits in `browser.json` (`BrowserCompanions.Declaration`), which Chrome matches without the
-extension reading the page. The builder decides from the wish (`Agent.Rules.browserCompanion`) and tries the
-sidebar with `look_at_app` and `use_app` given `sidebar` and `page`: Lamp draws it itself (`BrowserPreview`) and is
-one more tab of it, so every engine tries it the same way. Each Chrome tab has its own sidebar and its own surface
-from the app, so what one page prepared never shows on another; keep that when changing either side.
+The sidebar is a web page of the app's own (`Assets/Sidebar/`), which the app serves itself on this Mac's own address
+(`LampBrowser.startPage` in LampSupport.swift), at a name under `.localhost` and a port of its own
+(`Template.sidebarHost`, `sidebarPort`, trying the next few when another program has it), so it works while the app
+is open whether Lamp is or not. One extension frames every app's page: it keeps the app's name, offer and consent line
+above the frame, gives the page no browser powers, and is the page's only way to the person's tab (a read only right
+after a click in it). The page asks its app for everything else (`lamp.call`, with a key Lamp hands the extension);
+the app answers only its own name, only that key, never a request another site made, and lets only the extension
+frame the page, whose own policy keeps it talking to the app alone. Lamp's `/lamp.css` gives the page the Mac window's
+look, which the app makes its own. Apps built before pages still publish a surface as data (`LampBrowser.start`),
+which the extension still draws. The app declares where it fits in `browser.json` (`BrowserCompanions.Declaration`),
+which Chrome matches without the extension reading the page. The builder decides from the wish
+(`Agent.Rules.browserCompanion`) and tries the sidebar with `look_at_app` and `use_app` given `sidebar` and `page`:
+Lamp opens the app's page itself, out of sight at the sidebar's width (`PagePreview`), and hands it the page beside
+it, so every engine tries it the same way; it's the one thing the builder uses in a new app, since it isn't the
+person's Chrome. Each Chrome tab has its own sidebar and the app keeps what one tab prepared by its tab (`call.tab`),
+so what one page prepared never shows on another; keep that when changing either side.
 
 A build asks the app to quit before it replaces it, and the app's answer decides (`AppQuit`). An app may ask
 about unsaved work first: Lamp sends the quit request itself and reads the reply macOS carries back, which is
