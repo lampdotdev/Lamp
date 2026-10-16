@@ -3,7 +3,7 @@ import LampSidebarKit
 
 /// The wishes Lamp comes with: working apps on a new person's desk from the start, to use as they are and to
 /// change into their own, which shows what Lamp does better than a question about what to make. Each is a
-/// folder in Resources/Starters: the app's code (Sources/, Widget/), APP.md for the agent that changes it,
+/// folder in Resources/Starters: the app's code (Sources/, Widget/, Share/), its pictures (Assets/), APP.md for the agent that changes it,
 /// icon.json, about.json, capabilities.json when it needs one, preview.png (the picture the desk shows on hover),
 /// and starter.md, which is Lamp's: the wish's name and what the sidebar offers to change first. They're copied once, on the first launch, and from then on
 /// they're the person's like any other wish; a later Lamp with other starters gives those only to new people.
@@ -134,7 +134,7 @@ enum Starters {
 
     /// What a starter's folder gives the app, beside its scaffold (which is replaced): the agent and the build
     /// read these where any app keeps them.
-    private static let copied = ["Sources", "Widget", "APP.md", "icon.json", "about.json", "capabilities.json"]
+    private static let copied = ["Sources", "Widget", "Share", "Assets", "APP.md", "icon.json", "about.json", "capabilities.json"]
 
     /// A starter's icon, drawn once from its icon.json (`StarterIconsTests`) and shipped with Lamp, so it's on the desk
     /// as soon as the starter is: the files `Icons.write` makes, which go into the app's .lamp folder, and the

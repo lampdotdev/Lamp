@@ -71,7 +71,7 @@ final class StartersTests: XCTestCase {
             XCTAssertEqual(drawn, spec, "\(name)'s icon was drawn from another icon.json: draw it again")
             // What the desk shows when the pointer rests on it, before anyone has opened it.
             XCTAssertNotNil(NSImage(contentsOf: folder.appendingPathComponent("preview.png")), "\(name) ships no preview.png")
-            for owned in ["Sources/LampSupport.swift", "Widget/LampWidgetSupport.swift", "build.sh", "Package.swift"] {
+            for owned in ["Sources/LampSupport.swift", "Widget/LampWidgetSupport.swift", "Share/LampShareSupport.swift", "build.sh", "Package.swift"] {
                 XCTAssertFalse(fm.fileExists(atPath: folder.appendingPathComponent(owned).path), "\(name) ships \(owned)")
             }
         }
