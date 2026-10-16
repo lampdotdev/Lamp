@@ -8444,7 +8444,8 @@ enum Template {
         /// The app serves its sidebar page itself (Assets/Sidebar, index.html first) on this Mac's own address, at a
         /// name and port of its own, so its sidebar works while the app is open whether Lamp is or not. Chrome's
         /// sidebar frames it; the page asks the app for its data and actions with `lamp.call`, and for the page the
-        /// person is on with `lamp.readPage()` after a click. `api` answers the calls, on the main actor:
+        /// person is on with `lamp.readPage()` after a click, or when the app's right-click item is chosen (`lamp.onMenu`).
+        /// `api` answers the calls, on the main actor:
         ///
         ///     LampBrowser.startPage { call in
         ///         switch call.name {
@@ -8685,7 +8686,8 @@ enum Template {
             }
         }
 
-        /// `lamp.js`, which the page loads first: `lamp.call`, `lamp.readPage`, `lamp.readSelection`, `lamp.onChange`.
+        /// `lamp.js`, which the page loads first: `lamp.call`, `lamp.readPage`, `lamp.readSelection`, `lamp.onChange`,
+        /// `lamp.onMenu`.
         nonisolated fileprivate static let script = """
         // Lamp's bridge for this app's sidebar page. The page sits in Chrome's sidebar, framed by Lamp's extension;
         // what it knows of the person's tab comes only through that frame, after a click.
@@ -8724,6 +8726,19 @@ enum Template {
           addEventListener('message', event => {
             if (event.source === parent && event.origin === framer && event.data && event.data.lamp === 'prove') prove();
           });
+          // The app's right-click item was chosen on this tab: the handler does what the item says, as the person's
+          // click would. Held until the page has given its handler, so one given after the news still gets it.
+          const menuHandlers = []; let menuWaiting = false;
+          function chosen() {
+            if (!menuHandlers.length) { menuWaiting = true; return; }
+            menuWaiting = false;
+            menuHandlers.forEach(f => { try { Promise.resolve(f()).catch(() => {}); } catch {} });
+          }
+          addEventListener('message', event => {
+            if (event.source === parent && event.origin === framer && event.data && event.data.lamp === 'menu') chosen();
+          });
+          // Lamp's own preview of the sidebar (the builder's) chooses the item through this, as Chrome's sidebar does above.
+          if (preview) Object.defineProperty(window, '__lampChooseMenu', {value: chosen});
           async function call(name, body) {
             await ready;
             let reply;
@@ -8783,6 +8798,9 @@ enum Template {
             readSelection: () => read('selection'),
             /// Called when the app says what the page shows changed (LampBrowser.pageChanged()).
             onChange(f) { watchers.push(f); },
+            /// Called when the person chose the app's right-click item for this page: do what it says, reading the
+            /// page once with lamp.readPage() or lamp.readSelection() as a click would.
+            onMenu(f) { menuHandlers.push(f); if (menuWaiting) chosen(); },
           };
         })();
         """

@@ -714,7 +714,19 @@ builder decides from the wish (`Agent.Rules.browserCompanion`) and tries the sid
 parts out of line),
 and hands it the page beside it, so every engine tries it the same way; it's the one thing the builder uses in a new app, since it isn't the person's Chrome.
 Each Chrome tab has its own sidebar and the app keeps what one tab prepared by its tab (`call.tab`), so what one
-page prepared never shows on another; keep that when changing either side.
+page prepared never shows on another; keep that when changing either side. The builder may also give an app a
+right-click item (`menu` in browser.json) for what its sidebar does with a page, whatever that is (save it, explain,
+summarise or translate it, answer something about it): it opens that app's sidebar, and shows only on pages a fit
+names by address, the one thing Chrome can check before its menu opens.
+**The one exception to "once per click in it"**: choosing an app's right-click item counts as the person's click in
+that app's page. The sidebar tells that page once (`lamp.onMenu`) and lets it read once without a click in it, only
+within 15 seconds of the choice, only with the proof the page gave in that sidebar, and only of the page the item was
+chosen on (the extension checks the tab's address before reading). A choice the page gets too late (a slow-starting
+app) doesn't run, and the sidebar says so and that choosing the item again runs it. Nothing else stands in for a click: not the
+toolbar icon, not opening the sidebar, not the page asking on its own. From the item a page may also go straight
+through a step it would otherwise stop at for a look first (a save's check, say), since choosing the item already
+said what to do; it then shows what it did where it can be changed or undone. Widening this needs the same say-so as
+making it.
 
 A build asks the app to quit before it replaces it, and the app's answer decides (`AppQuit`). An app may ask
 about unsaved work first: Lamp sends the quit request itself and reads the reply macOS carries back, which is
