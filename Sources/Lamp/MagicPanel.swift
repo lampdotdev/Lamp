@@ -177,6 +177,8 @@ final class MagicPanel {
         var observers: [NSObjectProtocol] = []
         var busyWatch: AnyCancellable?
         var cover: NSWindow?
+        /// Glass where the app's chat was beside it, while the cover stands in for the app.
+        var chatCover: NSWindow?
         var coverTimeout: DispatchWorkItem?
     }
     private var following: [String: Following] = [:]
@@ -245,6 +247,7 @@ final class MagicPanel {
         }
         state.coverTimeout?.cancel()
         state.cover?.orderOut(nil)
+        state.chatCover?.orderOut(nil)
     }
 
     // MARK: Pointing
@@ -336,6 +339,7 @@ final class MagicPanel {
         window.setFrame(frame, display: true)
         window.orderFrontRegardless()
         state.cover = window
+        state.chatCover = Self.chatCover(in: folder)
         // Never for long: a build that fails or a turn that ends without the app leaves nothing standing.
         let id = project.id
         let timeout = DispatchWorkItem { [weak self] in self?.dropCover(id) }
@@ -343,15 +347,45 @@ final class MagicPanel {
         DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: timeout)
     }
 
+    /// The chat had its own panel beside the window (`LampSidebar.panelFrame`): plain glass stands where it was, so
+    /// the chat doesn't vanish from beside the app while it's away. The chat itself is the extension's to draw, so
+    /// nothing of it is pictured.
+    private static func chatCover(in folder: URL) -> NSWindow? {
+        guard #available(macOS 26, *),
+              let text = try? String(contentsOf: folder.appendingPathComponent("cover-chat-frame.txt"), encoding: .utf8) else { return nil }
+        let frame = NSRectFromString(text)
+        guard frame.width > 0, frame.height > 0 else { return nil }
+        let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
+        window.ignoresMouseEvents = true
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: ChatCoverView())
+        window.setFrame(frame, display: true)
+        window.orderFrontRegardless()
+        return window
+    }
+
     private func revealApp(_ id: String) {
         guard let state = following[id], let cover = state.cover else { return }
+        let chatCover = state.chatCover
         state.cover = nil
+        state.chatCover = nil
         state.coverTimeout?.cancel()
+        // The chat beside the new copy takes a moment longer to come than its window.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             NSAnimationContext.runAnimationGroup({ context in
                 context.duration = 0.25
                 cover.animator().alphaValue = 0
             }, completionHandler: { MainActor.assumeIsolated { cover.orderOut(nil) } })
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            guard let chatCover else { return }
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.25
+                chatCover.animator().alphaValue = 0
+            }, completionHandler: { MainActor.assumeIsolated { chatCover.orderOut(nil) } })
         }
     }
 
@@ -360,6 +394,8 @@ final class MagicPanel {
         state.coverTimeout?.cancel()
         state.cover?.orderOut(nil)
         state.cover = nil
+        state.chatCover?.orderOut(nil)
+        state.chatCover = nil
     }
 
     private func dropCoverIfAppGone(_ id: String) {
@@ -387,6 +423,16 @@ private struct CoverView: View {
                 .padding(.bottom, 18)
             }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+/// Glass where the app's chat was beside it, while the app reopens for a change.
+@available(macOS 26, *)
+private struct ChatCoverView: View {
+    var body: some View {
+        Color.clear
+            .overlay { ProgressView().controlSize(.small) }
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 
