@@ -7821,6 +7821,17 @@ enum Template {
     /// answers only the app it built, running from where Lamp installed it, and only while Lamp is open. On an
     /// iPhone the device's Keychain (`.keychain`) asks nothing, so it's kept there. Both ways sit behind the same
     /// three calls, so an app that keeps its own secrets again is one line: `store`.
+    ///
+    /// It's also where a key goes for a service that isn't one of Lamp's connectors. The app asks for the key in a
+    /// field of its own (a SecureField on a sheet or in Settings, with a link to where the key is made), keeps it
+    /// here, and sends it only to that service:
+    ///
+    ///     guard LampSecrets.save(Data(key.utf8), as: "weather-key") else { problem = "Couldn't keep the key."; return }
+    ///     let key = LampSecrets.read("weather-key").map { String(decoding: $0, as: UTF8.self) }
+    ///     _ = LampSecrets.delete("weather-key")                    // a Remove Key button
+    ///
+    /// Not UserDefaults or LampStore, which are the app's settings and folder, and not a Keychain item of the
+    /// app's own, which asks for the password after every rebuild. Names starting "lamp-" are Lamp's.
     enum LampSecrets {
         enum Store { case lamp, keychain }
         #if os(macOS)

@@ -190,6 +190,11 @@ enum Connectors {
         device (LampCalendar, LampReminders, LampContacts, LampMail, synced folders); after them, LampComputer on \
         the Mac for anything not here. Call connectors again with service set to an id for how to build on it.
 
+        A service that isn't here can still be called from the app with URLSession. When it needs a key, the app \
+        asks for it in a field of its own (a SecureField, with a link to the page where the key is made) and keeps \
+        it with LampSecrets: read its comment in LampSupport.swift. Never UserDefaults, LampStore or a Keychain \
+        item, and send the key only to that service.
+
         """
         let signIns = all.filter { if case .signIn = $0.kind { true } else { false } }
         let tokens = all.filter { if case .token = $0.kind { true } else { false } }

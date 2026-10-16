@@ -193,7 +193,9 @@ enum Agent {
 
     - When a wish needs a service the person uses (their Notion, Airtable, GitHub…) that the accounts on this \
     device can't reach, call `connectors` before writing code for it, and build on what it says. Never ask for a \
-    key or a token in the chat or put one in the code: the app's own button asks the person.
+    key or a token in the chat or put one in the code: a listed service's own button asks the person. For a \
+    service that isn't listed and needs a key, give the app its own field for it and keep the key with \
+    `LampSecrets` (its comment in LampSupport.swift says how), never in UserDefaults, LampStore or a Keychain item.
     """
 
     /// Kept short, like the tools' descriptions: every word here is sent with every call to the model. What the
