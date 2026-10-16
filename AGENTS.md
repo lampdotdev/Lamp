@@ -561,6 +561,18 @@ once it's installed (`LiveReload.markRunning(from:)`). A spare never reaches sav
 nothing, and a computed property isn't encoded. If spares ever keep an app from building, it's built again without
 them and stays without (`LiveSlots.giveUp`, `.lamp/live/no-spares`), so the agent only sees errors in its own code.
 
+A constant (a static or global `let`) whose value changes would otherwise not change at all: the open app made its
+value once and keeps it in storage the new code goes on reading. So each constant's value is part of the kept layout
+as a digest (`SwiftSource.constantEntries`, not compared as what a type holds), and one that changed is rewritten in
+the live copy into a computed property that makes the new value once and keeps it (`LampConstants`, by name and
+value; `LiveSlots.changedConstants`, `rewriteConstant`). The first time a constant is rewritten every file is
+compiled again, so every reader goes through it; it stays rewritten until the app is installed again. One holding an
+object of the app's own classes reopens instead, since a second object would split the app's state.
+
+Code already running keeps the version it started with (a closure given to a Timer, a loop in a Task, an observer):
+calls go to new code, but a closure already handed out is the old one. `Agent.liveNote` asks for loops and timers
+to call a method of the app's each time, so a change to that method goes in.
+
 Where a class's fields are is sometimes worked out at run time (a subclass, or fields after a system type such as
 an `@Observable` class's registrar), kept in a global for each field that the app fills in. A library has its own
 copies, which nothing fills in, so `LampLive` copies the app's values into each library as it loads

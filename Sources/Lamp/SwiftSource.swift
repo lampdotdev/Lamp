@@ -42,6 +42,10 @@ enum SwiftSource {
     struct Declarations {
         var bindings: [Binding] = []
         var variables: [String: Variable] = [:]
+        /// Static and global `let`s, by "Type<tab>name" ("<tab>name" for a global).
+        var constants: [String: Variable] = [:]
+        /// The app's own classes, whose objects a constant may hold.
+        var classes: Set<String> = []
     }
 
     private static let rangePattern = try! NSRegularExpression(pattern: #"range=\[([^\]]+?):(\d+):(\d+) - line:(\d+):(\d+)\]"#)
@@ -58,8 +62,8 @@ enum SwiftSource {
 
     /// Every property declared in a type of the app's, with its declaration.
     static func declarations(inDump dump: String) -> Declarations {
-        let typeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|actor)_decl\b[^"]*"([^"]+)""#)
-        let scopeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|accessor_decl|constructor_decl|destructor_decl|closure_expr|subscript_decl|top_level_code_decl|extension_decl)\b"#)
+        let typeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|actor|extension)_decl\b[^"]*"([^"]+)""#)
+        let scopeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|accessor_decl|constructor_decl|destructor_decl|closure_expr|subscript_decl|top_level_code_decl)\b"#)
         let varDecl = try! NSRegularExpression(pattern: #"^(\s*)\(var_decl\b[^"]*"([^"]+)" interface_type="([^"]*)"(.*)$"#)
         let named = try! NSRegularExpression(pattern: #"\(pattern_named\b.*"([^"]+)"\)*\s*$"#)
         let identifier = try! NSRegularExpression(pattern: #"id="(\w+)""#)
@@ -82,7 +86,9 @@ enum SwiftSource {
             if let m = typeDecl.firstMatch(in: line, range: range) {
                 let name = String(line[Range(m.range(at: 3), in: line)!])
                 let outer = scopes.compactMap(\.type).last
-                scopes.append((indent, outer.map { $0 + "." + name } ?? name))
+                let full = outer.map { $0 + "." + name } ?? name
+                scopes.append((indent, full))
+                if line[Range(m.range(at: 2), in: line)!] == "class" { out.classes.insert(full); out.classes.insert(name) }
                 continue
             }
             if scopeDecl.firstMatch(in: line, range: range) != nil { scopes.append((indent, nil)); continue }
@@ -109,19 +115,30 @@ enum SwiftSource {
                 }
                 continue
             }
-            guard let owner else { continue }
+            // A type's members, and the file's own globals.
+            let global = scopes.isEmpty
+            guard owner != nil || global else { continue }
             if line.contains("(pattern_binding_decl"), let r = self.range(in: line) {
                 out.bindings.append(Binding(start: r.start, last: r.last, entries: []))
                 binding = (indent, out.bindings.count - 1)
                 entryOpen = false
                 continue
             }
-            if let m = varDecl.firstMatch(in: line, range: range), !line.contains(" static"), let r = self.range(in: line),
-               let index = out.bindings.indices.last {
+            if let m = varDecl.firstMatch(in: line, range: range), let r = self.range(in: line), let index = out.bindings.indices.last {
                 let name = String(line[Range(m.range(at: 2), in: line)!])
                 guard out.bindings[index].entries.contains(where: { $0.name == name }) else { continue }
+                let isStatic = line.contains(" static"), rest = String(line[Range(m.range(at: 4), in: line)!])
+                if isStatic || global {
+                    // A constant: a static or global `let` with a starting value.
+                    if rest.contains(" let ") {
+                        out.constants[(owner ?? "") + "\t" + name] = Variable(name: name, position: r.start,
+                                                                               type: String(line[Range(m.range(at: 3), in: line)!]),
+                                                                               binding: index, attributes: [])
+                    }
+                    continue
+                }
+                guard let owner else { continue }
                 let key = owner + "\t" + name
-                let rest = String(line[Range(m.range(at: 4), in: line)!])
                 out.variables[key] = Variable(name: name, position: r.start, type: String(line[Range(m.range(at: 3), in: line)!]),
                                               binding: index, attributes: [],
                                               special: rest.contains("with_observers") || rest.contains(" lazy "))
@@ -157,6 +174,26 @@ enum SwiftSource {
             let digest = SHA256.hash(data: Data(text.bytes[start..<end])).prefix(8).map { String(format: "%02x", $0) }.joined()
             return "\u{1}launch\t" + (type.isExtension ? "extension " : "") + type.name + ": " + digest
         }
+    }
+
+    /// Each constant's starting value, as "\u{2}constant<tab>Type.name: <digest of its text>": what the open app made
+    /// is what it keeps, so one whose value changes is rewritten in the live copy to give the new value
+    /// (`LiveSlots.fit`). Not part of what a type holds: the layout comparison passes over them.
+    static func constantEntries(_ declarations: Declarations) -> [String] {
+        var files: [String: Text] = [:]
+        return declarations.constants.keys.sorted().compactMap { key in
+            guard let variable = declarations.constants[key],
+                  let initial = declarations.bindings[variable.binding].entries.first(where: { $0.name == variable.name })?.initial else { return nil }
+            let path = initial.start.file
+            guard let text = files[path] ?? Text(path: path) else { return nil }
+            files[path] = text
+            guard let start = text.offset(initial.start), let end = text.tokenEnd(initial.last), start < end else { return nil }
+            return "\u{2}constant\t" + key.replacingOccurrences(of: "\t", with: ".") + ": " + digest(text.slice(start, end))
+        }
+    }
+
+    static func digest(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
     /// A file's text as bytes, which the compiler's columns count.

@@ -3496,6 +3496,25 @@ enum Template {
         func decode(_ type: LampSpare.Type, forKey key: Key) throws -> LampSpare { LampSpare(nil) }
     }
 
+    /// A constant (a static or global `let`) whose value changed while the app is open (LiveSlots): the open app
+    /// keeps the value it made at first, so the live copy reads it from here instead, made once for each value it's
+    /// been given (`key` names the value too).
+    enum LampConstants {
+        private static var values: [String: Any] = [:]
+        private static let lock = NSLock()
+        static func value<T>(_ key: String, _ make: () -> T) -> T {
+            lock.lock()
+            if let value = values[key] as? T { lock.unlock(); return value }
+            lock.unlock()
+            let value = make()
+            lock.lock()
+            defer { lock.unlock() }
+            if let made = values[key] as? T { return made }
+            values[key] = value
+            return value
+        }
+    }
+
     /// A view's spare state (LiveSlots): `@State` added to a view while the app is open is kept here by name, so the
     /// view holds what it did. A starting value is worked out on the first read and kept without redrawing anything;
     /// a change redraws the views that read any of it.
