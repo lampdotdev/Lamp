@@ -29,8 +29,7 @@ enum Onboarding {
 }
 
 private enum Step: Int, CaseIterable {
-    // The numbers are the backdrop's pictures (`LampBackdrop`): setup keeps the one it had when a step for
-    // the first idea came between.
+    // The numbers are saved (`Onboarding.stepKey`), so setup keeps the one it had when a step came between.
     case hello = 0, setup = 2
 
     /// Where the welcome opens: at setup if that's where it was left, otherwise from the start.
@@ -79,13 +78,6 @@ struct OnboardingView: View {
         .background {
             ZStack {
                 Palette.ground
-                LampBackdrop(step: step.rawValue)
-                // Behind the later steps' content the lamp fades into the page, so it never competes with it.
-                LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: Palette.ground.opacity(0.425), location: 0.24),
-                                       .init(color: Palette.ground.opacity(0.425), location: 0.76), .init(color: .clear, location: 1)],
-                               startPoint: .leading, endPoint: .trailing)
-                    .opacity(step == .hello ? 0 : 1)
-                    .animation(.easeInOut(duration: 0.8), value: step)
                 // Dawn, where the site left off when the wish appeared there: it fades into Lamp's daylight.
                 LinearGradient(colors: [Color(red: 1, green: 0.74, blue: 0.5).opacity(0.62), Color(red: 1, green: 0.6, blue: 0.5).opacity(0.3)],
                                startPoint: .top, endPoint: .bottom)
@@ -203,33 +195,39 @@ struct OnboardingView: View {
 
 // MARK: - Steps
 
-/// 1. What Lamp is, over the lamp itself.
+/// 1. What Lamp is: software that keeps changing for the person, shown by an app changing while it's used.
 private struct HelloStep: View {
     let next: () -> Void
     @State private var shown = false
 
     var body: some View {
         GeometryReader { proxy in
-            VStack(spacing: 0) {
-                // The website's own promise, so someone who just came from it sees the same words; the question
-                // is the next step's, where it can be answered.
-                Text("Lamp turns your wishes\ninto selfish software.")
-                    .font(.system(size: 54, weight: .bold))
-                    .tracking(-1.2)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(Palette.ink)
-                    .reveal(shown, delay: 0.1)
-                Text("Made by you, for nobody else. Tools, apps and games for your Mac, iPhone and iPad.")
-                    .font(.system(size: 19))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 12)
-                    .reveal(shown, delay: 0.2)
-                BigButton(title: "Get Started", action: next)
-                    .keyboardShortcut(.defaultAction)
-                    .padding(.top, 30)
-                    .reveal(shown, delay: 0.35, rise: 8)
+            HStack(spacing: 48) {
+                VStack(alignment: hasLoop ? .leading : .center, spacing: 0) {
+                    Text("Software that changes\nwhenever you do.")
+                        .font(.system(size: hasLoop ? 42 : 54, weight: .bold))
+                        .tracking(-1.1)
+                        .foregroundStyle(Palette.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .reveal(shown, delay: 0.1)
+                    Text("Start with one of ours or your own idea. Change anything, any time, even while you're using it.")
+                        .font(.system(size: 19))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 14)
+                        .reveal(shown, delay: 0.2)
+                    BigButton(title: "Get Started", action: next)
+                        .keyboardShortcut(.defaultAction)
+                        .padding(.top, 30)
+                        .reveal(shown, delay: 0.35, rise: 8)
+                }
+                .multilineTextAlignment(hasLoop ? .leading : .center)
+                .frame(maxWidth: hasLoop ? 450 : 720)
+                if hasLoop {
+                    film
+                        .frame(width: 480, height: 300)
+                        .reveal(shown, delay: 0.25, rise: 10)
+                }
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
         }
@@ -238,6 +236,26 @@ private struct HelloStep: View {
             try? await Task.sleep(for: .seconds(0.15))
             shown = true
         }
+    }
+
+    /// Lamp Dev keeps the film's place while there's no film yet, so the layout can be judged.
+    private var hasLoop: Bool { WelcomeLoop.url != nil || Edition.isDev }
+
+    private var film: some View {
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        return ZStack {
+            if WelcomeLoop.url != nil {
+                WelcomeLoop()
+            } else {
+                shape.fill(Color.black.opacity(0.03))
+                shape.strokeBorder(Color.black.opacity(0.15), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+                Text("An app changing while it's used")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .clipShape(shape)
+        .shadow(color: .black.opacity(WelcomeLoop.url != nil ? 0.12 : 0), radius: 24, y: 10)
     }
 }
 

@@ -121,7 +121,10 @@ cp Resources/lamp-tools.ts Resources/lamp-tools.json "$APP/Contents/Resources/"
 rm -rf "$APP/Contents/Resources/skills" && cp -R Resources/skills "$APP/Contents/Resources/skills"   # guidance the agent opens with read_skill (Skills)   # the agent's tools: pi's extension and the registry both it and the MCP endpoint read
 cp scripts/signing-identity.sh "$APP/Contents/Resources/"   # gives the apps Lamp builds a stable signature
 cp -R Resources/ProviderLogos "$APP/Contents/Resources/"
-cp -R Resources/Onboarding "$APP/Contents/Resources/"
+# The welcome's film (WelcomeLoop), once it's recorded: an app changing while it's used.
+if [ -e Resources/Onboarding/welcome-loop.mp4 ]; then
+  mkdir -p "$APP/Contents/Resources/Onboarding" && cp Resources/Onboarding/welcome-loop.mp4 "$APP/Contents/Resources/Onboarding/"
+fi
 cp -R Resources/Starters "$APP/Contents/Resources/"   # the wishes Lamp comes with (Starters.swift)
 tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'
 # Only the server and its libraries (symlinks kept), not llama.cpp's other tools.

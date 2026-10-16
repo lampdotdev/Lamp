@@ -195,8 +195,9 @@ and say in the PR description which engines you tried.
 
 ## The desk
 
-Lamp's window opens on the desk (`WishDesk`, `Desk.swift`): the person's wishes as icons, and above them the
-one place to make a new one. Everything someone makes with Lamp is a **wish** in what they read; a wish may
+Lamp's window opens on the desk (`WishDesk`, `Desk.swift`): the person's wishes as icons, first, since using one and
+changing it is where most wishes start, and under them the one place to make a new one. A click's hint says it
+opens to use and change (`DeskIcon`). Everything someone makes with Lamp is a **wish** in what they read; a wish may
 be made of an app, a widget, a menu bar item, a watch app, so "app" stays where it means that piece. A wish is
 typed in the bar, or said with the talk button beside it (`TalkButton`, moving with `Dictation.level`); either
 way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so it passes the same
