@@ -43,10 +43,25 @@ enum Versions {
     /// what the agent's own commands are: it runs under the same sandbox (`Sandbox`), confined to the app's
     /// folder. Nothing in the history has to be trusted, checked or cleaned, and nothing the agent does with
     /// git has to be refused.
+    ///
+    /// `onLine` is handed what git printed, a line at a time, and nothing else: its errors are kept apart, and
+    /// the shell reads none of the person's startup files (`-f`), where a line that fails (a tool that was
+    /// uninstalled, say) would print on every run and be read as git's answer: a status that "had changes".
     static func git(_ command: String, cwd: URL, env: [String: String] = [:],
                     onLine: @escaping @MainActor (String) -> Void = { _ in }) async -> Int32 {
-        guard let confined = confined(command, in: cwd) else { return unconfined }
-        return await Shell.run(confined, cwd: cwd, env: env.merging(environment) { $1 }, onLine: onLine)
+        let result = await gitResult(command, cwd: cwd, env: env)
+        let lines = result.output.split(separator: "\n").map { $0.trimmingCharacters(in: .newlines) }.filter { !$0.isEmpty }
+        await MainActor.run { lines.forEach(onLine) }
+        return result.status
+    }
+
+    /// The same, with git's output and its errors, for a caller that has to say why it failed.
+    static func gitResult(_ command: String, cwd: URL, env: [String: String] = [:]) async -> Subprocess.Result {
+        guard let confined = confined(command, in: cwd) else {
+            return Subprocess.Result(status: unconfined, output: "", errors: "The sandbox could not be set up.", timedOut: false)
+        }
+        return await Subprocess.run("/bin/zsh", ["-fc", confined], cwd: cwd, env: env.merging(environment) { $1 },
+                                    mergeErrors: false, timeout: nil)
     }
 
     /// The same, for the one caller that can't await (the migration, at launch).
@@ -54,7 +69,7 @@ enum Versions {
         guard let confined = confined(command, in: cwd) else {
             return Subprocess.Result(status: unconfined, output: "", errors: "", timedOut: false)
         }
-        return Subprocess.runBlocking("/bin/zsh", ["-c", confined], cwd: cwd, env: environment, mergeErrors: false, timeout: 120)
+        return Subprocess.runBlocking("/bin/zsh", ["-fc", confined], cwd: cwd, env: environment, mergeErrors: false, timeout: 120)
     }
 
     /// What a git command returns when the sandbox couldn't be set up: it isn't run loose instead.
@@ -271,16 +286,39 @@ enum Versions {
 
     /// Stages everything and commits it, with `arguments` for the commit. A save can be shut out for a moment
     /// by something else at work in the folder (the agent's own git, say, which is free to use it), so one
-    /// that fails with changes still unsaved is tried again before it's given up on.
-    static func commitAll(_ arguments: String, in dir: URL, env: [String: String] = [:]) async -> Saved {
+    /// that fails with changes still unsaved is tried again before it's given up on. When it is, what git said
+    /// on each try goes to Lamp's log and to `report` (the turn's details), so a failed save says why.
+    static func commitAll(_ arguments: String, in dir: URL, env: [String: String] = [:],
+                          report: @escaping @MainActor (String) -> Void = { _ in }) async -> Saved {
+        var tries: [String] = []
         for attempt in 0...savePauses.count {
-            if await git("git add -A && \(commit) \(arguments)", cwd: dir, env: env) == 0 { return .saved }
-            var unsaved = ""
-            let looked = await git("git status --porcelain", cwd: dir) { unsaved += $0 }
-            if looked == 0, unsaved.trimmed.isEmpty { return .nothingToSave }
+            let saving = await gitResult("git add -A && \(commit) \(arguments)", cwd: dir, env: env)
+            if saving.ok { return .saved }
+            let looking = await gitResult("git status --porcelain", cwd: dir)
+            if looking.ok, looking.output.trimmed.isEmpty { return .nothingToSave }
+            tries.append(describe(saving, attempt: attempt + 1, looking: looking))
             if attempt < savePauses.count { try? await Task.sleep(for: savePauses[attempt]) }
         }
+        let why = "The version couldn't be saved.\n" + tries.joined(separator: "\n")
+        NSLog("Lamp: %@ in %@", why, dir.path)
+        await report(why)
         return .failed
+    }
+
+    /// One failed try at a save, in git's own words, with what was still unsaved after it.
+    private static func describe(_ saving: Subprocess.Result, attempt: Int, looking: Subprocess.Result) -> String {
+        func cut(_ text: String) -> String {
+            let lines = text.trimmed.split(separator: "\n", omittingEmptySubsequences: true)
+            return lines.prefix(20).joined(separator: "\n") + (lines.count > 20 ? "\n… \(lines.count - 20) more lines" : "")
+        }
+        var parts = ["Try \(attempt): git exited with \(saving.status)\(saving.timedOut ? " (timed out)" : "")"]
+        if let said = (saving.errors + "\n" + saving.output).trimmed.nilIfEmpty { parts.append(cut(said)) }
+        if looking.ok {
+            parts.append("Still unsaved:\n" + cut(looking.output))
+        } else {
+            parts.append("Its status couldn't be read (\(looking.status)): " + cut(looking.errors + "\n" + looking.output))
+        }
+        return parts.joined(separator: "\n")
     }
 
     static func head(_ project: LampProject) async -> String? {

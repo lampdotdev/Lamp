@@ -2215,7 +2215,8 @@ final class Store: ObservableObject {
         // Nothing is committed when the agent changed no files.
         let label = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n").nilIfEmpty
             ?? Self.label(attachments: saved)
-        let saving = await Versions.commitAll("-qm \"$LAMP_PROMPT\"", in: project.dir, env: ["LAMP_PROMPT": label])
+        let saving = await Versions.commitAll("-qm \"$LAMP_PROMPT\"", in: project.dir, env: ["LAMP_PROMPT": label],
+                                                 report: { [weak self] in self?.log(project, .detail, $0) })
         var committed = saving == .saved
         // Said once the turn's last save is known: a fix for a crash on launch saves again, and may get through.
         var unsaved = saving == .failed
@@ -2252,7 +2253,7 @@ final class Store: ObservableObject {
             }
             project = current(project) ?? project
             let commit = committed ? "-q --amend --no-edit" : "-qm 'Fix a crash on launch'"
-            switch await Versions.commitAll(commit, in: project.dir) {
+            switch await Versions.commitAll(commit, in: project.dir, report: { [weak self] in self?.log(project, .detail, $0) }) {
             case .saved: (committed, unsaved) = (true, false)
             case .failed: unsaved = true
             case .nothingToSave: break

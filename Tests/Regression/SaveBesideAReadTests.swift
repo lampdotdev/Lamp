@@ -44,13 +44,28 @@ import XCTest
     func testASaveThatCannotGetThroughSaysSo() async throws {
         try change(0)
         try Data().write(to: project.dir.appendingPathComponent(".git/index.lock"))
-        let saved = await Versions.commitAll("-qm held", in: project.dir)
+        var why = ""
+        let saved = await Versions.commitAll("-qm held", in: project.dir) { why = $0 }
         XCTAssertEqual(saved, .failed)
+        XCTAssertTrue(why.contains("index.lock"), why)   // git's own words reach the turn's details
     }
 
     /// The agent changed nothing: that isn't a failure, and isn't tried again.
     func testNothingChangedIsNotAFailure() async throws {
         let saved = await Versions.commitAll("-qm empty", in: project.dir)
+        XCTAssertEqual(saved, .nothingToSave)
+    }
+
+    /// A shell startup file that prints an error on every run (a tool since uninstalled) isn't read as git's
+    /// answer: nothing changed is still nothing to save, not a save that failed.
+    func testAProfileThatPrintsIsNotUnsavedWork() async throws {
+        let home = project.dir.appendingPathComponent(".lamp/zsh")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        for file in [".zshenv", ".zprofile", ".zshrc"] {
+            try "echo 'no such file or directory: brew' >&2\necho 'noise'\n".write(to: home.appendingPathComponent(file), atomically: true, encoding: .utf8)
+        }
+        try "/.lamp/\n".write(to: project.dir.appendingPathComponent(".git/info/exclude"), atomically: true, encoding: .utf8)
+        let saved = await Versions.commitAll("-qm empty", in: project.dir, env: ["ZDOTDIR": home.path])
         XCTAssertEqual(saved, .nothingToSave)
     }
 }
