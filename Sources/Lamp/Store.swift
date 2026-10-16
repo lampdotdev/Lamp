@@ -2906,11 +2906,11 @@ final class Store: ObservableObject {
         let window = await look(at: project)
         guard window.0 == 200, !macCopies(of: project).isEmpty else { return window }
         var (status, sidebar) = await BrowserPreview.look(project, page: page)
-        // The window beside it, so the sidebar is judged as a part of the app, not on its own.
+        // The window beside it, so the sidebar's items are judged against the app's, not on their own.
         if Privacy.sharesPictures, let pictures = window.1["screenshots"] as? [String], let front = pictures.first {
             sidebar["screenshots"] = ((sidebar["screenshots"] as? [String]) ?? []) + [front]
-            sidebar["text"] = (sidebar["text"] as? String ?? "") + " The app's front window follows it: the sidebar is a part of this app, so " +
-                "compare the two and make the sidebar's colours, type, shapes, icons and the way it draws an item match the window's."
+            sidebar["text"] = (sidebar["text"] as? String ?? "") + "\n\nThe app's front window follows it: the sidebar is a part of this app, so " +
+                "compare the two: each item in the sidebar shows what the window shows of it (its picture or symbol, its facts, in the same order and grouping), in Apple's own look with the window's tint."
         }
         return (status, sidebar)
     }

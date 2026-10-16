@@ -46,9 +46,9 @@ enum Skills {
     }
 
     /// The skills a prompt offers. 3D scenes need a Mac app on a Mac that can run RealityView, and a real place
-    /// from map data is built as one.
-    static func offered(mac: Bool) -> [String] {
-        mac && Agent.Rules.scenes ? ["scene-3d", "maps"] : []
+    /// from map data is built as one. The Chrome sidebar's page is offered where the prompt has the sidebar's rule.
+    static func offered(mac: Bool, sidebar: Bool = false) -> [String] {
+        (mac && Agent.Rules.scenes ? ["scene-3d", "maps"] : []) + (sidebar ? ["chrome-sidebar"] : [])
     }
 
     /// The rule that lists a prompt's skills; empty when it offers none.
@@ -72,8 +72,9 @@ enum Skills {
 
     /// The skills an app's own code shows it uses, each with what showed it, among those its prompt offers.
     static func applying(to project: LampProject) -> [(name: String, because: String)] {
-        let offered = offered(mac: project.platform == .mac)
+        let offered = offered(mac: project.platform == .mac, sidebar: BrowserBridge.enabled && project.platform.hasMac)
         var found: [(name: String, because: String)] = []
+        if offered.contains("chrome-sidebar"), Template.hasSidebarPage(project) { found.append(("chrome-sidebar", "it has a sidebar page in Chrome")) }
         if offered.contains("scene-3d"), Template.usesScene(project) { found.append(("scene-3d", "its code uses RealityKit")) }
         if offered.contains("maps"), usesMapData(project) { found.append(("maps", "its code uses OpenStreetMap data")) }
         return found
