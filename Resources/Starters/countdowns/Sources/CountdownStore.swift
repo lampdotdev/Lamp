@@ -57,7 +57,10 @@ final class CountdownStore: ObservableObject {
 
     // MARK: Changes
 
+    /// A sample the person changes and saves is theirs from then on, so Clear Examples keeps it.
     func save(_ countdown: Countdown) {
+        var countdown = countdown
+        if countdowns.first(where: { $0.id == countdown.id }) != countdown { countdown.isExample = false }
         saved.put(countdown)
         if let index = countdowns.firstIndex(where: { $0.id == countdown.id }) {
             countdowns[index] = countdown

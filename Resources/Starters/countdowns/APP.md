@@ -39,7 +39,8 @@ rolls over to next year.
 On the very first launch `CountdownStore.writeExamplesOnce()` adds four countdowns dated from that day (Concert in
 18 days, Weekend away in 42, Mum's birthday in 75 and yearly, Half marathon in 110), each marked `isExample`, and
 saves the flag "examplesWritten" so they are never written again. Clear Examples (in the panel's footer and in
-Settings) deletes only the countdowns marked `isExample`; anything the person added stays.
+Settings) deletes only the countdowns marked `isExample`; anything the person added stays, and so does a sample
+they changed and saved (`CountdownStore.save` unmarks it).
 
 ## Easy to change
 
