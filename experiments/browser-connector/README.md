@@ -52,8 +52,15 @@ for everything else.
   files and connections only to its app.
 - **The frame** is sandboxed (no popups, no navigating the sidebar). Above it
   the extension keeps the app's name, its offer and the consent line the page
-  asks for (`data-lamp-reads`). `/lamp.css` gives the page the Mac window's
-  look, which the app makes its own with its colour and its items.
+  asks for (`data-lamp-reads`), drawn in the page's own colours, which the page
+  sends (`look`) and the extension takes only as plain colours.
+- **The look is the app's.** `/lamp.css` holds the parts (boxes, rows, cards,
+  fields, buttons, the bar at the foot) and takes every look from variables the
+  page sets from its window's code. The app serves its own pictures at
+  `/assets/<file>` and the SF Symbols its window shows at
+  `/symbols/<name>.png?color=&size=&weight=`, drawn by the app. Chrome has
+  no rounded, serif or monospaced system type, so the builder uses system-ui,
+  Georgia and Menlo for those designs.
 - **Reading** happens only when the page's file declares it (`data-lamp-reads`,
   which Lamp reads from the file, never from the page as it runs) and the page
   asks (`lamp.readPage`, `lamp.readSelection`) right after a click in it, once
@@ -77,7 +84,8 @@ for everything else.
   and the gateway refuses requests with an Origin.
 - **The builder tries it** without Chrome: `look_at_app` and `use_app` with
   `sidebar: true` open the app's page out of sight at the sidebar's width
-  (`PagePreview`), list its text and controls, and press them by target, handing
+  (`PagePreview`), show it beside the app's front window to compare, list its
+  text and controls, and press them by target, handing
   a read the text of a real page (`page`), which Lamp opens out of sight and
   reads with the extension's own capture script; the look says whether the page
   fits `browser.json`. That reader connects only through `PublicOnlyProxy`,

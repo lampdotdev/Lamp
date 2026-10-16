@@ -8020,7 +8020,8 @@ enum Template {
         ///
         /// A page to start from, for a sidebar that keeps something from the page. It goes through every state
         /// a sidebar has: ready, reading, a preview to edit, saved (shown as the window shows it), and an error.
-        /// Make it the app's own: its colour, and each item drawn as its window draws it.
+        /// Its look is only placeholders: every `:root` value comes from the window's code, and each saved item is
+        /// drawn as the window draws it (here a card with the item's picture, a symbol and its facts).
         ///
         ///     <!-- Assets/Sidebar/index.html -->
         ///     <!doctype html><html data-lamp-reads="page"><head><meta charset="utf-8">
@@ -8030,22 +8031,31 @@ enum Template {
         ///     <section id="preview" hidden><h1>Check it</h1>
         ///       <label>Title<input id="title"></label>
         ///       <label>Ingredients, one per line<textarea id="items" rows="8"></textarea></label></section>
-        ///     <h2>Saved</h2><div id="saved" class="box"></div><p id="status" class="status" role="status"></p>
+        ///     <h2>Saved</h2><div id="saved"></div><p id="status" class="status" role="status"></p>
         ///     <div class="actions"><button id="main" class="primary">Read This Recipe</button>
         ///       <button id="cancel" hidden>Cancel</button></div></body></html>
         ///
-        ///     /* app.css */  :root { --accent: #d9622b; }
+        ///     /* app.css: the window's own look, light and dark */
+        ///     :root { --bg: #fbf6ef; --surface: #ffffff; --ink: #2b2118; --muted: #8a7a6a; --line: #eadfd2;
+        ///             --accent: #d9622b; --on-accent: #ffffff; --radius: 14px; --control-radius: 999px;
+        ///             --font: system-ui; --title-font: Georgia; --title-size: 22px; }
+        ///     @media (prefers-color-scheme: dark) { :root { --bg: #1f1a16; --surface: #2a241f; --ink: #f3ece4; --line: #3a322b; } }
         ///
         ///     // app.js
         ///     const $ = id => document.getElementById(id); let draft = null;
+        ///     const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
+        ///     function card(item) {   // {title, picture, minutes, count}: drawn as the window's card
+        ///       const c = el("div", "card");
+        ///       if (item.picture) { const img = el("img"); img.src = "/assets/" + encodeURIComponent(item.picture); c.append(img); }
+        ///       const words = el("div", "words"); words.append(el("h3", "", item.title));
+        ///       const facts = el("div", "facts"), time = el("span"), icon = el("img", "symbol");
+        ///       icon.src = "/symbols/clock.png?color=8a7a6a&size=14"; time.append(icon, " " + item.minutes + " min");
+        ///       facts.append(time, el("span", "", item.count + " ingredients")); words.append(facts); c.append(words);
+        ///       return c;
+        ///     }
         ///     async function show() {
-        ///       const saved = await lamp.call("saved");   // [{title, detail}]
-        ///       $("saved").replaceChildren(...saved.map(item => {
-        ///         const row = document.createElement("div"); row.className = "row";
-        ///         const words = document.createElement("div"); words.className = "grow"; words.textContent = item.title;
-        ///         const sub = document.createElement("div"); sub.className = "sub"; sub.textContent = item.detail;
-        ///         words.append(sub); row.append(words); return row;
-        ///       }));
+        ///       const saved = await lamp.call("saved");
+        ///       $("saved").replaceChildren(...saved.map(card));
         ///       $("ready").hidden = !!draft; $("preview").hidden = !draft; $("cancel").hidden = !draft;
         ///       $("main").textContent = draft ? "Save" : "Read This Recipe";
         ///     }
@@ -8165,6 +8175,29 @@ enum Template {
                 read()
             }
 
+            /// An SF Symbol as a PNG at `size` points (drawn at twice that), in `color` (hex) or black.
+            @MainActor static func symbolPNG(_ name: String, color: String?, size: Int, weight: String?) -> Data? {
+                let points = CGFloat(min(max(size, 8), 128))
+                let weights: [String: NSFont.Weight] = ["ultralight": .ultraLight, "thin": .thin, "light": .light, "regular": .regular,
+                                                        "medium": .medium, "semibold": .semibold, "bold": .bold, "heavy": .heavy, "black": .black]
+                var tint = NSColor.black
+                if let color, color.count == 6, let rgb = UInt32(color, radix: 16) {
+                    tint = NSColor(srgbRed: CGFloat((rgb >> 16) & 255) / 255, green: CGFloat((rgb >> 8) & 255) / 255, blue: CGFloat(rgb & 255) / 255, alpha: 1)
+                }
+                let config = NSImage.SymbolConfiguration(pointSize: points, weight: weights[weight ?? ""] ?? .regular)
+                    .applying(NSImage.SymbolConfiguration(paletteColors: [tint]))
+                guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config) else { return nil }
+                let pixels = NSSize(width: ceil(symbol.size.width * 2), height: ceil(symbol.size.height * 2))
+                guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(pixels.width), pixelsHigh: Int(pixels.height), bitsPerSample: 8,
+                                                 samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+                rep.size = symbol.size
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+                symbol.draw(in: NSRect(origin: .zero, size: symbol.size))
+                NSGraphicsContext.restoreGraphicsState()
+                return rep.representation(using: .png, properties: [:])
+            }
+
             static func send(_ status: Int, _ type: String, _ body: Data, on connection: NWConnection) {
                 let reason = [200: "OK", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 421: "Misdirected Request", 503: "Unavailable"][status] ?? "Error"
                 let head = "HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\n" +
@@ -8190,6 +8223,34 @@ enum Template {
                           !nonce.isEmpty, nonce.count <= 100 else { return json(400, ["error": "No nonce."], on: connection) }
                     let code = HMAC<SHA256>.authenticationCode(for: Data("\(nonce):\(port)".utf8), using: SymmetricKey(data: Data(key.utf8)))
                     return json(200, ["proof": code.map { String(format: "%02x", $0) }.joined()], on: connection)
+                }
+                // The symbols the window shows, drawn by the app as the window draws them, so the page can use the same.
+                if path.hasPrefix("/symbols/") {
+                    let query = URLComponents(string: request.path)?.queryItems ?? []
+                    let value = { (name: String) in query.first { $0.name == name }?.value }
+                    let name = String(path.dropFirst("/symbols/".count)).replacingOccurrences(of: ".png", with: "")
+                    guard name.count <= 80, name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "." }),
+                          let png = DispatchQueue.main.sync(execute: { MainActor.assumeIsolated { symbolPNG(name, color: value("color"),
+                                                                                 size: Int(value("size") ?? "") ?? 32, weight: value("weight")) } }) else {
+                        return send(404, "text/plain", Data("Not found".utf8), on: connection)
+                    }
+                    return send(200, "image/png", png, on: connection)
+                }
+                // The app's own pictures (its Assets folder), so an item shows the picture the window shows for it.
+                if path.hasPrefix("/assets/") {
+                    let parts = path.dropFirst("/assets/".count).split(separator: "/").map { String($0).removingPercentEncoding ?? "" }
+                    let images = ["png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp",
+                                  "heic": "image/heic", "svg": "image/svg+xml"]
+                    guard let assets = LampAssets.folder, !parts.isEmpty, parts.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") }),
+                          let type = images[(parts.last! as NSString).pathExtension.lowercased()] else {
+                        return send(404, "text/plain", Data("Not found".utf8), on: connection)
+                    }
+                    let root = assets.resolvingSymlinksInPath().path + "/"
+                    let file = parts.reduce(assets) { $0.appendingPathComponent($1) }.resolvingSymlinksInPath()
+                    guard file.path.hasPrefix(root), let data = try? Data(contentsOf: file) else {
+                        return send(404, "text/plain", Data("Not found".utf8), on: connection)
+                    }
+                    return send(200, type, data, on: connection)
                 }
                 if path.hasPrefix("/lamp/") {
                     // The page's data: only for the key Chrome's sidebar (or Lamp's preview) was given, and never
@@ -8310,6 +8371,25 @@ enum Template {
             setTimeout(poll, 1000);
           }
           poll();
+          // The page's own colours, so Lamp's strip above it is drawn in them and the two read as one.
+          // Only a solid background goes: a gradient or a see-through one gives its first solid colour, or nothing, and
+          // with no background the strip keeps all of its own colours, so its words are never drawn on the wrong one.
+          function solid(value) {
+            const m = /rgba?\\(([^)]*)\\)/.exec(value || '');
+            if (!m) return '';
+            const parts = m[1].split(',').map(p => p.trim());
+            return parts.length < 4 || parseFloat(parts[3]) >= 1 ? 'rgb(' + parts.slice(0, 3).join(', ') + ')' : '';
+          }
+          function tellLook() {
+            if (preview || !framer) return;
+            const html = getComputedStyle(document.documentElement), body = getComputedStyle(document.body);
+            const v = name => html.getPropertyValue(name).trim();
+            const bg = solid(body.backgroundColor) || solid(body.backgroundImage) || solid(html.backgroundColor) || solid(html.backgroundImage);
+            parent.postMessage(bg ? {lamp: 'look', bg, ink: body.color, muted: v('--muted'), line: v('--line'), accent: v('--accent')}
+                                  : {lamp: 'look'}, framer);
+          }
+          if (document.readyState === 'loading') addEventListener('DOMContentLoaded', tellLook); else tellLook();
+          matchMedia('(prefers-color-scheme: dark)').addEventListener('change', tellLook);
           window.lamp = {
             tab, call,
             /// The readable text of the page the person is on: {url, title, text, truncated}. Call it from a click.
@@ -8322,25 +8402,27 @@ enum Template {
         })();
         """
 
-        /// `lamp.css`: the sidebar as a part of the app's Mac window. The window's gray, Mac-sized type and controls,
-        /// lists as grouped boxes, and the app's colour only where a Mac window puts it: the main button, links and
-        /// focus. A page sets its colour with `:root { --accent: … }` in its own CSS and builds the rest on top.
+        /// `lamp.css`: the parts a sidebar is made of (boxes, rows, cards, fields, buttons, the bar at the foot), every
+        /// look of which comes from a variable the page sets to its app's own look in `:root`: `--bg`, `--surface`,
+        /// `--ink`, `--muted`, `--line`, `--field`, `--accent`, `--on-accent`, `--danger` (and the same in a dark
+        /// `@media`), `--font`, `--title-font`, `--title-size`, `--title-weight`, `--radius`, `--control-radius`,
+        /// `--control-height`, `--shadow`. Unset, they're a plain Mac window's.
         nonisolated fileprivate static let style = """
-        :root{color-scheme:light dark;--bg:#eff1f2;--card:#fdfdfd;--line:#dadcde;--field:#c4c7ca;--ink:#1d1d1f;--muted:#6e6e73;--accent:#0a64d6;--on-accent:#fff;--danger:#c2412a;--radius:10px;--shadow:0 .5px 1.5px rgba(0,0,0,.1);--face:-apple-system,BlinkMacSystemFont,system-ui,sans-serif}
-        @media (prefers-color-scheme:dark){:root{--bg:#1e1f20;--card:#2a2b2c;--line:#3a3b3d;--field:#505255;--ink:#f5f5f7;--muted:#98989d;--danger:#ff7b6b;--shadow:none}}
+        :root{color-scheme:light dark;--bg:#eff1f2;--surface:#fdfdfd;--line:#dadcde;--field:#c4c7ca;--ink:#1d1d1f;--muted:#6e6e73;--accent:#0a64d6;--on-accent:#fff;--danger:#c2412a;--font:system-ui,-apple-system,sans-serif;--title-font:var(--font);--title-size:20px;--title-weight:700;--radius:10px;--control-radius:7px;--control-height:28px;--shadow:0 .5px 1.5px rgba(0,0,0,.1)}
+        @media (prefers-color-scheme:dark){:root{--bg:#1e1f20;--surface:#2a2b2c;--line:#3a3b3d;--field:#505255;--ink:#f5f5f7;--muted:#98989d;--danger:#ff7b6b;--shadow:none}}
         *{box-sizing:border-box}html{background:var(--bg)}
-        body{margin:0;padding:12px 16px 84px;background:var(--bg);color:var(--ink);font:13px/1.45 var(--face);-webkit-font-smoothing:antialiased}
-        h1{font:700 20px/1.2 var(--face);letter-spacing:-.012em;margin:6px 0 4px}h2{font:600 12px/1.3 var(--face);margin:18px 2px 6px}h3{font:600 15px/1.3 var(--face);margin:0}
+        body{margin:0;padding:12px 16px 84px;background:var(--bg);color:var(--ink);font:13px/1.45 var(--font);-webkit-font-smoothing:antialiased}
+        h1{font:var(--title-weight) var(--title-size)/1.2 var(--title-font);letter-spacing:-.012em;margin:6px 0 4px}h2{font:600 12px/1.3 var(--font);margin:18px 2px 6px}h3{font:600 15px/1.3 var(--title-font);margin:0}
         p{margin:0 0 8px}.muted{color:var(--muted)}a{color:var(--accent)}
-        .box{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin:0 0 10px}
+        .box,.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin:0 0 10px}
         .box>p{margin:0;padding:9px 12px}.row{display:flex;gap:10px;align-items:center;padding:8px 12px;border-top:1px solid var(--line)}.box>.row:first-child{border-top:0}
-        .row .grow{flex:1;min-width:0}.row .sub{color:var(--muted);font-size:12px}
-        .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin:0 0 10px}
+        .row .grow{flex:1;min-width:0}.row .sub{color:var(--muted);font-size:12px}.row img{flex:none}
         .card>img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;background:var(--line)}.card .words{padding:10px 12px}.card .words p{color:var(--muted);margin:2px 0 0}
+        .facts{display:flex;flex-wrap:wrap;gap:4px 12px;color:var(--muted);font-size:12px}.facts img,.symbol{width:1.1em;height:1.1em;vertical-align:-.15em}
         ul.list{list-style:none;margin:0;padding:0}ul.list li{padding:7px 12px;border-top:1px solid var(--line)}ul.list li:first-child{border-top:0}
         label{display:block;margin:12px 0 0;font-weight:500}
-        input,textarea,select{display:block;width:100%;font:400 13px/1.45 var(--face);padding:5px 8px;border:1px solid var(--field);border-radius:6px;margin-top:4px;background:var(--card);color:var(--ink)}textarea{resize:vertical}
-        button{font:600 13px/1.3 var(--face);min-height:28px;padding:5px 14px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--ink);box-shadow:var(--shadow);cursor:pointer}
+        input,textarea,select{display:block;width:100%;font:400 13px/1.45 var(--font);padding:5px 8px;border:1px solid var(--field);border-radius:calc(var(--control-radius) - 1px);margin-top:4px;background:var(--surface);color:var(--ink)}textarea{resize:vertical}
+        button{font:600 13px/1.3 var(--font);min-height:var(--control-height);padding:5px 14px;border:1px solid var(--line);border-radius:var(--control-radius);background:var(--surface);color:var(--ink);box-shadow:var(--shadow);cursor:pointer}
         button.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}button:disabled{opacity:.5;cursor:wait}
         button.link{border:0;background:none;box-shadow:none;color:var(--accent);padding:0;min-height:0}
         :focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 50%,transparent);outline-offset:1px}
