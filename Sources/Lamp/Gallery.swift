@@ -79,8 +79,6 @@ enum Gallery {
                                              status: "Habit Tracker is ready")),
         result("Change, updated in place", Talk.Result(summary: "Added a weekly chart under your habits.", guesses: [],
                                                        status: "Habit Tracker is updated")),
-        result("Saved with what wasn't tried", Talk.Result(summary: "Added a weekly chart under your habits.", guesses: [],
-                                                           untried: "Swiping a habit away to delete it")),
         result("Latest change, with Undo", Talk.Result(summary: "Watering entries can now include an amount.", guesses: []), undo: true),
         result("Saved with what's new", Talk.Result(summary: "Added streaks and a dark look.", guesses: [], news: [
             Talk.News(what: "Streaks", place: "beside each habit"), Talk.News(what: "Dark look", place: "View menu"),

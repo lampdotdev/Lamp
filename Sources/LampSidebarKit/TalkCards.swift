@@ -446,8 +446,7 @@ struct ChipRow: View {
 /// window. It says one thing, in the agent's own words: what changed and where to find it. A picture of the app
 /// beside it, and a row offering to have Lamp test what it hadn't, left people unsure how the two went together and
 /// what the row's words were; the app is open beside the chat, and with changes going in live people try them
-/// themselves. It's headed by the word that the request is done, which it stands in for: a line under it saying
-/// what Lamp hadn't tried read as an excuse, not as something to do, and is gone.
+/// themselves. It's headed by the word that the request is done, which it stands in for.
 public struct ResultCardView: View {
     let result: TalkCard.Result
 

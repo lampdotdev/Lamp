@@ -170,7 +170,7 @@ public enum TalkCard {
         public var idea: Idea?
         /// Only on cards saved while there were rows of what's new (see `News`).
         public var news: [News]?
-        /// Only on cards saved while they said what the agent hadn't tried; no longer shown.
+        /// Read from cards saved by an earlier Lamp; not shown.
         public var untried: String?
         /// The word that the request is finished ("Ann Arbor Drive is ready"), heading the card: it takes the
         /// place of the status line that would say it. Missing on cards saved before it was.

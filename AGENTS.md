@@ -44,7 +44,7 @@ A capability given to one engine must be given to all of them that can take it, 
   the card for what a request came to, saying one thing: one sentence, for a new app or a big change what they
   now have, for an ordinary change that adds things what's new and where, headed by the word that it's done ("… is
   ready", or "… is updated" for a change that went into the open app), which the card says in place of that status
-  line. Nothing under it about what wasn't tried: that read as an excuse, not as something to do. No picture of the app and no buttons: the app is open beside the chat and people try a change
+  line. No picture of the app and no buttons: the app is open beside the chat and people try a change
   themselves, and a picture beside an offer to test left them unsure how the two went together. No rows either:
   a new app's guesses and idea there made a form to go through when it's the app the person wants to try. Cards saved with them still read
   (`Talk.News`, `Talk.Guess`, `Talk.Idea`): what's new as lines under the sentence, a guess the person turned as
