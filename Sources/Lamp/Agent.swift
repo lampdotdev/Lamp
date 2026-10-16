@@ -965,7 +965,7 @@ enum Agent {
         static let about = """
         - The app's description is in \(AppDescription.file) at the app's root: `{"description": "…"}`, one short, plain \
         sentence saying what the app is, like the line under an app's name in a store ("A counter that goes up \
-        every ten seconds."), 90 characters at most. Lamp shows it under the app's name to anyone the app is \
+        every ten seconds."), \(AppDescription.limit) characters at most. Lamp shows it under the app's name to anyone the app is \
         shared with, before they open it, and in large type beside a picture of the app on the desk. Not a list of features and not how it works: what it is, in everyday words, with nothing from \
         the code. Write it once a new app is built, and again when what the app is changes.
         """

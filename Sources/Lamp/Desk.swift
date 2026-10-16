@@ -22,8 +22,6 @@ struct WishDesk: View {
     @State private var pointedAt: LampProject.ID?
     @State private var staged: Staged?
     private static let stageHeight: CGFloat = 160
-    /// The most a wish's line holds and still fits the stage's three lines (`AppDescription`, `Agent.Rules.about`).
-    static let describedIn = 90
 
     private struct Staged: Equatable {
         let id: LampProject.ID
@@ -145,12 +143,13 @@ struct WishDesk: View {
                     }
                     if let words = staged.words {
                         Text(words)
-                            .font(.system(size: 22, weight: .medium, design: .rounded))
+                            .font(.system(size: 18, weight: .medium, design: .rounded))
                             .foregroundStyle(.primary.opacity(0.8))
-                            .lineLimit(3)
-                            .minimumScaleFactor(0.75)
+                            // One size for every wish, in at most four lines: room for about 150 characters, so a
+                            // line written before `AppDescription.limit` fits too until the agent shortens it.
+                            .lineLimit(4)
                             .multilineTextAlignment(staged.picture == nil ? .center : .leading)
-                            .frame(maxWidth: 320, alignment: staged.picture == nil ? .center : .leading)
+                            .frame(maxWidth: 360, alignment: staged.picture == nil ? .center : .leading)
                     }
                 }
                 .padding(.horizontal, 32)
