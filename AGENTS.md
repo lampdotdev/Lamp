@@ -217,7 +217,7 @@ send. Until that message, nothing is named, scaffolded, built or saved (`startQu
 becomes may be an iPhone app, which a scaffold already written as a Mac app would rule out. The message that
 isn't an answer to a card names it like any first request and ends `finding`.
 
-A new person's desk isn't empty: Lamp comes with ten wishes (`Starters`, from `Resources/Starters`), working
+A new person's desk isn't empty: Lamp comes with eleven wishes (`Starters`, from `Resources/Starters`), working
 apps to use as they are and to change into their own, which shows what Lamp does better than a question about
 what to make. So the welcome is the hello and setup, and ends on the desk (a wish from the site is still made
 once setup is done). They're copied once, on the first launch, each saved as its first version ("From Lamp"),
@@ -249,6 +249,25 @@ without Lamp's chat). Shrink it to at most 800 px on the long side (`sips -Z 800
 `Resources/Starters/<folder>/preview.png`. Look at it before committing: example content only, nothing from the Mac
 it was taken on (names, folders, accounts). A starter that opens no window (the menu bar) is pictured with its
 panel open.
+
+**Turning an app made with Lamp into a starter.** The app's folder is under `~/Library/Application Support/Lamp
+Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp). Into a new `Resources/Starters/<folder>`:
+
+1. Copy its `Sources` without `LampSupport.swift` (and `LampScene.swift`), `Widget/` without `LampWidgetSupport.swift`,
+   `capabilities.json` when it has one, `icon.json` and `about.json`. Never `build.sh`, `Package.swift`, `.lamp/`,
+   `Attachments/` or anything else Lamp writes.
+2. Read the code for what only works for its maker or only for now: a date written in (a deadline, a year) goes
+   relative to the first launch and is saved then, so the app means something whenever Lamp was installed; a key,
+   an account or the maker's own files and names have no place in it. Content is example content the person can
+   change or clear.
+3. Write `APP.md` for the agent that changes it, in the shape the other starters' have (`Kind:`, what it does,
+   Code, Data, Easy to change), from the code as it is, not the app's own APP.md.
+4. Write `starter.md`: `name`, `offer` ("Make <name> yours") and three tweaks of at most six words, each with an SF
+   Symbol. They're changes the app doesn't already make, that the agent can make in one request with no key,
+   account or pictures to draw.
+5. Take `preview.png` as above (the app's own `.lamp/runtime/preview.png` is the picture when it shows only example
+   content), draw the icon with `LAMP_RENDER_STARTER_ICONS=<folder> swift test --filter StarterIconsTests`, then run
+   `scripts/check-starters.sh <folder>` and `swift test --filter StartersTests`, and update the count of wishes above.
 
 ## Two Lamps on one Mac
 
