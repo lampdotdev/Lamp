@@ -178,12 +178,16 @@ async function deliverMenu() {
   const menu = info.menu, frame = $('page');
   if (!menu || !frameReady || !pageToken || menu.app !== framed || menu.at === menuSeen) return;
   menuSeen = menu.at;
+  // The page this choice is for, as it is now: the person may switch apps, or the frame reload, while the write below
+  // waits, and then the choice goes nowhere rather than to another page.
+  const app = framed, origin = frame.dataset.origin, token = pageToken, moved = info.moved;
   const {menu: _, ...rest} = info; info = rest;
   await chrome.storage.session.set({[keys.tab]: rest});
+  if (framed !== app || frame.dataset.origin !== origin || pageToken !== token || !frameReady) return;
   // 15 seconds from the click on the item, however long the app took to open its page.
-  if (info.moved || Date.now() >= menu.at + 15000) return;
-  menuRead = {token: pageToken, url: menu.url, until: menu.at + 15000};
-  frame.contentWindow.postMessage({lamp: 'menu'}, frame.dataset.origin);
+  if (moved || info.moved || Date.now() >= menu.at + 15000) return;
+  menuRead = {token, url: menu.url, until: menu.at + 15000};
+  frame.contentWindow.postMessage({lamp: 'menu'}, origin);
 }
 // Every document the frame loads proves itself again, so a page that replaced the app's (the app gone, another
 // program on its port) can't use what the app's page proved.
