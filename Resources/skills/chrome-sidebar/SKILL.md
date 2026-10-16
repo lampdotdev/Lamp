@@ -89,11 +89,13 @@ A page that saves goes through all of these, an article or a link too: nothing i
    meaningful fields (name, schedule, ingredients), never ones the app fills in itself (the date saved). A
    `.bottom-bar` with Cancel and the prominent Save. Focus goes to the first field. Cancel writes nothing and puts
    the offer and list back.
-4. **Saving**: the button says "Saving…" and is disabled; one write at a time.
-5. **Saved**: only after the app says it saved. One confirmation: the offer's detail line becomes "Saved to My
-   Recipes" and its button becomes the next action, "Open" (`button.tinted.capsule`), with focus on it. Never a
-   disabled "Saved" button and a "Saved" message both. The app keeps one copy per item (by its URL or identity), so
-   saving again updates it.
+4. **Saving**: the button says "Saving…"; it and Cancel are disabled until the write settles, so a slow save can't
+   land on top of another draft. One write at a time.
+5. **Saved**: only after the app says it saved. One confirmation, in the status line ("Peace lily saved to My
+   Plants."), and the item in the list, where its row opens it, with focus on that row. Never a disabled "Saved"
+   button and a "Saved" message both. The offer goes back to "Save…": the sidebar stays open while the tab moves on
+   to other pages and isn't told when it does, so the offer must always be ready to save the next one. The app
+   keeps one copy per item (by its URL or identity), so saving the same page again updates it.
 6. **Failed save**: the app's message in the status line with `.error`, everything typed kept, focus back on Save to
    try again.
 7. **Changed elsewhere**: `lamp.onChange(show)` redraws when the window or another tab changed the items.
@@ -171,7 +173,7 @@ function row(item) {   // as the window draws the item
   fact.append(sym("drop.fill"), "Every " + item.every); meta.append(fact);
   main.append(el("span", "title-line clamp-1", item.name), meta);
   r.append(picture(item), main, el("div", "trailing", item.due));
-  r.setAttribute("role", "button"); r.tabIndex = 0;
+  r.setAttribute("role", "button"); r.tabIndex = 0; r.dataset.id = item.id;
   r.onclick = () => lamp.call("open", {id: item.id});
   r.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); r.click(); } };
   return r;
@@ -196,18 +198,16 @@ $("save").onclick = async () => {
 };
 $("cancel").onclick = () => { draft = null; checking(false); $("save").focus(); };
 $("keep").onclick = async () => {
-  const b = $("keep"); if (b.disabled) return;
-  b.disabled = true; b.textContent = "Saving…"; status("");
+  const b = $("keep"), cancel = $("cancel"); if (b.disabled) return;
+  b.disabled = cancel.disabled = true; b.textContent = "Saving…"; status("");
   try {
     const item = await lamp.call("save", {...draft, name: $("name").value, every: $("every").value});
     draft = null; checking(false);
-    $("offer-title").textContent = item.name; $("offer-detail").replaceChildren(el("span", "", "Saved to My Plants"));
-    const open = el("button", "tinted capsule", "Open"); open.id = "save";
-    open.onclick = () => lamp.call("open", {id: item.id});
-    $("save").replaceWith(open); open.focus();
     await show();
+    status(item.name + " saved to My Plants.");
+    document.querySelector(`[data-id="${CSS.escape(String(item.id))}"]`)?.focus();
   } catch (e) { status(e.message, true); b.focus(); }
-  b.disabled = false; b.textContent = "Save Plant";
+  b.disabled = cancel.disabled = false; b.textContent = "Save Plant";
 };
 lamp.onChange(show);
 show();
