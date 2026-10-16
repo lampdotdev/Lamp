@@ -140,10 +140,11 @@ async function refresh() {
 // An app that serves its own page: the sidebar frames it, keeps the app's name and the consent line above it, and
 // is the page's only way to the person's tab. A frame that fails to load says nothing, so the page says hello.
 let lampClosed = false, framed = '', frameReady = false, frameAsked = 0, tabKey = '', tried = 0;
+function clearLook() { for (const name of ['bg', 'ink', 'muted', 'line', 'accent']) document.body.style.removeProperty('--page-' + name); }
 function showPage(app) {
   const frame = $('page');
   document.body.classList.toggle('framed', !!app);
-  if (!app) { if (framed) { frame.src = 'about:blank'; framed = ''; } frame.hidden = true; return; }
+  if (!app) { if (framed) { frame.src = 'about:blank'; framed = ''; } frame.hidden = true; clearLook(); return; }
   document.querySelector('main').hidden = true;
   const now = Date.now();
   // Not answering: the app's next port is tried (another program may have its first), and round again every few
@@ -154,6 +155,7 @@ function showPage(app) {
     const url = app.page.urls[tried % app.page.urls.length];
     frame.dataset.origin = new URL(url).origin;
     frame.src = url + '#' + new URLSearchParams({tab: tabKey}).toString();
+    clearLook();   // another page's colours never stay on the strip; a page that sends none gets the strip's own
     readSpent = true; if (document.activeElement === frame) takeFocusBack();
   }
   // A page that stopped answering (its app quit, or reopened at another of its ports) is looked for again.
@@ -203,10 +205,14 @@ window.addEventListener('message', async event => {
   if (message.lamp === 'alive') { if (frameReady) lastAlive = Date.now(); return; }
   // The page's colours for the strip above it: plain colours only (hex or rgb), each checked before it's used.
   if (message.lamp === 'look') {
+    clearLook();
     const colour = value => typeof value === 'string' && /^(#[0-9a-f]{3,8}|rgba?\(\s*\d{1,3}(\.\d+)?%?\s*,\s*\d{1,3}(\.\d+)?%?\s*,\s*\d{1,3}(\.\d+)?%?\s*(,\s*[\d.]+\s*)?\))$/i.test(value.trim()) ? value.trim() : '';
+    // The words' colours only with the background they were chosen for, and never on a see-through one.
+    const bg = colour(message.bg);
+    if (!bg || /^rgba\(.*,\s*0?\.\d+\s*\)$|^rgba\(.*,\s*0\s*\)$|^#([0-9a-f]{4}|[0-9a-f]{8})$/i.test(bg)) return;
     for (const name of ['bg', 'ink', 'muted', 'line', 'accent']) {
       const value = colour(message[name]);
-      if (value) document.body.style.setProperty('--page-' + name, value); else document.body.style.removeProperty('--page-' + name);
+      if (value) document.body.style.setProperty('--page-' + name, value);
     }
     return;
   }

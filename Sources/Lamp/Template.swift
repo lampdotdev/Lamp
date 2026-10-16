@@ -8271,12 +8271,21 @@ enum Template {
           }
           poll();
           // The page's own colours, so Lamp's strip above it is drawn in them and the two read as one.
+          // Only a solid background goes: a gradient or a see-through one gives its first solid colour, or nothing, and
+          // with no background the strip keeps all of its own colours, so its words are never drawn on the wrong one.
+          function solid(value) {
+            const m = /rgba?\\(([^)]*)\\)/.exec(value || '');
+            if (!m) return '';
+            const parts = m[1].split(',').map(p => p.trim());
+            return parts.length < 4 || parseFloat(parts[3]) >= 1 ? 'rgb(' + parts.slice(0, 3).join(', ') + ')' : '';
+          }
           function tellLook() {
             if (preview || !framer) return;
-            const root = getComputedStyle(document.documentElement), body = getComputedStyle(document.body);
-            const v = name => root.getPropertyValue(name).trim();
-            parent.postMessage({lamp: 'look', bg: body.backgroundColor, ink: body.color, muted: v('--muted'), line: v('--line'),
-                                accent: v('--accent')}, framer);
+            const html = getComputedStyle(document.documentElement), body = getComputedStyle(document.body);
+            const v = name => html.getPropertyValue(name).trim();
+            const bg = solid(body.backgroundColor) || solid(body.backgroundImage) || solid(html.backgroundColor) || solid(html.backgroundImage);
+            parent.postMessage(bg ? {lamp: 'look', bg, ink: body.color, muted: v('--muted'), line: v('--line'), accent: v('--accent')}
+                                  : {lamp: 'look'}, framer);
           }
           if (document.readyState === 'loading') addEventListener('DOMContentLoaded', tellLook); else tellLook();
           matchMedia('(prefers-color-scheme: dark)').addEventListener('change', tellLook);
