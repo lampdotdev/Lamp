@@ -31,6 +31,7 @@ enum AgentEvent {
     case stepArgs(String)  // a piece of that call's arguments, as they stream in
     case compacted         // the engine summed up the conversation so far to make room
     case plan([PlanPart])  // the agent's checklist for the build card
+    case finished          // the engine has answered: a message written to it now would start another answer
 }
 
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.
@@ -1415,6 +1416,7 @@ enum Shell {
         _ command: String,
         cwd: URL,
         env: [String: String] = [:],
+        input: AgentInput? = nil,
         started: (@MainActor (Process) -> Void)? = nil,
         onLine: @escaping @MainActor (String) -> Void
     ) async -> Int32 {
@@ -1428,7 +1430,7 @@ enum Shell {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
-        process.standardInput = FileHandle.nullDevice
+        process.standardInput = input?.pipe ?? FileHandle.nullDevice
 
         // Not `fileHandleForReading.bytes`: every FileHandle shares one serial reader, so a quiet process
         // (the agent waiting on its look_at_app tool) would hold up the output of every other one (the build
@@ -1448,10 +1450,15 @@ enum Shell {
         } catch {
             pipe.fileHandleForReading.readabilityHandler = nil
             await onLine("Could not start process: \(error.localizedDescription)")
+            input?.close()
             return -1
         }
+        // The process has its own copy of the reading end; with Lamp's closed, a write after it has gone fails
+        // instead of waiting for a reader that will never come.
+        try? input?.pipe.fileHandleForReading.close()
         await started?(process)
         for await line in lines { await onLine(line) }
+        input?.close()
         // In its own task so a cancelled caller (e.g. a SwiftUI .task restarting) still waits for the exit,
         // instead of reading terminationStatus from a process that's still running, which throws.
         return await Task {
@@ -1485,6 +1492,34 @@ enum Shell {
         private func emit(_ line: Data) {
             let text = String(decoding: line, as: UTF8.self).trimmingCharacters(in: .newlines)
             if !text.isEmpty { output.yield(text) }
+        }
+    }
+}
+
+/// An engine's standard input, for an engine Lamp keeps talking to while it works (Claude Code reads the
+/// person's messages there as they're sent). Writes go out in order on a queue of their own: a pipe the engine
+/// hasn't read yet must not hold up the main thread.
+final class AgentInput: @unchecked Sendable {
+    let pipe = Pipe()
+    private let queue = DispatchQueue(label: "lamp.agent-input")
+    private var open = true   // only touched on the queue
+
+    init() {
+        // An engine that has quit makes a write fail; without this it would end Lamp with SIGPIPE.
+        _ = fcntl(pipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+    }
+
+    func write(_ line: String) {
+        let data = Data((line + "\n").utf8)
+        queue.async { [self] in if open { try? pipe.fileHandleForWriting.write(contentsOf: data) } }
+    }
+
+    /// The end of what Lamp has to say: the engine exits once it has answered what it was sent.
+    func close() {
+        queue.async { [self] in
+            guard open else { return }
+            open = false
+            try? pipe.fileHandleForWriting.close()
         }
     }
 }

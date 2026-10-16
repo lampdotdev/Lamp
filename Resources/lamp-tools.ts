@@ -33,7 +33,9 @@
  *   shows the command in the app's chat with Allow / Allow All This Turn / Deny, and blocks it if denied.
  * - `plan`: the agent's checklist of what it's building, with the files behind each part. Lamp reads the
  *   list from pi's event stream, shows it on the build card, and ticks parts as their files are written,
- *   so the tool itself has nothing to do.
+ *   so the tool itself has nothing to do. * - Messages the person sends while the agent works reach it in the same turn: after each of pi's turns (a
+ *   reply and the tools it called) this asks Lamp for them and hands them to pi as steering, which pi gives
+ *   the model before its next request.
  */
 
 import { readFileSync } from "node:fs";
@@ -178,6 +180,29 @@ function keepsPicturesFew(pi: ExtensionAPI) {
 			}
 		}
 		return entries.length > (event.entries as unknown[]).length ? { entries } : undefined;
+	});
+}
+
+/** The person's messages sent since the agent started, taken from Lamp after each turn (Store.steer). pi puts
+ * them in the conversation as the person's own, before the model's next request; after the agent's last
+ * reply that request is made for them, so none is left for the turn after. */
+function takesMessagesMidTurn(pi: ExtensionAPI) {
+	pi.on("turn_end", async (_event, ctx) => {
+		const url = process.env.LAMP_STEER_URL;
+		if (!url) return undefined;
+		try {
+			const response = await fetch(url, {
+				method: "POST",
+				headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+				body: "{}",
+				signal: ctx.signal ? AbortSignal.any([ctx.signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
+			});
+			const reply = (await response.json()) as { message?: string };
+			if (reply.message) pi.sendUserMessage(reply.message, { deliverAs: "steer" });
+		} catch {
+			// Lamp couldn't be reached: what's waiting there goes as the next request.
+		}
+		return undefined;
 	});
 }
 
@@ -556,6 +581,7 @@ export default function (pi: ExtensionAPI) {
 		return undefined;
 	});
 	keepsPicturesFew(pi);
+	takesMessagesMidTurn(pi);
 	pi.registerTool(webFetch);
 	pi.registerTool(lookAtApp);
 	pi.registerTool(useApp);
