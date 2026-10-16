@@ -17,6 +17,10 @@ struct WishDesk: View {
     @State private var notSureHovered = false
     /// The room a scroll bar takes: none where scroll bars only show over the content while scrolling.
     @State private var scrollerWidth = WishDesk.scrollerWidth()
+    /// The wish the pointer is on, and the picture of it on the stage where the headline is.
+    @State private var pointedAt: LampProject.ID?
+    @State private var staged: NSImage?
+    private static let stageHeight: CGFloat = 160
     /// How the desk moves when the ideas open or close and wishes come and go: everything on it together,
     /// as one change, so nothing jumps ahead of the rest.
     private static let glide = Animation.spring(response: 0.45, dampingFraction: 0.86)
@@ -34,14 +38,11 @@ struct WishDesk: View {
                     // The wishes come first: using one and changing it is where most wishes start, and a new
                     // one is the way on from there.
                     VStack(spacing: 0) {
-                        Text(wishes.isEmpty ? "What do you wish for?" : "Use one, change one, or wish for something new.")
-                            .font(.system(size: 30, weight: .semibold, design: .rounded))
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 32)
+                        stage
                         if !wishes.isEmpty {
-                            grid.padding(.top, 36)
+                            grid.padding(.top, 12)
                         }
-                        header.padding(.top, wishes.isEmpty ? 18 : 40)
+                        header.padding(.top, wishes.isEmpty ? 18 : 28)
                         if showingIdeas && !ideas.isEmpty {
                             DeskIdeas(ideas: ideas, choose: choose, find: store.findWish)
                                 .padding(.top, 28)
@@ -49,7 +50,8 @@ struct WishDesk: View {
                                 .transition(.modifier(active: MiddleOut(shown: 0), identity: MiddleOut(shown: 1)))
                         }
                     }
-                    .padding(.vertical, 40)
+                    // The stage starts high, in the clear title bar, so a picture there doesn't push the desk down.
+                    .padding(.top, 12).padding(.bottom, 40)
                     // Laid out as if the scroll bar were always there: when one comes and goes as the ideas
                     // open, the desk would otherwise move sideways by its width.
                     .frame(width: max(0, area.size.width - scrollerWidth))
@@ -58,6 +60,7 @@ struct WishDesk: View {
                 }
                 .scrollContentBackground(.hidden)
             }
+            .ignoresSafeArea(.container, edges: .top)
         }
         .navigationTitle("Lamp")
         .toolbar {
@@ -95,6 +98,54 @@ struct WishDesk: View {
         } message: { problem in
             Text(problem.message)
         }
+    }
+
+    private var headline: some View {
+        Text(wishes.isEmpty ? "What do you wish for?" : "Use one, change one, or wish for something new.")
+            .font(.system(size: 30, weight: .semibold, design: .rounded))
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 32)
+    }
+
+    /// The headline, which steps back and fades as a wish's picture comes forward in its place while the pointer
+    /// is on the wish. Its room is kept either way, so nothing below moves.
+    private var stage: some View {
+        ZStack {
+            headline
+                .scaleEffect(staged == nil ? 1 : 0.86)
+                .blur(radius: staged == nil ? 0 : 10)
+                .opacity(staged == nil ? 1 : 0)
+            if let staged {
+                WishStage(image: staged, height: Self.stageHeight - 20)
+                    .id(ObjectIdentifier(staged))
+                    .transition(.asymmetric(
+                        insertion: .scale(scale: 0.92).combined(with: .opacity),
+                        removal: .opacity))
+            }
+        }
+        .frame(height: wishes.isEmpty ? nil : Self.stageHeight)
+        .frame(maxWidth: .infinity)
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: staged.map(ObjectIdentifier.init))
+        .task(id: pointedAt) { await stagePicture() }
+    }
+
+    /// A short rest before the first picture, so crossing the desk on the way somewhere doesn't flash one; from one
+    /// wish to the next it changes at once, and moving off leaves it a moment for the gap between two icons.
+    private func stagePicture() async {
+        guard let id = pointedAt, let project = wishes.first(where: { $0.id == id }) else {
+            try? await Task.sleep(for: .milliseconds(160))
+            if !Task.isCancelled { staged = nil }
+            return
+        }
+        if staged == nil {
+            try? await Task.sleep(for: .milliseconds(250))
+            if Task.isCancelled { return }
+        }
+        // Read afresh each time: the app takes a new picture whenever it opens.
+        let url = Runtime.previewURL(project)
+        let file = FileManager.default.fileExists(atPath: url.path) ? url : Starters.shippedPreview(of: project)
+        let image = file.flatMap(NSImage.init(contentsOf:))
+        if !Task.isCancelled { staged = image }
     }
 
     private var header: some View {
@@ -159,9 +210,11 @@ struct WishDesk: View {
     }
 
     private var grid: some View {
-        DeskRows(width: 124, spacing: 8, lineSpacing: 22) {
+        DeskRows(width: 112, spacing: 4, lineSpacing: 6) {
             ForEach(wishes) { project in
-                DeskIcon(project: project)
+                DeskIcon(project: project) { inside in
+                    if inside { pointedAt = project.id } else if pointedAt == project.id { pointedAt = nil }
+                }
             }
         }
         .frame(maxWidth: 880)
@@ -406,11 +459,45 @@ struct TalkButton: View {
     private static let glow = Color(red: 1.0, green: 0.62, blue: 0.3)
 }
 
+/// What a wish looks like, where the desk's headline was: the picture its app took of its window, standing like a
+/// window on a stage, fitted to the stage whatever the window's shape.
+struct WishStage: View {
+    let image: NSImage
+    let height: CGFloat
+
+    private var size: CGSize {
+        let pixels = image.representations.first.map { CGSize(width: $0.pixelsWide, height: $0.pixelsHigh) } ?? image.size
+        guard pixels.width > 0, pixels.height > 0 else { return CGSize(width: height, height: height) }
+        let scale = min(height * 1.9 / pixels.width, height / pixels.height)
+        return CGSize(width: (pixels.width * scale).rounded(), height: (pixels.height * scale).rounded())
+    }
+
+    var body: some View {
+        Image(nsImage: image)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: size.width, height: size.height)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.black.opacity(0.1), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.18), radius: 22, y: 12)
+            .shadow(color: .black.opacity(0.08), radius: 3, y: 1)
+            // The light it stands in.
+            .background(
+                Ellipse()
+                    .fill(RadialGradient(colors: [.white.opacity(0.9), .white.opacity(0)], center: .center, startRadius: 0, endRadius: size.width * 0.6))
+                    .frame(width: size.width * 1.5, height: size.height * 1.2)
+            )
+            .accessibilityHidden(true)
+    }
+}
+
 /// One wish on the desk: its icon, its name, and under it where it lives or what it's waiting for. A click opens
 /// it, with its chat beside it to change it (`Store.open(fromDesk:)`).
 struct DeskIcon: View {
     @EnvironmentObject private var store: Store
     let project: LampProject
+    /// The pointer came onto it or left it: the desk shows what it looks like (`WishStage`).
+    var onHover: (Bool) -> Void = { _ in }
     @State private var hovered = false
     @State private var place: WishPlace?
 
@@ -477,7 +564,10 @@ struct DeskIcon: View {
         // With keyboard navigation on, Tab reaches it, and Return opens it.
         .focusable(interactions: .activate)
         .onKeyPress(.return) { store.open(fromDesk: project); return .handled }
-        .onHover { hovered = $0 }
+        .onHover { inside in
+            hovered = inside
+            onHover(inside)
+        }
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hovered)
         .background(ShareAnchor(origin: .app(project.id)))
         .background(WishDrag(project: project))

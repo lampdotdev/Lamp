@@ -153,6 +153,11 @@ enum Runtime {
         return url
     }
 
+    /// The picture of the app the desk shows when the pointer rests on its icon: its first window after each launch,
+    /// which a Mac app saves itself (`LampRuntime.preview`) and Lamp takes of the simulator for an iPhone app. One
+    /// for both kinds, in the Mac copy's folder: the desk shows whichever was opened last. A starter ships its own.
+    static func previewURL(_ project: LampProject) -> URL { macFolder(project).appendingPathComponent("preview.png") }
+
     /// Asks the running app to save fresh pictures of its windows now (see `LampRuntime` in the app).
     static func requestScreenshots(of project: LampProject) {
         DistributedNotificationCenter.default().postNotificationName(

@@ -4270,6 +4270,8 @@ final class Store: ObservableObject {
                 refreshOpenApps()
                 return crash
             }
+            // The desk's picture of it, as a Mac app takes its own once its window settles.
+            Task { _ = await Simulator.screenshot(on: udid, to: Runtime.previewURL(project)) }
             await openWatchApp(project, phone: udid, live: stillOwns)
             if inFront {
                 // The Simulator was opened before the install; by now it may be behind Lamp again, and "ready"
