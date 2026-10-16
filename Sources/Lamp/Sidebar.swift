@@ -267,7 +267,7 @@ final class SidebarServer {
         // Only the end of a long chat, as Lamp's window opens on it; the rest is a click away in Lamp.
         let start = LogLine.recentStart(in: lines, atLeast: reach)
         let latestRequest = lines.last { $0.kind == .user }?.id
-        let shown = Talk.withoutCardMessages(lines[start...])
+        let shown = Array(lines[start...])
         let items = ChatItem.items(progressShown ? Transcript.withoutStepInProgress(shown) : shown)
         var out: [SidebarLine] = []
         for (index, item) in items.enumerated() {

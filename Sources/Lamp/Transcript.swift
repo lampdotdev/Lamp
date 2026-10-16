@@ -154,6 +154,9 @@ extension LogLine {
     /// app. The agent's working is left out, both its steps and what it says between them, which is where
     /// the file names and code are; the progress line stands in for it. Agent Details shows everything.
     static func visible(_ lines: [LogLine], details: Bool) -> [LogLine] {
+        // What a card shows isn't said again as a message: decided while saved result cards are still there,
+        // since which card a clicked message came from is what decides it.
+        let lines = Talk.withoutCardMessages(lines)
         if details { return lines }
         // The last thing the agent says in a run is its answer. A run ends with its summary; while one is
         // going, the latest message shows as it's written (it says what the agent is about to do, or is
@@ -260,7 +263,7 @@ struct Transcript: View {
         let latestRequest = lines.last { $0.kind == .user }?.id
         let openAsk = Talk.open(in: lines)?.id
         // Answers clicked on a card are shown by the card, folded where it was: not again as a message.
-        let shown = Talk.withoutCardMessages(lines)
+        let shown = lines
         let items = ChatItem.items(progressShown ? Self.withoutStepInProgress(shown) : shown)
         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
             let isLast = index == items.count - 1
