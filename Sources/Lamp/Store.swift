@@ -2905,7 +2905,14 @@ final class Store: ObservableObject {
         guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
         let window = await look(at: project)
         guard window.0 == 200, !macCopies(of: project).isEmpty else { return window }
-        return await BrowserPreview.look(project, page: page)
+        var (status, sidebar) = await BrowserPreview.look(project, page: page)
+        // The window beside it, so the sidebar is judged as a part of the app, not on its own.
+        if Privacy.sharesPictures, let pictures = window.1["screenshots"] as? [String], let front = pictures.first {
+            sidebar["screenshots"] = ((sidebar["screenshots"] as? [String]) ?? []) + [front]
+            sidebar["text"] = (sidebar["text"] as? String ?? "") + " The app's front window follows it: the sidebar is a part of this app, so " +
+                "compare the two and make the sidebar's colours, type, shapes, icons and the way it draws an item match the window's."
+        }
+        return (status, sidebar)
     }
     private static let noSidebar = "Only a Mac app has a sidebar in Chrome, and only while Apps in Chrome is on in Lamp's Settings → Experimental."
 
