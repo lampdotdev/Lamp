@@ -11,6 +11,7 @@ final class SharingTemporaryFilesTests: XCTestCase {
     private var locked: [URL] = []
     /// A small disk the test attached, detached when it's done.
     private var disk: URL?
+    override func setUp() { expectNoSharingFoldersLeft() }
     override func tearDown() {
         for file in locked { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: file.path) }
         if let disk { _ = try? run("/usr/bin/hdiutil", ["detach", disk.path, "-force"]) }
@@ -72,7 +73,7 @@ final class SharingTemporaryFilesTests: XCTestCase {
     func testSharedFileLeavesNoTemporaryFolder() throws {
         let project = try project()
         let file = try Store.sharedFile(of: project, at: root!.appendingPathComponent("Shared/Tally.lampapp"))
-        XCTAssertNoThrow(try Sharing.open(file))
+        XCTAssertNoThrow(try opened(file))
         XCTAssertEqual(try workFolders(), [])
     }
 

@@ -5,6 +5,7 @@ import XCTest
 /// the rest, and is written into the app that's made from it. No code reaches an app without the review.
 final class SharingWidgetTests: XCTestCase {
     private var root: URL?
+    override func setUp() { expectNoSharingFoldersLeft() }
     override func tearDown() { if let root { try? FileManager.default.removeItem(at: root) } }
 
     private static let widgetCode = "import WidgetKit\n// shows the tally\nlet kind = \"tally\"\n"
@@ -50,7 +51,7 @@ final class SharingWidgetTests: XCTestCase {
     func testTheWidgetsCodeIsReadByTheReviewLikeTheApps() throws {
         let sender = try project()
         try write("import Foundation\nfunc leak() { _ = URLSession.shared; let p = Process(); _ = p }\n", to: "Widget/Net.swift", in: sender.dir)
-        let package = try Sharing.open(try Sharing.export(sender))
+        let package = try opened(try exported(sender))
         let found = Sharing.inspect(package)
         XCTAssertEqual(found.files.map(\.name).sorted(), ["Sources/App.swift", "Sources/ContentView.swift", "Widget/Net.swift", "Widget/Widget.swift"])
         // Lamp's own checks see what the widget does...
@@ -77,7 +78,7 @@ final class SharingWidgetTests: XCTestCase {
             "build.sh": "#!/bin/sh\necho owned\n",
             "Package.swift": "// not Lamp's\n",
         ])
-        let package = try Sharing.open(file)
+        let package = try opened(file)
         let reviewed = Set(Sharing.inspect(package).files.map(\.name))
         let receiver = try Template.scaffold(name: "Receiver", in: try XCTUnwrap(root))
         let ownBuild = try String(contentsOf: receiver.dir.appendingPathComponent("build.sh"), encoding: .utf8)
