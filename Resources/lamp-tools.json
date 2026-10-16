@@ -473,24 +473,6 @@
     }
   },
   {
-    "name": "show_result",
-    "label": "Show result",
-    "description": "Shows the person what this request came to, in the chat once the app is built and open: one sentence. It is your whole ending: after calling it write nothing more. For a new app, a big change, or a change that gives them something new to find (a button, menu, page, shortcut or new way of doing something), whether or not you tried it: the `summary`. Lamp heads it with the word that the app is ready. Not for a small change or a fix they'll see at once (bigger text, a color, a bug gone), and not for an answer: those get one sentence.",
-    "inputSchema": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "summary"
-      ],
-      "properties": {
-        "summary": {
-          "type": "string",
-          "description": "What they now have, 12 words at most, without the app's name or “is ready”: “A week of dinners and one shared grocery list.” After a change, the new thing and where it is: “Star a meal beside its name to save it.”"
-        }
-      }
-    }
-  },
-  {
     "name": "write_wish",
     "label": "Write wish",
     "description": "Writes the wish you found together into the person's message box, in their own words, for them to change and send: the end of helping them find something to wish for. Only then, never for a wish they told you themselves. After it, end your reply with one short sentence at most.",

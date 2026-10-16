@@ -21,16 +21,6 @@ final class TalkTests: XCTestCase {
         XCTAssertEqual(first.switched, [0])
     }
 
-    /// A result card as an agent really wrote one, for a wish to plan a family's dinners: its summary was shown as
-    /// a bold paragraph. It goes back to the agent to say shorter; the same card with short words is shown.
-    func testALongCardIsTurnedBack() {
-        let sent: [String: Any] = ["summary": "A week of dinner nights to fill in, a set of family favorites to choose from, and a grocery list that builds itself from the plan."]
-        guard case .failure = Talk.result(from: sent) else { return XCTFail("a 27-word summary was shown") }
-        guard case .success = Talk.result(from: ["summary": "A week of dinners and a grocery list."]) else {
-            return XCTFail("a short card was turned back")
-        }
-    }
-
     /// A card answered by clicking folds to a line that reads on its own: two questions both answered "Both"
     /// must still say what each "Both" was for.
     func testAFoldedCardSaysWhatWasAsked() {

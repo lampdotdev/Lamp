@@ -177,7 +177,8 @@ extension LogLine {
             }
         }
         if let latest { answers.insert(latest) }
-        return lines.filter { $0.kind == .agent ? answers.contains($0.id) : !$0.isDetail }
+        // A result card saved by an earlier Lamp isn't shown: the agent's last message says what it did.
+        return lines.filter { $0.kind == .agent ? answers.contains($0.id) : !$0.isDetail && $0.kind != .result }
     }
 }
 
@@ -213,12 +214,6 @@ enum ChatItem: Identifiable {
                 let kept = run.filter { !$0.text.hasSuffix("…") }
                 items[items.count - 1] = .statuses(kept + [line])
             case (.status, _): items.append(.statuses([line]))
-            case (.result, .statuses(let run)?):
-                // The card comes once the app is built and open, so a step still saying it's building is over.
-                // The line that would have followed it ("… is ready") is left out for the card (Store.turn).
-                let kept = run.filter { !$0.text.hasSuffix("…") }
-                if kept.isEmpty { items.removeLast() } else { items[items.count - 1] = .statuses(kept) }
-                items.append(.line(line))
             default: items.append(.line(line))
             }
         }
@@ -276,7 +271,6 @@ struct Transcript: View {
                 // The agent's cards depend on what came after them, so they're outside the row that's
                 // redrawn only when its own line changes.
                 case .line(let line) where line.kind == .ask: AskCard(line: line, dir: dir, isOpen: line.id == openAsk)
-                case .line(let line) where line.kind == .result: ResultCard(line: line)
                 case .line(let line): LogRow(line: line, dir: dir, busy: busy, goBack: goBack, sendAgain: sendAgain,
                                              retryPhone: retryPhone, isLatestRequest: line.id == latestRequest).equatable()
                 case .tools(let lines): ToolGroup(lines: lines, running: isLast && busy && !progressShown).equatable()

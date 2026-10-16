@@ -330,11 +330,7 @@ private struct LineView: View {
         case .ask:
             AskLine(line: line)
         case .result:
-            if let result = line.result {
-                ResultCardView(result: result)
-            } else {
-                ChatLook.AgentText(line.text)
-            }
+            EmptyView()
         }
     }
 }

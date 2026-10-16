@@ -440,11 +440,6 @@ struct ProjectView: View {
             if follow.atEnd { DispatchQueue.main.async { proxy.scrollTo("bottom", anchor: .bottom) } }
         }
         .onChange(of: lines.count) { followEnd(proxy, lines, pin: pin) }
-        // A result card comes into view whole. It can take the place of the line before it, so the
-        // count may not change; and it's tall, so the end is looked for after it has been laid out.
-        .onChange(of: Talk.current(in: lines)?.id) {
-            if follow.atEnd { DispatchQueue.main.async { followEnd(proxy, lines, pin: pin) } }
-        }
         .onChange(of: written(lines)) { followEnd(proxy, lines, pin: pin) }
         .onChange(of: queued.count) { followEnd(proxy, lines, pin: pin) }
         .onChange(of: store.progress[project.id]?.plan.count) { followEnd(proxy, lines, pin: pin) }

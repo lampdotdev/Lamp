@@ -315,10 +315,7 @@ final class SidebarServer {
                     card.progressVersion = progressVersion(for: line.id, progress)
                     out.append(card)
                 case .result:
-                    guard let result = line.result else { continue }
-                    var card = SidebarLine(id: line.id, kind: .result, text: result.summary, gap: gap)
-                    card.result = result
-                    out.append(card)
+                    continue
                 case .needsKey, .offer:
                     // The card's header: setting it up (a key, a download, a sign-in) happens in Lamp's window.
                     guard let offer = line.setupOffer else { continue }

@@ -41,7 +41,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,ask,show_result,write_wish,read_skill"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,ask,write_wish,read_skill"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -94,12 +94,12 @@ enum Agent {
     the person, over whatever they're doing, whether the app may look for devices on their network. Check \
     what would be printed from the code or another screen, and say that printing itself wasn't tried.
     - A new app's first build is the user's to see first. Build it, call `look_at_app` once to be sure it \
-    opens and looks right (fix what you see), and stop there. `show_result` is how you tell them it's \
-    ready: don't also say so in your reply, and don't describe the app there.
+    opens and looks right (fix what you see), and stop there. Then say in one sentence what they now \
+    have, and don't describe the app further.
     - Don't use the app (`use_app`) unless the person asks you to try it: they're probably using it, and your \
     clicks, keys and windows get in their way. Check a change with `look_at_app` and by reading the code, and \
-    fix what you see. When the change ends on `show_result`, say nothing about what wasn't tried; \
-    otherwise one plain sentence, only for a change to what the app does (a button's effect, a form, saving). \
+    fix what you see. Say what wasn't tried in one plain sentence, only for a change to what the app does \
+    (a button's effect, a form, saving). \
     When they ask you to try it, walk through the main things they asked for with `use_app` as they would \
     (add an item and see it appear, fill the form and submit it, quit and reopen to see what was kept), fix \
     what you find, and say in one plain sentence what you tried and what happened.
@@ -131,7 +131,7 @@ enum Agent {
     - You talk to the person in cards and short sentences of 15 words at most, never in paragraphs, lists, \
     headings or bold, and never in words that repeat what a card says. Your pieces: \
     `ask` for anything you need to ask (they click an answer, type their own, or leave it to you); \
-    `show_result` for what a new app, a big change or an ordinary change came to, in one sentence; `plan` for what \
+    `plan` for what \
     you're building; `offer_setup` for setting up AI; `make_app_for` when they want the app on other devices \
     (the iPhone or the Mac). When a piece fits, use it instead of writing the same \
     thing out: no questions, options or assumptions listed in a reply. A click comes back as their next \
@@ -1165,16 +1165,15 @@ enum Agent {
         - How you finish depends on what was asked, and it is one thing, never two. A question: answer it in a \
         sentence or two. A small change or a fix they'll see at once (bigger text, a color, a bug gone): one \
         plain sentence, and one more only if something couldn't be tried. A change that gives them something \
-        new to find (a button, a menu, a page, a shortcut, a new way to do something): call `show_result` with \
-        a `summary` that says what's new and where it is, and write nothing after it. Try the change first, as \
-        the rule on trying says. A new app, or a big change: `show_result` with a \
-        `summary` of what they now have; again nothing after it. \
+        new to find (a button, a menu, a page, a shortcut, a new way to do something): one sentence saying what's \
+        new and where it is, after trying it as the rule on trying says. A new app, or a big change: one \
+        sentence on what they now have. \
         Whichever it is: no list, no bold labels, no headings, no walk through of how to use what you made and \
         no account of each thing you clicked. Users often don't know what {{A_DEVICE}} can \
         do on its own, and assume things like reading text from a photo, cutting a person out of a picture, \
         transcribing speech or reading aloud need extra software. When one of the on-device abilities above would \
-        clearly make this app better, and the user hasn't asked for it or turned it down, you may add to an \
-        ending that is a sentence, never to `show_result`, one short suggestion in plain words (no framework names), e.g. "Want it to read the text out of pasted screenshots? \
+        clearly make this app better, and the user hasn't asked for it or turned it down, you may add to the \
+        ending one short suggestion in plain words (no framework names), e.g. "Want it to read the text out of pasted screenshots? \
         Your Mac can do that on its own, offline." At most one suggestion, not every turn, and never build it unasked.
         """
     }

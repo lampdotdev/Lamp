@@ -20,7 +20,7 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `show_result`, `write_wish`, `read_skill`, the version tools, the notes tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `write_wish`, `read_skill`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
@@ -31,7 +31,7 @@ A capability given to one engine must be given to all of them that can take it, 
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `show_result`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **How the agent talks** (`Talk`, `TalkCards.swift`): in short sentences and in cards, not paragraphs, so building
   feels like a short wizard. A vague wish gets a good first attempt built from sensible guesses, not questions: the
@@ -40,17 +40,11 @@ A capability given to one engine must be given to all of them that can take it, 
   taken when it's left to Lamp; an answer never grants access or approves an outside action (`Agent.Rules.ask`). Each piece of a card has a word limit (`Talk.Words`, the same numbers as the
   tools' descriptions), and a call over it is turned away for the agent to say shorter, whichever engine it is. Its
   pieces are tools: `ask` puts questions in the chat as a card answered by clicking, laid out as the agent
-  chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own), and `show_result` is
-  the card for what a request came to, saying one thing: one sentence, for a new app or a big change what they
-  now have, for an ordinary change that adds things what's new and where, headed by the word that it's done ("… is
-  ready", or "… is updated" for a change that went into the open app), which the card says in place of that status
-  line. No picture of the app and no buttons: the app is open beside the chat and people try a change
-  themselves, and a picture beside an offer to test left them unsure how the two went together. No rows either:
-  a new app's guesses and idea there made a form to go through when it's the app the person wants to try. Cards saved with them still read
-  (`Talk.News`, `Talk.Guess`, `Talk.Idea`): what's new as lines under the sentence, a guess the person turned as
-  what they chose, and nothing else. A new app's build card folds to its first line (its name, Ready) once the turn is over, with no
-  picture of the app, so the result card under it is the one thing that says what came of it. The card takes the place of the line saying the app is ready; the agent's last message still shows above it, since what it says there (what looked off, what it changed its mind about) is said nowhere else. A
-  small change or a fix keeps one sentence and that line. What each piece
+  chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own). What a
+  request came to is the agent's last message, in a sentence or two (`Agent.Rules.finish`), under the line that says
+  the app is ready or updated; a card for it said no more than that message did and hid what it said beyond it.
+  Result cards saved by an earlier Lamp still read and aren't shown (`LogLine.visible`). A new app's build card folds
+  to its first line (its name, Ready) once the turn is over, with no picture of the app. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
   tool waits for the person: it returns at once, the agent ends its reply, and a click is sent as the
   person's next message (`Store.answer`), so a click and a typed answer reach every engine the same way and
@@ -60,8 +54,7 @@ A capability given to one engine must be given to all of them that can take it, 
   answer that has to wait in line, clicked or typed, folds its card at once and opens it again if it's taken
   back (`Talk.unqueue`); waiting for setup, it keeps its card across a relaunch (`QueuedMessage.saved`).
   `Talk.Ask` also reads the shape cards were first saved in (options as plain words, `chosen`, `dismissed`):
-  a chat line that can't be read loses the whole chat. `show_result` is kept on the turn and shown only once
-  the app is built and open. While a card waits for its answer nothing above it changes height and the chat
+  a chat line that can't be read loses the whole chat. While a card waits for its answer nothing above it changes height and the chat
   doesn't follow what's added below: a new app's card goes to its short form as the questions arrive, a
   second `ask` before the answer is turned away, and a one-at-a-time card is laid out for all its questions
   at once (`AskSteps`), so nothing moves under the pointer. Its questions are kept the same height, so the card
@@ -1123,7 +1116,7 @@ card), check:
 
 Lamp Dev has a gallery (Window → Gallery, ⌥⇧⌘G; `Gallery.swift`): each of the chat's cards in every state it
 can be in, drawn from made-up values at the chat's width and the wand panel's, light and dark. A card is drawn by
-a view that takes plain values (`AskCardView`, `ResultCardView`), and the view that reads `Store` only finds those
+a view that takes plain values (`AskCardView`), and the view that reads `Store` only finds those
 values and passes them in, so the gallery shows exactly what people see. Keep it that way: a new card, a new
 state of one (a layout, a shape saved by an earlier Lamp, a button that shows only sometimes) or a fix to how one
 lays out gets its entry in `Gallery.entries` in the same change, and is looked at there before the PR. A card
