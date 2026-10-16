@@ -7,7 +7,24 @@ import LampFileLook
 /// out of the very file Lamp writes, without unpacking it.
 final class SharedFileLookTests: XCTestCase {
     private var root: URL?
-    override func tearDown() { if let root { try? FileManager.default.removeItem(at: root) } }
+    /// Drawing the icon keeps a copy in Lamp's own caches folder (`Icons.largePreview`), which is the real one even
+    /// in a test: each test's app has an id of its own, and what it left there, and any folder it made, goes after.
+    private let id = "lamp-look-test-\(UUID().uuidString)"
+    private let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("Forge")
+    private var madeCaches: [URL] = []
+
+    override func setUp() {
+        madeCaches = [caches, caches.appendingPathComponent("Icons")].filter { !FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    override func tearDown() {
+        let fm = FileManager.default
+        if let root { try? fm.removeItem(at: root) }
+        try? fm.removeItem(at: caches.appendingPathComponent("Icons/\(id)"))
+        for folder in madeCaches.reversed() where (try? fm.contentsOfDirectory(atPath: folder.path))?.isEmpty == true {
+            try? fm.removeItem(at: folder)
+        }
+    }
 
     private func project(icon: Bool) throws -> LampProject {
         let fm = FileManager.default
@@ -16,7 +33,7 @@ final class SharedFileLookTests: XCTestCase {
         let dir = root.appendingPathComponent("tidenotes")
         try fm.createDirectory(at: dir.appendingPathComponent("Sources"), withIntermediateDirectories: true)
         try "let tides = 2".write(to: dir.appendingPathComponent("Sources/ContentView.swift"), atomically: true, encoding: .utf8)
-        let project = LampProject(id: "tidenotes", name: "Tide Notes", exe: "TideNotes", dir: dir)
+        let project = LampProject(id: id, name: "Tide Notes", exe: "TideNotes", dir: dir)
         if icon {
             // The desk's icon, as Lamp writes it beside the app: a 256 px PNG.
             let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 256, pixelsHigh: 256, bitsPerSample: 8, samplesPerPixel: 4,
