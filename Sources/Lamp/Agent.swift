@@ -171,9 +171,13 @@ enum Agent {
 
     ---
     This app is updated in place while it's open, keeping what's on screen, when a change only edits or adds code. \
-    New stored properties go in too, in a class, a struct or (as @State) a view, when each is declared on one line \
-    with a starting value (or is an optional); so do new cases at the end of an enum whose cases carry nothing. \
-    Changing or removing a stored property, the App, or a case anywhere else reopens it. \
+    New stored properties go in too, in a class, a struct or (as @State) a view, when each has a starting value \
+    (or is an optional) and no didSet or willSet; so do new cases at the end of an enum whose cases carry nothing, \
+    and new values for constants. Changing or removing a stored property, a case anywhere else, or what's read only \
+    at launch (the App, its scenes and menu commands) reopens it. \
+    Code already running keeps the version it started with: a closure given to a Timer, a loop in a Task, an \
+    observer. So in a loop or a timer, call a method of the app's each time rather than writing the work in the \
+    closure, and a change to that method goes in. \
     A look shows the window as the person left it, with the change in it.
     """
 

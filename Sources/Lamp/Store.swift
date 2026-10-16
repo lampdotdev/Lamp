@@ -3996,19 +3996,31 @@ final class Store: ObservableObject {
         note("Updating \(project.name) in place…", for: project)
         // The changed files' compile and the whole code's check go side by side; the check decides. With properties
         // already in spares, the live copy is rewritten before anything is compiled (`LiveSlots.fit`).
-        let spared = !LiveSlots.mapping(project).isEmpty
+        let spared = !LiveSlots.mapping(project).isEmpty || LiveSlots.hasConstants(project)
         async let early: (url: URL?, problem: String?) = spared ? (nil, nil) : await LiveReload.compile(project, changed: changed)
         let (before, after, declarations) = await LiveReload.layouts(project)
         var check = LiveReload.layoutProblem(before: before, after: after)
+        let constants = before.flatMap { before in after.map { LiveSlots.changedConstants(project, before: before, after: $0) } } ?? []
         var (library, problem) = await early
-        // Stored properties added to existing types go into their spares, and the change is compiled with them.
-        if check.problem != nil, let before, let after, let plan = LiveSlots.fit(project, before: before, after: after, declarations: declarations) {
+        // Stored properties added to existing types go into their spares, constants whose value changed give the new
+        // one, and the change is compiled with them.
+        if check.problem != nil || !constants.isEmpty, let before, let after,
+           let plan = LiveSlots.fit(project, before: before, after: after, declarations: declarations, constants: constants) {
             changed = Array(Set(changed).union(plan.files)).sorted()
+            // A constant newly read through its new code is read so everywhere: the open app's own reads go to storage
+            // that keeps the first value. Afterwards every caller reads through it, so later changes need no more.
+            if !plan.constants.isEmpty { changed = LiveReload.appFiles(project) }
             check = LiveReload.layoutProblem(before: before, after: plan.layout)
             (library, problem) = await LiveReload.compile(project, changed: changed)
             if check.problem == nil, !plan.added.isEmpty {
                 log(project, .detail, "Added \(plan.added.joined(separator: ", ")) without reopening \(project.name).")
             }
+            if check.problem == nil, !plan.constants.isEmpty {
+                log(project, .detail, "Gave \(plan.constants.joined(separator: ", ")) \(plan.constants.count == 1 ? "its" : "their") new value without reopening \(project.name).")
+            }
+        } else if !constants.isEmpty, check.problem == nil {
+            log(project, .detail, "Reopening \(project.name) for this change: a constant's new value can't be given in place.")
+            return false
         } else if spared, check.problem == nil {
             (library, problem) = await LiveReload.compile(project, changed: changed)
         }
