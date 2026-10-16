@@ -698,7 +698,8 @@ enum LiveSlots {
                 queue.append(made)
             }
         }
-        let name = displayName(key) + "#" + SwiftSource.digest(sources.keys.sorted().map { $0 + "=" + sources[$0]! }.joined(separator: "\n"))
+        // Named by its key, the file of a private one included: two files' `private let spacing` are two values.
+        let name = key.replacingOccurrences(of: "\t", with: ".") + "#" + SwiftSource.digest(sources.keys.sorted().map { $0 + "=" + sources[$0]! }.joined(separator: "\n"))
         let quoted = name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         return (start..<end, "var \(variable.name): \(variable.type) { LampConstants.value(\"\(quoted)\") { () -> \(variable.type) in \(initial) } }")
     }
@@ -931,9 +932,38 @@ enum SwiftText {
         return at
     }
 
-    /// Whether `identifier` is used in `text`'s code (not in a string or comment, nor as part of a longer name).
+    /// Whether `identifier` is used in `text`'s code (not in a string's text or a comment, nor as part of a longer
+    /// name), the code of a string's interpolations included.
     static func mentions(_ identifier: String, in text: String) -> Bool {
-        !identifier.isEmpty && replacing(identifier: identifier, with: "\u{0}", in: text) != text
+        let code = codeOnly(Array(text))
+        return !identifier.isEmpty && replacing(identifier: identifier, with: "\u{0}", in: code) != code
+    }
+
+    /// `chars` with comments and strings' text taken out, and the code of strings' interpolations kept.
+    static func codeOnly(_ chars: [Character]) -> String {
+        var out = "", at = 0
+        while at < chars.count {
+            guard let end = skip(chars, at: at) else { out.append(chars[at]); at += 1; continue }
+            out += " "
+            if chars[at] != "/" {
+                // A string: what's inside each `\(…)` (`\#(…)` in a raw one) is code.
+                var hashes = 0
+                while at + hashes < end, chars[at + hashes] == "#" { hashes += 1 }
+                var inside = at + hashes
+                while inside < end {
+                    if chars[inside] == "\\", inside + 1 + hashes < end,
+                       chars[(inside + 1)..<(inside + 1 + hashes)].allSatisfy({ $0 == "#" }), chars[inside + 1 + hashes] == "(" {
+                        let open = inside + 2 + hashes, close = interpolationEnd(chars, from: open)
+                        out += codeOnly(Array(chars[open..<max(open, close - 1)])) + " "
+                        inside = close
+                        continue
+                    }
+                    inside += hashes == 0 && chars[inside] == "\\" ? 2 : 1
+                }
+            }
+            at = end
+        }
+        return out
     }
 
     /// `text` with each use of `identifier` in its code (not in a string or comment, nor part of a longer name)
