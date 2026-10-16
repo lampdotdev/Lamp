@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = askEntries + resultEntries + buildEntries
+    static let entries: [Entry] = askEntries + resultEntries + buildEntries + pointedEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -112,6 +112,37 @@ enum Gallery {
             change(&progress)
             return AnyView(BuildCardView(title: "Tip Calculator", name: "Tip Calculator", iconReady: false, progress: progress) {
                 BlueprintIcon(letter: "T", size: 44)
+            })
+        }
+    }
+
+    // MARK: Pointed at
+
+    private static let pointedEntries: [Entry] = [
+        pointed("In the message box", detail: "Kitchen basil", typed: "Let me add how much water, too."),
+        pointed("In the message box, nothing typed yet", detail: "Kitchen basil", typed: ""),
+        pointed("In the message box, app closed", detail: "Kitchen basil", typed: "Let me add how much water, too.", canChooseAgain: false),
+        pointed("In the message box, a long name", detail: "Weekly watering schedule for the balcony planters",
+                typed: "Make this bigger.", title: "Mark every plant on the balcony as watered today button"),
+        pointed("An area", detail: nil, typed: "Put a photo of the plant here.", title: "Top left area"),
+        Entry(group: "Pointed at", name: "Sent") {
+            AnyView(ChatLook.UserRow(text: "Let me add how much water, too.", busy: false, goBack: nil, sendAgain: {}, isLatest: true) {
+                ChatLook.PointedPill(title: "Watered button", detail: "Kitchen basil", preview: {})
+            })
+        },
+    ]
+
+    private static func pointed(_ name: String, detail: String?, typed: String, title: String = "Watered button",
+                                canChooseAgain: Bool = true) -> Entry {
+        Entry(group: "Pointed at", name: name) {
+            AnyView(ChatLook.MessageBar(busy: false, canSend: true, attachHelp: "", attach: {}, send: {}, stop: {}, focus: {}) {
+                Text(typed.isEmpty ? ChatLook.placeholder(busy: false, empty: false) : typed)
+                    .foregroundStyle(typed.isEmpty ? .tertiary : .primary)
+                    .frame(maxWidth: .infinity, minHeight: Composer.lineHeight, alignment: .leading)
+                    .padding(.leading, 5)
+            } above: {
+                ChatLook.PointedPill(title: title, detail: detail, chooseAgain: canChooseAgain ? {} : nil, remove: {})
+                    .padding(.top, 4)
             })
         }
     }

@@ -483,7 +483,9 @@ at part of the app: the app lays a clear window over its own (`LampMagic.Picker`
 thing under the pointer from its own accessibility tree (`LampDriver.elements`), a click where nothing is named (a game's
 ball, a drawing) takes the area around it, and a drag draws a box of the person's own; it then leaves a cropped
 picture in its runtime folder and says what it is (an area is named by where it is, "Top left area"); Lamp attaches that picture to the message, named after the
-thing ("Save button.png", `MagicPanel.name`), and takes a picture only from that folder.
+thing ("Save button.png", `MagicPanel.name`), and takes a picture only from that folder. In both chats' message boxes it is
+one pill (`ChatLook.PointedPill`: what it is and what it's part of, from the app's own row or the heading above it),
+which a click points again and its × lets go; pointing again replaces it, and nothing is left drawn over the app.
 
 Whether the change was asked for beside the app or in Lamp's window, a change goes into the open app without a restart when it can (`LiveReload`). The
 Mac app, or the Mac half of an app for both while Try On points at this Mac, is
@@ -508,6 +510,20 @@ opened it again, never for Open App or Undo. A live build reads the app's own fi
 from its Assets folder rather than its bundle (`LampAssets`), so a new picture goes in live too; the package, the
 app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which asks for
 new state in new views rather than new stored properties in existing types, when that's as clear.
+
+A stored property added to a class goes in live too (`LiveSlots`, in LiveReload.swift). The copy step gives every
+class of the app's (not `@Model`, Core Data or `Sendable` ones) a few empty spare places, `__lampSpare_<Class>_0`…
+of `LampSpare?` (named after the class, so a subclass's don't clash with what it inherits; `@Published` when the
+header says `ObservableObject`), so the open app's objects already have room. A starting value that isn't a literal
+(`.now`, a call) is worked out on the first read and kept; a `@Published` property in a class whose places aren't
+published (conforming in an extension) reopens the app instead. When the only
+difference in layout is new stored properties in such classes, `LiveSlots.fit` rewrites each one-line declaration in
+the live copy into a computed property kept in a free place, and the change is compiled again and checked as usual.
+Being stored, a place is observed like any property, so views redraw. Which property is in which place
+(`.lamp/live/slots.json`) is put back into each fresh copy (`LiveSlots.apply`) until the app is installed again: the
+whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs
+once it's installed (`LiveReload.markRunning(from:)`). A place never reaches saved data: `LampSpare` encodes as
+nothing, and a computed property isn't encoded.
 
 A Mac app can also open beside a web page, in Chrome's sidebar (Lamp Dev only, an experiment: Settings →
 Experimental, `BrowserBridge.switchKey`; how it fits together is in `experiments/browser-connector/README.md`).
@@ -859,6 +875,18 @@ iPhone `LampSecrets` stays the device's Keychain, which asks nothing, and an app
 one line (`LampSecrets.store`). Neither kind is ever in the app's folder, so a shared copy arrives disconnected and is
 flagged in the review (`Sharing.checklist`). How to build on each is in its doc comment in LampSupport.swift, which the tool's answer
 sends the builder to.
+
+**A service that isn't listed** can still be called from the app's own code. When it needs a key, the app declares
+it with `LampAPI.own` (its API's address, the page where the key is made, one sentence of steps, how the key is
+sent: a header or a query parameter, and a path to check it) and uses `LampAPIButton`, so the person pastes the key
+on the same Connect sheet as a listed service's, it is checked, kept in `LampSecrets` under a name of its own
+(`own-…`, so it can't stand in for a listed service's token), and sent only to that address. No key field or dialog
+of the app's own, and never UserDefaults, LampStore or a Keychain item of the app's own: the first two are the app's
+settings and folder, and the last asks for the password after every rebuild. Both `Agent.connectorRules` and the
+tool's list (`Connectors.list`, also its answer to a name it doesn't know) say so. Such a service's address must be
+https (`httpsOnly`: nothing is sent otherwise), while a listed one's may be the person's own server on plain http.
+The review counts `LampAPIButton`, `LampAPI.own` and `LampSecrets.` in the app's code as connecting an account, and
+open data alone as going online.
 
 ## Naming: Lamp and Lamp
 

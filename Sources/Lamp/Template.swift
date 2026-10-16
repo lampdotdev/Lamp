@@ -488,6 +488,8 @@ enum Template {
         \(liveCopySteps)
           # Lamp only wants the live copy, to put a change into the open app before building the whole of it.
           [[ "${LAMP_LIVE_COPY:-}" == 1 ]] && exit 0
+          # What this build compiles, which is what the app runs once it's installed (LiveReload.markRunning).
+          rsync -a --delete "$LIVE/Sources/" "$LIVE/built/"
           mkdir -p "$LIVE/xcode"
           rsync -a --delete --exclude DerivedData .lamp/device/ "$LIVE/xcode/device/"
           ln -sfn ../../Assets "$LIVE/Assets"
@@ -3376,6 +3378,19 @@ enum Template {
     }
 
     #if LAMP_LIVE
+    /// A spare place in a class, for a stored property added while the app is open (LiveReload's slots): live
+    /// builds give every class of the app's a few, empty, and a new property kept in one leaves the object's
+    /// layout as the open app has it. Saved data never holds one (it encodes as nothing and decodes empty).
+    struct LampSpare: Codable, @unchecked Sendable {
+        var value: Any?
+        init(_ value: Any?) { self.value = value }
+        init(from decoder: Decoder) throws { value = nil }
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encodeNil()
+        }
+    }
+
     /// Changes made while the app is open, put into it without a restart (live builds only: debug, linked
     /// -interposable, from Lamp's copy of the sources with each view's body wrapped). Lamp compiles the files a
     /// change touched into a library in `.lamp/live`; asked with the app's token, this loads it and points the
@@ -3757,7 +3772,7 @@ enum Template {
                 if let dragged { return pick(dragged, role: "area", label: Self.place(of: dragged, in: bounds)) }
                 if let index = item(at: point) {
                     let item = items[index]
-                    return pick(rect(item), role: item.role, label: item.label.isEmpty ? item.value : item.label)
+                    return pick(rect(item), role: item.role, label: item.label.isEmpty ? item.value : item.label, context: context(of: index))
                 }
                 let box = area(around: point)
                 pick(box, role: "area", label: Self.place(of: box, in: bounds))
@@ -3771,15 +3786,47 @@ enum Template {
                 return row == "middle" && !column.isEmpty ? column : [row, column].filter { !$0.isEmpty }.joined(separator: " ")
             }
 
+            /// What a named thing is part of, to tell it from others like it: the "Kitchen basil" of one of several
+            /// "Watered" buttons. Short words on its own line to its left; else the nearest named thing around it
+            /// that isn't most of the window (a list's row says what's in it, "Kitchen basil · Last watered…"); else
+            /// the heading just above it in its column, for things laid out without rows.
+            private func context(of index: Int) -> String {
+                let own = rect(items[index])
+                let label = items[index].label.isEmpty ? items[index].value : items[index].label
+                func short(_ text: String) -> Bool { !text.isEmpty && text.count <= 40 && text != label && !text.contains("\n") }
+                let words = items.indices.filter { $0 != index && ["text", "heading"].contains(items[$0].role) && short(items[$0].label) }
+                let left = words.filter { rect(items[$0]).maxX <= own.minX + 2 && abs(rect(items[$0]).midY - own.midY) < own.height / 2 + 4 }
+                    .max { rect(items[$0]).maxX < rect(items[$1]).maxX }
+                if let left { return items[left].label }
+                let around = items.indices.filter { other in
+                    let box = rect(items[other])
+                    return other != index && box.contains(own) && box != own && box.width * box.height < bounds.width * bounds.height / 2
+                        && items[other].label.components(separatedBy: " · ").contains(where: short)
+                }
+                .min { rect(items[$0]).width * rect(items[$0]).height < rect(items[$1]).width * rect(items[$1]).height }
+                if let around, let first = items[around].label.components(separatedBy: " · ").first(where: short) { return first }
+                // Going up from it, the first words larger than the line just above it: a plant's name over the
+                // line about it, not the page's title further up. With none larger, that nearest line.
+                let above = words.filter {
+                    let text = rect(items[$0])
+                    return text.maxY <= own.minY + 2 && own.minY - text.maxY < 120
+                        && text.minX < own.maxX && text.maxX > own.minX - 24
+                }
+                .sorted { rect(items[$0]).maxY > rect(items[$1]).maxY }
+                guard let nearest = above.first else { return "" }
+                let larger = above.first { items[$0].role == "heading" || rect(items[$0]).height > rect(items[nearest]).height + 2 }
+                return items[larger ?? nearest].label
+            }
+
             /// Leaves a picture of `box` (this view's points) in the runtime folder and tells Lamp what it is.
-            private func pick(_ box: NSRect, role: String, label: String) {
+            private func pick(_ box: NSRect, role: String, label: String, context: String = "") {
                 guard let window = target else { return stop() }
                 let scale = scale
                 stop(tell: false)
                 // The picture is taken once the outline is off the screen, a little wider than the thing itself.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { MainActor.assumeIsolated {
                     // What it is and what it says; Lamp names the picture with them.
-                    var info: [String: String] = ["role": role, "label": label]
+                    var info: [String: String] = ["role": role, "label": label, "context": context]
                     if let png = LampRuntime.picture(of: window), let image = NSBitmapImageRep(data: png)?.cgImage {
                         let margin = 12 * scale
                         let crop = CGRect(x: box.minX * scale, y: box.minY * scale, width: box.width * scale, height: box.height * scale)
@@ -7789,6 +7836,10 @@ enum Template {
     /// answers only the app it built, running from where Lamp installed it, and only while Lamp is open. On an
     /// iPhone the device's Keychain (`.keychain`) asks nothing, so it's kept there. Both ways sit behind the same
     /// three calls, so an app that keeps its own secrets again is one line: `store`.
+    ///
+    /// A key for a service that isn't one of Lamp's connectors goes through `LampAPI.own`, which keeps it here and
+    /// asks for it on the same sheet as the listed services: don't draw a key field of your own. Names starting
+    /// "lamp-" are Lamp's.
     enum LampSecrets {
         enum Store { case lamp, keychain }
         #if os(macOS)
@@ -8664,6 +8715,19 @@ enum Template {
     ///         _ = try await LampAPI.readwise.post("v3/save/", ["url": link])
     ///     }
     ///
+    /// A service that isn't listed but needs a key gets the same sheet and the same care: the app declares it once
+    /// with `own`, saying where its API is, where the person makes the key, one sentence on what to do there, how the
+    /// key is sent (a header, or a query parameter as NASA's and many free APIs take it) and a cheap path that
+    /// answers 2xx to a working key.
+    ///
+    ///     extension LampAPI {
+    ///         static let nasa = LampAPI.own("nasa", name: "NASA", base: "https://api.nasa.gov/",
+    ///             keyPage: "https://api.nasa.gov", steps: "Sign up for a free API key, then paste it here.",
+    ///             query: ["api_key": "{key}"], check: "neo/rest/v1/feed/today")
+    ///     }
+    ///     LampAPIButton(api: .nasa)
+    ///     let feed = try await LampAPI.nasa.get("neo/rest/v1/feed", query: ["start_date": day])
+    ///
     /// Paths are the service's own, relative to its API's address (`base`); `get`, `post`, `put`, `patch` and
     /// `delete` send JSON and return what came back. A path that leads anywhere else is refused, so the token can't
     /// be sent to another site. A call made while not connected, or once the service no longer takes the token (the person
@@ -8729,15 +8793,23 @@ enum Template {
         /// The headers each request carries, with `{key}` standing for what the person pasted under that key. A
         /// value beginning "Basic " has the rest sent as Basic authentication.
         private let headers: [String: String]
+        /// Query parameters each request carries, written the same way, for a service that takes its key in the
+        /// address. They win over a parameter of the same name in a call, so a call can't send another key.
+        private let keyQuery: [String: String]
         /// A path that answers 2xx to a token that works: it's asked before the token is kept.
         private let check: String
+        /// An app's own service names its address itself, so it must be https or the key would travel as plain
+        /// text. A listed one's address is Lamp's, or the person's own server (Home Assistant on the home network
+        /// comes on plain http).
+        private let httpsOnly: Bool
         @Published private(set) var isConnected = false
         private var generation = 0
         /// Counts Connects, so one the person walked away from keeps nothing it hears back.
         private var attempt = 0
 
         fileprivate init(id: String, name: String, base: String, page: String, steps: String, fields: [Field],
-                         headers: [String: String], check: String, also: [String] = []) {
+                         headers: [String: String], check: String, also: [String] = [], query: [String: String] = [:],
+                         httpsOnly: Bool = false) {
             self.id = id
             self.name = name
             baseAddress = base
@@ -8746,6 +8818,8 @@ enum Template {
             self.steps = steps
             self.fields = fields
             self.headers = headers
+            keyQuery = query
+            self.httpsOnly = httpsOnly
             self.check = check
             isConnected = fields.isEmpty || Saved.read(id) != nil
         }
@@ -8785,6 +8859,18 @@ enum Template {
             server.host = host
             server.port = parts.port
             return server.string
+        }
+
+        /// A service that isn't one of Lamp's connectors, declared by the app, with the same Connect sheet, check
+        /// and keeping as the listed ones. Declare it once (a `static let`), since the button and the calls must
+        /// share one. `base` is the API's https address; `{key}` in `headers` or `query` stands for what's pasted
+        /// under that field's key.
+        static func own(_ id: String, name: String, base: String, keyPage: String, steps: String,
+                        fields: [Field] = [Field(key: "key", label: "API Key")],
+                        headers: [String: String] = [:], query: [String: String] = [:], check: String) -> LampAPI {
+            // Its own name, so it can't take the place of a listed service's token in this app.
+            LampAPI(id: "own-" + id, name: name, base: base, page: keyPage, steps: steps, fields: fields,
+                    headers: headers, check: check, query: query, httpsOnly: true)
         }
 
         /// Checks what the person pasted with the service and keeps it when the service takes it. Throws the reason
@@ -8887,7 +8973,10 @@ enum Template {
             guard var parts = URLComponents(string: relative) else { return nil }
             guard parts.scheme == nil, parts.host == nil else { return nil }
             if !query.isEmpty {
-                parts.queryItems = (parts.queryItems ?? []) + query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
+                // A parameter given here takes the place of one of the same name already in the path, so a key in a
+                // path can't ride beside the saved one.
+                let kept = (parts.queryItems ?? []).filter { query[$0.name] == nil }
+                parts.queryItems = kept + query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
                 // A plus in a value would read as a space at the other end.
                 parts.percentEncodedQuery = parts.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
             }
@@ -8898,6 +8987,13 @@ enum Template {
         }
 
         private func request(_ method: String, _ path: String, query: [String: String], body: Data?, values: [String: String]) async throws -> Reply {
+            var query = query
+            for (name, template) in keyQuery {
+                var value = template
+                for (key, pasted) in values { value = value.replacingOccurrences(of: "{\(key)}", with: pasted) }
+                query[name] = value
+            }
+            guard !httpsOnly || base(values)?.scheme == "https" else { throw Failure(message: "\(name)'s address must start with https://.") }
             guard let url = address(of: path, query: query, values: values) else {
                 throw Failure(message: "\(path) isn't part of \(name)'s API.")
             }
@@ -12592,6 +12688,9 @@ enum Template {
         out="$LIVE/$f"
         mkdir -p "${out:h}"
         perl -0pe 's/var body: some View \\{/var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\\n    \\@ViewBuilder var __lampBody: some View {/g' "$f" > "$out.new"
+        # Every class of the app's gets \(LiveSlots.count) spare places for properties added while it's open (LiveSlots),
+        # named after the class, so a subclass's don't clash with those it inherits.
+        case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) perl -0pi -e 's#^([ \\t]*)((?:@[\\w.]+(?:\\([^)\\n]*\\))?\\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated)\\s+)*class\\s+(?!(?:func|var|let|subscript|override|class)\\b)(\\w+)[^{\\n]*\\{)#my ($i, $h, $n) = ($1, $2, $3); ($h =~ /\\@Model\\b|NSManagedObject|(?<!unchecked )\\bSendable\\b/) ? "$i$h" : "$i$h" . join("", map { "\\n$i    " . ($h =~ /ObservableObject/ ? "\\@Published " : "") . "var __lampSpare_${n}_$_: LampSpare? = nil;" } 0 .. \(LiveSlots.count - 1))#gme' "$out.new" ;; esac
         if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi
       done
       for f in "$LIVE"/Sources/**/*.swift(N); do [[ -f "${f#$LIVE/}" ]] || rm "$f"; done
@@ -12623,6 +12722,8 @@ enum Template {
       cmp -s Package.swift "$LIVE/Package.swift" || cp Package.swift "$LIVE/Package.swift"
       # Lamp only wants the live copy, to put a change into the open app before building the whole of it.
       [[ "${LAMP_LIVE_COPY:-}" == 1 ]] && exit 0
+      # What this build compiles, which is what the app runs once it's installed (LiveReload.markRunning).
+      rsync -a --delete "$LIVE/Sources/" "$LIVE/built/"
       FLAGS=(-c debug --package-path "$LIVE" --scratch-path "$LIVE/.build" -Xswiftc -DLAMP_LIVE -Xswiftc -enable-testing -Xlinker -interposable "${RESTRICT[@]}")
     fi
     \(appIntentsSetup(ios: false))
