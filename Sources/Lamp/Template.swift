@@ -4245,6 +4245,8 @@ enum Template {
         private static let identifier = NSUserInterfaceItemIdentifier("lampSidebar")
         private static var pointID: String { (Bundle.main.bundleIdentifier ?? "") + ".lamp-sidebar" }
         @MainActor private static var restored = false
+        /// Lamp asked for the chat while every window was closed: it opens beside the next one to come forward.
+        @MainActor private static var openWhenShown = false
 
         @MainActor private static func item(in window: NSWindow) -> NSSplitViewItem? {
             (window.contentViewController as? NSSplitViewController)?.splitViewItems.first { $0.viewController.view.identifier == identifier }
@@ -4264,6 +4266,11 @@ enum Template {
         /// A change that reopens the app brings its sidebar back with its first window, which macOS (or Lamp,
         /// putting it back where it was) opens at its size with the sidebar: it isn't made wider again.
         @MainActor static func restore(_ window: NSWindow) {
+            if openWhenShown {
+                openWhenShown = false
+                _ = askedToOpen()
+                return open(window)
+            }
             guard !restored else { return }
             restored = true
             // A window that had the chat open last time comes back at a size that already holds it.
@@ -4303,8 +4310,16 @@ enum Template {
 
         /// Lamp asks for the chat: in the window in front, which comes forward with it.
         @MainActor static func openForLamp() {
-            // A copy still starting has no window yet: the file stays for its first one (`restore`).
-            guard let window = frontWindow() else { return }
+            guard let window = frontWindow() else {
+                // A copy still starting has no window yet: the file stays for its first one (`restore`). One that's
+                // running with every window closed opens one, as a click in the Dock would, and the chat goes beside
+                // it as it comes forward.
+                if restored {
+                    openWhenShown = true
+                    LampWindows.show()
+                }
+                return
+            }
             _ = askedToOpen()
             restored = true
             NSApp.activate()

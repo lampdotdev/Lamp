@@ -1019,8 +1019,10 @@ extension Store {
         Task {
             guard !project.finding, FileManager.default.fileExists(atPath: project.installedURL.path),
                   await MagicPanel.chatsInApp(project) else { return showChat(project.id) }
-            unread.remove(project.id)
             let running = !macCopies(of: project).isEmpty
+            // A copy built before the chat could be asked for this way keeps its chat in Lamp's window.
+            guard !running || MagicPanel.runningCopiesTakeTheChat(project) else { return showChat(project.id) }
+            unread.remove(project.id)
             MagicPanel.shared.openChat(in: project)
             if !running { openPrepared(project) }
         }

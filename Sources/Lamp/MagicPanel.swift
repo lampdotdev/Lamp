@@ -70,6 +70,16 @@ final class MagicPanel {
         return await Task.detached { WishPlace.of(project) }.value == .window
     }
 
+    /// Whether the copies of the app running now can take Lamp's request for their chat (`openChat`): one built by a
+    /// Lamp from before it would only come forward, with the chat nowhere. Read off each running copy's own program,
+    /// which may be older than the one installed since.
+    static func runningCopiesTakeTheChat(_ project: LampProject) -> Bool {
+        Store.shared.macCopies(of: project).allSatisfy { app in
+            guard let program = app.executableURL, let data = try? Data(contentsOf: program, options: .alwaysMapped) else { return false }
+            return data.range(of: Data((Edition.notificationPrefix + "openSidebar").utf8)) != nil
+        }
+    }
+
     private static func handedOff(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/sidebar-handed-off") }
 
     /// After the turn that first builds and opens a new app: its chat window closes and the app opens the chat
@@ -77,7 +87,8 @@ final class MagicPanel {
     /// person opened in Lamp's window afterwards stays there.
     func handOff(_ project: LampProject) async {
         guard !FileManager.default.fileExists(atPath: Self.handedOff(project).path),
-              await Self.chatsInApp(project), !Store.shared.macCopies(of: project).isEmpty else { return }
+              await Self.chatsInApp(project), !Store.shared.macCopies(of: project).isEmpty,
+              Self.runningCopiesTakeTheChat(project) else { return }
         FileManager.default.createFile(atPath: Self.handedOff(project).path, contents: nil)
         openChat(in: project)
         // Lamp's window closes once the chat is up in the app, and not before: with no window of its own and no chat
