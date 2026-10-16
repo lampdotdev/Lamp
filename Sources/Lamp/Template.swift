@@ -7822,16 +7822,9 @@ enum Template {
     /// iPhone the device's Keychain (`.keychain`) asks nothing, so it's kept there. Both ways sit behind the same
     /// three calls, so an app that keeps its own secrets again is one line: `store`.
     ///
-    /// It's also where a key goes for a service that isn't one of Lamp's connectors. The app asks for the key in a
-    /// field of its own (a SecureField on a sheet or in Settings, with a link to where the key is made), keeps it
-    /// here, and sends it only to that service:
-    ///
-    ///     guard LampSecrets.save(Data(key.utf8), as: "weather-key") else { problem = "Couldn't keep the key."; return }
-    ///     let key = LampSecrets.read("weather-key").map { String(decoding: $0, as: UTF8.self) }
-    ///     _ = LampSecrets.delete("weather-key")                    // a Remove Key button
-    ///
-    /// Not UserDefaults or LampStore, which are the app's settings and folder, and not a Keychain item of the
-    /// app's own, which asks for the password after every rebuild. Names starting "lamp-" are Lamp's.
+    /// A key for a service that isn't one of Lamp's connectors goes through `LampAPI.own`, which keeps it here and
+    /// asks for it on the same sheet as the listed services: don't draw a key field of your own. Names starting
+    /// "lamp-" are Lamp's.
     enum LampSecrets {
         enum Store { case lamp, keychain }
         #if os(macOS)
@@ -8702,6 +8695,19 @@ enum Template {
     ///         _ = try await LampAPI.readwise.post("v3/save/", ["url": link])
     ///     }
     ///
+    /// A service that isn't listed but needs a key gets the same sheet and the same care: the app declares it once
+    /// with `own`, saying where its API is, where the person makes the key, one sentence on what to do there, how the
+    /// key is sent (a header, or a query parameter as NASA's and many free APIs take it) and a cheap path that
+    /// answers 2xx to a working key.
+    ///
+    ///     extension LampAPI {
+    ///         static let nasa = LampAPI.own("nasa", name: "NASA", base: "https://api.nasa.gov/",
+    ///             keyPage: "https://api.nasa.gov", steps: "Sign up for a free API key, then paste it here.",
+    ///             query: ["api_key": "{key}"], check: "neo/rest/v1/feed/today")
+    ///     }
+    ///     LampAPIButton(api: .nasa)
+    ///     let feed = try await LampAPI.nasa.get("neo/rest/v1/feed", query: ["start_date": day])
+    ///
     /// Paths are the service's own, relative to its API's address (`base`); `get`, `post`, `put`, `patch` and
     /// `delete` send JSON and return what came back. A path that leads anywhere else is refused, so the token can't
     /// be sent to another site. A call made while not connected, or once the service no longer takes the token (the person
@@ -8760,6 +8766,9 @@ enum Template {
         /// The headers each request carries, with `{key}` standing for what the person pasted under that key. A
         /// value beginning "Basic " has the rest sent as Basic authentication.
         private let headers: [String: String]
+        /// Query parameters each request carries, written the same way, for a service that takes its key in the
+        /// address. They win over a parameter of the same name in a call, so a call can't send another key.
+        private let keyQuery: [String: String]
         /// A path that answers 2xx to a token that works: it's asked before the token is kept.
         private let check: String
         @Published private(set) var isConnected = false
@@ -8768,7 +8777,7 @@ enum Template {
         private var attempt = 0
 
         fileprivate init(id: String, name: String, base: String, page: String, steps: String, fields: [Field],
-                         headers: [String: String], check: String) {
+                         headers: [String: String], check: String, query: [String: String] = [:]) {
             self.id = id
             self.name = name
             self.base = URL(string: base)!
@@ -8776,8 +8785,21 @@ enum Template {
             self.steps = steps
             self.fields = fields
             self.headers = headers
+            keyQuery = query
             self.check = check
             isConnected = Saved.read(id) != nil
+        }
+
+        /// A service that isn't one of Lamp's connectors, declared by the app, with the same Connect sheet, check
+        /// and keeping as the listed ones. Declare it once (a `static let`), since the button and the calls must
+        /// share one. `base` is the API's https address; `{key}` in `headers` or `query` stands for what's pasted
+        /// under that field's key.
+        static func own(_ id: String, name: String, base: String, keyPage: String, steps: String,
+                        fields: [Field] = [Field(key: "key", label: "API Key")],
+                        headers: [String: String] = [:], query: [String: String] = [:], check: String) -> LampAPI {
+            // Its own name, so it can't take the place of a listed service's token in this app.
+            LampAPI(id: "own-" + id, name: name, base: base, page: keyPage, steps: steps, fields: fields,
+                    headers: headers, check: check, query: query)
         }
 
         /// Checks what the person pasted with the service and keeps it when the service takes it. Throws the reason
@@ -8878,6 +8900,12 @@ enum Template {
         }
 
         private func request(_ method: String, _ path: String, query: [String: String], body: Data?, values: [String: String]) async throws -> Reply {
+            var query = query
+            for (name, template) in keyQuery {
+                var value = template
+                for (key, pasted) in values { value = value.replacingOccurrences(of: "{\(key)}", with: pasted) }
+                query[name] = value
+            }
             guard let url = address(of: path, query: query) else {
                 throw Failure(message: "\(path) isn't part of \(name)'s API.")
             }

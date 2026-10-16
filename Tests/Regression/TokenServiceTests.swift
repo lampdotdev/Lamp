@@ -69,6 +69,18 @@ final class TokenServiceTests: XCTestCase {
         XCTAssertTrue(printed.contains("disconnect-unkept call after: answered"), printed)
     }
 
+    /// A service the app declares itself takes the key on the same sheet and keeps it under a name of its own. A key
+    /// sent as a query parameter goes only to the service's address, with every call, and a call can't send another.
+    func testAnAppsOwnServiceSendsItsKeyOnlyToItsAddress() throws {
+        let printed = try runProgram(scenarios: ["own"])
+        XCTAssertTrue(printed.contains("sent https://api.example.test/v1/ping?api_key=made-up-key with no key"), printed)
+        XCTAssertTrue(printed.contains("own kept as own-space: true"), printed)
+        XCTAssertTrue(printed.contains("sent https://api.example.test/v1/feed?api_key=made-up-key&day=1 with no key"), printed)
+        XCTAssertTrue(printed.contains("https://evil.test/x -> refused"), printed)
+        XCTAssertFalse(printed.contains("sent https://evil.test"), printed)
+        XCTAssertFalse(printed.contains("api_key=other"), printed)
+    }
+
     // MARK: - The program
 
     private func runProgram(scenarios: [String]) throws -> String {
@@ -253,6 +265,18 @@ final class TokenServiceTests: XCTestCase {
                     do { _ = try await api.get("items"); print("disconnect-unkept call after: answered") }
                     catch { print("disconnect-unkept call after: \(error.localizedDescription)") }
                     LampSecrets.store = .keychain
+                case "own":
+                    let api = LampAPI.own("space", name: "Space", base: "https://api.example.test/v1/", keyPage: "https://example.test/keys",
+                                          steps: "", query: ["api_key": "{key}"], check: "ping")
+                    Answers.table["https://api.example.test/v1/ping?api_key=made-up-key"] = json(200)
+                    Answers.table["https://api.example.test/v1/feed?api_key=made-up-key&day=1"] = json(200)
+                    do { try await api.connect(["key": "made-up-key"]) } catch { print("own connect: \(error.localizedDescription)") }
+                    print("own kept as own-space: \(LampAPI.Saved.read("own-space") != nil)")
+                    for path in ["feed", "https://evil.test/x"] {
+                        do { _ = try await api.get(path, query: ["day": "1", "api_key": "other"]); print("\(path) -> answered") }
+                        catch { print("\(path) -> \(error.localizedDescription.contains("isn't part of") ? "refused" : error.localizedDescription)") }
+                    }
+                    LampAPI.Saved.delete("own-space")
                 default: print("unknown scenario \(scenario)")
                 }
             }

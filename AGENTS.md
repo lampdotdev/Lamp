@@ -851,12 +851,15 @@ one line (`LampSecrets.store`). Neither kind is ever in the app's folder, so a s
 flagged in the review (`Sharing.checklist`). How to build on each is in its doc comment in LampSupport.swift, which the tool's answer
 sends the builder to.
 
-**A service that isn't listed** can still be called from the app's own code. When it needs a key, the builder gives
-the app a field of its own for it and keeps the key with `LampSecrets`, never in UserDefaults, LampStore or a
-Keychain item of the app's own: the first two are the app's settings and folder, and the last asks for the password
-after every rebuild. Both `Agent.connectorRules` and the tool's list (`Connectors.list`, also its answer to a name it
-doesn't know) say so, and LampSecrets' doc comment shows how. The review counts `LampSecrets.` in the app's code as
-connecting an account.
+**A service that isn't listed** can still be called from the app's own code. When it needs a key, the app declares
+it with `LampAPI.own` (its API's address, the page where the key is made, one sentence of steps, how the key is
+sent: a header or a query parameter, and a path to check it) and uses `LampAPIButton`, so the person pastes the key
+on the same Connect sheet as a listed service's, it is checked, kept in `LampSecrets` under a name of its own
+(`own-…`, so it can't stand in for a listed service's token), and sent only to that address. No key field or dialog
+of the app's own, and never UserDefaults, LampStore or a Keychain item of the app's own: the first two are the app's
+settings and folder, and the last asks for the password after every rebuild. Both `Agent.connectorRules` and the
+tool's list (`Connectors.list`, also its answer to a name it doesn't know) say so. The review counts `LampAPI` and
+`LampSecrets.` in the app's code as connecting an account.
 
 ## Naming: Lamp and Lamp
 
