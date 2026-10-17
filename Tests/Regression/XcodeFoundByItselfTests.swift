@@ -46,6 +46,29 @@ final class XcodeFoundByItselfTests: XCTestCase {
         XCTAssertNil(found())
     }
 
+    func testAnXcodeWhoseToolsLeadOutOfItIsNotTaken() throws {
+        // Its developer folder a link to one elsewhere.
+        let outside = root.appendingPathComponent("Writable/Other.app")
+        try makeXcode(at: outside)
+        let first = applications.appendingPathComponent("Xcode.app")
+        try FileManager.default.createDirectory(at: first.appendingPathComponent("Contents"), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: outside.appendingPathComponent("Contents/Info.plist"), to: first.appendingPathComponent("Contents/Info.plist"))
+        try FileManager.default.createSymbolicLink(at: first.appendingPathComponent("Contents/Developer"),
+                                                   withDestinationURL: outside.appendingPathComponent("Contents/Developer"))
+        XCTAssertNil(found())
+        // Its xcodebuild a link to a program elsewhere.
+        try FileManager.default.removeItem(at: first)
+        try makeXcode(at: first)
+        let xcodebuild = first.appendingPathComponent("Contents/Developer/usr/bin/xcodebuild")
+        try FileManager.default.removeItem(at: xcodebuild)
+        try FileManager.default.createSymbolicLink(at: xcodebuild,
+                                                   withDestinationURL: outside.appendingPathComponent("Contents/Developer/usr/bin/xcodebuild"))
+        var asked: [String] = []
+        XCTAssertNil(PhoneTools.installedXcode(env: [:], selected: { self.commandLineTools }, applications: applications.path,
+                                               isReady: { asked.append($0); return true }))
+        XCTAssertEqual(asked, [], "nothing outside the bundle may be run to check it")
+    }
+
     func testNothingIsTakenWhenTheMacOrLampAlreadyNamesOne() throws {
         let xcode = applications.appendingPathComponent("Xcode.app")
         try makeXcode(at: xcode)

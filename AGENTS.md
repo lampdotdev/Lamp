@@ -342,7 +342,8 @@ builds (`Store.materialize`, in the first turn after naming and in `run`), and `
 kept in `meta.json` and through renames). It needs Xcode, not just the Command Line Tools. Lamp's choice of Xcode stays in its own
 process (`DEVELOPER_DIR`, which its shells, the engines, simctl and devicectl inherit; xcode-select is never changed): the one
 chosen in setup (Use Xcode), else, when xcode-select names the Command Line Tools, one Lamp finds by itself at launch
-(`PhoneTools.installedXcode`): only in /Applications, through every link, since Lamp runs its tools as itself and the agent
+(`PhoneTools.installedXcode`): only in /Applications, through every link (the bundle, its developer folder and each
+tool Lamp runs from it), since Lamp runs its tools as itself and the agent
 can't write there, and only once its agreements are accepted, or every build would fail. Builds then use Xcode's toolchain
 too, and `Shell.compatibleSDK` goes by `DEVELOPER_DIR` before xcode-select. `Simulator`
 (`Sources/Lamp/Simulator.swift`) picks a booted or available iPhone with `simctl`, installs the built bundle,

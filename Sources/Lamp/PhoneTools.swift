@@ -210,10 +210,27 @@ enum PhoneTools {
             let bundle = String(cString: resolved)
             free(resolved)
             let developer = bundle + "/Contents/Developer"
-            guard (bundle as NSString).deletingLastPathComponent == root, isXcode(developer), isReady(developer) else { continue }
+            guard (bundle as NSString).deletingLastPathComponent == root, staysInside(bundle),
+                  isXcode(developer), isReady(developer) else { continue }
             return developer
         }
         return nil
+    }
+
+    /// Whether the developer folder and the tools Lamp runs from it as itself are the bundle's own, not links
+    /// out of it to a folder a command could write. Apple's Xcode has no link that leads outside itself.
+    private static func staysInside(_ bundle: String) -> Bool {
+        let developer = bundle + "/Contents/Developer"
+        func resolved(_ path: String) -> String? {
+            realpath(path, nil).map { defer { free($0) }; return String(cString: $0) }
+        }
+        guard resolved(developer) == developer else { return false }
+        for tool in ["xcodebuild", "simctl", "devicectl", "xcdevice", "git"] {
+            let path = developer + "/usr/bin/" + tool
+            guard FileManager.default.fileExists(atPath: path) else { continue }
+            guard let real = resolved(path), real.hasPrefix(bundle + "/") else { return false }
+        }
+        return true
     }
 
     struct OlderPhone: Identifiable {
