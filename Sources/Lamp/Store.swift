@@ -4069,9 +4069,15 @@ final class Store: ObservableObject {
     }
     private var fileWrites: [String: Task<Void, Error>] = [:]
 
-    /// Waits for Lamp's own files being written in the app's folder, before the folder is deleted or made again.
+    /// Waits for Lamp's own files being written in the app's folder, before the folder is deleted or made again: the
+    /// latest write, and again for any started while waiting (a look the agent asked for meanwhile). The caller goes
+    /// on to the folder without waiting for anything else, so nothing can start in between.
     private func settleFiles(_ project: LampProject) async {
-        _ = await fileWrites[project.id]?.result
+        var waited: Task<Void, Error>?
+        while let write = fileWrites[project.id], write != waited {
+            _ = await write.result
+            waited = write
+        }
     }
 
     private func build(_ project: LampProject) async -> String? {
