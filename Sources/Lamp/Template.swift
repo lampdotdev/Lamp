@@ -3892,13 +3892,14 @@ enum Template {
         /// until the new copy is up; the new copy opens its window in that place (`putBack`).
         @MainActor private static func leaveCover() {
             guard isOn, let window = NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible && ($0.isKeyWindow || $0.isMainWindow) })
-                    ?? NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible }),
-                  !window.isMiniaturized, !window.styleMask.contains(.fullScreen),
+                    ?? NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible }) else { return }
+            // Whether or not there's a picture to leave: a window in full screen or the Dock is still owed its width.
+            LampSidebar.handOn(window)
+            guard !window.isMiniaturized, !window.styleMask.contains(.fullScreen),
                   let picture = LampRuntime.picture(of: window) else { return }
             try? picture.write(to: cover)
             try? NSStringFromRect(window.frame).write(to: coverFrame, atomically: true, encoding: .utf8)
             try? NSStringFromRect(LampSidebar.panelFrame(of: window) ?? .zero).write(to: coverChatFrame, atomically: true, encoding: .utf8)
-            LampSidebar.handOn(window)
         }
 
         /// The first window of a copy started for a change goes where the last one was, once.
@@ -4418,6 +4419,8 @@ enum Template {
             }
             guard !restored else { return }
             restored = true
+            // Not put back where a cover was left (full screen, the Dock): the first window takes on what's owed.
+            takeOn(window)
             if let wait = askedToOpen() {
                 // A wish Lamp came with, opened for the first time, is seen on its own a moment before its chat
                 // comes in beside it: the file says how long (`MagicPanel.startWithChat`).
@@ -4535,8 +4538,8 @@ enum Template {
         }
 
         /// The width a window was made narrower by, handed on as the app quits for a change (`LampMagic.leaveCover`)
-        /// to the window put back in its place (`LampMagic.putBack`), whose chat gives it back when it closes. Only
-        /// that window takes it: another window of the app was never narrowed.
+        /// to the window put back in its place (`LampMagic.putBack`), or the new copy's first window when none is put
+        /// back, whose chat gives it back when it closes. Only that window takes it: another was never narrowed.
         @MainActor static func handOn(_ window: NSWindow) {
             UserDefaults.standard.set(Double(chat(in: window)?.narrowedBy ?? 0), forKey: narrowedKey)
         }
