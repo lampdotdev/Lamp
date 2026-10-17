@@ -599,7 +599,8 @@ chat, never over it: the chat is drawn by another process, which takes every cli
 is told outright to take mouse events (`ignoresMouseEvents` off): its glass is drawn by the window server, so its own
 pixels are clear, and a clear window lets clicks on clear pixels through. The panel takes the keyboard for the message box
 without becoming the main window. The chat's close button sits in the bar at the top of the card, drawn by the app since
-it does only what the app could do anyway. What Lamp's window has in
+it does only what the app could do anyway: beside the window it's the sidebar symbol on the chat's side, over the window,
+where the chat isn't a sidebar, a plain close mark (`closeSymbol`). What Lamp's window has in
 its toolbar is the chat's own, drawn by the extension above the chat (`ChatToolbar`), three a side: Undo Last Change, More and
 Delete, then Point at Something, Agent Details and Versions. More holds what's used least, Share (the file is made by
 Lamp and handed over whole, `SidebarState.sharing`, since the extension can't read it; sent once, so the extension keeps

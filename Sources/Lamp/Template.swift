@@ -4370,6 +4370,8 @@ enum Template {
             let card: NSView
             /// What the bar and the chat are laid out in.
             var pane: NSView = NSView()
+            /// The bar's close button, whose symbol says what the chat is where it is (`closeSymbol`).
+            weak var close: NSButton?
             weak var window: NSWindow?
             var panel: Beside?
             var side: Side = .right
@@ -4521,6 +4523,7 @@ enum Template {
                 let chat = Chat(host: host, card: made.card, window: window)
                 chat.narrowedBy = owed.removeValue(forKey: ObjectIdentifier(window)) ?? 0
                 chat.pane = made.pane
+                chat.close = made.close
                 chats[ObjectIdentifier(window)] = chat
                 follow(window, chat)
                 watchClicks()
@@ -4664,6 +4667,7 @@ enum Template {
             chat.panel = panel
             // Its outer edge widens it: over the window that's the one facing into it.
             panel.side = chat.over ? .left : chat.side
+            closeSymbol(chat)
             if chat.host.parent !== panel.holder, let ground = panel.holder.view as? PanelGround {
                 panel.holder.addChild(chat.host)
                 // In its panel the card leaves the edge that widens it clear (`PanelGround.layout`).
@@ -4677,6 +4681,14 @@ enum Template {
             if panel.parent == nil { window.addChildWindow(panel, ordered: .above) }
             panel.orderFront(nil)
             Placing.shared.place(chat.host)
+        }
+
+        /// Beside the window the chat is a sidebar, and its close button is the sidebar's symbol, on the side it's on;
+        /// over the window it isn't one, and the button is a plain close mark.
+        @MainActor private static func closeSymbol(_ chat: Chat) {
+            let symbol = chat.over ? "xmark" : chat.side == .left ? "sidebar.leading" : "sidebar.trailing"
+            chat.close?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Close Chat")?
+                .withSymbolConfiguration(.init(pointSize: chat.over ? 12 : 14, weight: .semibold))
         }
 
         @MainActor private static func hidePanel(_ chat: Chat) {
@@ -4861,7 +4873,7 @@ enum Template {
         /// button closing the chat at the left and what the chat is for beside it; it does only what the app could
         /// do anyway (close its own chat). What changes the wish (undo, versions, sharing…) is in the chat under it,
         /// which only Lamp speaks to.
-        @MainActor private static func card(for host: EXHostViewController, in window: NSWindow) -> (card: NSView, pane: NSView) {
+        @MainActor private static func card(for host: EXHostViewController, in window: NSWindow) -> (card: NSView, pane: NSView, close: NSButton) {
             let outer = Passing()
             let pane = Passing()
             if #available(macOS 26, *) {
@@ -4919,7 +4931,7 @@ enum Template {
             centred.priority = .defaultHigh
             constraints.append(centred)
             NSLayoutConstraint.activate(constraints)
-            return (outer, pane)
+            return (outer, pane, close)
         }
 
         private static let chatIdentifier = NSUserInterfaceItemIdentifier("lampSidebarChat")
