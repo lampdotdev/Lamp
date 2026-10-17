@@ -192,8 +192,8 @@ enum LiveReload {
     @MainActor static func enumsHeld(_ project: LampProject, grown: [String]) async -> String? {
         let primaries = swiftFiles(in: sources(project)).keys.filter { ($0 as NSString).lastPathComponent != "LampSupport.swift" }.sorted()
         var output: [String] = []
-        let status = await Shell.run(frontend("-dump-ast", in: sources(project), primaries: primaries, module: project.exe,
-                                              macOS: Template.macMinimum(project)) + " 2>/dev/null", cwd: sources(project)) { output.append($0) }
+        let status = await Sandbox.run(frontend("-dump-ast", in: sources(project), primaries: primaries, module: project.exe,
+                                                macOS: Template.macMinimum(project)) + " 2>/dev/null", for: project, cwd: sources(project)) { output.append($0) }
         guard status == 0 else { return "the compiler couldn't say what holds the enums that grew" }
         let held = members(inDump: output.joined(separator: "\n"), held: true).compactMap { entry -> (String, String)? in
             guard let colon = entry.range(of: ": ") else { return nil }
@@ -223,10 +223,10 @@ enum LiveReload {
     /// With the new code's, where each of its properties is declared, for `LiveSlots` to rewrite.
     @MainActor static func layouts(_ project: LampProject) async
         -> (before: [String]?, after: [String]?, declarations: SwiftSource.Declarations) {
-        async let after = analysis(of: sources(project), module: project.exe, macOS: Template.macMinimum(project))
+        async let after = analysis(of: sources(project), in: project, module: project.exe, macOS: Template.macMinimum(project))
         var before = (try? String(contentsOf: runningLayout(project), encoding: .utf8)).map { $0.components(separatedBy: "\n").filter { !$0.isEmpty } }
         if before == nil {
-            before = await analysis(of: running(project), module: project.exe, macOS: Template.macMinimum(project))?.layout
+            before = await analysis(of: running(project), in: project, module: project.exe, macOS: Template.macMinimum(project))?.layout
             if let before { try? before.joined(separator: "\n").write(to: runningLayout(project), atomically: true, encoding: .utf8) }
         }
         let new = await after
@@ -283,7 +283,7 @@ enum LiveReload {
     /// code's says whether a library can go in: no reading of the text, which formatting, comments, strings and
     /// inferred types all fool. Nil when the compiler can't say (the code doesn't type-check). `rawValues` adds
     /// each case's raw value (`= "plant_name"`), which is what a coding key or a saved enum writes.
-    static func layout(of folder: URL, files: [String]?, module: String, macOS: String, ios: Bool = false,
+    static func layout(of folder: URL, in project: LampProject, files: [String]?, module: String, macOS: String, ios: Bool = false,
                        rawValues: Bool = false) async -> [String]? {
         if files?.isEmpty == true { return [] }
         // All of the app's own files, by name: the compiler prints (and checks the bodies of) only the files it's
@@ -292,20 +292,20 @@ enum LiveReload {
         let primaries = files ?? swiftFiles(in: folder).keys.filter { ($0 as NSString).lastPathComponent != "LampSupport.swift" }.sorted()
         guard !primaries.isEmpty else { return [] }
         var output: [String] = []
-        let status = await Shell.run(frontend("-dump-ast", in: folder, primaries: primaries, module: module, macOS: macOS, ios: ios) + " 2>/dev/null",
-                                     cwd: folder) { output.append($0) }
+        let status = await Sandbox.run(frontend("-dump-ast", in: folder, primaries: primaries, module: module, macOS: macOS, ios: ios) + " 2>/dev/null",
+                                       for: project, cwd: folder) { output.append($0) }
         guard status == 0 else { return nil }
         return members(inDump: output.joined(separator: "\n"), rawValues: rawValues)
     }
 
     /// A live copy's layout as `layout` gives it, with what's read only at launch (`SwiftSource.launchEntries`)
     /// and where each property is declared, all from the one printout.
-    static func analysis(of folder: URL, module: String, macOS: String) async -> (layout: [String], declarations: SwiftSource.Declarations)? {
+    static func analysis(of folder: URL, in project: LampProject, module: String, macOS: String) async -> (layout: [String], declarations: SwiftSource.Declarations)? {
         let primaries = swiftFiles(in: folder).keys.filter { ($0 as NSString).lastPathComponent != "LampSupport.swift" }.sorted()
         guard !primaries.isEmpty else { return ([], SwiftSource.Declarations()) }
         var output: [String] = []
-        let status = await Shell.run(frontend("-dump-ast", in: folder, primaries: primaries, module: module, macOS: macOS) + " 2>/dev/null",
-                                     cwd: folder) { output.append($0) }
+        let status = await Sandbox.run(frontend("-dump-ast", in: folder, primaries: primaries, module: module, macOS: macOS) + " 2>/dev/null",
+                                       for: project, cwd: folder) { output.append($0) }
         guard status == 0 else { return nil }
         let dump = output.joined(separator: "\n")
         let declarations = SwiftSource.declarations(inDump: dump)
@@ -396,7 +396,7 @@ enum LiveReload {
             codesign --force -s - \(quoted(library.path)) 2>&1
             """
         var output: [String] = []
-        let status = await Shell.run(script, cwd: project.dir) { output.append($0) }
+        let status = await Sandbox.run(script, for: project) { output.append($0) }
         guard status == 0 else { return (nil, output.suffix(30).joined(separator: "\n")) }
         return (library, nil)
     }

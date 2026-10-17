@@ -4144,14 +4144,14 @@ final class Store: ObservableObject {
         await liveBuilds[project.id]?.value
         liveBuildFailed.remove(project.id)
         if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1" }   // a change can go into the open app (LiveReload)
-        var status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: env,
-                                     started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
+        var status = await Self.runBuild(command, for: project, env: env,
+                                         started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
         // The live copy's spare places must never be what keeps an app from building: if they are, it's built
         // without them from now on, and the agent only ever sees errors in its own code.
         if status != 0, env["LAMP_LIVE"] == "1", LiveSlots.brokeBuild(output.joined(separator: "\n")), LiveSlots.giveUp(project) {
             output = []
-            status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: env,
-                                     started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
+            status = await Self.runBuild(command, for: project, env: env,
+                                         started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
         }
         turns[project.id]?.build = nil
         guard exists(project) else { return "The app was deleted." }
@@ -4163,6 +4163,20 @@ final class Store: ObservableObject {
         let tail = output.suffix(40).joined(separator: "\n")
         log(project, .detail, "Build failed:\n" + tail)
         return tail
+    }
+
+    /// Runs the app's build.sh. It's Lamp's file, written just before, but in the agent's folder: a command the agent
+    /// left running can put its own there in between, and Package.swift and the code it compiles are the agent's
+    /// anyway. So the build runs as the agent's commands do, in the app's sandbox (`Sandbox.run`), and only what it
+    /// made is taken further, by Lamp, from a copy (`deploy`). The one build that still runs as Lamp is the Mac
+    /// half of an app for both: Xcode signs it for the person's team there, with keys the sandbox closes.
+    static func runBuild(_ command: String, for project: LampProject, env: [String: String],
+                         started: (@MainActor (Process) -> Void)? = nil,
+                         onLine: @escaping @MainActor (String) -> Void) async -> Int32 {
+        if project.platform == .universal, command == "./build.sh mac", env["LAMP_LIVE_COPY"] != "1" {
+            return await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: env, started: started, onLine: onLine)
+        }
+        return await Sandbox.run(Shell.compatibleSDK + command, for: project, env: env, started: started, onLine: onLine)
     }
 
     /// A new app's card that has already said how its turn ended follows what happens to the app afterwards
@@ -4192,7 +4206,7 @@ final class Store: ObservableObject {
         var copy = env
         copy["LAMP_LIVE"] = "1"
         copy["LAMP_LIVE_COPY"] = "1"
-        guard await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: copy) { _ in } == 0,
+        guard await Self.runBuild(command, for: project, env: copy) { _ in } == 0,
               await reloadInPlace(project, inFront: false) else { return false }
         reloadedBeforeBuild.insert(project.id)
         // Nothing to install until the whole build is done: the copy in build/ is the one before this change. Only
@@ -4204,7 +4218,7 @@ final class Store: ObservableObject {
         full["LAMP_LIVE"] = "1"
         liveBuilds[project.id] = Task { [weak self] in
             var output: [String] = []
-            let status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: full) { output.append($0) }
+            let status = await Self.runBuild(command, for: project, env: full) { output.append($0) }
             guard let self else { return }
             self.liveBuilds[project.id] = nil
             LiveReload.finishedBuilding(project)
@@ -4730,8 +4744,10 @@ final class Store: ObservableObject {
 
                 """
         }
-        _ = await Shell.run(script, cwd: project.dir,
-                            env: ["LAMP_APP": app.path, "LAMP_NAME": project.name, "LAMP_ICON": Icons.squareURL(project).path]) { _ in }
+        // The bundle is the build's, in the agent's folder, so what works on it runs in the app's sandbox: a
+        // plist or an icon there that leads elsewhere leads nowhere.
+        _ = await Sandbox.run(script, for: project,
+                              env: ["LAMP_APP": app.path, "LAMP_NAME": project.name, "LAMP_ICON": Icons.squareURL(project).path]) { _ in }
         Sharing.Assets.adopt(in: project)
         let assets = project.dir.appendingPathComponent(Sharing.Assets.folder)
         try? fm.removeItem(at: app.appendingPathComponent(Attachments.folder))
@@ -4744,17 +4760,17 @@ final class Store: ObservableObject {
         if fm.fileExists(atPath: app.appendingPathComponent("Watch").path), fm.fileExists(atPath: Icons.squareURL(project).path) {
             let work = project.dir.appendingPathComponent(".lamp/watch-icon")
             try? Template.writeWatchIconCatalog(at: work.appendingPathComponent("Icon.xcassets"), icon: Icons.squareURL(project))
-            _ = await Shell.run("""
+            _ = await Sandbox.run("""
                 for watch in "$LAMP_APP"/Watch/*.app(N); do
                   xcrun actool "$LAMP_WORK/Icon.xcassets" --compile "$watch" --platform watchsimulator --minimum-deployment-target 10.0 \\
                     --app-icon AppIcon --output-partial-info-plist "$LAMP_WORK/partial.plist" >/dev/null 2>&1 && \\
                   plutil -replace CFBundleIcons -json '{"CFBundlePrimaryIcon":{"CFBundleIconName":"AppIcon"}}' "$watch/Info.plist"
                 done
-                """, cwd: project.dir, env: ["LAMP_APP": app.path, "LAMP_WORK": work.path]) { _ in }
+                """, for: project, env: ["LAMP_APP": app.path, "LAMP_WORK": work.path]) { _ in }
         }
         // A widget extension inside is signed first, as Xcode does: the app's signature then seals it. The watch
         // app the same way, its complications before it.
-        _ = await Shell.run("""
+        _ = await Sandbox.run("""
             xattr -cr "$LAMP_APP"
             for widget in "$LAMP_APP"/PlugIns/*.appex(N); do codesign --force -s - "$widget"; done
             for watch in "$LAMP_APP"/Watch/*.app(N); do
@@ -4762,7 +4778,7 @@ final class Store: ObservableObject {
               codesign --force -s - "$watch"
             done
             codesign --force -s - "$LAMP_APP"
-            """, cwd: project.dir, env: ["LAMP_APP": app.path]) { _ in }
+            """, for: project, env: ["LAMP_APP": app.path]) { _ in }
     }
 
     /// iPhone apps running in the simulator: which simulator each was launched on, and its process id.

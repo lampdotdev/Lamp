@@ -20,6 +20,24 @@ enum Sandbox {
         return launch(command, profile: file)
     }
 
+    /// What a confined command returns when the sandbox couldn't be set up: it isn't run loose instead.
+    static let unconfined: Int32 = 126
+
+    /// Runs one of Lamp's own commands over an app's folder (its build, the compiler's look at its code, the
+    /// finishing of what the build made) under the profile the agent's commands get, in zsh. Everything in that
+    /// folder is the agent's to write, build.sh included at any moment between Lamp writing it and running it, so
+    /// whatever runs there runs as the agent's commands do, never as Lamp: with Lamp's keys, sign-ins and the
+    /// other apps out of reach.
+    static func run(_ command: String, for project: LampProject, cwd: URL? = nil, env: [String: String] = [:],
+                    started: (@MainActor (Process) -> Void)? = nil,
+                    onLine: @escaping @MainActor (String) -> Void) async -> Int32 {
+        guard let confined = wrap("/bin/zsh -c " + quoted(command), for: project) else {
+            await onLine("Lamp couldn't set up the sandbox for \(project.name), so nothing was run.")
+            return unconfined
+        }
+        return await Shell.run(confined, cwd: cwd ?? project.dir, env: env, started: started, onLine: onLine)
+    }
+
     /// The shell line that runs `command` under `profile`, with Lamp's `swift` first on the path (below). A
     /// login shell started inside (Codex runs its commands with `zsh -lc`) rebuilds the path with the system's
     /// folders first, so zsh is also given Lamp's startup files, which put the shims back in front; the
