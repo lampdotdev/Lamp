@@ -31,7 +31,9 @@ model not to claim it heard an accent.
   colour.
 - `Coach.swift`: `WeddingState` (everything kept), `WeddingCoach` (milestones, scores, the weakest one, the daily
   phrase, notifications) and `CoachSettings`.
-- `Practice.swift`: the roleplay page and its AI prompt. Conversations are kept per milestone.
+- `Practice.swift`: the roleplay page.
+- `TableTalk.swift`: the roleplay's conversation and its AI prompt. Conversations are kept per milestone; a reply is
+  saved before her answer is asked for, so when that call fails it stays, and Try again sends it once more.
 - `Toast.swift`: the toast page: writing, rebuilding, line and full rehearsal, and their AI prompts.
 - `Speech.swift`: `WeddingSpeech` (Italian speech synthesis, and recognition on the device first, online when the
   Italian model isn't installed) and `SpeakingInput`, the speak-or-type field.
@@ -50,10 +52,10 @@ weakest milestone.
 
 ## Easy to change
 
-- The language: the `it-IT` locale in `Speech.swift` and the prompts in `Practice.swift`, `Toast.swift` and
+- The language: the `it-IT` locale in `Speech.swift` and the prompts in `TableTalk.swift`, `Toast.swift` and
   `Coach.dailyCoaching`, plus the wording on each page.
 - The occasion and people: the milestones in `WeddingCoach.milestones`, the defaults in `WeddingState`, the
-  headline words in `ContentView.home`, and who the AI plays in `PracticeView.reply`.
+  headline words in `ContentView.home`, and who the AI plays in `TableTalk.ask`.
 - How hard the coach is: the scoring and correction instructions in the prompts.
 - Notification wording and rhythm: `WeddingCoach.scheduleNotifications`.
 - Colours: `Color.terracotta` in `ContentView.swift`.
