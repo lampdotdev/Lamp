@@ -1142,8 +1142,18 @@ extension Store {
             unread.remove(project.id)
             // A wish Lamp came with, opened for the first time, is seen on its own a moment before its chat comes.
             if running || !MagicPanel.shared.startWithChat(project) { MagicPanel.shared.openChat(in: project) }
-            if !running { openPrepared(project) }
+            if !running {
+                openPrepared(project)
+                MagicPanel.shared.showChatIfAppNeverComes(project)
+            }
         }
+    }
+
+    /// An app's chat where it lives: beside the app when it has a window to be beside (`change`, which opens the app
+    /// when it's closed), else in Lamp's window.
+    func openChat(_ id: String) {
+        guard let project = projects.first(where: { $0.id == id }) else { return showChat(id) }
+        change(project)
     }
 
     /// A wish clicked on the desk: it opens with its chat beside it, to use

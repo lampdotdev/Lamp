@@ -3898,16 +3898,22 @@ enum Template {
 
         private static var cover: URL { LampRuntime.folder.appendingPathComponent("cover.png") }
         private static var coverFrame: URL { LampRuntime.folder.appendingPathComponent("cover-frame.txt") }
+        /// Where the chat was beside the window, for Lamp to stand its own glass in until the new copy's chat is up.
+        private static var coverChatFrame: URL { LampRuntime.folder.appendingPathComponent("cover-chat-frame.txt") }
 
         /// The front window's picture and place, as the app quits. Lamp shows the picture where the window was
         /// until the new copy is up; the new copy opens its window in that place (`putBack`).
         @MainActor private static func leaveCover() {
             guard isOn, let window = NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible && ($0.isKeyWindow || $0.isMainWindow) })
-                    ?? NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible }),
-                  !window.isMiniaturized, !window.styleMask.contains(.fullScreen),
+                    ?? NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible })
+                    ?? NSApp.windows.first(where: { isAppWindow($0) && $0.isMiniaturized }) else { return }
+            // Whether or not there's a picture to leave: a window in full screen or the Dock is still owed its width.
+            LampSidebar.handOn(window)
+            guard !window.isMiniaturized, !window.styleMask.contains(.fullScreen),
                   let picture = LampRuntime.picture(of: window) else { return }
             try? picture.write(to: cover)
             try? NSStringFromRect(window.frame).write(to: coverFrame, atomically: true, encoding: .utf8)
+            try? NSStringFromRect(LampSidebar.panelFrame(of: window) ?? .zero).write(to: coverChatFrame, atomically: true, encoding: .utf8)
         }
 
         /// The first window of a copy started for a change goes where the last one was, once.
@@ -3920,6 +3926,7 @@ enum Template {
                   NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) }) else { return }
             window.setFrame(frame, display: true)
             putBackWindow = window
+            LampSidebar.takeOn(window)
         }
 
         /// The window put back where the last copy's was, with the chat's width if it had the chat open then.
@@ -4174,7 +4181,8 @@ enum Template {
             }
             floating(in: window)?.removeFromSuperview()
             if let holder = window.titlebarAccessoryViewControllers.first(where: { $0.view.identifier == identifier })?.view {
-                return fit(holder, in: window)
+                fit(holder, in: window)
+                return showWand(in: window)
             }
             let holder = NSView()
             holder.identifier = identifier
@@ -4184,17 +4192,17 @@ enum Template {
             accessory.layoutAttribute = .trailing
             window.addTitlebarAccessoryViewController(accessory)
             fit(holder, in: window)
+            showWand(in: window)
             DispatchQueue.main.async { fit(holder, in: window) }
         }
 
         /// The button as tall as the toolbar's buttons when there's a toolbar, smaller in a plain title bar, in
-        /// the middle of the title bar's height. It stays at the right of the app's own content: with the chat
-        /// open beside it, it's kept clear of the chat by the chat's width.
+        /// the middle of the title bar's height, at the right of the app's own content.
         @MainActor private static func fit(_ holder: NSView, in window: NSWindow) {
             guard let button = holder.subviews.first else { return }
             let titlebar = max(window.frame.height - window.contentLayoutRect.height, 28)
             let side = buttonSide(titlebar)
-            holder.frame.size = NSSize(width: side + 14 + LampSidebar.openWidth(in: window), height: titlebar)
+            holder.frame.size = NSSize(width: side + 14, height: titlebar)
             button.frame = NSRect(x: 4, y: ((titlebar - side) / 2).rounded(), width: side, height: side)
         }
 
@@ -4222,13 +4230,13 @@ enum Template {
                 return made
             }()
             // At the top right, where the title bar's wand is in other windows: a touch larger than the traffic
-            // lights, level with them, as far from the right edge as they are from the left, and left of the chat
-            // while it's open. It keeps to the right edge as the window is resized.
+            // lights, level with them, as far from the right edge as they are from the left. It keeps to the right edge as the window is resized.
             let side = (zoom.frame.height + 6).rounded()
             let inset = window.standardWindowButton(.closeButton)?.frame.minX ?? 12
-            let right = bar.bounds.width - LampSidebar.openWidth(in: window) - inset
+            let right = bar.bounds.width - inset
             wand.autoresizingMask = [.minXMargin]
             wand.frame = NSRect(x: (right - side).rounded(), y: (zoom.frame.midY - side / 2).rounded(), width: side, height: side)
+            showWand(in: window)
         }
 
         /// The wand floating over the app's own content: a dark disc with a white wand, legible over a game's night
@@ -4302,6 +4310,13 @@ enum Template {
             }
             guard let holder = window.titlebarAccessoryViewControllers.first(where: { $0.view.identifier == identifier })?.view else { return }
             fit(holder, in: window)
+            showWand(in: window)
+        }
+
+        /// The wand only while the chat is closed: open, the chat has its own close button, and two controls for one
+        /// chat (the wand left over beside its panel) said less than one.
+        @MainActor private static func showWand(in window: NSWindow) {
+            wand(in: window)?.isHidden = LampSidebar.isOpen(in: window)
         }
 
         /// Where the window is, in screen coordinates, for the picture Lamp shows in its place while a change
@@ -4323,11 +4338,10 @@ enum Template {
                 LampSidebar.toggle(window)
             }
             @objc func close(_ sender: NSButton) {
-                guard let window = sender.window else { return }
+                // Beside the window, the button is in the chat's own panel: it closes the chat of the window the panel
+                // belongs to.
+                guard let window = sender.window?.parent ?? sender.window else { return }
                 LampSidebar.close(window)
-            }
-            @objc func openInLamp(_ sender: NSButton) {
-                NSWorkspace.shared.open(URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!)
             }
         }
     }
@@ -4341,20 +4355,65 @@ enum Template {
     }
 
     enum LampSidebar {
-        private static let width: CGFloat = 420
+        /// How wide the chat is: dragged wider or narrower by its edge, and kept for
+        /// the app, so it comes back at the width the person left it.
+        fileprivate static let narrowest: CGFloat = 320
+        fileprivate static let widest: CGFloat = 640
+        private static let widthKey = "LampSidebarWidth"
+        fileprivate static var width: CGFloat {
+            get {
+                let kept = UserDefaults.standard.double(forKey: widthKey)
+                return kept > 0 ? min(max(kept, narrowest), widest) : 400
+            }
+            set { UserDefaults.standard.set(Double(min(max(newValue, narrowest), widest)), forKey: widthKey) }
+        }
         private static let openKey = "LampSidebarOpen"
+        private static let narrowedKey = "LampSidebarNarrowedBy"
         private static let coachedKey = "LampSidebarCoached"
-        private static let identifier = NSUserInterfaceItemIdentifier("lampSidebar")
         private static var pointID: String { (Bundle.main.bundleIdentifier ?? "") + ".lamp-sidebar" }
         @MainActor private static var restored = false
         /// Lamp asked for the chat while every window was closed: it opens beside the next one to come forward.
         @MainActor private static var openWhenShown = false
 
-        @MainActor private static func item(in window: NSWindow) -> NSSplitViewItem? {
-            (window.contentViewController as? NSSplitViewController)?.splitViewItems.first { $0.viewController.view.identifier == identifier }
+        /// One window's chat: the chat itself (`host`, drawn by the extension) on its card with its bar, in a panel of
+        /// its own beside the window (`Beside`). It never goes inside the window: the room a column takes from the app
+        /// is more than it gives the chat.
+        @MainActor final class Chat {
+            let host: EXHostViewController
+            let card: NSView
+            /// What the bar and the chat are laid out in.
+            var pane: NSView = NSView()
+            /// The bar's close button, whose symbol says what the chat is where it is (`closeSymbol`).
+            weak var close: NSButton?
+            weak var window: NSWindow?
+            var panel: Beside?
+            var side: Side = .right
+            /// Over the window's own edge rather than beside it: where there's no room beside it and none can be made
+            /// (full screen, or a window that can't be made narrow enough).
+            var over = false
+            /// Open, whether or not its panel is on screen this moment (it's taken down while the window goes in or
+            /// out of full screen, or to the Dock).
+            var wanted = false
+            /// How much narrower the window was made to leave room for the chat, given back when it closes. A change
+            /// that reopens the app hands it on to the window put back in this one's place (`handOn`, `takeOn`).
+            var narrowedBy: CGFloat = 0
+            var observers: [NSObjectProtocol] = []
+
+            init(host: EXHostViewController, card: NSView, window: NSWindow) {
+                self.host = host
+                self.card = card
+                self.window = window
+            }
+
+            var inPanel: Bool { panel?.isVisible == true && panel?.parent != nil }
         }
 
-        @MainActor static func isOpen(in window: NSWindow) -> Bool { item(in: window).map { !$0.isCollapsed } ?? false }
+        enum Side { case right, left }
+
+        @MainActor private static var chats: [ObjectIdentifier: Chat] = [:]
+        @MainActor private static func chat(in window: NSWindow) -> Chat? { chats[ObjectIdentifier(window)] }
+
+        @MainActor static func isOpen(in window: NSWindow) -> Bool { chat(in: window)?.wanted == true }
 
         /// Whether the chat was open when the app last quit: a menu bar app opens its panel as a window to hold it
         /// again (`LampMenuBar.arrive`), since it has no first window of its own to bring it back with.
@@ -4363,17 +4422,11 @@ enum Template {
         /// The window the chat was in was closed: it isn't opened with the app next time.
         @MainActor static func forget() { UserDefaults.standard.set(false, forKey: openKey) }
 
-        @MainActor static func openWidth(in window: NSWindow) -> CGFloat {
-            guard let item = item(in: window), !item.isCollapsed else { return 0 }
-            return item.viewController.view.frame.width
-        }
-
         @MainActor static func toggle(_ window: NSWindow) {
             isOpen(in: window) ? close(window) : open(window)
         }
 
-        /// A change that reopens the app brings its sidebar back with its first window, which macOS (or Lamp,
-        /// putting it back where it was) opens at its size with the sidebar: it isn't made wider again.
+        /// A change that reopens the app brings its chat back with its first window.
         @MainActor static func restore(_ window: NSWindow) {
             if openWhenShown {
                 openWhenShown = false
@@ -4382,19 +4435,19 @@ enum Template {
             }
             guard !restored else { return }
             restored = true
-            // A window that had the chat open last time comes back at a size that already holds it.
-            let wasOpen = UserDefaults.standard.bool(forKey: openKey)
+            // Not put back where a cover was left (full screen, the Dock): the first window takes on what's owed.
+            takeOn(window)
             if let wait = askedToOpen() {
                 // A wish Lamp came with, opened for the first time, is seen on its own a moment before its chat
                 // comes in beside it: the file says how long (`MagicPanel.startWithChat`).
-                guard wait > 0 else { return open(window, grow: !wasOpen) }
+                guard wait > 0 else { return open(window) }
                 DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
                     MainActor.assumeIsolated {
-                        if window.isVisible, !isOpen(in: window) { open(window, grow: !wasOpen) }
+                        if window.isVisible, !isOpen(in: window) { open(window) }
                     }
                 }
             }
-            else if wasOpen { open(window, grow: false) }
+            else if wasOpen { open(window) }
         }
 
         /// Lamp hands a new app's chat over to the app once it's first built (`Store.handOff`): it leaves a file in
@@ -4448,21 +4501,12 @@ enum Template {
             open(window)
         }
 
-        @MainActor static func open(_ window: NSWindow, grow: Bool = true) {
+        @MainActor static func open(_ window: NSWindow) {
             UserDefaults.standard.set(true, forKey: openKey)
             tellLamp()
-            if let item = item(in: window) {
-                guard item.isCollapsed else { return }
-                // All at once, in one screen update: the window grows by the chat as the chat appears, so the app's
-                // content and the wand stay exactly where they were. The chat fades in rather than slides.
-                window.disableScreenUpdatesUntilFlush()
-                let content = window.frame.width
-                if grow { resize(window, by: width) }
-                item.viewController.view.alphaValue = 0
-                item.isCollapsed = false
-                keep(content: grow ? content : nil, in: window)
-                LampMagic.refit(window)
-                fadeIn(item.viewController.view)
+            if let chat = chat(in: window) {
+                guard !isOpen(in: window) else { return }
+                show(chat)
                 return
             }
             Task { @MainActor in
@@ -4484,22 +4528,257 @@ enum Template {
                     return first
                 }
                 guard let identity else { return fallback() }
+                guard self.chat(in: window) == nil else { return show(self.chat(in: window)!) }
                 let host = EXHostViewController()
                 host.delegate = Placing.shared
                 host.configuration = .init(appExtension: identity, sceneID: "chat")
-                embed(host, in: window, grow: grow)
+                let made = card(for: host, in: window)
+                let chat = Chat(host: host, card: made.card, window: window)
+                chat.narrowedBy = owed.removeValue(forKey: ObjectIdentifier(window)) ?? 0
+                chat.pane = made.pane
+                chat.close = made.close
+                chats[ObjectIdentifier(window)] = chat
+                follow(window, chat)
+                watchClicks()
+                show(chat)
             }
         }
 
         @MainActor static func close(_ window: NSWindow) {
             UserDefaults.standard.set(false, forKey: openKey)
-            guard let item = item(in: window), !item.isCollapsed else { return }
-            let thickness = item.viewController.view.frame.width
-            window.disableScreenUpdatesUntilFlush()
-            item.isCollapsed = true
-            resize(window, by: -thickness)
+            guard isOpen(in: window), let chat = chat(in: window) else { return }
+            chat.wanted = false
+            hidePanel(chat)
+            giveBackWidth(chat)
             LampMagic.refit(window)
             coach(window)
+        }
+
+        /// The width a window was made narrower by, handed on as the app quits for a change (`LampMagic.leaveCover`)
+        /// to the window put back in its place (`LampMagic.putBack`), or the new copy's first window when none is put
+        /// back, whose chat gives it back when it closes. Only that window takes it: another was never narrowed.
+        @MainActor static func handOn(_ window: NSWindow) {
+            UserDefaults.standard.set(Double(chat(in: window)?.narrowedBy ?? 0), forKey: narrowedKey)
+        }
+
+        @MainActor private static var owed: [ObjectIdentifier: CGFloat] = [:]
+
+        @MainActor static func takeOn(_ window: NSWindow) {
+            let width = CGFloat(UserDefaults.standard.double(forKey: narrowedKey))
+            UserDefaults.standard.removeObject(forKey: narrowedKey)
+            if width > 0 { owed[ObjectIdentifier(window)] = width }
+        }
+
+        /// A window made narrower for the chat gets its width back once the chat is closed; in full screen, once it
+        /// leaves full screen, where its own size comes back.
+        @MainActor private static func giveBackWidth(_ chat: Chat) {
+            guard let window = chat.window, !chat.wanted, chat.narrowedBy > 0, !window.styleMask.contains(.fullScreen) else { return }
+            resize(window, by: chat.narrowedBy)
+            chat.narrowedBy = 0
+        }
+
+        /// The chat shown beside the window, on the side with room for it (`makeRoom`).
+        @MainActor private static func show(_ chat: Chat) {
+            guard let window = chat.window else { return }
+            chat.wanted = true
+            chat.card.alphaValue = 0
+            makeRoom(for: chat)
+            putInPanel(chat)
+            LampMagic.refit(window)
+            fadeIn(chat.card)
+        }
+
+        private static let gap: CGFloat = 10
+
+        /// Where the chat goes as it opens. Beside the window on a side with room for it; with room on neither side
+        /// the window makes some: it moves over on its screen when that's enough, else it's made narrower (never
+        /// below its own smallest width) to leave the chat its narrowest on the right, and gets the width back when the
+        /// chat closes. Only where neither can be done (full screen, a window that can't be that narrow) does the chat
+        /// go over the window's right edge, still a panel of its own.
+        @MainActor private static func makeRoom(for chat: Chat) {
+            guard let window = chat.window else { return }
+            chat.over = false
+            if let side = side(for: window, preferring: chat.side) {
+                chat.side = side
+                return
+            }
+            chat.side = .right
+            if let room = roomBeside(window) {
+                window.setFrame(room, display: true)
+            } else if let narrower = narrowed(window) {
+                chat.narrowedBy += window.frame.width - narrower.width
+                window.setFrame(narrower, display: true, animate: false)
+            } else {
+                chat.over = true
+            }
+        }
+
+        /// Where beside the window the chat has room, on the screen the window is on: the side it was on while it still
+        /// fits there, else the right, else the left. None in full screen, where the window is the whole screen.
+        @MainActor private static func side(for window: NSWindow, preferring preferred: Side) -> Side? {
+            guard !window.styleMask.contains(.fullScreen), let screen = (window.screen ?? NSScreen.main)?.visibleFrame else { return nil }
+            // A side with room for the chat at its width first, else one with room for it at its narrowest.
+            let order = preferred == .right ? [Side.right, .left] : [Side.left, .right]
+            for need in [width, narrowest] {
+                if let side = order.first(where: { room(on: $0, of: window.frame, in: screen) >= need }) { return side }
+            }
+            return nil
+        }
+
+        /// The room beside the window on one side, up to its screen's edge, less the gap between them.
+        private static func room(on side: Side, of frame: NSRect, in screen: NSRect) -> CGFloat {
+            (side == .right ? screen.maxX - frame.maxX : frame.minX - screen.minX) - gap
+        }
+
+        /// Where the window would go to leave room for the chat on its right, kept on its screen; nil when it can't: in
+        /// full screen, or wider than its screen leaves room for.
+        @MainActor private static func roomBeside(_ window: NSWindow) -> NSRect? {
+            guard !window.styleMask.contains(.fullScreen), let screen = (window.screen ?? NSScreen.main)?.visibleFrame else { return nil }
+            // Room for the chat at its width when the screen has it, else at its narrowest.
+            guard let need = [width + gap, narrowest + gap].first(where: { window.frame.width + $0 <= screen.width }) else { return nil }
+            var frame = window.frame
+            frame.origin.x = max(screen.minX, min(frame.minX, screen.maxX - need - frame.width))
+            return frame
+        }
+
+        /// The window at the left of its screen, as wide as leaves the chat its narrowest on the right; nil in full
+        /// screen, or when that's narrower than the window can be.
+        @MainActor private static func narrowed(_ window: NSWindow) -> NSRect? {
+            guard !window.styleMask.contains(.fullScreen), window.styleMask.contains(.resizable),
+                  let screen = (window.screen ?? NSScreen.main)?.visibleFrame else { return nil }
+            let target = screen.width - narrowest - gap
+            let smallest = max(window.minSize.width, window.frameRect(forContentRect: NSRect(origin: .zero, size: window.contentMinSize)).width)
+            guard target >= smallest, target < window.frame.width else { return nil }
+            var frame = window.frame
+            frame.origin.x = screen.minX
+            frame.size.width = target
+            return frame
+        }
+
+        /// The panel's frame: beside the window on the chat's side, as wide as it's kept or the room there is, or over
+        /// the window's right edge, below its title bar.
+        @MainActor private static func panelFrame(for chat: Chat) -> NSRect {
+            guard let window = chat.window else { return .zero }
+            let frame = window.frame
+            let screen = (window.screen ?? NSScreen.main)?.visibleFrame
+            if chat.over {
+                let shown = max(narrowest, min(width, frame.width / 2))
+                let titlebar = max(frame.height - window.contentLayoutRect.height, 0)
+                let right = min(frame.maxX, screen?.maxX ?? frame.maxX) - gap
+                return NSRect(x: right - shown, y: frame.minY + gap, width: shown, height: max(frame.height - titlebar - 2 * gap, 200))
+            }
+            var shown = width
+            if let screen { shown = max(narrowest, min(width, room(on: chat.side, of: frame, in: screen))) }
+            let x = chat.side == .right ? frame.maxX + gap : frame.minX - gap - shown
+            return NSRect(x: x, y: frame.minY, width: shown, height: frame.height)
+        }
+
+        /// Into its panel, which is put where the chat now goes.
+        @MainActor private static func putInPanel(_ chat: Chat) {
+            guard let window = chat.window else { return }
+            let panel = chat.panel ?? Beside()
+            chat.panel = panel
+            // Its outer edge widens it: over the window that's the one facing into it.
+            panel.side = chat.over ? .left : chat.side
+            closeSymbol(chat)
+            if chat.host.parent !== panel.holder, let ground = panel.holder.view as? PanelGround {
+                panel.holder.addChild(chat.host)
+                // In its panel the card leaves the edge that widens it clear (`PanelGround.layout`).
+                chat.card.translatesAutoresizingMaskIntoConstraints = true
+                ground.card = chat.card
+                ground.addSubview(chat.card)
+                ground.addSubview(ground.edge)
+            }
+            panel.holder.view.needsLayout = true
+            panel.setFrame(panelFrame(for: chat), display: true)
+            if panel.parent == nil { window.addChildWindow(panel, ordered: .above) }
+            panel.orderFront(nil)
+            Placing.shared.place(chat.host)
+        }
+
+        /// Beside the window the chat is a sidebar, and its close button is the sidebar's symbol, on the side it's on;
+        /// over the window it isn't one, and the button is a plain close mark.
+        @MainActor private static func closeSymbol(_ chat: Chat) {
+            let symbol = chat.over ? "xmark" : chat.side == .left ? "sidebar.leading" : "sidebar.trailing"
+            chat.close?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Close Chat")?
+                .withSymbolConfiguration(.init(pointSize: chat.over ? 12 : 14, weight: .semibold))
+        }
+
+        @MainActor private static func hidePanel(_ chat: Chat) {
+            guard let panel = chat.panel else { return }
+            panel.parent?.removeChildWindow(panel)
+            panel.orderOut(nil)
+        }
+
+        /// What happens to the window decides where its chat goes: a move or a size that leaves no room on its side
+        /// moves the panel to the other side, or over the window's edge when neither has room; room again takes it back
+        /// beside. Going in or out of full screen takes the panel down for the change and puts it back after. The panel
+        /// goes with the window when it closes or goes to the Dock.
+        @MainActor private static func follow(_ window: NSWindow, _ chat: Chat) {
+            let center = NotificationCenter.default
+            func on(_ name: Notification.Name, _ act: @escaping @MainActor (Chat) -> Void) {
+                chat.observers.append(center.addObserver(forName: name, object: window, queue: .main) { [weak chat] _ in
+                    MainActor.assumeIsolated { if let chat { act(chat) } }
+                })
+            }
+            on(NSWindow.didResizeNotification) { chat in
+                guard let window = chat.window else { return }
+                if chat.inPanel, let panel = chat.panel { panel.setFrame(panelFrame(for: chat), display: true) }
+                // A size set all at once (zoom, a tile, a size the app sets) may leave room beside it, or take it away.
+                if !window.inLiveResize { replace(chat) }
+            }
+            on(NSWindow.didEndLiveResizeNotification) { replace($0) }
+            on(NSWindow.didMoveNotification) { replace($0) }
+            on(NSWindow.didChangeScreenNotification) { replace($0) }
+            on(NSWindow.willEnterFullScreenNotification) { chat in if chat.wanted { hidePanel(chat) } }
+            on(NSWindow.didEnterFullScreenNotification) { chat in
+                guard chat.wanted else { return }
+                makeRoom(for: chat)
+                putInPanel(chat)
+            }
+            on(NSWindow.willExitFullScreenNotification) { chat in if chat.wanted { hidePanel(chat) } }
+            on(NSWindow.didExitFullScreenNotification) { chat in
+                // Back from full screen, the chat goes beside the window again as when it opened; closed while in full
+                // screen, the window gets back the width it gave it.
+                guard chat.wanted else { return giveBackWidth(chat) }
+                makeRoom(for: chat)
+                putInPanel(chat)
+            }
+            on(NSWindow.didMiniaturizeNotification) { chat in if chat.inPanel { chat.panel?.orderOut(nil) } }
+            on(NSWindow.didDeminiaturizeNotification) { chat in
+                guard let window = chat.window, let panel = chat.panel, panel.parent === window else { return }
+                panel.orderFront(nil)
+            }
+            on(NSWindow.willCloseNotification) { chat in
+                hidePanel(chat)
+                chat.observers.forEach { NotificationCenter.default.removeObserver($0) }
+                if let window = chat.window { chats[ObjectIdentifier(window)] = nil }
+            }
+        }
+
+        /// The chat where it now fits, if it's open and that isn't where it is. The window isn't moved or narrowed
+        /// here, while the person is placing it: with no room beside it, the chat goes over its edge.
+        @MainActor private static func replace(_ chat: Chat) {
+            guard let window = chat.window, chat.inPanel, !window.inLiveResize else { return }
+            if let side = side(for: window, preferring: chat.side) {
+                if !chat.over, side == chat.side {
+                    // Same side: only its width may change, back towards the kept width when there's more room now.
+                    if let panel = chat.panel {
+                        let fitted = panelFrame(for: chat)
+                        if abs(fitted.width - panel.frame.width) > 0.5 { panel.setFrame(fitted, display: true) }
+                    }
+                    return
+                }
+                chat.side = side
+                chat.over = false
+            } else {
+                guard !chat.over else { return }
+                chat.side = .right
+                chat.over = true
+            }
+            window.disableScreenUpdatesUntilFlush()
+            putInPanel(chat)
+            LampMagic.refit(window)
         }
 
         /// The first time the chat is closed, a note points at the wand, so the way back is known: the chat may have
@@ -4535,43 +4814,102 @@ enum Template {
             }
         }
 
-        /// The app's content and the chat side by side, the chat as the window's inspector; the window grows by
-        /// the chat's width so the app keeps the room it had.
-        @MainActor private static func embed(_ host: EXHostViewController, in window: NSWindow, grow: Bool) {
-            let frame = window.frame
-            let content: NSViewController
-            if let current = window.contentViewController {
-                content = current
-            } else {
-                content = NSViewController()
-                content.view = window.contentView ?? NSView()
+        /// The chat beside the window: a borderless panel of the app's, attached to the window as its child so macOS
+        /// moves, stacks and hides it with the window, holding the card on its glass. It takes the keyboard for the
+        /// message box without becoming the main window, so the app's window stays the active one, as with any
+        /// inspector panel.
+        @MainActor final class Beside: NSPanel {
+            let holder = NSViewController()
+            /// Which side of the window it's on: its outer edge, away from the window, is the one that widens it.
+            var side: Side = .right
+
+            init() {
+                super.init(contentRect: NSRect(x: 0, y: 0, width: LampSidebar.width, height: 400), styleMask: [.borderless],
+                           backing: .buffered, defer: false)
+                isOpaque = false
+                backgroundColor = .clear
+                hasShadow = true
+                // Its glass is drawn by the window server, so the panel's own pixels are clear almost everywhere, and a
+                // clear window lets clicks on clear pixels through to whatever is behind it. Said outright, the whole
+                // panel takes them: blank glass in the chat, and the edge that widens it.
+                ignoresMouseEvents = false
+                isMovable = false
+                hidesOnDeactivate = false
+                isReleasedWhenClosed = false
+                let ground = PanelGround()
+                ground.panel = self
+                holder.view = ground
+                contentViewController = holder
+                ground.edge.began = { [weak self] in self?.dragStart = self?.frame }
+                ground.edge.moved = { [weak self] change in
+                    guard let self, let start = self.dragStart else { return }
+                    self.widen(from: start, by: change)
+                }
+                // A new width moves the chat on the screen without moving the window (on the left it moves its origin),
+                // and the window's own moves are all the chat is otherwise told of: say where it is now, for the
+                // input method's candidates and the emoji picker.
+                resized = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: self, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self, let parent = self.parent else { return }
+                        self.contentView?.layoutSubtreeIfNeeded()
+                        LampSidebar.Placing.shared.place(in: parent)
+                    }
+                }
             }
-            window.disableScreenUpdatesUntilFlush()
-            window.contentViewController = nil
-            let split = NSSplitViewController()
-            split.splitView.isVertical = true
-            split.addSplitViewItem(NSSplitViewItem(viewController: content))
-            // The chat on the chat's own paper, which runs up behind the bar above it to the window's top edge.
-            let column = NSViewController()
-            column.view = Backing()
-            column.view.wantsLayer = true
-            column.view.identifier = identifier
-            column.addChild(host)
+
+            private var resized: (any NSObjectProtocol)?
+
+            private var dragStart: NSRect?
+
+            /// Wider or narrower by its outer edge, between the chat's narrowest and widest and never past the screen's
+            /// edge; the width is kept for next time.
+            func widen(from start: NSRect, by change: CGFloat) {
+                var target = start.width + (side == .right ? change : -change)
+                if let screen = (parent?.screen ?? screen ?? NSScreen.main)?.visibleFrame {
+                    let room = side == .right ? screen.maxX - start.minX : start.maxX - screen.minX
+                    target = min(target, room)
+                }
+                target = min(max(target, LampSidebar.narrowest), LampSidebar.widest)
+                var frame = start
+                frame.size.width = target
+                if side == .left { frame.origin.x = start.maxX - target }
+                setFrame(frame, display: true)
+                LampSidebar.width = target
+            }
+
+            override var canBecomeKey: Bool { true }
+            override var canBecomeMain: Bool { false }
+        }
+
+        /// The chat with the bar above it, on a card in its panel: on Liquid Glass (`NSGlassEffectView`) from macOS 26,
+        /// on the chat's own paper before (`Paper`). The bar has a round
+        /// button closing the chat at the left and what the chat is for beside it; it does only what the app could
+        /// do anyway (close its own chat). What changes the wish (undo, versions, sharing…) is in the chat under it,
+        /// which only Lamp speaks to.
+        @MainActor private static func card(for host: EXHostViewController, in window: NSWindow) -> (card: NSView, pane: NSView, close: NSButton) {
+            let outer = Passing()
+            let pane = Passing()
+            if #available(macOS 26, *) {
+                let glass = Glass()
+                glass.cornerRadius = 20
+                glass.frame = outer.bounds
+                glass.autoresizingMask = [.width, .height]
+                glass.contentView = pane
+                outer.addSubview(glass)
+            } else {
+                let paper = Paper()
+                paper.frame = outer.bounds
+                paper.autoresizingMask = [.width, .height]
+                pane.frame = paper.bounds
+                pane.autoresizingMask = [.width, .height]
+                paper.addSubview(pane)
+                outer.addSubview(paper)
+            }
             host.view.translatesAutoresizingMaskIntoConstraints = false
             host.view.identifier = chatIdentifier
-            column.view.addSubview(host.view)
-            watchClicks()
-            // The bar above the chat, drawn as the message box's row is at its foot: round buttons floating on the
-            // paper with nothing behind them, closing the chat at the left (as an inspector closes) and opening it
-            // in Lamp at the right, with what the chat is for between them. They're the column's, not the title
-            // bar's, which the window's split view covers above the chat. They do only what the app could do
-            // anyway (close its own inspector, open Lamp), so they needn't be the chat's. Pointing at part of the
-            // app is in the message box's + menu.
-            let titlebar = max(window.frame.height - window.contentLayoutRect.height, 28)
+            pane.addSubview(host.view)
             let size = RoundButton.side
             let close = RoundButton("sidebar.trailing", "Close Chat", "Close the chat", #selector(LampMagic.Opener.close(_:)))
-            let expand = RoundButton("arrow.up.left.and.arrow.down.right", "Open in Lamp", "Open this chat in Lamp",
-                                     #selector(LampMagic.Opener.openInLamp(_:)))
             let title = Caption(labelWithString: "Customize \(appName)")
             title.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
             title.textColor = .labelColor
@@ -4580,80 +4918,53 @@ enum Template {
             title.maximumNumberOfLines = 1
             title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             title.translatesAutoresizingMaskIntoConstraints = false
-            column.view.addSubview(title)
+            pane.addSubview(title)
             let strip = NSLayoutGuide()
-            column.view.addLayoutGuide(strip)
+            pane.addLayoutGuide(strip)
+            // The card stands on its own beside the window, so its bar needs only the button's height.
             var constraints = [
-                strip.topAnchor.constraint(equalTo: column.view.topAnchor),
-                strip.heightAnchor.constraint(equalToConstant: max(titlebar, size + 20)),
+                strip.topAnchor.constraint(equalTo: pane.topAnchor),
+                strip.heightAnchor.constraint(equalToConstant: size + 16),
                 host.view.topAnchor.constraint(equalTo: strip.bottomAnchor),
-                host.view.bottomAnchor.constraint(equalTo: column.view.bottomAnchor),
-                host.view.leadingAnchor.constraint(equalTo: column.view.leadingAnchor),
-                host.view.trailingAnchor.constraint(equalTo: column.view.trailingAnchor),
+                host.view.bottomAnchor.constraint(equalTo: pane.bottomAnchor),
+                host.view.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
+                host.view.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
             ]
-            for button in [close, expand] {
-                button.translatesAutoresizingMaskIntoConstraints = false
-                column.view.addSubview(button)
-                constraints += [button.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
-                                button.widthAnchor.constraint(equalToConstant: size), button.heightAnchor.constraint(equalToConstant: size)]
-            }
-            // The same 12 points from the edges as the message box's row.
-            constraints += [close.leadingAnchor.constraint(equalTo: column.view.leadingAnchor, constant: 12),
-                            expand.trailingAnchor.constraint(equalTo: column.view.trailingAnchor, constant: -12),
+            close.translatesAutoresizingMaskIntoConstraints = false
+            pane.addSubview(close)
+            constraints += [close.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
+                            close.widthAnchor.constraint(equalToConstant: size), close.heightAnchor.constraint(equalToConstant: size),
+                            // The same 12 points from the edge as the message box's row.
+                            close.leadingAnchor.constraint(equalTo: pane.leadingAnchor, constant: 12),
                             title.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
                             title.leadingAnchor.constraint(greaterThanOrEqualTo: close.trailingAnchor, constant: 10),
-                            title.trailingAnchor.constraint(lessThanOrEqualTo: expand.leadingAnchor, constant: -10)]
-            // Centred in the column while there's room, else as much as fits between the buttons.
-            let centred = title.centerXAnchor.constraint(equalTo: column.view.centerXAnchor)
+                            title.trailingAnchor.constraint(lessThanOrEqualTo: pane.trailingAnchor, constant: -(12 + size + 10))]
+            // Centred while there's room, else as much as fits beside the button.
+            let centred = title.centerXAnchor.constraint(equalTo: pane.centerXAnchor)
             centred.priority = .defaultHigh
             constraints.append(centred)
             NSLayoutConstraint.activate(constraints)
-            let side = NSSplitViewItem(inspectorWithViewController: column)
-            side.minimumThickness = 320
-            side.maximumThickness = 640
-            side.canCollapse = true
-            // No line under the bar: it floats on the paper, as the message box's row does.
-            side.titlebarSeparatorStyle = .none
-            host.view.alphaValue = 0
-            split.addSplitViewItem(side)
-            window.contentViewController = split
-            window.setFrame(frame, display: false)
-            if grow { resize(window, by: width) }
-            split.splitView.layoutSubtreeIfNeeded()
-            keep(content: grow ? frame.width : nil, in: window)
-            NotificationCenter.default.addObserver(forName: NSSplitView.didResizeSubviewsNotification, object: split.splitView,
-                                                   queue: .main) { [weak window] _ in
-                MainActor.assumeIsolated {
-                    guard let window else { return }
-                    LampMagic.refit(window)
-                    LampSidebar.Placing.shared.place(in: window)
-                }
-            }
-            LampMagic.refit(window)
-            fadeIn(host.view)
+            return (outer, pane, close)
         }
 
         private static let chatIdentifier = NSUserInterfaceItemIdentifier("lampSidebarChat")
         nonisolated(unsafe) private static var clicks: Any?
 
-        /// Two things AppKit doesn't do for the chat beside the app, done as each click arrives. The bar's buttons
-        /// sit where the window's title bar is, and a window with a toolbar lays the toolbar over them, which takes
-        /// their clicks: a click on one presses it. And the chat is drawn by another process, which AppKit's focus
-        /// doesn't follow, so what had the keyboard before (a list, a field) keeps it through a click in the chat:
-        /// once the click has landed, the keyboard goes to the chat.
+        /// The chat is drawn by another process, which AppKit's focus doesn't follow, so what had the keyboard before
+        /// keeps it through a click in the chat: once the click has landed, the keyboard goes to the chat.
         @MainActor private static func watchClicks() {
             guard clicks == nil else { return }
             clicks = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
                 MainActor.assumeIsolated {
-                    guard let window = event.window, let item = item(in: window), !item.isCollapsed else { return event }
-                    let column = item.viewController.view
-                    let point = column.convert(event.locationInWindow, from: nil)
-                    guard column.bounds.contains(point) else { return event }
-                    for case let button as RoundButton in column.subviews where !button.isHidden && button.isEnabled && button.frame.contains(point) {
-                        button.performClick(nil)
-                        return nil
-                    }
-                    if let chat = column.subviews.first(where: { $0.identifier == chatIdentifier }), chat.frame.contains(point) {
+                    guard let panel = event.window as? Beside else { return event }
+                    let window: NSWindow = panel
+                    let area = panel.holder.view
+                    let point = area.convert(event.locationInWindow, from: nil)
+                    guard area.bounds.contains(point) else { return event }
+                    func all(_ view: NSView) -> [NSView] { view.subviews + view.subviews.flatMap(all) }
+                    let inside = all(area)
+                    if let chat = inside.first(where: { $0.identifier == chatIdentifier }),
+                       chat.convert(chat.bounds, to: area).contains(point) {
                         let location = event.locationInWindow
                         DispatchQueue.main.async {
                             guard let hit = chat.hitTest(chat.superview?.convert(location, from: nil) ?? .zero) else { return }
@@ -4666,28 +4977,90 @@ enum Template {
             }
         }
 
-        /// The app's content as wide as it was before the chat opened (`content`), or else the chat at its own
-        /// width, so the content and the wand stay where they were.
-        @MainActor private static func keep(content: CGFloat?, in window: NSWindow) {
-            guard let split = window.contentViewController as? NSSplitViewController else { return }
-            split.splitView.layoutSubtreeIfNeeded()
-            let position = content ?? (window.frame.width - width)
-            split.splitView.setPosition(min(position, window.frame.width - 320), ofDividerAt: 0)
+        /// Where the chat beside a window is now, for the picture Lamp shows in the app's place while a change reopens
+        /// it (`LampMagic.leaveCover`); nothing when it's closed.
+        @MainActor static func panelFrame(of window: NSWindow) -> NSRect? {
+            guard let chat = chat(in: window), chat.inPanel, let panel = chat.panel else { return nil }
+            return panel.frame
         }
 
         /// The chat's paper, as the chat draws it (`ChatLook.paper`): a warm off-white, a warm near-black in the dark.
-        private final class Backing: NSView {
+        /// The card's ground before macOS 26, which has no Liquid Glass to put it on.
+        private final class Paper: NSView {
+            override init(frame: NSRect) {
+                super.init(frame: frame)
+                wantsLayer = true
+                layer?.cornerRadius = 20
+                layer?.masksToBounds = true
+            }
+            required init?(coder: NSCoder) { fatalError() }
+
             override var wantsUpdateLayer: Bool { true }
             override func updateLayer() {
                 let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
                 layer?.backgroundColor = dark ? CGColor(srgbRed: 0x1F / 255, green: 0x1E / 255, blue: 0x1C / 255, alpha: 1)
                                               : CGColor(srgbRed: 0xF7 / 255, green: 0xF5 / 255, blue: 0xF1 / 255, alpha: 1)
             }
-            // It only paints behind the bar: a click there is the title bar's, for moving the window.
+        }
+
+        /// The glass and what's laid out on it take no clicks of their own: the window moves by its bar, as by its
+        /// title bar.
+        @available(macOS 26, *)
+        private final class Glass: NSGlassEffectView {
             override func hitTest(_ point: NSPoint) -> NSView? {
                 let hit = super.hitTest(point)
                 return hit === self ? nil : hit
             }
+        }
+
+        private final class Passing: NSView {
+            override func hitTest(_ point: NSPoint) -> NSView? {
+                let hit = super.hitTest(point)
+                return hit === self ? nil : hit
+            }
+        }
+
+        /// The panel's ground, which keeps the edge that widens it along the side away from the window.
+        @MainActor final class PanelGround: NSView {
+            weak var panel: Beside?
+            weak var card: NSView?
+            let edge = WidenEdge()
+
+            /// The card beside the strip that widens it, never under it: the chat is drawn by another process, which
+            /// takes every click on its part of the window, so a strip laid over the chat would never be dragged.
+            override func layout() {
+                super.layout()
+                let side: CGFloat = 8
+                let onLeft = panel?.side == .left
+                edge.frame = NSRect(x: onLeft ? 0 : bounds.width - side, y: 0, width: side, height: bounds.height)
+                card?.frame = NSRect(x: onLeft ? side : 0, y: 0, width: bounds.width - side, height: bounds.height)
+            }
+
+            override func hitTest(_ point: NSPoint) -> NSView? {
+                let hit = super.hitTest(point)
+                return hit === self ? nil : hit
+            }
+        }
+
+        /// The strip along the panel's outer edge: the pointer turns into the resize arrows over it, and a drag makes the
+        /// chat wider or narrower, as a window's own edge does.
+        @MainActor final class WidenEdge: NSView {
+            /// A drag began, and how far it has gone sideways since, in points.
+            var began: (() -> Void)?
+            var moved: ((CGFloat) -> Void)?
+            private var start: CGFloat?
+
+            override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeLeftRight) }
+            override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+            override func mouseDown(with event: NSEvent) {
+                start = NSEvent.mouseLocation.x
+                began?()
+            }
+            override func mouseDragged(with event: NSEvent) {
+                guard let start else { return }
+                moved?(NSEvent.mouseLocation.x - start)
+            }
+            override func mouseUp(with event: NSEvent) { start = nil }
         }
 
         /// The bar's title, which takes no clicks: the window moves by it as by its title bar.
@@ -4696,7 +5069,8 @@ enum Template {
         }
 
         /// A round button as the message box's row draws its own (`ChatLook.Round`): as tall as a one-line box, a
-        /// text background ringed by a separator, its symbol in the secondary colour.
+        /// text background ringed by a separator, its symbol in the secondary colour. On the glass pane, a glass
+        /// button, as the chat's own buttons are there.
         private final class RoundButton: NSButton {
             static let side = (NSLayoutManager().defaultLineHeight(for: .systemFont(ofSize: NSFont.systemFontSize)) + 20).rounded()
 
@@ -4705,14 +5079,23 @@ enum Template {
                     .withSymbolConfiguration(.init(pointSize: 14, weight: .semibold))!
                 self.init(image: image, target: LampMagic.Opener.shared, action: action)
                 toolTip = tip
-                isBordered = false
                 imagePosition = .imageOnly
                 contentTintColor = .secondaryLabelColor
+                if #available(macOS 26, *) {
+                    bezelStyle = .glass
+                    borderShape = .circle
+                    return
+                }
+                isBordered = false
                 wantsLayer = true
             }
 
-            override var wantsUpdateLayer: Bool { true }
+            override var wantsUpdateLayer: Bool {
+                if #available(macOS 26, *) { return super.wantsUpdateLayer }
+                return true
+            }
             override func updateLayer() {
+                if #available(macOS 26, *) { return super.updateLayer() }
                 guard let layer else { return }
                 layer.cornerRadius = bounds.height / 2
                 layer.borderWidth = 1
@@ -4782,19 +5165,14 @@ enum Template {
             /// says it again (`LampMagic`).
             func place(_ controller: EXHostViewController) {
                 guard let connection = connections[ObjectIdentifier(controller)], let window = controller.view.window,
-                      window.isKeyWindow else { return }
+                      window.isKeyWindow || window.parent?.isKeyWindow == true else { return }
                 let origin = window.convertToScreen(controller.view.convert(controller.view.bounds, to: nil)).origin
                 (connection.remoteObjectProxy as? LampSidebarPlacement)?.place(x: origin.x, y: origin.y)
             }
 
             /// Every chat in this window, after it moved or changed size.
             func place(in window: NSWindow) {
-                guard let split = window.contentViewController as? NSSplitViewController else { return }
-                for item in split.splitViewItems {
-                    for child in item.viewController.children {
-                        if let host = child as? EXHostViewController { place(host) }
-                    }
-                }
+                if let chat = LampSidebar.chats[ObjectIdentifier(window)] { place(chat.host) }
             }
         }
 
@@ -5030,14 +5408,8 @@ enum Template {
         /// each launch, without Lamp's chat beside it, so it keeps up with the app as it changes.
         @MainActor
         private static func preview(of window: NSWindow) {
-            guard let png = picture(of: window), var image = NSBitmapImageRep(data: png)?.cgImage,
-                  let view = window.contentView?.superview ?? window.contentView, view.bounds.width > 0 else { return }
+            guard let png = picture(of: window), let image = NSBitmapImageRep(data: png)?.cgImage else { return }
             previewTaken = true
-            let chat = LampSidebar.openWidth(in: window)
-            if chat > 0 {
-                let kept = Int((Double(image.width) * (view.bounds.width - chat) / view.bounds.width).rounded())
-                if kept > 40, let cropped = image.cropping(to: CGRect(x: 0, y: 0, width: kept, height: image.height)) { image = cropped }
-            }
             try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
                 .write(to: folder.appendingPathComponent("preview.png"), options: .atomic)
         }
@@ -13526,18 +13898,16 @@ enum Template {
         @MainActor static func customize() {
             guard LampMagic.isOn else { return LampSidebar.openFromMenu() }
             close()
-            // The window is new each launch, at the panel's size: the chat makes it wider, rather than coming back
-            // into it as into a window macOS restored at a size that already held it (`LampSidebar.restore`).
+            // The window is new each launch, at the panel's size: the chat opens beside it below, not with it as
+            // a restored window's would (`LampSidebar.restore`).
             LampSidebar.forget()
             showWindow()
             guard let window else { return }
-            // Once the window is in front and has its wand. Put back where the copy before a change left it, its
-            // frame already holds the chat.
+            // Once the window is in front and has its wand.
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    let putBack = LampMagic.putBackWindow === window
                     LampMagic.putBackWindow = nil
-                    LampSidebar.open(window, grow: !putBack)
+                    LampSidebar.open(window)
                 }
             }
         }

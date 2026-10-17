@@ -43,6 +43,8 @@ final class Link: ObservableObject {
     static let shared = Link()
 
     @Published var state: SidebarState?
+    /// The wish's file after Share…, until the share menu has taken it (`ChatToolbar`).
+    @Published var sharing: SidebarSharing?
     @Published var connected = false
     /// Lamp hasn't answered for a while: it isn't open.
     @Published var lampAway = false
@@ -94,8 +96,14 @@ final class Link: ObservableObject {
         if count < 0, errno == EAGAIN || errno == EINTR { return }
         guard count > 0 else { return drop() }
         buffer.append(contentsOf: chunk[0..<count])
+        // A long line (a shared file) comes in many pieces: the buffer is looked through only once one ends a line.
+        guard chunk[0..<count].contains(0x0A) else { return }
         for line in SidebarWire.lines(from: &buffer) {
-            if let state = try? JSONDecoder().decode(SidebarState.self, from: line) { self.state = state }
+            if let state = try? JSONDecoder().decode(SidebarState.self, from: line) {
+                // Sent once: kept here as it arrives, since a state decoded after it in the same read replaces this one.
+                if let sharing = state.sharing { self.sharing = sharing }
+                self.state = state
+            }
         }
     }
 
@@ -149,7 +157,7 @@ struct SidebarView: View {
             }
         }
         .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity)
-        .background(ChatLook.paper)
+        .chatGround()
         // Files and pictures dropped on the chat go with the next message, as in Lamp's window.
         .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
             Dropped.load(providers) { files in if !files.isEmpty { link.send(.attach(files)) } }
@@ -174,6 +182,18 @@ private struct Chat: View {
     @State private var settled = false
 
     var body: some View {
+        VStack(spacing: 0) {
+            if let toolbar = state.toolbar { ChatToolbar(state: state, toolbar: toolbar) }
+            switch state.panel {
+            case .versions: VersionsPanel(state: state)
+            case .info: InfoPanel(state: state)
+            case nil: chat
+            }
+        }
+        .chatGround()
+    }
+
+    private var chat: some View {
         VStack(spacing: 0) {
             ScrollViewReader { scroller in
                 ScrollView {
@@ -268,7 +288,6 @@ private struct Chat: View {
             }
             ComposerRow(state: state)
         }
-        .background(ChatLook.paper)
     }
 
     private func follow(_ scroller: ScrollViewProxy, animated: Bool = true) {
@@ -331,6 +350,8 @@ private struct LineView: View {
             AskLine(line: line)
         case .result:
             EmptyView()
+        case .tools:
+            ToolsLine(line: line)
         }
     }
 }
@@ -470,7 +491,7 @@ private struct ComposerRow: View {
 
     var body: some View {
         ChatLook.MessageBar(busy: state.busy, canSend: canSend, attachHelp: "Attach files. You can also paste images and files here.",
-                            attach: chooseFiles, point: { link.send(.point) }, send: submit, stop: { link.send(.stop) }, focus: { focus += 1 }) {
+                            attach: chooseFiles, send: submit, stop: { link.send(.stop) }, focus: { focus += 1 }) {
             Composer(text: $text, height: $height, placeholder: ChatLook.placeholder(busy: state.busy, empty: state.empty),
                      // No suggestion while a request from the chat is in the box, as in Lamp's window.
                      suggestion: state.replacing == true ? nil : state.suggestion,

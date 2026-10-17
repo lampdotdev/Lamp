@@ -94,11 +94,45 @@ final class MagicPanel {
         // Lamp's window closes once the chat is up in the app, and not before: with no window of its own and no chat
         // connected, Lamp would quit, and an app that couldn't show the chat would leave it nowhere.
         for _ in 0..<50 {
-            if SidebarServer.shared.isConnected(project.id) {
-                Store.shared.chatsHandedOff.insert(project.id)
-                return
-            }
+            if SidebarServer.shared.isConnected(project.id) { return Self.closeChatWindow(of: project) }
             try? await Task.sleep(for: .milliseconds(200))
+        }
+    }
+
+    /// An app's chat is in one place at a time: when it opens beside the app, its window in Lamp closes. Not while
+    /// someone is using that window (Lamp in front, with it), which they opened on purpose (a setup card's button,
+    /// the Window menu) and may be typing in.
+    func chatOpenedInApp(_ project: LampProject) {
+        let store = Store.shared
+        // Only once the chat Lamp checked is there (`SidebarServer.accepted`): the app's word that it's opening is a
+        // notification anything could send, and a window closed with no chat to take its place would leave it nowhere.
+        guard SidebarServer.shared.isConnected(project.id), !(NSApp.isActive && store.selection == project.id) else { return }
+        Self.closeChatWindow(of: project)
+    }
+
+    private static func closeChatWindow(of project: LampProject) {
+        guard Store.shared.chatWindows.contains(project.id) else { return }
+        Store.shared.chatsHandedOff.insert(project.id)
+    }
+
+    /// The app was opened to show its chat beside it: if no chat has come by the time it should have (the app
+    /// couldn't start, or quit as it opened), the chat is shown in Lamp's window, so it's never nowhere. A rebuild
+    /// first (an app built by an older Lamp) is waited for, since its progress is in that chat.
+    func showChatIfAppNeverComes(_ project: LampProject) {
+        let id = project.id
+        Task {
+            var waited = 0
+            while Store.shared.busy.contains(id), waited < 1200 {
+                try? await Task.sleep(for: .milliseconds(500))
+                waited += 1
+            }
+            for _ in 0..<30 {
+                if SidebarServer.shared.isConnected(id) { return }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+            guard let current = Store.shared.projects.first(where: { $0.id == id }), !SidebarServer.shared.isConnected(id),
+                  Store.shared.macCopies(of: current).isEmpty else { return }
+            Store.shared.showChat(id)
         }
     }
 
@@ -133,6 +167,8 @@ final class MagicPanel {
     func opening(_ id: String) {
         guard let project = Store.shared.projects.first(where: { $0.id == id }) else { return }
         follow(project.id)
+        // A chat closed beside the app keeps its connection, so opening it again is told only this way.
+        chatOpenedInApp(project)
     }
 
     // MARK: Following an app
@@ -141,6 +177,8 @@ final class MagicPanel {
         var observers: [NSObjectProtocol] = []
         var busyWatch: AnyCancellable?
         var cover: NSWindow?
+        /// Glass where the app's chat was beside it, while the cover stands in for the app.
+        var chatCover: NSWindow?
         var coverTimeout: DispatchWorkItem?
     }
     private var following: [String: Following] = [:]
@@ -209,6 +247,7 @@ final class MagicPanel {
         }
         state.coverTimeout?.cancel()
         state.cover?.orderOut(nil)
+        state.chatCover?.orderOut(nil)
     }
 
     // MARK: Pointing
@@ -300,6 +339,7 @@ final class MagicPanel {
         window.setFrame(frame, display: true)
         window.orderFrontRegardless()
         state.cover = window
+        state.chatCover = Self.chatCover(in: folder)
         // Never for long: a build that fails or a turn that ends without the app leaves nothing standing.
         let id = project.id
         let timeout = DispatchWorkItem { [weak self] in self?.dropCover(id) }
@@ -307,15 +347,45 @@ final class MagicPanel {
         DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: timeout)
     }
 
+    /// The chat had its own panel beside the window (`LampSidebar.panelFrame`): plain glass stands where it was, so
+    /// the chat doesn't vanish from beside the app while it's away. The chat itself is the extension's to draw, so
+    /// nothing of it is pictured.
+    private static func chatCover(in folder: URL) -> NSWindow? {
+        guard #available(macOS 26, *),
+              let text = try? String(contentsOf: folder.appendingPathComponent("cover-chat-frame.txt"), encoding: .utf8) else { return nil }
+        let frame = NSRectFromString(text)
+        guard frame.width > 0, frame.height > 0 else { return nil }
+        let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
+        window.ignoresMouseEvents = true
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: ChatCoverView())
+        window.setFrame(frame, display: true)
+        window.orderFrontRegardless()
+        return window
+    }
+
     private func revealApp(_ id: String) {
         guard let state = following[id], let cover = state.cover else { return }
+        let chatCover = state.chatCover
         state.cover = nil
+        state.chatCover = nil
         state.coverTimeout?.cancel()
+        // The chat beside the new copy takes a moment longer to come than its window.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             NSAnimationContext.runAnimationGroup({ context in
                 context.duration = 0.25
                 cover.animator().alphaValue = 0
             }, completionHandler: { MainActor.assumeIsolated { cover.orderOut(nil) } })
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            guard let chatCover else { return }
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.25
+                chatCover.animator().alphaValue = 0
+            }, completionHandler: { MainActor.assumeIsolated { chatCover.orderOut(nil) } })
         }
     }
 
@@ -324,6 +394,8 @@ final class MagicPanel {
         state.coverTimeout?.cancel()
         state.cover?.orderOut(nil)
         state.cover = nil
+        state.chatCover?.orderOut(nil)
+        state.chatCover = nil
     }
 
     private func dropCoverIfAppGone(_ id: String) {
@@ -351,6 +423,16 @@ private struct CoverView: View {
                 .padding(.bottom, 18)
             }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+/// Glass where the app's chat was beside it, while the app reopens for a change.
+@available(macOS 26, *)
+private struct ChatCoverView: View {
+    var body: some View {
+        Color.clear
+            .overlay { ProgressView().controlSize(.small) }
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 

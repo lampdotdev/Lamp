@@ -47,6 +47,10 @@ struct WishWindow: View {
         .frame(minWidth: 760, minHeight: 480)
         .background(WindowKeyWatcher { if let project { store.selection = project.id } })
         .onAppear { LampWindows.open = LampWindows.open ?? openWindow }
+        .onChange(of: project?.id, initial: true) { old, now in
+            if let old { store.chatWindows.remove(old) }
+            if let now { store.chatWindows.insert(now) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             store.markRead()
         }
@@ -68,6 +72,7 @@ struct WishWindow: View {
             if project == nil { dismiss() }
         }
         .onDisappear {
+            if let project { store.chatWindows.remove(project.id) }
             guard let id else { return }
             if store.selection == id { store.selection = nil }
             // An empty new wish goes with its window, as it went when the person left its chat.

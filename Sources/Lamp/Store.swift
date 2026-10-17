@@ -319,6 +319,8 @@ final class Store: ObservableObject {
     @Published var chatFocusRequest = 0
     /// Wishes whose chat window should close, its chat having moved into the app's own window (`MagicPanel.handOff`).
     @Published var chatsHandedOff: Set<String> = []
+    /// Wishes whose chat has a window of its own open now (`WishWindow`).
+    var chatWindows: Set<String> = []
     /// A wish from the site's link that came while the welcome is up, for the welcome to take (`take(wish:)`).
     @Published var arrivedWish: String?
     /// The wishes being written into a message box right now, by app (`Wish.Arrival`). The drafts hold them whole.
