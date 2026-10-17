@@ -162,8 +162,7 @@ enum Template {
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
             .replacingOccurrences(of: "{{BUNDLE}}", with: project.bundleID)
         let url = project.dir.appendingPathComponent(path)
-        // Never makes the app's folder itself: written away from the main thread, this can finish after the app was
-        // deleted or moved, and would leave a folder of build files where it was.
+        // Never makes the app's folder itself, which would leave a folder of build files where an app was.
         guard FileManager.default.fileExists(atPath: project.dir.path) else { throw CocoaError(.fileNoSuchFile) }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         // Left alone when it's already right, so its date only moves when the app needs a rebuild.
@@ -171,17 +170,6 @@ enum Template {
             try contents.write(to: url, atomically: true, encoding: .utf8)
         }
         if executable { try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path) }
-    }
-
-    /// `writeOwnedFiles` and `writeSupport` away from the main thread, for a turn and a build. Filling in the support
-    /// file's template copies several hundred kilobytes once for each placeholder and asks the system for this Mac's
-    /// network name, which held the main thread, and so the chat, for about a tenth of a second at every agent run.
-    /// Both only read and write the app's own files.
-    static func writeOwnedFilesInBackground(for project: LampProject) async throws {
-        try await Task.detached(priority: .userInitiated) { try writeOwnedFiles(for: project) }.value
-    }
-    static func writeSupportInBackground(for project: LampProject) async throws {
-        try await Task.detached(priority: .userInitiated) { try writeSupport(for: project) }.value
     }
 
     /// Lamp owns LampSupport.swift and rewrites it before every agent turn and build,

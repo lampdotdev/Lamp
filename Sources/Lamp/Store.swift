@@ -1457,6 +1457,7 @@ final class Store: ObservableObject {
         await WidgetProcess.end(for: old)
         try? fm.removeItem(at: old.installedURL)
         // Lines logged while the copy was made and the old app quit are written to the new folder instead.
+        await settleFiles(old)
         settleChat(old)
         try? fm.removeItem(at: old.dir)
 
@@ -2322,7 +2323,7 @@ final class Store: ObservableObject {
         }
         // Only build when something changed: not after a question, and not again when the agent's last
         // look already built and opened exactly this code.
-        try? await Template.writeSupportInBackground(for: project)
+        try? await writeOwnFiles(project, all: false)
         let changed = Runtime.sourcesChanged(project)
         if changed {
             guard await buildFixingErrors(project) else {
@@ -2497,7 +2498,7 @@ final class Store: ObservableObject {
         turn.stopped = false
         let sessionFile = Self.sessionFile(for: project, engine: engine)
         // After the stopped mark is cleared, so a Stop pressed while the file is written is seen by the check below.
-        try? await Template.writeSupportInBackground(for: project)
+        try? await writeOwnFiles(project, all: false)
         // What the agent is told about the app's AI follows the sign-ins as they are. Checking them can take a
         // while, and Stop pressed meanwhile has no agent to end yet: if the turn was stopped or replaced, or the
         // app deleted, during the wait, the agent isn't started.
@@ -2786,6 +2787,7 @@ final class Store: ObservableObject {
         if fm.fileExists(atPath: project.installedURL.path) {
             try? fm.trashItem(at: project.installedURL, resultingItemURL: nil)
         }
+        await settleFiles(project)
         settleChat(project)
         do {
             try fm.trashItem(at: project.dir, resultingItemURL: nil)
@@ -4049,17 +4051,44 @@ final class Store: ObservableObject {
     }
 
     /// Returns nil on success, or the tail of the compiler output on failure.
+    /// Lamp's own files in an app (`Template.writeOwnedFiles`, or only LampSupport.swift), written away from the main
+    /// thread. Filling in the support file's template copies several hundred kilobytes once for each placeholder and
+    /// asks the system for this Mac's network name, which held the main thread, and so the chat, for about a tenth of
+    /// a second at every agent run and build. An app's writes go one after another and are remembered
+    /// (`fileWrites`), so deleting or remaking its folder waits for them (`settleFiles`): one finishing afterwards
+    /// would make parts of the folder again.
+    private func writeOwnFiles(_ project: LampProject, all: Bool) async throws {
+        let before = fileWrites[project.id]
+        let write = Task.detached(priority: .userInitiated) {
+            _ = await before?.result
+            if all { try Template.writeOwnedFiles(for: project) } else { try Template.writeSupport(for: project) }
+        }
+        fileWrites[project.id] = write
+        defer { if fileWrites[project.id] == write { fileWrites[project.id] = nil } }
+        try await write.value
+    }
+    private var fileWrites: [String: Task<Void, Error>] = [:]
+
+    /// Waits for Lamp's own files being written in the app's folder, before the folder is deleted or made again.
+    private func settleFiles(_ project: LampProject) async {
+        _ = await fileWrites[project.id]?.result
+    }
+
     private func build(_ project: LampProject) async -> String? {
         guard exists(project) else { return "The app was deleted." }
         log(project, .status, "Building…")
         // Lamp's own files first, and no build without them: the build runs build.sh and Package.swift.
+        let owner = turns[project.id]
         do {
-            try await Template.writeOwnedFilesInBackground(for: project)
+            try await writeOwnFiles(project, all: true)
         } catch {
             let problem = "Lamp couldn't write the app's build files: \(error.localizedDescription)"
             log(project, .error, problem)
             return problem
         }
+        // Stop pressed, or the app deleted, while they were written: there's no build yet for Stop to end.
+        guard exists(project) else { return "The app was deleted." }
+        if let owner, owner.stopped || turns[project.id] !== owner { return "Stopped." }
         // Taken before the build, so an edit made while it runs still counts as a change afterwards.
         let fingerprint = Runtime.fingerprint(project)
         var output: [String] = []
@@ -5900,7 +5929,7 @@ final class Store: ObservableObject {
         turn.look.installed = false
         defer { turn.look.inProgress = false }
 
-        try? await Template.writeSupportInBackground(for: project)
+        try? await writeOwnFiles(project, all: false)
         let changed = Runtime.sourcesChanged(project)
         if changed, let errors = await build(project) {
             if errors == macMembershipProblem(project) {
