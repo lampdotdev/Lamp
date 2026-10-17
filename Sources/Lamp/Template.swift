@@ -3483,7 +3483,8 @@ enum Template {
     // Mac only: the Customize with Lamp command, windows, and what Lamp needs to watch and try the app.
 
     /// Adds "Customize with Lamp…" (⇧⌘E), which opens this app's chat beside the window in front
-    /// (`LampSidebar.openFromMenu`); its button up top opens the same chat in Lamp's own window.
+    /// (`LampSidebar.openFromMenu`); its button up top opens the same chat in Lamp's own window. And File ▸ Share…,
+    /// which sends the app to someone as a file to open with Lamp (`LampShareApp`).
     struct LampCommands: Commands {
         init() {
             LampRuntime.start
@@ -3502,6 +3503,77 @@ enum Template {
                 }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
             }
+            CommandGroup(after: .saveItem) {
+                Button("Share…") { LampShareApp.share() }
+            }
+        }
+    }
+
+    /// File ▸ Share…: the app as a file someone else opens with Lamp. Lamp makes it from the app's folder, the same
+    /// file as Lamp's own Share…, and the app shows the system's share picker for it from its window, as Apple's apps
+    /// do. When Lamp isn't open it's opened, and asked again once it answers.
+    @MainActor enum LampShareApp {
+        private static var picker: NSSharingServicePicker?
+
+        static func share() {
+            Task {
+                var answer = await ask()
+                if answer == nil, NSRunningApplication.runningApplications(withBundleIdentifier: "{{HOST}}").isEmpty,
+                   let lamp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "{{HOST}}") {
+                    let config = NSWorkspace.OpenConfiguration()
+                    config.activates = false
+                    _ = try? await NSWorkspace.shared.openApplication(at: lamp, configuration: config)
+                    for _ in 0..<40 where answer == nil {
+                        try? await Task.sleep(for: .milliseconds(500))
+                        answer = await ask()
+                    }
+                }
+                guard let answer, let path = answer["file"] as? String else {
+                    let alert = NSAlert()
+                    alert.messageText = "This app couldn't be shared"
+                    alert.informativeText = "Lamp makes the file to share it. Open Lamp and try again."
+                    alert.runModal()
+                    return
+                }
+                let items: [Any] = [answer["note"] as? String, (answer["picture"] as? String).map(URL.init(fileURLWithPath:)),
+                                    URL(fileURLWithPath: path)].compactMap { $0 }
+                let picker = NSSharingServicePicker(items: items)
+                self.picker = picker
+                // From the top of the window, where a toolbar's Share button would be: a menu command has no control
+                // of its own to open from. With every window closed one is opened again first, as a click in the Dock
+                // would; an app with none to open shows the file in Finder, whose Share is the same.
+                var window = NSApp.keyWindow ?? NSApp.windows.first { $0.isVisible && $0.canBecomeKey }
+                if window == nil {
+                    LampWindows.show(relaunching: false)
+                    for _ in 0..<20 where window == nil {
+                        try? await Task.sleep(for: .milliseconds(100))
+                        window = NSApp.keyWindow ?? NSApp.windows.first { $0.isVisible && $0.canBecomeKey }
+                    }
+                }
+                guard let content = window?.contentView else {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                    return
+                }
+                let top = NSRect(x: content.bounds.midX, y: content.isFlipped ? 0 : content.bounds.maxY - 1, width: 1, height: 1)
+                picker.show(relativeTo: top, of: content, preferredEdge: content.isFlipped ? .minY : .maxY)
+            }
+        }
+
+        /// Lamp's answer: where the file and its picture are. Nil when Lamp didn't answer or couldn't make it.
+        private static func ask() async -> [String: Any]? {
+            guard let url = URL(string: lampGateway + "/app/share") else { return nil }
+            var request = URLRequest(url: url, timeoutInterval: 120)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
+            request.httpBody = Data("{}".utf8)
+            guard let (data, response) = try? await URLSession.shared.data(for: request) else { return nil }
+            let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                fputs("LampShareApp: \(answer?["error"] as? String ?? "Lamp didn't make the file")\n", stderr)
+                return nil
+            }
+            return answer
         }
     }
 
@@ -5239,7 +5311,9 @@ enum Template {
         }
         // end LampWindows.reopen
 
-        @MainActor static func show() {
+        /// `relaunching` false for a caller with work in hand (Share…): then a window that can't be brought back is
+        /// left for it to deal with, rather than the app starting again and ending that work.
+        @MainActor static func show(relaunching: Bool = true) {
             NSApp.unhide(nil)
             let windows = NSApp.windows.filter { $0.canBecomeMain }
             if !windows.contains(where: \.isVisible) {
@@ -5261,6 +5335,7 @@ enum Template {
             }
             // Nothing could bring a window back: the app replaced New Window with something else, or its only
             // window has no menu item. Rather than sit in the Dock with nothing to show, start again with one.
+            guard relaunching else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 if !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) { relaunch() }
             }
