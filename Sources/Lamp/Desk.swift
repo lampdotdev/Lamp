@@ -21,6 +21,8 @@ struct WishDesk: View {
     /// saying what it is.
     @State private var pointedAt: LampProject.ID?
     @State private var staged: Staged?
+    /// The wishes Lamp came with that aren't on the desk, offered at its end (`MoreFromLamp`).
+    @State private var missingStarters: [Starters.Starter] = []
     private static let stageHeight: CGFloat = 160
 
     private struct Staged: Equatable {
@@ -46,7 +48,7 @@ struct WishDesk: View {
                     // one is the way on from there.
                     VStack(spacing: 0) {
                         headline
-                        if !wishes.isEmpty {
+                        if !wishes.isEmpty || !missingStarters.isEmpty {
                             grid.padding(.top, 28)
                         }
                         // While the pointer is on a wish, what it is takes this place: making a new one and
@@ -74,6 +76,8 @@ struct WishDesk: View {
                     .frame(width: max(0, area.size.width - scrollerWidth))
                     .frame(maxWidth: .infinity, minHeight: area.size.height, alignment: .leading)
                     .animation(Self.glide, value: wishes.map(\.id))
+                    // Read from the files, so once for each change to the desk rather than at every redraw.
+                    .task(id: wishes.map(\.id)) { missingStarters = Starters.missing(from: wishes) }
                 }
                 .scrollContentBackground(.hidden)
             }
@@ -253,6 +257,9 @@ struct WishDesk: View {
                 DeskIcon(project: project) { inside in
                     if inside { pointedAt = project.id } else if pointedAt == project.id { pointedAt = nil }
                 }
+            }
+            if !missingStarters.isEmpty {
+                MoreFromLamp(starters: missingStarters)
             }
         }
         .frame(maxWidth: 880)
@@ -531,6 +538,136 @@ struct WishStage: View {
 
 /// One wish on the desk: its icon, its name, and under it where it lives or what it's waiting for. A click opens
 /// it, with its chat beside it to change it (`Store.open(fromDesk:)`).
+/// The wishes Lamp came with that aren't on the desk (never added, or deleted since), offered at its end as one
+/// tile: a few of their icons and how many there are. A click lists them, each with an Add that puts it back on
+/// the desk (`Store.put(starter:)`). It's gone once every one is there.
+struct MoreFromLamp: View {
+    @EnvironmentObject private var store: Store
+    let starters: [Starters.Starter]
+    @State private var hovered = false
+    @State private var listing = false
+    /// Measured once the rows are laid out. It starts at the most it can be, so the popover is placed on screen
+    /// for its largest size and only gets shorter: placed for a smaller one, it grew past the screen's bottom.
+    @State private var rowsHeight = MoreFromLamp.tallest
+    /// The most the list's rows take before they scroll: room for about six, on the shortest screens a Mac has.
+    private static let tallest: CGFloat = 440
+
+    var body: some View {
+        VStack(spacing: 6) {
+            tile
+                .scaleEffect(hovered ? 1.06 : 1)
+                .offset(y: hovered ? -2 : 0)
+            Text("More from Lamp")
+                .font(.callout.weight(.medium))
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8).padding(.horizontal, 4)
+        .background(Color.primary.opacity(hovered ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture { listing = true }
+        .onHover { hovered = $0 }
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hovered)
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("More from Lamp")
+        .accessibilityValue("\(starters.count) to add")
+        .accessibilityAction { listing = true }
+        .focusable(interactions: .activate)
+        .onKeyPress(.return) { listing = true; return .handled }
+        .help("Wishes that came with Lamp and aren't on your desk")
+        .popover(isPresented: $listing, arrowEdge: .trailing) { list }
+        .onChange(of: starters.isEmpty) { if starters.isEmpty { listing = false } }
+    }
+
+    /// Up to four of their icons, two by two, in a dashed outline the size of a wish's icon.
+    private var tile: some View {
+        let shown = Array(starters.prefix(4))
+        return RoundedRectangle(cornerRadius: 17, style: .continuous)
+            .strokeBorder(Color.primary.opacity(0.25), style: StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+            .frame(width: 76, height: 76)
+            .overlay {
+                Grid(horizontalSpacing: 8, verticalSpacing: 8) {
+                    ForEach(0..<2, id: \.self) { row in
+                        GridRow {
+                            ForEach(0..<2, id: \.self) { column in
+                                let index = row * 2 + column
+                                if index < shown.count {
+                                    StarterIcon(starter: shown[index], size: 24)
+                                } else {
+                                    Color.clear.frame(width: 24, height: 24)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                Text("\(starters.count)")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6).frame(minWidth: 20, minHeight: 20)
+                    .background(Color.accentColor, in: Capsule())
+                    .overlay(Capsule().strokeBorder(.background, lineWidth: 2))
+                    .offset(x: 7, y: -7)
+            }
+    }
+
+    private var list: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("More from Lamp").font(.headline)
+            Text("Wishes that came with Lamp and aren't on your desk.")
+                .font(.subheadline).foregroundStyle(.secondary)
+                .padding(.top, 2)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(starters, id: \.name) { starter in
+                        HStack(alignment: .center, spacing: 12) {
+                            StarterIcon(starter: starter, size: 40)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(starter.name).font(.body.weight(.semibold))
+                                if let about = Starters.about(starter) {
+                                    Text(about)
+                                        .font(.callout).foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            Spacer(minLength: 12)
+                            Button("Add") { store.put(starter: starter) }
+                                .accessibilityLabel("Add \(starter.name)")
+                        }
+                    }
+                }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowsHeight = $0 }
+            }
+            // As tall as its rows, up to what a short screen has room for; past that the rows scroll.
+            .frame(height: min(rowsHeight, Self.tallest))
+            .scrollBounceBehavior(.basedOnSize)
+            .padding(.top, 14)
+        }
+        .padding(18)
+        .frame(width: 400)
+        // Its own height whatever the popover had: as each is added the list gets shorter, and the popover with it.
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// A starter's icon as it ships, before it's on the desk.
+private struct StarterIcon: View {
+    let starter: Starters.Starter
+    let size: CGFloat
+
+    var body: some View {
+        if let icon = Starters.icon(of: starter) {
+            Image(nsImage: icon).resizable().interpolation(.high).frame(width: size, height: size)
+        } else {
+            BlueprintIcon(letter: starter.name.first, size: size)
+        }
+    }
+}
+
 struct DeskIcon: View {
     @EnvironmentObject private var store: Store
     let project: LampProject

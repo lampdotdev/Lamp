@@ -3726,23 +3726,7 @@ final class Store: ObservableObject {
     private func installStarters() {
         guard !UserDefaults.standard.bool(forKey: Starters.installedKey) else { return }
         UserDefaults.standard.set(true, forKey: Starters.installedKey)
-        var made: [LampProject] = []
-        for starter in Starters.bundled {
-            do {
-                let project = try Template.draft(name: uniqueName(starter.name), in: root)
-                do {
-                    try Template.fill(project)
-                    try Starters.copy(starter, into: project)
-                    try Template.writeOwnedFiles(for: project)   // again, now it's known whether it has a widget
-                    made.append(project)
-                } catch {
-                    try? FileManager.default.removeItem(at: project.dir)
-                    throw error
-                }
-            } catch {
-                NSLog("Lamp couldn't add the wish \(starter.name): \(error.localizedDescription)")
-            }
-        }
+        let made = Starters.bundled.compactMap(add(starter:))
         guard !made.isEmpty else { return }
         reload()
         startersInstall = Task {
@@ -3753,6 +3737,42 @@ final class Store: ObservableObject {
         }
     }
     private var startersInstall: Task<Void, Never>?
+
+    /// One starter put on the desk from Lamp's bundle, as on the first launch: its files in a new app, saved as
+    /// its first version and built by `prepareStarters`. The caller reloads the desk. Nil when it couldn't be
+    /// written, and then nothing of it is left.
+    func add(starter: Starters.Starter) -> LampProject? {
+        do {
+            let project = try Template.draft(name: uniqueName(starter.name), in: root)
+            do {
+                try Template.fill(project)
+                try Starters.copy(starter, into: project)
+                try Template.writeOwnedFiles(for: project)   // again, now it's known whether it has a widget
+                // A copy deleted after its build failed leaves its folder name free for this one, which is built afresh.
+                unpreparedStarters.remove(project.id)
+                return project
+            } catch {
+                try? FileManager.default.removeItem(at: project.dir)
+                throw error
+            }
+        } catch {
+            NSLog("Lamp couldn't add the wish \(starter.name): \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// A starter put back on the desk after the first launch (More from Lamp's Add): added, shown on the desk, and
+    /// saved and built out of sight like the first launch's (`prepareStarters`).
+    @discardableResult func put(starter: Starters.Starter) -> LampProject? {
+        guard let added = add(starter: starter) else { return nil }
+        reload()
+        guard let project = current(added) else { return nil }
+        if !Starters.hasShippedIcon(project), let spec = Icons.load(project) {
+            Task { await renderIcon(project, spec: spec) }
+        }
+        prepareStarters()
+        return project
+    }
 
     /// A starter's chat begins with what it offers to change first (`Starters.card`), added a moment after the chat
     /// is first shown, beside the app or in Lamp's window, so it arrives there rather than being there already.
@@ -3789,7 +3809,11 @@ final class Store: ObservableObject {
             defer { preparingStarters = false }
             await startersInstall?.value
             await saveStartersFirstVersions()
-            while let next = nextStarterToPrepare() { await prepare(next) }
+            while let next = nextStarterToPrepare() {
+                // Again for each: one put back on the desk meanwhile gets its first version before its build.
+                await saveStartersFirstVersions()
+                await prepare(next)
+            }
         }
     }
 
