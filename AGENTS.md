@@ -506,6 +506,14 @@ and `Package.swift` are written afresh before every build (`Template.writeOwnedF
 that fails. The last two are what the build runs (the shell runs build.sh; SwiftPM compiles and executes
 Package.swift as a program), so they're replaced rather than checked: nothing the agent's file tools wrote
 into them, with no card, can run. Shared apps never carry them: import writes its own.
+Replacing them isn't enough on its own: they sit in the agent's folder, and a command it left running can put
+its own there between Lamp writing them and running them. So the build runs as the agent's commands do, in the
+app's sandbox (`Store.runBuild`, through `Sandbox.run`), and so does everything else Lamp runs over what's in
+that folder: the compiler's looks at the code for live changes and Undo (`LiveReload`), and the finishing of a
+simulator bundle (`finishSimulatorBundle`). Only a copy Lamp made in its own folder is signed with Lamp's or the
+person's keys (`Store.deploy`). A new command of Lamp's that reads or runs what's in an app's folder belongs in
+`Sandbox.run`, never in `Shell.run` directly. The one build that still runs as Lamp is the Mac half of an app
+for both, which Xcode signs for the person's team with keys the sandbox closes.
 
 `Sources/Lamp/Template.swift` holds `LampSupport.swift`, the support code copied into every generated
 app (`LampAI`, `LampStore`, `LampScript`, the connectors, `LampDriver` for `use_app`). It is a Swift

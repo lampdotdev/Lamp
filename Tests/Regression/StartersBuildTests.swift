@@ -2,11 +2,12 @@ import XCTest
 @testable import Lamp
 
 /// Each wish Lamp comes with, set up as the first launch sets it up (`Store.installStarters`) and built with the
-/// build.sh Lamp writes for it, widget and all. Minutes of compiling, so only when asked:
+/// build.sh Lamp writes for it, widget and all, the way Lamp runs it (`Store.runBuild`, in the app's sandbox). Minutes of compiling, so only when asked:
 /// `LAMP_BUILD_STARTERS=1 swift test --filter StartersBuildTests` (or `=today` for one). With
 /// `LAMP_STARTERS_OUT=<folder>` the apps are kept there, to open and try.
+@MainActor
 final class StartersBuildTests: XCTestCase {
-    func testEveryStarterBuilds() throws {
+    func testEveryStarterBuilds() async throws {
         guard let only = ProcessInfo.processInfo.environment["LAMP_BUILD_STARTERS"] else {
             throw XCTSkip("Set LAMP_BUILD_STARTERS=1 to build every starter.")
         }
@@ -27,27 +28,14 @@ final class StartersBuildTests: XCTestCase {
             try Starters.copy(starter, into: project)
             try Template.writeOwnedFiles(for: project)
             XCTAssertTrue(Starters.isStarter(project))
-            let (status, output) = try run(Shell.compatibleSDK + "./build.sh", in: project.dir)
-            XCTAssertEqual(status, 0, "\(starter.name) didn't build:\n\(output.suffix(3000))")
+            var output: [String] = []
+            let status = await Store.runBuild("./build.sh", for: project, env: [:]) { output.append($0) }
+            XCTAssertEqual(status, 0, "\(starter.name) didn't build:\n\(output.joined(separator: "\n").suffix(3000))")
             XCTAssertTrue(FileManager.default.fileExists(atPath: project.builtURL.path), starter.name)
             if Template.hasWidget(project) {
                 let widget = project.builtURL.appendingPathComponent("Contents/PlugIns/\(project.exe)Widget.appex")
                 XCTAssertTrue(FileManager.default.fileExists(atPath: widget.path), "\(starter.name)'s widget")
             }
         }
-    }
-
-    private func run(_ command: String, in directory: URL) throws -> (Int32, String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", command]
-        process.currentDirectoryURL = directory
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return (process.terminationStatus, String(decoding: data, as: UTF8.self))
     }
 }
