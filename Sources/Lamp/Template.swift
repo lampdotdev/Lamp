@@ -3521,7 +3521,7 @@ enum Template {
                 // would; an app with none to open shows the file in Finder, whose Share is the same.
                 var window = NSApp.keyWindow ?? NSApp.windows.first { $0.isVisible && $0.canBecomeKey }
                 if window == nil {
-                    LampWindows.show()
+                    LampWindows.show(relaunching: false)
                     for _ in 0..<20 where window == nil {
                         try? await Task.sleep(for: .milliseconds(100))
                         window = NSApp.keyWindow ?? NSApp.windows.first { $0.isVisible && $0.canBecomeKey }
@@ -4910,7 +4910,9 @@ enum Template {
         }
         // end LampWindows.reopen
 
-        @MainActor static func show() {
+        /// `relaunching` false for a caller with work in hand (Share…): then a window that can't be brought back is
+        /// left for it to deal with, rather than the app starting again and ending that work.
+        @MainActor static func show(relaunching: Bool = true) {
             NSApp.unhide(nil)
             let windows = NSApp.windows.filter { $0.canBecomeMain }
             if !windows.contains(where: \.isVisible) {
@@ -4932,6 +4934,7 @@ enum Template {
             }
             // Nothing could bring a window back: the app replaced New Window with something else, or its only
             // window has no menu item. Rather than sit in the Dock with nothing to show, start again with one.
+            guard relaunching else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 if !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) { relaunch() }
             }
