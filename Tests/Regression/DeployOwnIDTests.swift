@@ -1,8 +1,8 @@
 import XCTest
 @testable import Lamp
 
-/// Lamp signs a build as the app only while the build still says it is the app: an id rewritten after the build
-/// (by anything that can write the app's folder) would have Lamp's certificate vouch for another app.
+/// Lamp signs an app as itself only while it is the app: the build folder is the agent's to write, so the id is
+/// read from a copy outside it, the copy that is then signed, and a copy carrying another app's id isn't signed.
 final class DeployOwnIDTests: XCTestCase {
     private var root: URL!
 
@@ -19,19 +19,23 @@ final class DeployOwnIDTests: XCTestCase {
             .write(to: url.appendingPathComponent("Contents/Info.plist"))
     }
 
-    func testABuildCarryingAnotherAppsIDIsNotSigned() throws {
+    func testOnlyACopyCarryingTheAppsOwnIDsIsSigned() throws {
         let project = LampProject(id: "tallymarks", name: "Tally Marks", exe: "TallyMarks", dir: root.appendingPathComponent("tallymarks"))
         let other = LampProject(id: "pocketnotes", name: "Pocket Notes", exe: "PocketNotes", dir: root.appendingPathComponent("pocketnotes"))
-        let app = project.builtURL
-        try bundle(app, id: project.bundleID)
-        try bundle(Template.widgetURL(in: app, of: project), id: Template.widgetBundleID(for: project))
-        XCTAssertNoThrow(try Store.checkOwnIDs(in: app, for: project))
+        let apps = root.appendingPathComponent("Apps")
+        let built = project.builtURL
+        try bundle(built, id: project.bundleID)
+        try bundle(Template.widgetURL(in: built, of: project), id: Template.widgetBundleID(for: project))
 
-        try bundle(app, id: other.bundleID)
-        XCTAssertThrowsError(try Store.checkOwnIDs(in: app, for: project))
+        // Rewritten in the build folder once the copy is made, the id doesn't reach what Lamp signs.
+        let copy = try Store.stage(project, in: apps)
+        try bundle(built, id: other.bundleID)
+        XCTAssertNoThrow(try Store.checkOwnIDs(in: copy, for: project))
 
-        try bundle(app, id: project.bundleID)
-        try bundle(Template.widgetURL(in: app, of: project), id: Template.widgetBundleID(for: other))
-        XCTAssertThrowsError(try Store.checkOwnIDs(in: app, for: project))
+        // Rewritten before the copy, it does, and nothing is signed.
+        XCTAssertThrowsError(try Store.checkOwnIDs(in: try Store.stage(project, in: apps), for: project))
+        try bundle(built, id: project.bundleID)
+        try bundle(Template.widgetURL(in: built, of: project), id: Template.widgetBundleID(for: other))
+        XCTAssertThrowsError(try Store.checkOwnIDs(in: try Store.stage(project, in: apps), for: project))
     }
 }

@@ -4700,11 +4700,26 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Puts the icon into the freshly built bundle, re-signs it, and swaps it into the apps folder.
-    /// The swap is atomic, so it's safe even while the app is running.
+    /// A copy of the app's build in `folder`, hidden until it's swapped in, for Lamp alone to finish and sign.
+    nonisolated static func stage(_ project: LampProject, in folder: URL) throws -> URL {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let copy = folder.appendingPathComponent(".\(project.exe)-\(UUID().uuidString).app")
+        try FileManager.default.copyItem(at: project.builtURL, to: copy)
+        return copy
+    }
+
+    /// Copies the freshly built bundle into the apps folder, puts the icon in, signs it and swaps it in place of
+    /// the installed copy. The swap is atomic, so it's safe even while the app is running.
     private func deploy(_ project: LampProject) async throws {
         let fm = FileManager.default
-        let resources = project.builtURL.appendingPathComponent("Contents/Resources")
+        // Everything from here to the swap is done to a copy in the apps folder, which the agent's commands can't
+        // write: the build folder is theirs, and a bundle there could be changed between Lamp's look at it and its
+        // signature.
+        let app = try Self.stage(project, in: Self.installDir)
+        AppsLink.ensure()
+        var swapped = false
+        defer { if !swapped { try? fm.removeItem(at: app) } }
+        let resources = app.appendingPathComponent("Contents/Resources")
         try fm.createDirectory(at: resources, withIntermediateDirectories: true)
         // Every usage description, from the one list: without its reason macOS kills the app the moment it
         // asks for the microphone, photos and the rest. Added here as well as in build.sh so apps made before
@@ -4719,7 +4734,7 @@ final class Store: ObservableObject {
             let reason = text.replacingOccurrences(of: "{{NAME}}", with: project.name).replacingOccurrences(of: "'", with: "'\\''")
             plist += "plutil -replace \(key) -string '\(reason)' \"$P\"\n"
         }
-        _ = await Shell.run(plist, cwd: project.dir, env: ["LAMP_APP": project.builtURL.path, "LAMP_NAME": project.name]) { _ in }
+        _ = await Shell.run(plist, cwd: project.dir, env: ["LAMP_APP": app.path, "LAMP_NAME": project.name]) { _ in }
         if fm.fileExists(atPath: Icons.icnsURL(project).path) {
             try? fm.removeItem(at: resources.appendingPathComponent("AppIcon.icns"))
             try fm.copyItem(at: Icons.icnsURL(project), to: resources.appendingPathComponent("AppIcon.icns"))
@@ -4732,7 +4747,7 @@ final class Store: ObservableObject {
                 : "{ plutil -remove CFBundleIconName \"$LAMP_APP/Contents/Info.plist\" 2>/dev/null || true; }"
             _ = await Shell.run("""
                 plutil -replace CFBundleIconFile -string AppIcon "$LAMP_APP/Contents/Info.plist" && \(iconName)
-                """, cwd: project.dir, env: ["LAMP_APP": project.builtURL.path]) { _ in }
+                """, cwd: project.dir, env: ["LAMP_APP": app.path]) { _ in }
         }
         // The app's own files (Assets/) ship inside it, where LampAssets finds them; the chat's attachments
         // don't. A binary built by an older Lamp (a new icon installed without a rebuild) still looks for
@@ -4744,7 +4759,7 @@ final class Store: ObservableObject {
             try fm.copyItem(at: assets, to: resources.appendingPathComponent(Sharing.Assets.folder))
         }
         try? fm.removeItem(at: resources.appendingPathComponent(Attachments.folder))
-        if BuildStamp.read(project.builtURL)?.isOutdated ?? true {
+        if BuildStamp.read(app)?.isOutdated ?? true {
             let attachments = project.dir.appendingPathComponent(Attachments.folder)
             if fm.fileExists(atPath: attachments.path) {
                 try fm.copyItem(at: attachments, to: resources.appendingPathComponent(Attachments.folder))
@@ -4752,7 +4767,7 @@ final class Store: ObservableObject {
         }
         // What the agent declared in capabilities.json, as the simulator's bundle gets its own (finishSimulatorBundle).
         let capabilities = Template.Capabilities.load(project)
-        capabilities.apply(to: project.builtURL, for: project)
+        capabilities.apply(to: app, for: project)
         // Told once: from now on the app opens at login and keeps running, which is the person's to undo.
         let told = project.dir.appendingPathComponent(".lamp/background-told")
         if capabilities.background == true, !FileManager.default.fileExists(atPath: told.path) {
@@ -4765,26 +4780,26 @@ final class Store: ObservableObject {
         // certificate one ("resource fork, Finder information, or similar detritus not allowed"), which is
         // how apps silently ended up ad hoc. Strip them first.
         // The chat the app shows inside its window, signed with the app.
-        try Sidebar.install(into: project.builtURL, for: project)
-        _ = await Shell.run("xattr -cr \"$LAMP_APP\"", cwd: project.dir, env: ["LAMP_APP": project.builtURL.path]) { _ in }
+        try Sidebar.install(into: app, for: project)
+        _ = await Shell.run("xattr -cr \"$LAMP_APP\"", cwd: project.dir, env: ["LAMP_APP": app.path]) { _ in }
         // A widget keeps its own signature inside the app's (AppSigning.command), with entitlements Lamp
         // writes here rather than takes from the build folder, where anything could have changed them.
-        let widget = Template.widgetURL(in: project.builtURL, of: project)
+        let widget = Template.widgetURL(in: app, of: project)
         let hasWidget = fm.fileExists(atPath: widget.path)
         let entitlements = project.dir.appendingPathComponent(".lamp/widget-entitlements.plist")
         if hasWidget { try Template.widgetEntitlementsPlist.write(to: entitlements, atomically: true, encoding: .utf8) }
         // A share extension the same way. It hands what it's given to the app through a folder they share,
         // which macOS allows only to a signature with a team, so it stays only in an app signed for one.
-        let share = Template.shareURL(in: project.builtURL, of: project)
+        let share = Template.shareURL(in: app, of: project)
         var hasShare = project.platform == .mac && fm.fileExists(atPath: share.path)
         let shareEntitlements = project.dir.appendingPathComponent(".lamp/share-entitlements.plist")
-        var signingEnv = ["LAMP_APP": project.builtURL.path, "LAMP_WIDGET": widget.path, "LAMP_WIDGET_ENTITLEMENTS": entitlements.path,
+        var signingEnv = ["LAMP_APP": app.path, "LAMP_WIDGET": widget.path, "LAMP_WIDGET_ENTITLEMENTS": entitlements.path,
                           "LAMP_SHARE": share.path, "LAMP_SHARE_ENTITLEMENTS": shareEntitlements.path]
-            .merging(Sidebar.signingEnvironment(for: project)) { $1 }
-        // Only a build that is this app is signed as it: anything that can write the build folder can rewrite an
-        // id after build.sh, and signed with Lamp's certificate under another app's id the build would get that
-        // app's permissions and keychain items. Read from the files last of all, just before the signing.
-        try Self.checkOwnIDs(in: project.builtURL, for: project)
+            .merging(Sidebar.signingEnvironment(in: app, for: project)) { $1 }
+        // Only a build that is this app is signed as it: an id rewritten after build.sh, signed with Lamp's
+        // certificate, would get that other app's permissions and keychain items. Read from the copy, which only
+        // Lamp writes, just before it's signed.
+        try Self.checkOwnIDs(in: app, for: project)
         // An app for both was signed by Xcode for the person's team; what was put in since is sealed with the
         // same certificate and the same entitlements, never Lamp's own, which could carry neither.
         let identity = project.platform == .universal ? (await Devices.signingIdentity(for: Devices.team) ?? "-") : await AppSigning.identity()
@@ -4794,7 +4809,7 @@ final class Store: ObservableObject {
             signed = await Shell.run(Sidebar.signingStep("codesign --force -s \"$LAMP_IDENTITY\"")
                                      + " && codesign --force --preserve-metadata=entitlements -s \"$LAMP_IDENTITY\" \"$LAMP_APP\" 2>&1",
                                      cwd: project.dir, env: signingEnv.merging(["LAMP_IDENTITY": identity]) { $1 }) { output.append($0) } == 0
-                && AppSigning.isCertificateSigned(project.builtURL)
+                && AppSigning.isCertificateSigned(app)
             if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
         } else {
             // A Mac app is signed for the person's Apple team when there is one: macOS runs an app's App Intents
@@ -4806,7 +4821,7 @@ final class Store: ObservableObject {
                 var env = signingEnv.merging(["LAMP_IDENTITY": team]) { $1 }
                 if hasWidget || hasShare {
                     let group = Template.macAppGroup(team: Devices.team, for: project)
-                    Self.setAppGroup(group, in: [project.builtURL] + (hasWidget ? [widget] : []) + (hasShare ? [share] : []))
+                    Self.setAppGroup(group, in: [app] + (hasWidget ? [widget] : []) + (hasShare ? [share] : []))
                     let appEntitlements = project.dir.appendingPathComponent(".lamp/app-entitlements.plist")
                     try Template.Capabilities().entitlementsPlist(container: nil, platform: .mac, appGroup: group)
                         .write(to: appEntitlements, atomically: true, encoding: .utf8)
@@ -4818,7 +4833,7 @@ final class Store: ObservableObject {
                 signed = await Shell.run(AppSigning.command(adHoc: false, widget: hasWidget, share: hasShare, ownKeychain: false,
                                                             appEntitlements: hasWidget || hasShare),
                                          cwd: project.dir, env: env) { output.append($0) } == 0
-                    && AppSigning.isCertificateSigned(project.builtURL) && (!hasWidget || AppSigning.isCertificateSigned(widget))
+                    && AppSigning.isCertificateSigned(app) && (!hasWidget || AppSigning.isCertificateSigned(widget))
                     && (!hasShare || AppSigning.isCertificateSigned(share))
                 if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
                 Self.rememberTeamSigning(failed: !signed, for: project)
@@ -4827,9 +4842,9 @@ final class Store: ObservableObject {
                 // Not signed for a team, the app's intents would be listed by macOS and never run: they're taken
                 // out. The widget's stay: its buttons run them inside the widget, which needs no team. Nor is
                 // there a shared folder: the widget sends its actions to the app over their connection instead.
-                try? fm.removeItem(at: project.builtURL.appendingPathComponent("Contents/Resources/Metadata.appintents"))
+                try? fm.removeItem(at: app.appendingPathComponent("Contents/Resources/Metadata.appintents"))
                 if hasWidget {
-                    Self.setAppGroup(nil, in: [project.builtURL, widget])
+                    Self.setAppGroup(nil, in: [app, widget])
                     try Template.widgetEntitlementsPlist.write(to: entitlements, atomically: true, encoding: .utf8)
                 }
                 // A share extension with no folder to leave things in would take what people share and lose it:
@@ -4847,7 +4862,7 @@ final class Store: ObservableObject {
             signed = await Shell.run(AppSigning.command(adHoc: false, widget: hasWidget),
                                      cwd: project.dir, env: signingEnv) { output.append($0) } == 0
             // Trust the result, not the exit status: check the app really carries the certificate.
-            if signed && !(AppSigning.isCertificateSigned(project.builtURL) && (!hasWidget || AppSigning.isCertificateSigned(widget))) {
+            if signed && !(AppSigning.isCertificateSigned(app) && (!hasWidget || AppSigning.isCertificateSigned(widget))) {
                 signed = false
                 output.append("codesign returned 0 but the app is not certificate-signed")
             }
@@ -4864,7 +4879,7 @@ final class Store: ObservableObject {
         }
 
         // What Lamp signed as the app's sidebar, the one program it will talk to there.
-        Sidebar.remember(project)
+        Sidebar.remember(project, signed: app)
 
         // What the copy being replaced was signed as, to notice when this build is signed differently. Only a copy
         // of this app, by its id: one of another id at the same place (an app of the same name since deleted, or
@@ -4873,18 +4888,15 @@ final class Store: ObservableObject {
         let previousID = NSDictionary(contentsOf: project.installedURL.appendingPathComponent("Contents/Info.plist"))?["CFBundleIdentifier"] as? String
         let replaced = previousID == project.bundleID ? await AppSigning.requirement(of: project.installedURL) : nil
 
-        try fm.createDirectory(at: Self.installDir, withIntermediateDirectories: true)
-        AppsLink.ensure()
-        let staging = Self.installDir.appendingPathComponent(".\(project.exe)-\(UUID().uuidString).app")
-        try fm.copyItem(at: project.builtURL, to: staging)
         // The app isn't running by now (a build quits it, an icon waits for it to close), but its widget's
         // process may be: ended here, last thing before the swap, so no program outlives the copy it came from.
         await WidgetProcess.end(for: project)
         if fm.fileExists(atPath: project.installedURL.path) {
-            _ = try fm.replaceItemAt(project.installedURL, withItemAt: staging)
+            _ = try fm.replaceItemAt(project.installedURL, withItemAt: app)
         } else {
-            try fm.moveItem(at: staging, to: project.installedURL)
+            try fm.moveItem(at: app, to: project.installedURL)
         }
+        swapped = true
         // What the app now runs when it opens is this build's sources (LiveReload compares a change with them).
         LiveReload.installed(project)
         // The installed app's classes hold every property it was built with, and its spare places are empty.

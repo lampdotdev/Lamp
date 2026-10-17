@@ -82,8 +82,8 @@ enum Sidebar {
         "{ [ ! -d \"$LAMP_SIDEBAR\" ] || \(sign) --options runtime --entitlements \"$LAMP_SIDEBAR_ENTITLEMENTS\" \"$LAMP_SIDEBAR\" 2>&1; }"
     }
 
-    static func signingEnvironment(for project: LampProject) -> [String: String] {
-        ["LAMP_SIDEBAR": extensionURL(in: project.builtURL).path, "LAMP_SIDEBAR_ENTITLEMENTS": entitlementsURL(for: project).path]
+    static func signingEnvironment(in app: URL, for project: LampProject) -> [String: String] {
+        ["LAMP_SIDEBAR": extensionURL(in: app).path, "LAMP_SIDEBAR_ENTITLEMENTS": entitlementsURL(for: project).path]
     }
 
     // MARK: Which extension is the real one
@@ -96,8 +96,8 @@ enum Sidebar {
     }()
 
     /// After signing: the hash of what was signed, the one thing a process can't fake about what it runs.
-    static func remember(_ project: LampProject) {
-        let appex = extensionURL(in: project.builtURL)
+    static func remember(_ project: LampProject, signed app: URL) {
+        let appex = extensionURL(in: app)
         var code: SecStaticCode?
         var info: CFDictionary?
         guard FileManager.default.fileExists(atPath: appex.path),
