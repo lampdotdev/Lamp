@@ -57,7 +57,7 @@ fi
 # The macOS 27 SDK makes @State a macro, and its compiler plugin only ships with full Xcode.
 # With just the Command Line Tools, build against the newest installed SDK that doesn't need it.
 # (Lamp does the same for the apps it builds: Shell.compatibleSDK in Sources/Lamp/Agent.swift.)
-dev="$(xcode-select -p 2>/dev/null)"
+dev="${DEVELOPER_DIR:-$(xcode-select -p 2>/dev/null)}"
 if [ -z "${SDKROOT:-}" ] && [ -d "$dev/SDKs" ] && [ ! -e "$dev/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]; then
   for sdk in "$dev"/SDKs/MacOSX*.sdk(/NnOn); do
     if ! grep -qs StateMacro /dev/null "$sdk"/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/*-macos.swiftinterface(N); then

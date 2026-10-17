@@ -167,10 +167,70 @@ enum PhoneTools {
         setenv("DEVELOPER_DIR", developer, 1)
     }
 
+    /// At launch: the Xcode chosen in Lamp's setup, else one Lamp finds by itself (`installedXcode`). Without
+    /// either, a Mac whose xcode-select names the Command Line Tools has no devicectl, so no phone shows in Try On.
     static func restoreChoice() {
-        if !Pretend.isMissing("xcode"), let saved = UserDefaults.standard.string(forKey: preference), isXcode(saved) {
+        guard !Pretend.isMissing("xcode") else { return }
+        if let saved = UserDefaults.standard.string(forKey: preference), isXcode(saved) {
             setenv("DEVELOPER_DIR", saved, 1)
+            return
         }
+        // Xcode's own check takes a moment, so it's made off the main thread; until it answers Lamp's tools are
+        // the Mac's own choice, as they were before.
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let found = installedXcode() else { return }
+            DispatchQueue.main.async {
+                if ProcessInfo.processInfo.environment["DEVELOPER_DIR"]?.isEmpty ?? true { setenv("DEVELOPER_DIR", found, 1) }
+            }
+        }
+    }
+
+    /// The Xcode Lamp uses without being asked, when nothing else names one: Lamp wasn't started with
+    /// `DEVELOPER_DIR` and xcode-select names the Command Line Tools (or nothing that works). It's kept to Lamp's
+    /// process, like a choice made in setup, and isn't saved, so it's looked for again at each launch.
+    /// Lamp runs this Xcode's tools as itself, so it is only ever one in /Applications, through every link: the
+    /// agent's commands can't write there (`Sandbox.profile`), where an Xcode in the home folder or elsewhere may be
+    /// one a command left. And only one that's ready to build: with its agreements not yet accepted, every build
+    /// would fail where the Command Line Tools would have built.
+    static func installedXcode(env: [String: String] = ProcessInfo.processInfo.environment,
+                               selected: () -> String = { Subprocess.runBlocking("/usr/bin/xcode-select", ["-p"], mergeErrors: false, timeout: 10)
+                                   .output.trimmingCharacters(in: .whitespacesAndNewlines) },
+                               applications: String = "/Applications",
+                               isReady: (String) -> Bool = { Subprocess.runBlocking($0 + "/usr/bin/xcodebuild", ["-checkFirstLaunchStatus"],
+                                                                                    env: ["DEVELOPER_DIR": $0], timeout: 30).ok }) -> String? {
+        guard env["DEVELOPER_DIR"]?.isEmpty ?? true else { return nil }
+        let current = selected()
+        guard current.isEmpty || !isXcode(current) else { return nil }
+        let root = realpath(applications, nil).map { defer { free($0) }; return String(cString: $0) } ?? applications
+        let apps = ((try? FileManager.default.contentsOfDirectory(atPath: applications)) ?? []).filter { $0.hasSuffix(".app") }
+        // Xcode.app first, as the one Apple's App Store puts there, then any other (Xcode-beta.app) by name.
+        let ordered = apps.filter { $0 == "Xcode.app" } + apps.filter { $0 != "Xcode.app" }.sorted()
+        for app in ordered {
+            guard let resolved = realpath(applications + "/" + app, nil) else { continue }
+            let bundle = String(cString: resolved)
+            free(resolved)
+            let developer = bundle + "/Contents/Developer"
+            guard (bundle as NSString).deletingLastPathComponent == root, staysInside(bundle),
+                  isXcode(developer), isReady(developer) else { continue }
+            return developer
+        }
+        return nil
+    }
+
+    /// Whether the developer folder and the tools Lamp runs from it as itself are the bundle's own, not links
+    /// out of it to a folder a command could write. Apple's Xcode has no link that leads outside itself.
+    private static func staysInside(_ bundle: String) -> Bool {
+        let developer = bundle + "/Contents/Developer"
+        func resolved(_ path: String) -> String? {
+            realpath(path, nil).map { defer { free($0) }; return String(cString: $0) }
+        }
+        guard resolved(developer) == developer else { return false }
+        for tool in ["xcodebuild", "simctl", "devicectl", "xcdevice", "git"] {
+            let path = developer + "/usr/bin/" + tool
+            guard FileManager.default.fileExists(atPath: path) else { continue }
+            guard let real = resolved(path), real.hasPrefix(bundle + "/") else { return false }
+        }
+        return true
     }
 
     struct OlderPhone: Identifiable {
