@@ -92,8 +92,16 @@ enum Checks {
         // signs it as the app and an id the agent changed would have it sign something as another.
         let copy: URL
         do {
-            copy = try Store.stage(project, in: run)
+            // Under the app's own name, as installed: macOS names the app by it when a check asks for a permission.
+            let staged = try Store.stage(project, in: run)
+            copy = run.appendingPathComponent("\(project.name).app")
+            try FileManager.default.moveItem(at: staged, to: copy)
             try Store.checkOwnIDs(in: copy, for: project)
+            // An app for both keeps the signature Xcode gave it (`sign`), which an edit to its Info.plist would break.
+            for key in ["CFBundleName", "CFBundleDisplayName"] where project.platform == .mac {
+                _ = await Subprocess.run("/usr/bin/plutil", ["-replace", key, "-string", project.name,
+                                                             copy.appendingPathComponent("Contents/Info.plist").path], timeout: 20)
+            }
         } catch {
             try? FileManager.default.removeItem(at: run)
             return .notRun("Lamp won't run this build as the app: \(error.localizedDescription)")
@@ -161,8 +169,10 @@ enum Checks {
         if let team = await Devices.signingIdentity(for: Devices.team),
            await Subprocess.run("/usr/bin/codesign", ["--force", "-s", team, app.path], timeout: 60).status == 0 { return }
         let identity = await AppSigning.identity()
-        guard identity != "-" else { return }   // ad hoc, as the build already is
-        _ = await Subprocess.run("/usr/bin/codesign", ["--force", "--keychain", AppSigning.keychain, "-s", identity, app.path], timeout: 60)
+        if identity != "-",
+           await Subprocess.run("/usr/bin/codesign", ["--force", "--keychain", AppSigning.keychain, "-s", identity, app.path], timeout: 60).status == 0 { return }
+        // Ad hoc when neither could sign, as `deploy` falls back: the name written into the copy must be sealed too.
+        _ = await Subprocess.run("/usr/bin/codesign", ["--force", "-s", "-", app.path], timeout: 60)
     }
 
     /// Takes the copy out of macOS's list of apps once it's gone, so it's never what opens the app's files or links.
