@@ -48,7 +48,8 @@ final class WidgetBuildTests: XCTestCase {
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
         let port = Template.widgetPort(for: project)
 
-        // The app's half, cut out of LampSupport.swift, with the two things it leans on there.
+        // The app's half, cut out of LampSupport.swift, with the things it leans on there. Its link handling
+        // (`LampWidgetLinks`) answers clicks on the widget, which a program run from the shell never gets.
         let support = try text("Sources/LampSupport.swift", in: project)
         let start = try XCTUnwrap(support.range(of: "enum LampWidget {"))
         let end = try XCTUnwrap(support.range(of: "#endif", range: start.upperBound..<support.endIndex))
@@ -58,6 +59,7 @@ final class WidgetBuildTests: XCTestCase {
         import CryptoKit
         import WidgetKit
         enum LampStore { static let folder = URL(fileURLWithPath: CommandLine.arguments[1]) }
+        enum LampWidgetLinks { static let start: Void = () }
         struct Tide: Codable { var height: Double }
         \(support[start.lowerBound..<end.lowerBound])
         LampWidget.share(Tide(height: 2.5), as: "tide")
