@@ -3898,6 +3898,7 @@ enum Template {
             try? picture.write(to: cover)
             try? NSStringFromRect(window.frame).write(to: coverFrame, atomically: true, encoding: .utf8)
             try? NSStringFromRect(LampSidebar.panelFrame(of: window) ?? .zero).write(to: coverChatFrame, atomically: true, encoding: .utf8)
+            LampSidebar.handOn(window)
         }
 
         /// The first window of a copy started for a change goes where the last one was, once.
@@ -3910,6 +3911,7 @@ enum Template {
                   NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) }) else { return }
             window.setFrame(frame, display: true)
             putBackWindow = window
+            LampSidebar.takeOn(window)
         }
 
         /// The window put back where the last copy's was, with the chat's width if it had the chat open then.
@@ -4351,7 +4353,7 @@ enum Template {
             set { UserDefaults.standard.set(Double(min(max(newValue, narrowest), widest)), forKey: widthKey) }
         }
         private static let openKey = "LampSidebarOpen"
-        fileprivate static let narrowedKey = "LampSidebarNarrowedBy"
+        private static let narrowedKey = "LampSidebarNarrowedBy"
         private static let coachedKey = "LampSidebarCoached"
         private static var pointID: String { (Bundle.main.bundleIdentifier ?? "") + ".lamp-sidebar" }
         @MainActor private static var restored = false
@@ -4375,13 +4377,9 @@ enum Template {
             /// Open, whether or not its panel is on screen this moment (it's taken down while the window goes in or
             /// out of full screen, or to the Dock).
             var wanted = false
-            /// How much narrower the window was made to leave room for the chat, given back when it closes. Kept in the
-            /// app's settings, since a change that reopens the app puts its window back at the narrowed size and the
-            /// copy that closes the chat is a new one.
-            var narrowedBy: CGFloat {
-                get { CGFloat(UserDefaults.standard.double(forKey: LampSidebar.narrowedKey)) }
-                set { UserDefaults.standard.set(Double(max(newValue, 0)), forKey: LampSidebar.narrowedKey) }
-            }
+            /// How much narrower the window was made to leave room for the chat, given back when it closes. A change
+            /// that reopens the app hands it on to the window put back in this one's place (`handOn`, `takeOn`).
+            var narrowedBy: CGFloat = 0
             var observers: [NSObjectProtocol] = []
 
             init(host: EXHostViewController, card: NSView, window: NSWindow) {
@@ -4517,6 +4515,7 @@ enum Template {
                 host.configuration = .init(appExtension: identity, sceneID: "chat")
                 let made = card(for: host, in: window)
                 let chat = Chat(host: host, card: made.card, window: window)
+                chat.narrowedBy = owed.removeValue(forKey: ObjectIdentifier(window)) ?? 0
                 chat.pane = made.pane
                 chats[ObjectIdentifier(window)] = chat
                 follow(window, chat)
@@ -4533,6 +4532,21 @@ enum Template {
             giveBackWidth(chat)
             LampMagic.refit(window)
             coach(window)
+        }
+
+        /// The width a window was made narrower by, handed on as the app quits for a change (`LampMagic.leaveCover`)
+        /// to the window put back in its place (`LampMagic.putBack`), whose chat gives it back when it closes. Only
+        /// that window takes it: another window of the app was never narrowed.
+        @MainActor static func handOn(_ window: NSWindow) {
+            UserDefaults.standard.set(Double(chat(in: window)?.narrowedBy ?? 0), forKey: narrowedKey)
+        }
+
+        @MainActor private static var owed: [ObjectIdentifier: CGFloat] = [:]
+
+        @MainActor static func takeOn(_ window: NSWindow) {
+            let width = CGFloat(UserDefaults.standard.double(forKey: narrowedKey))
+            UserDefaults.standard.removeObject(forKey: narrowedKey)
+            if width > 0 { owed[ObjectIdentifier(window)] = width }
         }
 
         /// A window made narrower for the chat gets its width back once the chat is closed; in full screen, once it
@@ -4707,8 +4721,6 @@ enum Template {
                 panel.orderFront(nil)
             }
             on(NSWindow.willCloseNotification) { chat in
-                // The window that was narrowed is gone: no other window is owed its width.
-                chat.narrowedBy = 0
                 hidePanel(chat)
                 chat.observers.forEach { NotificationCenter.default.removeObserver($0) }
                 if let window = chat.window { chats[ObjectIdentifier(window)] = nil }
