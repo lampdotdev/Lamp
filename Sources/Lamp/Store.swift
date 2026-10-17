@@ -6117,7 +6117,7 @@ final class Store: ObservableObject {
         guard !turn.look.inProgress else { return (200, ["text": "Lamp is already building the app. Wait for that result, then run the checks."]) }
         turn.look.inProgress = true
         defer { turn.look.inProgress = false }
-        try? Template.writeSupport(for: project)
+        try? await writeOwnFiles(project, all: false)
         guard Checks.canRun(project) else { return (200, ["text": Checks.report(await runChecks(project))]) }
         // Built whole, never put into the open app: the person's copy isn't the agent's to change mid-work. Nor is
         // it counted as built: these sources are still new to the app on screen, so the next look or the end of the

@@ -86,23 +86,26 @@ enum Checks {
             return .notRun("The app was built by an earlier Lamp, which couldn't run checks. It's rebuilt with your next change.")
         }
         let run = folder.appendingPathComponent(UUID().uuidString)
-        let copy = run.appendingPathComponent(built.lastPathComponent)
         let results = run.appendingPathComponent("results.json")
+        // Staged and checked as an install is (`Store.stage`, `checkContained`, `checkOwnIDs`): a copy only Lamp
+        // writes, that leads nowhere outside itself, and whose app and pieces carry this app's own ids, since Lamp
+        // signs it as the app and an id the agent changed would have it sign something as another.
+        let copy: URL
         do {
-            try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true)
-            try FileManager.default.copyItem(at: built, to: copy)
+            copy = try Store.stage(project, in: run)
+            try Store.checkOwnIDs(in: copy, for: project)
         } catch {
             try? FileManager.default.removeItem(at: run)
-            return .notRun("Lamp couldn't make a copy of the app to run its checks: \(error.localizedDescription)")
-        }
-        // Only a build that is this app: Lamp signs the copy as the app, and an id the agent changed would have it
-        // sign something as another app.
-        let id = NSDictionary(contentsOf: copy.appendingPathComponent("Contents/Info.plist"))?["CFBundleIdentifier"] as? String
-        guard id == project.bundleID else {
-            await forget(run, copy: copy)
-            return .notRun("The app's build doesn't carry its own id (\(id ?? "none")), so Lamp won't run it as the app.")
+            return .notRun("Lamp won't run this build as the app: \(error.localizedDescription)")
         }
         await sign(copy, for: project)
+        do {
+            try Store.checkContained(copy)
+            try Store.checkOwnIDs(in: copy, for: project, signed: true)
+        } catch {
+            await forget(run, copy: copy)
+            return .notRun("Lamp won't run this build as the app: \(error.localizedDescription)")
+        }
         running[project.id] = copy
         defer { running[project.id] = nil }
         let config = NSWorkspace.OpenConfiguration()
