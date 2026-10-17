@@ -56,4 +56,92 @@ final class DeployOwnIDTests: XCTestCase {
         try FileManager.default.createSymbolicLink(at: built, withDestinationURL: real)
         XCTAssertThrowsError(try Store.stage(project, in: apps))
     }
+
+    /// The build can be swapped for a link after any look at it, so the copy is what's checked: a staged copy
+    /// that is itself a link into the app's folder is refused.
+    func testAStagedCopyThatIsALinkIsRefused() throws {
+        let project = LampProject(id: "tallymarks", name: "Tally Marks", exe: "TallyMarks", dir: root.appendingPathComponent("tallymarks"))
+        try bundle(project.builtURL, id: project.bundleID)
+        let apps = root.appendingPathComponent("Apps")
+        try FileManager.default.createDirectory(at: apps, withIntermediateDirectories: true)
+        let copy = apps.appendingPathComponent(".TallyMarks-staged.app")
+        try FileManager.default.createSymbolicLink(at: copy, withDestinationURL: project.builtURL)
+        XCTAssertNoThrow(try Store.checkOwnIDs(in: copy, for: project))
+        XCTAssertThrowsError(try Store.checkContained(copy))
+    }
+
+    /// A signature made while Info.plist named another app still names it after the file is put back, and the
+    /// seal no longer matches: the signed copy is read again before it's installed and refused.
+    func testASignatureMadeAsAnotherAppIsRefused() throws {
+        let project = LampProject(id: "tallymarks", name: "Tally Marks", exe: "TallyMarks", dir: root.appendingPathComponent("tallymarks"))
+        let other = LampProject(id: "pocketnotes", name: "Pocket Notes", exe: "PocketNotes", dir: root.appendingPathComponent("pocketnotes"))
+        let app = try executableBundle(at: root.appendingPathComponent("TallyMarks.app"), id: project.bundleID)
+        XCTAssertEqual(try sign(app, entitlements: nil), 0)
+        XCTAssertNoThrow(try Store.checkOwnIDs(in: app, for: project, signed: true))
+
+        try info(app, id: other.bundleID)
+        XCTAssertEqual(try sign(app, entitlements: nil), 0)
+        try info(app, id: project.bundleID)
+        XCTAssertNoThrow(try Store.checkOwnIDs(in: app, for: project))
+        XCTAssertThrowsError(try Store.checkOwnIDs(in: app, for: project, signed: true))
+    }
+
+    /// The Mac half of an app for both is signed with Lamp's entitlements, not with what the build's own
+    /// signature claims: anything in the app's folder can sign the build with another app's group.
+    func testAnAppForBothIsSignedWithLampsEntitlementsOnly() throws {
+        let project = LampProject(id: "tallymarks", name: "Tally Marks", exe: "TallyMarks", dir: root.appendingPathComponent("tallymarks"))
+        let app = try executableBundle(at: root.appendingPathComponent("TallyMarks.app"), id: project.bundleID)
+        let claimed = root.appendingPathComponent("claimed.plist")
+        try PropertyListSerialization.data(fromPropertyList: ["com.apple.security.application-groups": ["ABCDE12345.dev.lamp.app.pocketnotes"],
+                                                              "com.apple.security.cs.disable-library-validation": true],
+                                           format: .xml, options: 0).write(to: claimed)
+        XCTAssertEqual(try sign(app, entitlements: claimed), 0)
+        XCTAssertNotNil(try entitlements(of: app)["com.apple.security.application-groups"])
+
+        let lamps = root.appendingPathComponent("app-entitlements.plist")
+        try Template.Capabilities.load(project).universalMacSigningPlist(for: project, team: "ABCDE12345").write(to: lamps, atomically: true, encoding: .utf8)
+        XCTAssertEqual(try shell(AppSigning.universalCommand, ["LAMP_APP": app.path, "LAMP_IDENTITY": "-", "LAMP_APP_ENTITLEMENTS": lamps.path,
+                                                               "LAMP_SIDEBAR": app.appendingPathComponent("Contents/Extensions/None.appex").path]), 0)
+        let signed = try entitlements(of: app)
+        XCTAssertNil(signed["com.apple.security.application-groups"])
+        XCTAssertNil(signed["com.apple.security.cs.disable-library-validation"])
+        XCTAssertEqual(signed["com.apple.developer.team-identifier"] as? String, "ABCDE12345")
+        XCTAssertEqual(signed["com.apple.application-identifier"] as? String, "ABCDE12345." + project.bundleID)
+    }
+
+    private func info(_ app: URL, id: String) throws {
+        try PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": id, "CFBundleExecutable": "TallyMarks",
+                                                              "CFBundlePackageType": "APPL"], format: .xml, options: 0)
+            .write(to: app.appendingPathComponent("Contents/Info.plist"))
+    }
+
+    /// A bundle codesign will sign: a copy of a small system program as its executable.
+    private func executableBundle(at app: URL, id: String) throws -> URL {
+        try FileManager.default.createDirectory(at: app.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: "/usr/bin/true"), to: app.appendingPathComponent("Contents/MacOS/TallyMarks"))
+        try info(app, id: id)
+        return app
+    }
+
+    private func sign(_ app: URL, entitlements: URL?) throws -> Int32 {
+        try shell("codesign --force -s - \(entitlements.map { "--entitlements '\($0.path)'" } ?? "") \"$LAMP_APP\"", ["LAMP_APP": app.path])
+    }
+
+    private func entitlements(of app: URL) throws -> [String: Any] {
+        let out = root.appendingPathComponent("entitlements-\(UUID().uuidString).plist")
+        _ = try shell("codesign -d --entitlements \"$OUT\" --xml \"$LAMP_APP\"", ["LAMP_APP": app.path, "OUT": out.path])
+        guard let data = try? Data(contentsOf: out), !data.isEmpty else { return [:] }
+        return try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] ?? [:]
+    }
+
+    @discardableResult
+    private func shell(_ command: String, _ env: [String: String]) throws -> Int32 {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-c", command]
+        process.environment = ProcessInfo.processInfo.environment.merging(env) { $1 }
+        try process.run()
+        process.waitUntilExit()
+        return process.terminationStatus
+    }
 }

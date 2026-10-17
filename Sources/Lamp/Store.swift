@@ -1,6 +1,7 @@
 import SwiftUI
 import LampSidebarKit
 import CryptoKit
+import Security
 import AppKit
 import LampFileLook
 
@@ -4687,8 +4688,9 @@ final class Store: ObservableObject {
     }
 
     /// Throws unless the built app and each piece Lamp signs inside it (the chat, a widget, a share extension)
-    /// carry the ids Lamp gave them.
-    nonisolated static func checkOwnIDs(in app: URL, for project: LampProject) throws {
+    /// carry the ids Lamp gave them. Once it's `signed`, each signature must be whole and name the same id: a
+    /// signature made while a file said something else wouldn't.
+    nonisolated static func checkOwnIDs(in app: URL, for project: LampProject, signed: Bool = false) throws {
         let fm = FileManager.default
         let pieces = [(app, project.bundleID),
                       (Sidebar.extensionURL(in: app), Sidebar.bundleID(for: project)),
@@ -4697,6 +4699,14 @@ final class Store: ObservableObject {
         for (bundle, expected) in pieces where bundle == app || fm.fileExists(atPath: bundle.path) {
             let id = NSDictionary(contentsOf: bundle.appendingPathComponent("Contents/Info.plist"))?["CFBundleIdentifier"] as? String
             guard id == expected else { throw ForeignBuild(id: id) }
+            guard signed else { continue }
+            var code: SecStaticCode?
+            var info: CFDictionary?
+            guard SecStaticCodeCreateWithPath(bundle as CFURL, [], &code) == errSecSuccess, let code,
+                  SecStaticCodeCheckValidity(code, [], nil) == errSecSuccess,
+                  SecCodeCopySigningInformation(code, [], &info) == errSecSuccess else { throw ForeignBuild(id: nil) }
+            let signedID = (info as? [String: Any])?[kSecCodeInfoIdentifier as String] as? String
+            guard signedID == expected else { throw ForeignBuild(id: signedID) }
         }
     }
 
@@ -4706,10 +4716,10 @@ final class Store: ObservableObject {
 
     /// A copy of the app's build in `folder`, hidden until it's swapped in, for Lamp alone to finish and sign.
     /// A copy keeps symbolic links as links, so one that leads out of the copy (or a build that is itself a link)
-    /// would have Lamp change, read and sign files the agent can still write: such a build isn't staged.
+    /// would have Lamp change, read and sign files the agent can still write: such a build isn't staged. The copy
+    /// is what's checked, not the build, which can be swapped for a link between a look at it and the copy.
     nonisolated static func stage(_ project: LampProject, in folder: URL) throws -> URL {
         let fm = FileManager.default
-        if (try? fm.destinationOfSymbolicLink(atPath: project.builtURL.path)) != nil { throw LinkedBuild() }
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         let copy = folder.appendingPathComponent(".\(project.exe)-\(UUID().uuidString).app")
         try fm.copyItem(at: project.builtURL, to: copy)
@@ -4722,6 +4732,7 @@ final class Store: ObservableObject {
     /// its links too.
     nonisolated static func checkContained(_ app: URL) throws {
         let fm = FileManager.default
+        if (try? fm.destinationOfSymbolicLink(atPath: app.path)) != nil { throw LinkedBuild() }
         let inside = app.standardizedFileURL.path + "/"
         for case let file as URL in fm.enumerator(at: app, includingPropertiesForKeys: nil) ?? FileManager.DirectoryEnumerator() {
             guard let target = try? fm.destinationOfSymbolicLink(atPath: file.path) else { continue }
@@ -4829,14 +4840,19 @@ final class Store: ObservableObject {
         try Self.checkContained(app)
         try Self.checkOwnIDs(in: app, for: project)
         // An app for both was signed by Xcode for the person's team; what was put in since is sealed with the
-        // same certificate and the same entitlements, never Lamp's own, which could carry neither.
+        // same certificate and the entitlements Xcode was given, never Lamp's own certificate, which could carry
+        // neither.
         let identity = project.platform == .universal ? (await Devices.signingIdentity(for: Devices.team) ?? "-") : await AppSigning.identity()
         var signed = false
         if project.platform == .universal, identity != "-" {
             var output: [String] = []
-            signed = await Shell.run(Sidebar.signingStep("codesign --force -s \"$LAMP_IDENTITY\"")
-                                     + " && codesign --force --preserve-metadata=entitlements -s \"$LAMP_IDENTITY\" \"$LAMP_APP\" 2>&1",
-                                     cwd: project.dir, env: signingEnv.merging(["LAMP_IDENTITY": identity]) { $1 }) { output.append($0) } == 0
+            // With Lamp's own entitlements, never those of the build's signature, which anything in the app's
+            // folder could have signed it with.
+            let appEntitlements = signing.appendingPathComponent("app-entitlements.plist")
+            try capabilities.universalMacSigningPlist(for: project, team: Devices.team).write(to: appEntitlements, atomically: true, encoding: .utf8)
+            signed = await Shell.run(AppSigning.universalCommand,
+                                     cwd: project.dir, env: signingEnv.merging(["LAMP_IDENTITY": identity,
+                                                                                "LAMP_APP_ENTITLEMENTS": appEntitlements.path]) { $1 }) { output.append($0) } == 0
                 && AppSigning.isCertificateSigned(app)
             if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
         } else {
@@ -4905,6 +4921,10 @@ final class Store: ObservableObject {
                 log(project, .status, AppSigning.adHocNotice(for: project.name))
             }
         }
+
+        // Read once more from what was signed, last thing before the swap: the copy, its ids and its signatures.
+        try Self.checkContained(app)
+        try Self.checkOwnIDs(in: app, for: project, signed: true)
 
         // What Lamp signed as the app's sidebar, the one program it will talk to there.
         Sidebar.remember(project, signed: app)
