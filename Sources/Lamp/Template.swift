@@ -76,17 +76,6 @@ enum Template {
         return token
     }
 
-    /// A second secret for iPhone apps, which only ever reaches the phone inside the build (over the cable
-    /// or Xcode's install), never over the network: what the keys an app keeps are sealed with, so a copy of
-    /// the Wi‑Fi traffic, token and all, gives nobody the key.
-    static func phoneSecret(for project: LampProject) -> String {
-        let url = project.dir.appendingPathComponent(".lamp/phone-secret")
-        if let secret = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !secret.isEmpty { return secret }
-        let secret = UUID().uuidString + UUID().uuidString
-        try? secret.write(to: url, atomically: true, encoding: .utf8)
-        return secret
-    }
-
     /// The three files Lamp owns in every app, written afresh before every build: LampSupport.swift, build.sh
     /// and Package.swift. The last two are what the build runs (the shell runs build.sh, and SwiftPM compiles
     /// and executes Package.swift as a program before building anything), so nothing the agent, or something
@@ -94,6 +83,8 @@ enum Template {
     /// a failure to build, since the old file would be what runs.
     static func writeOwnedFiles(for project: LampProject) throws {
         try writeSupport(for: project)
+        // An earlier Lamp sealed the AI keys it gave a phone with this; it unlocks nothing now.
+        try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(".lamp/phone-secret"))
         let widget = hasWidget(project)
         let share = hasShare(project)
         // The simulator build's entitlements, for build.sh to put in the binary (see iPhoneBuildSh), and each
@@ -185,7 +176,6 @@ enum Template {
             .replacingOccurrences(of: "{{HOST}}", with: Edition.bundleID)
             .replacingOccurrences(of: "{{APPS}}", with: Edition.supportFolder.appendingPathComponent("Apps").path)
             .replacingOccurrences(of: "{{MACHOST}}", with: Devices.macHost)
-            .replacingOccurrences(of: "{{PHONE_SECRET}}", with: project.platform.hasIOS ? phoneSecret(for: project) : "")
             .replacingOccurrences(of: "{{WIDGET_PORT}}", with: String(widgetPort(for: project)))
             .replacingOccurrences(of: "{{WIDGET_TOKEN}}", with: project.platform == .mac ? widgetToken(for: project) : "")
             .replacingOccurrences(of: "{{SIDEBAR_PORT}}", with: String(sidebarPort(for: project)))
@@ -1805,6 +1795,7 @@ enum Template {
             ("App.entitlements", capabilities.entitlementsPlist(for: project, platform: .ios, appGroup: widget || share ? group : nil)),
             ("\(project.exe).xcodeproj/xcshareddata/xcschemes/\(project.exe).xcscheme", deviceScheme),
             ("Info.plist", deviceInfoPlist),
+            ("LampForgetKeys.c", forgetKeptKeysC),
             ("Assets.xcassets/Contents.json", #"{ "info": { "author": "xcode", "version": 1 } }"#),
             ("Assets.xcassets/AppIcon.appiconset/Contents.json", hasIcon
                 ? #"{ "images": [ { "filename": "AppIcon.png", "idiom": "universal", "platform": "ios", "size": "1024x1024" } ], "info": { "author": "xcode", "version": 1 } }"#
@@ -1884,12 +1875,14 @@ enum Template {
     		A00000000000000000000007 /* Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; name = Sources; path = ../../Sources; sourceTree = "<group>"; };
     		A00000000000000000000008 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
     		A00000000000000000000013 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
-    		A00000000000000000000009 = {isa = PBXGroup; children = (A00000000000000000000007 /* Sources */, A00000000000000000000002 /* Assets */, A00000000000000000000004 /* Assets.xcassets */, A00000000000000000000005 /* Info.plist */, A00000000000000000000013 /* App.entitlements */, A0000000000000000000000A /* Products */); sourceTree = "<group>"; };
+    		A00000000000000000000014 /* LampForgetKeys.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = LampForgetKeys.c; sourceTree = "<group>"; };
+    		A00000000000000000000015 /* LampForgetKeys.c in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000014 /* LampForgetKeys.c */; };
+    		A00000000000000000000009 = {isa = PBXGroup; children = (A00000000000000000000007 /* Sources */, A00000000000000000000002 /* Assets */, A00000000000000000000004 /* Assets.xcassets */, A00000000000000000000005 /* Info.plist */, A00000000000000000000013 /* App.entitlements */, A00000000000000000000014 /* LampForgetKeys.c */, A0000000000000000000000A /* Products */); sourceTree = "<group>"; };
     		A0000000000000000000000A /* Products */ = {isa = PBXGroup; children = (A00000000000000000000006 /* {{EXE}}.app */); name = Products; sourceTree = "<group>"; };
     		A0000000000000000000000B /* {{EXE}} */ = {isa = PBXNativeTarget; buildConfigurationList = A0000000000000000000000C; buildPhases = (A0000000000000000000000D /* Sources */, A00000000000000000000008 /* Frameworks */, A0000000000000000000000E /* Resources */); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (A00000000000000000000007 /* Sources */); name = "{{EXE}}"; packageProductDependencies = (); productName = "{{EXE}}"; productReference = A00000000000000000000006 /* {{EXE}}.app */; productType = "com.apple.product-type.application"; };
     		A0000000000000000000000F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; TargetAttributes = {A0000000000000000000000B = {CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = A00000000000000000000010; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A00000000000000000000009; minimizedProjectReferenceProxies = 1; preferredProjectObjectVersion = 77; productRefGroup = A0000000000000000000000A /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A0000000000000000000000B /* {{EXE}} */); };
     		A0000000000000000000000E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* Assets in Resources */, A00000000000000000000003 /* Assets.xcassets in Resources */); runOnlyForDeploymentPostprocessing = 0; };
-    		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+    		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000015 /* LampForgetKeys.c in Sources */); runOnlyForDeploymentPostprocessing = 0; };
     		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MTL_ENABLE_DEBUG_INFO = NO; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
     		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = App.entitlements; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
     		A00000000000000000000010 /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000011 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
@@ -1918,6 +1911,29 @@ enum Template {
           </BuildableProductRunnable>
        </LaunchAction>
     </Scheme>
+
+    """
+
+    /// Part of every phone build, run as the app loads, before any of its own code: an app built by an earlier
+    /// Lamp kept the person's AI keys in its Keychain to answer away from the Mac. Phone apps use AI only through
+    /// Lamp now, so the copy goes, and the app's own code (the agent's) never gets the chance to read it.
+    static let forgetKeptKeysC = """
+    // Written by Lamp before every phone build; changes here are replaced.
+    #include <TargetConditionals.h>
+    #if TARGET_OS_IOS && !TARGET_OS_SIMULATOR
+    #include <CoreFoundation/CoreFoundation.h>
+    #include <Security/Security.h>
+
+    __attribute__((constructor)) static void lampForgetKeptKeys(void) {
+        CFBundleRef bundle = CFBundleGetMainBundle();
+        CFStringRef service = bundle ? CFBundleGetIdentifier(bundle) : NULL;
+        const void *keys[] = { kSecClass, kSecAttrService, kSecAttrAccount };
+        const void *values[] = { kSecClassGenericPassword, service ? service : CFSTR("lamp"), CFSTR("lamp-ai-keys") };
+        CFDictionaryRef query = CFDictionaryCreate(NULL, keys, values, 3, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+        SecItemDelete(query);
+        CFRelease(query);
+    }
+    #endif
 
     """
 
@@ -1968,12 +1984,14 @@ enum Template {
     		A00000000000000000000007 /* Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; name = Sources; path = ../../Sources; sourceTree = "<group>"; };
     		A00000000000000000000008 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
     		A00000000000000000000013 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
-    		A00000000000000000000009 = {isa = PBXGroup; children = (A00000000000000000000007 /* Sources */, A00000000000000000000002 /* Assets */, A00000000000000000000004 /* Assets.xcassets */, A00000000000000000000005 /* Info.plist */, A00000000000000000000013 /* App.entitlements */, A0000000000000000000000A /* Products */); sourceTree = "<group>"; };
+    		A00000000000000000000014 /* LampForgetKeys.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = LampForgetKeys.c; sourceTree = "<group>"; };
+    		A00000000000000000000015 /* LampForgetKeys.c in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000014 /* LampForgetKeys.c */; };
+    		A00000000000000000000009 = {isa = PBXGroup; children = (A00000000000000000000007 /* Sources */, A00000000000000000000002 /* Assets */, A00000000000000000000004 /* Assets.xcassets */, A00000000000000000000005 /* Info.plist */, A00000000000000000000013 /* App.entitlements */, A00000000000000000000014 /* LampForgetKeys.c */, A0000000000000000000000A /* Products */); sourceTree = "<group>"; };
     		A0000000000000000000000A /* Products */ = {isa = PBXGroup; children = (A00000000000000000000006 /* {{EXE}}.app */); name = Products; sourceTree = "<group>"; };
     		A0000000000000000000000B /* {{EXE}} */ = {isa = PBXNativeTarget; buildConfigurationList = A0000000000000000000000C; buildPhases = (A0000000000000000000000D /* Sources */, A00000000000000000000008 /* Frameworks */, A0000000000000000000000E /* Resources */); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (A00000000000000000000007 /* Sources */); name = "{{EXE}}"; packageProductDependencies = (); productName = "{{EXE}}"; productReference = A00000000000000000000006 /* {{EXE}}.app */; productType = "com.apple.product-type.application"; };
     		A0000000000000000000000F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; TargetAttributes = {A0000000000000000000000B = {CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = A00000000000000000000010; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A00000000000000000000009; minimizedProjectReferenceProxies = 1; preferredProjectObjectVersion = 77; productRefGroup = A0000000000000000000000A /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A0000000000000000000000B /* {{EXE}} */); };
     		A0000000000000000000000E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* Assets in Resources */, A00000000000000000000003 /* Assets.xcassets in Resources */); runOnlyForDeploymentPostprocessing = 0; };
-    		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+    		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000015 /* LampForgetKeys.c in Sources */); runOnlyForDeploymentPostprocessing = 0; };
     		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MACOSX_DEPLOYMENT_TARGET = 14.0; MTL_ENABLE_DEBUG_INFO = NO; SDKROOT = auto; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
     		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {"ASSETCATALOG_COMPILER_APPICON_NAME[sdk=iphone*]" = AppIcon; CODE_SIGN_ENTITLEMENTS = App.entitlements; "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "App-macOS.entitlements"; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; "INFOPLIST_FILE[sdk=macosx*]" = "Info-macOS.plist"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); "LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = ("$(inherited)", "@executable_path/../Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
     		A00000000000000000000010 /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000011 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
@@ -3087,341 +3105,6 @@ enum Template {
     import WatchConnectivity
     /// A picture: NSImage on the Mac, UIImage on iPhone and iPad.
     typealias LampImage = UIImage
-    #endif
-
-    #if os(iOS) && !targetEnvironment(simulator)
-    /// An app on the person's own phone, away from the Mac: Lamp answers its AI whenever the Mac is reachable,
-    /// and otherwise the app asks the provider itself with the person's own key, kept in the phone's Keychain
-    /// since the last time it saw Lamp (Settings → Experimental in Lamp decides whether it may keep one). The
-    /// prompt is the same either way: the fencing and the dates are made here. What's spent this way doesn't
-    /// show in Lamp, and using the Mac's other apps still needs the Mac.
-    enum LampDirect {
-        private static let keychainAccount = "lamp-ai-keys"
-
-        /// Whether the Mac answered lately, shared by every call so two at once don't each decide for
-        /// themselves: one probe at a time, and all callers wait for its answer.
-        private actor Reach {
-            private var lastProbe = Date.distantPast
-            private var reachable = true
-            private var probe: Task<Bool, Never>?
-
-            func useMac(token: String) async -> Bool {
-                if let probe { return await probe.value }
-                if Date().timeIntervalSince(lastProbe) < 30 { return reachable }
-                let task = Task<Bool, Never> { await LampDirect.probe(token: token) }
-                probe = task
-                let answer = await task.value
-                probe = nil
-                lastProbe = Date()
-                reachable = answer
-                return answer
-            }
-
-            /// A call to the Mac just failed to connect: the next caller checks again rather than trusting
-            /// the last answer.
-            func lost() { lastProbe = .distantPast; reachable = false }
-        }
-        private static let reach = Reach()
-
-        /// Whether to go through Lamp now: looked up at most every half minute with a quick call that also
-        /// refreshes the keys while the Mac is there.
-        static func useMac(token: String) async -> Bool { await reach.useMac(token: token) }
-
-        /// Whether an error from the Mac means the Mac couldn't be reached at all (as opposed to answering
-        /// with a failure), so the phone should answer for itself.
-        static func unreachable(_ error: Error) -> Bool {
-            guard let error = error as? URLError else { return false }
-            return [.cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .notConnectedToInternet, .networkConnectionLost,
-                    .timedOut, .internationalRoamingOff, .dataNotAllowed].contains(error.code)
-        }
-
-        static func lost() async { await reach.lost() }
-
-        private static func probe(token: String) async -> Bool {
-            var request = URLRequest(url: URL(string: lampGateway + "/ai/keys")!)
-            request.httpMethod = "POST"
-            request.timeoutInterval = 4
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = Data("{}".utf8)
-            do {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                switch (response as? HTTPURLResponse)?.statusCode {
-                case 200:
-                    // Sealed with the secret that came with the build, never over the air: a copy of this
-                    // traffic gives nobody the key.
-                    if let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let sealed = (reply["sealed"] as? String).flatMap({ Data(base64Encoded: $0) }),
-                       let box = try? AES.GCM.SealedBox(combined: sealed),
-                       let opened = try? AES.GCM.open(box, using: sealingKey),
-                       let keys = try? JSONSerialization.jsonObject(with: opened) as? [String: Any] {
-                        save(keys)
-                    }
-                case 403, 404:
-                    save(nil)   // the person turned keeping a key off, or there's no key any more: it goes
-                default:
-                    break   // a passing failure: the copy stays
-                }
-                return true
-            } catch {
-                return false
-            }
-        }
-
-        private static var sealingKey: SymmetricKey { SymmetricKey(data: SHA256.hash(data: Data("{{PHONE_SECRET}}".utf8))) }
-
-        /// The keys and model choices the phone keeps, or nil when it has none.
-        static var keys: [String: Any]? {
-            let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Bundle.main.bundleIdentifier ?? "lamp",
-                                        kSecAttrAccount as String: keychainAccount, kSecReturnData as String: true]
-            var item: CFTypeRef?
-            guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
-            return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        }
-
-        private static func save(_ keys: [String: Any]?) {
-            let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Bundle.main.bundleIdentifier ?? "lamp",
-                                        kSecAttrAccount as String: keychainAccount]
-            SecItemDelete(query as CFDictionary)
-            guard let keys, let data = try? JSONSerialization.data(withJSONObject: keys) else { return }
-            var add = query
-            add[kSecValueData as String] = data
-            add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-            SecItemAdd(add as CFDictionary, nil)
-        }
-
-        /// Answers what the gateway would, with the provider directly.
-        static func handle(_ path: String, _ body: [String: Any]) async throws -> [String: Any] {
-            guard let keys, let key = keys["openrouter"] as? String else {
-                throw LampAI.Failure(message: "Couldn't reach Lamp, and this phone has no key of its own yet. Open the app once while Lamp is reachable.",
-                                     needsSetup: .text)
-            }
-            // What the phone carries answers all three.
-            if path == "/ai/status" { return ["text": true, "decisions": true, "pictures": true] }
-            fputs("LampAI \(path): Lamp isn't reachable, using the key kept on this phone\n", stderr)
-            switch path {
-            case "/ai":
-                let text = try await complete(body, key: key, model: keys["text_model"] as? String ?? "anthropic/claude-sonnet-5.5")
-                return ["text": text]
-            case "/ai/decide":
-                if keys["decision_provider"] as? String == "text" {
-                    return ["answers": try await decideByText(body, key: key, model: keys["text_model"] as? String ?? "anthropic/claude-sonnet-5.5")]
-                }
-                return ["answers": try await decide(body, keys: keys)]
-            case "/ai/image":
-                return ["image": try await image(body, key: key, model: keys["image_model"] as? String ?? "google/gemini-3.1-flash-image"),
-                        "media_type": "image/png"]
-            default:
-                throw LampAI.Failure(message: "Using the Mac's other apps needs this phone to reach Lamp. Try again on the same Wi‑Fi as the Mac.")
-            }
-        }
-
-        private static func complete(_ body: [String: Any], key: String, model: String) async throws -> String {
-            let prompt = body["prompt"] as? String ?? ""
-            var system = body["system"] as? String ?? ""
-            let json = body["json"] as? Bool ?? false
-            if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
-            var text = try await chat(prompt: prompt, system: system, images: body["images"] as? [[String: String]] ?? [], json: json, key: key, model: model)
-            guard json else { return text }
-            // A JSON reply that doesn't parse is useless to the app: once more, saying so.
-            text = unfenced(text)
-            if !isJSON(text) {
-                let again = "\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."
-                text = unfenced(try await chat(prompt: again, system: system, images: body["images"] as? [[String: String]] ?? [], json: true, key: key, model: model))
-                if !isJSON(text) { throw LampAI.Failure(message: "The AI's reply wasn't valid JSON, even on a second try. Ask for less at once.") }
-            }
-            return text
-        }
-
-        private static func chat(prompt: String, system: String, images: [[String: String]], json: Bool, key: String, model: String) async throws -> String {
-            var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
-            request.httpMethod = "POST"
-            request.timeoutInterval = 120
-            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Lamp", forHTTPHeaderField: "X-Title")
-            var messages: [[String: Any]] = []
-            if !system.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { messages.append(["role": "system", "content": system]) }
-            let content: [[String: Any]] = [["type": "text", "text": prompt]] + images.compactMap { image in
-                guard let type = image["media_type"], let data = image["data"] else { return nil }
-                return ["type": "image_url", "image_url": ["url": "data:\(type);base64,\(data)"]]
-            }
-            messages.append(["role": "user", "content": content])
-            var payload: [String: Any] = ["model": model, "messages": messages]
-            if json {
-                payload["response_format"] = ["type": "json_object"]
-                payload["max_tokens"] = 16_000
-            }
-            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-            // The provider's content filter sometimes refuses an ordinary request at random: ask again.
-            for attempt in 0..<3 {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                guard status == 200, let choice = (obj["choices"] as? [[String: Any]])?.first else {
-                    throw LampAI.Failure(message: friendly(status, (obj["error"] as? [String: Any])?["message"] as? String))
-                }
-                if choice["finish_reason"] as? String == "content_filter" {
-                    if attempt < 2 { try await Task.sleep(for: .milliseconds(400 << attempt)); continue }
-                    throw LampAI.Failure(message: "The AI provider's content filter cut the reply off. Try rewording the request.")
-                }
-                return (choice["message"] as? [String: Any])?["content"] as? String ?? ""
-            }
-            throw LampAI.Failure(message: "The AI didn't answer.")
-        }
-
-        /// Decisions without a decision model: the questions go to the text model as JSON, and its answers
-        /// come back in the shape Jev's would, checked against each question as Lamp checks them.
-        private static func decideByText(_ body: [String: Any], key: String, model: String) async throws -> [String: Any] {
-            let questions = body["questions"] as? [String: Any] ?? [:]
-            let stateJSON = (try? JSONSerialization.data(withJSONObject: body["state"] ?? NSNull(), options: [.sortedKeys, .fragmentsAllowed]))
-                .map { String(decoding: $0, as: UTF8.self) } ?? ""
-            let questionsJSON = (try? JSONSerialization.data(withJSONObject: questions, options: [.sortedKeys]))
-                .map { String(decoding: $0, as: UTF8.self) } ?? ""
-            let system = """
-            You answer typed questions about some state, like a calibrated classifier. The questions are JSON, keyed \
-            by id; reply with one JSON object with the same keys and nothing else.
-
-            For a question of type "noul", the value is {"noul": p}: p is the probability, from 0 to 1, that the \
-            answer to its instructions is yes, judged against its criteria ("true" describes a yes, "false" a no). \
-            A clear no is 0.0, a clear yes 1.0.
-
-            For a question of type "choice", the criteria are the options (a description of when each applies, or \
-            null). The value is {"choice": option, "probabilities": {option: p, ...}, "confidence": c}: one \
-            probability per option, summing to 1; choice is the most likely option; confidence (0 to 1) is how \
-            concentrated the probabilities are.
-
-            For a question of type "score", the criteria are ordered levels, lowest first, each describing a \
-            situation. The value is {"score": s, "probabilities": {"0": p, "1": p, ...}, "confidence": c}: one \
-            probability per level index, summing to 1; s is the probability-weighted index; confidence (0 to 1) is \
-            how concentrated the probabilities are.
-            """
-            let text = try await complete(["prompt": "State:\n\(stateJSON)\n\nQuestions:\n\(questionsJSON)", "system": system, "json": true], key: key, model: model)
-            guard let raw = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
-                throw LampAI.Failure(message: "The model's decision wasn't valid JSON.")
-            }
-            var answers: [String: Any] = [:]
-            for (id, question) in questions {
-                guard let q = question as? [String: Any], let type = q["type"] as? String else { continue }
-                let given = raw[id] as? [String: Any] ?? [:]
-                func clamp(_ value: Any?) -> Double? { (value as? NSNumber).map { min(max($0.doubleValue, 0), 1) } }
-                switch type {
-                case "noul":
-                    guard let p = clamp(given["noul"]) else { throw LampAI.Failure(message: "The model didn't answer \"\(id)\".") }
-                    answers[id] = ["noul": p]
-                case "choice":
-                    let options = (q["criteria"] as? [String: Any])?.keys.map { $0 } ?? (q["criteria"] as? [String] ?? [])
-                    var probabilities = (given["probabilities"] as? [String: Any] ?? [:]).reduce(into: [String: Double]()) {
-                        if options.contains($1.key), let p = clamp($1.value) { $0[$1.key] = p }
-                    }
-                    var choice = given["choice"] as? String
-                    if choice == nil || !options.contains(choice!) { choice = probabilities.max { $0.value < $1.value }?.key }
-                    guard let choice else { throw LampAI.Failure(message: "The model didn't pick an option for \"\(id)\".") }
-                    if probabilities.isEmpty { probabilities = [choice: 1] }
-                    let total = probabilities.values.reduce(0, +)
-                    if total > 0 { probabilities = probabilities.mapValues { $0 / total } }
-                    answers[id] = ["choice": choice, "probabilities": probabilities,
-                                   "confidence": clamp(given["confidence"]) ?? probabilities[choice] ?? 1]
-                case "score":
-                    let levels = (q["criteria"] as? [Any])?.count ?? 0
-                    let top = Double(max(levels - 1, 0))
-                    var probabilities = (given["probabilities"] as? [String: Any] ?? [:]).reduce(into: [String: Double]()) {
-                        if let index = Int($1.key), index >= 0, Double(index) <= top, let p = clamp($1.value) { $0[$1.key] = p }
-                    }
-                    let total = probabilities.values.reduce(0, +)
-                    if total > 0 {
-                        probabilities = probabilities.mapValues { $0 / total }
-                    } else if let given = (given["score"] as? NSNumber).map({ min(max($0.doubleValue, 0), top) }) {
-                        probabilities = [String(Int(given.rounded())): 1]
-                    } else {
-                        throw LampAI.Failure(message: "The model didn't rate \"\(id)\".")
-                    }
-                    let score = probabilities.reduce(0) { $0 + Double($1.key)! * $1.value }
-                    answers[id] = ["score": score, "probabilities": probabilities,
-                                   "confidence": clamp(given["confidence"]) ?? probabilities.values.max() ?? 1]
-                default:
-                    throw LampAI.Failure(message: "Unknown question type \"\(type)\".")
-                }
-            }
-            return answers
-        }
-
-        private static func decide(_ body: [String: Any], keys: [String: Any]) async throws -> [String: Any] {
-            // Jev answers the same request through OpenRouter or TypeSafe; Lamp sends the TypeSafe key only
-            // when decisions away from the Mac go there.
-            let typesafe = keys["decision_provider"] as? String == "typesafe" ? keys["typesafe"] as? String : nil
-            let key = typesafe ?? keys["openrouter"] as? String ?? ""
-            var request = URLRequest(url: URL(string: typesafe == nil ? "https://openrouter.ai/api/v1/systemone" : "https://api.typesafe.ai/v1/systemone")!)
-            request.httpMethod = "POST"
-            request.timeoutInterval = 60
-            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Lamp", forHTTPHeaderField: "X-Title")
-            request.httpBody = try JSONSerialization.data(withJSONObject: ["state": body["state"] ?? NSNull(), "model": keys["decision_model"] as? String ?? "jev-latest",
-                                                                           "questions": body["questions"] ?? [:]] as [String: Any])
-            for attempt in 0..<4 {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-                if (status == 429 || status == 529) && attempt < 3 {
-                    try await Task.sleep(for: .milliseconds(500 << attempt))
-                    continue
-                }
-                guard status == 200, let answers = obj["answers"] as? [String: Any] else {
-                    throw LampAI.Failure(message: friendly(status, (obj["error"] as? [String: Any])?["message"] as? String))
-                }
-                return answers
-            }
-            throw LampAI.Failure(message: "The decision model is busy. Try again in a moment.")
-        }
-
-        private static func image(_ body: [String: Any], key: String, model: String) async throws -> String {
-            var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/images")!)
-            request.httpMethod = "POST"
-            request.timeoutInterval = 240
-            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Lamp", forHTTPHeaderField: "X-Title")
-            var payload: [String: Any] = ["model": model, "prompt": body["prompt"] ?? "", "n": 1, "output_format": "png"]
-            if let ratio = body["aspect_ratio"] { payload["aspect_ratio"] = ratio }
-            let references = (body["images"] as? [[String: String]] ?? []).compactMap { image -> [String: Any]? in
-                guard let type = image["media_type"], let data = image["data"] else { return nil }
-                return ["type": "image_url", "image_url": ["url": "data:\(type);base64,\(data)"]]
-            }
-            if !references.isEmpty { payload["input_references"] = references }
-            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            guard status == 200 else { throw LampAI.Failure(message: friendly(status, (obj["error"] as? [String: Any])?["message"] as? String)) }
-            guard let base64 = (obj["data"] as? [[String: Any]])?.first?["b64_json"] as? String else {
-                throw LampAI.Failure(message: "The image model didn't return a picture.")
-            }
-            return base64
-        }
-
-        private static func friendly(_ status: Int, _ detail: String?) -> String {
-            switch status {
-            case 401, 403: return "Your OpenRouter key didn't work. Open the app while Lamp is reachable to get the current one."
-            case 402: return "Your OpenRouter account is out of credit."
-            case 429: return "The AI is busy right now. Wait a minute and try again."
-            default: return "Something went wrong talking to the AI: \(detail ?? "HTTP \(status)")"
-            }
-        }
-
-        private static func unfenced(_ text: String) -> String {
-            var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if t.hasPrefix("```") {
-                t = String(t.drop(while: { $0 != "\n" }).dropFirst())
-                if let end = t.range(of: "```", options: .backwards) { t = String(t[..<end.lowerBound]) }
-            }
-            return t.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        private static func isJSON(_ text: String) -> Bool {
-            (try? JSONSerialization.jsonObject(with: Data(text.utf8), options: [.fragmentsAllowed])) != nil
-        }
-    }
     #endif
 
     /// Where Lamp is: on this Mac for a Mac app and for the simulator, and the Mac's name on the local
@@ -11221,17 +10904,12 @@ enum Template {
 
         private static func post(_ path: String, body: Data, timeout: TimeInterval = 240) async throws -> [String: Any] {
             #if os(iOS) && !targetEnvironment(simulator)
-            // Away from the Mac, the phone answers for itself when it has a key: when the Mac didn't answer
-            // the last check, and when a call to it fails to connect meanwhile.
-            func direct() async throws -> [String: Any] {
-                try await LampDirect.handle(path, (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:])
-            }
-            if await !LampDirect.useMac(token: "{{TOKEN}}"), LampDirect.keys != nil { return try await direct() }
+            // A phone's AI goes through Lamp on the Mac and nowhere else: the phone holds no key, since its code
+            // is the agent's to write and anything it held could be sent anywhere.
             do {
                 return try await postToLamp(path, body: body, timeout: timeout)
-            } catch where LampDirect.unreachable(error) && LampDirect.keys != nil {
-                await LampDirect.lost()
-                return try await direct()
+            } catch is URLError {
+                throw Failure(message: "Couldn't reach Lamp. This app's AI works while your phone is on the same Wi‑Fi as the Mac, with Lamp open.")
             }
             #else
             return try await postToLamp(path, body: body, timeout: timeout)
@@ -11269,7 +10947,7 @@ enum Template {
             }
             fputs("LampAI \(path) failed: couldn't reach Lamp\n", stderr)
             #if os(iOS) && !targetEnvironment(simulator)
-            throw URLError(.cannotConnectToHost)   // so the phone can answer for itself
+            throw URLError(.cannotConnectToHost)
             #else
             throw Failure(message: "Couldn't reach Lamp. Open Lamp and try again.")
             #endif

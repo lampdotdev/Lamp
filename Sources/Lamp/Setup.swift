@@ -829,8 +829,6 @@ struct AppsSettings: View {
                     }
                 }
             }
-            // Only for someone with an iPhone or iPad app: nothing else goes on a phone.
-            if store.projects.contains(where: { $0.platform.hasIOS }) { PhoneAwaySection(revision: revision) }
             ComputerUseSettings()
         }
         .settingsPane()
@@ -881,42 +879,6 @@ struct PhoneSigningSection: View {
             let signedIn = Devices.xcodeTeams()
             if let first = signedIn.first, !signedIn.contains(where: { $0.id == team }) { team = first.id }
             else if team.isEmpty, let first = teams.first { team = first.id }
-        }
-    }
-}
-
-/// What an app on the person's own phone uses when it can't reach this Mac, in Apps. Then it can only reach
-/// OpenRouter, so these are OpenRouter's models, and that's the one thing a phone needs a key for.
-struct PhoneAwaySection: View {
-    @AppStorage("awayModel") private var awayModel = ""
-    @AppStorage("awayImageModel") private var awayImageModel = ""
-    @AppStorage("awayDecisionModel") private var awayDecisionModel = ""
-    let revision: Int
-
-    var body: some View {
-        Section("On a phone away from this Mac") {
-            let _ = revision   // re-read KeyStore after keys change
-            if Provider.hasKey {
-                Picker("Text generation", selection: Binding(get: { AppAI.awayModel.id }, set: { awayModel = $0 })) {
-                    ForEach(AppAI.anthropicModels, id: \.id) { Text($0.label).tag($0.id) }
-                }
-                Picker("Image model", selection: Binding(get: { AppAI.awayImageModel }, set: { awayImageModel = $0 })) {
-                    ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
-                }
-                // Only what a phone can carry the key for; a choice whose key is gone shows the text
-                // route that stands in for it, as Store.keysForPhone does.
-                let awayDecisions = AppAI.awayDecisionModels.filter { $0.provider == "text" || $0.provider == "openrouter" || KeyStore.key(for: $0.provider) != nil }
-                Picker("Decision model", selection: Binding(get: {
-                    _ = awayDecisionModel
-                    let chosen = AppAI.awayDecisionModel.id
-                    return awayDecisions.contains { $0.id == chosen } ? chosen : awayDecisions.first { $0.provider == "text" }!.id
-                }, set: { awayDecisionModel = $0 })) {
-                    ForEach(awayDecisions, id: \.id) { Text($0.label).tag($0.id) }
-                }
-            } else {
-                NotReadyRow(title: "Text generation")
-                CapabilityNote(capability: .text, context: .phoneAway)
-            }
         }
     }
 }

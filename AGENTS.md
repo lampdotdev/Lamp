@@ -168,10 +168,10 @@ A capability given to one engine must be given to all of them that can take it, 
   question, probabilities read off the label tokens at the "Answer:" slot), or by text through what answers
   apps (`decideByText`). A decision model is never offered for text or building (`LocalModels.isDecisionModel`).
 - **What answers apps, and offering better** (`Sources/Lamp/Capabilities.swift`): `AppAI.resolve(capability,
-  for: app, in: .mac | .phoneAway)` is the one answer to "what answers text / decisions / pictures for this
+  for: app, in: .mac | .icon)` is the one answer to "what answers text / decisions / pictures for this
   app, how well (`Resolution.Tier`: none, works, best), and what would make it better (`Upgrade`: a key, a
   download, a sign-in)". Settings → Apps' menus and Not Ready rows, the notes under an app's
-  pickers, the sharing review, the keys a phone takes away (`keysForPhone`) and the agent's status line
+  pickers, the sharing review and the agent's status line
   all read it; don't work any of that out again elsewhere. A failure for want of setup carries
   `AppAI.Failure.needs`; the gateway passes it to the app (`LampAI.Failure.needsSetup`, and
   `LampAI.isAvailable` asks `/ai/status`) and offers a setup card in the app's chat (`Store.offerSetup`,
@@ -385,14 +385,12 @@ simulator: the phone's screen can't be photographed. The app reaches Lamp's gate
 name (`Devices.macHost`, the `{{MACHOST}}` placeholder, chosen in LampSupport by `targetEnvironment`): the
 gateway also listens on the network while some app is set to open on a phone (`Store.syncLocalNetwork`), marks those
 requests, and admits them only to the app routes with the Mac's own name as Host (`Store.isMacHost`).
-Away from the Mac, a phone app answers for itself (`LampDirect` in LampSupport, device builds only): `post`
-first asks `/ai/keys` with a four-second timeout, at most every half minute; while the Mac answers, the
-call goes through Lamp as ever and the reply (the OpenRouter key, the TypeSafe key when decisions go there,
-and the app's model choices, served by `Store.keysForPhone` only for iPhone apps) is kept in the
-phone's Keychain; when it doesn't, `LampDirect.handle` does
-what the gateway would with the provider directly (chat completions with the JSON retry, systemone
-decisions, images). The prompt's fencing and dates are made in the library either way. What's spent this
-way isn't recorded in Lamp, and `/ai/computer` says it needs the Mac.
+A phone app's AI goes through Lamp on the Mac and nowhere else: away from it, a call fails with a plain line
+saying so. The phone holds no key and nothing that unlocks one, since the app's code is the agent's to write and
+whatever the phone held could be sent anywhere; don't give a phone a key, a key's seal or a route that hands one
+out. A phone build drops what a phone app built by an earlier Lamp kept in its Keychain to answer away from the
+Mac: the device project compiles `Template.forgetKeptKeysC` into the app, which deletes that item as the app
+loads, before any of the app's own code runs.
 
 ## Apps for both the Mac and the iPhone
 
@@ -406,8 +404,7 @@ moving Try On closes nothing, and Stop quits only that copy (`quit(only:)`; a Ma
 copy). Each copy keeps its log and pictures in its own folder: the Mac copy's in `.lamp/runtime` (`Runtime.macFolder`,
 which the app writes itself, and where what only a Mac copy has, such as a held build or its quit reply, is read),
 the iPhone copy's in `.lamp/runtime/ios` (`Runtime.folder` while Try On points at iOS). Everything about running,
-looking and using branches on `destination` (`onIOS`); what an app could have, such as the Try On menu or the
-phone's away-from-the-Mac keys, branches on `Platform.hasIOS` / `hasMac`. Its scaffold and owned files are
+looking and using branches on `destination` (`onIOS`); what an app could have, such as the Try On menu, branches on `Platform.hasIOS` / `hasMac`. Its scaffold and owned files are
 their own (`Template.universalAppSwift`, `universalPackageSwift` listing both platforms, `universalBuildSh`,
 which takes `mac` or `ios`), and `Store.build` passes the destination; the destination is part of
 `Runtime.fingerprint`, so moving the app rebuilds it. The iOS build is the iPhone app's. The Mac build is Xcode's,

@@ -351,10 +351,6 @@
         "why": {
           "description": "One sentence to the person on what they'd get, naming the feature: “Recipe Box can draw a picture of each dish.”",
           "type": "string"
-        },
-        "away": {
-          "description": "iPhone apps only: the app needs it on the phone away from this Mac",
-          "type": "boolean"
         }
       },
       "required": [

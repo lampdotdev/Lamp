@@ -136,13 +136,6 @@ enum AppAI {
         /// Worked out when the list is made, on the main thread, where the local models live.
         let available: Bool
 
-        /// The OpenRouter model that stands in for this route where only OpenRouter can answer (an app on a
-        /// phone away from the Mac): the route's own model, else the usual default.
-        var openRouter: String {
-            if case .openRouter(let model) = kind { return model }
-            return AppAI.anthropicModels.first { $0.id == "sonnet" }!.openRouter
-        }
-
         @MainActor static func make(id: String, group: String, name: String, via: String? = nil, kind: Kind) -> TextRoute {
             let available: Bool
             switch kind {
@@ -286,52 +279,6 @@ enum AppAI {
         }
         if let route = route(own) { return route }
         return routes.first(where: \.available) ?? routes.first { $0.id == "sonnet" }!
-    }
-
-    /// The OpenRouter model an app on the person's phone uses away from the Mac, where only OpenRouter can
-    /// answer: Settings' choice, else the chosen route's own model when that's through OpenRouter, else Sonnet.
-    @MainActor static var awayModel: Provider.ListedModel {
-        let saved = UserDefaults.standard.string(forKey: "awayModel") ?? ""
-        if let chosen = anthropicModels.first(where: { $0.id == saved }) { return chosen }
-        if case .openRouter(let name) = model.kind, let same = anthropicModels.first(where: { $0.openRouter == name }) { return same }
-        return anthropicModels.first { $0.id == "sonnet" }!
-    }
-
-    /// The same for one app: its own choice (info panel), else Settings'.
-    @MainActor static func awayModel(for choice: String?) -> Provider.ListedModel {
-        anthropicModels.first { $0.id == choice } ?? awayModel
-    }
-
-    /// The image model an app on the phone uses away from the Mac: Settings' choice, else the Mac's own
-    /// choice when that's a cloud model, else the first cloud model. The model on this Mac can't travel.
-    @MainActor static var awayImageModel: String {
-        let saved = UserDefaults.standard.string(forKey: "awayImageModel") ?? ""
-        if Icons.artModels.contains(where: { $0.id == saved }) { return saved }
-        let macs = Icons.artModel
-        return Icons.artModels.contains(where: { $0.id == macs }) ? macs : Icons.artModels[0].id
-    }
-
-    @MainActor static func awayImageModel(for choice: String?) -> String {
-        Icons.artModels.contains { $0.id == choice } ? choice! : awayImageModel
-    }
-
-    /// What a phone can decide with on its own, through the keys it carries: Jev through OpenRouter or
-    /// TypeSafe, or the text model it uses away, asked the questions as JSON. The Mac's own model and OpenAI
-    /// stay here.
-    static var awayDecisionModels: [(id: String, label: String, provider: String, model: String)] {
-        [("openrouter:jev-latest", "Jev", "openrouter", "jev-latest"), ("typesafe:jev-latest", "Jev via TypeSafe", "typesafe", "jev-latest"),
-         ("text", "By text, through the text model above", "text", "")]
-    }
-
-    /// The decision model an app on the phone uses away from the Mac: Settings' choice, else by text when
-    /// that's the Mac's choice too, else Jev.
-    @MainActor static var awayDecisionModel: (id: String, label: String, provider: String, model: String) {
-        let saved = UserDefaults.standard.string(forKey: "awayDecisionModel") ?? ""
-        return awayDecisionModels.first { $0.id == saved } ?? awayDecisionModels.first { $0.id == decisionModel.id } ?? awayDecisionModels[0]
-    }
-
-    @MainActor static func awayDecisionModel(for choice: String?) -> (id: String, label: String, provider: String, model: String) {
-        awayDecisionModels.first { $0.id == choice } ?? awayDecisionModel
     }
 
     /// The route Settings chose for apps, when it can still answer; else the default.

@@ -1117,15 +1117,7 @@ struct AppInfoView: View {
         func answer(_ title: String, _ resolution: Resolution) -> SidebarInfoRow {
             SidebarInfoRow(label: title, value: resolution.tier == .none ? nil : short(resolution.answer ?? ""))
         }
-        var ai = Capability.allCases.filter { $0 != .browser }.map { answer($0.title, AppAI.resolve($0, for: project)) }
-        if project.platform.hasIOS {
-            // Away from the Mac a phone answers only through the OpenRouter key: without one, one row says so.
-            if Provider.hasKey {
-                ai += Capability.allCases.filter { $0 != .browser }.map { answer("\($0.title) away", AppAI.resolve($0, for: project, in: .phoneAway)) }
-            } else {
-                ai.append(SidebarInfoRow(label: "Away from this Mac", value: nil))
-            }
-        }
+        let ai = Capability.allCases.filter { $0 != .browser }.map { answer($0.title, AppAI.resolve($0, for: project)) }
         var aiButtons = [SidebarInfoButton(title: "Configure Providers…", action: "providers")]
         // Choices an earlier Lamp let this app make for itself: the one thing left to change here.
         if models != AppModels() { aiButtons.append(SidebarInfoButton(title: "Use Settings' Choices", action: useSettingsChoices)) }

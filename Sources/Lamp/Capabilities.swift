@@ -27,11 +27,10 @@ enum Capability: String, CaseIterable, Codable, Identifiable {
     }
 }
 
-/// Where the app is when it asks: on this Mac (or near it), or an app on the person's phone away from it,
-/// where only what the phone can carry (an OpenRouter key and model choices) can answer. `icon` is Lamp
-/// itself asking, for the artwork of an app's icon: pictures, with one more way to get them, since for an
+/// Who asks: an app (on this Mac, or on the person's phone, which asks through this Mac), or `icon`, Lamp
+/// itself asking for the artwork of an app's icon: pictures, with one more way to get them, since for an
 /// icon the person can be the one who draws.
-enum AIContext: Equatable { case mac, phoneAway, icon }
+enum AIContext: Equatable { case mac, icon }
 
 /// Something the person can do to make a capability better, shown the same way in the chat and in Settings.
 enum Upgrade: Hashable, Identifiable {
@@ -114,7 +113,6 @@ extension AppAI {
         case (.pictures, .mac): return resolvePictures(choice: models.image, text: models.text)
         case (.pictures, .icon): return resolveIconArt()
         case (.browser, _): preconditionFailure("Browser resolution is handled before AI routes")
-        case (_, .phoneAway): return resolveAway(capability, models: models)
         }
     }
 
@@ -244,34 +242,6 @@ extension AppAI {
                           upgrades: pictures.upgrades + [.drawIcons])
     }
 
-    /// Away from the Mac a phone answers with what it carries: the OpenRouter key, and a TypeSafe key for
-    /// decisions when they go there.
-    @MainActor private static func resolveAway(_ capability: Capability, models: AppModels) -> Resolution {
-        guard Provider.hasKey else {
-            return Resolution(capability: capability, tier: .none, answer: nil, provider: nil,
-                              note: "Apps on your phone can use AI only near this Mac.", upgrades: [.key("openrouter")])
-        }
-        switch capability {
-        case .browser: return resolve(.browser, in: .phoneAway)
-        case .text:
-            return Resolution(capability: .text, tier: .best, answer: "\(awayModel(for: models.away).label) via OpenRouter",
-                              provider: "openrouter", note: nil, upgrades: [])
-        case .pictures:
-            let model = awayImageModel(for: models.awayImage)
-            return Resolution(capability: .pictures, tier: .best, answer: Icons.artModels.first { $0.id == model }?.label ?? model,
-                              provider: "openrouter", note: nil, upgrades: [])
-        case .decisions:
-            let decision = awayDecisionModel(for: models.awayDecision)
-            if decision.provider != "text", decision.provider != "openrouter", KeyStore.key(for: decision.provider) == nil {
-                return Resolution(capability: .decisions, tier: .works, answer: "By text, through OpenRouter", provider: "openrouter",
-                                  note: "\(decision.label) needs \(keyPhrase(decision.provider)).",
-                                  upgrades: [.key(decision.provider)])
-            }
-            return Resolution(capability: .decisions, tier: .best, answer: decision.label,
-                              provider: decision.provider == "text" ? "openrouter" : decision.provider, note: nil, upgrades: [])
-        }
-    }
-
     /// "an OpenRouter key", "a TypeSafe key".
     @MainActor static func keyPhrase(_ provider: String) -> String {
         let name = Provider.keyProvider(provider)?.name ?? provider
@@ -291,30 +261,27 @@ extension AppAI {
 
 // MARK: - The setup offer in the chat
 
-/// A setup offer in an app's chat: which capability, and whether it's about the app on a phone away from
-/// the Mac. Kept on the chat line (`LogLine.offer`).
+/// A setup offer in an app's chat: which capability. Kept on the chat line (`LogLine.offer`).
 struct SetupOffer: Codable, Equatable, Hashable {
     let capability: Capability
+    /// An offer from an earlier Lamp to let a phone app's AI work away from the Mac, which phone apps no longer
+    /// do: still read, so the chat it's in can be, and left out when the chat is loaded (`Store.reload`).
     var away: Bool? = nil
     /// The card is about the app's own icon (Lamp wanted artwork for it), not something the app tried.
     /// Cards from before this was noted don't say.
     var icon: Bool? = nil
 
-    var context: AIContext { away == true ? .phoneAway : icon == true ? .icon : .mac }
+    var context: AIContext { icon == true ? .icon : .mac }
 
-    /// One card per capability per app, on this Mac or away, whatever raised it: an app whose icon card is
-    /// in the chat isn't given another when it tries to make a picture, so `icon` is no part of which offer
-    /// this is.
-    static func == (a: SetupOffer, b: SetupOffer) -> Bool { a.capability == b.capability && (a.away == true) == (b.away == true) }
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(capability)
-        hasher.combine(away == true)
-    }
+    /// One card per capability per app, whatever raised it: an app whose icon card is in the chat isn't given
+    /// another when it tries to make a picture, so `icon` is no part of which offer this is.
+    static func == (a: SetupOffer, b: SetupOffer) -> Bool { a.capability == b.capability }
+    func hash(into hasher: inout Hasher) { hasher.combine(capability) }
 
     /// "Not Now" is remembered for the app it was said in, and for every app: Lamp doesn't raise the same
     /// offer by itself elsewhere. The agent may still raise it in another app, with a reason of its own.
     private static let declinedKey = "declinedSetupOffers"
-    private var key: String { capability.rawValue + (away == true ? "@away" : "") }
+    private var key: String { capability.rawValue }
 
     func declined(in project: LampProject?) -> Bool {
         let declined = Set(UserDefaults.standard.stringArray(forKey: Self.declinedKey) ?? [])
@@ -344,8 +311,7 @@ enum AIStatus {
             return line
         }
         if project.platform.hasIOS {
-            let away = AppAI.resolve(.text, for: project, in: .phoneAway)
-            lines.append("- On the person's phone away from this Mac: \(away.tier == .none ? "no AI" : "text, pictures and decisions through OpenRouter")")
+            lines.append("- On the person's phone: the same, while it can reach this Mac on the same Wi‑Fi; no AI away from it")
         }
         return lines.joined(separator: "\n")
     }

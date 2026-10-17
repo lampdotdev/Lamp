@@ -681,7 +681,7 @@ final class Store: ObservableObject {
             let lamp = project.dir.appendingPathComponent(".lamp")
             if let data = try? Data(contentsOf: lamp.appendingPathComponent("chat.json")),
                let saved = try? JSONDecoder().decode([LogLine].self, from: data) {
-                logs[project.id] = saved.map(\.upgraded)
+                logs[project.id] = saved.filter { $0.offer?.away != true }.map(\.upgraded)
             }
             if let data = try? Data(contentsOf: lamp.appendingPathComponent("usage.json")),
                let saved = try? JSONDecoder().decode(AppUsage.self, from: data) {
@@ -3520,13 +3520,9 @@ final class Store: ObservableObject {
         if capability == .browser && (!BrowserBridge.enabled || !project.platform.hasMac) {
             return (400, ["error": "A sidebar in Chrome is only for a Mac app, while Apps in Chrome is on in Lamp's Settings → Experimental."])
         }
-        let away = arguments["away"] as? Bool == true
-        guard !away || (project.platform.hasIOS && capability != .browser) else {
-            return (400, ["error": "`away` is only for iPhone apps."])
-        }
         let why = (arguments["why"] as? String)?.trimmed ?? ""
         guard !why.isEmpty else { return (400, ["error": "Say in `why` what the person would get."]) }
-        return (200, ["text": offerSetup(project, SetupOffer(capability: capability, away: away ? true : nil), because: why, fromAgent: true)])
+        return (200, ["text": offerSetup(project, SetupOffer(capability: capability), because: why, fromAgent: true)])
     }
 
     /// `read_notes` and `save_notes`, for every engine. A save that changed what the notes say leaves a
@@ -4667,7 +4663,6 @@ final class Store: ObservableObject {
             if progress[project.id]?.finished != nil { progress[project.id]?.failed = false }
             attached.terminationHandler = { _ in Task { @MainActor in Store.shared.refreshOpenApps() } }
             log(project, .status, "\(project.name) is ready on \(name)")
-            offerAwaySetup(project)
         } catch {
             owner.build = nil
             if let failure = error as? PhoneFailure { failed(failure.message, output: failure.output) }
@@ -5142,19 +5137,6 @@ final class Store: ObservableObject {
         }
     }
 
-    /// An iPhone app that uses AI, just put on the phone: if nothing goes with it, say so once.
-    private func offerAwaySetup(_ project: LampProject) {
-        let sources = project.dir.appendingPathComponent("Sources")
-        let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
-        let usesAI = files.contains { url in
-            url.pathExtension == "swift" && url.lastPathComponent != "LampSupport.swift"
-                && ((try? String(contentsOf: url, encoding: .utf8))?.contains("LampAI.") ?? false)
-        }
-        guard usesAI else { return }
-        offerSetup(project, SetupOffer(capability: .text, away: true),
-                   because: "\(project.name)'s AI runs through this Mac, so on your phone it only works nearby. Add an OpenRouter key and the app takes it along, so its AI works anywhere.")
-    }
-
     /// Generates artwork for the icon's object in the background (best of a few candidates) and swaps it in
     /// when ready, with whatever can make pictures. With nothing, the first app asks for a key instead.
     private func upgradeIconArt(_ project: LampProject) {
@@ -5496,7 +5478,7 @@ final class Store: ObservableObject {
             return BrowserBridge.shared.handle(request, projects: projects)
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
-        let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
+        let paths = ["/ai", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
                      "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
@@ -5547,9 +5529,6 @@ final class Store: ObservableObject {
         guard let id = tokens[token], let project = projects.first(where: { $0.id == id }) else {
             return (401, ["error": "This app isn't registered with Lamp."])
         }
-        // A phone asking what it may keep is answered whatever the state of setup: a key just removed makes
-        // setup incomplete, and that's exactly when the phone has to hear that its copy should go.
-        if route == "/ai/keys" { return keysForPhone(project) }
         if route == "/ai/status" { return await aiStatus(for: project) }
         if route == "/app/secrets" { return appSecrets(request, for: project) }
         if route == "/app/share" { return await appShare(request, for: project) }
@@ -5829,37 +5808,6 @@ final class Store: ObservableObject {
             reply[capability.rawValue] = setup.ready && AppAI.resolve(capability, for: project).tier != .none
         }
         return (200, reply)
-    }
-
-    /// What an app on the person's own phone keeps so its AI works away from the Mac:
-    /// the OpenRouter key, the TypeSafe key when decisions go there, and the models the app is set to, as
-    /// `AppAI.resolve` has them for `.phoneAway`. Only for iPhone apps; a Mac app
-    /// or the simulator never needs it, and the key stays in the phone's Keychain, put there by the app itself.
-    private func keysForPhone(_ project: LampProject) -> (Int, [String: Any]) {
-        guard project.platform.hasIOS else { return (403, ["error": "Not for this app."]) }
-        guard AppAI.resolve(.text, for: project, in: .phoneAway).tier != .none, let key = KeyStore.openRouterKey else {
-            return (404, ["error": "There's no OpenRouter key to keep."])
-        }
-        let models = AppModels.load(project)
-        var decision = AppAI.awayDecisionModel(for: models.awayDecision)
-        var keys: [String: Any] = [
-            "openrouter": key,
-            "text_model": AppAI.awayModel(for: models.away).openRouter,
-        ]
-        if decision.provider == "typesafe" {
-            if let typesafe = KeyStore.key(for: "typesafe") { keys["typesafe"] = typesafe }
-            else { decision = AppAI.awayDecisionModels.first { $0.provider == "text" }! }   // what `resolve` says stands in
-        }
-        keys["decision_model"] = decision.model
-        keys["decision_provider"] = decision.provider
-        // The cloud image model chosen for away from the Mac (the Mac's own model can't travel).
-        keys["image_model"] = AppAI.awayImageModel(for: models.awayImage)
-        // Sealed with the secret that went to the phone inside its build, never over the network: the token
-        // in the request is on the air too, so it can't be what protects the key.
-        guard let json = try? JSONSerialization.data(withJSONObject: keys),
-              let box = try? AES.GCM.seal(json, using: SymmetricKey(data: SHA256.hash(data: Data(Template.phoneSecret(for: project).utf8)))),
-              let sealed = box.combined else { return (500, ["error": "Couldn't prepare the keys."]) }
-        return (200, ["sealed": sealed.base64EncodedString()])
     }
 
     /// `LampComputer.ask` / `.perform` from an app: a task done with the other apps on the Mac (see ComputerUse).
@@ -6331,9 +6279,6 @@ struct AppModels: Codable, Equatable {
     var text: String?       // an AppAI.TextRoute id
     var image: String?      // an id from Icons.artModels
     var decision: String?   // an id from AppAI.decisionModels
-    var away: String?       // iPhone apps: an id from AppAI.anthropicModels, for when the phone can't reach the Mac
-    var awayImage: String?  // iPhone apps: an id from Icons.artModels, likewise
-    var awayDecision: String?  // iPhone apps: an id from AppAI.awayDecisionModels, likewise
 
     private static func url(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/models.json") }
 

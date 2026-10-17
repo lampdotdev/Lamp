@@ -82,7 +82,7 @@ struct SetupCard: View {
     /// What's being offered, on a tile the size of the build card's app icon. Not the app's own icon: it's
     /// Lamp asking, not the app.
     static func symbol(_ offer: SetupOffer) -> String {
-        offer.context == .phoneAway ? "iphone.radiowaves.left.and.right" : offer.capability.symbol
+        offer.capability.symbol
     }
 
     /// The card's header in words, for the chat inside an app's window, which shows it and opens the card here
@@ -114,7 +114,6 @@ struct SetupCard: View {
     private var title: String { Self.title(offer) }
 
     static func title(_ offer: SetupOffer) -> String {
-        if offer.context == .phoneAway { return "Use AI on your phone, away from this Mac" }
         // Raised for the app's icon, its options include drawing icons by hand, which isn't AI.
         if offer.context == .icon { return "Give your apps proper icons" }
         return switch offer.capability {
@@ -128,7 +127,6 @@ struct SetupCard: View {
     private func doneText(_ answer: String) -> String { Self.doneText(offer, answer) }
 
     static func doneText(_ offer: SetupOffer, _ answer: String) -> String {
-        if offer.context == .phoneAway { return "All set. Away from this Mac, your phone's apps now use your OpenRouter key." }
         return switch offer.capability {
         case .text: "All set. Your apps' AI now runs on \(answer)."
         case .decisions: "All set. Your apps' judgments are now made by \(answer)."
