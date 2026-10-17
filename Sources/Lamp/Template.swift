@@ -3892,7 +3892,8 @@ enum Template {
         /// until the new copy is up; the new copy opens its window in that place (`putBack`).
         @MainActor private static func leaveCover() {
             guard isOn, let window = NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible && ($0.isKeyWindow || $0.isMainWindow) })
-                    ?? NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible }) else { return }
+                    ?? NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible })
+                    ?? NSApp.windows.first(where: { isAppWindow($0) && $0.isMiniaturized }) else { return }
             // Whether or not there's a picture to leave: a window in full screen or the Dock is still owed its width.
             LampSidebar.handOn(window)
             guard !window.isMiniaturized, !window.styleMask.contains(.fullScreen),
