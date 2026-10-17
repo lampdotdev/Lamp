@@ -85,13 +85,16 @@ enum Template {
         return token
     }
 
-    /// A second secret for iPhone apps, which only ever reaches the phone inside the build (over the cable
-    /// or Xcode's install), never over the network: what the keys an app keeps are sealed with, so a copy of
-    /// the Wi‑Fi traffic, token and all, gives nobody the key.
-    static func phoneSecret(for project: LampProject) -> String {
-        let url = project.dir.appendingPathComponent(".lamp/phone-secret")
-        if let secret = ownSecret(at: url, in: project) { return secret }
+    /// A second secret for iPhone apps, what the keys a phone keeps are sealed with (`Store.keysForPhone`), so a
+    /// copy of the Wi‑Fi traffic, token and all, gives nobody the key. It's kept in the folder the phone is built
+    /// in (`Devices.buildFolder`), in Lamp's own folder, and goes only into the Info.plist written there: never
+    /// into the app's folder, which the agent's commands read, since with the token there and the secret beside
+    /// it a command could ask for the keys and open them. Created on first use.
+    static func phoneSecret(in folder: URL) -> String {
+        let url = folder.appendingPathComponent("phone-secret")
+        if let secret = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !secret.isEmpty { return secret }
         let secret = UUID().uuidString + UUID().uuidString
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try? secret.write(to: url, atomically: true, encoding: .utf8)
         return secret
     }
@@ -102,6 +105,9 @@ enum Template {
     /// the agent read, put in them ever runs: they're replaced, not checked. A failure to write any of them is
     /// a failure to build, since the old file would be what runs.
     static func writeOwnedFiles(for project: LampProject) throws {
+        // Where an earlier Lamp kept the phone's secret, readable by the agent's commands; a new one is made in
+        // Lamp's own folder (`phoneSecret(in:)`).
+        try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(".lamp/phone-secret"))
         try writeSupport(for: project)
         let widget = hasWidget(project)
         let share = hasShare(project)
@@ -194,7 +200,6 @@ enum Template {
             .replacingOccurrences(of: "{{HOST}}", with: Edition.bundleID)
             .replacingOccurrences(of: "{{APPS}}", with: Edition.supportFolder.appendingPathComponent("Apps").path)
             .replacingOccurrences(of: "{{MACHOST}}", with: Devices.macHost)
-            .replacingOccurrences(of: "{{PHONE_SECRET}}", with: project.platform.hasIOS ? phoneSecret(for: project) : "")
             .replacingOccurrences(of: "{{WIDGET_PORT}}", with: String(widgetPort(for: project)))
             .replacingOccurrences(of: "{{WIDGET_TOKEN}}", with: project.platform == .mac ? widgetToken(for: project) : "")
             .replacingOccurrences(of: "{{SIDEBAR_PORT}}", with: String(sidebarPort(for: project)))
@@ -1847,8 +1852,12 @@ enum Template {
             files.append(("Complications.entitlements", Capabilities().entitlementsPlist(container: nil, platform: .ios, appGroup: group)))
         }
         let widgetPlist = widget || share ? appGroupPlistLines(group: group, liveActivities: widget) : ""
+        // Only the phone's project, in Lamp's own folder, carries the secret its keys are sealed with; the one an
+        // app for both keeps under .lamp/device for its Mac half is in the app's folder and never goes to a phone.
+        let secret = folder != nil && project.platform.hasIOS ? phoneSecret(in: dir) : ""
         for (path, template) in files {
             let contents = template
+                .replacingOccurrences(of: "{{PHONE_SECRET}}", with: secret)
                 .replacingOccurrences(of: "{{WIDGET_PLIST}}", with: widgetPlist)
                 .replacingOccurrences(of: "{{APP_GROUP}}", with: group)
                 .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
@@ -1951,6 +1960,7 @@ enum Template {
       <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
       <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
       <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+      <key>LampPhoneSecret</key><string>{{PHONE_SECRET}}</string>
     {{USAGE}}
     {{BACKGROUND}}
     {{ICLOUD}}
@@ -3164,6 +3174,7 @@ enum Template {
                     if let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                        let sealed = (reply["sealed"] as? String).flatMap({ Data(base64Encoded: $0) }),
                        let box = try? AES.GCM.SealedBox(combined: sealed),
+                       let sealingKey,
                        let opened = try? AES.GCM.open(box, using: sealingKey),
                        let keys = try? JSONSerialization.jsonObject(with: opened) as? [String: Any] {
                         save(keys)
@@ -3179,7 +3190,11 @@ enum Template {
             }
         }
 
-        private static var sealingKey: SymmetricKey { SymmetricKey(data: SHA256.hash(data: Data("{{PHONE_SECRET}}".utf8))) }
+        /// From the secret Lamp put in this build's Info.plist: only the phone's own build carries it.
+        private static var sealingKey: SymmetricKey? {
+            guard let secret = Bundle.main.object(forInfoDictionaryKey: "LampPhoneSecret") as? String, !secret.isEmpty else { return nil }
+            return SymmetricKey(data: SHA256.hash(data: Data(secret.utf8)))
+        }
 
         /// The keys and model choices the phone keeps, or nil when it has none.
         static var keys: [String: Any]? {

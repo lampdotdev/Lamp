@@ -5890,7 +5890,7 @@ final class Store: ObservableObject {
         // Sealed with the secret that went to the phone inside its build, never over the network: the token
         // in the request is on the air too, so it can't be what protects the key.
         guard let json = try? JSONSerialization.data(withJSONObject: keys),
-              let box = try? AES.GCM.seal(json, using: SymmetricKey(data: SHA256.hash(data: Data(Template.phoneSecret(for: project).utf8)))),
+              let box = try? AES.GCM.seal(json, using: SymmetricKey(data: SHA256.hash(data: Data(Template.phoneSecret(in: Devices.buildFolder(for: project)).utf8)))),
               let sealed = box.combined else { return (500, ["error": "Couldn't prepare the keys."]) }
         return (200, ["sealed": sealed.base64EncodedString()])
     }
