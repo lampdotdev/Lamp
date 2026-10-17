@@ -46,7 +46,11 @@ final class DeployOwnIDTests: XCTestCase {
         XCTAssertThrowsError(try Store.stage(project, in: apps))
         try FileManager.default.removeItem(at: plist)
         try FileManager.default.moveItem(at: kept, to: plist)
-        XCTAssertNoThrow(try Store.stage(project, in: apps))
+        // Nor a link that comes in later with what's copied into the bundle, such as the app's assets.
+        let staged = try Store.stage(project, in: apps)
+        XCTAssertNoThrow(try Store.checkContained(staged))
+        try FileManager.default.createSymbolicLink(at: staged.appendingPathComponent("Contents/Assets"), withDestinationURL: project.dir)
+        XCTAssertThrowsError(try Store.checkContained(staged))
         let real = project.dir.appendingPathComponent("Elsewhere.app")
         try FileManager.default.moveItem(at: built, to: real)
         try FileManager.default.createSymbolicLink(at: built, withDestinationURL: real)

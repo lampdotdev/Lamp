@@ -4706,23 +4706,28 @@ final class Store: ObservableObject {
 
     /// A copy of the app's build in `folder`, hidden until it's swapped in, for Lamp alone to finish and sign.
     /// A copy keeps symbolic links as links, so one that leads out of the copy (or a build that is itself a link)
-    /// would have Lamp change, read and sign files the agent can still write: such a build isn't copied.
+    /// would have Lamp change, read and sign files the agent can still write: such a build isn't staged.
     nonisolated static func stage(_ project: LampProject, in folder: URL) throws -> URL {
         let fm = FileManager.default
         if (try? fm.destinationOfSymbolicLink(atPath: project.builtURL.path)) != nil { throw LinkedBuild() }
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         let copy = folder.appendingPathComponent(".\(project.exe)-\(UUID().uuidString).app")
         try fm.copyItem(at: project.builtURL, to: copy)
-        let inside = copy.standardizedFileURL.path + "/"
-        for case let file as URL in fm.enumerator(at: copy, includingPropertiesForKeys: nil) ?? FileManager.DirectoryEnumerator() {
+        do { try checkContained(copy) } catch { try? fm.removeItem(at: copy); throw error }
+        return copy
+    }
+
+    /// Throws when a link in the bundle leads out of it. Asked of the copy as it's made and again of the finished
+    /// one before it's signed, since what deploy copies in from the app's folder (its assets, the icon) keeps
+    /// its links too.
+    nonisolated static func checkContained(_ app: URL) throws {
+        let fm = FileManager.default
+        let inside = app.standardizedFileURL.path + "/"
+        for case let file as URL in fm.enumerator(at: app, includingPropertiesForKeys: nil) ?? FileManager.DirectoryEnumerator() {
             guard let target = try? fm.destinationOfSymbolicLink(atPath: file.path) else { continue }
             let resolved = target.hasPrefix("/") ? URL(fileURLWithPath: target) : file.deletingLastPathComponent().appendingPathComponent(target)
-            if !resolved.standardizedFileURL.path.hasPrefix(inside) {
-                try? fm.removeItem(at: copy)
-                throw LinkedBuild()
-            }
+            if !resolved.standardizedFileURL.path.hasPrefix(inside) { throw LinkedBuild() }
         }
-        return copy
     }
 
     /// Copies the freshly built bundle into the apps folder, puts the icon in, signs it and swaps it in place of
@@ -4815,7 +4820,8 @@ final class Store: ObservableObject {
             .merging(Sidebar.signingEnvironment(in: app, for: project)) { $1 }
         // Only a build that is this app is signed as it: an id rewritten after build.sh, signed with Lamp's
         // certificate, would get that other app's permissions and keychain items. Read from the copy, which only
-        // Lamp writes, just before it's signed.
+        // Lamp writes, just before it's signed, as a bundle that leads nowhere else.
+        try Self.checkContained(app)
         try Self.checkOwnIDs(in: app, for: project)
         // An app for both was signed by Xcode for the person's team; what was put in since is sealed with the
         // same certificate and the same entitlements, never Lamp's own, which could carry neither.
