@@ -9,7 +9,12 @@ enum AppFile {
     /// The file's contents, or its last `last` bytes; nil when it isn't a plain file reached without a link from
     /// the app's real folder (`LampProject.realDir`), or isn't in that folder at all.
     static func read(_ url: URL, in project: LampProject, last: Int? = nil) -> Data? {
-        guard let fd = open(url, in: project) else { return nil }
+        read(url, inFolder: project.dir, last: last)
+    }
+
+    /// The same for an app's folder given by its path (the migration's, before there's a project).
+    static func read(_ url: URL, inFolder folder: URL, last: Int? = nil) -> Data? {
+        guard let fd = open(url, inFolder: folder) else { return nil }
         defer { close(fd) }
         var info = stat()
         guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return nil }
@@ -20,7 +25,7 @@ enum AppFile {
 
     /// The file's size and when it was last changed, on the same terms as `read`.
     static func attributes(_ url: URL, in project: LampProject) -> (size: Int, modified: Date)? {
-        guard let fd = open(url, in: project) else { return nil }
+        guard let fd = open(url, inFolder: project.dir) else { return nil }
         defer { close(fd) }
         var info = stat()
         guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return nil }
@@ -28,9 +33,16 @@ enum AppFile {
         return (Int(info.st_size), modified)
     }
 
+    /// The file's text, on the same terms as `read`; nil when it isn't UTF-8.
+    static func text(_ url: URL, in project: LampProject) -> String? { text(url, inFolder: project.dir) }
+    static func text(_ url: URL, inFolder folder: URL) -> String? {
+        read(url, inFolder: folder).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
     /// Opens the file step by step from the folder holding the app's, which is Lamp's: the app's folder by its
     /// name and every step below it refused when it's a link.
-    private static func open(_ url: URL, in project: LampProject) -> Int32? {
+    private static func open(_ url: URL, inFolder folder: URL) -> Int32? {
+        let project = LampProject(id: folder.lastPathComponent, name: "", exe: "", dir: folder)
         let path = url.standardizedFileURL.path
         let named = project.dir.standardizedFileURL.path, real = project.realDir.path
         let inside: Substring

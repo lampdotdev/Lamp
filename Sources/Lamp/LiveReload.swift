@@ -224,7 +224,8 @@ enum LiveReload {
     @MainActor static func layouts(_ project: LampProject) async
         -> (before: [String]?, after: [String]?, declarations: SwiftSource.Declarations) {
         async let after = analysis(of: sources(project), in: project, module: project.exe, macOS: Template.macMinimum(project))
-        var before = (try? String(contentsOf: runningLayout(project), encoding: .utf8)).map { $0.components(separatedBy: "\n").filter { !$0.isEmpty } }
+        // Written back after a reload, so never read through a link: it would bring what it leads to into the folder.
+        var before = AppFile.text(runningLayout(project), in: project).map { $0.components(separatedBy: "\n").filter { !$0.isEmpty } }
         if before == nil {
             before = await analysis(of: running(project), in: project, module: project.exe, macOS: Template.macMinimum(project))?.layout
             if let before { try? before.joined(separator: "\n").write(to: runningLayout(project), atomically: true, encoding: .utf8) }

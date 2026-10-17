@@ -67,10 +67,19 @@ enum Template {
         try writeOwnedFiles(for: project)   // Package.swift last: it's what marks the app as no longer a draft
     }
 
+    /// A secret Lamp made for the app and keeps in its folder, or nil to make a new one. It's written into the
+    /// app's own code, where the agent reads it, so it's read as `AppFile` reads (never through a link the agent
+    /// put in its place) and only as Lamp writes them: letters, digits and dashes.
+    static func ownSecret(at url: URL, in project: LampProject) -> String? {
+        guard let text = AppFile.text(url, in: project)?.trimmed, !text.isEmpty, text.count <= 128,
+              text.unicodeScalars.allSatisfy({ ($0.isASCII && CharacterSet.alphanumerics.contains($0)) || $0 == "-" }) else { return nil }
+        return text
+    }
+
     /// Per-app secret the app sends to Lamp's AI gateway. Created on first use.
     static func token(for project: LampProject) -> String {
         let url = project.dir.appendingPathComponent(".lamp/token")
-        if let token = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !token.isEmpty { return token }
+        if let token = ownSecret(at: url, in: project) { return token }
         let token = UUID().uuidString + UUID().uuidString
         try? token.write(to: url, atomically: true, encoding: .utf8)
         return token
@@ -81,7 +90,7 @@ enum Template {
     /// the Wi‑Fi traffic, token and all, gives nobody the key.
     static func phoneSecret(for project: LampProject) -> String {
         let url = project.dir.appendingPathComponent(".lamp/phone-secret")
-        if let secret = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !secret.isEmpty { return secret }
+        if let secret = ownSecret(at: url, in: project) { return secret }
         let secret = UUID().uuidString + UUID().uuidString
         try? secret.write(to: url, atomically: true, encoding: .utf8)
         return secret
@@ -2429,7 +2438,7 @@ enum Template {
     /// The key the sidebar page's calls carry: Lamp hands it to Chrome's sidebar with the page's address.
     static func sidebarKey(for project: LampProject) -> String {
         let url = project.dir.appendingPathComponent(".lamp/sidebar-key")
-        if let key = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !key.isEmpty { return key }
+        if let key = ownSecret(at: url, in: project) { return key }
         let key = UUID().uuidString + UUID().uuidString
         try? key.write(to: url, atomically: true, encoding: .utf8)
         return key
@@ -2448,7 +2457,7 @@ enum Template {
     /// The secret an app and its widget are both built with, so the app answers its own widget and nobody else.
     static func widgetToken(for project: LampProject) -> String {
         let url = project.dir.appendingPathComponent(".lamp/widget-token")
-        if let token = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !token.isEmpty { return token }
+        if let token = ownSecret(at: url, in: project) { return token }
         let token = UUID().uuidString + UUID().uuidString
         try? token.write(to: url, atomically: true, encoding: .utf8)
         return token

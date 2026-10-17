@@ -1358,13 +1358,15 @@ final class Store: ObservableObject {
         let sources = dir.appendingPathComponent("Sources")
         let files = (fm.enumerator(at: sources, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
             .filter { $0.pathExtension == "swift" && $0.lastPathComponent != "LampSupport.swift" }
+        // Read as `AppFile` reads: written back in place, a file read through a link would bring what it leads to
+        // into the app's folder.
         for file in files {
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            guard let text = AppFile.text(file, inFolder: dir) else { continue }
             let updated = text.replacingOccurrences(of: "\"\(old)\"", with: "\"\(new)\"")
             if updated != text { try? updated.write(to: file, atomically: true, encoding: .utf8) }
         }
         let appMd = dir.appendingPathComponent("APP.md")
-        if let text = try? String(contentsOf: appMd, encoding: .utf8), text.hasPrefix("# \(old)\n") {
+        if let text = AppFile.text(appMd, inFolder: dir), text.hasPrefix("# \(old)\n") {
             try? ("# \(new)\n" + text.dropFirst(old.count + 3)).write(to: appMd, atomically: true, encoding: .utf8)
         }
     }
@@ -2786,7 +2788,7 @@ final class Store: ObservableObject {
     /// One pi conversation per app, so the agent remembers earlier requests, including ones that were undone.
     private static func piSession(for project: LampProject) -> String {
         let url = project.dir.appendingPathComponent(".lamp/pi-session")
-        if let id = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !id.isEmpty { return id }
+        if let id = Template.ownSecret(at: url, in: project) { return id }
         let id = "lamp-" + UUID().uuidString.lowercased()
         try? id.write(to: url, atomically: true, encoding: .utf8)
         return id
@@ -2797,8 +2799,11 @@ final class Store: ObservableObject {
         project.dir.appendingPathComponent(".lamp/session-\(engine.rawValue)")
     }
 
+    /// An engine's conversation id as Lamp kept it. It goes to the engine, and to its environment, so it's read as
+    /// `AppFile` reads and only as engines write them.
     private static func savedSession(_ url: URL) -> String? {
-        (try? String(contentsOf: url, encoding: .utf8))?.trimmed.nilIfEmpty
+        let folder = url.deletingLastPathComponent().deletingLastPathComponent()
+        return Template.ownSecret(at: url, in: LampProject(id: folder.lastPathComponent, name: "", exe: "", dir: folder))
     }
 
     /// Deletes an app: quits it, stops its agent, and moves its source and built app to the Trash.

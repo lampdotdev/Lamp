@@ -303,7 +303,7 @@ enum Icons {
     /// from the first thing its user asked for.
     static func design(for project: LampProject, brief: String? = nil, avoiding current: IconSpec? = nil) async -> IconSpec {
         let about = brief.map { "Its user asked for: \($0)" }
-            ?? (try? String(contentsOf: project.dir.appendingPathComponent("APP.md"), encoding: .utf8)) ?? ""
+            ?? AppFile.text(project.dir.appendingPathComponent("APP.md"), in: project) ?? ""
         let names = backgrounds.map(\.name).joined(separator: ", ")
         var prompt = """
         Design a macOS app icon for an app called "\(project.name)". About the app:

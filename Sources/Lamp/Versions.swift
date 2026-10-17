@@ -363,7 +363,8 @@ enum Versions {
 
     /// The note about a restore since the last request. It stays until the agent has had it (`forgetNote`).
     static func note(for project: LampProject) -> String {
-        (try? String(contentsOf: noteURL(project), encoding: .utf8)) ?? ""
+        // It goes into the next request word for word, so never through a link the agent put in its place.
+        AppFile.text(noteURL(project), in: project) ?? ""
     }
 
     static func forgetNote(for project: LampProject) {
