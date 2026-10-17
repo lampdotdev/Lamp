@@ -4681,6 +4681,25 @@ final class Store: ObservableObject {
         }
     }
 
+    struct ForeignBuild: LocalizedError {
+        let id: String?
+        var errorDescription: String? { "its build says it's another app (\(id ?? "no id")), so Lamp won't sign it as this one." }
+    }
+
+    /// Throws unless the built app and each piece Lamp signs inside it (the chat, a widget, a share extension)
+    /// carry the ids Lamp gave them.
+    nonisolated static func checkOwnIDs(in app: URL, for project: LampProject) throws {
+        let fm = FileManager.default
+        let pieces = [(app, project.bundleID),
+                      (Sidebar.extensionURL(in: app), Sidebar.bundleID(for: project)),
+                      (Template.widgetURL(in: app, of: project), Template.widgetBundleID(for: project)),
+                      (Template.shareURL(in: app, of: project), project.bundleID + ".share")]
+        for (bundle, expected) in pieces where bundle == app || fm.fileExists(atPath: bundle.path) {
+            let id = NSDictionary(contentsOf: bundle.appendingPathComponent("Contents/Info.plist"))?["CFBundleIdentifier"] as? String
+            guard id == expected else { throw ForeignBuild(id: id) }
+        }
+    }
+
     /// Puts the icon into the freshly built bundle, re-signs it, and swaps it into the apps folder.
     /// The swap is atomic, so it's safe even while the app is running.
     private func deploy(_ project: LampProject) async throws {
@@ -4762,6 +4781,10 @@ final class Store: ObservableObject {
         var signingEnv = ["LAMP_APP": project.builtURL.path, "LAMP_WIDGET": widget.path, "LAMP_WIDGET_ENTITLEMENTS": entitlements.path,
                           "LAMP_SHARE": share.path, "LAMP_SHARE_ENTITLEMENTS": shareEntitlements.path]
             .merging(Sidebar.signingEnvironment(for: project)) { $1 }
+        // Only a build that is this app is signed as it: anything that can write the build folder can rewrite an
+        // id after build.sh, and signed with Lamp's certificate under another app's id the build would get that
+        // app's permissions and keychain items. Read from the files last of all, just before the signing.
+        try Self.checkOwnIDs(in: project.builtURL, for: project)
         // An app for both was signed by Xcode for the person's team; what was put in since is sealed with the
         // same certificate and the same entitlements, never Lamp's own, which could carry neither.
         let identity = project.platform == .universal ? (await Devices.signingIdentity(for: Devices.team) ?? "-") : await AppSigning.identity()
