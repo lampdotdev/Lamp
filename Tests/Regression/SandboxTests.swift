@@ -77,8 +77,42 @@ final class SandboxTests: XCTestCase {
         XCTAssertTrue(started.output.contains("not permitted"), started.output)
         let injected = try run("DYLD_INSERT_LIBRARIES=/tmp/nothing.dylib \(Sandbox.quoted(program.path))", in: project)
         XCTAssertTrue(injected.output.contains("not permitted"), injected.output)
+        // Nor a program in Lamp's phone builds, where Xcode leaves what it makes from the app.
+        let builds = Devices.buildsFolder.appendingPathComponent("sandbox-exec-test-\(UUID().uuidString)")
+        try fm.createDirectory(at: builds, withIntermediateDirectories: true)
+        defer {
+            try? fm.removeItem(at: builds)
+            if (try? fm.contentsOfDirectory(atPath: Devices.buildsFolder.path))?.isEmpty == true { try? fm.removeItem(at: Devices.buildsFolder) }
+        }
+        let built = builds.appendingPathComponent("hello")
+        try fm.copyItem(at: program, to: built)
+        let fromBuilds = try run(Sandbox.quoted(built.path), in: project)
+        XCTAssertNotEqual(fromBuilds.status, 0, fromBuilds.output)
+        XCTAssertTrue(fromBuilds.output.contains("not permitted"), fromBuilds.output)
         // An ordinary program still starts.
         let plain = try run("/bin/echo fine", in: project)
         XCTAssertEqual(plain.output.trimmingCharacters(in: .whitespacesAndNewlines), "fine")
+    }
+    /// A command can swap the app's folder for a link to another folder: it may unlink and create at the
+    /// folder's own path. Every later command, and Lamp's own checks and writes for the agent, must still
+    /// open only the folder where the app really lives, never wherever that link leads (here the folder
+    /// holding the app, standing in for Lamp's own).
+    @MainActor func testTheAppsFolderSwappedForALinkOpensNothingElse() throws {
+        let (project, root) = try project()
+        let dir = Sandbox.quoted(project.dir.path)
+        let swap = try run("cd / && rm -r \(dir) && ln -s \(Sandbox.quoted(root.path)) \(dir)", in: project)
+        XCTAssertEqual(swap.status, 0, swap.output)
+        XCTAssertNotNil(try? FileManager.default.destinationOfSymbolicLink(atPath: project.dir.path))
+
+        let through = try run("cd / && cat \(dir)/outside.txt; echo planted > \(dir)/planted", in: project)
+        XCTAssertFalse(through.output.contains("secret"), through.output)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("planted").path))
+
+        XCTAssertNotEqual(Privacy.verdict(tool: "read", path: "outside.txt", project: project), .allow)
+        XCTAssertNotEqual(Privacy.verdict(tool: "write", path: "planted", project: project), .allow)
+        XCTAssertNotEqual(Store.deleteFile("outside.txt", in: project).0, 200)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("outside.txt").path))
+        XCTAssertNil(Previews.destination(for: "shot.jpg", under: ".lamp/runtime/previews", in: project))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".lamp").path))
     }
 }

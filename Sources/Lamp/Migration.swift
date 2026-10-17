@@ -114,7 +114,9 @@ enum Migration {
             touched = true
         }
         let ignore = dir.appendingPathComponent(".gitignore")
-        if let text = try? String(contentsOf: ignore, encoding: .utf8), !text.contains(".lamp/") {
+        // What's read here is written back in place, so it's read as `AppFile` reads: through a link it would bring
+        // what that leads to into the app's folder.
+        if let text = AppFile.text(ignore, inFolder: dir), !text.contains(".lamp/") {
             try? (text.replacingOccurrences(of: ".forge/", with: ".lamp/") + (text.contains(".forge/") ? "" : "\n.lamp/\n"))
                 .write(to: ignore, atomically: true, encoding: .utf8)
             touched = true
@@ -129,7 +131,7 @@ enum Migration {
         let files = (fm.enumerator(at: sources, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
             .filter { $0.pathExtension == "swift" } + ["APP.md", "build.sh", "Package.swift"].map { dir.appendingPathComponent($0) }
         for file in files {
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            guard let text = AppFile.text(file, inFolder: dir) else { continue }
             var updated = text.replacingOccurrences(of: #"\bForge(?=[A-Z])"#, with: "Lamp", options: .regularExpression)
             updated = updated.replacingOccurrences(of: ".forgeDropFiles", with: ".lampDropFiles")
                 .replacingOccurrences(of: "dev.forge.", with: "dev.lamp.")

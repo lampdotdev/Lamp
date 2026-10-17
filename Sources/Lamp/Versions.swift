@@ -299,7 +299,7 @@ enum Versions {
     /// Saves a reduced copy of a screenshot as a version's picture.
     static func savePicture(_ screenshot: URL, in project: LampProject, for version: String) {
         guard let url = Previews.destination(for: version + ".jpg", under: ".lamp/versions", in: project) else { return }
-        Previews.write(screenshot, to: url, maxPixels: 900, quality: 0.8)
+        Previews.write(screenshot, in: project, to: url, maxPixels: 900, quality: 0.8)
     }
 
     static func copyPicture(in project: LampProject, from version: String, to other: String) {
@@ -363,7 +363,8 @@ enum Versions {
 
     /// The note about a restore since the last request. It stays until the agent has had it (`forgetNote`).
     static func note(for project: LampProject) -> String {
-        (try? String(contentsOf: noteURL(project), encoding: .utf8)) ?? ""
+        // It goes into the next request word for word, so never through a link the agent put in its place.
+        AppFile.text(noteURL(project), in: project) ?? ""
     }
 
     static func forgetNote(for project: LampProject) {

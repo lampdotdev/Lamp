@@ -76,6 +76,13 @@ struct LampProject: Identifiable, Hashable {
     let name: String    // display name
     let exe: String     // Swift target / executable name
     let dir: URL
+    /// Where the app's folder really is: the folders above it worked out (they're Lamp's), the folder itself
+    /// taken by its name. The agent may write at that name, so it can swap the folder for a link to anywhere,
+    /// Lamp's own folder included; what is opened or trusted as the app's must never follow that link.
+    var realDir: URL {
+        let named = dir.standardizedFileURL
+        return named.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent(named.lastPathComponent)
+    }
     /// Who this app is, whatever its folder is called: given when it's made and kept through renames, so
     /// something started on a draft still finds the app it became, and a later draft that takes the same
     /// folder name is a different app. Apps from before it existed use their folder name.
@@ -1351,13 +1358,15 @@ final class Store: ObservableObject {
         let sources = dir.appendingPathComponent("Sources")
         let files = (fm.enumerator(at: sources, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
             .filter { $0.pathExtension == "swift" && $0.lastPathComponent != "LampSupport.swift" }
+        // Read as `AppFile` reads: written back in place, a file read through a link would bring what it leads to
+        // into the app's folder.
         for file in files {
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            guard let text = AppFile.text(file, inFolder: dir) else { continue }
             let updated = text.replacingOccurrences(of: "\"\(old)\"", with: "\"\(new)\"")
             if updated != text { try? updated.write(to: file, atomically: true, encoding: .utf8) }
         }
         let appMd = dir.appendingPathComponent("APP.md")
-        if let text = try? String(contentsOf: appMd, encoding: .utf8), text.hasPrefix("# \(old)\n") {
+        if let text = AppFile.text(appMd, inFolder: dir), text.hasPrefix("# \(old)\n") {
             try? ("# \(new)\n" + text.dropFirst(old.count + 3)).write(to: appMd, atomically: true, encoding: .utf8)
         }
     }
@@ -2779,7 +2788,7 @@ final class Store: ObservableObject {
     /// One pi conversation per app, so the agent remembers earlier requests, including ones that were undone.
     private static func piSession(for project: LampProject) -> String {
         let url = project.dir.appendingPathComponent(".lamp/pi-session")
-        if let id = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !id.isEmpty { return id }
+        if let id = Template.ownSecret(at: url, in: project) { return id }
         let id = "lamp-" + UUID().uuidString.lowercased()
         try? id.write(to: url, atomically: true, encoding: .utf8)
         return id
@@ -2790,8 +2799,11 @@ final class Store: ObservableObject {
         project.dir.appendingPathComponent(".lamp/session-\(engine.rawValue)")
     }
 
+    /// An engine's conversation id as Lamp kept it. It goes to the engine, and to its environment, so it's read as
+    /// `AppFile` reads and only as engines write them.
     private static func savedSession(_ url: URL) -> String? {
-        (try? String(contentsOf: url, encoding: .utf8))?.trimmed.nilIfEmpty
+        let folder = url.deletingLastPathComponent().deletingLastPathComponent()
+        return Template.ownSecret(at: url, in: LampProject(id: folder.lastPathComponent, name: "", exe: "", dir: folder))
     }
 
     /// Deletes an app: quits it, stops its agent, and moves its source and built app to the Trash.
@@ -3290,10 +3302,8 @@ final class Store: ObservableObject {
                 return reply(["content": [["type": "text", "text": answer["error"] as? String ?? "Lamp couldn't do that."]], "isError": true])
             }
             var content: [[String: Any]] = [["type": "text", "text": answer["text"] as? String ?? ""]]
-            for path in answer["screenshots"] as? [String] ?? [] {
-                if let data = try? Data(contentsOf: URL(fileURLWithPath: path)) {
-                    content.append(["type": "image", "data": data.base64EncodedString(), "mimeType": Previews.mimeType(of: path)])
-                }
+            for picture in Self.pictureData(answer["screenshots"] as? [String] ?? [], in: project) {
+                content.append(["type": "image", "data": picture["data"] ?? "", "mimeType": picture["mimeType"] ?? "image/png"])
             }
             return reply(["content": content])
         default:
@@ -3336,7 +3346,7 @@ final class Store: ObservableObject {
     /// The agent's `delete_file`: one file inside the app's folder, never Lamp's own files, never through a
     /// link that leads out. The same rules as pi's version in lamp-tools.ts.
     static func deleteFile(_ path: String, in project: LampProject) -> (Int, [String: Any]) {
-        let root = project.dir.resolvingSymlinksInPath().standardizedFileURL
+        let root = project.realDir
         let target = URL(fileURLWithPath: path, relativeTo: project.dir).standardizedFileURL
         let relative = target.path.hasPrefix(root.path + "/") || target.path.hasPrefix(project.dir.path + "/")
             ? String(target.path.dropFirst((target.path.hasPrefix(root.path + "/") ? root.path : project.dir.path).count + 1)) : ""
@@ -3608,7 +3618,7 @@ final class Store: ObservableObject {
             let size = NSBitmapImageRep(data: png).map { " (\($0.pixelsWide)×\($0.pixelsHigh) pixels)" } ?? ""
             let around = scene ? "" : ", transparent around the object"
             return (200, ["text": "Saved Assets/\(name)\(size)\(around). Show it with LampAssets.image(\"\(name)\"). It follows.",
-                          "screenshots": [Previews.forAgent(url, in: project).path]])
+                          "screenshots": [Previews.forAgent(url, in: project)?.path].compactMap { $0 }])
         } catch let failure as AppAI.Failure where failure.needs == .pictures {
             offerSetup(project, SetupOffer(capability: .pictures), because: because)
             return (200, ["text": unavailable])
@@ -3626,7 +3636,7 @@ final class Store: ObservableObject {
     /// that leads anywhere else; nil when either does.
     private func artDestination(_ name: String, in project: LampProject) -> URL? {
         let fm = FileManager.default
-        let root = project.dir.resolvingSymlinksInPath().standardizedFileURL
+        let root = project.realDir
         let folder = project.dir.appendingPathComponent("Assets")
         if let type = (try? fm.attributesOfItem(atPath: folder.path))?[.type] as? FileAttributeType {
             guard type == .typeDirectory else { return nil }
@@ -4643,14 +4653,21 @@ final class Store: ObservableObject {
             return nil
         }
         do {
-            try Template.writeDeviceProject(for: project, team: team, in: Devices.buildFolder(for: project))
+            try await Devices.stage(project, team: team, started: { owner.build = $0 })
+            owner.build = nil
             // Where the phone's project and builds were kept before, inside the app's folder. An app for both
             // still builds its Mac half there.
             if project.platform == .iphone { try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(".lamp/device")) }
+        } catch let error as Devices.LinkedFiles {
+            owner.build = nil
+            failed(error.localizedDescription)
+            return nil
         } catch {
+            owner.build = nil
             failed("Lamp couldn't get the app ready for \(name). Click Retry. If it fails again, ask Lamp to fix it and include the error from Agent Details.", output: error.localizedDescription)
             return nil
         }
+        guard stillOwns() else { return nil }
         log(project, .status, "Building for \(name)…")
         var output: [String] = []
         let app: URL
@@ -5652,12 +5669,12 @@ final class Store: ObservableObject {
         if route == "/mcp" { return await mcp(request.body, for: project, fileTools: request.path.contains("files=1")) }
         if request.path == "/agent/look" {
             let arguments = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
-            return arguments["sidebar"] as? Bool == true
+            return Self.withPictureData(arguments["sidebar"] as? Bool == true
                 ? await lookAtSidebar(project, page: arguments["page"] as? String, reopen: arguments["reopen"] as? Bool ?? false)
                 : await look(at: project, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
-                                 reopen: arguments["reopen"] as? Bool ?? false)
+                                 reopen: arguments["reopen"] as? Bool ?? false), in: project)
         }
-        if request.path == "/agent/use" { return await use(project, request: request.body) }
+        if request.path == "/agent/use" { return Self.withPictureData(await use(project, request: request.body), in: project) }
         if request.path.hasPrefix("/agent/versions") {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             return await versions(String(request.path.dropFirst("/agent/versions".count)), body, of: project)
@@ -5670,7 +5687,7 @@ final class Store: ObservableObject {
             return Skills.read((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:])
         }
         if route == "/agent/art" {
-            return await makeArt((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
+            return Self.withPictureData(await makeArt((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project), in: project)
         }
         if route == "/agent/talk" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
@@ -6056,7 +6073,24 @@ final class Store: ObservableObject {
     /// the art (`Previews.forAgent`), so a conversation holds many before a request is too big to send; none
     /// when the person keeps pictures from the model. The files given are left as they are.
     static func agentPictures(_ pictures: [URL], in project: LampProject) -> [String] {
-        Privacy.sharesPictures ? pictures.map { Previews.forAgent($0, in: project).path } : []
+        Privacy.sharesPictures ? pictures.compactMap { Previews.forAgent($0, in: project)?.path } : []
+    }
+
+    /// Those pictures' bytes, as every engine is given them: read by Lamp as `AppFile` reads, so a picture swapped
+    /// for a link after its copy was made brings the agent nothing else. An engine handed only the path would read
+    /// it itself, through whatever link was there by then.
+    static func pictureData(_ paths: [String], in project: LampProject) -> [[String: String]] {
+        paths.compactMap { path in
+            AppFile.read(URL(fileURLWithPath: path), in: project).map { ["data": $0.base64EncodedString(), "mimeType": Previews.mimeType(of: path)] }
+        }
+    }
+
+    /// A tool's answer with its pictures' bytes beside their paths, for pi's extension.
+    private static func withPictureData(_ result: (Int, [String: Any]), in project: LampProject) -> (Int, [String: Any]) {
+        guard let paths = result.1["screenshots"] as? [String], !paths.isEmpty else { return result }
+        var answer = result.1
+        answer["pictures"] = pictureData(paths, in: project)
+        return (result.0, answer)
     }
 
     /// What a look says when the person kept the earlier build open (`Turn.keptOpen`).

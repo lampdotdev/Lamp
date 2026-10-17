@@ -4,8 +4,8 @@ import CryptoKit
 
 /// The person's own iPhone or iPad: plugged in or on the same Wi‑Fi and paired with this Mac, found and
 /// driven with Xcode's devicectl. An app goes on it signed with the person's Apple account, which Xcode
-/// holds (Xcode → Settings → Accounts), through a small Xcode project Lamp writes in its own folder
-/// (Template.writeDeviceProject, `buildsFolder`): Xcode's own automatic signing registers the phone and makes the certificate
+/// holds (Xcode → Settings → Accounts), through a small Xcode project Lamp writes in its own folder, beside a copy
+/// of the app's files (`stage`, `buildsFolder`): Xcode's own automatic signing registers the phone and makes the certificate
 /// and profile, so Lamp never handles the account itself. The phone can't be photographed from here, so
 /// the agent keeps looking at the simulator; the phone is for the person to try the app on.
 enum Devices {
@@ -159,6 +159,61 @@ enum Devices {
     static let buildsFolder = Edition.supportFolder.appendingPathComponent("Phone Builds")
 
     static func buildFolder(for project: LampProject) -> URL { buildsFolder.appendingPathComponent(project.id) }
+
+    /// Thrown when the app's files hold a link: Xcode copies what a link leads to into the app, and the app can
+    /// send anything it carries anywhere once it's on the phone, so a link could carry any file Lamp can read.
+    struct LinkedFiles: LocalizedError {
+        var errorDescription: String? {
+            "Some of this app's files are shortcuts to other files, so Lamp won't put it on your phone. Ask Lamp to put the files themselves in their place."
+        }
+    }
+
+    /// What Xcode builds the phone app from, put together in `folder`: Lamp's project for it, and beside it in
+    /// `app/` a copy of the app's own files (its code, Assets, widget, share extension and watch app), which the
+    /// project reads instead of the app's folder. The copy is made by a command under the app's own sandbox, so
+    /// it reads only the app's real folder, even one swapped for a link while it copies, and keeps links as
+    /// links. Then no link may be left but Lamp's own one to the widget's shared code: what a link leads to stays
+    /// the agent's to change after any look at it. Gives back the copy. `started` gets the copy's process, so
+    /// Stop can end it like the build.
+    @discardableResult
+    static func stage(_ project: LampProject, team: String, in folder: URL? = nil,
+                      started: (@MainActor (Process) -> Void)? = nil) async throws -> URL {
+        let fm = FileManager.default
+        // The app's folder swapped for a link: the copy below couldn't read through it, and an empty app isn't one.
+        if (try? fm.destinationOfSymbolicLink(atPath: project.dir.path)) != nil { throw LinkedFiles() }
+        let dir = folder ?? buildFolder(for: project)
+        let files = dir.appendingPathComponent("app")
+        try? fm.removeItem(at: files)
+        try fm.createDirectory(at: files, withIntermediateDirectories: true)
+        try Template.writeDeviceProject(for: project, team: team, in: dir, reading: files)
+        let names = ["Sources", Sharing.Assets.folder, Template.widgetFolder, Template.shareFolder, Template.watchFolder]
+        let copy = "cd \"$LAMP_FROM\" && for name in \(names.map(Sandbox.quoted).joined(separator: " ")); do "
+            + "if [ -e \"$name\" ] || [ -L \"$name\" ]; then /bin/cp -Rp \"$name\" \"$LAMP_TO/\" || exit 1; fi; done"
+        guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [files.path]) else {
+            throw Failure(message: "Lamp couldn't copy the app's files to build it.")
+        }
+        var output: [String] = []
+        let status = await Shell.run(confined, cwd: files, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": files.path],
+                                     started: started) { output.append($0) }
+        guard status == 0 else { throw Failure(message: "Lamp couldn't copy the app's files to build it.\n\n" + output.suffix(4).joined(separator: "\n")) }
+        do { try checkUnlinked(dir) } catch { try? fm.removeItem(at: files); throw error }
+        return files
+    }
+
+    /// Throws `LinkedFiles` when anything Xcode reads in `folder` is a link (the project, the icon Lamp copied in,
+    /// the copy of the app's files), but Lamp's own one to the widget's shared code. What Xcode makes isn't read.
+    static func checkUnlinked(_ folder: URL) throws {
+        let fm = FileManager.default
+        let base = folder.standardizedFileURL.path
+        let ownLink = "app/Sources/" + Template.sharedWidgetLink
+        guard let walk = fm.enumerator(at: folder, includingPropertiesForKeys: nil) else { return }
+        for case let file as URL in walk {
+            let relative = String(file.standardizedFileURL.path.dropFirst(base.count + 1))
+            if relative == "DerivedData" { walk.skipDescendants(); continue }
+            guard let target = try? fm.destinationOfSymbolicLink(atPath: file.path) else { continue }
+            guard relative == ownLink, target == "../\(Template.widgetFolder)/\(Template.sharedWidgetFolder)" else { throw LinkedFiles() }
+        }
+    }
 
     /// Builds the app for the phone with Xcode, signed for the team, and gives back the bundle. Automatic
     /// signing may register the phone and make a certificate and profile, which is slow the first time.

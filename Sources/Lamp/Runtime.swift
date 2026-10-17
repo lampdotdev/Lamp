@@ -176,7 +176,7 @@ enum Runtime {
     static func propAnswer(of project: LampProject, waiting seconds: Double = 5) async -> String? {
         let url = folder(project).appendingPathComponent("prop.txt")
         for _ in 0..<Int(seconds * 4) {
-            if let text = try? String(contentsOf: url, encoding: .utf8) { return text }
+            if let data = AppFile.read(url, in: project) { return String(decoding: data, as: UTF8.self) }
             try? await Task.sleep(for: .milliseconds(250))
         }
         return nil
@@ -192,8 +192,8 @@ enum Runtime {
             Notification.Name(Edition.notificationPrefix + "motion.\(project.id)"), object: nil, userInfo: nil, deliverImmediately: true)
         for _ in 0..<32 {
             try? await Task.sleep(for: .milliseconds(250))
-            guard (try? report.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast > asked,
-                  let data = try? Data(contentsOf: report),
+            guard AppFile.attributes(report, in: project)?.modified ?? .distantPast > asked,
+                  let data = AppFile.read(report, in: project),
                   let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { continue }
             if answer["error"] != nil { return ("The app had no window open to watch.", []) }
             let changes = answer["changes"] as? [Double] ?? []
@@ -236,7 +236,7 @@ enum Runtime {
                           while running: () -> Bool) async -> String? {
         let url = folder(project).appendingPathComponent("use.json")
         for _ in 0..<Int(seconds * 4) where running() {
-            if let data = try? Data(contentsOf: url),
+            if let data = AppFile.read(url, in: project),
                let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: String], answer["id"] == id {
                 return answer["report"]
             }
@@ -252,8 +252,9 @@ enum Runtime {
     static func screenText(of project: LampProject, since date: Date) async -> String? {
         let url = folder(project).appendingPathComponent("screen.txt")
         func fresh() -> String? {
-            guard (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast > date else { return nil }
-            return try? String(contentsOf: url, encoding: .utf8)
+            guard AppFile.attributes(url, in: project)?.modified ?? .distantPast > date,
+                  let data = AppFile.read(url, in: project) else { return nil }
+            return String(decoding: data, as: UTF8.self)
         }
         for _ in 0..<6 where fresh() == nil {
             try? await Task.sleep(for: .milliseconds(250))
@@ -279,7 +280,7 @@ enum Runtime {
 
     /// The last lines of the latest launch's output.
     static func logTail(_ project: LampProject, lines: Int = 30) -> String? {
-        guard let data = try? Data(contentsOf: logURL(project)) else { return nil }
+        guard let data = AppFile.read(logURL(project), in: project, last: 8_000) else { return nil }
         let tail = String(decoding: data.suffix(8_000), as: UTF8.self)
             .split(separator: "\n", omittingEmptySubsequences: false).suffix(lines).joined(separator: "\n").trimmed
         return tail.isEmpty ? nil : tail
@@ -287,12 +288,12 @@ enum Runtime {
 
     /// How much the app has printed so far, to tell later what's new.
     static func logSize(_ project: LampProject) -> Int {
-        ((try? logURL(project).resourceValues(forKeys: [.fileSizeKey]))?.fileSize) ?? 0
+        AppFile.attributes(logURL(project), in: project)?.size ?? 0
     }
 
     /// What the app has printed since its log was `offset` bytes long, at most the last 30 lines. nil if nothing.
     static func log(of project: LampProject, from offset: Int) -> String? {
-        guard let data = try? Data(contentsOf: logURL(project)), data.count > offset else { return nil }
+        guard let data = AppFile.read(logURL(project), in: project), data.count > offset else { return nil }
         let lines = String(decoding: data.dropFirst(offset).suffix(8_000), as: UTF8.self)
             .split(separator: "\n", omittingEmptySubsequences: false).suffix(30).joined(separator: "\n").trimmed
         return lines.isEmpty ? nil : lines
