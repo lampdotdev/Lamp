@@ -1761,14 +1761,17 @@ enum Template {
 
     // MARK: - On the person's own phone
 
-    /// The Xcode project that builds the app for a real iPhone or iPad, written under .lamp/device: one app
-    /// target over the package's Sources, with Xcode's automatic signing for the person's team, the icon in
-    /// an asset catalog and the app's own files (Assets/) copied in as a folder. Nothing else about the app changes:
-    /// Package.swift stays what the simulator and the agent build with.
-    static func writeDeviceProject(for project: LampProject, team: String) throws {
+    /// The Xcode project that builds the app for a real iPhone or iPad: one app target over the package's
+    /// Sources, with Xcode's automatic signing for the person's team, the icon in an asset catalog and the
+    /// app's own files (Assets/) copied in as a folder. Nothing else about the app changes: Package.swift stays
+    /// what the simulator and the agent build with. The phone's is written in `folder`, Lamp's own
+    /// (`Devices.buildFolder`), where the agent's sandboxed commands can't change what it's signed with; an app for both
+    /// also has one under .lamp/device, which its build.sh builds the Mac half from inside the agent's
+    /// sandbox, and which Lamp signs again with its own entitlements when it installs the app (`Store.deploy`).
+    static func writeDeviceProject(for project: LampProject, team: String, in folder: URL? = nil) throws {
         let fm = FileManager.default
         let universal = project.platform == .universal
-        let dir = project.dir.appendingPathComponent(".lamp/device")
+        let dir = folder ?? project.dir.appendingPathComponent(".lamp/device")
         let xcodeproj = dir.appendingPathComponent("\(project.exe).xcodeproj")
         try fm.createDirectory(at: xcodeproj.appendingPathComponent("xcshareddata/xcschemes"), withIntermediateDirectories: true)
         Sharing.Assets.adopt(in: project)
@@ -1796,6 +1799,7 @@ enum Template {
                 .sorted()
             pbxproj = withWatchTarget(pbxproj, complications: complications, leftOut: inComplications)
         }
+        if folder != nil { pbxproj = reaching(project.dir, in: pbxproj) }
         var files: [(String, String)] = [
             ("\(project.exe).xcodeproj/project.pbxproj", pbxproj),
             ("App.entitlements", capabilities.entitlementsPlist(for: project, platform: .ios, appGroup: widget || share ? group : nil)),
@@ -1850,6 +1854,15 @@ enum Template {
                 try contents.write(to: url, atomically: true, encoding: .utf8)
             }
         }
+    }
+
+    /// The project names the app's folders by where it sits inside the app (../../Sources). Written anywhere
+    /// else, it names them by their full path.
+    static func reaching(_ app: URL, in pbxproj: String) -> String {
+        let base = app.standardizedFileURL.path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let pattern = try! NSRegularExpression(pattern: #"path = \.\./\.\./([^;"]+); sourceTree = "<group>";"#)
+        return pattern.stringByReplacingMatches(in: pbxproj, range: NSRange(pbxproj.startIndex..., in: pbxproj),
+                                                withTemplate: NSRegularExpression.escapedTemplate(for: "path = \"\(base)/") + "$1\"; sourceTree = \"<absolute>\";")
     }
 
     /// Xcode 16's project format: the Sources folder is a synchronized group, so every file in it is in

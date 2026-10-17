@@ -4,8 +4,8 @@ import CryptoKit
 
 /// The person's own iPhone or iPad: plugged in or on the same Wi‑Fi and paired with this Mac, found and
 /// driven with Xcode's devicectl. An app goes on it signed with the person's Apple account, which Xcode
-/// holds (Xcode → Settings → Accounts), through a small Xcode project Lamp writes beside the package
-/// (Template.deviceProject): Xcode's own automatic signing registers the phone and makes the certificate
+/// holds (Xcode → Settings → Accounts), through a small Xcode project Lamp writes in its own folder
+/// (Template.writeDeviceProject, `buildsFolder`): Xcode's own automatic signing registers the phone and makes the certificate
 /// and profile, so Lamp never handles the account itself. The phone can't be photographed from here, so
 /// the agent keeps looking at the simulator; the phone is for the person to try the app on.
 enum Devices {
@@ -150,18 +150,31 @@ enum Devices {
         }
     }
 
+    /// Where the phone's builds are made: in Lamp's own folder, which the sandbox the agent's commands run in
+    /// closes. Xcode signs with the entitlements file its project names, after copying it into its build folder,
+    /// so in the app's folder a command left running in the background could rewrite either between Lamp writing
+    /// it and the signature, and the app would go onto the phone signed for the team with another app's group or
+    /// keychain. The project, its entitlements and everything Xcode makes from them stay here; only the code
+    /// and the app's own files are read from the app's folder.
+    static let buildsFolder = Edition.supportFolder.appendingPathComponent("Phone Builds")
+
+    static func buildFolder(for project: LampProject) -> URL { buildsFolder.appendingPathComponent(project.id) }
+
     /// Builds the app for the phone with Xcode, signed for the team, and gives back the bundle. Automatic
     /// signing may register the phone and make a certificate and profile, which is slow the first time.
-    static func build(_ project: LampProject, team: String, udid: String, started: (@MainActor (Process) -> Void)? = nil,
+    /// `destination` is xcodebuild's: the phone's `id=`.
+    static func build(_ project: LampProject, team: String, destination: String, started: (@MainActor (Process) -> Void)? = nil,
                       onLine: @escaping @MainActor (String) -> Void) async throws -> URL {
-        let dir = project.dir.appendingPathComponent(".lamp/device")
-        let app = dir.appendingPathComponent("DerivedData/Build/Products/Release-iphoneos/\(project.exe).app")
+        let dir = buildFolder(for: project)
+        // A simulator destination is the tests', which build the same project with no team.
+        let sdk = destination.contains("Simulator") ? "iphonesimulator" : "iphoneos"
+        let app = dir.appendingPathComponent("DerivedData/Build/Products/Release-\(sdk)/\(project.exe).app")
         let status = await Shell.run("""
-            xcodebuild -project "$LAMP_PROJECT" -scheme "$LAMP_SCHEME" -configuration Release -destination "id=$LAMP_UDID" \\
+            xcodebuild -project "$LAMP_PROJECT" -scheme "$LAMP_SCHEME" -configuration Release -destination "$LAMP_DESTINATION" \\
               -derivedDataPath "$LAMP_DERIVED" -allowProvisioningUpdates -allowProvisioningDeviceRegistration \\
               DEVELOPMENT_TEAM="$LAMP_TEAM" build 2>&1
             """, cwd: dir, env: ["LAMP_PROJECT": dir.appendingPathComponent("\(project.exe).xcodeproj").path, "LAMP_SCHEME": project.exe,
-                                 "LAMP_UDID": udid, "LAMP_DERIVED": dir.appendingPathComponent("DerivedData").path, "LAMP_TEAM": team],
+                                 "LAMP_DESTINATION": destination, "LAMP_DERIVED": dir.appendingPathComponent("DerivedData").path, "LAMP_TEAM": team],
             started: started, onLine: onLine)
         guard status == 0, FileManager.default.fileExists(atPath: app.path) else { throw Failure(message: "Xcode couldn't build the app for the phone.") }
         return app

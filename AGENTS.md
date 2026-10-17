@@ -369,9 +369,14 @@ are. `SimulatorLiveTests` runs the driver against a real window when `LAMP_LIVE_
 `devicectl`): paired ones to choose, and plugged-in ones that haven't trusted the Mac yet, which it offers
 to pair (`Devices.pair`, `devicectl manage pair`, which puts the Trust prompt on the phone) before telling
 the person about Developer Mode. `LampProject.device` remembers the chosen one. Play and the end of a turn then go through
-`Store.installOnDevice`: `Template.writeDeviceProject` writes a small Xcode project under `.lamp/device`
-(one app target over the package's Sources as a synchronized group, the icon in an asset catalog, the
-attachments as a folder reference, a real Info.plist) and `Devices.build` runs `xcodebuild` with automatic
+`Store.installOnDevice`: `Template.writeDeviceProject` writes a small Xcode project in Lamp's own folder
+(`Devices.buildFolder`, under `Phone Builds`: one app target over the package's Sources as a synchronized group,
+the icon in an asset catalog, the attachments as a folder reference, a real Info.plist). The project, its
+entitlements files and Xcode's build folder stay out of the app's folder, where the sandbox closes them, so no
+command of the agent's, in the background or not, can change what the app is signed with between Lamp writing it
+and Xcode signing; only the
+app's code and files are read from there, by full path (`Template.reaching`). An app for both keeps a copy under
+`.lamp/device` for its Mac build, which Lamp signs again when it installs it (`Store.deploy`). `Devices.build` runs `xcodebuild` with automatic
 signing for the team in Settings → Building (`Devices.team`, found from the Mac's Apple Development certificates), so
 Xcode registers the phone and makes the certificate and profile with the account signed in to Xcode; Lamp
 never holds the account. The bundle id carries the team (`deviceBundleID(team:)`). `devicectl` installs and
