@@ -150,15 +150,17 @@ enum Devices {
         }
     }
 
-    /// Where the phone's builds are made: in Lamp's own folder, which the sandbox the agent's commands run in
-    /// closes. Xcode signs with the entitlements file its project names, after copying it into its build folder,
-    /// so in the app's folder a command left running in the background could rewrite either between Lamp writing
-    /// it and the signature, and the app would go onto the phone signed for the team with another app's group or
-    /// keychain. The project, its entitlements and everything Xcode makes from them stay here; only the code
-    /// and the app's own files are read from the app's folder.
+    /// Lamp's own folder for what's signed for the team, which the sandbox the agent's commands run in closes: the
+    /// project of Lamp's own that Xcode signs to find what the app is signed with (`TeamSigning`), and the copy of the
+    /// app that's signed and put on the phone. A command left running in the background could change anything in the
+    /// app's folder between Lamp writing it and the signature; nothing here.
     static let buildsFolder = Edition.supportFolder.appendingPathComponent("Phone Builds")
 
     static func buildFolder(for project: LampProject) -> URL { buildsFolder.appendingPathComponent(project.id) }
+
+    /// Where an app's signing for the team is done (`TeamSigning`, `signedCopy`): beside its build folder, not in it,
+    /// since the build opens that one to Xcode in the app's sandbox. No app's folder name starts with a dot.
+    static func signingFolder(for project: LampProject) -> URL { buildsFolder.appendingPathComponent(".signing").appendingPathComponent(project.id) }
 
     /// Thrown when the app's files hold a link: Xcode copies what a link leads to into the app, and the app can
     /// send anything it carries anywhere once it's on the phone, so a link could carry any file Lamp can read.
@@ -215,25 +217,52 @@ enum Devices {
         }
     }
 
-    /// Builds the app for the phone with Xcode, signed for the team, and gives back the bundle. Automatic
-    /// signing may register the phone and make a certificate and profile, which is slow the first time.
-    /// `destination` is xcodebuild's: the phone's `id=`.
+    /// Builds the app for the phone with Xcode from what `stage` put in Lamp's folder (its project, and the copy of the
+    /// app's files), in the app's sandbox with only that folder opened and with signing off, and gives back the bundle,
+    /// unsigned: what Xcode does with the agent's code happens as the agent's commands would, and nothing it makes
+    /// is signed until Lamp has copied it (`signedCopy`). `destination` names the phone's SDK (a simulator's is the
+    /// tests'); the build is for any phone.
     static func build(_ project: LampProject, team: String, destination: String, started: (@MainActor (Process) -> Void)? = nil,
                       onLine: @escaping @MainActor (String) -> Void) async throws -> URL {
         let dir = buildFolder(for: project)
-        // A simulator destination is the tests', which build the same project with no team.
-        let sdk = destination.contains("Simulator") ? "iphonesimulator" : "iphoneos"
-        let app = dir.appendingPathComponent("DerivedData/Build/Products/Release-\(sdk)/\(project.exe).app")
-        let status = await Shell.run("""
+        let simulator = destination.contains("Simulator")
+        let app = dir.appendingPathComponent("DerivedData/Build/Products/Release-\(simulator ? "iphonesimulator" : "iphoneos")/\(project.exe).app")
+        let command = """
             "$LAMP_XCODEBUILD" -project "$LAMP_PROJECT" -scheme "$LAMP_SCHEME" -configuration Release -destination "$LAMP_DESTINATION" \\
-              -derivedDataPath "$LAMP_DERIVED" -allowProvisioningUpdates -allowProvisioningDeviceRegistration \\
-              DEVELOPMENT_TEAM="$LAMP_TEAM" build 2>&1
-            """, cwd: dir, env: ["LAMP_XCODEBUILD": DeveloperTools.path("xcodebuild"),
+              -derivedDataPath "$LAMP_DERIVED" CODE_SIGNING_ALLOWED=NO DEVELOPMENT_TEAM="$LAMP_TEAM" build 2>&1
+            """
+        guard let confined = Sandbox.wrapEngine(command, for: project, opening: [dir.path]) else {
+            throw Failure(message: "Xcode couldn't build the app for the phone.")
+        }
+        let status = await Shell.run(confined, cwd: dir, env: ["LAMP_XCODEBUILD": DeveloperTools.path("xcodebuild"),
                                  "LAMP_PROJECT": dir.appendingPathComponent("\(project.exe).xcodeproj").path, "LAMP_SCHEME": project.exe,
-                                 "LAMP_DESTINATION": destination, "LAMP_DERIVED": dir.appendingPathComponent("DerivedData").path, "LAMP_TEAM": team],
+                                 "LAMP_DESTINATION": simulator ? "generic/platform=iOS Simulator" : "generic/platform=iOS",
+                                 "LAMP_DERIVED": dir.appendingPathComponent("DerivedData").path, "LAMP_TEAM": team],
             started: started, onLine: onLine)
         guard status == 0, FileManager.default.fileExists(atPath: app.path) else { throw Failure(message: "Xcode couldn't build the app for the phone.") }
         return app
+    }
+
+    /// The build, signed for the team: copied into Lamp's own folder without following a link, then signed there
+    /// with what Xcode signed Lamp's own project with for this phone (`TeamSigning`). Gives back the signed copy, which
+    /// the caller removes once it's on the phone.
+    static func signedCopy(of build: URL, for project: LampProject, team: String, destination: String,
+                           started: (@MainActor (Process) -> Void)? = nil,
+                           onLine: @escaping @MainActor (String) -> Void) async throws -> URL {
+        // Xcode's signing of Lamp's own project comes first: it makes the team's certificate when this Mac has none yet.
+        let (plan, planDir) = try await TeamSigning.plan(for: project, team: team, place: .iphone, destination: destination,
+                                                         started: started, onLine: onLine)
+        guard let identity = await signingIdentity(for: team) else {
+            throw Failure(message: "This Mac has no certificate for your Apple team yet. Open Xcode → Settings → Accounts, choose the team and click Manage Certificates, then try again.")
+        }
+        let folder = signingFolder(for: project).appendingPathComponent("Install")
+        try? FileManager.default.removeItem(at: folder)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let copy = folder.appendingPathComponent("\(project.exe).app")
+        try AppFolder.copy(build, in: buildFolder(for: project), to: copy, in: folder)
+        try Store.checkContained(copy)
+        try await TeamSigning.sign(copy, with: plan, in: planDir, identity: identity)
+        return copy
     }
 
     static func install(_ app: URL, on udid: String) async throws {

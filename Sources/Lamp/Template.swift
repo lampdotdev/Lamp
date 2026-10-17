@@ -78,11 +78,7 @@ enum Template {
 
     /// Per-app secret the app sends to Lamp's AI gateway. Created on first use.
     static func token(for project: LampProject) -> String {
-        let url = project.dir.appendingPathComponent(".lamp/token")
-        if let token = ownSecret(at: url, in: project) { return token }
-        let token = UUID().uuidString + UUID().uuidString
-        try? token.write(to: url, atomically: true, encoding: .utf8)
-        return token
+        secret(".lamp/token", for: project)
     }
 
     /// A second secret for iPhone apps, what the keys a phone keeps are sealed with (`Store.keysForPhone`), so a
@@ -99,6 +95,27 @@ enum Template {
         return secret
     }
 
+    /// One of the app's secrets, kept in its folder and made on first use: read as `ownSecret` reads it, and written
+    /// without following a link (`AppFolder`), since it goes into the code the agent reads.
+    private static func secret(_ path: String, for project: LampProject) -> String {
+        let url = project.dir.appendingPathComponent(path)
+        if let saved = ownSecret(at: url, in: project) { return saved }
+        let made = UUID().uuidString + UUID().uuidString
+        try? AppFolder.write(made, to: url, in: project.dir)
+        return made
+    }
+
+    /// Writes one of Lamp's own files into the app's folder when it isn't already what it should be (so its date
+    /// moves only when the app needs a rebuild), without following a link on the way (`AppFolder`), and
+    /// executable when asked.
+    static func put(_ contents: String, at url: URL, for project: LampProject, executable: Bool = false) throws {
+        if AppFile.read(url, in: project) != Data(contents.utf8) {
+            try AppFolder.write(contents, to: url, in: project.dir, mode: executable ? 0o755 : 0o644)
+        } else if executable {
+            try AppFolder.setMode(0o755, of: url, in: project.dir)
+        }
+    }
+
     /// The three files Lamp owns in every app, written afresh before every build: LampSupport.swift, build.sh
     /// and Package.swift. The last two are what the build runs (the shell runs build.sh, and SwiftPM compiles
     /// and executes Package.swift as a program before building anything), so nothing the agent, or something
@@ -107,30 +124,30 @@ enum Template {
     static func writeOwnedFiles(for project: LampProject) throws {
         // Where an earlier Lamp kept the phone's secret, readable by the agent's commands; a new one is made in
         // Lamp's own folder (`phoneSecret(in:)`).
-        try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(".lamp/phone-secret"))
+        AppFolder.remove(project.dir.appendingPathComponent(".lamp/phone-secret"), in: project.dir)
         try writeSupport(for: project)
         let widget = hasWidget(project)
         let share = hasShare(project)
         // The simulator build's entitlements, for build.sh to put in the binary (see iPhoneBuildSh), and each
         // extension's beside them.
         if project.platform.hasIOS {
-            try Capabilities.load(project).simulatorEntitlementsPlist(for: project)
-                .write(to: project.dir.appendingPathComponent(".lamp/entitlements.plist"), atomically: true, encoding: .utf8)
+            try put(Capabilities.load(project).simulatorEntitlementsPlist(for: project),
+                    at: project.dir.appendingPathComponent(".lamp/entitlements.plist"), for: project)
             for (has, suffix) in [(widget, "widget"), (share, "share")] {
                 let entitlements = project.dir.appendingPathComponent(".lamp/\(suffix)-entitlements.plist")
                 if has {
-                    try simulatorExtensionEntitlementsPlist(for: project, suffix: suffix).write(to: entitlements, atomically: true, encoding: .utf8)
+                    try put(simulatorExtensionEntitlementsPlist(for: project, suffix: suffix), at: entitlements, for: project)
                 } else {
-                    try? FileManager.default.removeItem(at: entitlements)
+                    AppFolder.remove(entitlements, in: project.dir)
                 }
             }
             try linkSharedWidgetCode(for: project)
             // The watch app's, for build.sh to put in its binaries the same way.
             let watchEntitlements = project.dir.appendingPathComponent(".lamp/watch-entitlements.plist")
             if hasWatch(project) {
-                try simulatorWatchEntitlementsPlist(for: project).write(to: watchEntitlements, atomically: true, encoding: .utf8)
+                try put(simulatorWatchEntitlementsPlist(for: project), at: watchEntitlements, for: project)
             } else {
-                try? FileManager.default.removeItem(at: watchEntitlements)
+                AppFolder.remove(watchEntitlements, in: project.dir)
             }
         }
         switch project.platform {
@@ -179,12 +196,7 @@ enum Template {
         let url = project.dir.appendingPathComponent(path)
         // Never makes the app's folder itself, which would leave a folder of build files where an app was.
         guard FileManager.default.fileExists(atPath: project.dir.path) else { throw CocoaError(.fileNoSuchFile) }
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        // Left alone when it's already right, so its date only moves when the app needs a rebuild.
-        if (try? String(contentsOf: url, encoding: .utf8)) != contents {
-            try contents.write(to: url, atomically: true, encoding: .utf8)
-        }
-        if executable { try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path) }
+        try put(contents, at: url, for: project, executable: executable)
     }
 
     /// Lamp owns LampSupport.swift and rewrites it before every agent turn and build,
@@ -208,10 +220,7 @@ enum Template {
             .replacingOccurrences(of: "{{SIDEBAR_KEY}}", with: project.platform.hasMac ? sidebarKey(for: project) : "")
             .replacingOccurrences(of: "{{SIDEBAR_FRAMER}}", with: sidebarFramer)
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
-        let url = project.dir.appendingPathComponent("Sources/LampSupport.swift")
-        if (try? String(contentsOf: url, encoding: .utf8)) != contents {
-            try contents.write(to: url, atomically: true, encoding: .utf8)
-        }
+        try put(contents, at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
         try writeWidgetSupport(for: project)
         try writeShareSupport(for: project)
         try writeWatchSupport(for: project)
@@ -358,10 +367,10 @@ enum Template {
         var isFolder: ObjCBool = false
         if hasWidget(project), fm.fileExists(atPath: shared.path, isDirectory: &isFolder), isFolder.boolValue {
             guard (try? fm.destinationOfSymbolicLink(atPath: link.path)) != target else { return }
-            if isLink { try fm.removeItem(at: link) } else if fm.fileExists(atPath: link.path) { return }
-            try fm.createSymbolicLink(atPath: link.path, withDestinationPath: target)
+            if !isLink, fm.fileExists(atPath: link.path) { return }
+            try AppFolder.link(link, to: target, in: project.dir)
         } else if isLink {
-            try fm.removeItem(at: link)
+            AppFolder.remove(link, in: project.dir)
         }
     }
 
@@ -475,7 +484,8 @@ enum Template {
     """
 
     /// An app for both: the simulator's build is the iPhone's, and the Mac's is Xcode's, from the project
-    /// Lamp writes under .lamp/device, signed for the team Lamp was given (LAMP_TEAM, from Settings → Building).
+    /// Lamp writes under .lamp/device, with signing off: it runs in the app's sandbox, where the person's keys
+    /// aren't, and Lamp signs a copy of it for the team (LAMP_TEAM, from Settings → Building) when it installs it.
     static var universalBuildSh: String { universalBuildSh(widget: false) }
 
     static func universalBuildSh(widget: Bool, share: Bool = false) -> String {
@@ -492,7 +502,8 @@ enum Template {
         \(ios)
           exit 0
         fi
-        # The Mac build is Xcode's, signed for the person's Apple team, so the app can use what Apple ties to a team.
+        # The Mac build is Xcode's, for the person's Apple team, so the app can use what Apple ties to a team. Lamp signs
+        # it for the team when it installs it (Store.deploy): this build runs in the app's sandbox, without the keys.
         if [[ -z "${LAMP_TEAM:-}" ]]; then
           echo "The Mac build of an app for both needs your Apple team: choose it in Lamp's Settings → Building." >&2
           exit 1
@@ -526,7 +537,7 @@ enum Template {
             "SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG LAMP_LIVE" "OTHER_LDFLAGS=-Xlinker -interposable $RESTRICT_FLAGS")
         fi
         xcodebuild -project "$PROJECT/{{EXE}}.xcodeproj" -scheme "{{EXE}}" -configuration Release -destination "platform=macOS" \\
-          -derivedDataPath "$PROJECT/DerivedData" -allowProvisioningUpdates -allowProvisioningDeviceRegistration \\
+          -derivedDataPath "$PROJECT/DerivedData" CODE_SIGNING_ALLOWED=NO \\
           DEVELOPMENT_TEAM="$LAMP_TEAM" "OTHER_LDFLAGS=$RESTRICT_FLAGS" "${LIVE_SETTINGS[@]}" build 2>&1
         APP="build/{{EXE}}.app"
         rm -rf "$APP"
@@ -909,11 +920,9 @@ enum Template {
         for (place, wanted) in places {
             let url = place.appendingPathComponent(watchSupportFile)
             if wanted {
-                if (try? String(contentsOf: url, encoding: .utf8)) != lampWatchSupportSwift {
-                    try lampWatchSupportSwift.write(to: url, atomically: true, encoding: .utf8)
-                }
+                try put(lampWatchSupportSwift, at: url, for: project)
             } else if fm.fileExists(atPath: url.path) {
-                try fm.removeItem(at: url)
+                AppFolder.remove(url, in: project.dir)
             }
         }
     }
@@ -1058,16 +1067,16 @@ enum Template {
     /// An asset catalog holding the app's icon for watchOS, which takes its icon only from a compiled catalog:
     /// compiled into the simulator's watch app by `actool` (Store.finishSimulatorBundle), and the watch
     /// target's own catalog in the Xcode project.
-    static func writeWatchIconCatalog(at catalog: URL, icon: URL?) throws {
-        let fm = FileManager.default
+    /// `icon` is the picture, read by the caller as `AppFile` reads; `root` is the folder the catalog is written in (the
+    /// app's, or Lamp's own), where it isn't reached through a link (`AppFolder`).
+    static func writeWatchIconCatalog(at catalog: URL, icon picture: Data?, in root: URL) throws {
         let iconset = catalog.appendingPathComponent("AppIcon.appiconset")
-        try fm.createDirectory(at: iconset, withIntermediateDirectories: true)
-        try #"{ "info": { "author": "xcode", "version": 1 } }"#.write(to: catalog.appendingPathComponent("Contents.json"), atomically: true, encoding: .utf8)
-        try? fm.removeItem(at: iconset.appendingPathComponent("AppIcon.png"))
-        if let icon, fm.fileExists(atPath: icon.path) { try fm.copyItem(at: icon, to: iconset.appendingPathComponent("AppIcon.png")) }
-        let image = (icon.map { fm.fileExists(atPath: $0.path) } ?? false) ? #""filename": "AppIcon.png", "# : ""
-        try #"{ "images": [ { \#(image)"idiom": "universal", "platform": "watchos", "size": "1024x1024" } ], "info": { "author": "xcode", "version": 1 } }"#
-            .write(to: iconset.appendingPathComponent("Contents.json"), atomically: true, encoding: .utf8)
+        try AppFolder.write(#"{ "info": { "author": "xcode", "version": 1 } }"#, to: catalog.appendingPathComponent("Contents.json"), in: root)
+        AppFolder.remove(iconset.appendingPathComponent("AppIcon.png"), in: root)
+        if let picture { try AppFolder.write(picture, to: iconset.appendingPathComponent("AppIcon.png"), in: root) }
+        let image = picture != nil ? #""filename": "AppIcon.png", "# : ""
+        try AppFolder.write(#"{ "images": [ { \#(image)"idiom": "universal", "platform": "watchos", "size": "1024x1024" } ], "info": { "author": "xcode", "version": 1 } }"#,
+                            to: iconset.appendingPathComponent("Contents.json"), in: root)
     }
 
     /// The watch app's Info.plist in the Xcode project, for a phone or an app for both's iPhone half.
@@ -1621,16 +1630,6 @@ enum Template {
             return plist.replacingOccurrences(of: "<plist version=\"1.0\"><dict>\n", with: "<plist version=\"1.0\"><dict>\n" + identity)
         }
 
-        /// What Lamp seals the Mac half of an app for both with, after putting its icon and chat in: what Xcode was
-        /// given for it (`App-macOS.entitlements`) and the team identity Xcode's automatic signing adds.
-        func universalMacSigningPlist(for project: LampProject, team: String) -> String {
-            let plist = entitlementsPlist(for: project, platform: .mac)
-            guard !team.isEmpty else { return plist }
-            let identity = "  <key>com.apple.application-identifier</key><string>\(team).\(project.bundleID.xmlEscaped)</string>\n" +
-                "  <key>com.apple.developer.team-identifier</key><string>\(team)</string>\n"
-            return plist.replacingOccurrences(of: "<plist version=\"1.0\"><dict>\n", with: "<plist version=\"1.0\"><dict>\n" + identity)
-        }
-
         func entitlementsPlist(container: String?, platform: Destination = .ios, teamSigned: Bool = false, appGroup: String? = nil) -> String {
             var lines: [String] = []
             // The folder an app shares with its widget extension (`LampWidget`): an iPhone app's, and a Mac app's
@@ -1775,28 +1774,37 @@ enum Template {
 
     // MARK: - On the person's own phone
 
-    /// The Xcode project that builds the app for a real iPhone or iPad: one app target over the package's
-    /// Sources, with Xcode's automatic signing for the person's team, the icon in an asset catalog and the
-    /// app's own files (Assets/) copied in as a folder. Nothing else about the app changes: Package.swift stays
-    /// what the simulator and the agent build with. The phone's is written in `folder`, Lamp's own
-    /// (`Devices.buildFolder`), where the agent's sandboxed commands can't change what it's signed with; an app for both
-    /// also has one under .lamp/device, which its build.sh builds the Mac half from inside the agent's
-    /// sandbox, and which Lamp signs again with its own entitlements when it installs the app (`Store.deploy`).
-    /// Written in `folder`, the project reads the app's files from `files`: for the phone, the copy of them
-    /// `Devices.stage` makes beside it, since Xcode copies whatever a link in the app's own folder leads to.
-    static func writeDeviceProject(for project: LampProject, team: String, in folder: URL? = nil, reading files: URL? = nil) throws {
+    /// The Xcode project that builds the app for a real iPhone or iPad, and the Mac half of an app for both: one app
+    /// target over the package's Sources, the icon in an asset catalog and the app's own files (Assets/) copied in as
+    /// a folder. Nothing else about the app changes: Package.swift stays what the simulator and the agent build with.
+    /// The Mac half's is written in the app's folder (.lamp/device) and built there by build.sh; the phone's in
+    /// `folder`, Lamp's own (`Devices.buildFolder`), reading the copy of the app's files in `files` that
+    /// `Devices.stage` makes, since Xcode copies whatever a link in the app's own folder leads to. Both are built in
+    /// the app's sandbox with signing off, so nothing in them is trusted: what they're signed with comes from the same
+    /// project written `forSigning`, in Lamp's folder over Lamp's own code in `files` (`TeamSigning`).
+    static func writeDeviceProject(for project: LampProject, team: String, in folder: URL? = nil, reading files: URL? = nil,
+                                   forSigning: Bool = false) throws {
         let fm = FileManager.default
         let universal = project.platform == .universal
         let dir = folder ?? project.dir.appendingPathComponent(".lamp/device")
-        let xcodeproj = dir.appendingPathComponent("\(project.exe).xcodeproj")
-        try fm.createDirectory(at: xcodeproj.appendingPathComponent("xcshareddata/xcschemes"), withIntermediateDirectories: true)
-        Sharing.Assets.adopt(in: project)
-        try fm.createDirectory(at: project.dir.appendingPathComponent(Sharing.Assets.folder), withIntermediateDirectories: true)
+        // Where its writes are kept to without following a link: the app's folder, or Lamp's own one.
+        let root = folder ?? project.dir
+        if let folder { try fm.createDirectory(at: folder, withIntermediateDirectories: true) }
+        // Where the watch complications' files are listed from: Lamp's own code for its signing project; otherwise the
+        // app's folder, since the phone's copy of the files is made only after its project is written.
+        let sources = forSigning ? (files ?? project.dir) : project.dir
+        if !forSigning {
+            Sharing.Assets.adopt(in: project)
+            try AppFolder.createDirectory(project.dir.appendingPathComponent(Sharing.Assets.folder), in: project.dir)
+        }
+        try AppFolder.createDirectory(dir.appendingPathComponent("\(project.exe).xcodeproj/xcshareddata/xcschemes"), in: root)
         let iconset = dir.appendingPathComponent("Assets.xcassets/AppIcon.appiconset")
-        try fm.createDirectory(at: iconset, withIntermediateDirectories: true)
-        try? fm.removeItem(at: iconset.appendingPathComponent("AppIcon.png"))
-        let hasIcon = fm.fileExists(atPath: Icons.squareURL(project).path)
-        if hasIcon { try fm.copyItem(at: Icons.squareURL(project), to: iconset.appendingPathComponent("AppIcon.png")) }
+        AppFolder.remove(iconset.appendingPathComponent("AppIcon.png"), in: root)
+        // The icon is read from the app's folder without following a link (`AppFile`). Lamp's signing project is never
+        // built into anything anyone runs, and needs none.
+        let icon = forSigning ? nil : AppFile.read(Icons.squareURL(project), in: project)
+        let hasIcon = icon != nil
+        if let icon { try AppFolder.write(icon, to: iconset.appendingPathComponent("AppIcon.png"), in: root) }
         let capabilities = Capabilities.load(project)
         let widget = hasWidget(project), share = hasShare(project)
         let group = appGroup(for: project, onDevice: true, team: team)
@@ -1805,11 +1813,11 @@ enum Template {
         if widget { pbxproj = withWidgetTarget(pbxproj) }
         if share { pbxproj = withShareTarget(pbxproj) }
         if watch {
-            let folder = project.dir.appendingPathComponent(watchFolder).appendingPathComponent(complicationsFolder)
-            let inComplications = (fm.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey])?.compactMap { $0 as? URL } ?? [])
+            let complicationsDir = sources.appendingPathComponent(watchFolder).appendingPathComponent(complicationsFolder)
+            let inComplications = (fm.enumerator(at: complicationsDir, includingPropertiesForKeys: [.isRegularFileKey])?.compactMap { $0 as? URL } ?? [])
                 .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
                 .compactMap { file -> String? in
-                    let path = file.standardizedFileURL.path, base = folder.standardizedFileURL.path + "/"
+                    let path = file.standardizedFileURL.path, base = complicationsDir.standardizedFileURL.path + "/"
                     return path.hasPrefix(base) ? complicationsFolder + "/" + path.dropFirst(base.count) : nil
                 }
                 .sorted()
@@ -1845,7 +1853,7 @@ enum Template {
         if watch {
             files.append(("Watch-Info.plist", deviceWatchInfoPlist))
             files.append(("Watch.entitlements", watchCapabilities(project).entitlementsPlist(container: nil, platform: .ios, appGroup: group)))
-            try writeWatchIconCatalog(at: dir.appendingPathComponent("WatchAssets.xcassets"), icon: hasIcon ? Icons.squareURL(project) : nil)
+            try writeWatchIconCatalog(at: dir.appendingPathComponent("WatchAssets.xcassets"), icon: icon, in: root)
         }
         if complications {
             files.append(("Complications-Info.plist", deviceComplicationsInfoPlist))
@@ -1854,7 +1862,7 @@ enum Template {
         let widgetPlist = widget || share ? appGroupPlistLines(group: group, liveActivities: widget) : ""
         // Only the phone's project, in Lamp's own folder, carries the secret its keys are sealed with; the one an
         // app for both keeps under .lamp/device for its Mac half is in the app's folder and never goes to a phone.
-        let secret = folder != nil && project.platform.hasIOS ? phoneSecret(in: dir) : ""
+        let secret = folder != nil && !forSigning && project.platform.hasIOS ? phoneSecret(in: dir) : ""
         for (path, template) in files {
             let contents = template
                 .replacingOccurrences(of: "{{PHONE_SECRET}}", with: secret)
@@ -1870,9 +1878,7 @@ enum Template {
                 .replacingOccurrences(of: "{{BUNDLE}}", with: universal ? project.bundleID : project.deviceBundleID(team: team))
                 .replacingOccurrences(of: "{{TEAM}}", with: team)
             let url = dir.appendingPathComponent(path)
-            if (try? String(contentsOf: url, encoding: .utf8)) != contents {
-                try contents.write(to: url, atomically: true, encoding: .utf8)
-            }
+            if AppFile.read(url, inFolder: root) != Data(contents.utf8) { try AppFolder.write(contents, to: url, in: root) }
         }
     }
 
@@ -1887,6 +1893,8 @@ enum Template {
 
     /// Xcode 16's project format: the Sources folder is a synchronized group, so every file in it is in
     /// the target without being listed here. Only a Release configuration, which is what's built.
+    /// `-disable-sandbox`: the compiler runs Swift's macros in a helper with a sandbox of its own, which macOS
+    /// won't start inside the app's (`Sandbox`), where this project is built.
     static let devicePbxproj = """
     // !$*UTF8*$!
     {
@@ -1910,7 +1918,7 @@ enum Template {
     		A0000000000000000000000F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; TargetAttributes = {A0000000000000000000000B = {CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = A00000000000000000000010; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A00000000000000000000009; minimizedProjectReferenceProxies = 1; preferredProjectObjectVersion = 77; productRefGroup = A0000000000000000000000A /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A0000000000000000000000B /* {{EXE}} */); };
     		A0000000000000000000000E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* Assets in Resources */, A00000000000000000000003 /* Assets.xcassets in Resources */); runOnlyForDeploymentPostprocessing = 0; };
     		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-    		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MTL_ENABLE_DEBUG_INFO = NO; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
+    		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MTL_ENABLE_DEBUG_INFO = NO; OTHER_SWIFT_FLAGS = "$(inherited) -disable-sandbox"; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
     		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = App.entitlements; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
     		A00000000000000000000010 /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000011 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
     		A0000000000000000000000C /* Build configuration list for PBXNativeTarget */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000012 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
@@ -1995,7 +2003,7 @@ enum Template {
     		A0000000000000000000000F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; TargetAttributes = {A0000000000000000000000B = {CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = A00000000000000000000010; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A00000000000000000000009; minimizedProjectReferenceProxies = 1; preferredProjectObjectVersion = 77; productRefGroup = A0000000000000000000000A /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A0000000000000000000000B /* {{EXE}} */); };
     		A0000000000000000000000E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* Assets in Resources */, A00000000000000000000003 /* Assets.xcassets in Resources */); runOnlyForDeploymentPostprocessing = 0; };
     		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-    		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MACOSX_DEPLOYMENT_TARGET = 14.0; MTL_ENABLE_DEBUG_INFO = NO; SDKROOT = auto; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
+    		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MACOSX_DEPLOYMENT_TARGET = 14.0; MTL_ENABLE_DEBUG_INFO = NO; OTHER_SWIFT_FLAGS = "$(inherited) -disable-sandbox"; SDKROOT = auto; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
     		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {"ASSETCATALOG_COMPILER_APPICON_NAME[sdk=iphone*]" = AppIcon; CODE_SIGN_ENTITLEMENTS = App.entitlements; "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "App-macOS.entitlements"; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; "INFOPLIST_FILE[sdk=macosx*]" = "Info-macOS.plist"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); "LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = ("$(inherited)", "@executable_path/../Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
     		A00000000000000000000010 /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000011 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
     		A0000000000000000000000C /* Build configuration list for PBXNativeTarget */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000012 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
@@ -2447,11 +2455,7 @@ enum Template {
     }
     /// The key the sidebar page's calls carry: Lamp hands it to Chrome's sidebar with the page's address.
     static func sidebarKey(for project: LampProject) -> String {
-        let url = project.dir.appendingPathComponent(".lamp/sidebar-key")
-        if let key = ownSecret(at: url, in: project) { return key }
-        let key = UUID().uuidString + UUID().uuidString
-        try? key.write(to: url, atomically: true, encoding: .utf8)
-        return key
+        secret(".lamp/sidebar-key", for: project)
     }
     /// Only Lamp's extension may frame an app's sidebar page.
     static var sidebarFramer: String {
@@ -2466,11 +2470,7 @@ enum Template {
 
     /// The secret an app and its widget are both built with, so the app answers its own widget and nobody else.
     static func widgetToken(for project: LampProject) -> String {
-        let url = project.dir.appendingPathComponent(".lamp/widget-token")
-        if let token = ownSecret(at: url, in: project) { return token }
-        let token = UUID().uuidString + UUID().uuidString
-        try? token.write(to: url, atomically: true, encoding: .utf8)
-        return token
+        secret(".lamp/widget-token", for: project)
     }
 
     /// Lamp's own file in a widget's folder, written like LampSupport.swift: before every turn and build.
@@ -2482,10 +2482,7 @@ enum Template {
             .replacingOccurrences(of: "{{WIDGET_TOKEN}}", with: widgetToken(for: project))
             .replacingOccurrences(of: "{{SCHEME}}", with: Edition.urlScheme)
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
-        let url = project.dir.appendingPathComponent(widgetFolder).appendingPathComponent(widgetSupportFile)
-        if (try? String(contentsOf: url, encoding: .utf8)) != contents {
-            try contents.write(to: url, atomically: true, encoding: .utf8)
-        }
+        try put(contents, at: project.dir.appendingPathComponent(widgetFolder).appendingPathComponent(widgetSupportFile), for: project)
     }
 
     // MARK: - Share extensions
@@ -2518,10 +2515,7 @@ enum Template {
     /// Lamp's own file in the Share folder, written like LampSupport.swift: before every turn and build.
     static func writeShareSupport(for project: LampProject) throws {
         guard hasShare(project) else { return }
-        let url = project.dir.appendingPathComponent(shareFolder).appendingPathComponent(shareSupportFile)
-        if (try? String(contentsOf: url, encoding: .utf8)) != lampShareSupportSwift {
-            try lampShareSupportSwift.write(to: url, atomically: true, encoding: .utf8)
-        }
+        try put(lampShareSupportSwift, at: project.dir.appendingPathComponent(shareFolder).appendingPathComponent(shareSupportFile), for: project)
     }
 
     /// The share extension's side of `LampShare`, one source for the Mac and iOS. The system starts

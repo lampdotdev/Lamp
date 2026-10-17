@@ -86,8 +86,9 @@ final class DeployOwnIDTests: XCTestCase {
         XCTAssertThrowsError(try Store.checkOwnIDs(in: app, for: project, signed: true))
     }
 
-    /// The Mac half of an app for both is signed with Lamp's entitlements, not with what the build's own
-    /// signature claims: anything in the app's folder can sign the build with another app's group.
+    /// The Mac half of an app for both is signed with Lamp's entitlements (what Xcode signed Lamp's own project with,
+    /// `TeamSigning`), not with what the build's own signature claims: anything in the app's folder can sign the build
+    /// with another app's group.
     func testAnAppForBothIsSignedWithLampsEntitlementsOnly() throws {
         let project = LampProject(id: "tallymarks", name: "Tally Marks", exe: "TallyMarks", dir: root.appendingPathComponent("tallymarks"))
         let app = try executableBundle(at: root.appendingPathComponent("TallyMarks.app"), id: project.bundleID)
@@ -99,7 +100,11 @@ final class DeployOwnIDTests: XCTestCase {
         XCTAssertNotNil(try entitlements(of: app)["com.apple.security.application-groups"])
 
         let lamps = root.appendingPathComponent("app-entitlements.plist")
-        try Template.Capabilities.load(project).universalMacSigningPlist(for: project, team: "ABCDE12345").write(to: lamps, atomically: true, encoding: .utf8)
+        let teamIdentity = "  <key>com.apple.developer.team-identifier</key><string>ABCDE12345</string>\n" +
+            "  <key>com.apple.application-identifier</key><string>ABCDE12345.\(project.bundleID)</string>\n"
+        try Template.Capabilities.load(project).entitlementsPlist(for: project, platform: .mac)
+            .replacingOccurrences(of: "<plist version=\"1.0\"><dict>\n", with: "<plist version=\"1.0\"><dict>\n" + teamIdentity)
+            .write(to: lamps, atomically: true, encoding: .utf8)
         XCTAssertEqual(try shell(AppSigning.universalCommand, ["LAMP_APP": app.path, "LAMP_IDENTITY": "-", "LAMP_APP_ENTITLEMENTS": lamps.path,
                                                                "LAMP_SIDEBAR": app.appendingPathComponent("Contents/Extensions/None.appex").path]), 0)
         let signed = try entitlements(of: app)

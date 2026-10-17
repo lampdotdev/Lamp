@@ -20,13 +20,13 @@ enum Runtime {
     static func logURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("log.txt") }
     private static func builtURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("built") }
     /// The build no longer stands for the sources (a build after a live change failed): the next look builds again.
-    static func forgetBuilt(_ project: LampProject) { try? FileManager.default.removeItem(at: builtURL(project)) }
+    static func forgetBuilt(_ project: LampProject) { AppFolder.remove(builtURL(project), in: project.dir) }
 
     /// Remembers when the current build was made (the file's date, so crashes of older builds aren't blamed
     /// on it) and what it was made from: the fingerprint of the sources as they were when the build started.
     static func markBuilt(_ project: LampProject, from fingerprint: String) {
-        try? FileManager.default.createDirectory(at: folder(project), withIntermediateDirectories: true)
-        try? Data(fingerprint.utf8).write(to: builtURL(project))
+        // The build has just run in the agent's folder, which may now hold a link where this file goes.
+        try? AppFolder.write(fingerprint, to: builtURL(project), in: project.dir)
     }
 
     /// A build that hasn't been installed because the person kept the app open when it was asked to quit. The
@@ -34,10 +34,9 @@ enum Runtime {
     /// disk, so the build still goes in after Lamp itself has been quit and opened again.
     private static func heldURL(_ project: LampProject) -> URL { macFolder(project).appendingPathComponent("held-build") }
     static func holdBuild(_ project: LampProject) {
-        try? FileManager.default.createDirectory(at: macFolder(project), withIntermediateDirectories: true)
-        try? Data().write(to: heldURL(project))
+        try? AppFolder.write(Data(), to: heldURL(project), in: project.dir)
     }
-    static func releaseBuild(_ project: LampProject) { try? FileManager.default.removeItem(at: heldURL(project)) }
+    static func releaseBuild(_ project: LampProject) { AppFolder.remove(heldURL(project), in: project.dir) }
     static func holdsBuild(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: heldURL(project).path) }
 
     /// What the app is built from, as one hash: the contents of Sources, its widget's folder, Package.swift and the icon design,

@@ -173,6 +173,12 @@ enum Sandbox {
             // unwritable from the command's sandbox (the file denies above), so nothing the builder makes can
             // be put there: keep it that way, or the check needs the replacement refused too.
         }
+        // Xcode's interface and asset compilers hand their work to helpers that stay running and are found through
+        // shared memory named "ib…", whoever started them. A helper started outside the sandbox (by Lamp drawing an
+        // icon, or by the person's own Xcode) would read and write for a command wherever it asked; one started in
+        // another app's sandbox would see nothing of this app. Without that memory each command starts its own,
+        // confined as it is. Other shared memory (Python's, say) stays open.
+        lines.append(#"(deny ipc-posix-shm* (ipc-posix-name-regex #"^/?ib"))"#)
         // Lamp's shims and shell startup files may be read and run, and not changed.
         lines.append("(allow file-read* (subpath \(quotedPath(real(bin.path)))) (subpath \(quotedPath(real(zdot.path)))))")
         lines.append("(allow file-read* file-write* (subpath \(quotedPath(app))))")

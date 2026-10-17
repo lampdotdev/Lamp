@@ -1469,6 +1469,7 @@ final class Store: ObservableObject {
         await WidgetProcess.end(for: old)
         try? fm.removeItem(at: old.installedURL)
         try? fm.removeItem(at: Devices.buildFolder(for: old))
+        try? fm.removeItem(at: Devices.signingFolder(for: old))
         // Lines logged while the copy was made and the old app quit are written to the new folder instead.
         await settleFiles(old)
         settleChat(old)
@@ -2832,6 +2833,7 @@ final class Store: ObservableObject {
         }
         Self.trashData(of: project)
         try? fm.removeItem(at: Devices.buildFolder(for: project))
+        try? fm.removeItem(at: Devices.signingFolder(for: project))
         // Its sign-ins too: an app made later under the same name is another app, and starts disconnected.
         AppSecrets.forget(app: project.instance)
         projects.removeAll { $0.id == project.id }
@@ -4167,7 +4169,7 @@ final class Store: ObservableObject {
         guard exists(project) else { return "The app was deleted." }
         guard status != 0 else {
             Runtime.markBuilt(project, from: fingerprint)
-            BuildStamp.write(to: project.builtURL)   // deploy signs the app afterwards
+            BuildStamp.write(for: project)   // deploy signs the app afterwards
             return nil
         }
         let tail = output.suffix(40).joined(separator: "\n")
@@ -4178,15 +4180,11 @@ final class Store: ObservableObject {
     /// Runs the app's build.sh. It's Lamp's file, written just before, but in the agent's folder: a command the agent
     /// left running can put its own there in between, and Package.swift and the code it compiles are the agent's
     /// anyway. So the build runs as the agent's commands do, in the app's sandbox (`Sandbox.run`), and only what it
-    /// made is taken further, by Lamp, from a copy (`deploy`). The one build that still runs as Lamp is the Mac
-    /// half of an app for both: Xcode signs it for the person's team there, with keys the sandbox closes.
+    /// made is taken further, by Lamp, from a copy (`deploy`), which is where anything is signed for the person's team.
     static func runBuild(_ command: String, for project: LampProject, env: [String: String],
                          started: (@MainActor (Process) -> Void)? = nil,
                          onLine: @escaping @MainActor (String) -> Void) async -> Int32 {
-        if project.platform == .universal, command == "./build.sh mac", env["LAMP_LIVE_COPY"] != "1" {
-            return await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: env, started: started, onLine: onLine)
-        }
-        return await Sandbox.run(Shell.compatibleSDK + command, for: project, env: env, started: started, onLine: onLine)
+        await Sandbox.run(Shell.compatibleSDK + command, for: project, env: env, started: started, onLine: onLine)
     }
 
     /// A new app's card that has already said how its turn ended follows what happens to the app afterwards
@@ -4235,7 +4233,7 @@ final class Store: ObservableObject {
             guard let current = self.current(project) else { return }
             if status == 0 {
                 Runtime.markBuilt(current, from: fingerprint)
-                BuildStamp.write(to: current.builtURL)
+                BuildStamp.write(for: current)
                 LiveReload.awaitInstall(current)
                 // Waiting for the app to close; closed already (while this built), it goes in now.
                 _ = self.heldInstalls.mayInstall(current.id, running: true)
@@ -4672,7 +4670,10 @@ final class Store: ObservableObject {
         var output: [String] = []
         let app: URL
         do {
-            app = try await Devices.build(project, team: team, destination: "id=\(udid)", started: { owner.build = $0 }) { output.append($0) }
+            let build = try await Devices.build(project, team: team, destination: "id=\(udid)", started: { owner.build = $0 }) { output.append($0) }
+            guard stillOwns() else { owner.build = nil; return nil }
+            app = try await Devices.signedCopy(of: build, for: project, team: team, destination: "id=\(udid)",
+                                               started: { owner.build = $0 }) { output.append($0) }
             owner.build = nil
         } catch {
             owner.build = nil
@@ -4682,6 +4683,7 @@ final class Store: ObservableObject {
         }
         guard stillOwns() else { return nil }
         log(project, .status, "Putting \(project.name) on \(name)…")
+        defer { try? FileManager.default.removeItem(at: app.deletingLastPathComponent()) }
         do {
             try await Devices.install(app, on: udid)
             guard stillOwns() else { return nil }
@@ -4766,17 +4768,18 @@ final class Store: ObservableObject {
         _ = await Sandbox.run(script, for: project,
                               env: ["LAMP_APP": app.path, "LAMP_NAME": project.name, "LAMP_ICON": Icons.squareURL(project).path]) { _ in }
         Sharing.Assets.adopt(in: project)
+        // The bundle and the files copied into it are the agent's, so neither is reached through a link.
         let assets = project.dir.appendingPathComponent(Sharing.Assets.folder)
-        try? fm.removeItem(at: app.appendingPathComponent(Attachments.folder))
-        try? fm.removeItem(at: app.appendingPathComponent(Sharing.Assets.folder))
+        AppFolder.remove(app.appendingPathComponent(Attachments.folder), in: project.dir)
+        AppFolder.remove(app.appendingPathComponent(Sharing.Assets.folder), in: project.dir)
         if fm.fileExists(atPath: assets.path) {
-            try? fm.copyItem(at: assets, to: app.appendingPathComponent(Sharing.Assets.folder))
+            try? AppFolder.copy(assets, to: app.appendingPathComponent(Sharing.Assets.folder), in: project.dir)
         }
         // The watch app's icon: watchOS takes one only from a compiled asset catalog, so Xcode's own compiler makes
         // it from the same square as the iPhone's, and Info.plist names it.
         if fm.fileExists(atPath: app.appendingPathComponent("Watch").path), fm.fileExists(atPath: Icons.squareURL(project).path) {
             let work = project.dir.appendingPathComponent(".lamp/watch-icon")
-            try? Template.writeWatchIconCatalog(at: work.appendingPathComponent("Icon.xcassets"), icon: Icons.squareURL(project))
+            try? Template.writeWatchIconCatalog(at: work.appendingPathComponent("Icon.xcassets"), icon: AppFile.read(Icons.squareURL(project), in: project), in: project.dir)
             _ = await Sandbox.run("""
                 for watch in "$LAMP_APP"/Watch/*.app(N); do
                   xcrun actool "$LAMP_WORK/Icon.xcassets" --compile "$watch" --platform watchsimulator --minimum-deployment-target 10.0 \\
@@ -4851,7 +4854,8 @@ final class Store: ObservableObject {
         let fm = FileManager.default
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         let copy = folder.appendingPathComponent(".\(project.exe)-\(UUID().uuidString).app")
-        try fm.copyItem(at: project.builtURL, to: copy)
+        // Reached without following a link: a build/ that is one would bring in a bundle from anywhere.
+        try AppFolder.copy(project.builtURL, in: project.dir, to: copy, in: folder)
         do { try checkContained(copy) } catch { try? fm.removeItem(at: copy); throw error }
         return copy
     }
@@ -4868,6 +4872,31 @@ final class Store: ObservableObject {
             let resolved = target.hasPrefix("/") ? URL(fileURLWithPath: target) : file.deletingLastPathComponent().appendingPathComponent(target)
             if !resolved.standardizedFileURL.path.hasPrefix(inside) { throw LinkedBuild() }
         }
+    }
+
+    /// Signs `app`, Lamp's copy of the Mac half of an app for both, for the team: with the profile and entitlements
+    /// Xcode signed Lamp's own project with for the Mac (`TeamSigning`), and the chat inside it first. True when it
+    /// came out signed with the team's certificate. The certificate is looked up after Xcode's signing, which makes
+    /// one when this Mac has none for the team yet.
+    nonisolated static func signForTeam(_ app: URL, for project: LampProject, team: String,
+                                        env: [String: String]) async throws -> Bool {
+        let fm = FileManager.default
+        var output: [String] = []
+        let (plan, planDir) = try await TeamSigning.plan(for: project, team: team, place: .mac, destination: "platform=macOS") { output.append($0) }
+        guard let identity = await Devices.signingIdentity(for: team) else { return false }
+        guard let piece = plan.app else { throw TeamSigning.Problem(message: "Lamp couldn't tell what to sign it with.") }
+        // Nothing that runs but the app's own program and the chat Lamp put in it.
+        try TeamSigning.checkCode(in: app, allowing: [app, Sidebar.extensionURL(in: app)])
+        let embedded = app.appendingPathComponent("Contents/embedded.provisionprofile")
+        try? fm.removeItem(at: embedded)
+        if let profile = piece.profile { try fm.copyItem(at: planDir.appendingPathComponent(profile), to: embedded) }
+        let entitlements = planDir.appendingPathComponent(piece.entitlements)
+        let signed = await Shell.run(AppSigning.universalCommand, cwd: FileManager.default.temporaryDirectory,
+                                     env: env.merging(["LAMP_APP": app.path, "LAMP_IDENTITY": identity, "LAMP_APP_ENTITLEMENTS": entitlements.path]) { $1 }) {
+            output.append($0)
+        } == 0 && AppSigning.isCertificateSigned(app)
+        if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
+        return signed
     }
 
     /// Copies the freshly built bundle into the apps folder, puts the icon in, signs it and swaps it in place of
@@ -4968,22 +4997,16 @@ final class Store: ObservableObject {
         // Lamp writes, just before it's signed, as a bundle that leads nowhere else.
         try Self.checkContained(app)
         try Self.checkOwnIDs(in: app, for: project)
-        // An app for both was signed by Xcode for the person's team; what was put in since is sealed with the
-        // same certificate and the entitlements Xcode was given, never Lamp's own certificate, which could carry
-        // neither.
-        let identity = project.platform == .universal ? (await Devices.signingIdentity(for: Devices.team) ?? "-") : await AppSigning.identity()
+        // An app for both is signed for the person's team, never with Lamp's own certificate, which could carry neither
+        // its team's ids nor what Apple ties to a team. Its build is unsigned (it ran in the app's sandbox, without the
+        // keys); what it's signed with is what Xcode signed Lamp's own project with for the Mac (`TeamSigning`): that
+        // profile, put in the copy, and those entitlements.
+        // For an app for both, the team's certificate is looked up only after Xcode has signed Lamp's own project, which
+        // makes one the first time.
+        let identity = project.platform == .universal ? "-" : await AppSigning.identity()
         var signed = false
-        if project.platform == .universal, identity != "-" {
-            var output: [String] = []
-            // With Lamp's own entitlements, never those of the build's signature, which anything in the app's
-            // folder could have signed it with.
-            let appEntitlements = signing.appendingPathComponent("app-entitlements.plist")
-            try capabilities.universalMacSigningPlist(for: project, team: Devices.team).write(to: appEntitlements, atomically: true, encoding: .utf8)
-            signed = await Shell.run(AppSigning.universalCommand,
-                                     cwd: project.dir, env: signingEnv.merging(["LAMP_IDENTITY": identity,
-                                                                                "LAMP_APP_ENTITLEMENTS": appEntitlements.path]) { $1 }) { output.append($0) } == 0
-                && AppSigning.isCertificateSigned(app)
-            if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
+        if project.platform == .universal, !Devices.team.isEmpty {
+            signed = try await Self.signForTeam(app, for: project, team: Devices.team, env: signingEnv)
         } else {
             // A Mac app is signed for the person's Apple team when there is one: macOS runs an app's App Intents
             // (Siri, Shortcuts, Spotlight) only for an app signed with a team. Otherwise Lamp's own certificate.

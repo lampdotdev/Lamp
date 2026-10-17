@@ -23,15 +23,13 @@ extension Template {
     static func writeSceneSupport(for project: LampProject) throws {
         let url = project.dir.appendingPathComponent(sceneSupportPath)
         guard usesScene(project) else {
-            if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+            if FileManager.default.fileExists(atPath: url.path) { AppFolder.remove(url, in: project.dir) }
             return
         }
         let contents = lampSceneSwift
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
             .replacingOccurrences(of: "{{NOTE}}", with: Edition.notificationPrefix)
-        if (try? String(contentsOf: url, encoding: .utf8)) != contents {
-            try contents.write(to: url, atomically: true, encoding: .utf8)
-        }
+        try put(contents, at: url, for: project)
     }
 
     /// The oldest macOS a Mac app runs on: 15 with a 3D scene (RealityView begins there), else 14. Whatever compiles

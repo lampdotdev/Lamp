@@ -102,7 +102,10 @@ A capability given to one engine must be given to all of them that can take it, 
   where it looks. Codex's hook can't change a command and a sandbox can't be nested, so Codex itself runs
   inside the profile (`Sandbox.wrapEngine`, with the copy in use and its folder opened and Codex's own sandbox off) and its
   commands with it. SwiftPM's own sandbox can't start inside Lamp's, so a `swift` shim first on the path
-  (`Sandbox.bin`) gives `swift build`/`test`/`run`/`package` `--disable-sandbox`. Nothing reads a command's text
+  (`Sandbox.bin`) gives `swift build`/`test`/`run`/`package` `--disable-sandbox`; the compiler's helper for macros is
+  the same, so Lamp's Xcode projects pass it `-disable-sandbox` too. Xcode's interface and asset compilers hand their
+  work to helpers that stay running and are found through shared memory named `ib…`, whoever started them, so the
+  profile closes that memory (and no other): a command starts helpers of its own, confined as it is. Nothing reads a command's text
   for paths any more; don't bring that back.
   A command may write at the app's folder's own name, so it can swap the folder for a link to anywhere, Lamp's
   folder included. The profile, the file checks (`Privacy.verdict`, pi's `checkFile` and `delete_file`, which take
@@ -114,7 +117,8 @@ A capability given to one engine must be given to all of them that can take it, 
   printed, its screen as text, its answers to Lamp, its pictures and their copies, the app's notes and what was taken
   back from them, the note after a restore), what Lamp writes into the app's code or hands an engine (its secrets,
   `Template.ownSecret`, and the conversation ids), and what Lamp rewrites in place (the migration, a rename, the
-  live layout), which would otherwise bring what a link leads to into the folder. A new such read belongs there.
+  live layout), which would otherwise bring what a link leads to into the folder. A new such read belongs there. Lamp's own
+  writes there around a build go through `AppFolder` on the same terms (see "Generated apps").
   The profile also closes Homebrew's folders (`/opt/homebrew`, `/usr/local`) for writing (reading and running
   what's there stays open): they're on the path of everything Lamp runs as itself, so a command could otherwise
   leave a program there for Lamp to run unconfined. The agent can't `brew install`. A program Lamp runs outside
@@ -395,15 +399,19 @@ the person about Developer Mode. `LampProject.device` remembers the chosen one. 
 app target over the package's Sources as a synchronized group, the icon in an asset catalog, the attachments as a
 folder reference, a real Info.plist), and the app's Sources, Assets, Widget, Share and Watch are copied beside it, in
 `app/`, by a command under the app's sandbox, links kept as links; the project reads that copy by full path
-(`Template.reaching`). The project, its entitlements files, the copy and Xcode's build folder stay out of the app's
-folder, where the sandbox closes them, so no command of the agent's, in the background or not, can change what the
-app is signed with or carries between Lamp writing it and Xcode signing. Xcode copies whatever a link leads to into
-the app, and on the phone the app can send what it carries anywhere, so a build folder holding any link but Lamp's own
-to the widget's shared code is refused (`Devices.LinkedFiles`). An app for both keeps a project under `.lamp/device`
-for its Mac build, which Lamp signs again when it installs it (`Store.deploy`). `Devices.build` runs `xcodebuild` with automatic
-signing for the team in Settings → Building (`Devices.team`, found from the Mac's Apple Development certificates), so
-Xcode registers the phone and makes the certificate and profile with the account signed in to Xcode; Lamp
-never holds the account. The bundle id carries the team (`deviceBundleID(team:)`). `devicectl` installs and
+(`Template.reaching`). Xcode copies whatever a link leads to into the app, and on the phone the app can send what it
+carries anywhere, so a build folder holding any link but Lamp's own to the widget's shared code is refused
+(`Devices.LinkedFiles`). `Devices.build` builds it with `xcodebuild` in the app's sandbox, with only that folder opened
+and signing off, so what Xcode does with the agent's code runs as the agent's commands would. Signing for the team in
+Settings → Building (`Devices.team`, found from the Mac's Apple Development certificates) happens only as Lamp, on a
+copy in a folder the build can't write (`Devices.signingFolder`, `Phone Builds/.signing`), in `Devices.signedCopy`.
+What each piece is signed with comes from `TeamSigning`: the same project written there over a few lines of Lamp's
+own code and under names of its own (the app's name and program name are in meta.json, the agent's to write; its ids
+come from its folder name and the team), which Xcode builds with automatic signing, registering the phone and making
+the certificate and profiles with the account signed in to Xcode (Lamp never holds the account); each piece of the
+real build, matched by its id, then gets that piece's profile and the entitlements Xcode signed it with, and a build
+holding a piece Lamp's project doesn't, or a program or library that isn't a piece's own (`TeamSigning.checkCode`),
+isn't signed. Nothing the agent wrote is read for it. The bundle id carries the team (`deviceBundleID(team:)`). `devicectl` installs and
 launches the app with `--console`, so what it prints reaches the app's log. The agent's looks stay on the
 simulator: the phone's screen can't be photographed. The app reaches Lamp's gateway at the Mac's Bonjour
 name (`Devices.macHost`, the `{{MACHOST}}` placeholder, chosen in LampSupport by `targetEnvironment`): the
@@ -439,12 +447,15 @@ their own (`Template.universalAppSwift`, `universalPackageSwift` listing both pl
 which takes `mac` or `ios`), and `Store.build` passes the destination; the destination is part of
 `Runtime.fingerprint`, so moving the app rebuilds it. The iOS build is the iPhone app's. The Mac build is Xcode's,
 from the same project the phone uses (`Template.writeDeviceProject`, with `universalPbxproj`: one target for
-`iphoneos iphonesimulator macosx`, the Mac's own `Info-macOS.plist`), signed with automatic signing for the team
-in Settings → Building, so the app can use what Apple ties to a team, which Lamp's own certificate can't give it
-(see `Template.WidgetSharing` for why). Without a team the build stops with the fix, and the setup check
-(`PhoneSetup`, `requiresTeam`) asks for one before the first request. Its bundle id carries the team on both
-platforms (`LampProject.bundleID`), and `Store.deploy` seals what it adds (icon, assets, Info.plist) with the
-team's certificate and the entitlements Xcode gave it (`Devices.signingIdentity`), never Lamp's. The agent gets
+`iphoneos iphonesimulator macosx`, the Mac's own `Info-macOS.plist`), built by build.sh in the app's sandbox with
+signing off, and signed for the team in Settings → Building when it's installed, so the app can use what Apple ties to
+a team, which Lamp's own certificate can't give it (see `Template.WidgetSharing` for why). Without a team the build
+stops with the fix, and the setup check (`PhoneSetup`, `requiresTeam`) asks for one before the first request. Its
+bundle id carries the team on both platforms (`LampProject.bundleID`), and `Store.deploy` signs its copy, with what
+it added (icon, assets, Info.plist), with the team's certificate (`Devices.signingIdentity`), the profile and the
+entitlements Xcode signed Lamp's own project with for the Mac (`Store.signForTeam`, `TeamSigning`), never Lamp's
+certificate. Those entitlements never include `get-task-allow`, which would let a debugger into the app while it
+holds its secrets. The agent gets
 both kinds' rules, each marked for its half, after one rule on sharing the code (`Agent.universalPrompt`). An app
 for both is shared as a `.lampapp` like any other (the file says what it's made for, format 6, and carries `Watch/` when it has one); its widgets and Live Activities are the iPhone half's (below).
 
@@ -537,10 +548,13 @@ Replacing them isn't enough on its own: they sit in the agent's folder, and a co
 its own there between Lamp writing them and running them. So the build runs as the agent's commands do, in the
 app's sandbox (`Store.runBuild`, through `Sandbox.run`), and so does everything else Lamp runs over what's in
 that folder: the compiler's looks at the code for live changes and Undo (`LiveReload`), and the finishing of a
-simulator bundle (`finishSimulatorBundle`). Only a copy Lamp made in its own folder is signed with Lamp's or the
-person's keys (`Store.deploy`). A new command of Lamp's that reads or runs what's in an app's folder belongs in
-`Sandbox.run`, never in `Shell.run` directly. The one build that still runs as Lamp is the Mac half of an app
-for both, which Xcode signs for the person's team with keys the sandbox closes.
+simulator bundle (`finishSimulatorBundle`). Xcode's builds are no different: the phone's and the Mac half of an app
+for both build in the sandbox with signing off. Only a copy Lamp made in its own folder is signed with Lamp's or the
+person's keys (`Store.deploy`, `Devices.signedCopy`, `TeamSigning`). A new command of Lamp's that reads or runs what's
+in an app's folder belongs in `Sandbox.run`, never in `Shell.run` directly.
+What Lamp itself writes there around a build (its own files, what the build was made from, the stamp in the built
+app, the live copy's records, the simulator bundle's files) goes through `AppFolder`, which follows no link on the
+way: a build can leave one where any of them goes. Writes that aren't part of a build (the notes, meta.json) don't go through it.
 
 `Sources/Lamp/Template.swift` holds `LampSupport.swift`, the support code copied into every generated
 app (`LampAI`, `LampStore`, `LampScript`, the connectors, `LampDriver` for `use_app`). It is a Swift

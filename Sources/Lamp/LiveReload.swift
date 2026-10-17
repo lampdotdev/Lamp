@@ -26,12 +26,12 @@ enum LiveReload {
 
     /// What the open app runs is now `from` (the live copy, after a change went in, or what the build compiled,
     /// after an install), with the other things the build puts in the app as they are.
+    /// All of it is in the agent's folder, where a build may have left a link, so it's copied and written there
+    /// without following one (`AppFolder`).
     static func markRunning(_ project: LampProject, from: URL? = nil) {
-        let fm = FileManager.default
-        try? fm.removeItem(at: running(project))
-        try? fm.copyItem(at: from ?? sources(project), to: running(project))
-        try? inputs(project).write(to: runningInputs(project), atomically: true, encoding: .utf8)
-        try? fm.removeItem(at: runningLayout(project))
+        try? AppFolder.copy(from ?? sources(project), to: running(project), in: project.dir)
+        try? AppFolder.write(inputs(project), to: runningInputs(project), in: project.dir)
+        AppFolder.remove(runningLayout(project), in: project.dir)
     }
 
     private static func runningInputs(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-inputs.txt") }
@@ -53,7 +53,7 @@ enum LiveReload {
     }
 
     static func forget(_ project: LampProject) {
-        try? FileManager.default.removeItem(at: running(project))
+        AppFolder.remove(running(project), in: project.dir)
         LiveSlots.clear(project)
     }
 
@@ -61,21 +61,15 @@ enum LiveReload {
     /// Not `Runtime.holdBuild`, which says the reverse (the open copy is the older one) and keeps the agent off it.
     /// Kept on disk, so the install still happens after Lamp itself has been quit and opened again.
     private static func pendingURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("install-pending") }
-    static func awaitInstall(_ project: LampProject) {
-        try? FileManager.default.createDirectory(at: folder(project), withIntermediateDirectories: true)
-        try? Data().write(to: pendingURL(project))
-    }
-    static func installed(_ project: LampProject) { try? FileManager.default.removeItem(at: pendingURL(project)) }
+    static func awaitInstall(_ project: LampProject) { try? AppFolder.write(Data(), to: pendingURL(project), in: project.dir) }
+    static func installed(_ project: LampProject) { AppFolder.remove(pendingURL(project), in: project.dir) }
 
     /// A whole build running after a change went in early (`Store.reloadBeforeBuilding`), kept on disk: if Lamp
     /// quits before it's done, nothing says the open app's change was ever built, so at the next launch what Lamp
     /// knows of the open app is dropped and the next change takes the usual build.
     private static func buildingURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("building") }
-    static func startedBuilding(_ project: LampProject) {
-        try? FileManager.default.createDirectory(at: folder(project), withIntermediateDirectories: true)
-        try? Data().write(to: buildingURL(project))
-    }
-    static func finishedBuilding(_ project: LampProject) { try? FileManager.default.removeItem(at: buildingURL(project)) }
+    static func startedBuilding(_ project: LampProject) { try? AppFolder.write(Data(), to: buildingURL(project), in: project.dir) }
+    static func finishedBuilding(_ project: LampProject) { AppFolder.remove(buildingURL(project), in: project.dir) }
     /// At launch: a build that was still going when Lamp quit.
     static func recoverUnfinishedBuild(_ project: LampProject) {
         guard FileManager.default.fileExists(atPath: buildingURL(project).path) else { return }
@@ -228,7 +222,7 @@ enum LiveReload {
         var before = AppFile.text(runningLayout(project), in: project).map { $0.components(separatedBy: "\n").filter { !$0.isEmpty } }
         if before == nil {
             before = await analysis(of: running(project), in: project, module: project.exe, macOS: Template.macMinimum(project))?.layout
-            if let before { try? before.joined(separator: "\n").write(to: runningLayout(project), atomically: true, encoding: .utf8) }
+            if let before { try? AppFolder.write(before.joined(separator: "\n"), to: runningLayout(project), in: project.dir) }
         }
         let new = await after
         return (before, new?.layout, new?.declarations ?? SwiftSource.Declarations())
@@ -239,7 +233,7 @@ enum LiveReload {
     private static func runningLayout(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-layout.txt") }
 
     static func keepLayout(_ layout: [String], for project: LampProject) {
-        try? layout.joined(separator: "\n").write(to: runningLayout(project), atomically: true, encoding: .utf8)
+        try? AppFolder.write(layout.joined(separator: "\n"), to: runningLayout(project), in: project.dir)
     }
 
     /// A path for a shell command line, quoted.
