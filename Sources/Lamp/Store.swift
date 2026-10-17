@@ -4741,6 +4741,11 @@ final class Store: ObservableObject {
         AppsLink.ensure()
         var swapped = false
         defer { if !swapped { try? fm.removeItem(at: app) } }
+        // The entitlements it's signed with are written beside it, for the same reason: in the app's folder they
+        // could be changed between Lamp writing them and codesign reading them.
+        let signing = app.deletingPathExtension().appendingPathExtension("signing")
+        try fm.createDirectory(at: signing, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: signing) }
         let resources = app.appendingPathComponent("Contents/Resources")
         try fm.createDirectory(at: resources, withIntermediateDirectories: true)
         // Every usage description, from the one list: without its reason macOS kills the app the moment it
@@ -4802,22 +4807,22 @@ final class Store: ObservableObject {
         // certificate one ("resource fork, Finder information, or similar detritus not allowed"), which is
         // how apps silently ended up ad hoc. Strip them first.
         // The chat the app shows inside its window, signed with the app.
-        try Sidebar.install(into: app, for: project)
+        try Sidebar.install(into: app, for: project, entitlementsIn: signing)
         _ = await Shell.run("xattr -cr \"$LAMP_APP\"", cwd: project.dir, env: ["LAMP_APP": app.path]) { _ in }
         // A widget keeps its own signature inside the app's (AppSigning.command), with entitlements Lamp
-        // writes here rather than takes from the build folder, where anything could have changed them.
+        // writes beside the copy rather than takes from the build folder, where anything could have changed them.
         let widget = Template.widgetURL(in: app, of: project)
         let hasWidget = fm.fileExists(atPath: widget.path)
-        let entitlements = project.dir.appendingPathComponent(".lamp/widget-entitlements.plist")
+        let entitlements = signing.appendingPathComponent("widget-entitlements.plist")
         if hasWidget { try Template.widgetEntitlementsPlist.write(to: entitlements, atomically: true, encoding: .utf8) }
         // A share extension the same way. It hands what it's given to the app through a folder they share,
         // which macOS allows only to a signature with a team, so it stays only in an app signed for one.
         let share = Template.shareURL(in: app, of: project)
         var hasShare = project.platform == .mac && fm.fileExists(atPath: share.path)
-        let shareEntitlements = project.dir.appendingPathComponent(".lamp/share-entitlements.plist")
+        let shareEntitlements = signing.appendingPathComponent("share-entitlements.plist")
         var signingEnv = ["LAMP_APP": app.path, "LAMP_WIDGET": widget.path, "LAMP_WIDGET_ENTITLEMENTS": entitlements.path,
                           "LAMP_SHARE": share.path, "LAMP_SHARE_ENTITLEMENTS": shareEntitlements.path]
-            .merging(Sidebar.signingEnvironment(in: app, for: project)) { $1 }
+            .merging(Sidebar.signingEnvironment(in: app, entitlementsIn: signing)) { $1 }
         // Only a build that is this app is signed as it: an id rewritten after build.sh, signed with Lamp's
         // certificate, would get that other app's permissions and keychain items. Read from the copy, which only
         // Lamp writes, just before it's signed, as a bundle that leads nowhere else.
@@ -4845,7 +4850,7 @@ final class Store: ObservableObject {
                 if hasWidget || hasShare {
                     let group = Template.macAppGroup(team: Devices.team, for: project)
                     Self.setAppGroup(group, in: [app] + (hasWidget ? [widget] : []) + (hasShare ? [share] : []))
-                    let appEntitlements = project.dir.appendingPathComponent(".lamp/app-entitlements.plist")
+                    let appEntitlements = signing.appendingPathComponent("app-entitlements.plist")
                     try Template.Capabilities().entitlementsPlist(container: nil, platform: .mac, appGroup: group)
                         .write(to: appEntitlements, atomically: true, encoding: .utf8)
                     if hasWidget { try Template.widgetEntitlementsPlist(appGroup: group).write(to: entitlements, atomically: true, encoding: .utf8) }
