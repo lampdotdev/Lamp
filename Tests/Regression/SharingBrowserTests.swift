@@ -5,6 +5,7 @@ import XCTest
 /// comes out in the copy. Without it the copy's sidebar code would run with nothing listing or lighting it.
 final class SharingBrowserTests: XCTestCase {
     private var root: URL?
+    override func setUp() { expectNoSharingFoldersLeft() }
     override func tearDown() { if let root { try? FileManager.default.removeItem(at: root) } }
 
     private func project(_ id: String, browser: String?) throws -> LampProject {
@@ -22,7 +23,7 @@ final class SharingBrowserTests: XCTestCase {
     func testTheSidebarDeclarationTravelsWithTheApp() throws {
         let declared = #"{"offer": "Save this recipe to Recipe Box", "fits": [{"site": "allrecipes.com"}, {"selector": ".wprm-recipe-container"}], "extra": "dropped"}"#
         let sender = try project("sender", browser: declared)
-        let package = try Sharing.open(try Sharing.export(sender))
+        let package = try opened(try exported(sender))
         XCTAssertEqual(package.browser?.offer, "Save this recipe to Recipe Box")
         XCTAssertEqual(package.browser?.fits.count, 2)
         let mine = try project("mine", browser: nil)
@@ -35,7 +36,7 @@ final class SharingBrowserTests: XCTestCase {
     /// A declaration Lamp's checks refuse doesn't travel, and an update without one takes the old one away.
     func testARefusedDeclarationStaysBehindAndAnUpdateWithoutOneRemovesIt() throws {
         let sender = try project("sender", browser: #"{"offer": "Everything", "fits": [{"selector": "body a"}]}"#)
-        let package = try Sharing.open(try Sharing.export(sender))
+        let package = try opened(try exported(sender))
         XCTAssertNil(package.browser)
         let mine = try project("mine", browser: #"{"offer": "Old", "fits": [{"site": "example.com"}]}"#)
         try Sharing.install(package, into: mine, replacing: true)

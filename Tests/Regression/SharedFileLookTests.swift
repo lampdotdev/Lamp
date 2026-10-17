@@ -14,6 +14,7 @@ final class SharedFileLookTests: XCTestCase {
     private var madeCaches: [URL] = []
 
     override func setUp() {
+        expectNoSharingFoldersLeft()
         madeCaches = [caches, caches.appendingPathComponent("Icons")].filter { !FileManager.default.fileExists(atPath: $0.path) }
     }
 
@@ -50,7 +51,7 @@ final class SharedFileLookTests: XCTestCase {
     }
 
     func testTheSharedFileCarriesItsNameAndIcon() throws {
-        let file = try Sharing.export(try project(icon: true))
+        let file = try exported(try project(icon: true))
         let look = try XCTUnwrap(LampFile(contentsOf: file))
         XCTAssertEqual(look.name, "Tide Notes")
         XCTAssertEqual(look.icon?.width, 256)
@@ -58,7 +59,7 @@ final class SharedFileLookTests: XCTestCase {
 
     /// A file from before files carried their icon still shows its name, with Lamp's own icon.
     func testAFileWithoutAnIconStillShowsItsName() throws {
-        let file = try Sharing.export(try project(icon: false))
+        let file = try exported(try project(icon: false))
         let look = try XCTUnwrap(LampFile(contentsOf: file))
         XCTAssertEqual(look.name, "Tide Notes")
         XCTAssertNil(look.icon)
@@ -66,7 +67,7 @@ final class SharedFileLookTests: XCTestCase {
     }
 
     func testThePictureIsWrittenBesideTheFile() throws {
-        let file = try Sharing.export(try project(icon: true))
+        let file = try exported(try project(icon: true))
         let picture = try XCTUnwrap(Store.sharePicture(for: file))
         XCTAssertEqual(picture.lastPathComponent, "Tide Notes.png")
         let image = try XCTUnwrap(NSImage(contentsOf: picture)?.representations.first)
@@ -83,7 +84,7 @@ final class SharedFileLookTests: XCTestCase {
         try writeIcns(of: .systemRed, to: Icons.icnsURL(project))
 
         for icon in [Sharing.drawnIcon(of: project), await Sharing.sharedIcon(of: project)] {
-            let file = try Sharing.export(project, icon: icon)
+            let file = try exported(project, icon: icon)
             let image = try XCTUnwrap(LampFile(contentsOf: file)?.icon)
             let middle = try XCTUnwrap(NSBitmapImageRep(cgImage: image).colorAt(x: image.width / 2, y: image.height / 5))
             XCTAssertLessThan(middle.redComponent, middle.blueComponent, "the .icns's red, not the design's blue")

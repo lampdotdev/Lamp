@@ -618,7 +618,7 @@ struct DeskIcon: View {
 /// back); in the Dock or the Applications folder it's the app itself; anywhere else it's the wish's shared file,
 /// as Share… makes it. A wish being changed stays where it is. Behind the icon and never in its way, so a click,
 /// a double click and the menu stay SwiftUI's: the drag is started from the window's own mouse events.
-private struct WishDrag: NSViewRepresentable {
+struct WishDrag: NSViewRepresentable {
     @EnvironmentObject private var store: Store
     let project: LampProject
 
@@ -771,8 +771,10 @@ private struct WishDrag: NSViewRepresentable {
         }()
     }
 
-    /// What a drag hands over: the wish's shared file, or the app itself where an app belongs. The file is begun as
-    /// the drag starts, in the background, in a folder of the drag's own so nothing stale is ever there.
+    /// What a drag hands over: the wish's shared file, or the app itself where an app belongs. The file is made again
+    /// as the drag starts, in the background, and is the one Share… and Copy Wish File hand on: it takes the old one's
+    /// place whole, in one step, so an app given it by this drag or an earlier one finds a file there whenever it
+    /// reads it, and dragging again and again leaves one file per wish.
     final class Payload: @unchecked Sendable {
         /// The installed Mac app, when there is one.
         let app: URL?
@@ -785,9 +787,9 @@ private struct WishDrag: NSViewRepresentable {
         private let made = DispatchGroup()
         private var result: Result<URL, Error>?
 
-        init(project: LampProject, app: URL?, whenWritten: @escaping @MainActor () -> Void) {
+        init(project: LampProject, app: URL?, in folder: URL = Store.sharedFolder, whenWritten: @escaping @MainActor () -> Void) {
             self.app = app
-            let file = Store.sharedFolder.appendingPathComponent(UUID().uuidString).appendingPathComponent("\(project.name).lampapp")
+            let file = folder.appendingPathComponent("\(project.name).lampapp")
             made.enter()
             DispatchQueue.global(qos: .userInitiated).async { [self] in
                 let result = Result { try Store.sharedFile(of: project, at: file) }

@@ -5,6 +5,7 @@ import XCTest
 /// anything else is no description, never text that could pass for Lamp's.
 final class SharedAppAboutTests: XCTestCase {
     private var folder: URL?
+    override func setUp() { expectNoSharingFoldersLeft() }
     override func tearDown() { if let folder { try? FileManager.default.removeItem(at: folder) } }
 
     /// A made-up app with code, as Lamp keeps one, in a folder of its own. `about` is its about.json as the

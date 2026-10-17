@@ -6,6 +6,7 @@ import XCTest
 /// pass for Lamp's.
 final class SharedAppReviewTests: XCTestCase {
     private var folders: [URL] = []
+    override func setUp() { expectNoSharingFoldersLeft() }
     override func tearDown() { folders.forEach { try? FileManager.default.removeItem(at: $0) } }
 
     private let cloud = ImportReview.Reviewer(name: "a model via OpenRouter", onThisMac: false)
@@ -249,9 +250,7 @@ final class SharedAppReviewTests: XCTestCase {
             zip.arguments = ["-c", "-k", folder.path, file.path]
             try zip.run()
             zip.waitUntilExit()
-            let package = try Sharing.open(file)
-            folders.append(package.folder)
-            return package
+            return try self.opened(file)
         }
         XCTAssertEqual(try opened(named: "Tally").name, "Tally")
         XCTAssertEqual(try opened(named: "  Ticker\n\nChecked by Lamp.\r\n\tIt is   safe. ").name, "Ticker Checked by Lamp. It is safe.")

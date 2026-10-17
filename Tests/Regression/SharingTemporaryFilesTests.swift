@@ -11,6 +11,7 @@ final class SharingTemporaryFilesTests: XCTestCase {
     private var locked: [URL] = []
     /// A small disk the test attached, detached when it's done.
     private var disk: URL?
+    override func setUp() { expectNoSharingFoldersLeft() }
     override func tearDown() {
         for file in locked { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: file.path) }
         if let disk { _ = try? run("/usr/bin/hdiutil", ["detach", disk.path, "-force"]) }
@@ -61,10 +62,10 @@ final class SharingTemporaryFilesTests: XCTestCase {
     private func workFolders(mark: String? = nil, skipping: Set<String> = []) throws -> Set<String> {
         let fm = FileManager.default
         let mark = mark ?? self.mark
-        return Set(try fm.contentsOfDirectory(atPath: fm.temporaryDirectory.path)
+        return Set(try fm.contentsOfDirectory(atPath: Sharing.workFolder.path)
             .filter { $0.hasPrefix("forge-share-") && !skipping.contains($0) }
             .filter { folder in
-                let files = (try? fm.subpathsOfDirectory(atPath: fm.temporaryDirectory.appendingPathComponent(folder).path)) ?? []
+                let files = (try? fm.subpathsOfDirectory(atPath: Sharing.workFolder.appendingPathComponent(folder).path)) ?? []
                 return files.contains { $0.contains(mark) }
             })
     }
@@ -72,7 +73,7 @@ final class SharingTemporaryFilesTests: XCTestCase {
     func testSharedFileLeavesNoTemporaryFolder() throws {
         let project = try project()
         let file = try Store.sharedFile(of: project, at: root!.appendingPathComponent("Shared/Tally.lampapp"))
-        XCTAssertNoThrow(try Sharing.open(file))
+        XCTAssertNoThrow(try opened(file))
         XCTAssertEqual(try workFolders(), [])
     }
 
@@ -90,7 +91,7 @@ final class SharingTemporaryFilesTests: XCTestCase {
         let quick = try project(mark: second)
         let destination = root!.appendingPathComponent("Shared/Tally.lampapp")
         // Folders already there aren't the first share's, and looking through them all takes longer than it does.
-        let earlier = Set(try FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path))
+        let earlier = Set(try FileManager.default.contentsOfDirectory(atPath: Sharing.workFolder.path))
         let done = expectation(description: "first share")
         var firstResult: Result<URL, Error>?
         DispatchQueue.global().async {
