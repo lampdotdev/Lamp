@@ -37,5 +37,19 @@ final class DeployOwnIDTests: XCTestCase {
         try bundle(built, id: project.bundleID)
         try bundle(Template.widgetURL(in: built, of: project), id: Template.widgetBundleID(for: other))
         XCTAssertThrowsError(try Store.checkOwnIDs(in: try Store.stage(project, in: apps), for: project))
+
+        // A copy doesn't follow links: one leading back into the build folder, or a build that is a link, isn't copied.
+        try bundle(Template.widgetURL(in: built, of: project), id: Template.widgetBundleID(for: project))
+        let plist = built.appendingPathComponent("Contents/Info.plist"), kept = project.dir.appendingPathComponent("Info.plist")
+        try FileManager.default.moveItem(at: plist, to: kept)
+        try FileManager.default.createSymbolicLink(at: plist, withDestinationURL: kept)
+        XCTAssertThrowsError(try Store.stage(project, in: apps))
+        try FileManager.default.removeItem(at: plist)
+        try FileManager.default.moveItem(at: kept, to: plist)
+        XCTAssertNoThrow(try Store.stage(project, in: apps))
+        let real = project.dir.appendingPathComponent("Elsewhere.app")
+        try FileManager.default.moveItem(at: built, to: real)
+        try FileManager.default.createSymbolicLink(at: built, withDestinationURL: real)
+        XCTAssertThrowsError(try Store.stage(project, in: apps))
     }
 }

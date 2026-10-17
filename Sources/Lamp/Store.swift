@@ -4700,11 +4700,28 @@ final class Store: ObservableObject {
         }
     }
 
+    struct LinkedBuild: LocalizedError {
+        var errorDescription: String? { "its build reaches outside itself, so Lamp won't sign it." }
+    }
+
     /// A copy of the app's build in `folder`, hidden until it's swapped in, for Lamp alone to finish and sign.
+    /// A copy keeps symbolic links as links, so one that leads out of the copy (or a build that is itself a link)
+    /// would have Lamp change, read and sign files the agent can still write: such a build isn't copied.
     nonisolated static func stage(_ project: LampProject, in folder: URL) throws -> URL {
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let fm = FileManager.default
+        if (try? fm.destinationOfSymbolicLink(atPath: project.builtURL.path)) != nil { throw LinkedBuild() }
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         let copy = folder.appendingPathComponent(".\(project.exe)-\(UUID().uuidString).app")
-        try FileManager.default.copyItem(at: project.builtURL, to: copy)
+        try fm.copyItem(at: project.builtURL, to: copy)
+        let inside = copy.standardizedFileURL.path + "/"
+        for case let file as URL in fm.enumerator(at: copy, includingPropertiesForKeys: nil) ?? FileManager.DirectoryEnumerator() {
+            guard let target = try? fm.destinationOfSymbolicLink(atPath: file.path) else { continue }
+            let resolved = target.hasPrefix("/") ? URL(fileURLWithPath: target) : file.deletingLastPathComponent().appendingPathComponent(target)
+            if !resolved.standardizedFileURL.path.hasPrefix(inside) {
+                try? fm.removeItem(at: copy)
+                throw LinkedBuild()
+            }
+        }
         return copy
     }
 
