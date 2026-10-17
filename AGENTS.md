@@ -404,7 +404,10 @@ Away from the Mac, a phone app answers for itself (`LampDirect` in LampSupport, 
 first asks `/ai/keys` with a four-second timeout, at most every half minute; while the Mac answers, the
 call goes through Lamp as ever and the reply (the OpenRouter key, the TypeSafe key when decisions go there,
 and the app's model choices, served by `Store.keysForPhone` only for iPhone apps) is kept in the
-phone's Keychain; when it doesn't, `LampDirect.handle` does
+phone's Keychain. The reply is sealed with a secret (`Template.phoneSecret(in:)`) kept in the phone's build folder
+and written only into the Info.plist there, which the app reads (`LampPhoneSecret`): the app's token is in its
+folder, where the agent's commands read it, so the secret must never be there too, nor in LampSupport.swift or the
+`.lamp/device` project of an app for both, or a command could ask for the keys and open them. When the Mac doesn't answer, `LampDirect.handle` does
 what the gateway would with the provider directly (chat completions with the JSON retry, systemone
 decisions, images). The prompt's fencing and dates are made in the library either way. What's spent this
 way isn't recorded in Lamp, and `/ai/computer` says it needs the Mac.
