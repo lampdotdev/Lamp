@@ -328,7 +328,7 @@ extension Agent {
                 let fallback = String(decoding: try! JSONSerialization.data(withJSONObject: ["hookSpecificOutput": refusal]), as: UTF8.self)
                     .replacingOccurrences(of: "'", with: "'\\''")
                 return ["type": "command", "timeout": 3600,
-                        "command": "curl -sf --max-time 3540 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
+                        "command": "/usr/bin/curl -sf --max-time 3540 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
             }
             var permissionMode = "acceptEdits"
             var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__offer_setup,mcp__lamp__make_app_for,mcp__lamp__connectors,mcp__lamp__ask,mcp__lamp__write_wish,mcp__lamp__read_skill"

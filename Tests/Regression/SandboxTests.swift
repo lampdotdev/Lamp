@@ -115,4 +115,27 @@ final class SandboxTests: XCTestCase {
         XCTAssertNil(Previews.destination(for: "shot.jpg", under: ".lamp/runtime/previews", in: project))
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".lamp").path))
     }
+
+    /// Homebrew's folders are on the path of what Lamp runs as itself, so a command must not be able to put a
+    /// program there. Tried only where this user can't write anyway, so nothing lands there even without the
+    /// rule: macOS checks the sandbox first ("Operation not permitted") and ownership after ("Permission denied").
+    func testHomebrewFoldersAreClosedForWriting() throws {
+        let (project, _) = try project()
+        let fm = FileManager.default
+        let folders = ["/opt/homebrew/bin", "/opt/homebrew", "/usr/local/bin", "/usr/local"].filter { folder in
+            var isFolder: ObjCBool = false
+            return fm.fileExists(atPath: folder, isDirectory: &isFolder) && isFolder.boolValue && !fm.isWritableFile(atPath: folder)
+        }
+        guard !folders.isEmpty else { throw XCTSkip("No Homebrew folder here that this user can't already write to") }
+        for folder in folders {
+            let planted = "\(folder)/codesign-\(UUID().uuidString)"
+            let write = try run("printf fake > \(Sandbox.quoted(planted))", in: project)
+            XCTAssertNotEqual(write.status, 0, write.output)
+            XCTAssertTrue(write.output.contains("Operation not permitted"), "\(folder): \(write.output)")
+            XCTAssertFalse(fm.fileExists(atPath: planted))
+            // Reading what's there stays open.
+            let read = try run("ls \(Sandbox.quoted(folder)) > /dev/null", in: project)
+            XCTAssertEqual(read.status, 0, read.output)
+        }
+    }
 }

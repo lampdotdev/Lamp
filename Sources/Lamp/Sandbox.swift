@@ -189,6 +189,11 @@ enum Sandbox {
         for path in keeping {
             lines.append("(deny file-write* (literal \(quotedPath(real(path)))))")
         }
+        // Homebrew's folders belong to the person, so without this a command could put a program there (a
+        // `codesign`, a `git`) that something running outside the sandbox later finds on its path and runs
+        // unconfined. Reading and running what's there stays open; installing with brew doesn't. Last, so no
+        // folder opened above reopens them.
+        lines.append("(deny file-write* (subpath \(quotedPath(real("/opt/homebrew")))) (subpath \(quotedPath(real("/usr/local")))))")
         // The folders on the way to each opened one, the home folder included, can be looked at (not read):
         // a program resolving a path stats every step of it, and Node refuses to start otherwise.
         var ancestors: [String] = []

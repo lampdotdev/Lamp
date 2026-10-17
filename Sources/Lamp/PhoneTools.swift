@@ -87,10 +87,12 @@ enum PhoneTools {
                     return failed("You have not agreed to the Xcode license agreements.")
                 }
                 if arguments.contains("--show-sdk-path"), Pretend.xcodeMissing("platform") { return failed() }
-                if arguments.starts(with: ["simctl", "list", "runtimes"]), Pretend.xcodeMissing("runtime") {
+                // The tool by its name, then what it was asked: simctl is run by its full path.
+                let call = [URL(fileURLWithPath: tool).lastPathComponent] + arguments
+                if call.starts(with: ["simctl", "list", "runtimes"]), Pretend.xcodeMissing("runtime") {
                     return answer(#"{"runtimes": []}"#)
                 }
-                if arguments.starts(with: ["simctl", "list", "devices"]), Pretend.xcodeMissing("simulator") {
+                if call.starts(with: ["simctl", "list", "devices"]), Pretend.xcodeMissing("simulator") {
                     return answer(#"{"devices": {}}"#)
                 }
                 return real.run(tool, arguments, env)
@@ -182,7 +184,7 @@ enum PhoneTools {
     /// show an update action rather than trying to pair or install on an unsupported phone.
     static func olderPhones() async -> [OlderPhone] {
         guard let developer = discover() else { return [] }
-        let result = await Subprocess.run("/usr/bin/xcrun", ["xcdevice", "list", "--timeout", "5"],
+        let result = await Subprocess.run(developer + "/usr/bin/xcdevice", ["list", "--timeout", "5"],
                                           env: ["DEVELOPER_DIR": developer], mergeErrors: false, timeout: 30)
         return result.ok ? olderPhones(listing: result.output) : []
     }
@@ -250,7 +252,7 @@ enum PhoneTools {
             }
         }
         report.passed.append(.platform)
-        let runtimes = probe.run("/usr/bin/xcrun", ["simctl", "list", "runtimes", "-j"], env)
+        let runtimes = probe.run(developer + "/usr/bin/simctl", ["list", "runtimes", "-j"], env)
         guard runtimes.ok, let data = runtimes.output.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let list = json["runtimes"] as? [[String: Any]] else {
@@ -263,7 +265,7 @@ enum PhoneTools {
             return stop(.runtime, "Download iOS for the simulator", "Lamp tries your app in a simulator, an iPhone or iPad that appears on your Mac's screen, and that needs iOS \(minimumIOS) or later. Click Open Xcode, choose Xcode → Settings from the menu bar, then click Components (Platforms in older versions of Xcode) and click Get beside the newest iOS. Come back to Lamp when the download finishes.", .components)
         }
         report.passed.append(.runtime)
-        let devices = probe.run("/usr/bin/xcrun", ["simctl", "list", "devices", "available", "-j"], env)
+        let devices = probe.run(developer + "/usr/bin/simctl", ["list", "devices", "available", "-j"], env)
         guard devices.ok, Simulator.device(family, listing: devices.output) != nil else {
             return stop(.simulator, "Add an \(family.name) simulator", "There's no \(family.name) for Lamp to try your app on yet. Click Open Simulator, then choose File → New Simulator from the menu bar. Pick any \(family.name) with iOS \(minimumIOS) or later, click Create, and come back to Lamp.", .simulator)
         }
@@ -311,14 +313,14 @@ enum PhoneTools {
         if let phone {
             let file = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-phone-version-\(UUID().uuidString).json")
             defer { try? FileManager.default.removeItem(at: file) }
-            let result = probe.run("/usr/bin/xcrun", ["devicectl", "list", "devices", "--timeout", "5", "--json-output", file.path], env)
+            let result = probe.run(developer + "/usr/bin/devicectl", ["list", "devices", "--timeout", "5", "--json-output", file.path], env)
             guard result.ok, let data = probe.read(file),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let devices = (json["result"] as? [String: Any])?["devices"] as? [[String: Any]],
                   let device = devices.first(where: { ($0["hardwareProperties"] as? [String: Any])?["udid"] as? String == phone }),
                   let properties = device["deviceProperties"] as? [String: Any],
                   let version = properties["osVersionNumber"] as? String, major(version) > 0 else {
-                let legacy = probe.run("/usr/bin/xcrun", ["xcdevice", "list", "--timeout", "5"], env)
+                let legacy = probe.run(developer + "/usr/bin/xcdevice", ["list", "--timeout", "5"], env)
                 if legacy.ok, let old = olderPhones(listing: legacy.output).first(where: { $0.id == phone }) {
                     report.issue = updateIssue(name: old.name, version: old.version)
                     return report

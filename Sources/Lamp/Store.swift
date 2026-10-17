@@ -3506,7 +3506,7 @@ final class Store: ObservableObject {
             }
         }
         if current.platform.hasMac, kind.hasMac, current.bundleID != changed.bundleID {
-            _ = await Shell.run("defaults export \"$LAMP_OLD\" - | defaults import \"$LAMP_NEW\" -", cwd: changed.dir,
+            _ = await Shell.run("/usr/bin/defaults export \"$LAMP_OLD\" - | /usr/bin/defaults import \"$LAMP_NEW\" -", cwd: changed.dir,
                                 env: ["LAMP_OLD": current.bundleID, "LAMP_NEW": changed.bundleID]) { _ in }
         }
         syncLocalNetwork()
@@ -4893,13 +4893,13 @@ final class Store: ObservableObject {
         // a reason was added get it too.
         var plist = """
             P="$LAMP_APP/Contents/Info.plist"
-            plutil -replace CFBundleName -string "$LAMP_NAME" "$P" && \\
-            plutil -replace CFBundleDisplayName -string "$LAMP_NAME" "$P"
+            /usr/bin/plutil -replace CFBundleName -string "$LAMP_NAME" "$P" && \\
+            /usr/bin/plutil -replace CFBundleDisplayName -string "$LAMP_NAME" "$P"
 
             """
         for (key, text) in Template.macUsageDescriptions {
             let reason = text.replacingOccurrences(of: "{{NAME}}", with: project.name).replacingOccurrences(of: "'", with: "'\\''")
-            plist += "plutil -replace \(key) -string '\(reason)' \"$P\"\n"
+            plist += "/usr/bin/plutil -replace \(key) -string '\(reason)' \"$P\"\n"
         }
         _ = await Shell.run(plist, cwd: project.dir, env: ["LAMP_APP": app.path, "LAMP_NAME": project.name]) { _ in }
         if fm.fileExists(atPath: Icons.icnsURL(project).path) {
@@ -4910,10 +4910,10 @@ final class Store: ObservableObject {
             let hasCar = fm.fileExists(atPath: Icons.carURL(project).path)
             if hasCar { try fm.copyItem(at: Icons.carURL(project), to: resources.appendingPathComponent("Assets.car")) }
             let iconName = hasCar
-                ? "plutil -replace CFBundleIconName -string AppIcon \"$LAMP_APP/Contents/Info.plist\""
-                : "{ plutil -remove CFBundleIconName \"$LAMP_APP/Contents/Info.plist\" 2>/dev/null || true; }"
+                ? "/usr/bin/plutil -replace CFBundleIconName -string AppIcon \"$LAMP_APP/Contents/Info.plist\""
+                : "{ /usr/bin/plutil -remove CFBundleIconName \"$LAMP_APP/Contents/Info.plist\" 2>/dev/null || true; }"
             _ = await Shell.run("""
-                plutil -replace CFBundleIconFile -string AppIcon "$LAMP_APP/Contents/Info.plist" && \(iconName)
+                /usr/bin/plutil -replace CFBundleIconFile -string AppIcon "$LAMP_APP/Contents/Info.plist" && \(iconName)
                 """, cwd: project.dir, env: ["LAMP_APP": app.path]) { _ in }
         }
         // The app's own files (Assets/) ship inside it, where LampAssets finds them; the chat's attachments
@@ -4948,7 +4948,7 @@ final class Store: ObservableObject {
         // how apps silently ended up ad hoc. Strip them first.
         // The chat the app shows inside its window, signed with the app.
         try Sidebar.install(into: app, for: project, entitlementsIn: signing)
-        _ = await Shell.run("xattr -cr \"$LAMP_APP\"", cwd: project.dir, env: ["LAMP_APP": app.path]) { _ in }
+        _ = await Shell.run("/usr/bin/xattr -cr \"$LAMP_APP\"", cwd: project.dir, env: ["LAMP_APP": app.path]) { _ in }
         // A widget keeps its own signature inside the app's (AppSigning.command), with entitlements Lamp
         // writes beside the copy rather than takes from the build folder, where anything could have changed them.
         let widget = Template.widgetURL(in: app, of: project)

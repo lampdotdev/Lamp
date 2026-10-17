@@ -1408,17 +1408,19 @@ enum Agent {
 }
 
 enum Shell {
-    /// GUI apps don't inherit the user's shell PATH, so add the usual install locations.
+    /// GUI apps don't inherit the user's shell PATH, so add the usual install locations: the engines and the
+    /// tools the person installed are found there. A program Lamp itself runs here (codesign, plutil, xcrun…) is
+    /// named by its full path instead, so nothing put in one of these folders can stand in for it.
     private static let extraPath = ["/opt/homebrew/bin", "/usr/local/bin"].joined(separator: ":")
 
     /// Put this before a build command. The macOS 27 SDK makes `@State` a macro, and its compiler plugin
     /// only ships with full Xcode. With just the Command Line Tools, this builds against the newest
     /// installed SDK that doesn't need the plugin. The same lines are in Lamp's own build.sh.
     static let compatibleSDK = #"""
-    dev="$(xcode-select -p 2>/dev/null)"
+    dev="$(/usr/bin/xcode-select -p 2>/dev/null)"
     if [ -z "${SDKROOT:-}" ] && [ -d "$dev/SDKs" ] && [ ! -e "$dev/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]; then
       for sdk in "$dev"/SDKs/MacOSX*.sdk(/NnOn); do
-        if ! grep -qs StateMacro /dev/null "$sdk"/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/*-macos.swiftinterface(N); then
+        if ! /usr/bin/grep -qs StateMacro /dev/null "$sdk"/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/*-macos.swiftinterface(N); then
           export SDKROOT="$sdk"; break
         fi
       done
