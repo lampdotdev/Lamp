@@ -64,4 +64,55 @@ final class OwnToolsByPathTests: XCTestCase {
         XCTAssertEqual(faked, "", "Lamp ran a program found on the path instead of the system's")
         XCTAssertTrue(Subprocess.runBlocking("/usr/bin/codesign", ["--verify", app.path]).ok)
     }
+
+    /// The developer tools in /usr/bin (`git`, `xcrun`, `xcodebuild`…) are wrappers that look the real program up
+    /// in a cache in the user's temporary folder, which the agent's commands may write. Lamp's look at the person's
+    /// git settings runs git as Lamp, outside the sandbox, so it must run the real git and never what that cache
+    /// names. The wrappers are pointed at a cache of the test's own (`xcrun_db`), so the Mac's own is never touched,
+    /// and it names a fake git that notes whether it ran confined, then runs the real one.
+    func testLampsOwnGitIsNeverFoundThroughTheToolCache() async throws {
+        let fm = FileManager.default
+        // The app first: making it runs git as the test, not as Lamp.
+        let escape = HistoryEscapeTests()
+        defer { escape.tearDown() }
+        let app = try escape.app()
+        let cache = URL(fileURLWithPath: "/tmp/lamp-xc-\(UUID().uuidString.prefix(6))")
+        try fm.createDirectory(at: cache, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: cache) }
+        let db = cache.appendingPathComponent("db")
+        let previous = ProcessInfo.processInfo.environment["xcrun_db"]
+        setenv("xcrun_db", db.path, 1)
+        defer { if let previous { setenv("xcrun_db", previous, 1) } else { unsetenv("xcrun_db") } }
+
+        // The cache as the wrappers write it, then with the real git's path swapped for a fake one of the same length.
+        let real = Subprocess.runBlocking("/usr/bin/xcrun", ["--find", "git"], mergeErrors: false).output
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertTrue(Subprocess.runBlocking("/usr/bin/git", ["--version"]).ok)
+        let filler = real.count - cache.path.count - 1
+        guard !real.isEmpty, filler > 0, var table = fm.contents(atPath: db.path) else { throw XCTSkip("No developer tools cache here") }
+        let fake = cache.appendingPathComponent(String(repeating: "g", count: filler))
+        let log = cache.appendingPathComponent("ran.txt")
+        try """
+            #!/bin/sh
+            if ls "$HOME" >/dev/null 2>&1; then where=unconfined; else where=confined; fi
+            echo "$where $*" >> \(Sandbox.quoted(log.path))
+            exec \(Sandbox.quoted(real)) "$@"
+
+            """.write(to: fake, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
+        let found = try XCTUnwrap(table.lastRange(of: Data(real.utf8)))
+        table.replaceSubrange(found, with: Data(fake.path.utf8))
+        try table.write(to: db)
+
+        // The poisoned cache really is what the wrapper follows, or this test would prove nothing.
+        _ = Subprocess.runBlocking("/usr/bin/git", ["--version"])
+        XCTAssertTrue(((try? String(contentsOf: log, encoding: .utf8)) ?? "").contains("unconfined --version"))
+        try fm.removeItem(at: log)
+
+        // A look for unsaved work reads the person's git settings first (each test has a settings file of its own,
+        // so it's read again), then runs git in the app's sandbox.
+        _ = await Versions.hasUnsavedChanges(app.project)
+        let ran = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+        XCTAssertFalse(ran.contains("unconfined"), "Lamp ran, as itself, the git the cache named:\n" + ran)
+    }
 }

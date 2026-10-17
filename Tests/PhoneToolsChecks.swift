@@ -22,8 +22,13 @@ final class PhoneToolsChecks {
 
     private func probeWithoutAccount(fail: PhoneTools.Step? = nil, phoneVersion: String? = "17.0", runtime: String? = nil,
                                      commands: (([String]) -> Void)? = nil) -> PhoneTools.Probe {
-        .init(developer: { fail == .xcode ? nil : self.developer }, active: { fail == .tools ? "/Library/Developer/CommandLineTools" : self.developer }, run: { tool, args, env in
+        .init(developer: { fail == .xcode ? nil : self.developer }, active: { fail == .tools ? "/Library/Developer/CommandLineTools" : self.developer }, run: { tool, arguments, env in
             expectEqual(env["DEVELOPER_DIR"], self.developer)
+            // Xcode's own tools by their full path, never through a wrapper in /usr/bin.
+            let named = URL(fileURLWithPath: tool).lastPathComponent
+            let xcodeTool = ["simctl", "devicectl", "xcdevice"].contains(named)
+            if xcodeTool { expectEqual(tool, self.developer + "/usr/bin/" + named) }
+            let args = xcodeTool ? [named] + arguments : arguments
             commands?(args)
             if args == ["-checkFirstLaunchStatus"] {
                 expectEqual(tool, self.developer + "/usr/bin/xcodebuild")
@@ -274,7 +279,7 @@ final class PhoneToolsChecks {
         expectEqual(old.first?.version, "16.7.10")
         var p = probe(phoneVersion: nil)
         let run = p.run
-        p.run = { tool, args, env in args.contains("xcdevice") ? self.result(listing) : run(tool, args, env) }
+        p.run = { tool, args, env in tool.hasSuffix("/xcdevice") ? self.result(listing) : run(tool, args, env) }
         let report = PhoneTools.check(phone: "old", probe: p)
         expectEqual(report.issue?.action, .updatePhone)
         expectTrue(report.issue?.message.contains("Test iPad") == true)

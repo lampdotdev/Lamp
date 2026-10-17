@@ -148,3 +148,24 @@ enum Subprocess {
         return direct + direct.flatMap { descendants(of: $0) }
     }
 }
+
+/// Apple's developer tools as Lamp runs them itself. The programs of their names in /usr/bin (`xcrun`,
+/// `xcodebuild`, `git`, `swift`…) are small wrappers that find the real one through a cache in the user's
+/// temporary folder, and the agent's commands may write that folder: whatever the cache named would then run as
+/// Lamp. So Lamp runs the real program from the developer folder in use, by its full path, and never the wrapper.
+/// What runs in the sandbox (a build, the compiler's looks at the code) may use the wrappers: it runs confined anyway.
+enum DeveloperTools {
+    /// The developer folder the wrappers would use: `DEVELOPER_DIR` when it's given, else the one chosen with
+    /// xcode-select. Asked each time, since choosing Xcode in Lamp's setup changes it while Lamp runs.
+    static func folder(env: [String: String] = [:]) -> String {
+        if let given = env["DEVELOPER_DIR"] ?? ProcessInfo.processInfo.environment["DEVELOPER_DIR"], !given.isEmpty { return given }
+        let selected = Subprocess.runBlocking("/usr/bin/xcode-select", ["-p"], mergeErrors: false, timeout: 10).output
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return selected.isEmpty ? "/Library/Developer/CommandLineTools" : selected
+    }
+
+    /// The real `tool` (`simctl`, `devicectl`, `xcodebuild`, `git`) in that folder.
+    static func path(_ tool: String, env: [String: String] = [:]) -> String {
+        folder(env: env) + "/usr/bin/" + tool
+    }
+}

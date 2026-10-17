@@ -113,7 +113,7 @@ enum Devices {
     static func list() async -> [Device] {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-devices-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: file) }
-        let result = await Subprocess.run("/usr/bin/xcrun", ["devicectl", "list", "devices", "--timeout", "5", "--json-output", file.path],
+        let result = await Subprocess.run(DeveloperTools.path("devicectl"), ["list", "devices", "--timeout", "5", "--json-output", file.path],
                                           mergeErrors: false, timeout: 30)
         guard result.ok, let data = try? Data(contentsOf: file),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -136,7 +136,7 @@ enum Devices {
     /// Pairs a plugged-in phone with this Mac for development: the phone shows "Trust This Computer?" and
     /// asks for its passcode, and this waits for the answer. What Xcode's Devices window does on its own.
     static func pair(_ udid: String) async throws {
-        let result = await Subprocess.run("/usr/bin/xcrun", ["devicectl", "manage", "pair", "--device", udid, "--timeout", "120"],
+        let result = await Subprocess.run(DeveloperTools.path("devicectl"), ["manage", "pair", "--device", udid, "--timeout", "120"],
                                           mergeErrors: true, timeout: 150)
         guard result.ok else {
             let output = result.output.lowercased()
@@ -225,10 +225,11 @@ enum Devices {
         let sdk = destination.contains("Simulator") ? "iphonesimulator" : "iphoneos"
         let app = dir.appendingPathComponent("DerivedData/Build/Products/Release-\(sdk)/\(project.exe).app")
         let status = await Shell.run("""
-            /usr/bin/xcodebuild -project "$LAMP_PROJECT" -scheme "$LAMP_SCHEME" -configuration Release -destination "$LAMP_DESTINATION" \\
+            "$LAMP_XCODEBUILD" -project "$LAMP_PROJECT" -scheme "$LAMP_SCHEME" -configuration Release -destination "$LAMP_DESTINATION" \\
               -derivedDataPath "$LAMP_DERIVED" -allowProvisioningUpdates -allowProvisioningDeviceRegistration \\
               DEVELOPMENT_TEAM="$LAMP_TEAM" build 2>&1
-            """, cwd: dir, env: ["LAMP_PROJECT": dir.appendingPathComponent("\(project.exe).xcodeproj").path, "LAMP_SCHEME": project.exe,
+            """, cwd: dir, env: ["LAMP_XCODEBUILD": DeveloperTools.path("xcodebuild"),
+                                 "LAMP_PROJECT": dir.appendingPathComponent("\(project.exe).xcodeproj").path, "LAMP_SCHEME": project.exe,
                                  "LAMP_DESTINATION": destination, "LAMP_DERIVED": dir.appendingPathComponent("DerivedData").path, "LAMP_TEAM": team],
             started: started, onLine: onLine)
         guard status == 0, FileManager.default.fileExists(atPath: app.path) else { throw Failure(message: "Xcode couldn't build the app for the phone.") }
@@ -236,7 +237,7 @@ enum Devices {
     }
 
     static func install(_ app: URL, on udid: String) async throws {
-        let result = await Subprocess.run("/usr/bin/xcrun", ["devicectl", "device", "install", "app", "--device", udid, app.path],
+        let result = await Subprocess.run(DeveloperTools.path("devicectl"), ["device", "install", "app", "--device", udid, app.path],
                                           mergeErrors: true, timeout: 300)
         guard result.ok else {
             throw PhoneFailure(stage: .install, output: result.output + "\n" + result.errors)
@@ -254,8 +255,8 @@ enum Devices {
     static func launch(_ bundleID: String, on udid: String, log: URL, started: (Process) -> Void,
                        cancelled: () -> Bool) async throws -> Process {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        process.arguments = ["devicectl", "device", "process", "launch", "--device", udid, "--terminate-existing", "--console", bundleID]
+        process.executableURL = URL(fileURLWithPath: DeveloperTools.path("devicectl"))
+        process.arguments = ["device", "process", "launch", "--device", udid, "--terminate-existing", "--console", bundleID]
         if !FileManager.default.fileExists(atPath: log.path) { FileManager.default.createFile(atPath: log.path, contents: nil) }
         let handle = try FileHandle(forWritingTo: log)
         let offset = handle.seekToEndOfFile()

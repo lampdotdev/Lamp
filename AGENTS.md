@@ -119,7 +119,11 @@ A capability given to one engine must be given to all of them that can take it, 
   what's there stays open): they're on the path of everything Lamp runs as itself, so a command could otherwise
   leave a program there for Lamp to run unconfined. The agent can't `brew install`. A program Lamp runs outside
   the sandbox (in a `Shell.run` command, `signing-identity.sh`, Claude Code's hook) is named by its full path
-  (`/usr/bin/codesign`), never found on the path.
+  (`/usr/bin/codesign`), never found on the path. Apple's developer tools are the exception to `/usr/bin`: `xcrun`, `xcodebuild`,
+  `git`, `swift` and the rest there are wrappers that find the real program through a cache in the temporary
+  folder, which the sandbox leaves writable. So what Lamp runs of them as itself (`simctl`, `devicectl`, the phone's
+  `xcodebuild`, the look at the person's git settings) is the real program in the developer folder in use
+  (`DeveloperTools.path`), never the wrapper. Inside the sandbox the wrappers are fine.
   Lamp's own git (saving a version, Undo, restore, version names, the look for unsaved work) runs under the
   same sandbox, through `Versions.git` (`gitBlocking` where it can't await): the app's folder is the agent's
   to write, its `.git` included, and git runs the programs a repository names (hooks, filters, a signing

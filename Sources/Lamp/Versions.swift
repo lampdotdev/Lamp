@@ -123,7 +123,7 @@ enum Versions {
                 .joined(separator: "\n")
         }
         func ask(_ arguments: [String]) -> String? {
-            let answer = Subprocess.runBlocking("/usr/bin/git", ["config"] + arguments, cwd: URL(fileURLWithPath: "/"),
+            let answer = Subprocess.runBlocking(DeveloperTools.path("git"), ["config"] + arguments, cwd: URL(fileURLWithPath: "/"),
                                                 mergeErrors: false, timeout: 10)
             return answer.ok ? answer.output : nil
         }
