@@ -40,6 +40,23 @@ enum Starters {
         return folders.sorted { $0.lastPathComponent < $1.lastPathComponent }.compactMap(read)
     }
 
+    /// The starters this Lamp ships that aren't on the desk: never added, or deleted since. The desk offers them
+    /// (`MoreFromLamp`).
+    static func missing(from projects: [LampProject]) -> [Starter] {
+        let here = Set(projects.compactMap { starter(of: $0)?.name })
+        return bundled.filter { !here.contains($0.name) }
+    }
+
+    /// The icon a starter ships with, drawn from its icon.json (`StarterIconsTests`).
+    static func icon(of starter: Starter) -> NSImage? {
+        NSImage(contentsOf: starter.folder.appendingPathComponent(iconFolder).appendingPathComponent("icon.png"))
+    }
+
+    /// The starter's line saying what it is, from its about.json.
+    static func about(_ starter: Starter) -> String? {
+        AppDescription.description(at: starter.folder.appendingPathComponent(AppDescription.file))
+    }
+
     /// Where an app keeps its starter.md once copied: Lamp's, beside meta.json, out of the agent's way.
     static func file(of project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/starter.md") }
 

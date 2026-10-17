@@ -280,6 +280,12 @@ one request with no key, account or pictures to draw. They
 are Mac apps that need no key or account, use the AI the person builds with when they use any, and come with
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
 
+Starters not on the desk (never added, or deleted since; `Starters.missing`) are offered at its end as one dashed
+tile, More from Lamp (`MoreFromLamp`): up to four of their icons and how many there are, and a click lists them with
+an Add each. Add puts that one back (`Store.put(starter:)`, through `Store.add(starter:)`, the one way a starter is put
+on the desk, which the first launch uses too), saved and built out of sight like the first launch's. The tile goes
+once every one is there.
+
 **A starter added or changed in how it looks ships a new preview.png in the same change** (`StartersTests` fails
 without one). Take it from the app itself, not a mock-up: open the starter's build in Lamp Dev with its chat closed,
 and once its window has settled its `.lamp/runtime/preview.png` is the picture (the app writes it at each launch,
