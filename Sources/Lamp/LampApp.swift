@@ -4,7 +4,11 @@ import AppKit
 @main
 struct LampApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
-    @StateObject private var store = Store.shared
+    /// Not observed here. A scene that observes the store is built again on every change to it, and every window
+    /// with it: a message sent redrew Lamp's window, the desk behind it and each wish's window, twice over. Each
+    /// view observes the store itself, and so do the menu commands (`LampCommands`).
+    /// Read when the scenes are built rather than when the App is made, which is before there is an NSApplication.
+    private var store: Store { Store.shared }
 
     var body: some Scene {
         Window(Edition.name, id: "main") {
@@ -18,35 +22,7 @@ struct LampApp: App {
         }
         .defaultSize(width: 980, height: 720)
         .commandsRemoved()
-        .commands {
-            AboutCommands()
-            CheckForUpdatesCommand()
-            LampHelpCommands()
-            CommandGroup(replacing: .newItem) {
-                Button("New Wish") { store.newWish() }
-                    .keyboardShortcut("n")
-            }
-            CommandGroup(after: .newItem) {
-                Button("Import Shared Wish…") { store.chooseImport() }
-                    .keyboardShortcut("o")
-                Button("Duplicate") { if let project = store.selected { Task { await store.duplicate(project) } } }
-                    .disabled(store.selected.map { store.busy.contains($0.id) || !$0.scaffolded || $0.untitled } ?? true)
-            }
-            CommandGroup(after: .pasteboard) {
-                // The same as Share ▸ Copy Wish File in the toolbar; here so the shortcut the Help lists exists.
-                Button("Copy Wish File") { if let project = store.selected { store.copyAppFile(project) } }
-                    .keyboardShortcut("c", modifiers: [.command, .shift])
-                    .disabled(store.selected.map { !store.canShare($0) } ?? true)
-            }
-            CommandGroup(replacing: .saveItem) {
-                Button("Name This Version…") {
-                    if let project = store.selected { Task { await store.nameCurrentVersion(of: project) } }
-                }
-                .keyboardShortcut("s")
-                .disabled(store.selected == nil)
-            }
-            CommandGroup(after: .windowArrangement) { GalleryCommand() }
-        }
+        .commands { LampCommands(store: store) }
         Settings {
             SettingsView().environmentObject(store)
         }
@@ -54,6 +30,42 @@ struct LampApp: App {
         BugReportScene()
         AboutScene()
         GalleryScene()
+    }
+}
+
+/// The menu bar's commands. They observe the store themselves, so whether Duplicate or Copy Wish File can be chosen
+/// follows the selection without the scene around them being built again for every change (see `LampApp.store`).
+struct LampCommands: Commands {
+    @ObservedObject var store: Store
+
+    var body: some Commands {
+        AboutCommands()
+        CheckForUpdatesCommand()
+        LampHelpCommands()
+        CommandGroup(replacing: .newItem) {
+            Button("New Wish") { store.newWish() }
+                .keyboardShortcut("n")
+        }
+        CommandGroup(after: .newItem) {
+            Button("Import Shared Wish…") { store.chooseImport() }
+                .keyboardShortcut("o")
+            Button("Duplicate") { if let project = store.selected { Task { await store.duplicate(project) } } }
+                .disabled(store.selected.map { store.busy.contains($0.id) || !$0.scaffolded || $0.untitled } ?? true)
+        }
+        CommandGroup(after: .pasteboard) {
+            // The same as Share ▸ Copy Wish File in the toolbar; here so the shortcut the Help lists exists.
+            Button("Copy Wish File") { if let project = store.selected { store.copyAppFile(project) } }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+                .disabled(store.selected.map { !store.canShare($0) } ?? true)
+        }
+        CommandGroup(replacing: .saveItem) {
+            Button("Name This Version…") {
+                if let project = store.selected { Task { await store.nameCurrentVersion(of: project) } }
+            }
+            .keyboardShortcut("s")
+            .disabled(store.selected == nil)
+        }
+        CommandGroup(after: .windowArrangement) { GalleryCommand() }
     }
 }
 
@@ -125,6 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = Store.shared.stopAll()   // for a quit that didn't go through the question above
             Subprocess.killStopping()
             Store.shared.flushDrafts()
+            Store.shared.flushChats()
             LocalModels.shared.stopServer()
         }
     }

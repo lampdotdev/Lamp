@@ -695,11 +695,54 @@ final class Store: ObservableObject {
         saveChat(project)
     }
 
+    /// Saves the chat a moment later, with whatever else is added meanwhile, away from the main thread. The file is
+    /// the whole chat, and a turn adds a line for every step: written at once each time, a long chat's encoding held
+    /// the main thread for milliseconds per line, many times a turn. Lines added within `chatSavePause` of each other
+    /// go in one write; Lamp quitting writes what's waiting (`flushChats`), and so does anything that copies, moves
+    /// or deletes the app's folder first (`settleChat`).
     private func saveChat(_ project: LampProject) {
         guard exists(project) else { return }
-        if let data = try? JSONEncoder().encode(logs[project.id]) {
-            try? data.write(to: project.dir.appendingPathComponent(".lamp/chat.json"))
+        chatsToSave.insert(project.id)
+        guard !chatSaveScheduled else { return }
+        chatSaveScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.chatSavePause) { [weak self] in self?.writeChats() }
+    }
+
+    private static let chatSavePause: TimeInterval = 0.5
+    /// One queue for every chat's file, so a later write of a chat never lands before an earlier one.
+    private static let chatWrites = DispatchQueue(label: "dev.lamp.chat-writes", qos: .utility)
+    private var chatsToSave: Set<String> = []
+    private var chatSaveScheduled = false
+
+    private func writeChats() {
+        chatSaveScheduled = false
+        let ids = chatsToSave
+        chatsToSave = []
+        ids.forEach(writeChat)
+    }
+
+    /// Hands the chat as it is now to the writing queue. The lines are a copy, so the main thread goes on changing them.
+    private func writeChat(_ id: String) {
+        guard let project = projects.first(where: { $0.id == id }) else { return }
+        let lines = logs[id] ?? []
+        let file = project.dir.appendingPathComponent(".lamp/chat.json")
+        Self.chatWrites.async {
+            guard let data = try? JSONEncoder().encode(lines) else { return }
+            try? data.write(to: file, options: .atomic)
         }
+    }
+
+    /// Writes what's waiting of this chat now and waits until its file is written, before the app's folder is
+    /// copied, moved or deleted: a write landing afterwards would go to a folder that's no longer the app's.
+    private func settleChat(_ project: LampProject) {
+        if chatsToSave.remove(project.id) != nil { writeChat(project.id) }
+        Self.chatWrites.sync {}
+    }
+
+    /// Writes every chat that's waiting, for when Lamp quits.
+    func flushChats() {
+        writeChats()
+        Self.chatWrites.sync {}
     }
 
     /// The message each app's agent is writing right now: its chat line, and text that has arrived but isn't
@@ -1246,6 +1289,7 @@ final class Store: ObservableObject {
         guard let project = projects.first(where: { $0.id == id }), project.untitled, nothingAsked(of: id),
               draft(for: project).text.trimmed.isEmpty,
               !FileManager.default.fileExists(atPath: project.builtURL.path) else { return }
+        settleChat(project)
         try? FileManager.default.removeItem(at: project.dir)
         projects.removeAll { $0.id == id }
     }
@@ -1401,6 +1445,7 @@ final class Store: ObservableObject {
             NSAlert(error: error).runModal()
             return old
         }
+        settleChat(old)
         for path in [".lamp/chat.json", ".lamp/usage.json", ".lamp/notes.md", ".lamp/share-id", Attachments.folder, Sharing.Assets.folder] {
             let from = old.dir.appendingPathComponent(path)
             if fm.fileExists(atPath: from.path) {
@@ -1411,6 +1456,9 @@ final class Store: ObservableObject {
         await quit(old)
         await WidgetProcess.end(for: old)
         try? fm.removeItem(at: old.installedURL)
+        // Lines logged while the copy was made and the old app quit are written to the new folder instead.
+        await settleFiles(old)
+        settleChat(old)
         try? fm.removeItem(at: old.dir)
 
         if let device = old.device {   // the phone chosen before the first message stays chosen
@@ -1419,6 +1467,7 @@ final class Store: ObservableObject {
             try? Template.saveMeta(kept)
         }
         follow(old, to: project)
+        saveChat(project)
         return project
     }
 
@@ -1429,7 +1478,10 @@ final class Store: ObservableObject {
         let project = LampProject(id: slug, name: name, exe: exe, dir: root.appendingPathComponent(slug), instance: old.instance,
                                   platform: old.platform, family: old.family, device: old.device, chosen: old.chosen, simulator: old.simulator)
         do {
-            if slug != old.id { try FileManager.default.moveItem(at: old.dir, to: project.dir) }
+            if slug != old.id {
+                settleChat(old)
+                try FileManager.default.moveItem(at: old.dir, to: project.dir)
+            }
             try Template.saveMeta(project)
         } catch {
             log(old, .error, "Couldn't rename the app: \(error.localizedDescription)")
@@ -1454,6 +1506,7 @@ final class Store: ObservableObject {
         if let draft = drafts.removeValue(forKey: old.id) { drafts[project.id] = draft }
         draftWrites.removeValue(forKey: old.id)?.cancel()
         logs[project.id] = logs.removeValue(forKey: old.id)
+        if chatsToSave.remove(old.id) != nil { chatsToSave.insert(project.id) }
         usage[project.id] = usage.removeValue(forKey: old.id)
         queued[project.id] = queued.removeValue(forKey: old.id)
         if let turn = turns.removeValue(forKey: old.id) {   // the rename itself is a turn: it moves with the app
@@ -2289,7 +2342,7 @@ final class Store: ObservableObject {
         }
         // Only build when something changed: not after a question, and not again when the agent's last
         // look already built and opened exactly this code.
-        try? Template.writeSupport(for: project)
+        try? await writeOwnFiles(project, all: false)
         let changed = Runtime.sourcesChanged(project)
         if changed {
             guard await buildFixingErrors(project) else {
@@ -2426,7 +2479,6 @@ final class Store: ObservableObject {
 
     /// Returns false when the agent couldn't run at all (bad key, no credit, …), after telling the user why.
     private func runAgent(_ prompt: String, files: [String] = [], on project: LampProject) async -> Bool {
-        try? Template.writeSupport(for: project)
         // A turn started at launch (one waiting from before) may come before the look for the person's own
         // Claude Code or Codex has finished: it waits for it rather than finding no copy.
         if Builder.engine != .pi, EngineInstall.path(for: Builder.engine) == nil, !EngineInstall.hasLooked {
@@ -2464,6 +2516,8 @@ final class Store: ObservableObject {
         let artBefore = turn.artCost
         turn.stopped = false
         let sessionFile = Self.sessionFile(for: project, engine: engine)
+        // After the stopped mark is cleared, so a Stop pressed while the file is written is seen by the check below.
+        try? await writeOwnFiles(project, all: false)
         // What the agent is told about the app's AI follows the sign-ins as they are. Checking them can take a
         // while, and Stop pressed meanwhile has no agent to end yet: if the turn was stopped or replaced, or the
         // app deleted, during the wait, the agent isn't started.
@@ -2752,6 +2806,8 @@ final class Store: ObservableObject {
         if fm.fileExists(atPath: project.installedURL.path) {
             try? fm.trashItem(at: project.installedURL, resultingItemURL: nil)
         }
+        await settleFiles(project)
+        settleChat(project)
         do {
             try fm.trashItem(at: project.dir, resultingItemURL: nil)
         } catch {
@@ -4014,17 +4070,50 @@ final class Store: ObservableObject {
     }
 
     /// Returns nil on success, or the tail of the compiler output on failure.
+    /// Lamp's own files in an app (`Template.writeOwnedFiles`, or only LampSupport.swift), written away from the main
+    /// thread. Filling in the support file's template copies several hundred kilobytes once for each placeholder and
+    /// asks the system for this Mac's network name, which held the main thread, and so the chat, for about a tenth of
+    /// a second at every agent run and build. An app's writes go one after another and are remembered
+    /// (`fileWrites`), so deleting or remaking its folder waits for them (`settleFiles`): one finishing afterwards
+    /// would make parts of the folder again.
+    private func writeOwnFiles(_ project: LampProject, all: Bool) async throws {
+        let before = fileWrites[project.id]
+        let write = Task.detached(priority: .userInitiated) {
+            _ = await before?.result
+            if all { try Template.writeOwnedFiles(for: project) } else { try Template.writeSupport(for: project) }
+        }
+        fileWrites[project.id] = write
+        defer { if fileWrites[project.id] == write { fileWrites[project.id] = nil } }
+        try await write.value
+    }
+    private var fileWrites: [String: Task<Void, Error>] = [:]
+
+    /// Waits for Lamp's own files being written in the app's folder, before the folder is deleted or made again: the
+    /// latest write, and again for any started while waiting (a look the agent asked for meanwhile). The caller goes
+    /// on to the folder without waiting for anything else, so nothing can start in between.
+    private func settleFiles(_ project: LampProject) async {
+        var waited: Task<Void, Error>?
+        while let write = fileWrites[project.id], write != waited {
+            _ = await write.result
+            waited = write
+        }
+    }
+
     private func build(_ project: LampProject) async -> String? {
         guard exists(project) else { return "The app was deleted." }
         log(project, .status, "Building…")
         // Lamp's own files first, and no build without them: the build runs build.sh and Package.swift.
+        let owner = turns[project.id]
         do {
-            try Template.writeOwnedFiles(for: project)
+            try await writeOwnFiles(project, all: true)
         } catch {
             let problem = "Lamp couldn't write the app's build files: \(error.localizedDescription)"
             log(project, .error, problem)
             return problem
         }
+        // Stop pressed, or the app deleted, while they were written: there's no build yet for Stop to end.
+        guard exists(project) else { return "The app was deleted." }
+        if let owner, owner.stopped || turns[project.id] !== owner { return "Stopped." }
         // Taken before the build, so an edit made while it runs still counts as a change afterwards.
         let fingerprint = Runtime.fingerprint(project)
         var output: [String] = []
@@ -5865,7 +5954,7 @@ final class Store: ObservableObject {
         turn.look.installed = false
         defer { turn.look.inProgress = false }
 
-        try? Template.writeSupport(for: project)
+        try? await writeOwnFiles(project, all: false)
         let changed = Runtime.sourcesChanged(project)
         if changed, let errors = await build(project) {
             if errors == macMembershipProblem(project) {

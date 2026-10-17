@@ -162,6 +162,8 @@ enum Template {
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
             .replacingOccurrences(of: "{{BUNDLE}}", with: project.bundleID)
         let url = project.dir.appendingPathComponent(path)
+        // Never makes the app's folder itself, which would leave a folder of build files where an app was.
+        guard FileManager.default.fileExists(atPath: project.dir.path) else { throw CocoaError(.fileNoSuchFile) }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         // Left alone when it's already right, so its date only moves when the app needs a rebuild.
         if (try? String(contentsOf: url, encoding: .utf8)) != contents {
