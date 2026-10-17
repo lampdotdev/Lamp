@@ -104,6 +104,11 @@ A capability given to one engine must be given to all of them that can take it, 
   commands with it. SwiftPM's own sandbox can't start inside Lamp's, so a `swift` shim first on the path
   (`Sandbox.bin`) gives `swift build`/`test`/`run`/`package` `--disable-sandbox`. Nothing reads a command's text
   for paths any more; don't bring that back.
+  A command may write at the app's folder's own name, so it can swap the folder for a link to anywhere, Lamp's
+  folder included. The profile, the file checks (`Privacy.verdict`, pi's `checkFile` and `delete_file`, which take
+  the folder from `LAMP_DIR`) and Lamp's own writes for the agent (`Store.deleteFile`, `artDestination`,
+  `Previews.destination`) all take the app's folder as `LampProject.realDir`: the folders above it worked out, the
+  folder itself by its name, never where it leads. Don't resolve `project.dir` itself to decide what's the app's.
   Lamp's own git (saving a version, Undo, restore, version names, the look for unsaved work) runs under the
   same sandbox, through `Versions.git` (`gitBlocking` where it can't await): the app's folder is the agent's
   to write, its `.git` included, and git runs the programs a repository names (hooks, filters, a signing
@@ -369,14 +374,17 @@ are. `SimulatorLiveTests` runs the driver against a real window when `LAMP_LIVE_
 `devicectl`): paired ones to choose, and plugged-in ones that haven't trusted the Mac yet, which it offers
 to pair (`Devices.pair`, `devicectl manage pair`, which puts the Trust prompt on the phone) before telling
 the person about Developer Mode. `LampProject.device` remembers the chosen one. Play and the end of a turn then go through
-`Store.installOnDevice`: `Template.writeDeviceProject` writes a small Xcode project in Lamp's own folder
-(`Devices.buildFolder`, under `Phone Builds`: one app target over the package's Sources as a synchronized group,
-the icon in an asset catalog, the attachments as a folder reference, a real Info.plist). The project, its
-entitlements files and Xcode's build folder stay out of the app's folder, where the sandbox closes them, so no
-command of the agent's, in the background or not, can change what the app is signed with between Lamp writing it
-and Xcode signing; only the
-app's code and files are read from there, by full path (`Template.reaching`). An app for both keeps a copy under
-`.lamp/device` for its Mac build, which Lamp signs again when it installs it (`Store.deploy`). `Devices.build` runs `xcodebuild` with automatic
+`Store.installOnDevice`: `Devices.stage` puts together what Xcode builds from in Lamp's own folder
+(`Devices.buildFolder`, under `Phone Builds`): `Template.writeDeviceProject` writes a small Xcode project there (one
+app target over the package's Sources as a synchronized group, the icon in an asset catalog, the attachments as a
+folder reference, a real Info.plist), and the app's Sources, Assets, Widget, Share and Watch are copied beside it, in
+`app/`, by a command under the app's sandbox, links kept as links; the project reads that copy by full path
+(`Template.reaching`). The project, its entitlements files, the copy and Xcode's build folder stay out of the app's
+folder, where the sandbox closes them, so no command of the agent's, in the background or not, can change what the
+app is signed with or carries between Lamp writing it and Xcode signing. Xcode copies whatever a link leads to into
+the app, and on the phone the app can send what it carries anywhere, so a build folder holding any link but Lamp's own
+to the widget's shared code is refused (`Devices.LinkedFiles`). An app for both keeps a project under `.lamp/device`
+for its Mac build, which Lamp signs again when it installs it (`Store.deploy`). `Devices.build` runs `xcodebuild` with automatic
 signing for the team in Settings → Building (`Devices.team`, found from the Mac's Apple Development certificates), so
 Xcode registers the phone and makes the certificate and profile with the account signed in to Xcode; Lamp
 never holds the account. The bundle id carries the team (`deviceBundleID(team:)`). `devicectl` installs and

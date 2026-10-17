@@ -306,13 +306,24 @@ async function resolved(given: string): Promise<string> {
 }
 
 /**
+ * The app's folder by its own name, the folders above it worked out. The agent may swap the folder for a link,
+ * Lamp's own folder included, and the working folder is then wherever that leads, so it isn't what's trusted.
+ * Without Lamp's word for it, nothing is inside and every path asks.
+ */
+async function appFolder(): Promise<string | undefined> {
+	const named = process.env.LAMP_DIR;
+	if (!named) return undefined;
+	return path.join(await realpath(path.dirname(named)), path.basename(named));
+}
+
+/**
  * Asks Lamp whether a file tool may touch a path; resolves to an error message when it may not. Paths inside the
  * app's folder need no asking, except what the running app saves there (its log and pictures), which the user
  * can keep from the agent in Lamp's settings.
  */
 async function checkFile(tool: string, given: string, signal?: AbortSignal): Promise<string | undefined> {
-	const [target, home] = await Promise.all([resolved(given), resolved(".")]);
-	const inside = target === home || target.startsWith(home + path.sep);
+	const [target, home] = await Promise.all([resolved(given), appFolder()]);
+	const inside = home !== undefined && (target === home || target.startsWith(home + path.sep));
 	if (inside && !target.startsWith(path.join(home, ".lamp", "runtime") + path.sep)) return undefined;
 	const url = process.env.LAMP_APPROVE_URL;
 	if (!url) return inside ? undefined : "Files outside the app's folder need approval in Lamp, and Lamp isn't available.";
@@ -336,7 +347,8 @@ const protectedPaths = [".lamp", ".git", ".build", "build", ".gitignore", "Packa
 const deleteFile = defineTool({
 	...spec("delete_file"),
 	async execute(_toolCallId, params) {
-		const root = await realpath(process.cwd());
+		const root = await appFolder();
+		if (!root) throw new Error("Lamp isn't available to delete files.");
 		const target = path.resolve(root, params.path);
 		const relative = path.relative(root, target);
 		if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {

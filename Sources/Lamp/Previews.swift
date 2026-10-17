@@ -48,7 +48,7 @@ enum Previews {
     /// the file a plain file or nothing: the same rule as `Store.artDestination`.
     static func destination(for name: String, under folder: String, in project: LampProject) -> URL? {
         let fm = FileManager.default
-        let root = project.dir.resolvingSymlinksInPath().standardizedFileURL
+        let root = project.realDir
         /// Whether a path inside the app's folder is where it says, with no link along it leading out.
         func isReal(_ url: URL) -> Bool {
             let inside = String(url.standardizedFileURL.path.dropFirst(project.dir.standardizedFileURL.path.count))

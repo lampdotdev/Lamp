@@ -138,7 +138,8 @@ enum Sandbox {
                         keeping: [String] = []) -> String {
         let fm = FileManager.default
         let home = real(fm.homeDirectoryForCurrentUser.path)
-        let app = real(project.dir.path)
+        // The app's folder by its own name, never where it leads: a command may have swapped it for a link.
+        let app = project.realDir.path
         let support = real(home + "/Library/Application Support")
         var lines = [
             "(version 1)",

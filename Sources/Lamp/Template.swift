@@ -1768,7 +1768,9 @@ enum Template {
     /// (`Devices.buildFolder`), where the agent's sandboxed commands can't change what it's signed with; an app for both
     /// also has one under .lamp/device, which its build.sh builds the Mac half from inside the agent's
     /// sandbox, and which Lamp signs again with its own entitlements when it installs the app (`Store.deploy`).
-    static func writeDeviceProject(for project: LampProject, team: String, in folder: URL? = nil) throws {
+    /// Written in `folder`, the project reads the app's files from `files`: for the phone, the copy of them
+    /// `Devices.stage` makes beside it, since Xcode copies whatever a link in the app's own folder leads to.
+    static func writeDeviceProject(for project: LampProject, team: String, in folder: URL? = nil, reading files: URL? = nil) throws {
         let fm = FileManager.default
         let universal = project.platform == .universal
         let dir = folder ?? project.dir.appendingPathComponent(".lamp/device")
@@ -1799,7 +1801,7 @@ enum Template {
                 .sorted()
             pbxproj = withWatchTarget(pbxproj, complications: complications, leftOut: inComplications)
         }
-        if folder != nil { pbxproj = reaching(project.dir, in: pbxproj) }
+        if folder != nil { pbxproj = reaching(files ?? project.dir, in: pbxproj) }
         var files: [(String, String)] = [
             ("\(project.exe).xcodeproj/project.pbxproj", pbxproj),
             ("App.entitlements", capabilities.entitlementsPlist(for: project, platform: .ios, appGroup: widget || share ? group : nil)),

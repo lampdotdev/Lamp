@@ -76,6 +76,13 @@ struct LampProject: Identifiable, Hashable {
     let name: String    // display name
     let exe: String     // Swift target / executable name
     let dir: URL
+    /// Where the app's folder really is: the folders above it worked out (they're Lamp's), the folder itself
+    /// taken by its name. The agent may write at that name, so it can swap the folder for a link to anywhere,
+    /// Lamp's own folder included; what is opened or trusted as the app's must never follow that link.
+    var realDir: URL {
+        let named = dir.standardizedFileURL
+        return named.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent(named.lastPathComponent)
+    }
     /// Who this app is, whatever its folder is called: given when it's made and kept through renames, so
     /// something started on a draft still finds the app it became, and a later draft that takes the same
     /// folder name is a different app. Apps from before it existed use their folder name.
@@ -3336,7 +3343,7 @@ final class Store: ObservableObject {
     /// The agent's `delete_file`: one file inside the app's folder, never Lamp's own files, never through a
     /// link that leads out. The same rules as pi's version in lamp-tools.ts.
     static func deleteFile(_ path: String, in project: LampProject) -> (Int, [String: Any]) {
-        let root = project.dir.resolvingSymlinksInPath().standardizedFileURL
+        let root = project.realDir
         let target = URL(fileURLWithPath: path, relativeTo: project.dir).standardizedFileURL
         let relative = target.path.hasPrefix(root.path + "/") || target.path.hasPrefix(project.dir.path + "/")
             ? String(target.path.dropFirst((target.path.hasPrefix(root.path + "/") ? root.path : project.dir.path).count + 1)) : ""
@@ -3626,7 +3633,7 @@ final class Store: ObservableObject {
     /// that leads anywhere else; nil when either does.
     private func artDestination(_ name: String, in project: LampProject) -> URL? {
         let fm = FileManager.default
-        let root = project.dir.resolvingSymlinksInPath().standardizedFileURL
+        let root = project.realDir
         let folder = project.dir.appendingPathComponent("Assets")
         if let type = (try? fm.attributesOfItem(atPath: folder.path))?[.type] as? FileAttributeType {
             guard type == .typeDirectory else { return nil }
@@ -4643,14 +4650,21 @@ final class Store: ObservableObject {
             return nil
         }
         do {
-            try Template.writeDeviceProject(for: project, team: team, in: Devices.buildFolder(for: project))
+            try await Devices.stage(project, team: team, started: { owner.build = $0 })
+            owner.build = nil
             // Where the phone's project and builds were kept before, inside the app's folder. An app for both
             // still builds its Mac half there.
             if project.platform == .iphone { try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(".lamp/device")) }
+        } catch let error as Devices.LinkedFiles {
+            owner.build = nil
+            failed(error.localizedDescription)
+            return nil
         } catch {
+            owner.build = nil
             failed("Lamp couldn't get the app ready for \(name). Click Retry. If it fails again, ask Lamp to fix it and include the error from Agent Details.", output: error.localizedDescription)
             return nil
         }
+        guard stillOwns() else { return nil }
         log(project, .status, "Building for \(name)…")
         var output: [String] = []
         let app: URL
