@@ -1790,7 +1790,9 @@ enum Template {
         // Where its writes are kept to without following a link: the app's folder, or Lamp's own one.
         let root = folder ?? project.dir
         if let folder { try fm.createDirectory(at: folder, withIntermediateDirectories: true) }
-        let sources = files ?? project.dir
+        // Where the watch complications' files are listed from: Lamp's own code for its signing project; otherwise the
+        // app's folder, since the phone's copy of the files is made only after its project is written.
+        let sources = forSigning ? (files ?? project.dir) : project.dir
         if !forSigning {
             Sharing.Assets.adopt(in: project)
             try AppFolder.createDirectory(project.dir.appendingPathComponent(Sharing.Assets.folder), in: project.dir)
