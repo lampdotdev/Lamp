@@ -632,6 +632,8 @@ enum LiveSlots {
             guard let variable = declarations.constants[key] else { return nil }
             byFile[variable.position.file, default: []].append((variable.binding, [], key))
         }
+        let initializers = memberwiseInitializers(for: planned.filter { $0.slot.holder == .value }.map { ($0.type, $0.name) },
+                                                  declarations: declarations)
         var written: [(path: String, text: String)] = []
         for (file, edits) in byFile {
             guard let original = SwiftSource.Text(path: file) else { return nil }
@@ -650,6 +652,7 @@ enum LiveSlots {
             var text = String(decoding: bytes, as: UTF8.self)
             // A view's `$name` was its state's binding: now the box's.
             for name in views { text = SwiftText.replacing(identifier: "$" + name, with: "__lampBinding_" + name, in: text) }
+            text += initializers[file] ?? ""
             written.append((file, text))
         }
         for item in planned {
@@ -672,6 +675,43 @@ enum LiveSlots {
                     layout: after.filter { !moved.contains($0) },
                     files: written.map { URL(fileURLWithPath: $0.path).standardizedFileURL.path }.map { $0.hasPrefix(base) ? String($0.dropFirst(base.count)) : $0 },
                     constants: constants.filter { !earlier.contains($0) }.map(displayName))
+    }
+
+    /// A struct's new properties, moved into its spare, are no longer stored, so the initializer Swift made for it
+    /// (`CityPart(edges:…, fuel:…)`) no longer takes them, and the new code that passes them doesn't compile. So it's
+    /// made again beside the struct, in an extension of its file: the same labels, types and defaults, calling the one
+    /// Swift now makes and setting the moved properties after. The moved ones have no default here, so a call that
+    /// leaves them out can only be Swift's own and one that passes them only this one, and the call inside passes the
+    /// spare's argument, which only Swift's takes; without a spare there's nothing to tell them apart by, and none is
+    /// added. By file, the text to add to its end.
+    static func memberwiseInitializers(for moved: [(type: String, name: String)],
+                                       declarations: SwiftSource.Declarations) -> [String: String] {
+        var out: [String: String] = [:]
+        for (type, items) in Dictionary(grouping: moved, by: \.type).sorted(by: { $0.key < $1.key }) {
+            let names = Set(items.map(\.name))
+            guard let file = items.compactMap({ declarations.variables[type + "\t" + $0.name]?.position.file }).first else { continue }
+            for made in declarations.memberwise[type] ?? [] where made.labels.contains(where: names.contains) {
+                let params = zip(made.labels, made.types).filter { !$0.0.hasPrefix("__lamp") }.map { label, kind in
+                    var param = "\(label): \(kind)"
+                    // A moved property is required here, so a call that leaves it out can only be Swift's own.
+                    if !names.contains(label), let variable = declarations.variables[type + "\t" + label] {
+                        if let initial = initialText(of: variable, in: declarations) { param += " = " + initial }
+                        else if kind.hasSuffix("?") { param += " = nil" }
+                    }
+                    return param
+                }
+                // Swift's own, told apart from this one by the spare's argument, which only it takes.
+                let kept = made.labels.filter { !names.contains($0) }.compactMap { label -> String? in
+                    guard label.hasPrefix("__lamp") else { return "\(label): \(label)" }
+                    return declarations.variables[type + "\t" + label].flatMap { initialText(of: $0, in: declarations) }.map { "\(label): \($0)" }
+                }
+                let set = made.labels.filter(names.contains).map { "        self.\($0) = \($0)\n" }.joined()
+                guard made.labels.contains(where: { $0.hasPrefix("__lamp") }), kept.contains(where: { $0.hasPrefix("__lamp") }) else { continue }
+                out[file, default: ""] += "\n\nextension \(type) {\n    init(\(params.joined(separator: ", "))) {\n"
+                    + "        self.init(\(kept.joined(separator: ", ")))\n" + set + "    }\n}\n"
+            }
+        }
+        return out
     }
 
     /// A constant whose value changed, rewritten to give the new one: `static let size: Float = 200` becomes a
