@@ -5407,7 +5407,7 @@ final class Store: ObservableObject {
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -5462,8 +5462,32 @@ final class Store: ObservableObject {
         if route == "/ai/keys" { return keysForPhone(project) }
         if route == "/ai/status" { return await aiStatus(for: project) }
         if route == "/app/secrets" { return appSecrets(request, for: project) }
+        if route == "/app/share" { return await appShare(request, for: project) }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
+    }
+
+    /// File ▸ Share… in a Mac app (`LampShareApp`): the app as a file to open with Lamp, the same one Lamp's own Share…
+    /// makes, with its picture. Lamp writes them and the app shows the system's share picker from its own window,
+    /// which Lamp can't open over another app's. Only the app itself is answered, as for its secrets, and it can ask
+    /// only for itself: the file is made from the app's folder here, never from anything the app sends.
+    private func appShare(_ request: Gateway.Request, for project: LampProject) async -> (Int, [String: Any]) {
+        guard !request.fromNetwork, let port = request.peerPort,
+              PeerProcess.isApp(at: project.installedURL, connectedFrom: port, to: Gateway.port) else {
+            return (403, ["error": "Only the app itself, as Lamp installed it, can do that."])
+        }
+        do {
+            let icon = await Sharing.sharedIcon(of: project)
+            let (file, picture) = try await Task.detached(priority: .userInitiated) {
+                let file = try Sharing.export(project, icon: icon)
+                return (file, Store.sharePicture(for: file))
+            }.value
+            var answer = ["file": file.path, "note": "Open this with Lamp https://lamp.dev"]
+            if let picture { answer["picture"] = picture.path }
+            return (200, answer)
+        } catch {
+            return (500, ["error": "\(project.name) couldn't be made into a file to share: \(error.localizedDescription)"])
+        }
     }
 
     /// `LampSecrets` in a Mac app: what it keeps secret, kept here (AppSecrets). Only the app itself is answered, the
