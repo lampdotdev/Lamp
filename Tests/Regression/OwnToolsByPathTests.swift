@@ -115,4 +115,18 @@ final class OwnToolsByPathTests: XCTestCase {
         let ran = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
         XCTAssertFalse(ran.contains("unconfined"), "Lamp ran, as itself, the git the cache named:\n" + ran)
     }
+
+    /// `DEVELOPER_DIR` may name Xcode itself rather than its developer folder, as the wrappers allow. Lamp's own
+    /// runs must then still find the real tools, inside the app's Contents/Developer.
+    func testADeveloperFolderGivenAsTheXcodeAppFindsItsTools() throws {
+        let fm = FileManager.default
+        let xcode = root.appendingPathComponent("Xcode.app")
+        let bin = xcode.appendingPathComponent("Contents/Developer/usr/bin")
+        try fm.createDirectory(at: bin, withIntermediateDirectories: true)
+        let git = bin.appendingPathComponent("git")
+        try fm.copyItem(atPath: "/usr/bin/true", toPath: git.path)
+        XCTAssertEqual(DeveloperTools.path("git", env: ["DEVELOPER_DIR": xcode.path]), git.path)
+        XCTAssertEqual(DeveloperTools.path("git", env: ["DEVELOPER_DIR": xcode.appendingPathComponent("Contents/Developer").path]), git.path)
+        XCTAssertTrue(fm.isExecutableFile(atPath: DeveloperTools.path("git", env: ["DEVELOPER_DIR": xcode.path])))
+    }
 }

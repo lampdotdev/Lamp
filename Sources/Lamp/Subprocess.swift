@@ -157,8 +157,14 @@ enum Subprocess {
 enum DeveloperTools {
     /// The developer folder the wrappers would use: `DEVELOPER_DIR` when it's given, else the one chosen with
     /// xcode-select. Asked each time, since choosing Xcode in Lamp's setup changes it while Lamp runs.
+    /// `DEVELOPER_DIR` may name Xcode itself (/Applications/Xcode.app), as the wrappers allow; its tools are
+    /// then in its Contents/Developer.
     static func folder(env: [String: String] = [:]) -> String {
-        if let given = env["DEVELOPER_DIR"] ?? ProcessInfo.processInfo.environment["DEVELOPER_DIR"], !given.isEmpty { return given }
+        if let given = env["DEVELOPER_DIR"] ?? ProcessInfo.processInfo.environment["DEVELOPER_DIR"], !given.isEmpty {
+            let inside = (given as NSString).appendingPathComponent("Contents/Developer")
+            var isFolder: ObjCBool = false
+            return FileManager.default.fileExists(atPath: inside, isDirectory: &isFolder) && isFolder.boolValue ? inside : given
+        }
         let selected = Subprocess.runBlocking("/usr/bin/xcode-select", ["-p"], mergeErrors: false, timeout: 10).output
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return selected.isEmpty ? "/Library/Developer/CommandLineTools" : selected

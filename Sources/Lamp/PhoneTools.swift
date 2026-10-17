@@ -87,10 +87,12 @@ enum PhoneTools {
                     return failed("You have not agreed to the Xcode license agreements.")
                 }
                 if arguments.contains("--show-sdk-path"), Pretend.xcodeMissing("platform") { return failed() }
-                if arguments.starts(with: ["simctl", "list", "runtimes"]), Pretend.xcodeMissing("runtime") {
+                // The tool by its name, then what it was asked: simctl is run by its full path.
+                let call = [URL(fileURLWithPath: tool).lastPathComponent] + arguments
+                if call.starts(with: ["simctl", "list", "runtimes"]), Pretend.xcodeMissing("runtime") {
                     return answer(#"{"runtimes": []}"#)
                 }
-                if arguments.starts(with: ["simctl", "list", "devices"]), Pretend.xcodeMissing("simulator") {
+                if call.starts(with: ["simctl", "list", "devices"]), Pretend.xcodeMissing("simulator") {
                     return answer(#"{"devices": {}}"#)
                 }
                 return real.run(tool, arguments, env)
