@@ -19,18 +19,17 @@ extension XCTestCase {
         return package
     }
 
-    /// Fails the test if a folder sharing makes appears while it runs and is still there once its teardown blocks
-    /// have run. Called from `setUp`, so its own block runs last. What's found is left alone: Lamp itself, sharing at
-    /// the same moment, makes folders by these names too.
+    /// Gives the test a folder of its own for sharing's folders (`Sharing.workFolder`), and fails it if any is
+    /// still there once its teardown blocks have run. Called from `setUp`, so its own block runs last.
     func expectNoSharingFoldersLeft() {
-        let before = Self.sharingFolders()
+        let fm = FileManager.default
+        let folder = fm.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("lamp-sharing-work-\(UUID().uuidString)")
+        try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        Sharing.workFolder = folder
         addTeardownBlock {
-            XCTAssertEqual(Self.sharingFolders().subtracting(before), [], "left in the temporary folder")
+            XCTAssertEqual((try? fm.contentsOfDirectory(atPath: folder.path)) ?? [], [], "left in the temporary folder")
+            Sharing.workFolder = fm.temporaryDirectory
+            try? fm.removeItem(at: folder)
         }
-    }
-
-    private static func sharingFolders() -> Set<String> {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path)) ?? []
-        return Set(names.filter { $0.hasPrefix("forge-share-") || $0.hasPrefix("forge-import-") })
     }
 }

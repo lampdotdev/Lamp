@@ -151,11 +151,15 @@ enum Sharing {
         }
     }
 
+    /// Where `export` and `open` make their folders. Tests give each test a folder of its own here, so what one leaves
+    /// behind is told apart from the folders a running Lamp makes at the same moment.
+    nonisolated(unsafe) static var workFolder = FileManager.default.temporaryDirectory
+
     /// Writes `<Name>.lampapp` to a temporary folder and returns its URL. `icon` is the drawn icon to carry
     /// (`sharedIcon`); without one, Lamp's own drawing of the same design goes in.
     static func export(_ project: LampProject, icon: Data? = nil) throws -> URL {
         let fm = FileManager.default
-        let work = fm.temporaryDirectory.appendingPathComponent("forge-share-\(UUID().uuidString)")
+        let work = workFolder.appendingPathComponent("forge-share-\(UUID().uuidString)")
         let stage = work.appendingPathComponent("app")
         try fm.createDirectory(at: stage, withIntermediateDirectories: true)
         // Only the finished file is left in the folder, and whoever takes it out removes the folder: nothing
@@ -362,7 +366,7 @@ enum Sharing {
         let fm = FileManager.default
         let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         guard size <= maxArchiveBytes else { throw ImportError("This file is too large to be a Lamp app (over 64 MB).") }
-        let folder = fm.temporaryDirectory.appendingPathComponent("forge-import-\(UUID().uuidString)")
+        let folder = workFolder.appendingPathComponent("forge-import-\(UUID().uuidString)")
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         // The unpacked app is handed to whoever opened the file, who removes it; a file that's refused leaves nothing.
         var opened = false
