@@ -77,6 +77,18 @@ final class SandboxTests: XCTestCase {
         XCTAssertTrue(started.output.contains("not permitted"), started.output)
         let injected = try run("DYLD_INSERT_LIBRARIES=/tmp/nothing.dylib \(Sandbox.quoted(program.path))", in: project)
         XCTAssertTrue(injected.output.contains("not permitted"), injected.output)
+        // Nor a program in Lamp's phone builds, where Xcode leaves what it makes from the app.
+        let builds = Devices.buildsFolder.appendingPathComponent("sandbox-exec-test-\(UUID().uuidString)")
+        try fm.createDirectory(at: builds, withIntermediateDirectories: true)
+        defer {
+            try? fm.removeItem(at: builds)
+            if (try? fm.contentsOfDirectory(atPath: Devices.buildsFolder.path))?.isEmpty == true { try? fm.removeItem(at: Devices.buildsFolder) }
+        }
+        let built = builds.appendingPathComponent("hello")
+        try fm.copyItem(at: program, to: built)
+        let fromBuilds = try run(Sandbox.quoted(built.path), in: project)
+        XCTAssertNotEqual(fromBuilds.status, 0, fromBuilds.output)
+        XCTAssertTrue(fromBuilds.output.contains("not permitted"), fromBuilds.output)
         // An ordinary program still starts.
         let plain = try run("/bin/echo fine", in: project)
         XCTAssertEqual(plain.output.trimmingCharacters(in: .whitespacesAndNewlines), "fine")

@@ -70,7 +70,7 @@ final class DeviceBuildEntitlementsTests: XCTestCase {
         }
 
         // What Lamp does when the person tries the app on their phone (`Store.installOnDevice`).
-        try Template.writeDeviceProject(for: project, team: team, in: Devices.buildFolder(for: project))
+        try await Devices.stage(project, team: team)
         var output: [String] = []
         let app: URL
         do {

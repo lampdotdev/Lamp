@@ -47,7 +47,10 @@ final class PhoneBuildLinksTests: XCTestCase {
         let (project, root) = try project()
         let source = try await stage(project, root)
         XCTAssertTrue(carried(from: source).contains("heads"))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: source.appendingPathComponent(".lamp/device/CoinFlip.xcodeproj/project.pbxproj").path))
+        // The project reads the copy, not the app's folder.
+        let xcode = try String(contentsOf: source.deletingLastPathComponent().appendingPathComponent("CoinFlip.xcodeproj/project.pbxproj"), encoding: .utf8)
+        XCTAssertTrue(xcode.contains("path = \"\(source.standardizedFileURL.path)/Assets\""), xcode)
+        XCTAssertFalse(xcode.contains(project.dir.path + "/"))
     }
 
     func testAssetsLinkedElsewhereAreRefused() async throws {

@@ -165,6 +165,9 @@ enum Sandbox {
             // app's secrets out of Lamp through it (PeerProcess). The app's own build is unaffected: it's
             // built in its folder, not here.
             lines.append("(deny process-exec* (subpath \(quotedPath(real(home + "/Applications/" + name + " Apps")))))")
+            // Nor what Xcode makes there for the phone (`Devices.buildsFolder`), for the same reason: closed to
+            // reading, but a program in it could still be started.
+            lines.append("(deny process-exec* (subpath \(quotedPath(support + "/" + name + "/Phone Builds"))))")
             // The caller check (PeerProcess.isApp) would also accept a whole bundle replaced at the installed
             // path, signature valid by that copy's own requirement. That's safe only while this folder stays
             // unwritable from the command's sandbox (the file denies above), so nothing the builder makes can
