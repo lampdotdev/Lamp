@@ -49,8 +49,9 @@ enum SwiftSource {
         /// Each type's memberwise initializers that the compiler made itself and code outside the type can call: their
         /// labels and parameter types in order (`init(a:c:)`, `[Int, [Int]?]`). What a struct's code calls to make one.
         var memberwise: [String: [(labels: [String], types: [String])]] = [:]
-        /// The labels of each type's initializers written in its code, its extensions' included (`id:b:`).
-        var initializers: [String: Set<String>] = [:]
+        /// Each type's initializers written in its code, its extensions' included: labels and parameter types, as
+        /// `memberwise` has them, so one can be told from another with the same labels and other types.
+        var initializers: [String: [(labels: [String], types: [String])]] = [:]
     }
 
     private static let rangePattern = try! NSRegularExpression(pattern: #"range=\[([^\]]+?):(\d+):(\d+) - line:(\d+):(\d+)\]"#)
@@ -97,9 +98,8 @@ enum SwiftSource {
                 continue
             }
             if scopeDecl.firstMatch(in: line, range: range) != nil {
-                if let owner, line.contains("(constructor_decl"), !line.contains(" implicit "),
-                   let name = line.range(of: #""init\(([^)"]*)\)""#, options: .regularExpression) {
-                    out.initializers[owner, default: []].insert(String(line[name].dropFirst(6).dropLast(2)))
+                if let owner, line.contains("(constructor_decl"), !line.contains(" implicit "), let made = memberwise(in: line) {
+                    out.initializers[owner, default: []].append(made)
                 }
                 if let owner, line.contains("(constructor_decl"), line.contains(" implicit "),
                    !line.contains("access=private"), !line.contains("access=fileprivate"),
