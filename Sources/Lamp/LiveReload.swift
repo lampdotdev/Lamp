@@ -702,8 +702,12 @@ enum LiveSlots {
                 }
                 guard kept.contains(where: { $0.hasPrefix("__lamp") }) else { continue }
                 let order = made.labels.filter(names.contains)
+                // One the app declares itself with the same labels is the app's: a second would be a redeclaration.
+                let declared = declarations.initializers[type] ?? []
                 for (n, first) in order.enumerated() {
                     let later = Set(order[(n + 1)...])
+                    let labels = made.labels.filter { !$0.hasPrefix("__lamp") && (!names.contains($0) || $0 == first || later.contains($0)) }
+                    guard !declared.contains(labels.map { $0 + ":" }.joined()) else { continue }
                     let params = zip(made.labels, made.types).filter { label, _ in
                         !label.hasPrefix("__lamp") && (!names.contains(label) || label == first || later.contains(label))
                     }.map { label, kind in
