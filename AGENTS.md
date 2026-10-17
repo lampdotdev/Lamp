@@ -121,7 +121,9 @@ A capability given to one engine must be given to all of them that can take it, 
   writes there around a build go through `AppFolder` on the same terms (see "Generated apps").
   The profile also closes Homebrew's folders (`/opt/homebrew`, `/usr/local`) for writing (reading and running
   what's there stays open): they're on the path of everything Lamp runs as itself, so a command could otherwise
-  leave a program there for Lamp to run unconfined. The agent can't `brew install`. A program Lamp runs outside
+  leave a program there for Lamp to run unconfined. The agent can't `brew install`. `/Applications` and the developer folder in use
+  (`Sandbox.developerFolders`: `DEVELOPER_DIR` and xcode-select's choice, the whole Xcode wherever it is) are closed
+  for writing the same way: an Xcode dragged there is the person's to write, and Lamp runs its tools as itself. A program Lamp runs outside
   the sandbox (in a `Shell.run` command, `signing-identity.sh`, Claude Code's hook) is named by its full path
   (`/usr/bin/codesign`), never found on the path. Apple's developer tools are the exception to `/usr/bin`: `xcrun`, `xcodebuild`,
   `git`, `swift` and the rest there are wrappers that find the real program through a cache in the temporary
