@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { wishHTML, wishLink, copyWish, WISH_MARK, WISH_LIMIT } from "../lib/wish.js";
+import { wishHTML, wishLink, copyWish, starterLink, WISH_MARK, WISH_LIMIT, STARTER_MARK } from "../lib/wish.js";
 
 const wish = "A Mac app that sorts my files & asks <first>.\nNothing moves until I say \"yes\".";
 
@@ -15,6 +15,12 @@ test("the site and Lamp agree on the mark and the limit", () => {
   const swift = readFileSync(new URL("../../Sources/Lamp/Wish.swift", import.meta.url), "utf8");
   assert.ok(swift.includes(`static let mark = "${WISH_MARK}"`));
   assert.ok(swift.includes(`static let limit = ${WISH_LIMIT}`));
+  assert.ok(swift.includes(`static let starterMark = "${STARTER_MARK}"`));
+  const starters = readFileSync(new URL("../../Sources/Lamp/Starters.swift", import.meta.url), "utf8");
+  const link = new URL(starterLink("Wedding Words"));
+  assert.ok(starters.includes(`url.host?.lowercased() == "${link.host}"`));
+  assert.ok(starters.includes(`$0.name == "${[...link.searchParams.keys()][0]}"`));
+  assert.equal(link.searchParams.get("name"), "Wedding Words");
 });
 
 test("the link holds the whole wish, and there is none for an empty one", () => {

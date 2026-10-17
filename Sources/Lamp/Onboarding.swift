@@ -130,7 +130,13 @@ struct OnboardingView: View {
         let defaults = UserDefaults.standard
         if found == nil, !defaults.bool(forKey: Wish.lookedKey) {
             defaults.set(true, forKey: Wish.lookedKey)
-            if prompt.trimmed.isEmpty, case .wish(let text) = Wish.look() { found = text }
+            if prompt.trimmed.isEmpty {
+                switch Wish.look() {
+                case .wish(let text): found = text
+                case .starter(let name): UserDefaults.standard.set(name, forKey: Starters.arrivedKey)
+                default: break
+                }
+            }
         }
         if let found { receive(found, animated: animated) }
     }
@@ -177,7 +183,10 @@ struct OnboardingView: View {
             try? await Task.sleep(for: .seconds(0.05))
             if let window { Chrome.restore(window, to: Onboarding.appSize) }
             store.openWaitingImport()
-            // Without a wish from the site, the desk is where they land: Lamp's own wishes are there to use.
+            // Without a wish from the site, the desk is where they land: Lamp's own wishes are there to use. A
+            // starter the site asked for opens either way, after the wish is made when there is one too: both were
+            // asked for, and neither is dropped for the other.
+            defer { store.openArrivedStarter() }
             guard !idea.isEmpty else { return }
             store.create(fromWelcome: true)
             guard let project = store.selected else { return }

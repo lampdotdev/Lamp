@@ -9,6 +9,9 @@ enum Wish {
     /// The site puts this attribute on the wish in the clipboard's web form (`site/lib/wish.js`). The plain
     /// text beside it is just the wish, so pasted anywhere else nothing shows.
     static let mark = "data-lamp-wish"
+    /// A starter's example on the site copies its name in this attribute instead (`Starters.from(link:)` is its
+    /// link): Lamp opens that starter rather than writing a wish.
+    static let starterMark = "data-lamp-starter"
     /// Longer than anything the site writes; whatever arrives is cut here.
     static let limit = 4000
     /// Lamp looks at the clipboard by itself once, the first time the welcome is shown.
@@ -35,8 +38,17 @@ enum Wish {
         return tidy(plain)
     }
 
+    /// The starter a copy names, when it carries the starter's mark. Only its name: which starter that is, and
+    /// whether this Lamp has one by that name, is `Starters.bundled(named:)`'s to say.
+    static func markedStarter(html: String?) -> String? {
+        guard let html, let found = html.range(of: #"\#(starterMark)="([^"<>]{1,80})""#, options: .regularExpression) else { return nil }
+        return tidy(String(html[found].dropFirst(starterMark.count + 2).dropLast()))
+    }
+
     enum Look: Equatable {
         case wish(String)
+        /// A starter's name, from a starter's example on the site.
+        case starter(String)
         /// A browser's copy is waiting, but reading it would make macOS ask the person first.
         case wouldAsk
         case nothing
@@ -53,7 +65,9 @@ enum Wish {
             default: return fromBrowser(types) ? .wouldAsk : .nothing
             }
         }
-        return marked(html: pasteboard.string(forType: .html), plain: pasteboard.string(forType: .string)).map(Look.wish) ?? .nothing
+        let html = pasteboard.string(forType: .html)
+        if let starter = markedStarter(html: html) { return .starter(starter) }
+        return marked(html: html, plain: pasteboard.string(forType: .string)).map(Look.wish) ?? .nothing
     }
 
     /// Whether to offer a Paste button: only where macOS stands between Lamp and a browser's copy. Reads nothing.

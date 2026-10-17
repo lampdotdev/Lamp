@@ -40,6 +40,27 @@ enum Starters {
         return folders.sorted { $0.lastPathComponent < $1.lastPathComponent }.compactMap(read)
     }
 
+    /// The starter this Lamp ships by a name the site uses: its name in starter.md or its folder's, in any case.
+    static func bundled(named name: String) -> Starter? {
+        let wanted = name.trimmed.lowercased()
+        return bundled.first { $0.name.lowercased() == wanted || $0.folder.lastPathComponent.lowercased() == wanted }
+    }
+
+    /// The starter a link names (`lamp://starter?name=Solitaire`), from a starter's example on the site.
+    static func from(link url: URL, scheme: String = Edition.urlScheme) -> String? {
+        guard url.scheme?.lowercased() == scheme, url.host?.lowercased() == "starter" else { return nil }
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+        return Wish.tidy(items?.first { $0.name == "name" }?.value).map { String($0.prefix(80)) }
+    }
+
+    /// The app on this desk that came as this starter, renamed or not: starter.md keeps the name it came with.
+    static func installed(_ starter: Starter, in projects: [LampProject]) -> LampProject? {
+        projects.first { self.starter(of: $0)?.name == starter.name }
+    }
+
+    /// The starter a site's link or copy asked for, kept until the welcome is over, across a relaunch.
+    static let arrivedKey = "starterArrived"
+
     /// The starters this Lamp ships that aren't on the desk: never added, or deleted since. The desk offers them
     /// (`MoreFromLamp`).
     static func missing(from projects: [LampProject]) -> [Starter] {

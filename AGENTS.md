@@ -280,6 +280,12 @@ one request with no key, account or pictures to draw. They
 are Mac apps that need no key or account, use the AI the person builds with when they use any, and come with
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
 
+The site can open a starter instead of handing Lamp a wish to make it again: `lamp://starter?name=<its name>`
+(`Starters.from(link:)`), or the same name copied with the site's starter mark for a Lamp opened for the first time
+(`Wish.markedStarter`, `site/lib/wish.js`). It opens as from the desk (`Store.open(starterNamed:)`), put back on the desk
+first when it isn't there (`Store.put(starter:)`); during the welcome it waits for the welcome's end, and opens after
+the welcome's wish when there is one. Any page can open the link, so it adds at most that one app and sends nothing.
+
 Starters not on the desk (never added, or deleted since; `Starters.missing`) are offered at its end as one dashed
 tile, More from Lamp (`MoreFromLamp`): up to four of their icons and how many there are, and a click lists them with
 an Add each. Add puts that one back (`Store.put(starter:)`, through `Store.add(starter:)`, the one way a starter is put

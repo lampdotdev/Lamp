@@ -944,6 +944,7 @@ final class Store: ObservableObject {
             return
         }
         if let wish = Wish.from(link: url) { return take(wish: wish) }
+        if let starter = Starters.from(link: url) { return open(starterNamed: starter) }
         guard url.scheme == Edition.urlScheme,
               let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                 .queryItems?.first(where: { $0.name == "app" })?.value else { return }
@@ -3761,7 +3762,7 @@ final class Store: ObservableObject {
         }
     }
 
-    /// A starter put back on the desk after the first launch (More from Lamp's Add): added, shown on the desk, and
+    /// A starter put back on the desk after the first launch (More from Lamp's Add, the site's link): added, shown on the desk, and
     /// saved and built out of sight like the first launch's (`prepareStarters`).
     @discardableResult func put(starter: Starters.Starter) -> LampProject? {
         guard let added = add(starter: starter) else { return nil }
@@ -3772,6 +3773,29 @@ final class Store: ObservableObject {
         }
         prepareStarters()
         return project
+    }
+
+    /// A starter the site asked for (`Starters.from(link:)`, or its copy on a first open): opened as from the desk,
+    /// with its chat and what it offers to change, and put back on the desk first when it isn't there (never
+    /// added, or deleted since). Any page can open the link, so it adds at most the one app and sends nothing.
+    /// During the welcome it waits for the welcome to end (`openArrivedStarter`).
+    func open(starterNamed name: String) {
+        NSApp.activate()
+        guard Onboarding.isDone || welcomeFinished else {
+            UserDefaults.standard.set(name, forKey: Starters.arrivedKey)
+            return
+        }
+        guard let starter = Starters.bundled(named: name) else { return }
+        if let project = Starters.installed(starter, in: projects) { return open(fromDesk: project) }
+        guard let project = put(starter: starter) else { return }
+        open(fromDesk: project)
+    }
+
+    /// The welcome is over: a starter the site asked for meanwhile opens now.
+    func openArrivedStarter() {
+        guard let name = UserDefaults.standard.string(forKey: Starters.arrivedKey) else { return }
+        UserDefaults.standard.removeObject(forKey: Starters.arrivedKey)
+        open(starterNamed: name)
     }
 
     /// A starter's chat begins with what it offers to change first (`Starters.card`), added a moment after the chat
