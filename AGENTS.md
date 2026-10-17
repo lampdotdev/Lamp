@@ -587,7 +587,8 @@ showing through; the chat draws no paper of its own there (`chatGround`). Before
 card is the chat's own paper (`LampSidebar.Paper`). It goes on the side with room, the right first, at its kept width or
 the room there is down to its narrowest. Opened where neither side has room, the window makes some (`makeRoom`): it moves
 over on its screen when that's enough, else it's made narrower, never below its own smallest width, to leave the chat its
-narrowest on the right, and gets the width back when the chat closes (`narrowedBy`). Only where neither can be done (full
+narrowest on the right, and gets the width back when the chat closes (`narrowedBy`, kept in the app's settings so a reopened copy still owes it,
+and given back after full screen when the chat was closed there). Only where neither can be done (full
 screen, a window that can't be that narrow) does the chat go over the window's right edge, below its title bar, still its
 own panel (`Chat.over`). A move or resize the person makes never moves or narrows their window: the chat changes side, or
 goes over the edge when neither side has room, and back beside when there's room again (`replace`); going in and out of
