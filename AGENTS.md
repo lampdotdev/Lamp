@@ -390,7 +390,9 @@ saying so. The phone holds no key and nothing that unlocks one, since the app's 
 whatever the phone held could be sent anywhere; don't give a phone a key, a key's seal or a route that hands one
 out. A phone build drops what a phone app built by an earlier Lamp kept in its Keychain to answer away from the
 Mac: the device project compiles `Template.forgetKeptKeysC` into the app, which deletes that item as the app
-loads, before any of the app's own code runs.
+loads, before the app's own code. So that nothing of the agent's runs earlier, the app target compiles only Swift
+from the app's folders (`EXCLUDED_SOURCE_FILE_NAMES`: no C, Objective-C `+load`, assembly or prebuilt library),
+which costs nothing, since the simulator's SwiftPM build takes no other language in Sources either.
 
 ## Apps for both the Mac and the iPhone
 

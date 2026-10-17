@@ -44,14 +44,14 @@ final class PhoneKeysTests: XCTestCase {
         let folder = work.appendingPathComponent("Phone Builds/tally")
         try Template.writeDeviceProject(for: app, team: "ABCDE12345", in: folder)
 
-        let source = folder.appendingPathComponent("LampForgetKeys.c")
+        let source = folder.appendingPathComponent("LampForgetKeys.lamp-c")
         XCTAssertTrue(FileManager.default.fileExists(atPath: source.path), "the phone project has nothing that drops a kept key")
         let pbxproj = try String(contentsOf: folder.appendingPathComponent("Tally.xcodeproj/project.pbxproj"), encoding: .utf8)
-        XCTAssertTrue(pbxproj.contains("LampForgetKeys.c in Sources */); runOnlyForDeploymentPostprocessing"), "the app target doesn't compile it")
+        XCTAssertTrue(pbxproj.contains("LampForgetKeys.lamp-c in Sources */); runOnlyForDeploymentPostprocessing"), "the app target doesn't compile it")
 
         guard (try? shell("xcrun --sdk iphoneos --show-sdk-path"))?.status == 0 else { throw XCTSkip("No iPhone SDK here.") }
         let object = work.appendingPathComponent("forget.o")
-        let built = try shell("xcrun --sdk iphoneos clang -target arm64-apple-ios17.0 -c \"\(source.path)\" -o \"\(object.path)\" 2>&1")
+        let built = try shell("xcrun --sdk iphoneos clang -target arm64-apple-ios17.0 -x c -c \"\(source.path)\" -o \"\(object.path)\" 2>&1")
         XCTAssertEqual(built.status, 0, built.output)
         let sections = try shell("xcrun otool -l \"\(object.path)\"").output
         XCTAssertTrue(sections.contains("__mod_init_func"), "it doesn't run as the app loads")

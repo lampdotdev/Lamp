@@ -155,11 +155,11 @@ extension AppAI {
                               note: "\(missing.name) can't answer right now\(why)",
                               upgrades: upgrades)
         }
-        // A sign-in that answers because nothing was chosen works, but a key is quicker for small calls and
-        // goes with an app to a phone. Chosen on purpose, it's what the person wants.
+        // A sign-in that answers because nothing was chosen works, but a key is quicker for small calls.
+        // Chosen on purpose, it's what the person wants.
         if wanted == nil, case .engine = route.kind, !Provider.hasKey {
             return Resolution(capability: .text, tier: .works, answer: route.label, provider: provider(of: route),
-                              note: "An OpenRouter key answers small requests faster, and goes with apps to your phone.",
+                              note: "An OpenRouter key answers small requests faster.",
                               upgrades: [.key("openrouter")])
         }
         return Resolution(capability: .text, tier: .best, answer: route.label, provider: provider(of: route), note: nil, upgrades: [])
