@@ -679,36 +679,44 @@ enum LiveSlots {
 
     /// A struct's new properties, moved into its spare, are no longer stored, so the initializer Swift made for it
     /// (`CityPart(edges:…, fuel:…)`) no longer takes them, and the new code that passes them doesn't compile. So it's
-    /// made again beside the struct, in an extension of its file: the same labels, types and defaults, calling the one
-    /// Swift now makes and setting the moved properties after. The moved ones have no default here, so a call that
-    /// leaves them out can only be Swift's own and one that passes them only this one, and the call inside passes the
-    /// spare's argument, which only Swift's takes; without a spare there's nothing to tell them apart by, and none is
-    /// added. By file, the text to add to its end.
+    /// made again beside the struct, in extensions in its file, calling the one Swift now makes and setting the moved
+    /// properties after. A call may pass any of the moved ones, so there's one for each: the n-th takes the n-th moved
+    /// property without a default, the later ones with theirs, and none of the earlier ones (left at their starting
+    /// values). A call is then matched by the first moved property it passes and by nothing else, and one that passes
+    /// none only by Swift's own. The call inside passes the spare's argument, which only Swift's takes; without a spare
+    /// there's nothing to tell them apart by, and none is added. By file, the text to add to its end.
     static func memberwiseInitializers(for moved: [(type: String, name: String)],
                                        declarations: SwiftSource.Declarations) -> [String: String] {
         var out: [String: String] = [:]
         for (type, items) in Dictionary(grouping: moved, by: \.type).sorted(by: { $0.key < $1.key }) {
             let names = Set(items.map(\.name))
             guard let file = items.compactMap({ declarations.variables[type + "\t" + $0.name]?.position.file }).first else { continue }
-            for made in declarations.memberwise[type] ?? [] where made.labels.contains(where: names.contains) {
-                let params = zip(made.labels, made.types).filter { !$0.0.hasPrefix("__lamp") }.map { label, kind in
-                    var param = "\(label): \(kind)"
-                    // A moved property is required here, so a call that leaves it out can only be Swift's own.
-                    if !names.contains(label), let variable = declarations.variables[type + "\t" + label] {
-                        if let initial = initialText(of: variable, in: declarations) { param += " = " + initial }
-                        else if kind.hasSuffix("?") { param += " = nil" }
-                    }
-                    return param
-                }
-                // Swift's own, told apart from this one by the spare's argument, which only it takes.
+            func initial(_ label: String) -> String? {
+                declarations.variables[type + "\t" + label].flatMap { initialText(of: $0, in: declarations) }
+            }
+            for made in declarations.memberwise[type] ?? [] {
+                // Swift's own, told apart from these by the spare's argument, which only it takes.
                 let kept = made.labels.filter { !names.contains($0) }.compactMap { label -> String? in
                     guard label.hasPrefix("__lamp") else { return "\(label): \(label)" }
-                    return declarations.variables[type + "\t" + label].flatMap { initialText(of: $0, in: declarations) }.map { "\(label): \($0)" }
+                    return initial(label).map { "\(label): \($0)" }
                 }
-                let set = made.labels.filter(names.contains).map { "        self.\($0) = \($0)\n" }.joined()
-                guard made.labels.contains(where: { $0.hasPrefix("__lamp") }), kept.contains(where: { $0.hasPrefix("__lamp") }) else { continue }
-                out[file, default: ""] += "\n\nextension \(type) {\n    init(\(params.joined(separator: ", "))) {\n"
-                    + "        self.init(\(kept.joined(separator: ", ")))\n" + set + "    }\n}\n"
+                guard kept.contains(where: { $0.hasPrefix("__lamp") }) else { continue }
+                let order = made.labels.filter(names.contains)
+                for (n, first) in order.enumerated() {
+                    let later = Set(order[(n + 1)...])
+                    let params = zip(made.labels, made.types).filter { label, _ in
+                        !label.hasPrefix("__lamp") && (!names.contains(label) || label == first || later.contains(label))
+                    }.map { label, kind in
+                        var param = "\(label): \(kind)"
+                        if label != first {
+                            if let value = initial(label) { param += " = " + value } else if kind.hasSuffix("?") { param += " = nil" }
+                        }
+                        return param
+                    }
+                    let set = ([first] + order[(n + 1)...]).map { "        self.\($0) = \($0)\n" }.joined()
+                    out[file, default: ""] += "\n\nextension \(type) {\n    init(\(params.joined(separator: ", "))) {\n"
+                        + "        self.init(\(kept.joined(separator: ", ")))\n" + set + "    }\n}\n"
+                }
             }
         }
         return out

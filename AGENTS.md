@@ -626,7 +626,8 @@ each type of the app's spare room the open app's values already have: every clas
 so its own `==` and hash run: they take a property never set as its starting value; saved data leaves it out
 through two overloads of the keyed coding containers, which the compiler's Codable code takes over the general ones). A struct's moved properties drop out of the initializer Swift makes for it, which the new code may call with them,
 so `LiveSlots.memberwiseInitializers` makes that one again in an extension in the struct's file, from the labels and types
-the compiler lists for it (`SwiftSource.Declarations.memberwise`): the moved ones required, so no call can mean both.
+the compiler lists for it (`SwiftSource.Declarations.memberwise`), one for each moved property, so a call passing any
+of them is matched by the first it passes and one passing none only by Swift's own.
 Left out is what a spare would break: SwiftData and Core Data models, `Sendable` classes, `Equatable` views, the App
 and its scenes, property wrappers, App Intents, and structs in a file that lays memory out by hand (vertex data). When
 the only difference in layout is new stored properties in such types, `LiveSlots.fit` rewrites each one-line
