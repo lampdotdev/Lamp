@@ -3297,10 +3297,8 @@ final class Store: ObservableObject {
                 return reply(["content": [["type": "text", "text": answer["error"] as? String ?? "Lamp couldn't do that."]], "isError": true])
             }
             var content: [[String: Any]] = [["type": "text", "text": answer["text"] as? String ?? ""]]
-            for path in answer["screenshots"] as? [String] ?? [] {
-                if let data = try? Data(contentsOf: URL(fileURLWithPath: path)) {
-                    content.append(["type": "image", "data": data.base64EncodedString(), "mimeType": Previews.mimeType(of: path)])
-                }
+            for picture in Self.pictureData(answer["screenshots"] as? [String] ?? [], in: project) {
+                content.append(["type": "image", "data": picture["data"] ?? "", "mimeType": picture["mimeType"] ?? "image/png"])
             }
             return reply(["content": content])
         default:
@@ -3615,7 +3613,7 @@ final class Store: ObservableObject {
             let size = NSBitmapImageRep(data: png).map { " (\($0.pixelsWide)×\($0.pixelsHigh) pixels)" } ?? ""
             let around = scene ? "" : ", transparent around the object"
             return (200, ["text": "Saved Assets/\(name)\(size)\(around). Show it with LampAssets.image(\"\(name)\"). It follows.",
-                          "screenshots": [Previews.forAgent(url, in: project).path]])
+                          "screenshots": [Previews.forAgent(url, in: project)?.path].compactMap { $0 }])
         } catch let failure as AppAI.Failure where failure.needs == .pictures {
             offerSetup(project, SetupOffer(capability: .pictures), because: because)
             return (200, ["text": unavailable])
@@ -5666,12 +5664,12 @@ final class Store: ObservableObject {
         if route == "/mcp" { return await mcp(request.body, for: project, fileTools: request.path.contains("files=1")) }
         if request.path == "/agent/look" {
             let arguments = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
-            return arguments["sidebar"] as? Bool == true
+            return Self.withPictureData(arguments["sidebar"] as? Bool == true
                 ? await lookAtSidebar(project, page: arguments["page"] as? String, reopen: arguments["reopen"] as? Bool ?? false)
                 : await look(at: project, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
-                                 reopen: arguments["reopen"] as? Bool ?? false)
+                                 reopen: arguments["reopen"] as? Bool ?? false), in: project)
         }
-        if request.path == "/agent/use" { return await use(project, request: request.body) }
+        if request.path == "/agent/use" { return Self.withPictureData(await use(project, request: request.body), in: project) }
         if request.path.hasPrefix("/agent/versions") {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             return await versions(String(request.path.dropFirst("/agent/versions".count)), body, of: project)
@@ -5684,7 +5682,7 @@ final class Store: ObservableObject {
             return Skills.read((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:])
         }
         if route == "/agent/art" {
-            return await makeArt((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
+            return Self.withPictureData(await makeArt((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project), in: project)
         }
         if route == "/agent/talk" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
@@ -6070,7 +6068,24 @@ final class Store: ObservableObject {
     /// the art (`Previews.forAgent`), so a conversation holds many before a request is too big to send; none
     /// when the person keeps pictures from the model. The files given are left as they are.
     static func agentPictures(_ pictures: [URL], in project: LampProject) -> [String] {
-        Privacy.sharesPictures ? pictures.map { Previews.forAgent($0, in: project).path } : []
+        Privacy.sharesPictures ? pictures.compactMap { Previews.forAgent($0, in: project)?.path } : []
+    }
+
+    /// Those pictures' bytes, as every engine is given them: read by Lamp as `AppFile` reads, so a picture swapped
+    /// for a link after its copy was made brings the agent nothing else. An engine handed only the path would read
+    /// it itself, through whatever link was there by then.
+    static func pictureData(_ paths: [String], in project: LampProject) -> [[String: String]] {
+        paths.compactMap { path in
+            AppFile.read(URL(fileURLWithPath: path), in: project).map { ["data": $0.base64EncodedString(), "mimeType": Previews.mimeType(of: path)] }
+        }
+    }
+
+    /// A tool's answer with its pictures' bytes beside their paths, for pi's extension.
+    private static func withPictureData(_ result: (Int, [String: Any]), in project: LampProject) -> (Int, [String: Any]) {
+        guard let paths = result.1["screenshots"] as? [String], !paths.isEmpty else { return result }
+        var answer = result.1
+        answer["pictures"] = pictureData(paths, in: project)
+        return (result.0, answer)
     }
 
     /// What a look says when the person kept the earlier build open (`Turn.keptOpen`).

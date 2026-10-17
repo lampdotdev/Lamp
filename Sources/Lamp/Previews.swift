@@ -18,6 +18,16 @@ enum Previews {
     /// source can't be read.
     static func jpeg(of source: URL, maxPixels: Int?, quality: Double) -> Data? {
         guard let imageSource = CGImageSourceCreateWithURL(source as CFURL, nil) else { return nil }
+        return jpeg(of: imageSource, maxPixels: maxPixels, quality: quality)
+    }
+
+    /// The same, of a picture's bytes already read.
+    static func jpeg(of data: Data, maxPixels: Int?, quality: Double) -> Data? {
+        guard let imageSource = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return jpeg(of: imageSource, maxPixels: maxPixels, quality: quality)
+    }
+
+    private static func jpeg(of imageSource: CGImageSource, maxPixels: Int?, quality: Double) -> Data? {
         let image: CGImage?
         if let maxPixels {
             let options = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: maxPixels,
@@ -32,11 +42,13 @@ enum Previews {
         return CGImageDestinationFinalize(output) ? data as Data : nil
     }
 
-    /// Writes a JPEG of `source` at `destination`, a path `destination(for:…)` gave. False if the source can't
-    /// be read or the copy can't be written.
+    /// Writes a JPEG of `source`, a picture in the app's folder, at `destination`, a path `destination(for:…)` gave.
+    /// False if the source can't be read or the copy can't be written. The source is read as `AppFile` reads, never
+    /// through a link, since the copy lands where the agent can read it.
     @discardableResult
-    static func write(_ source: URL, to destination: URL, maxPixels: Int?, quality: Double) -> Bool {
-        guard let data = jpeg(of: source, maxPixels: maxPixels, quality: quality) else { return false }
+    static func write(_ source: URL, in project: LampProject, to destination: URL, maxPixels: Int?, quality: Double) -> Bool {
+        guard let picture = AppFile.read(source, in: project),
+              let data = jpeg(of: picture, maxPixels: maxPixels, quality: quality) else { return false }
         // Atomic: the file is written beside its place and moved over whatever is there, a link included,
         // so nothing is ever written through one.
         return (try? data.write(to: destination, options: .atomic)) != nil
@@ -74,13 +86,15 @@ enum Previews {
 
     /// The copy of `picture` the agent is shown, written under the app's runtime folder (`.lamp/runtime/previews`),
     /// which the privacy rule for pictures covers like the screenshots beside it. The full picture itself when
-    /// no copy could be made, so a model is never left without the picture it asked for.
-    static func forAgent(_ picture: URL, in project: LampProject) -> URL {
+    /// no copy could be made, so a model is never left without the picture it asked for; nil when the picture can't
+    /// be read as the app's own (`AppFile`), which is then not the agent's to see.
+    static func forAgent(_ picture: URL, in project: LampProject) -> URL? {
+        guard AppFile.attributes(picture, in: project) != nil else { return nil }
         let name = picture.deletingPathExtension().lastPathComponent
         // Art and screenshots share the folder; a file's own folder keeps two of one name apart.
         let art = picture.deletingLastPathComponent().lastPathComponent == "Assets"
         guard let preview = destination(for: (art ? "art-" : "") + name + ".jpg", under: ".lamp/runtime/previews", in: project),
-              write(picture, to: preview, maxPixels: art ? artMaxPixels : nil, quality: agentQuality)
+              write(picture, in: project, to: preview, maxPixels: art ? artMaxPixels : nil, quality: agentQuality)
         else { return picture }
         return preview
     }

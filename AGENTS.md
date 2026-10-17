@@ -109,6 +109,10 @@ A capability given to one engine must be given to all of them that can take it, 
   the folder from `LAMP_DIR`) and Lamp's own writes for the agent (`Store.deleteFile`, `artDestination`,
   `Previews.destination`) all take the app's folder as `LampProject.realDir`: the folders above it worked out, the
   folder itself by its name, never where it leads. Don't resolve `project.dir` itself to decide what's the app's.
+  What Lamp reads there for the agent, outside the sandbox (what the app printed, its screen as text, its answers to
+  Lamp, its pictures and their copies), goes through `AppFile`: each step of the path opened from the one before
+  it, none of them a link, and only a plain file read. A new read of the app's folder whose contents reach the agent
+  belongs there.
   Lamp's own git (saving a version, Undo, restore, version names, the look for unsaved work) runs under the
   same sandbox, through `Versions.git` (`gitBlocking` where it can't await): the app's folder is the agent's
   to write, its `.git` included, and git runs the programs a repository names (hooks, filters, a signing
@@ -132,7 +136,8 @@ A capability given to one engine must be given to all of them that can take it, 
 - **Pictures the agent is shown** (`look_at_app`, `use_app`, `make_art`): the conversation is sent whole with
   every request, so its pictures add up until the provider refuses the request (Anthropic takes 30 MB of images
   in one; OpenRouter drops the connection at about 5 MB of body). Every engine is handed a JPEG copy
-  (`Previews.forAgent`, under `.lamp/runtime/previews`, through `Store.agentPictures`), never the file itself:
+  (`Previews.forAgent`, under `.lamp/runtime/previews`, through `Store.agentPictures`), never the file itself, and
+  as bytes Lamp read (`Store.pictureData`: pi's extension gets them with the answer, never a path to read):
   the screenshots and the art stay as they are for the person and the app. A screenshot's copy keeps its pixels,
   since `use_app`'s points are pixels in the picture at the scale it was taken; art is shrunk to 1280 px. Lamp
   writes the copies unconfined, so their folder and file are checked like `Store.artDestination` checks art. pi's extension (`keepsPicturesFew` in

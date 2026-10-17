@@ -39,7 +39,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { lstat, readFile, realpath, rm } from "node:fs/promises";
+import { lstat, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "@earendil-works/pi-ai";
@@ -76,9 +76,18 @@ const lookAtApp = defineTool({
 	},
 });
 
-/** Lamp's answer to look_at_app or use_app: its text, then the pictures it names (if the model can see them). */
+/**
+ * Lamp's answer to look_at_app, use_app or make_art: its text, then its pictures (if the model can see them). Lamp
+ * sends the pictures' bytes, read where no link can lead elsewhere; a path read here could have been swapped for a
+ * link to any file by then.
+ */
 async function pictureReply(response: Response, model: { input: string[] } | undefined, failure: string) {
-	const reply = (await response.json()) as { text?: string; error?: string; screenshots?: string[] };
+	const reply = (await response.json()) as {
+		text?: string;
+		error?: string;
+		screenshots?: string[];
+		pictures?: { data: string; mimeType: string }[];
+	};
 	if (!response.ok) throw new Error(reply.error ?? failure);
 
 	const content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[] = [
@@ -88,16 +97,9 @@ async function pictureReply(response: Response, model: { input: string[] } | und
 	if (pictures.length > 0 && model && !model.input.includes("image")) {
 		content.push({ type: "text", text: "This model can't view images, so the pictures of the windows were left out." });
 	} else {
-		for (const path of pictures) {
-			content.push({ type: "image", data: (await readFile(path)).toString("base64"), mimeType: mimeType(path) });
-		}
+		for (const picture of reply.pictures ?? []) content.push({ type: "image", data: picture.data, mimeType: picture.mimeType });
 	}
 	return { content, details: { screenshots: pictures } };
-}
-
-/** Lamp hands the agent small JPEG copies of its pictures (Previews.forAgent); the files it names say which. */
-function mimeType(path: string) {
-	return /\.jpe?g$/i.test(path) ? "image/jpeg" : "image/png";
 }
 
 /**
