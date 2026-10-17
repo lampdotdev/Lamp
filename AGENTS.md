@@ -115,6 +115,11 @@ A capability given to one engine must be given to all of them that can take it, 
   back from them, the note after a restore), what Lamp writes into the app's code or hands an engine (its secrets,
   `Template.ownSecret`, and the conversation ids), and what Lamp rewrites in place (the migration, a rename, the
   live layout), which would otherwise bring what a link leads to into the folder. A new such read belongs there.
+  The profile also closes Homebrew's folders (`/opt/homebrew`, `/usr/local`) for writing (reading and running
+  what's there stays open): they're on the path of everything Lamp runs as itself, so a command could otherwise
+  leave a program there for Lamp to run unconfined. The agent can't `brew install`. A program Lamp runs outside
+  the sandbox (in a `Shell.run` command, `signing-identity.sh`, Claude Code's hook) is named by its full path
+  (`/usr/bin/codesign`), never found on the path.
   Lamp's own git (saving a version, Undo, restore, version names, the look for unsaved work) runs under the
   same sandbox, through `Versions.git` (`gitBlocking` where it can't await): the app's folder is the agent's
   to write, its `.git` included, and git runs the programs a repository names (hooks, filters, a signing

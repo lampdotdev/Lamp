@@ -225,7 +225,7 @@ enum Devices {
         let sdk = destination.contains("Simulator") ? "iphonesimulator" : "iphoneos"
         let app = dir.appendingPathComponent("DerivedData/Build/Products/Release-\(sdk)/\(project.exe).app")
         let status = await Shell.run("""
-            xcodebuild -project "$LAMP_PROJECT" -scheme "$LAMP_SCHEME" -configuration Release -destination "$LAMP_DESTINATION" \\
+            /usr/bin/xcodebuild -project "$LAMP_PROJECT" -scheme "$LAMP_SCHEME" -configuration Release -destination "$LAMP_DESTINATION" \\
               -derivedDataPath "$LAMP_DERIVED" -allowProvisioningUpdates -allowProvisioningDeviceRegistration \\
               DEVELOPMENT_TEAM="$LAMP_TEAM" build 2>&1
             """, cwd: dir, env: ["LAMP_PROJECT": dir.appendingPathComponent("\(project.exe).xcodeproj").path, "LAMP_SCHEME": project.exe,
