@@ -1607,6 +1607,16 @@ enum Template {
             return plist.replacingOccurrences(of: "<plist version=\"1.0\"><dict>\n", with: "<plist version=\"1.0\"><dict>\n" + identity)
         }
 
+        /// What Lamp seals the Mac half of an app for both with, after putting its icon and chat in: what Xcode was
+        /// given for it (`App-macOS.entitlements`) and the team identity Xcode's automatic signing adds.
+        func universalMacSigningPlist(for project: LampProject, team: String) -> String {
+            let plist = entitlementsPlist(for: project, platform: .mac)
+            guard !team.isEmpty else { return plist }
+            let identity = "  <key>com.apple.application-identifier</key><string>\(team).\(project.bundleID.xmlEscaped)</string>\n" +
+                "  <key>com.apple.developer.team-identifier</key><string>\(team)</string>\n"
+            return plist.replacingOccurrences(of: "<plist version=\"1.0\"><dict>\n", with: "<plist version=\"1.0\"><dict>\n" + identity)
+        }
+
         func entitlementsPlist(container: String?, platform: Destination = .ios, teamSigned: Bool = false, appGroup: String? = nil) -> String {
             var lines: [String] = []
             // The folder an app shares with its widget extension (`LampWidget`): an iPhone app's, and a Mac app's

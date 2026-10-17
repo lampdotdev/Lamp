@@ -47,6 +47,11 @@ enum AppSigning {
         return (steps + [app]).joined(separator: " && ")
     }
 
+    /// The Mac half of an app for both, sealed again for the person's team after Lamp has put its icon and chat in,
+    /// reading `LAMP_APP`, `LAMP_IDENTITY` and `LAMP_APP_ENTITLEMENTS`.
+    static let universalCommand = Sidebar.signingStep("codesign --force -s \"$LAMP_IDENTITY\"")
+        + " && codesign --force --entitlements \"$LAMP_APP_ENTITLEMENTS\" -s \"$LAMP_IDENTITY\" \"$LAMP_APP\" 2>&1"
+
     /// The identity to sign with, or "-" (ad-hoc) if one can't be made.
     @MainActor
     static func identity() async -> String {

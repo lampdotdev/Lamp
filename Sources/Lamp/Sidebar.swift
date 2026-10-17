@@ -31,7 +31,7 @@ enum Sidebar {
 
     /// Puts the extension into a built app, before it's signed. Its program is the same for every app; what
     /// tells them apart is the Info.plist, which names the app's own extension point.
-    static func install(into app: URL, for project: LampProject) throws {
+    static func install(into app: URL, for project: LampProject, entitlementsIn folder: URL) throws {
         let fm = FileManager.default
         let appex = extensionURL(in: app)
         try? fm.removeItem(at: appex)
@@ -60,7 +60,7 @@ enum Sidebar {
             .write(to: appex.appendingPathComponent("Contents/Info.plist"))
         let point: [String: Any] = [pointID(for: project): ["EXPresentsUserInterface": true]]
         try PropertyListSerialization.data(fromPropertyList: point, format: .xml, options: 0).write(to: pointURL(in: app))
-        try entitlements.write(to: entitlementsURL(for: project), atomically: true, encoding: .utf8)
+        try entitlements.write(to: entitlementsURL(in: folder), atomically: true, encoding: .utf8)
     }
 
     /// Sandboxed, which macOS asks of every extension it loads, with the ways out it needs: to reach Lamp, and to
@@ -74,7 +74,7 @@ enum Sidebar {
 
         """
 
-    static func entitlementsURL(for project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/sidebar-entitlements.plist") }
+    static func entitlementsURL(in folder: URL) -> URL { folder.appendingPathComponent("sidebar-entitlements.plist") }
 
     /// The signing step, before the app's: with the hardened runtime, so nothing can be loaded into it that
     /// would make it act otherwise than its code.
@@ -82,8 +82,8 @@ enum Sidebar {
         "{ [ ! -d \"$LAMP_SIDEBAR\" ] || \(sign) --options runtime --entitlements \"$LAMP_SIDEBAR_ENTITLEMENTS\" \"$LAMP_SIDEBAR\" 2>&1; }"
     }
 
-    static func signingEnvironment(for project: LampProject) -> [String: String] {
-        ["LAMP_SIDEBAR": extensionURL(in: project.builtURL).path, "LAMP_SIDEBAR_ENTITLEMENTS": entitlementsURL(for: project).path]
+    static func signingEnvironment(in app: URL, entitlementsIn folder: URL) -> [String: String] {
+        ["LAMP_SIDEBAR": extensionURL(in: app).path, "LAMP_SIDEBAR_ENTITLEMENTS": entitlementsURL(in: folder).path]
     }
 
     // MARK: Which extension is the real one
@@ -96,8 +96,8 @@ enum Sidebar {
     }()
 
     /// After signing: the hash of what was signed, the one thing a process can't fake about what it runs.
-    static func remember(_ project: LampProject) {
-        let appex = extensionURL(in: project.builtURL)
+    static func remember(_ project: LampProject, signed app: URL) {
+        let appex = extensionURL(in: app)
         var code: SecStaticCode?
         var info: CFDictionary?
         guard FileManager.default.fileExists(atPath: appex.path),
