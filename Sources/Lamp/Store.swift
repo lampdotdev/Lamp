@@ -5478,8 +5478,9 @@ final class Store: ObservableObject {
         }
         do {
             let icon = await Sharing.sharedIcon(of: project)
+            // Where Lamp keeps an app's shared file, written over each time: a share never leaves a copy behind.
             let (file, picture) = try await Task.detached(priority: .userInitiated) {
-                let file = try Sharing.export(project, icon: icon)
+                let file = try Store.sharedFile(of: project, icon: icon)
                 return (file, Store.sharePicture(for: file))
             }.value
             var answer = ["file": file.path, "note": "Open this with Lamp https://lamp.dev"]

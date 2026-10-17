@@ -3493,7 +3493,6 @@ enum Template {
         private static var picker: NSSharingServicePicker?
 
         static func share() {
-            let window = NSApp.keyWindow ?? NSApp.windows.first { $0.isVisible && $0.canBecomeKey }
             Task {
                 var answer = await ask()
                 if answer == nil, NSRunningApplication.runningApplications(withBundleIdentifier: "{{HOST}}").isEmpty,
@@ -3518,8 +3517,20 @@ enum Template {
                 let picker = NSSharingServicePicker(items: items)
                 self.picker = picker
                 // From the top of the window, where a toolbar's Share button would be: a menu command has no control
-                // of its own to open from.
-                guard let content = (window ?? NSApp.keyWindow)?.contentView else { return }
+                // of its own to open from. With every window closed one is opened again first, as a click in the Dock
+                // would; an app with none to open shows the file in Finder, whose Share is the same.
+                var window = NSApp.keyWindow ?? NSApp.windows.first { $0.isVisible && $0.canBecomeKey }
+                if window == nil {
+                    LampWindows.show()
+                    for _ in 0..<20 where window == nil {
+                        try? await Task.sleep(for: .milliseconds(100))
+                        window = NSApp.keyWindow ?? NSApp.windows.first { $0.isVisible && $0.canBecomeKey }
+                    }
+                }
+                guard let content = window?.contentView else {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                    return
+                }
                 let top = NSRect(x: content.bounds.midX, y: content.isFlipped ? 0 : content.bounds.maxY - 1, width: 1, height: 1)
                 picker.show(relativeTo: top, of: content, preferredEdge: content.isFlipped ? .minY : .maxY)
             }
