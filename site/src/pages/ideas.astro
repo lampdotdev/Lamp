@@ -7,6 +7,7 @@ import FirstIdea from "../components/FirstIdea.astro";
 import { CATEGORIES, IDEAS, platform, slug } from "../lib/ideas";
 import { together } from "../lib/text";
 import { platformIcon } from "../lib/platform-icons";
+import { STARTERS } from "../lib/starters";
 
 // Each idea's icon, on Lamp's own tile as Lamp makes them, and a picture of it in use, both drawn by an image
 // model from a short brief (see scripts/idea-art/README.md). An idea without one shows without it.
@@ -27,6 +28,14 @@ const iconURL = Object.fromEntries(await Promise.all(IDEAS.map(async (idea) => {
   return [idea.name, icon ? (await getImage({ src: icon, width: 128, format: "webp" })).src : ""];
 })));
 
+// The apps Lamp comes with: each one's icon, and its window for the opened card.
+const starters = await Promise.all(STARTERS.map(async (starter) => ({
+  name: starter.name,
+  about: starter.about,
+  icon: starter.icon ? (await getImage({ src: starter.icon, width: 128, format: "webp" })).src : "",
+  picture: starter.preview ? (await getImage({ src: starter.preview, width: 1200, format: "webp" })).src : "",
+})));
+
 // In the categories' order, so "All" reads as the categories one after another.
 const ideas = CATEGORIES.flatMap((category) => IDEAS.filter((idea) => idea.category === category.id));
 const description = "Wishes for software nobody else would make: for the office, your Mac, your family and your weekends. Find one that's nearly yours, and Lamp makes it yours.";
@@ -39,6 +48,41 @@ const description = "Wishes for software nobody else would make: for the office,
       <p class="mx-auto mt-5 max-w-[40rem] text-xl leading-[1.4] font-semibold text-muted">
         {together("Ideas to solve your own specific problems, or have fun your own way.")}
       </p>
+    </section>
+
+    <!--
+      The apps Lamp comes with, before the ideas: they're real apps, on the desk from the first launch, and opening one
+      opens that app in Lamp rather than a wish to make it again. Small tiles, so they read as a shelf of things to
+      try rather than more ideas.
+    -->
+    <section aria-labelledby="comes-with-lamp" class="mx-auto max-w-6xl px-4 pt-14 sm:px-6 sm:pt-16">
+      <h2 id="comes-with-lamp" class="text-center font-display text-3xl font-bold tracking-tight sm:text-4xl">Comes with Lamp</h2>
+      <p class="mx-auto mt-3 max-w-[36rem] text-center text-lg leading-snug text-muted">
+        {together("Ready to use the moment you open Lamp, and yours to change.")}
+      </p>
+      <ul class="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {
+          starters.map((starter) => (
+            <li class="flex">
+              <button
+                type="button"
+                data-starter={JSON.stringify(starter)}
+                class="group flex w-full cursor-pointer items-center gap-4 rounded-[20px] bg-panel p-4 text-left ring-1 ring-black/[0.04] transition duration-300 hover:-translate-y-0.5 hover:shadow-[0_14px_34px_-14px_rgba(0,0,0,0.22)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-graphite"
+              >
+                {starter.icon ? (
+                  <img src={starter.icon} alt="" width="56" height="56" loading="lazy" class="size-14 shrink-0 drop-shadow-[0_6px_10px_rgba(0,0,0,0.16)]" />
+                ) : (
+                  <span class="size-14 shrink-0" />
+                )}
+                <span class="flex min-w-0 flex-col">
+                  <span class="font-display text-xl font-bold tracking-tight">{starter.name}</span>
+                  <span class="mt-0.5 text-[15px] leading-snug text-muted">{together(starter.about)}</span>
+                </span>
+              </button>
+            </li>
+          ))
+        }
+      </ul>
     </section>
 
     <!--
@@ -141,6 +185,8 @@ const description = "Wishes for software nobody else would make: for the office,
   <!--
     A wish, opened to change and take to Lamp, as at the end of the homepage's first-idea section: Download copies
     it with Lamp's mark for Lamp to find when it first opens, and on a Mac a link opens Lamp with it straight away.
+    An app Lamp comes with opens here too, with nothing to write: Download copies its name with the starter's mark,
+    and the link opens that app in Lamp.
   -->
   <dialog
     data-wish
@@ -169,7 +215,7 @@ const description = "Wishes for software nobody else would make: for the office,
           <p data-about class="mt-1.5 text-[15px] leading-snug text-muted"></p>
         </div>
       </div>
-      <label for="wish-text" class="mt-6 mb-2.5 block text-[15px] font-semibold">Make it yours, then give it to Lamp:</label>
+      <label for="wish-text" data-label class="mt-6 mb-2.5 block text-[15px] font-semibold">Make it yours, then give it to Lamp:</label>
       <textarea
         id="wish-text"
         data-text
@@ -195,7 +241,7 @@ const description = "Wishes for software nobody else would make: for the office,
 </Base>
 
 <script>
-  import { copyWish, wishLink } from "../../lib/wish.js";
+  import { copyStarter, copyWish, starterLink, wishLink } from "../../lib/wish.js";
   import { track } from "../lib/analytics";
 
   // ---------- The filters, and the wishes coming and going ----------
@@ -313,29 +359,41 @@ const description = "Wishes for software nobody else would make: for the office,
   const picture = dialog.querySelector<HTMLImageElement>("[data-picture]")!;
   const backdrop = dialog.querySelector<HTMLImageElement>("[data-backdrop]")!;
   const icon = dialog.querySelector<HTMLImageElement>("[data-icon]")!;
+  type Starter = { name: string; about: string; picture: string; icon: string };
+  const label = dialog.querySelector<HTMLElement>("[data-label]")!;
   let current: Idea | null = null;
+  // An app Lamp comes with, opened instead of a wish: it has nothing to write, and goes to Lamp by its name.
+  let starter: Starter | null = null;
+
+  // What any opened card shows: its picture, icon, name and line. The card's own picture straight away, already
+  // loaded, so the last one's never lingers; the larger one takes its place once it has arrived.
+  function present(card: HTMLElement, shown: { name: string; about: string; picture: string; icon: string }) {
+    stage.hidden = !shown.picture;
+    const small = card.querySelector("img")?.currentSrc ?? "";
+    picture.src = backdrop.src = shown.picture ? (small && current ? small : shown.picture) : "";
+    if (shown.picture && picture.src !== shown.picture) {
+      const wanted = shown.picture, sharper = new Image();
+      sharper.onload = () => { if ((current ?? starter)?.picture === wanted) picture.src = wanted; };
+      sharper.src = wanted;
+    }
+    icon.hidden = !shown.icon;
+    if (shown.icon) icon.src = shown.icon;
+    name.textContent = shown.name;
+    about.textContent = shown.about;
+    go.textContent = "Download Lamp";
+    if (requirement) requirement.hidden = true;
+  }
+
   document.querySelectorAll<HTMLButtonElement>("[data-idea]").forEach((card) =>
     card.addEventListener("click", () => {
+      starter = null;
       current = JSON.parse(card.dataset.idea!) as Idea;
-      // The card's own picture straight away, already loaded, so the last wish's never lingers; the larger one
-      // takes its place once it has arrived.
-      stage.hidden = !current.picture;
-      const shown = card.querySelector("img")?.currentSrc ?? "";
-      picture.src = backdrop.src = shown || current.picture;
-      if (current.picture && current.picture !== shown) {
-        const wanted = current.picture, sharper = new Image();
-        sharper.onload = () => { if (current?.picture === wanted) picture.src = wanted; };
-        sharper.src = wanted;
-      }
-      icon.hidden = !current.icon;
-      if (current.icon) icon.src = current.icon;
-      name.textContent = current.name;
-      about.textContent = current.about;
+      present(card, current);
+      label.hidden = text.hidden = false;
       device.hidden = current.platform === "Mac";
       device.textContent = `In Lamp, choose ${current.platform} before you send this wish.`;
       text.value = current.wish;
-      go.textContent = "Download Lamp";
-      if (requirement) requirement.hidden = true;
+      open.textContent = "Already have Lamp? Open it with this wish";
       dialog.showModal();
       fit();
       // Ready to change straight away, with the cursor at the end, where there's a pointer and a keyboard; on a
@@ -348,11 +406,35 @@ const description = "Wishes for software nobody else would make: for the office,
     }),
   );
 
+  document.querySelectorAll<HTMLButtonElement>("[data-starter]").forEach((card) =>
+    card.addEventListener("click", () => {
+      current = null;
+      starter = JSON.parse(card.dataset.starter!) as Starter;
+      present(card, starter);
+      label.hidden = text.hidden = device.hidden = true;
+      open.textContent = `Already have Lamp? Open ${starter.name}`;
+      dialog.showModal();
+      track("starter_opened", { starter: starter.name });
+    }),
+  );
+
   dialog.querySelector("[data-close]")!.addEventListener("click", () => dialog.close());
   // A click on the dimmed page around the card closes it too.
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
 
   go.addEventListener("click", () => {
+    if (starter) {
+      const chosen = starter.name;
+      track("starter_download", { starter: chosen });
+      // Every starter is on a new desk anyway; the mark only has Lamp open this one when the welcome is done.
+      copyStarter(chosen).then((copied) => {
+        go.textContent = "Downloading…";
+        if (requirement) requirement.hidden = false;
+        if (requirement) requirement.textContent = copied === "marked" ? `Open Lamp when it's ready. ${chosen} will open.`
+          : `Open Lamp when it's ready. ${chosen} is on its desk.`;
+      });
+      return;
+    }
     if (current) track("idea_download", { idea: current.name });
     // The download leaves this page where it is, so the copy finishes and the card can say what happens next.
     copyWish(text.value).then((copied) => {
@@ -365,6 +447,11 @@ const description = "Wishes for software nobody else would make: for the office,
   });
 
   open.addEventListener("click", () => {
+    if (starter) {
+      track("starter_sent", { starter: starter.name });
+      location.href = starterLink(starter.name)!;
+      return;
+    }
     const link = wishLink(text.value);
     if (!link) return;
     if (current) track("idea_sent", { idea: current.name });

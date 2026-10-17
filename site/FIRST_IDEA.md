@@ -17,9 +17,10 @@ tell whether Lamp is installed:
   if it's still there), waiting for the person to send it. The page is never told whether Lamp opened, so
   it says "Off it goes." and offers to try again.
 
-An example that is one of the apps Lamp comes with can hand Lamp that app rather than a wish to make it again:
-`starterLink` and `copyStarter` in `lib/wish.js` work as the two ways in above, with the starter's name, and Lamp
-opens it with its chat and the changes it suggests, putting it back on the desk first if it isn't there.
+The ideas page's Comes with Lamp section (`src/lib/starters.ts`, read from `Resources/Starters` as Lamp ships them)
+hands Lamp the app itself rather than a wish to make it again: `starterLink` and `copyStarter` in `lib/wish.js` work
+as the two ways in above, with the starter's name, and Lamp opens it with its chat and the changes it suggests,
+putting it back on the desk first if it isn't there.
 
 - The page: `src/components/FirstIdea.astro`. The situations, the rounds and the questions used when the model
   can't be reached: `lib/situations.js`, shared with the server.
