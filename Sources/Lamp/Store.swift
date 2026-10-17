@@ -1457,6 +1457,7 @@ final class Store: ObservableObject {
         await quit(old)
         await WidgetProcess.end(for: old)
         try? fm.removeItem(at: old.installedURL)
+        try? fm.removeItem(at: Devices.buildFolder(for: old))
         // Lines logged while the copy was made and the old app quit are written to the new folder instead.
         await settleFiles(old)
         settleChat(old)
@@ -2816,6 +2817,7 @@ final class Store: ObservableObject {
             return
         }
         Self.trashData(of: project)
+        try? fm.removeItem(at: Devices.buildFolder(for: project))
         // Its sign-ins too: an app made later under the same name is another app, and starts disconnected.
         AppSecrets.forget(app: project.instance)
         projects.removeAll { $0.id == project.id }
@@ -4625,7 +4627,10 @@ final class Store: ObservableObject {
             return nil
         }
         do {
-            try Template.writeDeviceProject(for: project, team: team)
+            try Template.writeDeviceProject(for: project, team: team, in: Devices.buildFolder(for: project))
+            // Where the phone's project and builds were kept before, inside the app's folder. An app for both
+            // still builds its Mac half there.
+            if project.platform == .iphone { try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(".lamp/device")) }
         } catch {
             failed("Lamp couldn't get the app ready for \(name). Click Retry. If it fails again, ask Lamp to fix it and include the error from Agent Details.", output: error.localizedDescription)
             return nil
@@ -4634,7 +4639,7 @@ final class Store: ObservableObject {
         var output: [String] = []
         let app: URL
         do {
-            app = try await Devices.build(project, team: team, udid: udid, started: { owner.build = $0 }) { output.append($0) }
+            app = try await Devices.build(project, team: team, destination: "id=\(udid)", started: { owner.build = $0 }) { output.append($0) }
             owner.build = nil
         } catch {
             owner.build = nil
