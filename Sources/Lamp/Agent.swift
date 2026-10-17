@@ -1417,7 +1417,7 @@ enum Shell {
     /// only ships with full Xcode. With just the Command Line Tools, this builds against the newest
     /// installed SDK that doesn't need the plugin. The same lines are in Lamp's own build.sh.
     static let compatibleSDK = #"""
-    dev="$(/usr/bin/xcode-select -p 2>/dev/null)"
+    dev="${DEVELOPER_DIR:-$(/usr/bin/xcode-select -p 2>/dev/null)}"
     if [ -z "${SDKROOT:-}" ] && [ -d "$dev/SDKs" ] && [ ! -e "$dev/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]; then
       for sdk in "$dev"/SDKs/MacOSX*.sdk(/NnOn); do
         if ! /usr/bin/grep -qs StateMacro /dev/null "$sdk"/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/*-macos.swiftinterface(N); then

@@ -339,7 +339,12 @@ plain id (`{{DATAID}}`, `Edition.appBundlePrefix` and the folder name) whatever 
 once from a folder named after its signed id. New App makes a draft, a folder with only `.lamp/meta.json`
 (`Template.draft`), so its kind and name are just that file; the scaffold is written and committed when it first
 builds (`Store.materialize`, in the first turn after naming and in `run`), and `LampProject.scaffolded` tells the two apart. An iOS app is one app for both devices, as Apple has it; **Try On** (in the toolbar and the app's right-click menu) picks which simulator it opens in (`LampProject.family`, iPhone to begin with), or one simulator by name under Choose Simulator (`LampProject.simulator`, kept in `meta.json`; the list is `Simulator.choices`), for what only some models have, such as the Dynamic Island. Lamp's own pick of the family is used when the chosen one is no longer installed, and `look_at_app` tells the agent which simulator the app is open on. It runs in the iPhone or iPad simulator on this Mac (`LampProject.platform == .iphone`,
-kept in `meta.json` and through renames). It needs Xcode, not just the Command Line Tools: `Simulator`
+kept in `meta.json` and through renames). It needs Xcode, not just the Command Line Tools. Lamp's choice of Xcode stays in its own
+process (`DEVELOPER_DIR`, which its shells, the engines, simctl and devicectl inherit; xcode-select is never changed): the one
+chosen in setup (Use Xcode), else, when xcode-select names the Command Line Tools, one Lamp finds by itself at launch
+(`PhoneTools.installedXcode`): only in /Applications, through every link, since Lamp runs its tools as itself and the agent
+can't write there, and only once its agreements are accepted, or every build would fail. Builds then use Xcode's toolchain
+too, and `Shell.compatibleSDK` goes by `DEVELOPER_DIR` before xcode-select. `Simulator`
 (`Sources/Lamp/Simulator.swift`) picks a booted or available iPhone with `simctl`, installs the built bundle,
 launches it with its output going to the app's log, and photographs the screen for `look_at_app`. The
 scaffold is a Swift package built for the simulator SDK by its own `build.sh` (no Xcode project, no signing
