@@ -133,7 +133,7 @@ enum Sharing {
             let fm = FileManager.default
             let assets = project.dir.appendingPathComponent(folder)
             guard !fm.fileExists(atPath: assets.path) else { return }
-            defer { try? fm.createDirectory(at: assets, withIntermediateDirectories: true) }
+            defer { try? AppFolder.createDirectory(assets, in: project.dir) }
             let attachments = regularFiles(in: project.dir.appendingPathComponent(Attachments.folder))
             guard !attachments.isEmpty else { return }
             let code = swiftSources(in: project.dir.appendingPathComponent("Sources"))
@@ -145,8 +145,8 @@ enum Sharing {
             for file in attachments where everything || code.contains("\"\(file.lastPathComponent)\"") {
                 let target = assets.appendingPathComponent(file.lastPathComponent)
                 guard !fm.fileExists(atPath: target.path) else { continue }
-                try? fm.createDirectory(at: assets, withIntermediateDirectories: true)
-                try? fm.copyItem(at: file, to: target)
+                // Copied as it is: an attachment the agent swapped for a link brings nothing else in.
+                try? AppFolder.copy(file, to: target, in: project.dir)
             }
         }
     }

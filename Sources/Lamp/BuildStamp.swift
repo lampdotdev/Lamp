@@ -41,12 +41,16 @@ struct BuildStamp: Equatable {
         return FileManager.default.fileExists(atPath: mac.path) ? mac : app.appendingPathComponent("Info.plist")
     }
 
-    static func write(to app: URL) {
-        let url = infoPlist(of: app)
-        guard let info = NSMutableDictionary(contentsOf: url) else { return }
+    /// The build is in the agent's folder, so the plist is read and written there without following a link.
+    static func write(for project: LampProject) {
+        let url = infoPlist(of: project.builtURL)
+        guard let data = AppFile.read(url, in: project),
+              let info = try? PropertyListSerialization.propertyList(from: data, options: .mutableContainers, format: nil) as? NSMutableDictionary
+        else { return }
         info[lampKey] = current.lamp
         info[supportKey] = current.support
-        info.write(to: url, atomically: true)
+        guard let out = try? PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0) else { return }
+        try? AppFolder.write(out, to: url, in: project.dir)
     }
 
     /// Built by a Lamp whose app code differs from this one's.

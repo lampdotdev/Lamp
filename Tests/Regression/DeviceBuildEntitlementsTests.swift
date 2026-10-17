@@ -2,12 +2,13 @@ import XCTest
 @testable import Lamp
 
 /// The phone's build is signed with the entitlements Lamp wrote, whatever the agent's commands do while it runs.
-/// Xcode signs with the file its project names, after copying it into its build folder; both used to be in the
-/// app's folder, where a command left running in the background could rewrite them before the signature.
+/// Xcode builds the app's project in the app's folder, in its sandbox and with signing off; Lamp signs a copy in its
+/// own folder with entitlements from its own project. A command left running in the background can rewrite every
+/// entitlements file in the app's folder while that happens, and none of it is what the app is signed with.
 ///
-/// The build is Lamp's own (`Template.writeDeviceProject`, `Devices.build`) for the simulator, which takes its
-/// entitlements through the same steps as the phone's and needs no team; the command is run in Lamp's sandbox
-/// (`Sandbox.wrap`), as the agent's are.
+/// The build is Lamp's own (`Template.writeDeviceProject`, `Devices.build`) for the simulator, which needs no team,
+/// and the copy is signed ad hoc (`TeamSigning.sign`) with what Lamp's own project names; the command is run in
+/// Lamp's sandbox (`Sandbox.wrap`), as the agent's are.
 @MainActor
 final class DeviceBuildEntitlementsTests: XCTestCase {
     private var root: URL?
@@ -18,12 +19,14 @@ final class DeviceBuildEntitlementsTests: XCTestCase {
         if let root { try? fm.removeItem(at: root) }
         if let project {
             try? fm.removeItem(at: Devices.buildFolder(for: project))
+            try? fm.removeItem(at: Devices.signingFolder(for: project))
             // The command's sandbox profile, which Lamp would otherwise clear only after an hour.
             for file in (try? fm.contentsOfDirectory(atPath: Sandbox.folder.path)) ?? [] where file.hasPrefix(project.id + "-") {
                 try? fm.removeItem(at: Sandbox.folder.appendingPathComponent(file))
             }
         }
-        if (try? fm.contentsOfDirectory(atPath: Devices.buildsFolder.path))?.isEmpty == true { try? fm.removeItem(at: Devices.buildsFolder) }
+        for folder in [Devices.buildsFolder.appendingPathComponent(".signing"), Devices.buildsFolder]
+        where (try? fm.contentsOfDirectory(atPath: folder.path))?.isEmpty == true { try? fm.removeItem(at: folder) }
     }
 
     func testAPhoneBuildIsSignedWithLampsEntitlementsWhileACommandRewritesThem() async throws {
@@ -69,41 +72,38 @@ final class DeviceBuildEntitlementsTests: XCTestCase {
             command.waitUntilExit()
         }
 
-        // What Lamp does when the person tries the app on their phone (`Store.installOnDevice`).
+        // What Lamp does when the person tries the app on their phone (`Store.installOnDevice`), with an ad hoc
+        // signature where the team's certificate would be, and Lamp's own entitlements where Xcode's would be.
         try await Devices.stage(project, team: team)
         var output: [String] = []
-        let app: URL
+        let built: URL
         do {
-            app = try await Devices.build(project, team: team, destination: "generic/platform=iOS Simulator") { output.append($0) }
+            built = try await Devices.build(project, team: team, destination: "generic/platform=iOS Simulator") { output.append($0) }
         } catch {
             return XCTFail("\(error.localizedDescription)\n" + output.filter { $0.contains("error") }.suffix(10).joined(separator: "\n"))
         }
+        let planDir = TeamSigning.folder(for: project, place: .iphone).appendingPathComponent("Plan")
+        try fm.createDirectory(at: planDir, withIntermediateDirectories: true)
+        let lampsEntitlements = Template.Capabilities.load(project).entitlementsPlist(for: project, platform: .ios, appGroup: nil)
+        try lampsEntitlements.write(to: planDir.appendingPathComponent("0.entitlements"), atomically: true, encoding: .utf8)
+        let plan = TeamSigning.Plan(stamp: "", expires: .distantFuture,
+                                    pieces: [.init(path: "", id: project.deviceBundleID(team: team), entitlements: "0.entitlements", profile: nil)])
+        let install = Devices.signingFolder(for: project).appendingPathComponent("Install")
+        try fm.createDirectory(at: install, withIntermediateDirectories: true)
+        let app = install.appendingPathComponent("\(project.exe).app")
+        try AppFolder.copy(built, in: Devices.buildFolder(for: project), to: app, in: install)
+        try await TeamSigning.sign(app, with: plan, in: planDir, identity: "-")
 
         fm.createFile(atPath: project.dir.appendingPathComponent("stop").path, contents: nil)
         command.waitUntilExit()
         XCTAssertFalse(fm.fileExists(atPath: project.dir.appendingPathComponent("reached-lamps-folder").path),
                        "the agent's command could write Lamp's build folder")
 
-        // The simulator's entitlements are a section of the binary, put there from the file Xcode signed with.
-        let section = await Subprocess.run("/usr/bin/xcrun", ["otool", "-arch", "arm64", "-s", "__TEXT", "__entitlements",
-                                                              app.appendingPathComponent(project.exe).path], timeout: 60)
-        // otool prints it in hex, each line an address, a tab and the bytes, which for arm64 come in 32-bit
-        // little-endian words.
-        let bytes = section.output.split(separator: "\n").filter { $0.contains("\t") }.flatMap { line in
-            line.split(separator: "\t").dropFirst().joined(separator: " ").split(separator: " ").flatMap { word -> [UInt8] in
-                stride(from: 0, to: word.count, by: 2).compactMap { offset in
-                    UInt8(word.dropFirst(offset).prefix(2), radix: 16)
-                }.reversed()
-            }
-        }
-        let signed = try XCTUnwrap(try PropertyListSerialization.propertyList(from: Data(bytes), format: nil) as? [String: Any],
-                                   section.output + output.suffix(20).joined(separator: "\n"))
-        let lamps = try XCTUnwrap(try PropertyListSerialization.propertyList(
-            from: Data(Template.Capabilities.load(project).entitlementsPlist(for: project, platform: .ios, appGroup: nil).utf8),
-            format: nil) as? [String: Any])
-        // Xcode adds the app's identity; everything else is Lamp's.
-        XCTAssertEqual(NSDictionary(dictionary: signed.filter { $0.key != "application-identifier" }), NSDictionary(dictionary: lamps),
-                       "signed with \(signed)")
+        let read = await Subprocess.run("/usr/bin/codesign", ["-d", "--entitlements", "-", "--xml", app.path], mergeErrors: false, timeout: 60)
+        let signed = try XCTUnwrap(try PropertyListSerialization.propertyList(from: Data(read.output.utf8), format: nil) as? [String: Any],
+                                   read.output + output.suffix(20).joined(separator: "\n"))
+        let lamps = try XCTUnwrap(try PropertyListSerialization.propertyList(from: Data(lampsEntitlements.utf8), format: nil) as? [String: Any])
+        XCTAssertEqual(NSDictionary(dictionary: signed), NSDictionary(dictionary: lamps), "signed with \(signed)")
         XCTAssertNil(signed["com.apple.security.application-groups"])
         XCTAssertNil(signed["keychain-access-groups"])
     }
