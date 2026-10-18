@@ -43,16 +43,37 @@ Recipes", "Reading List"), what the answer is about for one that answers.
 
 A page that keeps things then has:
 
-3. The collection header: `<div class="collection-header"><h1>My Recipes</h1><span class="count">4 recipes</span></div>`.
-4. The items.
-5. An empty state for when nothing is saved yet.
+3. Its settings, when the items are judged against something the person sets (see below): one line.
+4. The collection header: `<div class="collection-header"><h1>My Recipes</h1><span class="count">4 recipes</span></div>`.
+5. The items.
+6. An empty state for when nothing is saved yet.
 
 The check before saving replaces the offer and the list while it's open (`hidden` on both), so the draft has the
-pane to itself.
+pane to itself. So does editing the settings.
 
 A page that answers (explains, summarises, translates, checks) has the answer in their place: a heading for what it's
 about, then the answer in `.group`s (paragraphs, or rows for a list of points), hidden until there is one, and
 before the first answer one sentence in the empty state on what the button does.
+
+The pane is short and the items or the answer are what it's opened for: the first shows within the top third of the
+pane, and nothing that stays on the page is taller than the list beside it.
+
+## Settings are one line with Edit
+
+What the person sets once and the app uses after (limits, a budget, servings, a start time, units) is glanced at, not
+worked in. Show it as one line, never as a form that stays open:
+
+```html
+<div class="section-header"><span>My Space</span><button class="plain" id="edit">Edit</button></div>
+<div class="group"><div class="row"><p class="facts-line num" id="summary"></p></div></div>
+```
+
+The line gives each value short, with its unit (`W 30 in`, `D 12 in`, `$100`), one `span` each; a value not set yet
+is left out, and with nothing set the line says so ("No limits set") and the button says "Set…". Edit puts the
+fields in place of the offer and the list, as the check before saving does: a `.collection-header` naming them, a
+`.group` of `.field` rows (a choice such as inches or centimetres is a `.segmented` above them, part of the settings,
+not a control of its own on the page), and a `.bottom-bar` with Cancel and Done. Done saves, redraws the line and the
+verdicts, and puts the list back.
 
 ## Draw the items as the app's window does
 
@@ -67,6 +88,30 @@ Same facts in the same order, same sorting and grouping, same symbols. Choose th
   leave no space when it hasn't. "Unread | All" goes in a `.segmented` control above the list.
 - **Cards** (`.grid` of `.card`) only when nearly every item has a good picture of its own and people pick by it.
   Otherwise rows.
+
+A row's `.meta` gives the facts people choose by, from the item itself, in the units they set: a product's size and
+price (`31.5 × 11 × 79.5 in`, `$79`), a recipe's time and servings, a place's hours. When the app judges the item,
+these are the facts it judged, so the verdict can be checked without opening the row. Then where it's from.
+
+## One verdict per item, the problem loudest
+
+When the app judges each item (fits or not, over budget, in stock, due), the row shows one verdict, in `.trailing`,
+with `.verdict` and one of `.bad`, `.good` or `.unknown`:
+
+```html
+<div class="trailing"><span class="verdict bad"><span class="sym" style="--sym:url(/symbols/xmark.png)"></span>Too Wide</span></div>
+```
+
+- Several checks make one verdict, the worst: any that fails names it ("Too Wide", "Over Budget"; with more than
+  one, the whole: "Too Large", "Doesn't Fit"), else any unknown ("Height Unknown"), else all well ("Fits").
+- What needs the person is what stands out: a problem is red (`.bad`, `xmark`), all well is the tint (`.good`,
+  `checkmark`) or nothing at all, unknown is grey (`.unknown`, `questionmark`). Never a grey or faint problem beside
+  a bold or coloured "Fits", and never two badges saying the same thing.
+- The check by check breakdown is not the row's: it's where the row opens (the window). Never a line per check in
+  the row.
+
+`.facts-line` puts a "·" between its spans and breaks between them: give it short plain facts (a size, a price, a
+site), never symbols, verdicts or sentences, and never type a "·", "|" or "/" of your own between things.
 
 No chevrons unless a row opens a detail view. A row that does something (opens the item in the app) is
 `role="button"` with `tabindex="0"`, Enter and Space, never a link to `#`. No search field on a short list.
@@ -128,8 +173,9 @@ The app's nouns ("Saved to My Plants"), never Lamp's workings. Title Case for ti
 - Page: `.page-top`, `.collection-header` (`h1`, `.count`), `.section-header`, `.section-footer`, `.status`
   (`.error`), `.empty` (`.sym`, `.title`, `p`).
 - Lists: `.group`; `.row` with `.has-thumb` or `.has-dot`, holding `.thumb`, `.main` (`.title-line`, `.meta` of
-  `span`s, `.clamp-1`/`.clamp-2`), `.trailing`; `.dot`; `.pill` (`.neutral`); `.facts-line` of `span`s (a line of
-  facts that wraps between facts, never inside one).
+  `span`s, `.clamp-1`/`.clamp-2`), `.trailing`; `.dot`; `.pill` (`.neutral`); `.verdict` (`.bad`, `.good`,
+  `.unknown`: a symbol, then a word or two); `.facts-line` of `span`s (a line of facts that wraps between facts,
+  never inside one).
 - Pictures: `.thumb` (`--thumb` for its size; `.placeholder` for a symbol on the tint wash), `.grid` of `.card`
   (`.picture`, `.title-line`, `.meta`).
 - Controls: `button` (grey), `.primary` (the tint), `.tinted`, `.plain`, `.capsule`; `.segmented` with
@@ -281,6 +327,8 @@ the pictures as Apple would:
    first item or the answer?
 3. Does every picture show the item it's on? Would a symbol be more honest?
 4. Separators start at the words, rows at least 44px, group edges in line with the titles?
-5. Each item as the window shows it, the urgent ones first?
-6. Dark: neutral grey, no outlines, the tint still readable?
-7. At 200%: nothing cut off without an ellipsis, no fact split across lines, the offer's title not squeezed away?
+5. Each item as the window shows it, the urgent ones first, its row giving the facts people choose by?
+6. One verdict per row, and a problem the first thing the eye lands on, not the faintest?
+7. Settings a line with Edit, not an open form? Nothing kept on the page taller than the list?
+8. Dark: neutral grey, no outlines, the tint still readable?
+9. At 200%: nothing cut off without an ellipsis, no fact split across lines, the offer's title not squeezed away?
