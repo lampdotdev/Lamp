@@ -4516,7 +4516,7 @@ final class Store: ObservableObject {
         // already in spares, the live copy is rewritten before anything is compiled (`LiveSlots.fit`).
         let spared = !LiveSlots.mapping(project).isEmpty || LiveSlots.hasConstants(project)
         async let early: (url: URL?, problem: String?) = spared ? (nil, nil) : await LiveReload.compile(project, changed: changed)
-        let (before, after, declarations) = await LiveReload.layouts(project)
+        let (before, after, declarations, oldCode) = await LiveReload.layouts(project)
         var check = LiveReload.layoutProblem(before: before, after: after)
         let constants = before.flatMap { before in after.map { LiveSlots.changedConstants(project, before: before, after: $0) } } ?? []
         var (library, problem) = await early
@@ -4574,6 +4574,8 @@ final class Store: ObservableObject {
         if let library { guard await LiveReload.send(library, to: project, token: Template.token(for: project)) else { return false } }
         LiveReload.markRunning(project)
         LiveReload.keepLayout(layout, for: project)
+        // What this change's code may leave running (a timer, a task) outlives the next change's replacing its sources.
+        LiveReload.recordOldCode(oldCode, for: project)
         watchAfterReload(project, app: app)
         LiveReload.awaitInstall(project)
         _ = heldInstalls.mayInstall(project.id, running: true)

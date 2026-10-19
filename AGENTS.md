@@ -815,9 +815,10 @@ the new code and in the types the spares keep (`LiveReload.enumsHeld`), before t
 values of any type (`Any`, `AnyObject`, `AnyHashable`, `any P`) reopens instead, since one could hide there. When an enum
 grew, every file of the app's is compiled again, so no code of the open app's meets a case it never knew (a switch over
 it, or printing it, reads past what its metadata describes); code already running keeps the version it started with,
-so the sources the open app runs are read for a switch over the enum, or an interpolation of it, in an escaping
-closure made outside a view's body, an async closure or an async function (`LiveReload.enumsMetByOldCode`), and the
-app reopens when there is one. The enum's metadata stays the change's own rather
+so the sources the open app runs, and those of every change that went in since it opened (`.lamp/live/old-code.txt`,
+`LiveReload.recordOldCode`: what an earlier change's code started may still be running), are read for a switch over the
+enum, or an interpolation of it, in an escaping closure made outside a view's body, an async closure or an async
+function (`LiveReload.enumsMetByOldCode`), and the app reopens when there is one. The enum's metadata stays the change's own rather
 than the app's (`LiveReload.compile(keep:)`, renamed `$lampown` so `LampLive` binds every later change to it), since
 the app's doesn't know the new cases. Which property is in which spare
 (`.lamp/live/slots.json`) is put back into each fresh copy (they come back as additions, and `LiveSlots.fit` puts

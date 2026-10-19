@@ -32,6 +32,8 @@ enum LiveReload {
         try? AppFolder.copy(from ?? sources(project), to: running(project), in: project.dir)
         try? AppFolder.write(inputs(project), to: runningInputs(project), in: project.dir)
         AppFolder.remove(runningLayout(project), in: project.dir)
+        // Installed, the app runs one generation of code again: nothing older is left running in it.
+        if from != nil { AppFolder.remove(oldCodeURL(project), in: project.dir) }
     }
 
     private static func runningInputs(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-inputs.txt") }
@@ -54,7 +56,21 @@ enum LiveReload {
 
     static func forget(_ project: LampProject) {
         AppFolder.remove(running(project), in: project.dir)
+        AppFolder.remove(oldCodeURL(project), in: project.dir)
         LiveSlots.clear(project)
+    }
+
+    /// Where the open app's code may still be running old versions of itself, from every change that went in since
+    /// it opened (`oldCodeUses`), kept beside the sources it runs: the sources of one change are replaced by the
+    /// next's, but a timer or a task started by an earlier change's code goes on running it.
+    private static func oldCodeURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("old-code.txt") }
+    static func recordOldCode(_ uses: [String], for project: LampProject) {
+        let known = oldCodeRecorded(project)
+        let all = known + uses.filter { !known.contains($0) }
+        if all.count != known.count { try? AppFolder.write(all.joined(separator: "\n"), to: oldCodeURL(project), in: project.dir) }
+    }
+    static func oldCodeRecorded(_ project: LampProject) -> [String] {
+        AppFile.text(oldCodeURL(project), in: project)?.components(separatedBy: "\n").filter { !$0.isEmpty } ?? []
     }
 
     /// The open app has a change the copy in the apps folder doesn't: the build goes in when the app closes.
@@ -138,7 +154,7 @@ enum LiveReload {
     /// (then the usual build runs and the agent sees its errors). The open app's layout is kept from the last
     /// time, so only the new code is type-checked, alongside the changed files' compile.
     @MainActor static func layoutProblem(_ project: LampProject) async -> (problem: String?, layout: [String]?) {
-        let (before, after, _) = await layouts(project)
+        let (before, after, _, _) = await layouts(project)
         return layoutProblem(before: before, after: after)
     }
 
@@ -247,28 +263,49 @@ enum LiveReload {
     /// again for one, but code already running keeps the version it started with: a closure given to a timer, a
     /// task or an observer, a `.task` of a view's, a function waiting on an `await`. A `switch` over the enum
     /// there was compiled for the cases it had, and a new case lands in another's arm or past the end; printing
-    /// it reads the old description of the enum. So the sources the open app runs are read for a `switch` over
-    /// the enum, or an interpolation of it, in an escaping closure made outside a view's body (what a body makes
-    /// is made again at the next draw), in an async closure anywhere, or in an async function.
+    /// it reads the old description of the enum. So the sources the open app runs, and those of every change that
+    /// went in before (`recordOldCode`, since what an earlier change's code started may still be running), are read
+    /// for a `switch` over the enum, or an interpolation of it, in an escaping closure made outside a view's body
+    /// (what a body makes is made again at the next draw), in an async closure anywhere, or in an async function.
     @MainActor static func enumsMetByOldCode(_ project: LampProject, grown: [String]) async -> String? {
         guard let dump = await dump(of: running(project), in: project, module: project.exe, macOS: Template.macMinimum(project)) else {
             return "the compiler couldn't say where the open app uses the enums that grew"
         }
-        return oldCode(meeting: grown, inDump: dump)
+        return oldCode(meeting: grown, uses: oldCodeRecorded(project) + oldCodeUses(inDump: dump))
     }
 
-    static func oldCode(meeting enums: [String], inDump dump: String) -> String? {
+    /// Why a grown enum can't go in, among what old code may still be doing: the first use of one of the enums.
+    static func oldCode(meeting enums: [String], uses: [String]) -> String? {
+        let names = Set(enums), optional = Set(enums.map { $0 + "?" })
+        for use in uses {
+            let parts = use.split(separator: "\t", maxSplits: 2).map(String.init)
+            guard parts.count == 3, names.contains(parts[0]) || optional.contains(parts[0]) else { continue }
+            return "\(parts[1]) \(parts[2]) \(parts[0]) in code that may still be running (a timer, a task, an observer), which doesn't know the new cases"
+        }
+        return nil
+    }
+
+    static func oldCode(meeting enums: [String], inDump dump: String) -> String? { oldCode(meeting: enums, uses: oldCodeUses(inDump: dump)) }
+
+    /// Every `switch` over an enum, and every interpolation of one, in code that may go on running after a change
+    /// (an escaping closure made outside a view's body, an async closure, an async function), as
+    /// "Type<tab>where<tab>switches over" or "…<tab>prints", for every enum: which ones will grow isn't known yet.
+    static func oldCodeUses(inDump dump: String) -> [String] {
         enum Kind { case body, escaping, async, function(String?, async: Bool), other }
-        let bodyDecl = try! NSRegularExpression(pattern: #"^(\s*)\(var_decl\b[^"]*"body" "#)
+        // A view's body, or the live copy's name for it (`Template.liveCopySteps` moves the body into `__lampBody`).
+        let bodyDecl = try! NSRegularExpression(pattern: #"^(\s*)\(var_decl\b[^"]*"(?:body|__lampBody)" "#)
         let closure = try! NSRegularExpression(pattern: #"^(\s*)\((?:closure_expr|autoclosure_expr)\b(.*)$"#)
         let function = try! NSRegularExpression(pattern: #"^(\s*)\((?:func_decl|accessor_decl|constructor_decl)\b[^"]*(?:"([^"]+)")? interface_type="([^"]*)""#)
         let scope = try! NSRegularExpression(pattern: #"^(\s*)\((?:var_decl|subscript_decl|struct_decl|class_decl|enum_decl|actor_decl|extension_decl|protocol)\b"#)
         let switchStmt = try! NSRegularExpression(pattern: #"^(\s*)\(switch_stmt\b"#)
         let casePattern = try! NSRegularExpression(pattern: #"^(\s*)\(pattern_enum_element\b.*? type="([^"]*)""#)
         let interpolation = try! NSRegularExpression(pattern: #"^(\s*)\(declref_expr\b.*? type="[^"]*\(([^"()]*)\) -> \(\)".*? decl="Swift\.\(file\)\.DefaultStringInterpolation\.appendInterpolation"#)
-        let names = Set(enums), optional = Set(enums.map { $0 + "?" })
-        var scopes: [(indent: Int, kind: Kind)] = []
+        var scopes: [(indent: Int, kind: Kind)] = [], uses: [String] = [], seen = Set<String>()
         var switching: Int?
+        func note(_ type: String, _ how: String) {
+            let use = type + "\t" + place() + "\t" + how
+            if seen.insert(use).inserted { uses.append(use) }
+        }
         func risky() -> Bool {
             var inBody = false
             for (_, kind) in scopes {
@@ -305,25 +342,19 @@ enum LiveReload {
             } else if switchStmt.firstMatch(in: line, range: range) != nil {
                 if risky() { switching = indent }
             } else if let at = switching, indent > at, let m = casePattern.firstMatch(in: line, range: range) {
-                let type = String(line[Range(m.range(at: 2), in: line)!])
-                if names.contains(type) || optional.contains(type) {
-                    return "\(place()) switches over \(type) in code that may still be running (a timer, a task, an observer), which doesn't know the new cases"
-                }
+                note(String(line[Range(m.range(at: 2), in: line)!]), "switches over")
             } else if let m = interpolation.firstMatch(in: line, range: range), risky() {
-                let type = String(line[Range(m.range(at: 2), in: line)!])
-                if names.contains(type) || optional.contains(type) {
-                    return "\(place()) prints \(type) in code that may still be running (a timer, a task, an observer), which doesn't know the new cases"
-                }
+                note(String(line[Range(m.range(at: 2), in: line)!]), "prints")
             }
         }
-        return nil
+        return uses
     }
 
     /// What the open app's types hold (kept from the last time, or worked out from the sources it runs) and what
     /// the new code's hold; nil for either the compiler can't say.
     /// With the new code's, where each of its properties is declared, for `LiveSlots` to rewrite.
     @MainActor static func layouts(_ project: LampProject) async
-        -> (before: [String]?, after: [String]?, declarations: SwiftSource.Declarations) {
+        -> (before: [String]?, after: [String]?, declarations: SwiftSource.Declarations, oldCode: [String]) {
         async let after = analysis(of: sources(project), in: project, module: project.exe, macOS: Template.macMinimum(project))
         // Written back after a reload, so never read through a link: it would bring what it leads to into the folder.
         var before = AppFile.text(runningLayout(project), in: project).map { $0.components(separatedBy: "\n").filter { !$0.isEmpty } }
@@ -332,7 +363,7 @@ enum LiveReload {
             if let before { try? AppFolder.write(before.joined(separator: "\n"), to: runningLayout(project), in: project.dir) }
         }
         let new = await after
-        return (before, new?.layout, new?.declarations ?? SwiftSource.Declarations())
+        return (before, new?.layout, new?.declarations ?? SwiftSource.Declarations(), new?.oldCode ?? [])
     }
 
     /// What the open app's types hold, kept beside the sources it runs: written when a change goes in (the new
@@ -413,11 +444,13 @@ enum LiveReload {
 
     /// A live copy's layout as `layout` gives it, with what's read only at launch (`SwiftSource.launchEntries`)
     /// and where each property is declared, all from the one printout.
-    static func analysis(of folder: URL, in project: LampProject, module: String, macOS: String) async -> (layout: [String], declarations: SwiftSource.Declarations)? {
+    /// And where its code may go on running after the next change (`oldCodeUses`), to record once it's in.
+    static func analysis(of folder: URL, in project: LampProject, module: String, macOS: String)
+        async -> (layout: [String], declarations: SwiftSource.Declarations, oldCode: [String])? {
         guard let dump = await dump(of: folder, in: project, module: module, macOS: macOS) else { return nil }
         let declarations = SwiftSource.declarations(inDump: dump)
         return (members(inDump: dump) + SwiftSource.launchEntries(inDump: dump, folder: folder) + SwiftSource.constantEntries(declarations),
-                declarations)
+                declarations, oldCodeUses(inDump: dump))
     }
 
     /// The stored members of every type in a `-dump-ast` printout: each line's indent says what it's inside, so

@@ -144,7 +144,8 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: layout!.filter { !$0.contains("grow(_:)") }))
         XCTAssertFalse(LiveReload.declarationsChanged(before: layout!, after: layout!))
         // An enum that grew is met by code the open app is still running: a timer's closure or an async function
-        // switching over it, or printing it; never what a view's body makes again at the next draw.
+        // switching over it, or printing it; never what a view's body (as the live copy names it) makes again at the
+        // next draw.
         try """
             import SwiftUI
             enum Mood { case a, b }
@@ -156,7 +157,8 @@ final class LiveReloadTests: XCTestCase {
             }
             struct V: View {
                 @State var model = Model()
-                var body: some View { Button("x") { switch model.mood { case .a: break; case .b: break } } }
+                var body: AnyView { AnyView(__lampBody) }
+                @ViewBuilder var __lampBody: some View { Button("x") { switch model.mood { case .a: break; case .b: break } } }
             }
             """.write(to: sources.appendingPathComponent("Moods.swift"), atomically: true, encoding: .utf8)
         let dumped = await LiveReload.dump(of: sources, in: project, module: project.exe, macOS: "14.0")
