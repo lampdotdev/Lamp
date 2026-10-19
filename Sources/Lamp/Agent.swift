@@ -183,6 +183,17 @@ enum Agent {
     SF Symbols in the app's palette instead: Lamp offers the user a way to set that up.
     """
 
+    /// Rides with a message the person sent while the agent worked (`Store.handOver`), not in the system prompt:
+    /// a rule there about such messages was followed only some of the time, and a message answered with nothing
+    /// reads in the chat as if it was never heard.
+    static let midTurnNote = """
+
+
+    Note from Lamp: the person sent this while you were working. Before your next step, reply to it in one \
+    short sentence that shows you heard it and says what you'll do now ("Got it, the theme: I'll change the \
+    colors and type across the app."), then carry on with it in mind.
+    """
+
     /// With each request to an app that's updated in place (LiveReload): which changes keep it open. Here and
     /// not in the system prompt, since it depends on the app's kind.
     static let liveNote = """
@@ -1206,9 +1217,7 @@ enum Agent {
         work, say how it's going as each pass begins, in one short sentence with `progress`: what's in now and \
         what's next. Then say what's different at the end. Whatever you write between steps is shown to the \
         person as a message, so it is a whole sentence that stands on its own, never a line ending in a colon \
-        that leads into a step. The person may send a message while you work; it reaches you between steps. \
-        Reply to it first, in one short sentence that shows you heard it and what you'll do now ("Got it, the \
-        theme: I'll change the colors and type across the app."), then carry on with it in mind.
+        that leads into a step.
         """
 
         static let finish = """
