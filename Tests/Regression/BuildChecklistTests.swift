@@ -25,7 +25,8 @@ final class BuildChecklistTests: XCTestCase {
     }
 
     /// Another such plan, whose last part listed App.swift, which the model never rewrote. Once Lamp is
-    /// building, that part must not sit unticked above Lamp's own row for building and opening.
+    /// building, that part must not sit unticked above Lamp's own row for building and opening, nor come
+    /// unticked when the agent goes on after the build.
     func testTheLastPartIsDoneOnceLampBuilds() {
         var progress = TurnProgress(newApp: true)
         progress.plan = [
@@ -43,5 +44,9 @@ final class BuildChecklistTests: XCTestCase {
         }
         progress.activity = "Building…"
         XCTAssertEqual(progress.plan.map { progress.state(of: $0) }, Array(repeating: .done, count: 5))
+        // The agent looks at what was built and thinks again: nothing it finished comes unticked.
+        progress.activity = "Thinking"
+        XCTAssertEqual(progress.plan.map { progress.state(of: $0) }, Array(repeating: .done, count: 5))
+        XCTAssertTrue(progress.showsFinishing)
     }
 }

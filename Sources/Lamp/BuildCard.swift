@@ -37,7 +37,15 @@ struct TurnProgress {
     var unopened = false
     /// What's happening right now, in the user's words rather than the code's: "Working on the interface",
     /// "Building…". It's the one place a turn in progress says what it's doing.
-    var activity: String
+    var activity: String {
+        // Lamp is building what the agent wrote: every part it has worked on is as done as this pass makes it,
+        // even with a listed file left unwritten, so none sits unticked above Lamp's own last row, and it stays
+        // ticked when the agent goes on.
+        didSet {
+            guard finishing else { return }
+            for index in plan.indices where plan[index].files.contains(where: files.contains) { plan[index].done = true }
+        }
+    }
     /// The file being written or edited right now, if that's what the agent is doing. Never shown: it
     /// tells which part of the plan is being worked on.
     var currentFile: String?
@@ -84,11 +92,7 @@ struct TurnProgress {
         // Being written now, even if that completes it: the tick shows once the agent moves on.
         if working, let currentFile, part.files.contains(currentFile) { return .active }
         if part.done { return .done }
-        if part.files.contains(where: files.contains) {
-            // Lamp is building what the agent wrote: the last part it worked on is as done as this pass makes
-            // it, even with a listed file left unwritten, and mustn't sit unticked above Lamp's own last row.
-            return finishing ? .done : .started
-        }
+        if part.files.contains(where: files.contains) { return .started }
         // A plan with no files listed: the first part still open is the one in progress.
         if working, plan.allSatisfy(\.files.isEmpty), part.id == plan.first(where: { !$0.done })?.id { return .active }
         return .open
