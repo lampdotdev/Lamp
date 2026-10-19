@@ -13,6 +13,8 @@ final class LiveReloadTests: XCTestCase {
 
     private static let before = """
         import Foundation
+        import Observation
+        @Observable final class Lab { var n = 0; func m() -> String { "m \\(n)" } }
         struct Point: Hashable { var x: Int }
         protocol Named { var name: String { get } }
         enum Ids { private static var next = 100; static func take() -> Int { next += 1; return next } }
@@ -27,6 +29,8 @@ final class LiveReloadTests: XCTestCase {
         """
     private static let after = """
         import Foundation
+        import Observation
+        @Observable final class Lab { var n = 0; func m() -> String { "M \\(n)" } }
         struct Point: Hashable { var x: Int }
         protocol Named { var name: String { get } }
         extension Point: Named { var name: String { "p\\(x)" } }
@@ -51,14 +55,14 @@ final class LiveReloadTests: XCTestCase {
                 let items: [Any] = [Point(x: 1)]
                 let counter = Counter()
                 let keys = keyed()
-                let box = Box("s")
-                print(describe(items[0]), Ids.take(), counter.step(), keys[AnyHashable(Point(x: 1))] ?? "nil", box.show())
+                let box = Box("s"), lab = Lab()
+                print(describe(items[0]), Ids.take(), counter.step(), keys[AnyHashable(Point(x: 1))] ?? "nil", box.show(), lab.m())
                 let key = SymmetricKey(data: Data("x".utf8))
                 let signature = HMAC<SHA256>.authenticationCode(for: Data("reload\\n\\(path)".utf8), using: key).map { String(format: "%02x", $0) }.joined()
                 MainActor.assumeIsolated { LampLive.shared.load(path, signature: signature) }
                 print((try? String(contentsOf: URL(fileURLWithPath: folder + "/reloaded.txt"), encoding: .utf8)) ?? "no answer")
                 print(describe(items[0]), Ids.take(), counter.step(), keys[AnyHashable(Point(x: 1))] ?? "nil", keyed()[AnyHashable(Point(x: 1))] ?? "nil",
-                      box.show(), Box(2).show())
+                      box.show(), Box(2).show(), lab.m())
                 _ = Counter()
             }
         }
@@ -92,12 +96,13 @@ final class LiveReloadTests: XCTestCase {
                                        "-Xlinker", "-weak_reference_mismatches", "-Xlinker", "weak"])
         _ = try run("/usr/bin/codesign", ["--force", "-s", "-", library])
         let output = try run(root.appendingPathComponent("app").path, [root.path]).components(separatedBy: "\n")
-        XCTAssertEqual(output[0], "point 1 101 step 1 one box s")
+        XCTAssertEqual(output[0], "point 1 101 step 1 one box s m 0")
         XCTAssertTrue(output[1].hasPrefix("ok "), "the app didn't take the change: \(output[1])")
         // The value made before is a Point still, with the conformance the change gave it; the static went on
         // counting; the object's method and deinit are the new ones; the key made before finds the new dictionary's;
-        // the generic class's method is the new one at the type it was used at before and at a new one.
-        XCTAssertEqual(output[2], "NAMED p1 102 STEP 11 one ONE BOX s BOX 2")
+        // the generic class's method is the new one at the type it was used at before and at a new one; an
+        // @Observable class, which the Objective-C runtime only meets when Swift first uses it, takes the change.
+        XCTAssertEqual(output[2], "NAMED p1 102 STEP 11 one ONE BOX s BOX 2 M 0")
         XCTAssertEqual(output[3], "GONE 0")
     }
 

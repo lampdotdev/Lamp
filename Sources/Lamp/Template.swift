@@ -4108,7 +4108,9 @@ enum Template {
             // What a class answers to from Objective-C (an override of a system class's method, a selector's
             // target) is in its method list, not its table: the kept class takes the change's copy's.
             for (name, copy) in copies where name.hasSuffix("CN") {
-                if let theirs = kept[name], theirs != copy { rebound += Self.takeMethods(from: copy, to: theirs) }
+                if let theirs = kept[name], theirs != copy {
+                    rebound += Self.takeMethods(from: copy, to: theirs, accessor: original[String(name.dropLast()) + "Ma"])
+                }
             }
             for write in descriptors where write.apply() { rebound += 1 }
             Self.watch(image: image)
@@ -4346,18 +4348,21 @@ enum Template {
 
         /// Gives a kept class the methods its copy in a change answers to from Objective-C: each of the copy's,
         /// and its metaclass's, is added to the kept class, or replaces the one it has of its own (a superclass's
-        /// is left as it is, which the add refuses to touch).
-        nonisolated private static func takeMethods(from copy: UnsafeRawPointer, to kept: UnsafeRawPointer) -> Int {
-            let source: AnyClass = unsafeBitCast(copy, to: AnyClass.self), target: AnyClass = unsafeBitCast(kept, to: AnyClass.self)
+        /// is left as it is, which the add refuses to touch). The copy is a class object the Objective-C runtime
+        /// has never seen (Swift registers a class with it on first use, and nothing uses the copy), so its methods
+        /// are read off its class data as the compiler laid it out, never asked of the runtime, which would take
+        /// the class for one it had set up and crash. The kept class is completed first (its accessor, which also
+        /// registers it), and one the runtime still doesn't have is left alone.
+        nonisolated private static func takeMethods(from copy: UnsafeRawPointer, to kept: UnsafeRawPointer, accessor: UnsafeRawPointer?) -> Int {
+            if let accessor { _ = unsafeBitCast(accessor, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0) }
+            guard isRealized(kept) else { return 0 }
+            let target: AnyClass = unsafeBitCast(kept, to: AnyClass.self)
             var count = 0
-            for (from, to) in [(source, target), (object_getClass(source), object_getClass(target))] {
-                guard let from, let to else { continue }
-                var number: UInt32 = 0
-                guard let list = class_copyMethodList(from, &number) else { continue }
-                defer { free(list) }
-                for index in 0..<Int(number) {
-                    let method = list[index], selector = method_getName(method), code = method_getImplementation(method)
-                    if class_addMethod(to, selector, code, method_getTypeEncoding(method)) { count += 1; continue }
+            // The class's own methods, then its metaclass's (the first word of a class is its metaclass).
+            for (source, to) in [(copy, target), (copy.load(as: UnsafeRawPointer.self), object_getClass(target))] {
+                guard let to else { continue }
+                for (selector, code, types) in methods(of: source) {
+                    if class_addMethod(to, selector, code, types) { count += 1; continue }
                     if let own = class_getInstanceMethod(to, selector), method_getImplementation(own) != code {
                         method_setImplementation(own, code)
                         count += 1
@@ -4366,6 +4371,50 @@ enum Template {
             }
             return count
         }
+
+        /// Whether the Objective-C runtime has set a class up: its data word then points at the runtime's record,
+        /// whose first word says so (bit 31); before that it points at the compiler's, whose never has it.
+        nonisolated private static func isRealized(_ class_: UnsafeRawPointer) -> Bool {
+            guard let data = UnsafeRawPointer(bitPattern: class_.load(fromByteOffset: 32, as: UInt.self) & ~7) else { return false }
+            return data.load(as: UInt32.self) & 0x8000_0000 != 0
+        }
+
+        /// A class's methods as the compiler laid them out, from its class data: the list begins with each entry's
+        /// size (in the low bits of its first word; the top bit says the entries are three offsets rather than three
+        /// pointers) and their number. An offset entry names its selector through a slot the loader filled in. A
+        /// class the runtime has set up is asked instead, since its data is the runtime's.
+        nonisolated private static func methods(of class_: UnsafeRawPointer) -> [(Selector, IMP, UnsafePointer<CChar>?)] {
+            if isRealized(class_) {
+                var number: UInt32 = 0
+                guard let list = class_copyMethodList(unsafeBitCast(class_, to: AnyClass.self), &number) else { return [] }
+                defer { free(list) }
+                return (0..<Int(number)).map { (method_getName(list[$0]), method_getImplementation(list[$0]), method_getTypeEncoding(list[$0])) }
+            }
+            guard let data = UnsafeRawPointer(bitPattern: class_.load(fromByteOffset: 32, as: UInt.self) & ~7),
+                  let list = data.load(fromByteOffset: 32, as: UnsafeRawPointer?.self) else { return [] }
+            let header = list.load(as: UInt32.self), count = Int(list.load(fromByteOffset: 4, as: UInt32.self))
+            let size = Int(header & 0xFFFC), offsets = header & 0x8000_0000 != 0
+            guard count < 1 << 12, offsets ? size == 12 : size == 24 else { return [] }
+            var out: [(Selector, IMP, UnsafePointer<CChar>?)] = []
+            for index in 0..<count {
+                let entry = list.advanced(by: 8 + index * size)
+                let name: UnsafePointer<CChar>?, types: UnsafePointer<CChar>?, code: UnsafeRawPointer?
+                if offsets {
+                    let slot = entry.advanced(by: Int(entry.load(as: Int32.self)))
+                    name = slot.load(as: UnsafePointer<CChar>?.self)
+                    types = UnsafePointer(entry.advanced(by: 4 + Int(entry.load(fromByteOffset: 4, as: Int32.self))).assumingMemoryBound(to: CChar.self))
+                    code = entry.advanced(by: 8 + Int(entry.load(fromByteOffset: 8, as: Int32.self)))
+                } else {
+                    name = entry.load(as: UnsafePointer<CChar>?.self)
+                    types = entry.load(fromByteOffset: 8, as: UnsafePointer<CChar>?.self)
+                    code = entry.load(fromByteOffset: 16, as: UnsafeRawPointer?.self)
+                }
+                guard let name, let code else { continue }
+                out.append((sel_registerName(name), unsafeBitCast(code, to: IMP.self), types))
+            }
+            return out
+        }
+
         /// Takes `swift_initClassMetadata2`'s five arguments and returns its two words as the runtime's does.
         nonisolated private static let classMade: @convention(thin) (UnsafeRawPointer, Int, Int, UnsafeRawPointer?, UnsafeRawPointer?) -> (UnsafeRawPointer?, Int) = { metadata, flags, fields, types, offsets in
             typealias Call = @convention(thin) (UnsafeRawPointer, Int, Int, UnsafeRawPointer?, UnsafeRawPointer?) -> (UnsafeRawPointer?, Int)
