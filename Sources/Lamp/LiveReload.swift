@@ -856,15 +856,17 @@ enum LiveReload {
     /// Asks the open app to load the library, signed with its token (only Lamp has it), and waits a moment for
     /// its answer, which it leaves in its runtime folder.
     /// Nil when the app took the change; else why not, in the app's words (`LampLive`), or that it didn't answer.
-    static func send(_ library: URL, to project: LampProject, token: String) async -> String? {
+    /// `whole` says every file was compiled into the library, so the app may take what it doesn't define of a
+    /// class's Objective-C methods as taken away.
+    static func send(_ library: URL, to project: LampProject, token: String, whole: Bool) async -> String? {
         let answer = Runtime.macFolder(project).appendingPathComponent("reloaded.txt")
         try? FileManager.default.removeItem(at: answer)
         let key = SymmetricKey(data: Data(token.utf8))
-        let signature = HMAC<SHA256>.authenticationCode(for: Data("reload\n\(library.path)".utf8), using: key)
+        let signature = HMAC<SHA256>.authenticationCode(for: Data(("reload\n\(library.path)" + (whole ? "\nwhole" : "")).utf8), using: key)
             .map { String(format: "%02x", $0) }.joined()
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name(Edition.notificationPrefix + "reload"), object: project.bundleID,
-            userInfo: ["path": library.path, "signature": signature], deliverImmediately: true)
+            userInfo: ["path": library.path, "signature": signature, "whole": whole ? "1" : "0"], deliverImmediately: true)
         for _ in 0..<50 {
             try? await Task.sleep(for: .milliseconds(100))
             if let text = try? String(contentsOf: answer, encoding: .utf8) {

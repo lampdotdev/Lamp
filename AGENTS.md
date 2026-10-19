@@ -784,10 +784,15 @@ a change brings one, `recordTables`, since the first to ask may be a cast rather
 at the new thunks. A default argument is made by a function of its own, which every caller calls, so it's rebound like any
 function. What a class answers to from Objective-C (an override of a system class's method, a selector's target) is in
 its method list, not its table, so a kept class takes its copy's methods (`takeMethods`, read off the copy's class data,
-since the runtime has never seen the copy). What `LampLive` can't make right it refuses, and the app reopens: a class's
-method table that changed shape, a class whose methods the change lists in another order than the app (one added, taken
-away or moved), since a table made after it would be laid out from the app's list, or a kept class that answers to
-something from Objective-C its copy no longer has (`removedMethods`), which it would go on answering with old code. The
+since the runtime has never seen the copy), and the change's categories (an extension's `@objc` members, an override in
+one): the runtime would attach those to the kept classes as the library loads, before any check, so `LiveObject` renames
+their list (`__lamp_catlist`) and `LampLive` attaches them once the change fits (`attach`). What `LampLive` can't make
+right it refuses, and the app reopens: a class's method table that changed shape, a class whose methods the change lists
+in another order than the app (one added, taken away or moved), since a table made after it would be laid out from the
+app's list, or a kept class that answers to something from Objective-C its copy no longer has (`removedMethods`), which
+it would go on answering with old code; that last is judged only for a change compiled from every file (`whole`, sent
+with the change), which is what a declaration taken away gets, since another leaves what an unchanged file's extension
+adds. The
 build then waits to be installed until the app closes (`LiveReload.awaitInstall`, which unlike a held build doesn't
 keep the agent off the app). Anything else needs the app reopened, with why in the chat's
 details (`LiveReload.Verdict`; what `LampLive` refused, and a change that didn't compile or load, say so there too,
