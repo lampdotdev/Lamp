@@ -10,67 +10,68 @@ extension View {
     }
 }
 
-/// The buttons Lamp's window has in its toolbar, above the chat: what changes the wish (Undo, More, Delete) on the
-/// left, and pointing and what shows more of it (Point at Something, Agent Details, Versions) on the right, three on
-/// each side. More holds what's used least: sharing the wish, and its info.
-/// Each does what its button in Lamp's window does: the sidebar only passes the click on.
-struct ChatToolbar: View {
+/// The bar at the top of the chat, one row: the red button that closes the chat, what the chat is for, and Undo,
+/// Versions and a button for the rest. Pressed, that button stays lit and the rest take the title's place: Wish Info,
+/// sharing, Agent Details and Delete. Each does what its button in Lamp's window does: the sidebar only passes the
+/// click on. Closing and the room between the buttons, which moves the chat, are the app's to do (`Host`): the panel
+/// is its window.
+struct ChatBar: View {
     @EnvironmentObject private var link: Link
-    let state: SidebarState
-    let toolbar: SidebarToolbar
+    /// Nil until Lamp is there: the bar still closes and moves the chat.
+    let state: SidebarState?
+    @State private var more = false
     @State private var deleting = false
+    @State private var moving = false
     /// The share button, where the share menu opens once Lamp has made the file.
     @State private var shareAnchor = Anchor()
 
     var body: some View {
         HStack(spacing: 8) {
-            ToolGroup {
-                ToolButton("arrow.uturn.backward", "Undo Last Change") { link.send(.undo) }
-                    .disabled(!toolbar.canUndo)
-                    .help(toolbar.canUndo ? "Go back to the version before this one" : "Nothing to undo yet")
-                Menu {
-                    Group {
-                        Button("Copy Wish File") { link.send(.copyWishFile) }
-                        Button("Share…") { link.send(.share) }
-                        Button("Export…") { link.send(.export) }
-                    }
-                    .disabled(!toolbar.canShare)
-                    Divider()
-                    Button(state.panel == .info ? "Hide Wish Info" : "Wish Info") {
-                        link.send(.panel(state.panel == .info ? nil : .info))
-                    }
-                } label: {
-                    ToolSymbol("ellipsis.circle", "More", on: state.panel == .info)
-                }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .background(AnchorView(anchor: shareAnchor))
-                .help(toolbar.usage.map { "Share this wish, or see its usage, cost and models. \($0)" }
-                      ?? "Share this wish, or see its usage, cost and models")
-                ToolButton("trash", "Delete Wish") { deleting = true }
-                    .help("Delete this wish")
+            CloseLight { Host.closeChat() }
+            if let state, let toolbar = state.toolbar, more {
+                Spacer(minLength: 0)
+                ToolGroup { rest(state, toolbar) }
+                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+            } else {
+                Text(state.map { "Customize \($0.app)" } ?? "")
+                    .font(.system(size: NSFont.systemFontSize, weight: .semibold))
+                    .lineLimit(1).truncationMode(.tail)
+                    .frame(maxWidth: .infinity)
+                    // The title is part of the room to drag the chat by.
+                    .allowsHitTesting(false)
             }
-            Spacer(minLength: 0)
-            ToolGroup {
-                // Pointing has its own button here, where the chat sits beside the app it points into; the + by the
-                // message box keeps only Add Files.
-                ToolButton("scope", "Point at Something in the App") { link.send(.point) }
-                    .help("Point at what you want to change")
-                ToolButton("wrench.and.screwdriver", "Agent Details", on: toolbar.details) { link.send(.details(!toolbar.details)) }
-                    .help("Agent details")
-                ToolButton("clock.arrow.circlepath", "Versions", on: state.panel == .versions) {
-                    link.send(.panel(state.panel == .versions ? nil : .versions))
+            if let state, let toolbar = state.toolbar {
+                ToolGroup {
+                    ToolButton("arrow.uturn.backward", "Undo Last Change") { link.send(.undo) }
+                        .disabled(!toolbar.canUndo)
+                        .help(toolbar.canUndo ? "Go back to the version before this one" : "Nothing to undo yet")
+                    ToolButton("clock.arrow.circlepath", "Versions", on: state.panel == .versions) {
+                        link.send(.panel(state.panel == .versions ? nil : .versions))
+                    }
+                    .disabled(!toolbar.hasVersions)
+                    .help(toolbar.hasVersions ? "See earlier versions of this wish, name them, and go back to one"
+                          : "No versions yet: each change Lamp makes is saved as one")
+                    ToolButton("ellipsis", more ? "Fewer Buttons" : "More Buttons", on: more) {
+                        withAnimation(.snappy(duration: 0.2)) { more.toggle() }
+                    }
+                    .help(more ? "Show the title again" : "Wish info, sharing, agent details and delete")
                 }
-                .disabled(!toolbar.hasVersions)
-                .help(toolbar.hasVersions ? "See earlier versions of this wish, name them, and go back to one"
-                      : "No versions yet: each change Lamp makes is saved as one")
             }
         }
+        .frame(height: 36)
         .padding(.horizontal, 12)
-        .padding(.bottom, 6)
-        .confirmationDialog("Delete “\(state.app)”?", isPresented: $deleting) {
+        .padding(.top, 8).padding(.bottom, 6)
+        // Pressing anywhere on the bar but a button and dragging moves the chat, as a title bar moves its window. The
+        // app moves it from here on, following the pointer until the button is let go.
+        .background {
+            Color.clear.contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .global)
+                    .onChanged { _ in
+                        if !moving { moving = true; Host.startMove() }
+                    }
+                    .onEnded { _ in moving = false })
+        }
+        .confirmationDialog("Delete “\(state?.app ?? "")”?", isPresented: $deleting) {
             Button("Move to Trash", role: .destructive) { link.send(.delete) }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -80,6 +81,32 @@ struct ChatToolbar: View {
             if let sharing = link.sharing { share(sharing) }
             link.sharing = nil
         }
+    }
+
+    /// What the button for the rest shows: Wish Info, sharing, Agent Details and Delete.
+    @ViewBuilder private func rest(_ state: SidebarState, _ toolbar: SidebarToolbar) -> some View {
+        ToolButton("info.circle", "Wish Info", on: state.panel == .info) {
+            link.send(.panel(state.panel == .info ? nil : .info))
+        }
+        .help(toolbar.usage.map { "Usage, cost and models. \($0)" } ?? "Usage, cost and models")
+        Menu {
+            Button("Copy Wish File") { link.send(.copyWishFile) }
+            Button("Share…") { link.send(.share) }
+            Button("Export…") { link.send(.export) }
+        } label: {
+            ToolSymbol("square.and.arrow.up", "Share")
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .background(AnchorView(anchor: shareAnchor))
+        .disabled(!toolbar.canShare)
+        .help("Share this wish")
+        ToolButton("wrench.and.screwdriver", "Agent Details", on: toolbar.details) { link.send(.details(!toolbar.details)) }
+            .help("Agent details")
+        ToolButton("trash", "Delete Wish") { deleting = true }
+            .help("Delete this wish")
     }
 
     /// The share menu, at the share button, for the file Lamp made (`SidebarState.sharing`). This process can't read
@@ -96,6 +123,34 @@ struct ChatToolbar: View {
         guard (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil,
               (try? sharing.file.data.write(to: url)) != nil, let view = shareAnchor.view, view.window != nil else { return }
         NSSharingServicePicker(items: [url]).show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
+    }
+}
+
+/// The chat's close button, drawn as a window's red one, since it closes the chat as that closes a window: a red dot
+/// that shows its mark when pointed at.
+private struct CloseLight: View {
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Circle()
+                .fill(Color(nsColor: .systemRed))
+                .overlay(Circle().strokeBorder(.black.opacity(0.12), lineWidth: 0.5))
+                .overlay {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 6.5, weight: .heavy))
+                        .foregroundStyle(.black.opacity(0.55))
+                        .opacity(hovered ? 1 : 0)
+                }
+                .frame(width: 12, height: 12)
+                .padding(6)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help("Close the chat")
+        .accessibilityLabel("Close Chat")
     }
 }
 
@@ -197,7 +252,7 @@ struct ToolsLine: View {
     var body: some View {
         let calls = line.calls ?? []
         if calls.count == 1 {
-            row(calls[0], running: line.running)
+            row(calls[0], running: line.running).padding(.leading, ChatLook.stepIndent)
         } else {
             VStack(alignment: .leading, spacing: 4) {
                 Button {
@@ -224,8 +279,9 @@ struct ToolsLine: View {
                     .padding(.leading, 10)
                 }
             }
-            .font(.callout)
+            .font(ChatLook.stepFont)
             .foregroundStyle(.secondary)
+            .padding(.leading, ChatLook.stepIndent)
         }
     }
 
@@ -238,12 +294,12 @@ struct ToolsLine: View {
             Text(call.verb)
             if !call.argument.isEmpty {
                 Text(call.argument)
-                    .font(.system(.callout, design: .monospaced))
+                    .font(.system(.subheadline, design: .monospaced))
                     .foregroundStyle(.tertiary)
                     .lineLimit(1).truncationMode(.middle)
             }
         }
-        .font(.callout)
+        .font(ChatLook.stepFont)
         .foregroundStyle(.secondary)
     }
 }

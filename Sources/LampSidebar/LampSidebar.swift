@@ -17,10 +17,12 @@ struct SidebarExtension: AppExtension {
             PrimitiveAppExtensionScene(id: "chat") {
                 SidebarView().environmentObject(Link.shared)
             } onConnection: { connection in
-                // The app only says where the sidebar is on screen.
+                // The app only says where the sidebar is on screen; the sidebar asks it to close or move its panel.
                 connection.exportedInterface = NSXPCInterface(with: SidebarPlacement.self)
                 connection.exportedObject = Placement()
+                connection.remoteObjectInterface = NSXPCInterface(with: SidebarHost.self)
                 connection.resume()
+                DispatchQueue.main.async { MainActor.assumeIsolated { Host.connection = connection } }
                 return true
             })
     }
@@ -36,6 +38,16 @@ private final class Placement: NSObject, SidebarPlacement {
     }
 }
 
+/// The app hosting the chat, for what only it can do with the chat's panel (`SidebarHost`).
+@MainActor
+enum Host {
+    static var connection: NSXPCConnection?
+    private static var app: SidebarHost? { connection?.remoteObjectProxy as? SidebarHost }
+
+    static func closeChat() { app?.closeChat() }
+    static func startMove() { app?.startMove() }
+}
+
 /// The line to Lamp: a connection on this Mac's own address, at the port Lamp wrote into this extension's
 /// Info.plist. Tried again until Lamp is there.
 @MainActor
@@ -43,7 +55,7 @@ final class Link: ObservableObject {
     static let shared = Link()
 
     @Published var state: SidebarState?
-    /// The wish's file after Share…, until the share menu has taken it (`ChatToolbar`).
+    /// The wish's file after Share…, until the share menu has taken it (`ChatBar`).
     @Published var sharing: SidebarSharing?
     @Published var connected = false
     /// Lamp hasn't answered for a while: it isn't open.
@@ -142,6 +154,7 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            ChatBar(state: link.connected ? link.state : nil)
             if let state = link.state, link.connected {
                 Chat(state: state)
             } else {
@@ -183,7 +196,6 @@ private struct Chat: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let toolbar = state.toolbar { ChatToolbar(state: state, toolbar: toolbar) }
             switch state.panel {
             case .versions: VersionsPanel(state: state)
             case .info: InfoPanel(state: state)
@@ -491,7 +503,8 @@ private struct ComposerRow: View {
 
     var body: some View {
         ChatLook.MessageBar(busy: state.busy, canSend: canSend, attachHelp: "Attach files. You can also paste images and files here.",
-                            attach: chooseFiles, send: submit, stop: { link.send(.stop) }, focus: { focus += 1 }) {
+                            attach: chooseFiles, point: { link.send(.point) }, send: submit, stop: { link.send(.stop) },
+                            focus: { focus += 1 }) {
             Composer(text: $text, height: $height, placeholder: ChatLook.placeholder(busy: state.busy, empty: state.empty),
                      // No suggestion while a request from the chat is in the box, as in Lamp's window.
                      suggestion: state.replacing == true ? nil : state.suggestion,
@@ -518,19 +531,13 @@ private struct ComposerRow: View {
                 }
                 .padding(.top, 2)
             }
-        } beside: {
+        } inside: {
             // Dictation runs in Lamp, which has the microphone, and writes into the box as Lamp's window does.
-            if state.canDictate == true {
+            // Once something's typed the person has chosen the keyboard; while it listens, it's how dictation stops.
+            if state.canDictate == true, state.listening == true || text.isEmpty {
                 let listening = state.listening ?? false
-                Button { link.send(.dictate(!listening)) } label: {
-                    Image(systemName: listening ? "mic.fill" : "mic")
-                        .foregroundStyle(listening ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-                        .symbolEffect(.pulse, isActive: listening)
-                }
-                .buttonStyle(ChatLook.Round(prominent: false))
-                .disabled(state.submitting == true)
-                .help(listening ? "Stop dictation" : "Dictate a change")
-                .accessibilityLabel(listening ? "Stop dictation" : "Dictate a change")
+                ChatLook.MicButton(listening: listening) { link.send(.dictate(!listening)) }
+                    .disabled(state.submitting == true)
             }
         }
         // Lined up with the chat above it, as in Lamp's window.

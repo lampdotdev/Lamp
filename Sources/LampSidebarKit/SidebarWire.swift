@@ -473,6 +473,18 @@ public final class SidebarOutbox {
     func place(x: Double, y: Double)
 }
 
+/// What the sidebar asks of the app hosting it, over the same connection: the two things about its own panel that only
+/// the app can do, since the panel is the app's window. The chat's bar is drawn here, with its close button and the
+/// room to drag the chat by, and the app closes or moves the panel when asked. Nothing about the wish goes this way.
+/// LampSupport.swift declares the same.
+@objc(LampSidebarHost) public protocol SidebarHost {
+    /// Close the chat, as the wand does when it's open.
+    func closeChat()
+    /// The person pressed on the bar and started dragging: the app moves the panel with the pointer until the button
+    /// is let go.
+    func startMove()
+}
+
 /// Something the person needs to know before a thing can work, as an alert: its title, what to do, and the
 /// button that opens the fix, when there is one.
 public struct SidebarProblem: Codable, Equatable {

@@ -190,9 +190,9 @@ public enum ChatLook {
     }
 
     /// The message box as a row of controls with nothing behind them, in Lamp's window and beside an app alike: a round attach button,
-    /// the rounded field with the text (and what's attached above it), any other round buttons beside it (such
-    /// as dictation), and a round button that sends, with one that stops the turn beside it while one runs.
-    public struct MessageBar<Field: View, Above: View, Beside: View>: View {
+    /// the rounded field with the text (what's attached above it, and small buttons such as dictation at its end, so
+    /// the text keeps the width), and a round button that sends, or stops the turn while one runs.
+    public struct MessageBar<Field: View, Above: View, Inside: View>: View {
         let busy: Bool
         let canSend: Bool
         let attachHelp: String
@@ -204,12 +204,12 @@ public enum ChatLook {
         let focus: () -> Void
         let field: Field
         let above: Above
-        let beside: Beside
+        let inside: Inside
 
         public init(busy: Bool, canSend: Bool, attachHelp: String, attach: @escaping () -> Void, point: (() -> Void)? = nil,
                     send: @escaping () -> Void, stop: @escaping () -> Void, focus: @escaping () -> Void,
                     @ViewBuilder field: () -> Field,
-                    @ViewBuilder above: () -> Above = { EmptyView() }, @ViewBuilder beside: () -> Beside = { EmptyView() }) {
+                    @ViewBuilder above: () -> Above = { EmptyView() }, @ViewBuilder inside: () -> Inside = { EmptyView() }) {
             self.busy = busy
             self.canSend = canSend
             self.attachHelp = attachHelp
@@ -220,24 +220,31 @@ public enum ChatLook {
             self.focus = focus
             self.field = field()
             self.above = above()
-            self.beside = beside()
+            self.inside = inside()
         }
 
-        /// A one-line field is as tall as the round buttons, so the three line up.
+        /// How tall a one-line field is. The round buttons are a little smaller, level with its middle.
         public static var height: CGFloat { Composer.lineHeight + 2 * padding }
         static var padding: CGFloat { 6 }
+        public static var buttonSide: CGFloat { 30 }
+        /// Under each round button, so it sits level with a one-line field and stays at the bottom of a taller one.
+        static var buttonLift: CGFloat { (height - buttonSide) / 2 }
 
         public var body: some View {
             HStack(alignment: .bottom, spacing: 8) {
                 Button(action: plus) { Image(systemName: "plus") }
                     .buttonStyle(Round(prominent: false))
-                    .help(point == nil ? attachHelp : "Add files, or point at part of the app")
+                    .help(point == nil ? attachHelp : "Point at part of the app, or attach a file")
                     .accessibilityLabel(point == nil ? "Attach files" : "Add")
-                VStack(alignment: .leading, spacing: 6) {
-                    above
-                    field
+                    .padding(.bottom, Self.buttonLift)
+                HStack(alignment: .bottom, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        above
+                        field
+                    }
+                    inside
                 }
-                .padding(.vertical, Self.padding).padding(.leading, 10).padding(.trailing, 12)
+                .padding(.vertical, Self.padding).padding(.leading, 10).padding(.trailing, 8)
                 .frame(minHeight: Self.height)
                 // Pressing anywhere in the field, not only on the text, is for typing: the field's padding hands
                 // focus to the text. Behind the text and what's attached, so clicks on those stay theirs.
@@ -246,20 +253,22 @@ public enum ChatLook {
                         .onTapGesture(perform: focus)
                 }
                 .overlay(Self.fieldShape.strokeBorder(Color(nsColor: .separatorColor)))
-                beside
-                // Stop stays for as long as the turn runs, beside Send rather than in its place: someone writing the
-                // next change can still stop this one, and what they've written stays in the box.
+                // While a turn runs the round button stops it; Return still sends what's typed, which waits its turn,
+                // so the row needs no second button for that.
                 if busy {
                     Button(action: stop) { Image(systemName: "stop.fill") }
-                        .buttonStyle(Round(prominent: false))
-                        .help("Stop")
+                        .buttonStyle(Round(prominent: true))
+                        .help("Stop. Press Return to queue what you've typed for after this change.")
                         .accessibilityLabel("Stop")
+                        .padding(.bottom, Self.buttonLift)
+                } else {
+                    Button(action: send) { Image(systemName: "arrow.up") }
+                        .buttonStyle(Round(prominent: true))
+                        .disabled(!canSend)
+                        .help("Send")
+                        .accessibilityLabel("Send")
+                        .padding(.bottom, Self.buttonLift)
                 }
-                Button(action: send) { Image(systemName: "arrow.up") }
-                    .buttonStyle(Round(prominent: true))
-                    .disabled(!canSend)
-                    .help(busy ? "Queue this change. It's sent when the current one is done." : "Send")
-                    .accessibilityLabel("Send")
             }
         }
 
@@ -267,13 +276,13 @@ public enum ChatLook {
         /// buttons have.
         private func plus() {
             guard let point else { return attach() }
-            PlusMenu.show([("Add Files…", attach), ("Point at Something in the App", point)])
+            PlusMenu.show([("Point at the Screen", "scope", point), ("Attach a File…", "paperclip", attach)])
         }
 
         static var fieldShape: RoundedRectangle { RoundedRectangle(cornerRadius: height / 2, style: .continuous) }
     }
 
-    /// A round button beside the message box: the accent colour for Send, plain for the rest.
+    /// A round button beside the message box: the accent colour for Send and Stop, plain for the rest.
     public struct Round: ButtonStyle {
         let prominent: Bool
         @Environment(\.isEnabled) private var isEnabled
@@ -281,9 +290,9 @@ public enum ChatLook {
         public init(prominent: Bool) { self.prominent = prominent }
 
         public func makeBody(configuration: Configuration) -> some View {
-            let size = MessageBar<EmptyView, EmptyView, EmptyView>.height
+            let size = MessageBar<EmptyView, EmptyView, EmptyView>.buttonSide
             configuration.label
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(prominent ? (isEnabled ? AnyShapeStyle(.white) : AnyShapeStyle(.tertiary))
                                            : AnyShapeStyle(.secondary))
                 .frame(width: size, height: size)
@@ -297,6 +306,30 @@ public enum ChatLook {
                 }
                 .contentShape(Circle())
                 .opacity(configuration.isPressed ? 0.7 : 1)
+        }
+    }
+
+    /// Dictation, as a small button at the end of the message box: red and pulsing while it listens.
+    public struct MicButton: View {
+        let listening: Bool
+        let action: () -> Void
+        public init(listening: Bool, action: @escaping () -> Void) {
+            self.listening = listening
+            self.action = action
+        }
+
+        public var body: some View {
+            Button(action: action) {
+                Image(systemName: listening ? "mic.fill" : "mic")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(listening ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                    .symbolEffect(.pulse, isActive: listening)
+                    .frame(width: 22, height: Composer.lineHeight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(listening ? "Stop dictation" : "Dictate a change")
+            .accessibilityLabel(listening ? "Stop dictation" : "Dictate a change")
         }
     }
 
@@ -358,11 +391,13 @@ enum PlusMenu {
         @objc func run(_ item: NSMenuItem) { actions[item.tag]() }
     }
 
-    static func show(_ items: [(String, () -> Void)]) {
-        let target = Target(items.map(\.1))
+    /// Each item's title, its symbol and what it does.
+    static func show(_ items: [(String, String, () -> Void)]) {
+        let target = Target(items.map(\.2))
         let menu = NSMenu()
-        for (index, title) in items.map(\.0).enumerated() {
-            let item = NSMenuItem(title: title, action: #selector(Target.run(_:)), keyEquivalent: "")
+        for (index, entry) in items.enumerated() {
+            let item = NSMenuItem(title: entry.0, action: #selector(Target.run(_:)), keyEquivalent: "")
+            item.image = NSImage(systemSymbolName: entry.1, accessibilityDescription: nil)
             item.target = target
             item.tag = index
             menu.addItem(item)

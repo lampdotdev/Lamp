@@ -559,17 +559,11 @@ struct ProjectView: View {
         } above: {
             if let pointed { pointedPill(pointed).padding(.top, 4) }
             if !attachments.isEmpty { pendingAttachments }
-        } beside: {
-            if hasMicrophone {
-                Button(action: toggleDictation) {
-                    Image(systemName: dictation.isListening ? "mic.fill" : "mic")
-                        .foregroundStyle(dictation.isListening ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-                        .symbolEffect(.pulse, isActive: dictation.isListening)
-                }
-                .buttonStyle(ChatLook.Round(prominent: false))
-                .disabled(submissionPending)
-                .help(dictation.isListening ? "Stop dictation" : "Dictate a change")
-                .accessibilityLabel(dictation.isListening ? "Stop dictation" : "Dictate a change")
+        } inside: {
+            // Once something's typed the person has chosen the keyboard; while it listens, it's how dictation stops.
+            if hasMicrophone, dictation.isListening || shownDraft.wrappedValue.isEmpty {
+                ChatLook.MicButton(listening: dictation.isListening, action: toggleDictation)
+                    .disabled(submissionPending)
             }
         }
         // Lined up with the chat above it (see `chat`).
