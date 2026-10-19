@@ -4376,10 +4376,16 @@ final class Store: ObservableObject {
             return false
         }
         // An enum that only gained cases goes in when nothing holds it where a new case would change what's there.
-        if let before, let layout = check.layout, case let grown = LiveReload.grownEnums(before: before, after: layout), !grown.isEmpty,
-           let why = await LiveReload.enumsHeld(project, grown: grown) {
-            log(project, .detail, "Reopening \(project.name) for this change: \(why).")
-            return false
+        // Then every file of the app's is compiled again, so no code of the open app's meets a case it never knew
+        // (a switch, or printing it), and the enum's own metadata is the change's, which knows the new cases.
+        if let before, let layout = check.layout, case let grown = LiveReload.grownEnums(before: before, after: layout), !grown.isEmpty {
+            if let why = await LiveReload.enumsHeld(project, grown: grown) {
+                log(project, .detail, "Reopening \(project.name) for this change: \(why).")
+                return false
+            }
+            changed = LiveReload.appFiles(project)
+            (library, problem) = await LiveReload.compile(project, changed: changed,
+                                                          keep: grown.map { LiveObject.mangledType($0, module: project.exe, kind: "O") })
         }
         guard let layout = check.layout, library != nil || changed.isEmpty else {
             print("Live reload of \(project.name) didn't compile:\n\(problem ?? "")")
