@@ -2,7 +2,7 @@
 name: Tidy Up
 offer: Make Tidy Up yours
 tweaks:
-  - doc.text: Group my invoices by client
+  - note.text: Write the rules as sticky notes
   - internaldrive: Show what's taking up space
-  - map: Name photos by their place
+  - photo.on.rectangle: Sort my photos into albums
 ---
