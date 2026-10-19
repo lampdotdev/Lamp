@@ -121,9 +121,12 @@ enum Agent {
     private static let planRules = """
 
     - When you build a new app, call `plan` once, before writing any code, with its 3 to 5 main parts in the \
-    user's own words (what they'll be able to do, never file or type names) and, for each part, the files \
-    you'll write for it. Lamp ticks a part off when its files are written, so the user watches the list \
-    fill in while they wait. Give every file to exactly one part. Don't use it for small changes.
+    order you'll build them, in the user's own words (what they'll be able to do, never file or type names) \
+    and, for each part, the files you'll write for it. Lamp ticks a part off when its files are written, so \
+    the user watches the list fill in while they wait. Write the files part by part in the list's order, so \
+    it fills in from the top and never looks as if a part was skipped: what later parts rely on (the app's \
+    saved data, a connection to a service) belongs to the first part that uses it. Give every file to exactly \
+    one part. Don't use it for small changes.
     - `delete_file` removes a file the app no longer needs, for example after moving its code elsewhere or \
     removing a screen. Never leave an emptied file behind instead.
     - Lamp saves a version of the app after every request. `name_version` names one so the user can find it \
@@ -1350,14 +1353,7 @@ enum Agent {
             let name = obj["toolName"] as? String ?? "tool"
             let args = obj["args"] as? [String: Any] ?? [:]
             var events: [AgentEvent] = [.tool(describe(name, args), call: callKey(name, args))]
-            if name == "plan", let parts = args["parts"] as? [[String: Any]] {
-                events.append(.plan(parts.enumerated().compactMap { index, part in
-                    (part["title"] as? String).map {
-                        PlanPart(id: index, title: $0, done: part["done"] as? Bool ?? false,
-                                 files: (part["files"] as? [String] ?? []).map { ($0 as NSString).lastPathComponent })
-                    }
-                }))
-            }
+            if name == "plan", args["parts"] != nil { events.append(.plan(PlanPart.parts(from: args))) }
             return events
         case "message_end":
             guard let message = obj["message"] as? [String: Any] else { return [] }
