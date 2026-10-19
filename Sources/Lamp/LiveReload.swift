@@ -760,8 +760,8 @@ enum LiveSlots {
     /// computed `static var` that makes the value once (`LampConstants`) and keeps it. The open app made the old
     /// value once and keeps it in storage the new code no longer reads. Its name in `LampConstants` carries its
     /// text and the texts of the rewritten constants it's made from, so a change to any of them makes it again. Not
-    /// for one that holds an object of the app's own classes, however wrapped (`[Model]`, `Session<Int>`, a struct
-    /// holding one): new objects there would split the app's state in two, so that reopens.
+    /// for one that can hold an object, however wrapped (`[Model]`, `Session<Int>`, a struct holding one, a
+    /// `LampAPI`): new objects there would split the app's state in two, so that reopens (`holdsObject`).
     private static func rewriteConstant(_ key: String, in text: SwiftSource.Text, declarations: SwiftSource.Declarations,
                                         rewritten: Set<String>, layout: [String: [String]]) -> (Range<Int>, String)? {
         guard let variable = declarations.constants[key] else { return nil }
@@ -814,21 +814,42 @@ enum LiveSlots {
         return (owner.isEmpty ? "" : owner + ".") + constantName(key)
     }
 
-    /// Whether a value of this type can hold an object of the app's own classes: one of them named in it, or a type
-    /// of the app's named in it that holds one, as far down as it goes.
+    /// Whether a value of this type can hold an object: one of the app's own classes named in it, a type of the app's
+    /// named in it that holds one, as far down as it goes, or any type that isn't a plain value Swift or SwiftUI has
+    /// (an object of Lamp's building blocks, `LampAPI`, or of the system's). Made again, such an object would be a
+    /// second one beside the one the open app already holds, and what's done to one wouldn't reach the other.
     private static func holdsObject(_ type: String, classes: Set<String>, layout: [String: [String]], seen: inout Set<String>) -> Bool {
         let names = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
         for match in names.matches(in: type, range: NSRange(type.startIndex..., in: type)) {
-            let name = String(type[Range(match.range, in: type)!])
-            if classes.contains(name) || classes.contains(String(name.split(separator: ".").last ?? "")) { return true }
-            guard let members = layout[name], seen.insert(name).inserted else { continue }
-            for member in members {
-                guard let colon = member.range(of: ": ") else { continue }
-                if holdsObject(String(member[colon.upperBound...]), classes: classes, layout: layout, seen: &seen) { return true }
+            var name = String(type[Range(match.range, in: type)!])
+            // A metatype is a value, whatever it names.
+            for suffix in [".Type", ".Protocol"] where name.hasSuffix(suffix) { name.removeLast(suffix.count) }
+            let last = String(name.split(separator: ".").last ?? "")
+            if classes.contains(name) || classes.contains(last) { return true }
+            if let members = layout[name] ?? layout[last] {
+                guard seen.insert(name).inserted else { continue }
+                for member in members {
+                    guard let colon = member.range(of: ": ") else { continue }
+                    if holdsObject(String(member[colon.upperBound...]), classes: classes, layout: layout, seen: &seen) { return true }
+                }
+                continue
             }
+            if !plainValues.contains(last) && !seen.contains(name) { return true }
         }
         return false
     }
+
+    /// Value types a constant is made of that hold no object of their own.
+    private static let plainValues: Set<String> = [
+        "Swift", "Int", "Int8", "Int16", "Int32", "Int64", "UInt", "UInt8", "UInt16", "UInt32", "UInt64", "Double", "Float",
+        "Float16", "CGFloat", "Bool", "String", "Substring", "Character", "StaticString", "Array", "Dictionary", "Set",
+        "Optional", "Range", "ClosedRange", "Void", "Never", "TimeInterval", "Date", "URL", "UUID", "Decimal", "Data",
+        "Duration", "SIMD2", "SIMD3", "SIMD4", "SIMD8", "SIMD16", "simd_float2", "simd_float3", "simd_float4",
+        "simd_float4x4", "simd_quatf", "CGPoint", "CGSize", "CGRect", "CGVector", "CGAffineTransform", "Color", "Font",
+        "Angle", "UnitPoint", "EdgeInsets", "Edge", "Alignment", "HorizontalAlignment", "VerticalAlignment", "Animation",
+        "Gradient", "LinearGradient", "RadialGradient", "AngularGradient", "Image", "Text", "LocalizedStringKey",
+        "KeyboardShortcut", "KeyEquivalent", "EventModifiers", "ContentMode",
+    ]
 
     /// The text of a property's starting value, when it has one.
     private static func initialText(of variable: SwiftSource.Variable, in declarations: SwiftSource.Declarations) -> String? {
