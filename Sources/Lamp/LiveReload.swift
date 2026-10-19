@@ -607,7 +607,8 @@ enum LiveReload {
         // A member returning `some …`: what it builds from (the calls and types in its body) is its type.
         let opaqueMember = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|var_decl)\b(?! implicit)[^"]*"([^"]+)" interface_type="([^"]*some [^"]*)" access=(\w+)"#)
         let attribute = try! NSRegularExpression(pattern: #" (?:decl|type)="([^"]*)""#)
-        let place = try! NSRegularExpression(pattern: #"@[^\s"\]]*:\d+:\d+"#)
+        // The place is a path (which may hold spaces, as the apps folder does), a line and a column.
+        let place = try! NSRegularExpression(pattern: #"@[^"]*?\.swift:\d+:\d+"#)
         // A literal's value, or an argument left to its default, changes no type: left out of the digest.
         let valueOnly = try! NSRegularExpression(pattern: #"^\s*\((?:\w+_literal_expr|default_argument_expr)\b"#)
         let extensionDecl = try! NSRegularExpression(pattern: #"^(\s*)\(extension_decl\b[^"]*"([^"]+)""#)

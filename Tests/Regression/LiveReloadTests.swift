@@ -110,7 +110,8 @@ final class LiveReloadTests: XCTestCase {
     /// their names, and a protocol's requirements are part of the layout a change is held to.
     @MainActor func testAChangeIsCompiledAgainstTheAppsTypes() async throws {
         let fm = FileManager.default
-        let root = fm.homeDirectoryForCurrentUser.appendingPathComponent(".lamp-live-test-\(UUID().uuidString)")
+        // Under a folder with a space in its name, as the apps folder has: a declaration's place carries its path.
+        let root = fm.homeDirectoryForCurrentUser.appendingPathComponent(".lamp live test-\(UUID().uuidString)")
         self.root = root
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         let project = try Template.scaffold(name: "Lively", platform: .mac, in: root)
