@@ -228,7 +228,7 @@ private struct Chat: View {
     /// Off until the chat has opened at its end, so the top of the chat seen while laying out asks for nothing.
     @State private var settled = false
     /// The end of the chat is in view, or the person hasn't scrolled away from it: while it is, the chat stays
-    /// at its end as it and its panel change size.
+    /// at its end as it and its panel change size, and follows what's added to it.
     @State private var atEnd = true
 
     var body: some View {
@@ -303,15 +303,16 @@ private struct Chat: View {
                 .onChange(of: state.lines.first?.id) { old, _ in
                     if let old, old == askedEarlierAt { scroller.scrollTo(old, anchor: .top) }
                 }
-                .onChange(of: state.lines.last?.id) { follow(scroller) }
+                // What the person sends is followed wherever they were; anything else only while they're at the end.
+                .onChange(of: state.lines.last?.id) { follow(scroller, always: state.lines.last?.kind == .user) }
                 .onChange(of: state.lines.last?.text) { follow(scroller) }
                 .onChange(of: state.working) { follow(scroller) }
-                .onChange(of: state.queued?.count) { follow(scroller) }
+                .onChange(of: state.queued?.count) { old, new in follow(scroller, always: (new ?? 0) > (old ?? 0)) }
                 .onChange(of: state.undoChange) { follow(scroller) }
                 // Once the lines are laid out: scrolled before then, the chat opens partway up.
                 .onAppear {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        follow(scroller, animated: false)
+                        follow(scroller, animated: false, always: true)
                         DispatchQueue.main.async { settled = true }
                     }
                 }
@@ -345,7 +346,9 @@ private struct Chat: View {
         }
     }
 
-    private func follow(_ scroller: ScrollViewProxy, animated: Bool = true) {
+    /// To the end of the chat, unless the person has scrolled up to read and `always` isn't asked for.
+    private func follow(_ scroller: ScrollViewProxy, animated: Bool = true, always: Bool = false) {
+        guard always || atEnd else { return }
         withAnimation(animated ? .easeOut(duration: 0.2) : nil) { scroller.scrollTo("end", anchor: .bottom) }
     }
 }
