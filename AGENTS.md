@@ -754,9 +754,8 @@ that changed shape, or a method of a generic class that can be overridden (its t
 for each type it's used at, where nothing finds them). The
 build then waits to be installed until the app closes (`LiveReload.awaitInstall`, which unlike a held build doesn't
 keep the agent off the app). Anything else is installed the usual way, by reopening the app, with why in the chat's
-details (`LiveReload.Verdict`), so the rules can be tuned by what happens. The person sees only that it happened: one
-quiet status line in both chats (`ChatLook.reloaded`), once a turn, when a request's change closed the open app and
-opened it again, never for Open App or Undo. A live build reads the app's own files
+details (`LiveReload.Verdict`), so the rules can be tuned by what happens. The chat says nothing about which it was:
+the change is in the app either way. A live build reads the app's own files
 from its Assets folder rather than its bundle (`LampAssets`), so a new picture goes in live too; the package, the
 app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which tells the
 agent what goes in without reopening.

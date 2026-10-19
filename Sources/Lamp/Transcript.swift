@@ -240,7 +240,7 @@ enum ChatItem: Identifiable {
         // A run that asked has its card for an answer: what it said before the card goes with the steps.
         let answer = run.contains { $0.kind == .ask } ? nil : run.last { $0.kind == .agent }?.id
         let isStep = { (line: LogLine) in
-            (line.kind == .status && line.text != ChatLook.reloaded && line.text != ChatLook.fixingCrash)
+            (line.kind == .status && line.text != ChatLook.fixingCrash)
                 || line.kind == .tool || line.kind == .progress || (line.kind == .agent && line.id != answer)
         }
         let steps = items(run.filter(isStep)).flatMap { item -> [LogLine] in

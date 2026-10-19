@@ -129,7 +129,7 @@ private struct Answered: View {
         VStack(alignment: .leading, spacing: 4) {
             if let folded = ask.folded {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Image(systemName: "checkmark.circle").foregroundStyle(.secondary).frame(width: 16)
+                    Image(systemName: "checkmark.circle").frame(width: 16)
                     Text(folded).fixedSize(horizontal: false, vertical: true)
                     if let waiting {
                         Button(action: waiting.takeBack) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
@@ -148,11 +148,13 @@ private struct Answered: View {
                         Image(systemName: "questionmark.circle").frame(width: 16)
                         Text(question.question).fixedSize(horizontal: false, vertical: true)
                     }
-                    .foregroundStyle(.secondary)
                 }
             }
         }
-        .font(.callout)
+        // Set in, sized and coloured as the turn's steps are, since it now reads as one.
+        .font(ChatLook.stepFont)
+        .foregroundStyle(.secondary)
+        .padding(.leading, ChatLook.stepIndent)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
     }
