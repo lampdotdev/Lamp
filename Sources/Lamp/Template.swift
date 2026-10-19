@@ -3900,8 +3900,10 @@ enum Template {
         private var orders: [String: [String]] = [:]
         /// What `classMade` reads on whatever thread makes a class, so kept under a lock rather than on the main
         /// actor: the classes Swift has made as the app ran, from its launch on; the newest code for every version
-        /// of each changed function; and the descriptions of the app's and the changes' classes.
-        nonisolated private static let lock = NSLock()
+        /// of each changed function; and the descriptions of the app's and the changes' classes. The lock can be
+        /// taken again by the thread holding it: a generic call made under it may ask the runtime for a witness
+        /// table or a class, which comes back through a hook.
+        nonisolated private static let lock = NSRecursiveLock()
         nonisolated(unsafe) private static var made: [UnsafeRawPointer] = []
         nonisolated(unsafe) private static var newest: [UnsafeRawPointer: UnsafeRawPointer] = [:]
         nonisolated(unsafe) private static var descriptions = Set<UnsafeRawPointer>()
@@ -3973,7 +3975,7 @@ enum Template {
             }
             for (name, mine) in defined where name.hasSuffix("CN") {
                 guard let theirs = kept[name], theirs != mine else { continue }
-                let class_ = String(name.dropLast(2))
+                let class_ = String(name.dropLast(1))
                 guard let old = table(theirs), let new = table(mine) else { continue }
                 guard old.count == new.count else { return "the methods of \(readable(class_)) changed" }
                 for (a, b) in zip(old, new) {
@@ -4038,10 +4040,11 @@ enum Template {
             // taken away or moved would put a call in another method's place. Such a change reopens the app.
             if let why = Self.reshapedMethods(defined + copies, against: kept) { return refuse(why) }
             // Each changed function's code before this change, for the class method tables that still hold it.
-            var moved: [UnsafeRawPointer: UnsafeRawPointer] = [:]
+            var moved: [UnsafeRawPointer: UnsafeRawPointer] = [:], code: [(String, UnsafeRawPointer)] = []
             for (name, address) in defined where Self.isCode(name) && !Self.accesses(name, oneOf: Self.stored(in: defined)) {
                 if let before = latest[name] ?? original[name] { moved[before] = address }
                 latest[name] = address
+                code.append((name, address))
             }
             // A class whose metadata is made as the app runs (a generic one at each type it's used at, a class under
             // a generic superclass) gets its table from the description that first brought the class, in the order
@@ -4052,6 +4055,9 @@ enum Template {
                 guard let before = orders[class_], before != methods else { continue }
                 return refuse("the methods of \(Self.readable(String(class_.dropLast(2)))) changed")
             }
+            // Started without Lamp's entry (an App declared in a shape the copy step didn't know), nothing records
+            // the classes made as the app runs, so a change to the methods of one reopens the app as before.
+            if !Self.watching, let why = Self.unwatchedClassMethod(changed: Set(defined.map(\.0)), copies: copies) { return refuse(why) }
             // Stored globals and statics, and classes, stay where they were first made: the new code's own copies
             // would be a second set, made afresh. So its calls to them go to the app's, or to the earlier change's
             // that first added one, and only one that's new keeps its own.
@@ -4066,11 +4072,14 @@ enum Template {
             var rebound = Self.rebind(image: 0, to: latest)
             for index in images.compactMap(Self.imageIndex) { rebound += Self.rebind(image: index, to: bindings) }
             orders.merge(listed) { first, _ in first }
-            let changed = Set(moved.values)
             Self.lock.lock()
-            for (name, address) in defined where changed.contains(address) {
-                versions[name, default: [original[name]].compactMap { $0 }].append(address)
-                for earlier in versions[name] ?? [] where earlier != address { Self.newest[earlier] = address }
+            // Every version of each function, the app's included, so a table made from any description that ever
+            // held one is pointed at the newest: a function born in a change has its first version too.
+            for (name, address) in code {
+                var history = versions[name] ?? [original[name]].compactMap { $0 }
+                if !history.contains(address) { history.append(address) }
+                versions[name] = history
+                for earlier in history where earlier != address { Self.newest[earlier] = address }
             }
             Self.descriptions = Self.allDescriptions
             let classes = Self.classes(kept.filter { $0.key.hasSuffix("CN") }.map(\.value))
@@ -4244,10 +4253,11 @@ enum Template {
         /// entry the live copy adds before the App's own) and in each change as it loads, at `classMade`, which
         /// lets it fill the table and then points the table at the newest code. The pointer the runtime's function
         /// is called through is the one `rebind` reaches, as any function's; once pointed over it stays so.
+        nonisolated(unsafe) private static var watching = false
         nonisolated static func watch(image: UInt32 = 0) {
             guard initClassMetadata != nil else { return }
             lock.lock()
-            if image == 0 { descriptions = allDescriptions }
+            if image == 0 { (descriptions, watching) = (allDescriptions, true) }
             lock.unlock()
             _ = rebind(image: image, to: ["_swift_initClassMetadata2": unsafeBitCast(classMade, to: UnsafeRawPointer.self)])
         }
@@ -4267,6 +4277,21 @@ enum Template {
                 _ = redirectMethods(of: [metadata], newest)
             }
             return result
+        }
+
+        /// Why the change can't go in while nothing watches the classes made as the app runs, if it can't: one of
+        /// the overridable methods (those with a method descriptor, `Tq`) of a class whose table is made then (a
+        /// generic class, or one the app has no complete metadata for) is among the changed functions.
+        private static func unwatchedClassMethod(changed: Set<String>, copies: [(String, UnsafeRawPointer)]) -> String? {
+            let complete = Set(copies.map(\.0).filter { $0.hasSuffix("CN") })
+            for (name, descriptor) in copies where name.hasSuffix("CMn") {
+                let class_ = String(name.dropLast(2))
+                guard descriptor.load(as: UInt32.self) & 0x80 != 0 || !complete.contains(class_ + "N") else { continue }
+                if changed.contains(where: { $0.hasPrefix(class_) && isCode($0) && changed.contains($0 + "Tq") }) {
+                    return "a method of \(readable(class_)) changed, and the app wasn't started through Lamp's entry"
+                }
+            }
+            return nil
         }
 
         /// The method descriptors (`Tq`) of each class in an image, in their order, by the class's descriptor they
@@ -15060,7 +15085,7 @@ enum Template {
         mkdir -p "${out:h}"
         perl -0pe 's/var body: some View \\{/var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\\n    \\@ViewBuilder var __lampBody: some View {/g' "$f" > "$out.new"
         # The app starts through Lamp's entry, which watches the classes Swift makes (LampLive.watch) before the App's own.
-        perl -0pi -e 's/\\@main(\\s+(?:\\@\\w+\\s+)*(?:final\\s+)?(?:struct|class|enum|actor)\\s+(\\w+))/$1/ and $_ .= "\\n\\@main enum __LampEntry { \\@MainActor static func main() { LampLive.watch(); $2.main() } }\\n"' "$out.new"
+        perl -0pi -e 's/\\@main((?:\\s+(?:\\@\\w+(?:\\([^)]*\\))?|public|internal|fileprivate|private|open|final))*\\s+(?:struct|class|enum|actor)\\s+(\\w+))/$1/ and $_ .= "\\n\\@main enum __LampEntry { \\@MainActor static func main() { LampLive.watch(); $2.main() } }\\n"' "$out.new"
         # Spare places for properties added while the app is open (LiveSlots), unless they kept the app from building.
         case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) [[ -e "$LIVE/no-spares" ]] || perl "$LIVE/spares.pl" \(LiveSlots.count) "$out.new" ;; esac
         if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi
