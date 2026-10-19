@@ -3833,14 +3833,81 @@ enum Template {
         /// a library's calls to functions it doesn't hold were bound to the app's first copies.
         private var latest: [String: UnsafeRawPointer] = [:]
         private var images: [String] = []
-        /// The accessors of each stored global and static, by name, from the image that first had it.
+        /// The accessors of each stored global and static, and each class's metadata, by name, from the image that
+        /// first had it.
         private var kept: [String: UnsafeRawPointer] = [:]
+        /// What the app itself defines, by name.
+        private var original: [String: UnsafeRawPointer] = [:]
 
         private func keep(_ symbols: [(String, UnsafeRawPointer)]) {
             let stored = Self.stored(in: symbols)
-            for (name, address) in symbols where kept[name] == nil && (name.hasSuffix("vau") || Self.accesses(name, oneOf: stored)) {
+            for (name, address) in symbols where kept[name] == nil
+                && (name.hasSuffix("vau") || Self.accesses(name, oneOf: stored) || Self.isClass(name)) {
                 kept[name] = address
             }
+        }
+
+        /// A call to a class's method that can be overridden goes through the method table in the class's
+        /// metadata, which holds each method's code itself, not a pointer `rebind` reaches. The classes are kept
+        /// (`isClass`), so their tables are pointed at the changed methods here, for the objects the app made and
+        /// those the new code makes alike. A table runs from the metadata's description to its end, which the
+        /// metadata gives (its size, and where its address point is in it).
+        private static func redirectMethods(of classes: [UnsafeRawPointer], _ moved: [UnsafeRawPointer: UnsafeRawPointer]) -> Int {
+            guard !moved.isEmpty else { return 0 }
+            let page = Int(vm_page_size)
+            var count = 0
+            for metadata in classes {
+                let size = Int(metadata.load(fromByteOffset: 56, as: UInt32.self))
+                let point = Int(metadata.load(fromByteOffset: 60, as: UInt32.self))
+                guard size < 1 << 20, point <= size, size - point > 72 else { continue }
+                let words = UnsafeMutablePointer<UnsafeRawPointer?>(mutating: metadata.assumingMemoryBound(to: UnsafeRawPointer?.self))
+                for index in 9..<((size - point) / 8) {
+                    guard let code = words[index], let new = moved[code] else { continue }
+                    let start = UInt(bitPattern: words.advanced(by: index)) & ~UInt(page - 1)
+                    mprotect(UnsafeMutableRawPointer(bitPattern: start), page, PROT_READ | PROT_WRITE)
+                    words[index] = new
+                    count += 1
+                }
+            }
+            return count
+        }
+
+        /// Why a class the change has (`defined`) can't take its changed methods into the table of the copy that's
+        /// kept, if it can't: the two tables differ in size, or a slot holds a different method in each.
+        private static func reshapedMethods(_ defined: [(String, UnsafeRawPointer)], against kept: [String: UnsafeRawPointer]) -> String? {
+            var names: [UnsafeRawPointer: String] = [:]
+            // The app's and the libraries' names, since an earlier change's method may be in a table now.
+            for image in 0..<_dyld_image_count() where image == 0 || String(cString: _dyld_get_image_name(image)).contains("/.lamp/live/") {
+                guard let header = _dyld_get_image_header(image) else { continue }
+                for (name, address) in definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image)) where isCode(name) { names[address] = name }
+            }
+            func table(_ metadata: UnsafeRawPointer) -> [UnsafeRawPointer?]? {
+                let size = Int(metadata.load(fromByteOffset: 56, as: UInt32.self))
+                let point = Int(metadata.load(fromByteOffset: 60, as: UInt32.self))
+                guard size < 1 << 20, point <= size, size - point > 72 else { return nil }
+                let words = metadata.assumingMemoryBound(to: UnsafeRawPointer?.self)
+                return (9..<((size - point) / 8)).map { words[$0] }
+            }
+            for (name, mine) in defined where name.hasSuffix("CN") {
+                guard let theirs = kept[name], theirs != mine else { continue }
+                let class_ = String(name.dropLast(2))
+                guard let old = table(theirs), let new = table(mine) else { continue }
+                guard old.count == new.count else { return "the methods of \(class_) changed" }
+                for (a, b) in zip(old, new) {
+                    guard let a, let b, let before = names[a], let after = names[b] else { continue }
+                    if before != after { return "the methods of \(class_) changed" }
+                }
+            }
+            return nil
+        }
+
+        /// A class's metadata and what finds it. The library has its own copy of each class in the files it was
+        /// compiled from, and code asking for the class there would get that one: an object the app made is then
+        /// not of its type, and what's looked up by type (an environment object, a cast) isn't found. So the new
+        /// code is pointed at the app's, whose layout the change kept (a new stored property has its own slot).
+        /// A struct's or an enum's stays the library's: an enum may have gained cases.
+        private static func isClass(_ name: String) -> Bool {
+            name.hasPrefix("_$s") && ["CMa", "CN", "CMn", "CMm", "CMf", "CMo"].contains { name.hasSuffix($0) }
         }
 
         private func load(_ path: String?, signature: String?) {
@@ -3864,15 +3931,26 @@ enum Template {
                   let header = _dyld_get_image_header(image) else { return }
             Self.takeFieldOffsets(header, slide: _dyld_get_image_vmaddr_slide(image))
             let defined = Self.definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image))
+            if original.isEmpty, let app = _dyld_get_image_header(0) {
+                let symbols = Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0))
+                original = Dictionary(symbols, uniquingKeysWith: { first, _ in first })
+                keep(symbols)
+            }
+            // A kept class's method table is the app's, so the new code's has to have the same shape: a method added,
+            // taken away or moved would put a call in another method's place. Such a change reopens the app.
+            if let why = Self.reshapedMethods(defined, against: kept) {
+                result = "failed: \(why)"
+                return
+            }
+            // Each changed function's code before this change, for the class method tables that still hold it.
+            var moved: [UnsafeRawPointer: UnsafeRawPointer] = [:]
             for (name, address) in defined where Self.isCode(name) && !Self.accesses(name, oneOf: Self.stored(in: defined)) {
+                if let before = latest[name] ?? original[name] { moved[before] = address }
                 latest[name] = address
             }
-            // Stored globals and statics stay where they were first made: the new code's own accessors for them
-            // would reach a second copy, made afresh. So its calls to them go to the app's, or to the earlier
-            // change's that first added one, and only one that's new keeps its own.
-            if kept.isEmpty, let app = _dyld_get_image_header(0) {
-                keep(Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0)))
-            }
+            // Stored globals and statics, and classes, stay where they were first made: the new code's own copies
+            // would be a second set, made afresh. So its calls to them go to the app's, or to the earlier change's
+            // that first added one, and only one that's new keeps its own.
             keep(defined)
             let bindings = latest.merging(kept) { new, _ in new }
             images.append(path)
@@ -3881,6 +3959,7 @@ enum Template {
                 guard let index = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == earlier }) else { continue }
                 rebound += Self.rebind(image: index, to: bindings)
             }
+            rebound += Self.redirectMethods(of: kept.filter { $0.key.hasSuffix("CN") }.map(\.value), moved)
             generation += 1
             result = "ok \(rebound)"
         }
@@ -3890,6 +3969,9 @@ enum Template {
         /// and state.
         private static func isCode(_ name: String) -> Bool {
             guard name.hasPrefix("_$s") else { return false }
+            // An async function is called through a small record of its own (its code and how much room it needs),
+            // which is what calls and method tables hold.
+            if name.hasSuffix("Tu") { return isCode(String(name.dropLast(2))) }
             // A type's own (static) functions and properties are named as an instance's, with a Z after.
             let name = name.hasSuffix("Z") ? String(name.dropLast()) : name
             for kept in ["Mn", "Mf", "MV", "Ma", "Mm", "MF", "Mc", "Ml", "MXX", "Ms", "Wp", "WP", "Wl", "WL", "lau", "vau", "Wz", "Qo", "QO", "So", "WV", "Wvd", "MQ"]
