@@ -416,6 +416,9 @@ final class Store: ObservableObject {
         /// The Mac app built but the last install couldn't put it in place or open it: logged, not a crash, so
         /// the turn still counts as a change. Kept so a new app's first run isn't counted when it never opened.
         var didNotOpen = false
+        /// The app was opened and died straight away: a crash, as opposed to an open that never happened (a
+        /// simulator missing, a Stop while it waited), which `install` reports in words too.
+        var diedOnLaunch = false
         /// The person kept the app open when this turn's build asked it to quit: it isn't asked a second time
         /// in the turn, and the agent isn't shown the copy on screen as its work.
         var keptOpen = false
@@ -4500,6 +4503,7 @@ final class Store: ObservableObject {
         do {
             let app = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
             if await Runtime.diedOnLaunch(app) {
+                owner?.diedOnLaunch = true
                 log(project, .status, "\(project.name) quit right after opening. Looking at why…")
                 crash = await Runtime.launchReport(project)
                 log(project, .detail, crash!)
@@ -4587,6 +4591,7 @@ final class Store: ObservableObject {
             try? await Task.sleep(for: .seconds(3))
             if !Simulator.isRunning(pid: pid) {
                 simulatorApps[project.id] = nil
+                owner.diedOnLaunch = true
                 log(project, .status, "\(project.name) quit right after opening. Looking at why…")
                 var crash = "The app quit right after launching."
                 if Privacy.sharesLog, let tail = Runtime.logTail(project) { crash += "\n\nLast lines it printed:\n" + tail }
@@ -4850,8 +4855,11 @@ final class Store: ObservableObject {
     /// For Open App, Undo, a restore and a rebuild, where no agent is running to fix a crash. Each of them holds the
     /// app while it installs, so the fix waits for it to let go (`fixHeldCrash`, from `finish`).
     private func installReportingCrash(_ project: LampProject) async {
-        guard let crash = await install(project) else { return }
-        crashesAfterRelease[project.id] = crash
+        let owner = turns[project.id]
+        guard let crash = await install(project), owner?.stopped != true else { return }
+        // Only an app that opened and died is worth a fix; one that never opened says why in the chat already.
+        if owner?.diedOnLaunch == true { crashesAfterRelease[project.id] = crash }
+        else { log(project, .error, ErrorMessages.crashAfterLaunch(project.name)) }
     }
 
     /// Crashes on opening seen while something held the app, to be fixed once it's free.
