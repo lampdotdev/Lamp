@@ -3929,9 +3929,7 @@ enum Template {
         }
 
         private func keep(_ symbols: [(String, UnsafeRawPointer)]) {
-            let stored = Self.stored(in: symbols)
-            for (name, address) in symbols where kept[name] == nil
-                && (name.hasSuffix("vau") || Self.accesses(name, oneOf: stored) || Self.isClass(name)) {
+            for (name, address) in symbols where kept[name] == nil && (name.hasSuffix("vau") || Self.isClass(name)) {
                 kept[name] = address
             }
         }
@@ -4050,8 +4048,7 @@ enum Template {
             // A protocol witness (the thunk a witness table holds, which calls whichever method answers the
             // requirement, or for an async one the record of the thunk) is private to its file, so it's among
             // every symbol, not the exported ones.
-            for (name, address) in defined + everything.filter({ $0.0.hasSuffix("TW") || $0.0.hasSuffix("TWTu") })
-            where Self.isCode(name) && !Self.accesses(name, oneOf: Self.stored(in: defined)) {
+            for (name, address) in defined + everything.filter({ $0.0.hasSuffix("TW") || $0.0.hasSuffix("TWTu") }) where Self.isCode(name) {
                 if let before = latest[name] ?? original[name] { moved[before] = address }
                 latest[name] = address
                 code.append((name, address))
@@ -4068,9 +4065,13 @@ enum Template {
             // Started without Lamp's entry (an App declared in a shape the copy step didn't know), nothing records
             // the classes made as the app runs, so a change to the methods of one reopens the app as before.
             if !Self.watching, let why = Self.unwatchedClassMethod(changed: Set(defined.map(\.0)), copies: copies) { return refuse(why) }
+            // A class the change has may no longer answer to something from Objective-C that the kept class does (an
+            // override taken out, a selector's target); the kept class would go on answering with old code.
+            if let why = Self.removedMethods(copies: copies, kept: kept, original: original) { return refuse(why) }
             // Stored globals and statics, and classes, stay where they were first made: the new code's own copies
             // would be a second set, made afresh. So its calls to them go to the app's, or to the earlier change's
-            // that first added one, and only one that's new keeps its own.
+            // that first added one, and only one that's new keeps its own. Their accessors are code like any other:
+            // they reach the storage through the kept addressor, so a `didSet` added to one goes in.
             keep(defined)
             // What the library's data names is worked out, and found possible, before anything is pointed at the
             // new code: a change refused leaves the app as it was.
@@ -4102,6 +4103,9 @@ enum Template {
             // from them for a generic type (`tablesMade`).
             Self.lock.lock()
             Self.conformances = Self.allConformances
+            Self.lock.unlock()
+            Self.recordTables(of: all.filter { $0.name.hasSuffix("Mc") && kept[$0.name] == $0.address }.map(\.address))
+            Self.lock.lock()
             let tables = Self.tablesMade
             Self.lock.unlock()
             rebound += Self.redirectWitnesses(of: kept.filter { $0.key.hasSuffix("WP") }.map(\.value) + tables, Self.newest)
@@ -4287,6 +4291,43 @@ enum Template {
             lock.unlock()
             _ = rebind(image: image, to: ["_swift_initClassMetadata2": unsafeBitCast(classMade, to: UnsafeRawPointer.self),
                                           "_swift_getWitnessTable": unsafeBitCast(tableMade, to: UnsafeRawPointer.self)])
+            if image == 0, let header = _dyld_get_image_header(0) {
+                recordTables(of: definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(0), local: true).filter { $0.0.hasSuffix("Mc") }.map(\.1))
+            }
+        }
+
+        /// A witness table the runtime makes for a conformance that has none of its own in the image (one to a
+        /// protocol of the system's that may change between releases: Comparable, Hashable, Codable) is made the
+        /// first time something asks, which may be a cast (`as? any Comparable`) rather than a request through the
+        /// hook. So at launch, and for the conformances a change brings, the table of each such conformance of a
+        /// type that isn't generic is asked for here and recorded as `tableMade` records the rest; a generic type's
+        /// are made at each type it's used at, which only a request names.
+        nonisolated private static func recordTables(of conformances: [UnsafeRawPointer]) {
+            guard let get = getWitnessTable else { return }
+            typealias Call = @convention(thin) (UnsafeRawPointer, UnsafeRawPointer?, UnsafeRawPointer?) -> UnsafeRawPointer?
+            for conformance in conformances {
+                // The protocol first: one the app only has on a later system (a conformance under `@available`) is a
+                // slot the loader left empty, and asking for a table through it would crash before any check of
+                // the system's version could run.
+                let toProtocol = conformance.loadUnaligned(as: Int32.self)
+                if toProtocol & 1 != 0 {
+                    guard conformance.advanced(by: Int(toProtocol & ~1)).load(as: UnsafeRawPointer?.self) != nil else { continue }
+                } else if toProtocol == 0 { continue }
+                // The type: its descriptor, directly (0) or through a slot (1); a class named another way is passed over.
+                let kind = (conformance.loadUnaligned(fromByteOffset: 12, as: UInt32.self) >> 3) & 0x7
+                guard kind == 0 || kind == 1 else { continue }
+                var descriptor = conformance.advanced(by: 4 + Int(conformance.loadUnaligned(fromByteOffset: 4, as: Int32.self)))
+                if kind == 1 { guard let direct = descriptor.load(as: UnsafeRawPointer?.self) else { continue }; descriptor = direct }
+                guard descriptor.load(as: UInt32.self) & 0x80 == 0 else { continue }
+                // The type's metadata, from the accessor its descriptor names.
+                let toAccessor = descriptor.loadUnaligned(fromByteOffset: 12, as: Int32.self)
+                guard toAccessor != 0,
+                      let metadata = unsafeBitCast(descriptor.advanced(by: 12 + Int(toAccessor)), to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0),
+                      let table = unsafeBitCast(get, to: Call.self)(conformance, metadata, nil) else { continue }
+                lock.lock()
+                if tablesSeen.insert(table).inserted { tablesMade.append(table) }
+                lock.unlock()
+            }
         }
         /// The runtime's own `swift_initClassMetadata2` and `swift_getWitnessTable`, found by name.
         nonisolated(unsafe) private static let initClassMetadata: UnsafeRawPointer? = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "swift_initClassMetadata2").map { UnsafeRawPointer($0) }
@@ -4346,6 +4387,26 @@ enum Template {
             return count
         }
 
+        /// Why the change can't go in for what a class answers to from Objective-C, if it can't: the kept class
+        /// answers to a selector of its own (an override of a system class's method, an `@objc` method) that its copy
+        /// in the change no longer has. The kept class is completed first (its accessor), so the runtime lists it.
+        nonisolated private static func removedMethods(copies: [(String, UnsafeRawPointer)], kept: [String: UnsafeRawPointer],
+                                                       original: [String: UnsafeRawPointer]) -> String? {
+            for (name, copy) in copies where name.hasSuffix("CN") {
+                guard let theirs = kept[name], theirs != copy else { continue }
+                if let accessor = original[String(name.dropLast()) + "Ma"] { _ = unsafeBitCast(accessor, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0) }
+                guard isRealized(theirs) else { continue }
+                for meta in [false, true] {
+                    let have = Set(methods(of: meta ? theirs.load(as: UnsafeRawPointer.self) : theirs).map { NSStringFromSelector($0.0) })
+                    let has = Set(methods(of: meta ? copy.load(as: UnsafeRawPointer.self) : copy).map { NSStringFromSelector($0.0) })
+                    if let gone = have.subtracting(has).sorted().first {
+                        return "\(readable(String(name.dropLast()))) no longer answers to \(gone) from Objective-C"
+                    }
+                }
+            }
+            return nil
+        }
+
         /// Gives a kept class the methods its copy in a change answers to from Objective-C: each of the copy's,
         /// and its metaclass's, is added to the kept class, or replaces the one it has of its own (a superclass's
         /// is left as it is, which the add refuses to touch). The copy is a class object the Objective-C runtime
@@ -4374,8 +4435,10 @@ enum Template {
 
         /// Whether the Objective-C runtime has set a class up: its data word then points at the runtime's record,
         /// whose first word says so (bit 31); before that it points at the compiler's, whose never has it.
+        /// The bits of a class's data word that are the pointer: the runtime keeps flags in the low three and the top.
+        nonisolated private static let dataMask: UInt = 0x0f00_7fff_ffff_fff8
         nonisolated private static func isRealized(_ class_: UnsafeRawPointer) -> Bool {
-            guard let data = UnsafeRawPointer(bitPattern: class_.load(fromByteOffset: 32, as: UInt.self) & ~7) else { return false }
+            guard let data = UnsafeRawPointer(bitPattern: class_.load(fromByteOffset: 32, as: UInt.self) & dataMask) else { return false }
             return data.load(as: UInt32.self) & 0x8000_0000 != 0
         }
 
@@ -4390,7 +4453,7 @@ enum Template {
                 defer { free(list) }
                 return (0..<Int(number)).map { (method_getName(list[$0]), method_getImplementation(list[$0]), method_getTypeEncoding(list[$0])) }
             }
-            guard let data = UnsafeRawPointer(bitPattern: class_.load(fromByteOffset: 32, as: UInt.self) & ~7),
+            guard let data = UnsafeRawPointer(bitPattern: class_.load(fromByteOffset: 32, as: UInt.self) & dataMask),
                   let list = data.load(fromByteOffset: 32, as: UnsafeRawPointer?.self) else { return [] }
             let header = list.load(as: UInt32.self), count = Int(list.load(fromByteOffset: 4, as: UInt32.self))
             let size = Int(header & 0xFFFC), offsets = header & 0x8000_0000 != 0
@@ -4462,7 +4525,7 @@ enum Template {
         }
 
         /// A mangled name in plain words for the chat's details, by the runtime's own demangler.
-        private static func readable(_ name: String) -> String {
+        nonisolated private static func readable(_ name: String) -> String {
             guard name.hasPrefix("_$s"), let demangle = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "swift_demangle") else { return name }
             typealias Demangle = @convention(c) (UnsafePointer<CChar>, Int, UnsafeMutablePointer<CChar>?, UnsafeMutablePointer<Int>?, UInt32) -> UnsafeMutablePointer<CChar>?
             let mangled = String(name.dropFirst())

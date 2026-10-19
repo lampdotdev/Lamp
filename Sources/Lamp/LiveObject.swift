@@ -24,12 +24,13 @@ enum LiveObject {
     /// Whether a defined symbol names what a type or protocol is to the runtime: a nominal type's metadata (`N`,
     /// `Mf` its full form) or descriptor (`Mn`), a protocol's descriptor (`Mp`), or a conformance's descriptor (`Mc`)
     /// and witness table (`WP`), by which the runtime tells generic types made with one conformance from those made
-    /// with another. Or, when it's private to its file (`local`), the addressor of a stored global or static (`vau`):
-    /// a public one's calls go through a symbol pointer that `LampLive` points at the app's storage, but a private
-    /// one's are direct, so the library would keep a second copy of the value, starting over.
+    /// with another. Or the addressor of a stored global or static (`vau`): the library's own code calls its own
+    /// copy directly, private or not, so without this the library's accessors would keep a second copy of the value,
+    /// starting over; through the table they reach the app's, and so the accessors themselves (with a `didSet`) can
+    /// be the change's.
     static func isIdentity(_ name: String, local: Bool = false) -> Bool {
         guard name.hasPrefix("_$s"), !name.hasSuffix(copySuffix), !name.hasSuffix(ownSuffix) else { return false }
-        if local, name.hasSuffix("vau") { return true }
+        if name.hasSuffix("vau") { return true }
         if name.hasSuffix("Mp") || name.hasSuffix("Mc") || name.hasSuffix("WP") { return true }
         for suffix in ["Mf", "N", "Mn"] where name.hasSuffix(suffix) {
             let kind = name.dropLast(suffix.count).last
