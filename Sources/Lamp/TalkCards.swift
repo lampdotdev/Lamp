@@ -36,8 +36,14 @@ struct AskCard: View {
     var body: some View {
         // Drawn with no app too (the gallery's chats), where a click has nowhere to go.
         if let ask = line.ask {
-            AskCardView(ask: ask, isOpen: isOpen, progress: progresses.binding(for: line.id)) { answers in
-                guard let project = store.projects.first(where: { $0.dir == dir }) else { return }
+            let project = store.projects.first(where: { $0.dir == dir })
+            let waiting = project.flatMap { project in
+                Talk.waiting(on: line, in: store.queued[project.id] ?? []).map { message in
+                    AskWaiting(forSetup: !store.setup.ready) { store.unqueue(message, from: project) }
+                }
+            }
+            AskCardView(ask: ask, isOpen: isOpen, progress: progresses.binding(for: line.id), waiting: waiting) { answers in
+                guard let project else { return }
                 withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: answers, in: project) }
             }
         }

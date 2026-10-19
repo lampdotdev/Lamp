@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + askEntries + buildEntries + pointedEntries
+    static let entries: [Entry] = chatEntries + askEntries + buildEntries + progressEntries + pointedEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -106,6 +106,10 @@ enum Gallery {
         ask("Steps, long words", Talk.Ask(layout: .steps, questions: [longWords, share])),
         ask("Together", Talk.Ask(layout: .together, questions: [kind, when, share])),
         ask("Answered by clicking", Talk.Ask(layout: .steps, questions: [kind, when], answers: ["Habits", Talk.youDecide]), isOpen: false),
+        ask("Answered, waiting in line", Talk.Ask(layout: .steps, questions: [kind, when], answers: ["Habits", Talk.youDecide]),
+            isOpen: false, waiting: .inLine),
+        ask("Answered, waiting for setup", Talk.Ask(layout: .steps, questions: [kind, when], answers: ["Habits", Talk.youDecide]),
+            isOpen: false, waiting: .forSetup),
         ask("Answered by typing", Talk.Ask(layout: .steps, questions: [kind, when], typed: true), isOpen: false),
         // What a wish Lamp came with offers to change first (`Starters.card`): Lamp's card, worded as a starter.md is.
         ask("A starter's first changes", Talk.Ask(layout: .steps, questions: [Talk.Question(question: "Make Today yours", options: [
@@ -115,8 +119,8 @@ enum Gallery {
         offer: true)),
     ]
 
-    private static func ask(_ name: String, _ ask: Talk.Ask, isOpen: Bool = true) -> Entry {
-        Entry(group: "Ask card", name: name) { AnyView(LiveAsk(ask: ask, isOpen: isOpen)) }
+    private static func ask(_ name: String, _ ask: Talk.Ask, isOpen: Bool = true, waiting: LiveAsk.Waiting? = nil) -> Entry {
+        Entry(group: "Ask card", name: name) { AnyView(LiveAsk(ask: ask, isOpen: isOpen, waiting: waiting)) }
     }
 
     // MARK: Build
@@ -144,6 +148,20 @@ enum Gallery {
             })
         }
     }
+
+    // MARK: Progress
+
+    /// The agent's lines on how the work is going: messages while its turn goes on, grey among its steps once it's
+    /// over (as "Worked for…" shows them opened).
+    private static let progressEntries: [Entry] = [
+        Entry(group: "Progress", name: "Among a finished turn's steps") {
+            AnyView(VStack(alignment: .leading, spacing: 4) {
+                ChatLook.ProgressLine("The week's columns are in. Now the tasks in them.")
+                ChatLook.StatusLine("Ran: swift build", running: false)
+                ChatLook.ProgressLine("Tasks show up. Now dragging them between days, and a few finishing touches.")
+            })
+        },
+    ]
 
     // MARK: Pointed at
 
@@ -179,14 +197,19 @@ enum Gallery {
 
 /// An ask card that can be clicked through: it keeps its own answers, and shows what it would have sent.
 private struct LiveAsk: View {
+    enum Waiting { case inLine, forSetup }
     let ask: Talk.Ask
     let isOpen: Bool
+    var waiting: Waiting?
     @State private var progress = AskProgress()
     @State private var sent: [String]?
+    @State private var takenBack = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AskCardView(ask: ask, isOpen: isOpen, progress: $progress) { sent = $0 }
+            // Taken back, the card opens again, as in the chat.
+            AskCardView(ask: ask, isOpen: isOpen || takenBack, progress: $progress,
+                        waiting: takenBack ? nil : waiting.map { AskWaiting(forSetup: $0 == .forSetup) { takenBack = true } }) { sent = $0 }
             if let sent {
                 HStack {
                     Text("Sent: " + sent.joined(separator: " · ")).font(.callout).foregroundStyle(.secondary)

@@ -10,6 +10,14 @@ struct LampApp: App {
     /// Read when the scenes are built rather than when the App is made, which is before there is an NSApplication.
     private var store: Store { Store.shared }
 
+    init() {
+        // A release builds the starters it ships before it's signed (PrebuiltStarters), with this program.
+        if ProcessInfo.processInfo.environment["PREBUILD_STARTERS"] == "1" {
+            if CommandLine.arguments.contains(PrebuiltStarters.commandLineFlag) { PrebuiltStarters.runFromCommandLine() }
+            if CommandLine.arguments.contains(PrebuiltStarters.restampFlag) { PrebuiltStarters.restampFromCommandLine() }
+        }
+    }
+
     var body: some Scene {
         Window(Edition.name, id: "main") {
             ContentView()

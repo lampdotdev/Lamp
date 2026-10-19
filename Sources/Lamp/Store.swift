@@ -169,7 +169,9 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// made. Their text is the same in plain words.
     /// `iphoneSetup` says a first request that read as an iPhone app was made for the Mac, since this Mac can't
     /// build one yet, and offers the setup (`IPhoneSetupLine`); its text is the kind that was wanted.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup }
+    /// `progress` is the agent's line on how the work is going (`Talk`'s `progress`), folded with the turn's
+    /// steps once it ends.
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -607,7 +609,8 @@ final class Store: ObservableObject {
         }
         // During the welcome, Apple's installer waits for the step that explains it.
         if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone { requestBuildTools() }
-        if !setup.hasBuildTools { pollSetup() } else { prepareStarters() }
+        if !setup.hasBuildTools { pollSetup() }
+        prepareStarters()   // the prebuilt ones need no build tools
         if setup.ready && !wasReady { await becameReady() }
     }
 
@@ -798,6 +801,8 @@ final class Store: ObservableObject {
     /// Updates what the app's turn is doing right now, for the build card and the activity line.
     /// `file` is the file being written or edited, when that's the step.
     private func note(_ activity: String, file: String? = nil, for project: LampProject) {
+        // A step that changes nothing about what's being done (the agent's progress line).
+        guard !activity.isEmpty else { return }
         guard let current = progress[project.id], current.activity != activity || current.currentFile != file else { return }
         progress[project.id]?.activity = activity
         progress[project.id]?.currentFile = file
@@ -2613,12 +2618,25 @@ final class Store: ObservableObject {
                     }
                 case .step(let tool):
                     if !tool.isEmpty { endOnQuestions(turn, before: tool) }
+                    // The model has finished writing the file it was streaming. One that writes every file in a
+                    // single reply has them all carried out only once the reply ends, so without this the
+                    // checklist would sit still and then tick at once.
+                    let streamed = TurnProgress.call(tool: streamingTool, partialArguments: streamingArguments)
+                    if let file = TurnProgress.file(changedBy: streamed) { progress[project.id]?.wrote(file) }
+                    // Likewise the plan, which a model may send in the same reply as every file: shown once it's
+                    // written rather than once the reply ends, so the list is there to tick as the files come.
+                    if streamingTool == "plan",
+                       let arguments = try? JSONSerialization.jsonObject(with: Data(streamingArguments.utf8)) as? [String: Any],
+                       arguments["parts"] != nil {
+                        progress[project.id]?.plan = PlanPart.parts(from: arguments)
+                        progress[project.id]?.tickWrittenParts()
+                    }
                     streamingTool = tool
                     streamingArguments = ""
                     note(TurnProgress.activity(tool: tool, partialArguments: ""), for: project)
                 case .stepArgs(let piece):
                     // The file name is among the first arguments; the rest is the file itself.
-                    guard streamingArguments.count < 600 else { break }
+                    guard streamingArguments.count < 600 || streamingTool == "plan" else { break }
                     streamingArguments += piece
                     let call = TurnProgress.call(tool: streamingTool, partialArguments: streamingArguments)
                     note(TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
@@ -3292,13 +3310,7 @@ final class Store: ObservableObject {
                 (status, answer) = await use(project, request: actions)
             case "plan":
                 // pi's plan reaches the build card through its event stream (Agent.parseLine); here it's set directly.
-                let parts = (arguments["parts"] as? [[String: Any]] ?? []).enumerated().compactMap { index, part in
-                    (part["title"] as? String).map {
-                        PlanPart(id: index, title: $0, done: part["done"] as? Bool ?? false,
-                                 files: (part["files"] as? [String] ?? []).map { ($0 as NSString).lastPathComponent })
-                    }
-                }
-                progress[project.id]?.plan = parts
+                progress[project.id]?.plan = PlanPart.parts(from: arguments)
                 progress[project.id]?.tickWrittenParts()
                 (status, answer) = (200, ["text": "The user can see the plan."])
             case "delete_file":
@@ -3312,7 +3324,7 @@ final class Store: ObservableObject {
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             case "make_app_for": (status, answer) = await agentKind(arguments, for: project)
             case "connectors": (status, answer) = Connectors.answer(arguments, for: project)
-            case "ask", "write_wish": (status, answer) = talk(name, arguments, for: project)
+            case "ask", "progress", "write_wish": (status, answer) = talk(name, arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
@@ -3390,8 +3402,8 @@ final class Store: ObservableObject {
         return (200, ["text": "Deleted \(relative)."])
     }
 
-    /// `ask` and `write_wish`, for every engine: pi's extension posts them to `/agent/talk`, Claude Code and
-    /// Codex call them over MCP.
+    /// `ask`, `progress` and `write_wish`, for every engine: pi's extension posts them to `/agent/talk`, Claude
+    /// Code and Codex call them over MCP.
     func talk(_ tool: String, _ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
         guard let turn = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         switch tool {
@@ -3412,6 +3424,15 @@ final class Store: ObservableObject {
                 turn.asked = true
                 saveChat(project)
                 return (200, ["text": Talk.asked])
+            }
+        case "progress":
+            switch Talk.progress(from: arguments, after: logs[project.id] ?? []) {
+            case .failure(let trouble): return (400, ["error": trouble.text])
+            case .success(nil): return (200, ["text": Talk.saidAlready])
+            case .success(let text?):
+                logs[project.id, default: []].append(LogLine(kind: .progress, text: text))
+                saveChat(project)
+                return (200, ["text": Talk.told])
             }
         case "write_wish":
             // Only for a wish being found: one the person told is already theirs, and a box they're typing in
@@ -3819,15 +3840,20 @@ final class Store: ObservableObject {
     /// Builds the starters nobody has opened yet, one at a time, as soon as Apple's tools are there, so each
     /// opens at once when used. One that's being waited for goes first.
     func prepareStarters() {
-        guard setup.hasBuildTools, !preparingStarters else { return }
+        guard canPrepare(), !preparingStarters else { return }
         preparingStarters = true
         Task {
             defer { preparingStarters = false }
             await startersInstall?.value
-            await saveStartersFirstVersions()
-            while let next = nextStarterToPrepare() {
+            // Their first versions need git, one of Apple's tools; a prebuilt starter made ready before them gets
+            // its first version when they arrive.
+            if setup.hasBuildTools { await saveStartersFirstVersions() }
+            // Each once: one that couldn't be made ready without the tools waits for them, not for this loop.
+            var tried: Set<String> = []
+            while let next = nextStarterToPrepare(excluding: tried) {
+                tried.insert(next.id)
                 // Again for each: one put back on the desk meanwhile gets its first version before its build.
-                await saveStartersFirstVersions()
+                if setup.hasBuildTools { await saveStartersFirstVersions() }
                 await prepare(next)
             }
         }
@@ -3851,8 +3877,16 @@ final class Store: ObservableObject {
             && !FileManager.default.fileExists(atPath: project.installedURL.path)
     }
 
-    private func nextStarterToPrepare() -> LampProject? {
-        let waiting = projects.filter(needsPreparing)
+    /// Whether some starter can be made ready now: any, once Apple's build tools are there, and before then the
+    /// ones Lamp came with already built (`PrebuiltStarters`).
+    func canPrepare(_ project: LampProject? = nil) -> Bool {
+        if setup.hasBuildTools { return true }
+        if let project { return PrebuiltStarters.has(project) }
+        return projects.contains { needsPreparing($0) && PrebuiltStarters.has($0) }
+    }
+
+    private func nextStarterToPrepare(excluding tried: Set<String> = []) -> LampProject? {
+        let waiting = projects.filter { needsPreparing($0) && canPrepare($0) && !tried.contains($0.id) }
         return waiting.first { openWhenReady.contains($0.id) } ?? waiting.first
     }
 
@@ -3863,7 +3897,12 @@ final class Store: ObservableObject {
         preparing.insert(project.id)
         let before = Set((logs[project.id] ?? []).map(\.id))
         var made = false
-        if await build(project) == nil {
+        // The copy Lamp came with when it's what this build would make, so the starter is ready at once.
+        var ready = PrebuiltStarters.install(into: project)
+        // Without Apple's tools there's no build: a starter whose prebuilt copy couldn't be used waits for them.
+        let canBuild = setup.hasBuildTools
+        if !ready, canBuild { ready = await build(project) == nil }
+        if ready {
             await prepareIcon(project)
             do {
                 try await deploy(project)
@@ -3880,7 +3919,7 @@ final class Store: ObservableObject {
             logs[project.id] = lines.filter { before.contains($0.id) || $0.kind == .ask }
             saveChat(project)
         }
-        if !made { unpreparedStarters.insert(project.id) }
+        if !made, canBuild { unpreparedStarters.insert(project.id) }
         preparing.remove(project.id)
         finish(project)
         guard openWhenReady.remove(project.id) != nil, let current = current(project) else { return }
@@ -4354,10 +4393,16 @@ final class Store: ObservableObject {
             return false
         }
         // An enum that only gained cases goes in when nothing holds it where a new case would change what's there.
-        if let before, let layout = check.layout, case let grown = LiveReload.grownEnums(before: before, after: layout), !grown.isEmpty,
-           let why = await LiveReload.enumsHeld(project, grown: grown) {
-            log(project, .detail, "Reopening \(project.name) for this change: \(why).")
-            return false
+        // Then every file of the app's is compiled again, so no code of the open app's meets a case it never knew
+        // (a switch, or printing it), and the enum's own metadata is the change's, which knows the new cases.
+        if let before, let layout = check.layout, case let grown = LiveReload.grownEnums(before: before, after: layout), !grown.isEmpty {
+            if let why = await LiveReload.enumsHeld(project, grown: grown) {
+                log(project, .detail, "Reopening \(project.name) for this change: \(why).")
+                return false
+            }
+            changed = LiveReload.appFiles(project)
+            (library, problem) = await LiveReload.compile(project, changed: changed,
+                                                          keep: grown.map { LiveObject.mangledType($0, module: project.exe, kind: "O") })
         }
         guard let layout = check.layout, library != nil || changed.isEmpty else {
             print("Live reload of \(project.name) didn't compile:\n\(problem ?? "")")
@@ -4764,6 +4809,7 @@ final class Store: ObservableObject {
     private func finishSimulatorBundle(_ project: LampProject) async {
         let fm = FileManager.default
         let app = project.builtURL
+        Self.setInstallValues(for: project, in: app.appendingPathComponent("Info.plist"), root: project.dir)
         var script = """
             P="$LAMP_APP/Info.plist"
             plutil -replace CFBundleName -string "$LAMP_NAME" "$P" && \\
@@ -5029,6 +5075,7 @@ final class Store: ObservableObject {
         defer { try? fm.removeItem(at: signing) }
         let resources = app.appendingPathComponent("Contents/Resources")
         try fm.createDirectory(at: resources, withIntermediateDirectories: true)
+        Self.setInstallValues(for: project, in: app.appendingPathComponent("Contents/Info.plist"), root: Self.installDir)
         // Every usage description, from the one list: without its reason macOS kills the app the moment it
         // asks for the microphone, photos and the rest. Added here as well as in build.sh so apps made before
         // a reason was added get it too.
@@ -5094,6 +5141,10 @@ final class Store: ObservableObject {
         // writes beside the copy rather than takes from the build folder, where anything could have changed them.
         let widget = Template.widgetURL(in: app, of: project)
         let hasWidget = fm.fileExists(atPath: widget.path)
+        if hasWidget, project.platform == .mac {
+            Self.setInstallValues(for: project, in: widget.appendingPathComponent("Contents/Info.plist"), root: Self.installDir,
+                                  values: Template.widgetInstallValues(for: project))
+        }
         let entitlements = signing.appendingPathComponent("widget-entitlements.plist")
         if hasWidget { try Template.widgetEntitlementsPlist.write(to: entitlements, atomically: true, encoding: .utf8) }
         // A share extension the same way. It hands what it's given to the app through a folder they share,
@@ -6450,6 +6501,20 @@ final class Store: ObservableObject {
               !FileManager.default.fileExists(atPath: Template.shareURL(in: project.installedURL, of: project).path),
               (try? String(contentsOf: teamSigningFailure(project), encoding: .utf8)) != Devices.team else { return false }
         return await Devices.signingIdentity(for: Devices.team) != nil
+    }
+
+    /// Writes what the app is told about itself and Lamp (`Template.installValues`) into a bundle's Info.plist,
+    /// before it's signed: LampSupport reads it there at launch rather than having it compiled in. `root` is the
+    /// folder the bundle is in, read and written without following links out of it: the simulator's bundle is in
+    /// the app's build folder, which the agent's commands can write.
+    nonisolated static func setInstallValues(for project: LampProject, in plistURL: URL, root: URL,
+                                             values: [String: String]? = nil) {
+        guard let data = AppFile.read(plistURL, inFolder: root),
+              var plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return }
+        plist["LampInstall"] = values ?? Template.installValues(for: project)
+        if let out = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) {
+            try? AppFolder.write(out, to: plistURL, in: root)
+        }
     }
 
     /// Writes, or takes out, the name of the folder a Mac app shares with its widget, in each bundle's Info.plist,

@@ -78,6 +78,9 @@ extension ChatLook {
         }
     }
 
+    /// Under what waits for setup before it's sent.
+    public static let waitingForSetup = "Starts when Apple's app-building tools finish installing"
+
     /// A message waiting for the current change to finish. It can still be taken back. The latest of its group has
     /// the group's caption, and, where the agent can take them while it works, Send Now for the whole group
     /// (`sendNow`); once that's asked, the caption says they're on their way.
@@ -128,7 +131,7 @@ extension ChatLook {
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
                     if waitingForSetup {
-                        Label("Starts when Apple's app-building tools finish installing", systemImage: "clock")
+                        Label(ChatLook.waitingForSetup, systemImage: "clock")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
                         // Worded like a text the other side hasn't read yet, with no icon, as Messages shows it.

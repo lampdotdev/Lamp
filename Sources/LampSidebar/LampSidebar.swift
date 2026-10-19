@@ -195,6 +195,24 @@ struct SidebarView: View {
     }
 }
 
+/// Whether the end of the chat is in view: within a line of it counts. Before macOS 15 there's no telling, and
+/// the chat is held at its end as it was (`OpensAtEnd`).
+private struct TracksEnd: ViewModifier {
+    @Binding var atEnd: Bool
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content.onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentSize.height + geometry.contentInsets.bottom - geometry.visibleRect.maxY < 24
+            } action: { _, now in
+                atEnd = now
+            }
+        } else {
+            content
+        }
+    }
+}
+
 /// Where the top of the chat lies in its scroll view, while there's more of it to load.
 private struct EarlierTop: PreferenceKey {
     static let defaultValue: CGFloat = -.infinity
@@ -209,6 +227,9 @@ private struct Chat: View {
     @State private var askedEarlierAt: UUID?
     /// Off until the chat has opened at its end, so the top of the chat seen while laying out asks for nothing.
     @State private var settled = false
+    /// The end of the chat is in view, or the person hasn't scrolled away from it: while it is, the chat stays
+    /// at its end as it and its panel change size, and follows what's added to it.
+    @State private var atEnd = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -267,6 +288,12 @@ private struct Chat: View {
                     .frame(maxWidth: .infinity)
                 }
                 .coordinateSpace(name: "chat")
+                // A reopened app (a reload to apply a change) brings its chat back in a new panel. The one scroll
+                // to the end a moment after it appears (below) misses on a busy Mac, and the chat then stays at its
+                // top. So the chat starts at its end and stays there as it and its panel change size, unless the
+                // person has scrolled up to read.
+                .modifier(OpensAtEnd(holdsEnd: atEnd))
+                .modifier(TracksEnd(atEnd: $atEnd))
                 .onPreferenceChange(EarlierTop.self) { top in
                     guard settled, top > -200, state.hasEarlier == true, askedEarlierAt != state.lines.first?.id else { return }
                     askedEarlierAt = state.lines.first?.id
@@ -276,15 +303,16 @@ private struct Chat: View {
                 .onChange(of: state.lines.first?.id) { old, _ in
                     if let old, old == askedEarlierAt { scroller.scrollTo(old, anchor: .top) }
                 }
-                .onChange(of: state.lines.last?.id) { follow(scroller) }
+                // What the person sends is followed wherever they were; anything else only while they're at the end.
+                .onChange(of: state.lines.last?.id) { follow(scroller, always: state.lines.last?.kind == .user) }
                 .onChange(of: state.lines.last?.text) { follow(scroller) }
                 .onChange(of: state.working) { follow(scroller) }
-                .onChange(of: state.queued?.count) { follow(scroller) }
+                .onChange(of: state.queued?.count) { old, new in follow(scroller, always: (new ?? 0) > (old ?? 0)) }
                 .onChange(of: state.undoChange) { follow(scroller) }
                 // Once the lines are laid out: scrolled before then, the chat opens partway up.
                 .onAppear {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        follow(scroller, animated: false)
+                        follow(scroller, animated: false, always: true)
                         DispatchQueue.main.async { settled = true }
                     }
                 }
@@ -318,7 +346,9 @@ private struct Chat: View {
         }
     }
 
-    private func follow(_ scroller: ScrollViewProxy, animated: Bool = true) {
+    /// To the end of the chat, unless the person has scrolled up to read and `always` isn't asked for.
+    private func follow(_ scroller: ScrollViewProxy, animated: Bool = true, always: Bool = false) {
+        guard always || atEnd else { return }
         withAnimation(animated ? .easeOut(duration: 0.2) : nil) { scroller.scrollTo("end", anchor: .bottom) }
     }
 }
@@ -355,7 +385,10 @@ private struct LineView: View {
         case .agent:
             ChatLook.AgentText(line.text, keep: !line.growing)
         case .status:
-            if let command = ChatLook.ranCommand(in: line.text) {
+            if line.symbol == ChatLook.progressSymbol {
+                // The agent's line on how the work went, among a finished turn's steps.
+                ChatLook.ProgressLine(line.text)
+            } else if let command = ChatLook.ranCommand(in: line.text) {
                 ChatLook.RanCommand(command)
             } else {
                 ChatLook.StatusLine(line.text, running: line.running)
@@ -401,7 +434,10 @@ private struct AskLine: View {
 
     var body: some View {
         if let ask = line.ask {
-            AskCardView(ask: ask, isOpen: line.askOpen ?? false, progress: $progress) { answers in
+            let waiting = line.takeBack.map { id in
+                AskWaiting(forSetup: line.waitingForSetup ?? false) { link.send(.unqueue(id)) }
+            }
+            AskCardView(ask: ask, isOpen: line.askOpen ?? false, progress: $progress, waiting: waiting) { answers in
                 link.send(.answer(line.id, answers))
             }
             .onAppear { take() }

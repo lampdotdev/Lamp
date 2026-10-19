@@ -238,6 +238,13 @@ final class SidebarServer {
             queued.canSendNow = canSendNow && message.id == lastWaiting ? true : nil
             return queued
         }
+        let waiting = store.queued[project.id] ?? []
+        for index in state.lines.indices where state.lines[index].kind == .ask {
+            guard let line = log.first(where: { $0.id == state.lines[index].id }),
+                  let message = Talk.waiting(on: line, in: waiting) else { continue }
+            state.lines[index].takeBack = message.id
+            state.lines[index].waitingForSetup = store.setup.ready ? nil : true
+        }
         state.waitingForSetup = !store.setup.ready
         state.approval = store.approvals[project.id].map {
             SidebarApproval(id: $0.id, title: $0.title, command: $0.command, explanation: $0.explanation?.look)
@@ -369,6 +376,16 @@ final class SidebarServer {
         }
     }
 
+    /// The agent's progress line: a message like any other while its turn goes on, and once it's among a finished
+    /// turn's steps (as the messages it wrote on the way are) a status line with the progress line's mark, which a sidebar from before progress lines draws
+    /// as a status line rather than failing to read the chat.
+    static func progress(_ line: LogLine, gap: Double, folded: Bool = false) -> SidebarLine {
+        guard folded else { return SidebarLine(id: line.id, kind: .agent, text: line.text, gap: gap) }
+        var out = SidebarLine(id: line.id, kind: .status, text: line.text, gap: gap)
+        out.symbol = ChatLook.progressSymbol
+        return out
+    }
+
     /// The chat as Lamp's window shows it without Agent Details (`Transcript`): the same lines, gathered and
     /// spaced the same way. Cards and notes Lamp's window has and this doesn't yet are left out.
     static func lines(_ log: [LogLine], project: LampProject, busy: Bool, progressShown: Bool,
@@ -409,6 +426,7 @@ final class SidebarServer {
                     switch step {
                     case .tools(let run): [tools(run, gap: 4, running: false)]
                     case .statuses(let run): run.map { SidebarLine(id: $0.id, kind: .status, text: $0.text, gap: 4) }
+                    case .line(let line) where line.kind == .progress || line.kind == .agent: [Self.progress(line, gap: 4, folded: true)]
                     default: []
                     }
                 }
@@ -426,6 +444,8 @@ final class SidebarServer {
                     out.append(request)
                 case .agent:
                     out.append(SidebarLine(id: line.id, kind: .agent, text: line.text, gap: gap, growing: busy))
+                case .progress:
+                    out.append(Self.progress(line, gap: gap))
                 case .summary:
                     out.append(SidebarLine(id: line.id, kind: .summary, text: line.text, gap: gap))
                 case .error:
@@ -922,6 +942,12 @@ final class SidebarServer {
                     message.attachments += asFile(message.pointed)
                     return message
                 }
+            }
+            // Answers clicked on a card and waiting in line are drawn as the folded card; a sidebar from before that
+            // takes them back only from the waiting message.
+            if version >= 8 {
+                let onCards = Set(state.lines.compactMap(\.takeBack))
+                state.queued = state.queued?.filter { !onCards.contains($0.id) }
             }
             guard let data = SidebarWire.encode(state), force || data != last else { return }
             last = data

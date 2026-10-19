@@ -20,7 +20,7 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `write_wish`, `read_skill`, the version tools, the notes tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
@@ -31,7 +31,7 @@ A capability given to one engine must be given to all of them that can take it, 
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **How the agent talks** (`Talk`, `TalkCards.swift`): in short sentences and in cards, not paragraphs, so building
   feels like a short wizard. A vague wish gets a good first attempt built from sensible guesses, not questions: the
@@ -43,6 +43,16 @@ A capability given to one engine must be given to all of them that can take it, 
   chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own). What a
   request came to is the agent's last message, in a sentence or two (`Agent.Rules.finish`), under the line that says
   the app is ready or updated; a card for it said no more than that message did and hid what it said beyond it.
+  While longer work goes on, the agent says how it's going with `progress`: a line of 12 words at most, shown at once
+  in both chats as a message like any other, and gathered into "Worked for…" with the turn's steps when it ends
+  (`ChatLook.ProgressLine`; folded, the sidebar gets it as a status line marked with `ChatLook.progressSymbol`, so an
+  older sidebar still reads the chat), so the answer is all that's left to read. Whatever the agent writes as messages
+  on the way is treated the same: each shows as it's said, and all but the last are folded with the steps
+  (`LogLine.visible`, `ChatItem.items`), since models write such updates whether or not they're asked to use the tool. A change to much of what an app already shows is built in passes
+  (`lookRules`: the layout with placeholders, then the parts working, then the detail), each begun with a
+  `progress` line and ended with `look_at_app`, which puts it into the open app, so the person watches the app
+  take shape rather than waiting for the end; what's read only at launch is made right in the first pass, so later
+  ones go in without reopening the app. A new app's first build is still made in one pass.
   Result cards saved by an earlier Lamp still read and aren't shown (`LogLine.visible`). A new app's build card folds
   to its first line (its name, Ready) once the turn is over, with no picture of the app. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
@@ -52,7 +62,8 @@ A capability given to one engine must be given to all of them that can take it, 
   answer (`Talk.message`), for an engine that reads the conversation again later; the chat doesn't show it,
   since the card does (`LogLine.fromCard`, `Talk.shows`). An
   answer that has to wait in line, clicked or typed, folds its card at once and opens it again if it's taken
-  back (`Talk.unqueue`); waiting for setup, it keeps its card across a relaunch (`QueuedMessage.saved`).
+  back (`Talk.unqueue`). A clicked one waits as its folded card alone, taken back from there (`AskWaiting`), not as a
+  waiting message too: that would show until it's sent and then go. Waiting for setup, it keeps its card across a relaunch (`QueuedMessage.saved`).
   `Talk.Ask` also reads the shape cards were first saved in (options as plain words, `chosen`, `dismissed`):
   a chat line that can't be read loses the whole chat. While a card waits for its answer nothing above it changes height and the chat
   doesn't follow what's added below: a new app's card goes to its short form as the questions arrive, a
@@ -326,8 +337,10 @@ orange DEV banner), bundle id (`dev.lamp.host.dev`), folders (`~/Library/Applica
 (`lamp-dev://`) and Keychain entries, and no self-updating. `Sources/Lamp/Edition.swift` is the one place
 these come from, read off the bundle id that `build.sh` writes (`FLAVOR=dev` by default; `release.sh` passes
 `FLAVOR=release`). Anything new that names Lamp on disk or on the network goes through `Edition`, and the
-generated apps get it through the `{{SCHEME}}`, `{{NOTE}}`, `{{HOST}}` and `{{APPS}}` placeholders in
-`Template.swift`. The app-signing keychain is shared on purpose, so apps keep their permissions whichever
+generated apps get it from their Info.plist: Lamp writes what an app is told about itself and Lamp (its folder name,
+its secrets, Lamp's ports, scheme and folders: `Template.installValues`) into every copy it installs
+(`Store.setInstallValues`, and the phone project's Info.plist), and LampSupport reads it at launch (`LampInstall`).
+None of it is compiled in, so a compiled app is the same for every install. The app-signing keychain is shared on purpose, so apps keep their permissions whichever
 Lamp rebuilds them. `scripts/dev-data.sh` copies your apps, keys, settings and the agent's sign-ins from the
 installed Lamp into Lamp Dev, so the development build has something to work on. To see what someone with a bare Mac
 sees, `LAMP_PRETEND_MISSING` (`Pretend`, Lamp Dev only) makes Lamp's own checks miss the Command Line Tools,
@@ -720,7 +733,25 @@ text) (`LiveReload.reloadable`, comparing with the sources the
 open app runs, kept in `.lamp/live/running`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
 linked into a library, which the app loads when asked with a request signed with its token, only from its
 own `.lamp/live` (`LampLive` in LampSupport, under `#if LAMP_LIVE`). It points the app's own calls at the new
-functions by rewriting the symbol pointers they go through; types, metadata and stored globals are left alone. The
+functions by rewriting the symbol pointers they go through, and the method tables of the app's classes (their
+deinit included) at the changed methods; types, metadata and stored globals are left alone. A library compiled from
+a changed file defines that file's types over again, and its code refers to its own copies directly, which no symbol
+pointer reaches: a value would then carry one copy's identity or the other's, so `as? Point` fails across the change,
+a conformance added in it isn't found, and SwiftUI, seeing a new type for a view's body, remakes the whole subtree
+and loses every state in it. So between compiling and linking, `LiveObject` rewrites each object: every type's
+metadata, descriptor and protocol descriptor it defines is renamed (`$lampcopy`), and the code's references become
+loads through the global offset table of a weak undefined symbol with the original name, which `LampLive` binds to the
+app's copy, or to the library's own for a type the app doesn't have (a new one, kept for the changes after it). A
+conformance's descriptor and witness table are treated the same, since the runtime tells generic types apart by them
+too (`[AnyHashable: …]` keys), which is why a protocol's requirements, their accessors included, are part of the
+layout a change is held to (`LiveReload.members`): the app's witness tables must fit. What the library's data names
+is worked out before anything is pointed at the new code, so a change refused leaves the app as it was. So is a private stored global's or static's addressor,
+since calls to it are direct too, and the library would otherwise keep a second copy of the value. The mangled type
+names and the records of conformances the change adds, which the library's data still holds, are pointed at the app's
+descriptors as it loads (`LampLive.redirectDescriptors`, writing through the library's text, which a Mac app without
+the hardened runtime may). What `LampLive` can't make right it refuses, and the app reopens: a class's method table
+that changed shape, or a method of a generic class that can be overridden (its tables are made as the app runs, one
+for each type it's used at, where nothing finds them). The
 build then waits to be installed until the app closes (`LiveReload.awaitInstall`, which unlike a held build doesn't
 keep the agent off the app). Anything else is installed the usual way, by reopening the app, with why in the chat's
 details (`LiveReload.Verdict`), so the rules can be tuned by what happens. The chat says nothing about which it was:
@@ -758,7 +789,11 @@ spare: its values keep their size (`LiveSlots.casesAdded`). Only while nothing t
 in a plain collection: Swift uses the numbers after the last case for `nil` in an optional of it and for other enums'
 cases that carry it, which a new case would take over. That's looked for in every stored field, static and global of
 the new code and in the types the spares keep (`LiveReload.enumsHeld`), before the change goes in; an app that keeps
-values of any type (`Any`, `AnyObject`, `AnyHashable`, `any P`) reopens instead, since one could hide there. Which property is in which spare
+values of any type (`Any`, `AnyObject`, `AnyHashable`, `any P`) reopens instead, since one could hide there. When an enum
+grew, every file of the app's is compiled again, so no code of the open app's meets a case it never knew (a switch over
+it, or printing it, reads past what its metadata describes), and the enum's metadata stays the change's own rather
+than the app's (`LiveReload.compile(keep:)`, renamed `$lampown` so `LampLive` binds every later change to it), since
+the app's doesn't know the new cases. Which property is in which spare
 (`.lamp/live/slots.json`) is put back into each fresh copy (they come back as additions, and `LiveSlots.fit` puts
 them in the same places) until the app is installed again: the
 whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs

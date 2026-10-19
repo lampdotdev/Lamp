@@ -6,7 +6,7 @@ import Foundation
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
     /// What this side reads and writes; see `SidebarCommand.hello`.
-    public static let version = 7
+    public static let version = 8
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -121,6 +121,10 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     /// Goes up when the progress changed in Lamp's window, so the sidebar takes it up; its own edits come back
     /// with the same number and are left alone, so an echo of an older one never undoes a newer one.
     public var progressVersion: Int?
+    /// Answers clicked on it that wait in line (`AskWaiting`): the waiting message, to take back, and whether it
+    /// waits for setup.
+    public var takeBack: UUID?
+    public var waitingForSetup: Bool?
     /// What a request made as Lamp's window draws it.
     public var result: TalkCard.Result?
     /// A receipt for a save of Lamp's notes (its title is `text`): the lines added and removed, whether it was

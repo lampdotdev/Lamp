@@ -9,6 +9,16 @@ struct PlanPart: Identifiable, Equatable {
     /// The files the agent said it would write for this part. Lamp ticks the part when they're written,
     /// so progress doesn't depend on the agent stopping to report it.
     var files: [String] = []
+
+    /// The parts in a `plan` call's arguments, whichever engine made it.
+    static func parts(from arguments: [String: Any]) -> [PlanPart] {
+        (arguments["parts"] as? [[String: Any]] ?? []).enumerated().compactMap { index, part in
+            (part["title"] as? String).map {
+                PlanPart(id: index, title: $0, done: part["done"] as? Bool ?? false,
+                         files: (part["files"] as? [String] ?? []).map { ($0 as NSString).lastPathComponent })
+            }
+        }
+    }
 }
 
 /// What Lamp knows about the turn in progress, for showing the user something better than a spinner.
@@ -27,7 +37,15 @@ struct TurnProgress {
     var unopened = false
     /// What's happening right now, in the user's words rather than the code's: "Working on the interface",
     /// "Building…". It's the one place a turn in progress says what it's doing.
-    var activity: String
+    var activity: String {
+        // Lamp is building what the agent wrote: every part it has worked on is as done as this pass makes it,
+        // even with a listed file left unwritten, so none sits unticked above Lamp's own last row, and it stays
+        // ticked when the agent goes on.
+        didSet {
+            guard finishing else { return }
+            for index in plan.indices where plan[index].files.contains(where: files.contains) { plan[index].done = true }
+        }
+    }
     /// The file being written or edited right now, if that's what the agent is doing. Never shown: it
     /// tells which part of the plan is being worked on.
     var currentFile: String?
@@ -80,11 +98,15 @@ struct TurnProgress {
         return .open
     }
 
-    /// Ticks every part whose files have all been written.
+    /// Ticks every part whose files have all been written, and every part the agent has started and then left
+    /// for a later one's files: the agent writes the parts in the list's order, and a file it listed often goes
+    /// into another one instead, which would leave its part unticked under ticked ones, as if skipped.
     mutating func tickWrittenParts() {
         let written = Set(files)
+        let latest = files.last.flatMap { file in plan.firstIndex { $0.files.contains(file) } } ?? -1
         for index in plan.indices where !plan[index].done && !plan[index].files.isEmpty {
-            plan[index].done = written.isSuperset(of: plan[index].files)
+            let started = plan[index].files.contains(where: written.contains)
+            plan[index].done = written.isSuperset(of: plan[index].files) || (started && latest > index)
         }
     }
 
@@ -137,7 +159,8 @@ struct TurnProgress {
         return !steps.isEmpty && finishing
     }
 
-    /// What the agent's tool call amounts to for someone who never sees the code: no file names, no tools.
+    /// What the agent's tool call amounts to for someone who never sees the code: no file names, no tools. Empty
+    /// for a call that leaves what's being done as it was.
     static func activity(for call: ToolCall) -> String {
         if call.name.hasSuffix("_version") || call.name.hasSuffix("_versions") { return "Looking at earlier versions" }
         switch call.action {
@@ -158,6 +181,8 @@ struct TurnProgress {
         case .kind: return "Making it for other devices"
         case .connectors: return "Looking up a connector"
         case .ask: return "Asking you"
+        // What it's doing goes on being what it was: the line it wrote says the rest.
+        case .progress: return ""
         case .result: return "Wrapping up"
         case .wish: return "Writing your wish"
         case .delegate, .other: return "Working on your app"

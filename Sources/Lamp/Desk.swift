@@ -1300,7 +1300,7 @@ extension Store {
     func open(fromDesk project: LampProject) {
         let made = FileManager.default.fileExists(atPath: project.installedURL.path)
             || FileManager.default.fileExists(atPath: project.builtURL.path)
-        if !made, setup.hasBuildTools, preparing.contains(project.id) || needsPreparing(project) {
+        if !made, canPrepare(project), preparing.contains(project.id) || needsPreparing(project) {
             openWhenReady.insert(project.id)
             prepareStarters()
             return
@@ -1320,7 +1320,7 @@ extension Store {
             || FileManager.default.fileExists(atPath: project.builtURL.path)
         // A wish Lamp came with that hasn't been built yet, or is being built now: its icon spins, and it
         // opens as soon as it's ready, without its chat in between.
-        if !made, setup.hasBuildTools, preparing.contains(project.id) || needsPreparing(project) {
+        if !made, canPrepare(project), preparing.contains(project.id) || needsPreparing(project) {
             openWhenReady.insert(project.id)
             prepareStarters()
             return

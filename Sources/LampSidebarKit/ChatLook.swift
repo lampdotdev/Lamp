@@ -79,6 +79,30 @@ public enum ChatLook {
         }
     }
 
+    /// What the agent said about how the work was going ("The layout's in. Now the timer."), once its turn is over
+    /// and the line is among the turn's steps: grey like them. While the turn goes on it's a message like any other
+    /// (`AgentText`).
+    public struct ProgressLine: View {
+        let text: String
+        public init(_ text: String) { self.text = text }
+
+        public var body: some View {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: ChatLook.progressSymbol).frame(width: 16)
+                Text(text).fixedSize(horizontal: false, vertical: true)
+            }
+            .font(ChatLook.stepFont)
+            .foregroundStyle(.secondary)
+            .padding(.leading, ChatLook.stepIndent)
+            .padding(.trailing, 32)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    /// The progress line's mark, which also tells the sidebar a status line is one (`SidebarLine.symbol`).
+    public static let progressSymbol = "ellipsis.bubble"
+
     /// The agent's steps (what it ran, read, checked) are told in small grey words under its bubbles, as Messages
     /// says a message was delivered: there, but quieter than what's said.
     public static let stepFont = Font.subheadline

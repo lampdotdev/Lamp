@@ -12,6 +12,11 @@ a secure timestamp. Nested code is signed first:
 - llama.cpp's server and libraries (`Resources/llama/`)
 - pi's native module and the pi executable, with `Resources/pi.entitlements`: pi is Bun-compiled, and Bun's
   JIT needs `allow-jit` and friends under hardened runtime
+- the starters Lamp ships, already built: `build.sh` has the new Lamp build each one as a person's Mac would
+  (`PrebuiltStarters.swift`), signs it and zips it beside the starter's files, so a new person's starters open at
+  once, before Apple's build tools are installed. This adds about five minutes to a release and about 30 MB to Lamp.
+  A development build reuses the ones in `.build/prebuilt-starters` while what they're made from is unchanged;
+  `PREBUILD_STARTERS=0 ./build.sh` leaves them out.
 - `Lamp.app`, with `Resources/Lamp.entitlements` (microphone, for dictation)
 
 Releases build into `dist/`, so they never replace the `build/Lamp.app` you run day to day. Release builds
