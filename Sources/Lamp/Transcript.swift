@@ -240,7 +240,7 @@ enum ChatItem: Identifiable {
     /// A finished run's lines, its steps under one line above its last message.
     private static func folded(_ run: [LogLine], summary: LogLine) -> [ChatItem] {
         let isStep = { (line: LogLine) in
-            (line.kind == .status && line.text != ChatLook.reloaded && line.text != ChatLook.fixingCrash) || line.kind == .tool
+            (line.kind == .status && line.text != ChatLook.fixingCrash) || line.kind == .tool
         }
         let steps = items(run.filter(isStep)).flatMap { item -> [LogLine] in
             switch item {

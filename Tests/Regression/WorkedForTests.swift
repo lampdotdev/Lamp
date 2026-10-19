@@ -6,7 +6,7 @@ import LampSidebarKit
 final class WorkedForTests: XCTestCase {
     func testAFinishedTurnsStepsGoAboveItsAnswer() {
         let lines = [LogLine(kind: .user, text: "make it"), LogLine(kind: .status, text: "Ran: ls"),
-                     LogLine(kind: .status, text: "Building…"), LogLine(kind: .status, text: ChatLook.reloaded),
+                     LogLine(kind: .status, text: "Building…"), LogLine(kind: .status, text: ChatLook.fixingCrash),
                      LogLine(kind: .agent, text: "Done."), LogLine(kind: .status, text: "Puzzle is ready"),
                      LogLine(kind: .summary, text: "Worked for 2m 3s · $0.12"),
                      LogLine(kind: .user, text: "more"), LogLine(kind: .status, text: "Ran: pwd")]
@@ -19,7 +19,7 @@ final class WorkedForTests: XCTestCase {
             case .work(_, let title, let steps): "\(title):" + steps.map(\.text).joined(separator: ",")
             }
         }
-        XCTAssertEqual(shape, ["make it", "statuses:\(ChatLook.reloaded)", "Worked for 2 min 3 s:Ran: ls,Puzzle is ready",
+        XCTAssertEqual(shape, ["make it", "statuses:\(ChatLook.fixingCrash)", "Worked for 2 min 3 s:Ran: ls,Puzzle is ready",
                                "Done.", "more", "statuses:Ran: pwd"])
     }
 

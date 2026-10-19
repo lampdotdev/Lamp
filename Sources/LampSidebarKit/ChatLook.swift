@@ -52,10 +52,6 @@ public enum ChatLook {
         }
     }
 
-    /// The line that says a change closed the open app and opened it again: the window going away and coming back
-    /// is otherwise left unexplained, since why is only in Agent Details.
-    public static let reloaded = "Lamp reloaded the app to apply this change"
-
     /// The line above a fix Lamp started on its own after the app crashed: the request it sent isn't shown, so this
     /// says why the agent is at work with nobody having asked.
     public static let fixingCrash = "The app crashed, so Lamp is fixing it"
@@ -72,7 +68,7 @@ public enum ChatLook {
         public var body: some View {
             HStack(spacing: 6) {
                 Group {
-                    if running { ProgressView().controlSize(.mini) } else { Image(systemName: text == ChatLook.reloaded ? "arrow.clockwise" : "checkmark.circle") }
+                    if running { ProgressView().controlSize(.mini) } else { Image(systemName: "checkmark.circle") }
                 }
                 .frame(width: 16)
                 Text(text)

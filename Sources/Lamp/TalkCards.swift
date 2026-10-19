@@ -34,8 +34,10 @@ struct AskCard: View {
     @ObservedObject private var progresses = AskProgresses.shared
 
     var body: some View {
-        if let ask = line.ask, let project = store.projects.first(where: { $0.dir == dir }) {
+        // Drawn with no app too (the gallery's chats), where a click has nowhere to go.
+        if let ask = line.ask {
             AskCardView(ask: ask, isOpen: isOpen, progress: progresses.binding(for: line.id)) { answers in
+                guard let project = store.projects.first(where: { $0.dir == dir }) else { return }
                 withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: answers, in: project) }
             }
         }
