@@ -1,6 +1,6 @@
 {
-  "background" : "red",
-  "subject" : "an ivory toast notebook with a burgundy ribbon bookmark",
-  "symbol" : "book.closed.fill",
-  "tint" : "#FFF1D6"
+  "subject": "two champagne glasses touching, with golden wine",
+  "symbol": "wineglass.fill",
+  "background": "red",
+  "tint": "#FFF1D6"
 }

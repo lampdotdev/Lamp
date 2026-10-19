@@ -268,8 +268,11 @@ Lamp's own card (`Starters.card`, an `ask` marked `offer`): the starter's line a
 the first request when clicked, with the message box answering it too. Nothing waits on it (`Talk.waiting`), so the
 desk doesn't say it has a question and using it still opens it. Each
 folder holds the app's code, APP.md (which the agent reads first, so it knows the app it's changing), icon.json
-(a symbol icon: Lamp paints no art for a starter, which would offer to set up pictures in its chat), the icon drawn
-from it in icon/ (`StarterIconsTests` draws them again, with Xcode set up for the Liquid Glass one), so the desk
+(its design), the icon drawn from it in icon/ with its artwork, drawn once the way an app's is: layers of glass
+(icon/art.json, `GlassIcons`) or, for a game, a painting (icon/art.png). The artwork goes where an app keeps its icon's,
+since Lamp draws none for a starter on the person's Mac, which would offer to set up pictures in its chat;
+`StarterIconsTests` draws the icons again, with Xcode set up for the Liquid Glass one, and the artwork again with
+`LAMP_PAINT_STARTER_ART=1` and a key), so the desk
 shows them at once and Lamp draws one again only once its icon.json changes (`Starters.hasShippedIcon`),
 preview.png, a picture of its window that the desk shows while the pointer is on the icon,
 with the app's about.json line beside it in large type, 90 characters at most (`WishStage`, `WishDesk.describedIn`; every
@@ -311,7 +314,8 @@ Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp). Into a new `Resource
    Symbol. They're changes the app doesn't already make, that the agent can make in one request with no key,
    account or pictures to draw.
 5. Take `preview.png` as above (the app's own `.lamp/runtime/preview.png` is the picture when it shows only example
-   content), draw the icon with `LAMP_RENDER_STARTER_ICONS=<folder> swift test --filter StarterIconsTests`, then run
+   content), paint and draw the icon with `LAMP_RENDER_STARTER_ICONS=<folder> LAMP_PAINT_STARTER_ART=1
+   OPENROUTER_API_KEY=… swift test --filter StarterIconsTests` and look at the artwork it picked, then run
    `scripts/check-starters.sh <folder>` and `swift test --filter StartersTests`, and update the count of wishes above.
 
 ## Two Lamps on one Mac

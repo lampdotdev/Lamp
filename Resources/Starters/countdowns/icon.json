@@ -1,1 +1,6 @@
-{"subject": "a calendar with a clock", "symbol": "calendar.badge.clock", "background": "indigo", "tint": "#FFFFFF"}
+{
+  "subject": "a desk calendar page with a red top band and two rings, with clean straight edges",
+  "symbol": "calendar",
+  "background": "white",
+  "tint": "#FF3B30"
+}

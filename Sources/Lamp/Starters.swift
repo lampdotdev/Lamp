@@ -60,8 +60,8 @@ enum Starters {
     /// Where an app keeps its starter.md once copied: Lamp's, beside meta.json, out of the agent's way.
     static func file(of project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/starter.md") }
 
-    /// An app that came with Lamp. Its icon stays the symbol it came with: painting one would put an offer to
-    /// set up pictures in the chat of an app the person hasn't asked anything of yet.
+    /// An app that came with Lamp. Its icon stays the one it came with, artwork and all: painting one would put an
+    /// offer to set up pictures in the chat of an app the person hasn't asked anything of yet.
     static func isStarter(_ project: LampProject) -> Bool {
         FileManager.default.fileExists(atPath: file(of: project).path)
     }
@@ -154,9 +154,15 @@ enum Starters {
     private static let copied = ["Sources", "Widget", "Share", "Assets", "APP.md", "icon.json", "about.json", "capabilities.json"]
 
     /// A starter's icon, drawn once from its icon.json (`StarterIconsTests`) and shipped with Lamp, so it's on the desk
-    /// as soon as the starter is: the files `Icons.write` makes, which go into the app's .lamp folder, and the
-    /// icon.json they were drawn from.
+    /// as soon as the starter is: the files `Icons.write` makes, which go into the app's .lamp folder, the
+    /// icon.json they were drawn from, and the artwork (`artFile`).
     static let iconFolder = "icon"
+
+    /// The icon's artwork, drawn once for the starter and kept so it's drawn again the same: a glass design, or a
+    /// game's painting. In the app it goes where Lamp keeps an icon's artwork (`Icons.glassURL`, `Icons.artURL`), so a
+    /// recolor or a redraw of the icon keeps it.
+    static let glassFile = "art.json"
+    static let artFile = "art.png"
 
     static func iconFiles(of project: LampProject) -> [URL] {
         [Icons.icnsURL(project), Icons.carURL(project), Icons.documentURL(project), Icons.previewURL(project), Icons.squareURL(project)]
@@ -215,6 +221,16 @@ enum Starters {
         }
         let spec = icon.appendingPathComponent("icon.json")
         if fm.fileExists(atPath: spec.path) { try fm.copyItem(at: spec, to: drawnFrom(project)) }
+        if let drawn = Icons.load(project) {
+            if let glass = GlassArt.load(from: icon.appendingPathComponent(glassFile)) {
+                try Icons.save(glass, for: project, spec: drawn)
+            } else if fm.fileExists(atPath: icon.appendingPathComponent(artFile).path) {
+                let to = Icons.artURL(project, spec: drawn)
+                try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? fm.removeItem(at: to)
+                try fm.copyItem(at: icon.appendingPathComponent(artFile), to: to)
+            }
+        }
         // A picture of it for the desk, since it's built out of sight and nobody has opened it yet: its first
         // launch replaces it.
         let preview = starter.folder.appendingPathComponent("preview.png")

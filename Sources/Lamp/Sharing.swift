@@ -218,8 +218,12 @@ enum Sharing {
         if let browser = BrowserCompanions.Declaration.load(project) {
             try BrowserCompanions.Declaration.encoded(browser).write(to: stage.appendingPathComponent(BrowserCompanions.Declaration.file))
         }
-        if let spec = Icons.load(project), fm.fileExists(atPath: Icons.artURL(project, spec: spec).path) {
-            try fm.copyItem(at: Icons.artURL(project, spec: spec), to: stage.appendingPathComponent("icon-art.png"))
+        if let spec = Icons.load(project) {
+            switch Icons.artwork(project, spec: spec) {
+            case .glass(let glass): try glass.encoded().write(to: stage.appendingPathComponent(glassEntry))
+            case .picture: try fm.copyItem(at: Icons.artURL(project, spec: spec), to: stage.appendingPathComponent("icon-art.png"))
+            case nil: break
+            }
         }
         // The icon as drawn here, for Quick Look and the picture sent with the file. The Mac that opens the file
         // draws its own from icon.json; an older Lamp leaves this one unread.
@@ -262,12 +266,14 @@ enum Sharing {
         return png(image, side: 512)
     }
 
+    /// Where a shared file carries an icon's glass design (`GlassArt`), beside a picture's icon-art.png.
+    static let glassEntry = "icon-glass.json"
+
     /// The same without waiting, for a drag: Lamp's own drawing of the design (`Icons.drawnTile`), or for an app
     /// with no design the icon Lamp last wrote. Nil before it has one.
     static func drawnIcon(of project: LampProject) -> Data? {
         if let spec = Icons.load(project) {
-            let art = NSImage(contentsOf: Icons.artURL(project, spec: spec))
-            let tile = Icons.drawnTile(spec, foreground: Icons.foregroundLayer(spec, art: art))
+            let tile = Icons.drawnTile(spec, art: Icons.artwork(project, spec: spec))
             return tile.cgImage.flatMap { png($0, side: 512) }
         }
         let largest = NSImage(contentsOf: Icons.icnsURL(project))?.representations
@@ -486,9 +492,14 @@ enum Sharing {
         if let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
            let spec = try? JSONDecoder().decode(IconSpec.self, from: data) {
             Icons.save(spec, for: project)
-            // Files from older Lamp versions carry full-square artwork; only cut-out objects fit the new icons.
-            if let art = try? Data(contentsOf: package.folder.appendingPathComponent("icon-art.png")),
-               Icons.isCutOut(art) {
+            // A glass design is kept only once it passes the same checks as one Lamp drew.
+            if let glass = GlassArt.load(from: package.folder.appendingPathComponent(glassEntry)) {
+                newArtwork = GlassArt.load(from: Icons.glassURL(project, spec: spec)) != glass
+                try? Icons.save(glass, for: project, spec: spec)
+            // Files from older Lamp versions carry full-square artwork; only cut-out objects fit the new icons, but a
+            // game's painting fills its tile.
+            } else if let art = try? Data(contentsOf: package.folder.appendingPathComponent("icon-art.png")),
+               spec.game || Icons.isCutOut(art) {
                 let url = Icons.artURL(project, spec: spec)
                 newArtwork = (try? Data(contentsOf: url)) != art
                 try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -699,18 +710,22 @@ extension Sharing {
     static func icon(of package: Package) async -> NSImage? {
         guard let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
               let spec = try? JSONDecoder().decode(IconSpec.self, from: data) else { return nil }
-        return await Icons.preview(spec, art: artwork(at: package.folder.appendingPathComponent("icon-art.png")))
+        if let glass = GlassArt.load(from: package.folder.appendingPathComponent(glassEntry)) {
+            return await Icons.preview(spec, art: .glass(glass))
+        }
+        return await Icons.preview(spec, art: artwork(at: package.folder.appendingPathComponent("icon-art.png"), game: spec.game)
+            .map(Icons.Artwork.picture))
     }
 
     /// The artwork, when it's a cut-out object (what `finishImport` keeps) no larger than Lamp paints them.
     /// The size comes from the file's header, so a picture made to exhaust memory is never unpacked.
-    private static func artwork(at url: URL) -> NSImage? {
+    private static func artwork(at url: URL, game: Bool) -> NSImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int,
               max(width, height) <= 4096,
-              let art = try? Data(contentsOf: url), Icons.isCutOut(art) else { return nil }
+              let art = try? Data(contentsOf: url), game || Icons.isCutOut(art) else { return nil }
         return NSImage(data: art)
     }
 
