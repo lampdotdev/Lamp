@@ -699,8 +699,127 @@ extension Sharing {
                    patterns: ["CGEvent", "AXUIElement", "CGEventTap"]),
         Capability(label: "Loads code at runtime (can hide what it does)", icon: "eye.slash", level: .sensitive,
                    patterns: ["dlopen", "NSClassFromString", "perform(#selector", "NSSelectorFromString"]),
-        Capability(label: "Contains encoded data (can hide what it does)", icon: "eye.slash", level: .sensitive, patterns: ["Data(base64Encoded"]),
+        encodedData,
     ]
+
+    /// Found by `hidesEncodedText`, not by its patterns.
+    static let encodedData = Capability(label: "Contains encoded data (can hide what it does)", icon: "eye.slash", level: .sensitive,
+                                        patterns: [])
+
+    /// Whether the code carries something written in base64, the usual way to keep an address, a script or a
+    /// payload from someone reading it. What's looked for is the encoded text itself, not a call that decodes:
+    /// decoding is also how an app reads what it downloads (the tag on each link of a page it fetches), which
+    /// hides nothing in the app, and a call that decodes text written into the code is found by that text.
+    /// A run of base64 counts when some stretch of it decodes to readable text, at any of the four ways it can
+    /// line up, or when it's long and has the mix of letters and digits encoded bytes have. Text cut into
+    /// pieces is put back together: strings that are nothing but base64, written close together, are read as
+    /// one, in the order they're written. Pieces written far apart or joined in another order, and other encodings (hex, numbers, a
+    /// reversed or scrambled string), are beyond a search like this; the AI review reads that code.
+    static func hidesEncodedText(_ code: String) -> Bool {
+        // A literal handed straight to the decoder, however short.
+        if code.contains(#/base64Encoded:\s*#*"/#) { return true }
+        let quote = UInt8(ascii: "\"")
+        var run: [UInt8] = [], pieces: [UInt8] = [], starts: [Int] = []
+        var before: UInt8 = 0
+        var offset = 0, lastPiece = 0
+        for byte in code.utf8 {
+            offset += 1
+            if base64Value(byte) != nil || byte == UInt8(ascii: "=") {
+                run.append(byte)
+                continue
+            }
+            if encodes(run) { return true }
+            if before == quote, byte == quote, !run.isEmpty {
+                // Pieces are written close together (`"…" + "…"`, one `let` a line); words far apart in the
+                // code, joined, can read as text by chance.
+                if offset - run.count - lastPiece > 40 {
+                    if joinedReadsAsText(pieces, from: starts) { return true }
+                    pieces.removeAll(keepingCapacity: true)
+                    starts.removeAll(keepingCapacity: true)
+                }
+                starts.append(pieces.count)
+                pieces += run.compactMap(base64Value)
+                lastPiece = offset
+            }
+            before = byte
+            run.removeAll(keepingCapacity: true)
+        }
+        return encodes(run) || joinedReadsAsText(pieces, from: starts)
+    }
+
+    /// Joined pieces are decoded from the start of one of them, as the app joining them would: read from
+    /// partway into a word, words repeated in a list can line up as text. A later start four digits on, or
+    /// any multiple of four, decodes to the end of what the earlier one does, so the first start of each of
+    /// the four ways to line up is enough, and a long list is read four times at most.
+    private static func joinedReadsAsText(_ digits: [UInt8], from starts: [Int]) -> Bool {
+        var first: [Int: Int] = [:]
+        for start in starts where first[start % 4] == nil { first[start % 4] = start }
+        return first.values.contains { digits.count - $0 >= 16 && readable(digits, from: $0, enough: 12) >= 12 }
+    }
+
+    /// One base64 digit's value, in either alphabet (`+/` or the web's `-_`).
+    private static func base64Value(_ byte: UInt8) -> UInt8? {
+        switch byte {
+        case UInt8(ascii: "A")...UInt8(ascii: "Z"): byte - UInt8(ascii: "A")
+        case UInt8(ascii: "a")...UInt8(ascii: "z"): byte - UInt8(ascii: "a") + 26
+        case UInt8(ascii: "0")...UInt8(ascii: "9"): byte - UInt8(ascii: "0") + 52
+        case UInt8(ascii: "+"), UInt8(ascii: "-"): 62
+        case UInt8(ascii: "/"), UInt8(ascii: "_"): 63
+        default: nil
+        }
+    }
+
+    private static func encodes(_ run: [UInt8]) -> Bool {
+        let digits = run.compactMap(base64Value)
+        // Shorter text gives itself away by its padding: a whole run of base64 ending in = that decodes to
+        // readable text (a short command).
+        if digits.count >= 8, run.count % 4 == 0, run.last == UInt8(ascii: "="), run.count - digits.count <= 2,
+           readable(digits, from: 0) >= digits.count * 6 / 8 { return true }
+        guard digits.count >= 16 else { return false }
+        // Encoded bytes are about two parts capitals, two parts small letters and one part digits and signs;
+        // a long path or a long name is mostly small letters, or capitals, with few digits. The alphabet
+        // itself, written out to make ids from, has that mix too, but in order: in encoded bytes one digit is
+        // followed by the next about once in sixty-four.
+        if digits.count >= 64 {
+            let capitals = digits.filter { $0 < 26 }.count, small = digits.filter { (26..<52).contains($0) }.count
+            let inOrder = zip(digits, digits.dropFirst()).filter { $1 == $0 + 1 }.count
+            if capitals * 4 >= digits.count, small * 4 >= digits.count, (digits.count - capitals - small) * 16 >= digits.count,
+               inOrder * 4 < digits.count {
+                return true
+            }
+        }
+        return readsAsText(digits)
+    }
+
+    /// What an address or a command is written in: letters, digits, spaces and the signs they use. Not line
+    /// breaks, tabs or the rarer signs (`^ { } [ ] \\` and the backquote): a long name in ordinary words can
+    /// decode to a line of those with a few letters between.
+    private static let readableBytes: Set<UInt8> = Set(Array(UInt8(ascii: "a")...UInt8(ascii: "z")) + Array(UInt8(ascii: "A")...UInt8(ascii: "Z"))
+        + Array(UInt8(ascii: "0")...UInt8(ascii: "9")) + Array(" !\"#$%&'()*+,-./:;<=>?@_|~".utf8))
+
+    /// Sixteen digits make twelve bytes: twelve such characters in a row don't come out of words, paths or
+    /// numbers by chance (about one in a million), and an address is longer than that.
+    private static func readsAsText(_ digits: [UInt8]) -> Bool {
+        digits.count >= 16 && (0..<4).contains { readable(digits, from: $0, enough: 12) >= 12 }
+    }
+
+    /// The longest stretch of readable characters the digits decode to, starting at `start`; it stops counting
+    /// at `enough`.
+    private static func readable(_ digits: [UInt8], from start: Int, enough: Int = .max) -> Int {
+        var longest = 0, stretch = 0
+        var bits = 0, held = 0
+        for digit in digits.dropFirst(start) {
+            held = (held << 6 | Int(digit)) & 0xFFFF
+            bits += 6
+            guard bits >= 8 else { continue }
+            bits -= 8
+            let byte = UInt8((held >> bits) & 0xFF)
+            stretch = readableBytes.contains(byte) ? stretch + 1 : 0
+            longest = max(longest, stretch)
+            if longest >= enough { break }
+        }
+        return longest
+    }
 
     /// Said under the checklist when Lamp has no AI to read the code with. It tells the reader what they're
     /// not getting and that opening doesn't depend on it; it isn't a problem to fix first.
@@ -951,7 +1070,9 @@ extension Sharing {
         if let browser = package.browser, let data = try? BrowserCompanions.Declaration.encoded(browser) {
             found.files.append((BrowserCompanions.Declaration.file, String(decoding: data, as: UTF8.self)))
         }
-        found.detected = checklist.filter { item in item.patterns.contains { everything.contains($0) } }
+        found.detected = checklist.filter { item in
+            item == encodedData ? hidesEncodedText(everything) : item.patterns.contains { everything.contains($0) }
+        }
         if package.capabilities.background == true, !found.detected.contains(where: { $0.label == startsAtLogin.label }) {
             found.detected.append(startsAtLogin)
         }

