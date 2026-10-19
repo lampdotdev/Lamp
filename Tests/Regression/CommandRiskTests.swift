@@ -171,6 +171,37 @@ final class CommandRiskTests: XCTestCase {
         }
     }
 
+    // MARK: A low rating
+
+    /// Dan: a command the card calls low risk, in green, shouldn't wait for an answer; medium and high keep
+    /// asking, and so does anything a check flagged, whatever the in-app model calls it.
+    func testALowRatingRunsWhatNothingFlagged() {
+        func rated(_ risk: String) -> Store.CommandExplanation {
+            Store.CommandExplanation(summary: "Searches the app's source files for words to change.", risk: risk,
+                                     why: "Only reads files inside the app's own folder; nothing is changed.")
+        }
+        XCTAssertTrue(CommandRisk.runsOnRating(rated("low"), flagged: nil))
+        XCTAssertFalse(CommandRisk.runsOnRating(rated("medium"), flagged: nil))
+        XCTAssertFalse(CommandRisk.runsOnRating(rated("high"), flagged: nil))
+        XCTAssertFalse(CommandRisk.runsOnRating(rated("low"), flagged: .sendsOut))
+        XCTAssertFalse(CommandRisk.runsOnRating(nil, flagged: nil))
+    }
+
+    /// A rating slower than the wait doesn't hold the card back: Allow and Deny come up at the limit, and one
+    /// in time is used.
+    @MainActor
+    func testASlowRatingDoesntHoldTheCard() async {
+        let slow = Task<String?, Never> { try? await Task.sleep(for: .seconds(5)); return "low" }
+        let start = ContinuousClock.now
+        let gaveUp = await Store.answer(of: slow, within: .milliseconds(200))
+        XCTAssertNil(gaveUp)
+        XCTAssertLessThan(ContinuousClock.now - start, .seconds(2))
+        slow.cancel()
+        let quick = Task<String?, Never> { "low" }
+        let answered = await Store.answer(of: quick, within: .seconds(5))
+        XCTAssertEqual(answered, .some("low"))
+    }
+
     // MARK: The reason on the card
 
     /// The text model can call a flagged command low risk; the card doesn't. A rating that's already
