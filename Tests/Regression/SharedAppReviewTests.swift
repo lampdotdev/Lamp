@@ -240,6 +240,14 @@ final class SharedAppReviewTests: XCTestCase {
         XCTAssertNotEqual(review.verdict, .sensitive)
     }
 
+    /// A long name in ordinary words, which decodes to a line of punctuation and a few letters.
+    func testALongNameIsNotFlagged() throws {
+        let review = try checked("""
+        func testOnlyTheInstalledAppIsTheApp() {}
+        """)
+        XCTAssertFalse(review.detected.contains { $0.level == .sensitive }, "\(review.detected.map(\.label))")
+    }
+
     /// Random ids made from base64's own alphabet: nothing is encoded or decoded.
     func testAnAlphabetForMakingIdsIsNotFlagged() throws {
         let review = try checked("""

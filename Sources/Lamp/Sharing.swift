@@ -778,8 +778,14 @@ extension Sharing {
         return readsAsText(digits)
     }
 
-    /// Sixteen digits make twelve bytes: twelve readable characters in a row don't come out of words, paths
-    /// or numbers by chance (about one in a hundred thousand), and an address is longer than that.
+    /// What an address or a command is written in: letters, digits, spaces and the signs they use. Not line
+    /// breaks, tabs or the rarer signs (`^ { } [ ] \\` and the backquote): a long name in ordinary words can
+    /// decode to a line of those with a few letters between.
+    private static let readableBytes: Set<UInt8> = Set(Array(UInt8(ascii: "a")...UInt8(ascii: "z")) + Array(UInt8(ascii: "A")...UInt8(ascii: "Z"))
+        + Array(UInt8(ascii: "0")...UInt8(ascii: "9")) + Array(" !\"#$%&'()*+,-./:;<=>?@_|~".utf8))
+
+    /// Sixteen digits make twelve bytes: twelve such characters in a row don't come out of words, paths or
+    /// numbers by chance (about one in a million), and an address is longer than that.
     private static func readsAsText(_ digits: [UInt8]) -> Bool {
         digits.count >= 16 && (0..<4).contains { readable(digits, from: $0, enough: 12) >= 12 }
     }
@@ -795,7 +801,7 @@ extension Sharing {
             guard bits >= 8 else { continue }
             bits -= 8
             let byte = UInt8((held >> bits) & 0xFF)
-            stretch = (0x20...0x7E).contains(byte) || byte == 0x0A || byte == 0x09 || byte == 0x0D ? stretch + 1 : 0
+            stretch = readableBytes.contains(byte) ? stretch + 1 : 0
             longest = max(longest, stretch)
             if longest >= enough { break }
         }
