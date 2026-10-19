@@ -430,10 +430,14 @@ extension Agent {
             // the rest of the Mac to reads as well as writes, which Codex's never did.
             // Codex's own sandbox stays off: it runs inside Lamp's (below), and one can't be nested in the other.
             let sandboxMode = "-c sandbox_mode=\"danger-full-access\""
+            // Codex's own bundled skills stay off, as every engine's own skills do (Skills): Codex would copy them into
+            // its folder's skills/.system at every start, which Lamp's sandbox keeps closed, and fail each time.
+            // `skills.bundled.enabled` is defined in Codex's config (BundledSkillsConfig in its config schema) but isn't
+            // in OpenAI's published reference; a Codex that drops it ignores the setting and the copy fails as before.
             let options = (codexModel.isEmpty ? "" : "-m \"$LAMP_MODEL\" ") + """
             --json --ignore-user-config --ignore-rules --dangerously-bypass-hook-trust --skip-git-repo-check \\
               \(sandboxMode) \\
-              -c web_search="live" -c "$LAMP_CODEX_INSTRUCTIONS" -c "$LAMP_CODEX_HOOKS" \\
+              -c web_search="live" -c skills.bundled.enabled=false -c "$LAMP_CODEX_INSTRUCTIONS" -c "$LAMP_CODEX_HOOKS" \\
               -c mcp_servers.lamp.url="http://127.0.0.1:\(Gateway.port)/mcp?files=1" -c mcp_servers.lamp.bearer_token_env_var="LAMP_TOKEN" \\
               -c mcp_servers.lamp.tool_timeout_sec=3600 -c mcp_servers.lamp.default_tools_approval_mode="approve"
             """

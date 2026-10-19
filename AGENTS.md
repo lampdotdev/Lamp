@@ -97,7 +97,8 @@ A capability given to one engine must be given to all of them that can take it, 
   `read_skill`, a tool like any other, so every engine reads skills the same way. Lamp answers from its own bundle,
   so a skill changed in an update reaches a conversation that began before it. Each engine can load skills of its own,
   and Lamp keeps that off where it can (pi's `--no-skills`; Claude Code's `--disable-slash-commands`, without which
-  it loads its own skills for coding work; Codex's sandbox keeps the person's out of reach): those are for other
+  it loads its own skills for coding work; Codex's sandbox keeps the person's out of reach, and `skills.bundled.enabled=false` its own, which it would otherwise
+  try to copy into its folder's `skills/.system` at every start, where the sandbox keeps it from writing): those are for other
   work, and the same file for every engine is one place to keep up to date. When an app's own code
   shows a skill applies (`Skills.applying`: it imports RealityKit, it uses OpenStreetMap data, it has a Chrome sidebar page), Lamp names it at
   the end of the request (`Skills.brief`), sent like `AIStatus.brief` through `RequestNote`: once per
