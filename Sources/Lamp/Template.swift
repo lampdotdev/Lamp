@@ -4943,9 +4943,21 @@ enum Template {
             @objc func reload(_ sender: NSButton) {
                 guard reloadState == .ready else { return }
                 setReload(.reloading)
-                DistributedNotificationCenter.default().postNotificationName(
-                    Notification.Name(LampInstall.note + "reloadNow"), object: nil,
-                    userInfo: ["app": LampInstall.slug], deliverImmediately: true)
+                if NSRunningApplication.runningApplications(withBundleIdentifier: LampInstall.host).isEmpty {
+                    // Lamp was quit: the link opens it, and it reloads the app once it's running.
+                    let configuration = NSWorkspace.OpenConfiguration()
+                    configuration.activates = false
+                    NSWorkspace.shared.open(LampInstall.link("reload"), configuration: configuration)
+                } else {
+                    DistributedNotificationCenter.default().postNotificationName(
+                        Notification.Name(LampInstall.note + "reloadNow"), object: nil,
+                        userInfo: ["app": LampInstall.slug], deliverImmediately: true)
+                }
+                // The app is closed for the change within moments. Still open later, the request didn't arrive (or
+                // the change went in another way): the button is there to press again.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+                    MainActor.assumeIsolated { if reloadState == .reloading { setReload(.ready) } }
+                }
             }
         }
     }

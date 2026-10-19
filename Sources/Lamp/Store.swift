@@ -528,11 +528,14 @@ final class Store: ObservableObject {
     /// and opening it again where it was. Pressed while a turn has the app, it's done when the turn ends.
     func reloadWaiting(_ id: String) {
         guard let project = projects.first(where: { $0.id == id }), Runtime.waitsForReload(project) else { return }
-        guard turns[project.id] == nil else { reloadWhenFree.insert(id); return }
+        // Taken now, before anything queued can start: otherwise kept until the turn that has the app ends.
+        guard begin(project) != nil else { reloadWhenFree.insert(id); return }
+        // The Mac copy's change, wherever Try On points now (an app for both may have moved it to a phone since).
+        var mac = project
+        mac.chosen = .mac
         Task {
-            guard let current = current(project), Runtime.waitsForReload(current), begin(current) != nil else { return }
-            _ = await install(current, inFront: true, fresh: true, reload: true)
-            finish(current)
+            _ = await install(mac, inFront: true, fresh: true, reload: true)
+            finish(project)
         }
     }
     private var reloadWhenFree: Set<String> = []
@@ -992,6 +995,8 @@ final class Store: ObservableObject {
                 .queryItems?.first(where: { $0.name == "app" })?.value else { return }
         // An app's sidebar, started while Lamp wasn't open: Lamp listens for it, and its own window stays put.
         if url.host == "sidebar" { return MagicPanel.shared.opening(slug) }
+        // The app's Reload button, pressed while Lamp wasn't running (`LampMagic.Opener.reload`).
+        if url.host == "reload" { return reloadWaiting(slug) }
         showChat(slug)
     }
 
@@ -2212,6 +2217,7 @@ final class Store: ObservableObject {
             Task {
                 await applyIconArt(project, spec: spec)
                 release(project)
+                if reloadWhenFree.remove(project.id) != nil { reloadWaiting(project.id) }
                 fixHeldCrash(project)
                 offerHeldDrawing(project)
                 startQueued(project)
