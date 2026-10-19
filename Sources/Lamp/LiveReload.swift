@@ -371,12 +371,28 @@ enum LiveReload {
     struct Conformances {
         var of: [String: Set<String>] = [:]
         var protocols = Set<String>(), types = Set<String>()
+        /// Each type's stored fields' types, to tell a type that may wrap anything (a generic parameter, `Any`, a
+        /// system type) from one made of plain values and the app's own types.
+        var fields: [String: [String]] = [:]
+        /// Each typealias and what it names, by its name and its qualified name.
+        var aliases: [String: String] = [:]
     }
     static func conformances(inLayout entries: [String]) -> Conformances {
         var out = Conformances()
         for entry in entries {
             if entry.hasPrefix("protocol "), entry.hasSuffix("\t") { out.protocols.insert(String(entry.dropFirst(9).dropLast())); continue }
+            if entry.hasPrefix(aliasGroup + "\t"), let equals = entry.range(of: " = ") {
+                let name = String(entry[entry.index(after: entry.firstIndex(of: "\t")!)..<equals.lowerBound]), names = String(entry[equals.upperBound...])
+                out.aliases[name] = names
+                out.aliases[String(name.split(separator: ".").last ?? "").split(separator: ":").last.map(String.init) ?? name] = names
+                continue
+            }
             if entry.hasSuffix("\t"), !isGroup(entry) { out.types.insert(String(entry.dropLast())); continue }
+            if !isGroup(entry), !entry.hasPrefix("protocol "), let tab = entry.firstIndex(of: "\t"), let colon = entry.range(of: ": ") {
+                let field = entry[entry.index(after: tab)..<colon.lowerBound]
+                if !field.hasPrefix("case ") { out.fields[String(entry[..<tab]), default: []].append(String(entry[colon.upperBound...])) }
+                continue
+            }
             guard entry.hasPrefix(declarationGroup + "\t") else { continue }
             let declared = entry.dropFirst(declarationGroup.count + 1)
             guard let at = declared.range(of: " inherits ") else { continue }
@@ -393,9 +409,10 @@ enum LiveReload {
     /// app doesn't declare: the standard wrappers conform to many of those on their own (`Optional` is
     /// CustomDebugStringConvertible whatever it wraps, an array a Collection), so `any Collection` may hold
     /// `[Mood?]`. For a protocol of the app's own, the enum must conform to it, directly, in an extension or
-    /// through a protocol that inherits it, or an extension of a type the app doesn't declare (`Optional`, `Array`)
-    /// must, which could then wrap the enum. A model keeping `any Shape` isn't a reason to reopen for a Mood that
-    /// is no Shape.
+    /// through a protocol that inherits it, or a type that could wrap the enum must: an extension of a type the app
+    /// doesn't declare (`Optional`, `Array`), or a type of the app's with a field of a type that isn't the app's or
+    /// a plain value (a generic parameter, `Any`, a system type), followed through the app's types. A model keeping
+    /// `any Shape` isn't a reason to reopen for a Mood that is no Shape.
     static func existential(in kind: String, holding type: String, conformances: Conformances) -> String? {
         // What the enum conforms to, followed through the protocols those inherit, and the same for the app's
         // extensions of types it doesn't declare, which may wrap the enum.
@@ -408,7 +425,31 @@ enum LiveReload {
             return seen
         }
         let own = reach(Array(conformances.of[type] ?? []))
-        let wrappers = reach(conformances.of.keys.filter { !conformances.types.contains($0) && !conformances.protocols.contains($0) && conformances.of[$0] != nil })
+        // Whether a type of the app's could hold anything: a field whose type names something that isn't one of the
+        // app's types or a plain value, looked through the app's types it's made of.
+        let names = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
+        func mayWrap(_ type: String, _ seen: inout Set<String>) -> Bool {
+            guard seen.insert(type).inserted else { return false }
+            return (conformances.fields[type] ?? []).contains { mayWrap(kind: $0, &seen) }
+        }
+        func mayWrap(kind: String, _ seen: inout Set<String>) -> Bool {
+            for match in names.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)) {
+                let name = String(kind[Range(match.range, in: kind)!]), last = String(name.split(separator: ".").last ?? "")
+                if ["any", "some", "inout"].contains(name) || LiveSlots.plainValues.contains(last) { continue }
+                if let named = conformances.aliases[name] ?? conformances.aliases[last] {
+                    if seen.insert("=" + name).inserted, mayWrap(kind: named, &seen) { return true } else { continue }
+                }
+                if conformances.types.contains(name) { if mayWrap(name, &seen) { return true } else { continue } }
+                if conformances.types.contains(last) { if mayWrap(last, &seen) { return true } else { continue } }
+                return true
+            }
+            return false
+        }
+        let wrappers = reach(conformances.of.keys.filter { key in
+            guard !conformances.protocols.contains(key), conformances.of[key] != nil else { return false }
+            var seen = Set<String>()
+            return !conformances.types.contains(key) || mayWrap(key, &seen)
+        })
         let boxes = try! NSRegularExpression(pattern: #"(?<![\w.])(Any|AnyObject|AnyHashable|any (?:[\w.]+(?: & [\w.]+)*))(?![\w])"#)
         for match in boxes.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)) {
             let box = String(kind[Range(match.range(at: 1), in: kind)!])
@@ -1103,7 +1144,7 @@ enum LiveSlots {
     }
 
     /// Value types a constant is made of that hold no object of their own.
-    private static let plainValues: Set<String> = [
+    static let plainValues: Set<String> = [
         "Swift", "Int", "Int8", "Int16", "Int32", "Int64", "UInt", "UInt8", "UInt16", "UInt32", "UInt64", "Double", "Float",
         "Float16", "CGFloat", "Bool", "String", "Substring", "Character", "StaticString", "Array", "Dictionary", "Set",
         "Optional", "Range", "ClosedRange", "Void", "Never", "TimeInterval", "Date", "URL", "UUID", "Decimal", "Data",

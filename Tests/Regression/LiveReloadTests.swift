@@ -125,6 +125,10 @@ final class LiveReloadTests: XCTestCase {
             extension Square: Hashable { typealias Key = String; var key: Key { name }; func grow(_ by: Int = 1) -> Square { self } }
             protocol Boxed {}
             extension Optional: Boxed {}
+            protocol Lidded {}
+            struct Jar<T>: Lidded { var value: T }
+            protocol Flat {}
+            struct Tile: Flat { var n: Int; var square: Square }
             struct Outer { enum Mood: Shape { case a, b; func area() -> Int { 0 }; var name: String { get { "" } set {} } } }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
         let layout = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
@@ -165,6 +169,10 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertEqual(LiveReload.existential(in: "(any Named)?", holding: "Mood", conformances: conformances), "any Named")
         XCTAssertNil(LiveReload.existential(in: "[String: any Shape & Hashable]", holding: "Mood", conformances: conformances))
         XCTAssertEqual(LiveReload.existential(in: "any Boxed", holding: "Mood", conformances: conformances), "any Boxed")
+        // A generic type of the app's conforming to the protocol may wrap the enum; one made of plain values and the
+        // app's own types can't.
+        XCTAssertEqual(LiveReload.existential(in: "any Lidded", holding: "Mood", conformances: conformances), "any Lidded")
+        XCTAssertNil(LiveReload.existential(in: "any Flat", holding: "Mood", conformances: conformances))
         XCTAssertEqual(LiveReload.existential(in: "any CustomDebugStringConvertible", holding: "Mood", conformances: conformances), "any CustomDebugStringConvertible")
         XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
         XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")
