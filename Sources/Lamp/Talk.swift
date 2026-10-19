@@ -159,6 +159,19 @@ enum Talk {
         card?.ask?.answers != nil || card?.result?.switched != nil
     }
 
+    /// The waiting message whose answers were clicked on `card`, which the folded card stands for until it's sent
+    /// (`AskWaiting`), so the chat never shows it and then takes it away.
+    static func waiting(on card: LogLine, in queue: [QueuedMessage]) -> QueuedMessage? {
+        guard card.ask?.answers != nil else { return nil }
+        return queue.first { $0.card == card.id }
+    }
+
+    /// The waiting messages drawn as such: not those a folded card stands for.
+    static func drawnWaiting(_ queue: [QueuedMessage], in lines: [LogLine]) -> [QueuedMessage] {
+        let clicked = Set(lines.filter { $0.ask?.answers != nil }.map(\.id))
+        return queue.filter { message in message.card.map { !clicked.contains($0) } ?? true }
+    }
+
     /// The messages a card shows, which the chat leaves out. A guess turned on a result card saved by an earlier Lamp was
     /// shown only by that card, which no longer is, so its message shows again: a message clicked on a card
     /// stays hidden only when the card before it is a question card.

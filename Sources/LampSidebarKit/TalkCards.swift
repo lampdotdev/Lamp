@@ -46,17 +46,20 @@ public struct AskCardView: View {
     let isOpen: Bool
     @Binding var progress: AskProgress
     let send: ([String]) -> Void
+    let waiting: AskWaiting?
 
-    public init(ask: TalkCard.Ask, isOpen: Bool, progress: Binding<AskProgress>, send: @escaping ([String]) -> Void) {
+    public init(ask: TalkCard.Ask, isOpen: Bool, progress: Binding<AskProgress>, waiting: AskWaiting? = nil,
+                send: @escaping ([String]) -> Void) {
         self.ask = ask
         self.isOpen = isOpen
         _progress = progress
+        self.waiting = waiting
         self.send = send
     }
 
     public var body: some View {
         if !isOpen {
-            Answered(ask: ask)
+            Answered(ask: ask, waiting: waiting)
         } else {
             Group {
                 if ask.layout == .together && ask.questions.count > 1 {
@@ -102,11 +105,25 @@ public struct AskCardView: View {
     }
 }
 
+/// Answers clicked on a card that wait in line behind the agent's turn. The folded card is all the chat shows of
+/// them, from the click on: drawn as a waiting message too, they'd be there only until they're sent, when the chat
+/// leaves them out because the card shows them. So taking them back is offered on the card.
+public struct AskWaiting {
+    let forSetup: Bool
+    let takeBack: () -> Void
+
+    public init(forSetup: Bool, takeBack: @escaping () -> Void) {
+        self.forSetup = forSetup
+        self.takeBack = takeBack
+    }
+}
+
 /// A card that's no longer waiting, folded where it was to a line like the ones for what Lamp did: each
 /// question with the answer clicked for it, or, when the person typed their own answer instead, what was asked (their
 /// message under it is the answer). Only the card that waits is drawn as a card.
 private struct Answered: View {
     let ask: TalkCard.Ask
+    let waiting: AskWaiting?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -114,6 +131,16 @@ private struct Answered: View {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Image(systemName: "checkmark.circle").foregroundStyle(.secondary).frame(width: 16)
                     Text(folded).fixedSize(horizontal: false, vertical: true)
+                    if let waiting {
+                        Button(action: waiting.takeBack) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                            .buttonStyle(.plain)
+                            .help("Take back and answer again")
+                            .accessibilityLabel("Take back and answer again")
+                    }
+                }
+                if waiting?.forSetup == true {
+                    Label(ChatLook.waitingForSetup, systemImage: "clock")
+                        .font(.caption).foregroundStyle(.secondary).padding(.leading, 22)
                 }
             } else {
                 ForEach(Array(ask.questions.enumerated()), id: \.offset) { _, question in

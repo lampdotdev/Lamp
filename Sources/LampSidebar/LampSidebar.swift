@@ -404,7 +404,10 @@ private struct AskLine: View {
 
     var body: some View {
         if let ask = line.ask {
-            AskCardView(ask: ask, isOpen: line.askOpen ?? false, progress: $progress) { answers in
+            let waiting = line.takeBack.map { id in
+                AskWaiting(forSetup: line.waitingForSetup ?? false) { link.send(.unqueue(id)) }
+            }
+            AskCardView(ask: ask, isOpen: line.askOpen ?? false, progress: $progress, waiting: waiting) { answers in
                 link.send(.answer(line.id, answers))
             }
             .onAppear { take() }
