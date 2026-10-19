@@ -67,6 +67,19 @@ final class GlassIconsTests: XCTestCase {
         }
     }
 
+    /// A game's painting and a design for glass never stand in for each other, while artwork kept before the game
+    /// style existed is still found where it was.
+    func testAGameKeepsItsArtworkApart() throws {
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-glass-game-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: work) }
+        let project = try Template.draft(name: "Cards", in: work)
+        var spec = IconSpec(subject: "a playing card", symbol: "suit.spade.fill", background: "green", tint: "#FFFFFF")
+        let plain = Icons.artURL(project, spec: spec)
+        spec.game = true
+        XCTAssertNotEqual(Icons.artURL(project, spec: spec), plain)
+        XCTAssertNotEqual(Icons.glassURL(project, spec: spec).deletingPathExtension(), plain.deletingPathExtension())
+    }
+
     func testACopyTurnsTheHuesAndKeepsTheWhites() {
         let blue = GlassDesign(background: "#0A84FF", layers: [
             GlassDesign.Layer(name: "ring", material: .glass, svg: svg(##"<circle r="10" fill="#5AB0FF"/>"##), color: "#0060DF",

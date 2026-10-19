@@ -315,8 +315,10 @@ enum Icons {
     }
 
     private static func artHash(_ spec: IconSpec) -> String {
-        // v3: drawn flat for Liquid Glass. Artwork in v2's shaded style isn't put under glass.
-        let key = "v3|\(spec.subject.trimmed)|\(background(named: spec.background).name)|\(spec.tint.trimmed.lowercased())"
+        // The key artwork has always had, so a picture someone chose in Image Playground is still found; a game's is
+        // apart, since a painting filling the tile and a design for glass don't stand in for each other.
+        let key = "v2|\(spec.subject.trimmed)|\(background(named: spec.background).name)|\(spec.tint.trimmed.lowercased())"
+            + (spec.game ? "|game" : "")
         return SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16).description
     }
 

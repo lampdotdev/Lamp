@@ -129,8 +129,9 @@ enum GlassIcons {
 
     // MARK: Drawing
 
-    /// Whether Lamp can draw glass icons: the drawing model is reached with the OpenRouter key.
-    static var canDraw: Bool { Provider.hasKey }
+    /// Whether Lamp draws glass icons: the drawing model is reached with the OpenRouter key, and only when icons
+    /// aren't to be painted by the model on this Mac, which someone chose to keep them free and private.
+    static var canDraw: Bool { Provider.hasKey && Icons.iconModel != Icons.localArt }
 
     /// The best of a few designs, each drawn and then put right by looking at its rendering.
     static func generateBest(for spec: IconSpec, appName: String, about: String,

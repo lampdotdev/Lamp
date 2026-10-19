@@ -504,6 +504,8 @@ enum Sharing {
                 newArtwork = (try? Data(contentsOf: url)) != art
                 try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? art.write(to: url)
+                // The sender's picture takes the place of a glass design kept here for the same icon.
+                try? fm.removeItem(at: Icons.glassURL(project, spec: spec))
             }
         }
         return newArtwork
