@@ -44,11 +44,12 @@ A capability given to one engine must be given to all of them that can take it, 
   request came to is the agent's last message, in a sentence or two (`Agent.Rules.finish`), under the line that says
   the app is ready or updated; a card for it said no more than that message did and hid what it said beyond it.
   While longer work goes on, the agent says how it's going with `progress`: a line of 12 words at most, shown at once
-  in both chats as a message like any other, and gathered into "Worked for…" with the turn's steps when it ends
-  (`ChatLook.ProgressLine`; folded, the sidebar gets it as a status line marked with `ChatLook.progressSymbol`, so an
-  older sidebar still reads the chat), so the answer is all that's left to read. Whatever the agent writes as messages
-  on the way is treated the same: each shows as it's said, and all but the last are folded with the steps
-  (`LogLine.visible`, `ChatItem.items`), since models write such updates whether or not they're asked to use the tool. A change to much of what an app already shows is built in passes
+  in both chats as a message like any other, which stays one when the turn ends: only the turn's steps go into
+  "Worked for…", above its last message (`ChatItem.items`). Whatever the agent writes as messages on the way is
+  treated the same, each shown as it's said and kept as it was (`LogLine.visible`), since models write such updates
+  whether or not they're asked to use the tool: what the person has read never turns into a gray line among the
+  steps or goes away. (A Lamp from before this folded them; `ChatLook.ProgressLine` and the status line marked with
+  `ChatLook.progressSymbol` are still drawn for a sidebar talking to one.) A change to much of what an app already shows is built in passes
   (`lookRules`: the layout with placeholders, then the parts working, then the detail), each begun with a
   `progress` line and ended with `look_at_app`, which puts it into the open app, so the person watches the app
   take shape rather than waiting for the end; what's read only at launch is made right in the first pass, so later

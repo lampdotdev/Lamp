@@ -235,13 +235,11 @@ enum ChatItem: Identifiable {
     }
 
     /// A finished run's lines, its steps under one line above its last message. What the agent said on the way
-    /// (its progress lines and messages before the last) goes with the steps: the last message is the answer.
+    /// (its progress lines and messages) stays where it was, a message like any other: what the person has read
+    /// doesn't change form or go when the turn ends, and only what was done goes into the fold.
     private static func folded(_ run: [LogLine], summary: LogLine) -> [ChatItem] {
-        // A run that asked has its card for an answer: what it said before the card goes with the steps.
-        let answer = run.contains { $0.kind == .ask } ? nil : run.last { $0.kind == .agent }?.id
         let isStep = { (line: LogLine) in
-            (line.kind == .status && line.text != ChatLook.fixingCrash)
-                || line.kind == .tool || line.kind == .progress || (line.kind == .agent && line.id != answer)
+            (line.kind == .status && line.text != ChatLook.fixingCrash) || line.kind == .tool
         }
         let steps = items(run.filter(isStep)).flatMap { item -> [LogLine] in
             switch item {
@@ -364,7 +362,6 @@ struct Transcript: View {
                             switch step {
                             case .tools(let lines): ToolGroup(lines: lines, running: false).equatable()
                             case .statuses(let lines): StatusGroup(lines: lines, running: false)
-                            case .line(let line) where line.kind == .progress || line.kind == .agent: ChatLook.ProgressLine(line.text)
                             default: EmptyView()
                             }
                         }

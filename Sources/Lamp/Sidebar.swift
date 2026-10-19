@@ -433,7 +433,6 @@ final class SidebarServer {
                         status.said = line.said
                         return status
                     }
-                    case .line(let line) where line.kind == .progress || line.kind == .agent: [Self.progress(line, gap: 4, folded: true)]
                     default: []
                     }
                 }

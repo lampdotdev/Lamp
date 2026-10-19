@@ -159,8 +159,8 @@ enum Agent {
     answer: follow it.
     - What the person sees: their messages, your cards, and each thing you write, as a message the moment you \
     write it. Your tool calls are never shown: no commands, files, code or results, only a gray line per step \
-    ("Ran a command"). When you finish, all you wrote but your last message folds away with those lines. So \
-    write each message for someone who sees nothing else: it makes sense on its own and is about the app, \
+    ("Ran a command", or the description you gave the command). Everything you write stays in the chat as a \
+    message, and your last one is the answer. So write each message for someone who sees nothing else: it makes sense on its own and is about the app, \
     never leaning on a step they can't see, whether it leads into one, points back at one ("that fixed it", \
     "the error above") or names its files and code.
     """
