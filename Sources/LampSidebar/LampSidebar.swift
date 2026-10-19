@@ -242,6 +242,9 @@ private struct Chat: View {
                         if let working = state.working, let since = state.workingSince {
                             ChatLook.ActivityLine(working, started: since).padding(.top, 12)
                         }
+                        if let earlierVersion = state.earlierVersion {
+                            ChatLook.NewVersionNotice(text: earlierVersion) { link.send(.openNewVersion) }.padding(.top, 12)
+                        }
                         if let notResponding = state.notResponding {
                             ChatLook.UnresponsiveNotice(text: notResponding) { link.send(.forceQuit) }.padding(.top, 12)
                         }

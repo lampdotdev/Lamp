@@ -2252,6 +2252,8 @@ final class Store: ObservableObject {
             Task {
                 // Installed or not, the wait ends here (`mayInstall`), so the app being given back finds nothing due.
                 await installIcon(project)
+                // Closed with Open New Version while a turn had it: the build it waited for is in, so it opens.
+                if reopening.remove(project.id) != nil, let current = current(project) { await open(current) }
                 finish(project)
             }
         }
@@ -4440,7 +4442,6 @@ final class Store: ObservableObject {
             // says what that breaks, too): the build waits, and goes in when the app closes.
             Runtime.holdBuild(project)
             _ = heldInstalls.mayInstall(project.id, running: true)
-            if !asked { log(project, .status, ErrorMessages.stayedOpen(project.name)) }
             owner?.keptOpen = true
             owner?.didNotOpen = true
             noteOpened(false, for: project)
@@ -4455,6 +4456,8 @@ final class Store: ObservableObject {
             try await deploy(project)
             heldInstalls.installed(project.id)
             Runtime.releaseBuild(project)
+            // Opened here: Open New Version, asked for during the turn, has nothing left to open.
+            reopening.remove(project.id)
         } catch {
             log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
             owner?.didNotOpen = true
@@ -4832,8 +4835,8 @@ final class Store: ObservableObject {
     private var simulatorLeases: [String: String] = [:]
 
     /// For Open App and Undo, where no agent is running to fix a crash.
-    private func installReportingCrash(_ project: LampProject) async {
-        if await install(project) != nil {
+    private func installReportingCrash(_ project: LampProject, fresh: Bool = false) async {
+        if await install(project, fresh: fresh) != nil {
             log(project, .error, ErrorMessages.crashAfterLaunch(project.name))
         }
     }
@@ -5485,6 +5488,45 @@ final class Store: ObservableObject {
         let closed = openApps.subtracting(ids).union(closedOnMac)
         if Set(ids) != openApps { openApps = Set(ids) }
         if !closed.isEmpty { installHeldIcons(for: closed) }
+        refreshEarlierVersions()
+    }
+
+    /// Apps open on this Mac that are still the version before a build that waits for them to close: their chat
+    /// offers to open the new one (`ChatLook.NewVersionNotice`).
+    @Published private(set) var earlierVersionOpen: Set<String> = []
+    /// Apps Open New Version was pressed for, until the new version is in.
+    private var reopening: Set<String> = []
+
+    private func refreshEarlierVersions() {
+        let now = Set(projects.filter { openOnMac.contains($0.id) && !reopening.contains($0.id) && Runtime.holdsBuild($0) }.map(\.id))
+        if now != earlierVersionOpen { earlierVersionOpen = now }
+    }
+
+    /// The person's click on Open New Version: the app they kept open is asked to quit, as a build asks it (one
+    /// with unsaved work asks them first, and keeping it open is still their answer), and the build that waited for
+    /// it goes in and opens. While a turn has the app, that happens when the turn gives it back.
+    func openNewVersion(_ project: LampProject) async {
+        guard reopening.insert(project.id).inserted else { return }
+        refreshEarlierVersions()
+        defer {
+            refreshOpenApps()
+            refreshEarlierVersions()
+        }
+        if begin(project) != nil {
+            defer {
+                reopening.remove(project.id)
+                finish(project)
+            }
+            // `fresh`: the build waits because the change couldn't go into the open app, so it isn't tried again.
+            await installReportingCrash(project, fresh: true)
+            return
+        }
+        guard await quit(project, only: .mac) else {
+            reopening.remove(project.id)
+            return
+        }
+        // The turn's next look or build installs what it makes, rather than taking the closed app for one still kept open.
+        turns[project.id]?.keptOpen = false
     }
 
     /// Quits the app, for the Stop button. It's asked, and its answer is waited for: an app asking about

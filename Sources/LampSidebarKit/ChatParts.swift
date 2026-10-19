@@ -168,6 +168,36 @@ extension ChatLook {
         }
     }
 
+    /// Under the chat while the app is open as it was before a change: it was asked to quit for the change and
+    /// stayed open, so the change waits for it to close. One click closes it and opens the new version, rather
+    /// than leaving the person to find that out from a line in the chat.
+    public struct NewVersionNotice: View {
+        let text: String
+        let open: () -> Void
+
+        public init(text: String, open: @escaping () -> Void) {
+            self.text = text
+            self.open = open
+        }
+
+        public var body: some View {
+            HStack(alignment: .center, spacing: 12) {
+                Label {
+                    Text(text).lineSpacing(2)
+                } icon: {
+                    Image(systemName: "arrow.clockwise.circle.fill").foregroundStyle(Color.accentColor)
+                }
+                Spacer(minLength: 0)
+                Button("Open New Version", action: open)
+                    .buttonStyle(.borderedProminent)
+                    .help("Closes the app and opens it with the change")
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
     /// What a command does and how risky it is, in plain words for people who don't read shell commands.
     public struct Explanation: Codable, Equatable {
         public var summary: String

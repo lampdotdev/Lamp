@@ -51,6 +51,8 @@ public struct SidebarState: Codable, Equatable {
     public var approval: SidebarApproval?
     /// The app was asked to quit and isn't responding: what the notice says.
     public var notResponding: String?
+    /// The app stayed open as it was before a change, which waits for it to close: what the notice says.
+    public var earlierVersion: String?
     /// A request taken back into the message box to change and send again: Escape puts it back.
     public var replacing: Bool?
     /// Only the end of a long chat is here; more is sent when asked (`SidebarCommand.earlier`).
@@ -383,6 +385,8 @@ public enum SidebarCommand: Codable, Equatable {
     /// The answer to the approval with this id.
     case approve(UUID, allow: Bool, allowAll: Bool)
     case forceQuit
+    /// Open New Version: the app closes and opens with the change that waited for it.
+    case openNewVersion
     // The toolbar's, as in Lamp's window.
     /// Lamp's icon at the start of the bar: Lamp in front, on its desk.
     case showLamp

@@ -243,6 +243,7 @@ final class SidebarServer {
             SidebarApproval(id: $0.id, title: $0.title, command: $0.command, explanation: $0.explanation?.look)
         }
         state.notResponding = store.notResponding[project.id] != nil ? ErrorMessages.notResponding(project.name) : nil
+        state.earlierVersion = store.earlierVersionOpen.contains(project.id) ? ErrorMessages.earlierVersion(project.name) : nil
         state.replacing = draft.replacing != nil
         state.hasEarlier = LogLine.recentStart(in: LogLine.visible(log, details: details), atLeast: reach[project.id] ?? LogLine.recentCount) > 0
         state.suggestion = suggestion(for: project, log: log, busy: busy)
@@ -754,6 +755,9 @@ final class SidebarServer {
             // Asked for from another app's window, so Lamp has to take the front for itself.
             NSApp.activate(ignoringOtherApps: true)
             store.showDesk()
+        case .openNewVersion:
+            guard store.earlierVersionOpen.contains(project.id) else { return }
+            Task { await store.openNewVersion(project) }
         case .undo:
             Task { await store.undo(project) }
         case .delete:
