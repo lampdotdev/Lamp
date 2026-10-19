@@ -324,7 +324,7 @@ public enum ChatLook {
                 if busy {
                     Button(action: stop) { Image(systemName: "stop.fill") }
                         .buttonStyle(Round(prominent: true))
-                        .help("Stop. Press Return to queue what you've typed for after this change.")
+                        .help("Stop. Press Return to send what you've typed after this change.")
                         .accessibilityLabel("Stop")
                         .padding(.bottom, Self.buttonLift)
                 } else {

@@ -1406,8 +1406,13 @@ final class Store: ObservableObject {
             if let spec = Icons.load(project) {
                 var recolored = spec
                 recolored.background = otherBackground(than: spec).name
-                // The same artwork, filed under the new background so the copy's icon finds it.
-                if fm.fileExists(atPath: Icons.artURL(copy, spec: spec).path) {
+                // The same artwork, filed under the new background so the copy's icon finds it. A glass design is
+                // made of the background's shades, so it takes the new background's hue.
+                if let glass = GlassArt.load(from: Icons.glassURL(copy, spec: spec)) {
+                    let hue = Icons.background(named: recolored.background).bottom
+                    try? Icons.save(GlassArt(design: glass.design.recolored(to: hue), paintings: glass.paintings),
+                                    for: copy, spec: recolored)
+                } else if fm.fileExists(atPath: Icons.artURL(copy, spec: spec).path) {
                     try? fm.copyItem(at: Icons.artURL(copy, spec: spec), to: Icons.artURL(copy, spec: recolored))
                 }
                 Icons.save(recolored, for: copy)
@@ -5181,7 +5186,7 @@ final class Store: ObservableObject {
 
     private func renderIcon(_ project: LampProject, spec: IconSpec) async {
         do {
-            let art = Icons.cachedArt(project, spec: spec)
+            let art = Icons.artwork(project, spec: spec)
             if art != nil { artApplied[project.id] = spec }
             icons[project.id] = try await Icons.write(spec, art: art, for: project)
         } catch {
@@ -5249,10 +5254,11 @@ final class Store: ObservableObject {
     }
 
     /// Generates artwork for the icon's object in the background (best of a few candidates) and swaps it in
-    /// when ready, with whatever can make pictures. With nothing, the first app asks for a key instead.
+    /// when ready: layers of glass where the model that draws them can be reached, else a painting with whatever
+    /// can make pictures, and always a painting for a game. With nothing, the first app asks for a key instead.
     private func upgradeIconArt(_ project: LampProject) {
         guard !Starters.isStarter(project), let spec = Icons.load(project), !spec.subject.trimmed.isEmpty,
-              Icons.cachedArt(project, spec: spec) == nil else { return }
+              Icons.artwork(project, spec: spec) == nil else { return }
         // The person chose to draw icons themselves: Lamp draws nothing, key or no key, and asks for no key.
         guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
         guard artInProgress.insert(project.id).inserted else { return }
@@ -5267,17 +5273,27 @@ final class Store: ObservableObject {
             // Lamp drew is used, and the drawing is theirs to do.
             guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
             do {
-                let art = try await Icons.generateBestArt(spec, appName: project.name) { [weak self] in
-                    self?.log(project, .detail, $0)
+                let log: @MainActor (String) -> Void = { [weak self] in self?.log(project, .detail, $0) }
+                let art: Icons.Artwork
+                if !spec.game, GlassIcons.canDraw {
+                    let about = AppFile.text(project.dir.appendingPathComponent("APP.md"), in: project) ?? ""
+                    art = .glass(try await GlassIcons.generateBest(for: spec, appName: project.name, about: about, log: log))
+                } else {
+                    art = .picture(try await Icons.generateBestArt(spec, appName: project.name, log: log))
                 }
                 guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
                 // A picture picked in Image Playground while these were being drawn is the person's choice: it stays.
-                guard Icons.cachedArt(project, spec: spec) == nil else { return }
-                let url = Icons.artURL(project, spec: spec)
-                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                guard let tiff = art.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?
-                    .representation(using: .png, properties: [:]) else { return }
-                try png.write(to: url)
+                guard Icons.artwork(project, spec: spec) == nil else { return }
+                switch art {
+                case .glass(let glass):
+                    try Icons.save(glass, for: project, spec: spec)
+                case .picture(let image):
+                    let url = Icons.artURL(project, spec: spec)
+                    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    guard let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?
+                        .representation(using: .png, properties: [:]) else { return }
+                    try png.write(to: url)
+                }
                 guard Icons.load(project) == spec else { return }   // the icon was redesigned meanwhile
                 // During a build the install that ends it picks the artwork up; if that install came first,
                 // finish() applies it. Otherwise apply it now.
@@ -5378,12 +5394,14 @@ final class Store: ObservableObject {
             let url = Icons.artURL(project, spec: spec)
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try png.write(to: url)
+            // The person's picture takes the place of a glass design drawn for the same icon.
+            try? FileManager.default.removeItem(at: Icons.glassURL(project, spec: spec))
             artApplied[project.id] = nil   // the icon on show was made with other artwork, or none
             // As with generated artwork: a turn that has the app installs the picture when it ends. The chat
             // shows it at once and says so, or picking it would look like nothing happened.
             guard begin(project) != nil else {
                 pendingIconArt.insert(project.id)
-                let preview = await Icons.preview(spec, art: NSImage(data: png))
+                let preview = await Icons.preview(spec, art: NSImage(data: png).map(Icons.Artwork.picture))
                 if exists(project), Icons.load(project) == spec {
                     icons[project.id] = preview
                     log(project, .status, "Your picture is \(project.name)'s icon now. It goes on the app when this turn ends.")
