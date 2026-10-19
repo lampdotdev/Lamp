@@ -246,14 +246,19 @@ enum LiveReload {
         guard let dump = await dump(of: sources(project), in: project, module: project.exe, macOS: Template.macMinimum(project)) else {
             return "the compiler couldn't say what holds the enums that grew"
         }
-        let held = members(inDump: dump, held: true).compactMap { entry -> (String, String)? in
+        let entries = members(inDump: dump, held: true)
+        let held = entries.compactMap { entry -> (String, String)? in
             guard !isGroup(String(entry.prefix { $0 != "\t" })), let colon = entry.range(of: ": ") else { return nil }
             return (String(entry.prefix { $0 != "\t" }), String(entry[colon.upperBound...]))
         } + LiveSlots.mapping(project).flatMap { type, properties in properties.map { (type, $0.value.type) } }
-        // A value of the enum could hide in what holds anything at all, where its type can't be seen.
-        let untyped = try! NSRegularExpression(pattern: #"(?<![\w.])(Any|AnyObject|AnyHashable|any [\w.]+)(?![\w])"#)
-        for (owner, kind) in held where untyped.firstMatch(in: kind, range: NSRange(kind.startIndex..., in: kind)) != nil {
-            return "\(owner.isEmpty ? "a global" : owner) keeps values of any type (\(kind)), which may hold \(grown.joined(separator: ", "))"
+        // A value of the enum could hide in what holds anything at all, where its type can't be seen: a value of
+        // any type, or of any type conforming to a protocol the enum conforms to.
+        for type in grown {
+            for (owner, kind) in held {
+                if let box = existential(in: kind, holding: type, conformances: conformances(inLayout: entries)) {
+                    return "\(owner.isEmpty ? "a global" : owner) keeps values of any type (\(box)), which may hold \(type)"
+                }
+            }
         }
         for type in grown {
             let name = NSRegularExpression.escapedPattern(for: type)
@@ -358,6 +363,108 @@ enum LiveReload {
             }
         }
         return uses
+    }
+
+    /// What each type and protocol conforms to or inherits, from the layout's declarations ("Mood inherits P, Q",
+    /// an extension's included, a nested type's under its qualified name), with the protocols the app declares
+    /// itself and the types it declares, so an extension of a system type (`extension Optional: P`) is told apart.
+    struct Conformances {
+        var of: [String: Set<String>] = [:]
+        var protocols = Set<String>(), types = Set<String>()
+        /// Each type's stored fields' types, an enum's cases' payloads included, to tell a type that may wrap
+        /// anything (a generic parameter, `Any`, a system type) from one made of plain values and the app's own types.
+        var fields: [String: [String]] = [:]
+        /// Each typealias and what it names, by its name and its qualified name.
+        var aliases: [String: String] = [:]
+    }
+    static func conformances(inLayout entries: [String]) -> Conformances {
+        var out = Conformances()
+        for entry in entries {
+            if entry.hasPrefix("protocol "), entry.hasSuffix("\t") { out.protocols.insert(String(entry.dropFirst(9).dropLast())); continue }
+            if entry.hasPrefix(aliasGroup + "\t"), let equals = entry.range(of: " = ") {
+                let name = String(entry[entry.index(after: entry.firstIndex(of: "\t")!)..<equals.lowerBound]), names = String(entry[equals.upperBound...])
+                out.aliases[name] = names
+                out.aliases[String(name.split(separator: ".").last ?? "").split(separator: ":").last.map(String.init) ?? name] = names
+                continue
+            }
+            if entry.hasSuffix("\t"), !isGroup(entry) { out.types.insert(String(entry.dropLast())); continue }
+            if !isGroup(entry), !entry.hasPrefix("protocol "), let tab = entry.firstIndex(of: "\t"), let colon = entry.range(of: ": ") {
+                out.fields[String(entry[..<tab]), default: []].append(String(entry[colon.upperBound...]))
+                continue
+            }
+            guard entry.hasPrefix(declarationGroup + "\t") else { continue }
+            let declared = entry.dropFirst(declarationGroup.count + 1)
+            guard let at = declared.range(of: " inherits ") else { continue }
+            let type = String(declared[..<at.lowerBound])
+            for name in declared[at.upperBound...].split(separator: ",") {
+                out.of[type, default: []].insert(name.trimmingCharacters(in: .whitespaces))
+            }
+        }
+        return out
+    }
+
+    /// The existential in a stored type that a value of the enum could be kept in, if there is one. `Any` takes
+    /// any value, `AnyObject` too (a value is boxed into an object for it), and so does `any P` for a protocol the
+    /// app doesn't declare: the standard wrappers conform to many of those on their own (`Optional` is
+    /// CustomDebugStringConvertible whatever it wraps, an array a Collection), so `any Collection` may hold
+    /// `[Mood?]`. For a protocol of the app's own, the enum must conform to it, directly, in an extension or
+    /// through a protocol that inherits it, or a type that could wrap the enum must: an extension of a type the app
+    /// doesn't declare (`Optional`, `Array`), or a type of the app's with a field of a type that isn't the app's or
+    /// a plain value (a generic parameter, `Any`, a system type), followed through the app's types. A model keeping
+    /// `any Shape` isn't a reason to reopen for a Mood that is no Shape.
+    static func existential(in kind: String, holding type: String, conformances: Conformances) -> String? {
+        // What the enum conforms to, followed through the protocols those inherit, and the same for the app's
+        // extensions of types it doesn't declare, which may wrap the enum.
+        func reach(_ from: [String]) -> Set<String> {
+            var seen = Set<String>(), queue = from
+            while let next = queue.popLast() {
+                guard seen.insert(next).inserted else { continue }
+                queue += conformances.of[next] ?? []
+            }
+            return seen
+        }
+        let own = reach(Array(conformances.of[type] ?? []))
+        // Whether a type of the app's could hold anything: a field whose type names something that isn't one of the
+        // app's types or a plain value, looked through the app's types it's made of.
+        let names = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
+        func mayWrap(_ type: String, _ seen: inout Set<String>) -> Bool {
+            guard seen.insert(type).inserted else { return false }
+            return (conformances.fields[type] ?? []).contains { mayWrap(kind: $0, &seen) }
+        }
+        func mayWrap(kind: String, _ seen: inout Set<String>) -> Bool {
+            for match in names.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)) {
+                var name = String(kind[Range(match.range, in: kind)!])
+                // A case's type names its enum's metatype; the type itself is what's looked at.
+                for suffix in [".Type", ".Protocol"] where name.hasSuffix(suffix) { name.removeLast(suffix.count) }
+                let last = String(name.split(separator: ".").last ?? "")
+                if ["any", "some", "inout"].contains(name) || LiveSlots.plainValues.contains(last) { continue }
+                if let named = conformances.aliases[name] ?? conformances.aliases[last] {
+                    if seen.insert("=" + name).inserted, mayWrap(kind: named, &seen) { return true } else { continue }
+                }
+                if conformances.types.contains(name) { if mayWrap(name, &seen) { return true } else { continue } }
+                if conformances.types.contains(last) { if mayWrap(last, &seen) { return true } else { continue } }
+                return true
+            }
+            return false
+        }
+        let wrappers = reach(conformances.of.keys.filter { key in
+            guard !conformances.protocols.contains(key), conformances.of[key] != nil else { return false }
+            var seen = Set<String>()
+            return !conformances.types.contains(key) || mayWrap(key, &seen)
+        })
+        let boxes = try! NSRegularExpression(pattern: #"(?<![\w.])(Any|AnyObject|AnyHashable|any (?:[\w.]+(?: & [\w.]+)*))(?![\w])"#)
+        for match in boxes.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)) {
+            let box = String(kind[Range(match.range(at: 1), in: kind)!])
+            if !box.hasPrefix("any ") { return box }
+            let protocols = box.dropFirst(4).split(separator: "&").map { $0.trimmingCharacters(in: .whitespaces) }
+            let holds = protocols.allSatisfy { name in
+                let simple = String(name.split(separator: ".").last ?? Substring(name))
+                guard conformances.protocols.contains(simple) else { return true }
+                return own.contains(simple) || own.contains(name) || wrappers.contains(simple)
+            }
+            if holds { return box }
+        }
+        return nil
     }
 
     /// What the open app's types hold (kept from the last time, or worked out from the sources it runs) and what
@@ -520,6 +627,7 @@ enum LiveReload {
             }
             if let m = protocolDecl.firstMatch(in: line, range: range) {
                 let type = "protocol " + String(line[Range(m.range(at: 3), in: line)!])
+                conformances(String(line[Range(m.range(at: 3), in: line)!]))
                 scopes.append((indent, type))
                 if seen.insert(type + "\t").inserted { out.append(type + "\t") }
             } else if let owner, owner.hasPrefix("protocol "), let m = requirement.firstMatch(in: line, range: range) {
@@ -534,7 +642,8 @@ enum LiveReload {
                 let name = String(line[Range(m.range(at: 3), in: line)!])
                 let outer = scopes.compactMap(\.type).last
                 let type = outer.map { $0 + "." + name } ?? name
-                conformances(type)
+                // By its bare name: `declared` puts the owner before it, which makes the qualified name once.
+                conformances(name)
                 scopes.append((indent, type))
                 // Every type is listed, members or not: an empty one the open app has is still its, and a first
                 // field added to it changes what it holds.
@@ -1037,7 +1146,7 @@ enum LiveSlots {
     }
 
     /// Value types a constant is made of that hold no object of their own.
-    private static let plainValues: Set<String> = [
+    static let plainValues: Set<String> = [
         "Swift", "Int", "Int8", "Int16", "Int32", "Int64", "UInt", "UInt8", "UInt16", "UInt32", "UInt64", "Double", "Float",
         "Float16", "CGFloat", "Bool", "String", "Substring", "Character", "StaticString", "Array", "Dictionary", "Set",
         "Optional", "Range", "ClosedRange", "Void", "Never", "TimeInterval", "Date", "URL", "UUID", "Decimal", "Data",

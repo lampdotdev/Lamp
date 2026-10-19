@@ -123,6 +123,15 @@ final class LiveReloadTests: XCTestCase {
             protocol Shape { func area() -> Int; var name: String { get set } }
             struct Square: Shape { var side: Side; var name = ""; func area() -> Int { side * side } }
             extension Square: Hashable { typealias Key = String; var key: Key { name }; func grow(_ by: Int = 1) -> Square { self } }
+            protocol Boxed {}
+            extension Optional: Boxed {}
+            protocol Lidded {}
+            struct Jar<T>: Lidded { var value: T }
+            protocol Flat {}
+            struct Tile: Flat { var n: Int; var square: Square }
+            enum Parcel<T>: Lidded { case value(T), none }
+            enum Coin: Flat { case heads, tails(Int) }
+            struct Outer { enum Mood: Shape { case a, b; func area() -> Int { 0 }; var name: String { get { "" } set {} } } }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
         let layout = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
         let shape = layout?.filter { $0.hasPrefix("protocol Shape") } ?? []
@@ -135,8 +144,9 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertEqual(layout?.filter { $0.hasPrefix(LiveReload.aliasGroup) },
                        [LiveReload.aliasGroup + "\tSide = Int", LiveReload.aliasGroup + "\tShapes.swift:Secret = Int", LiveReload.aliasGroup + "\tSquare.Key = String"])
         let declared = layout?.filter { $0.hasPrefix(LiveReload.declarationGroup) }.map { String($0.dropFirst(LiveReload.declarationGroup.count + 1)) } ?? []
-        XCTAssertEqual(declared, ["Square inherits Shape", "Square.area(): (Square) -> () -> Int", "Square inherits Hashable",
-                                  "Square.key: Square.Key", "Square.grow(_:): (Square) -> (Int) -> Square"], "\(declared)")
+        XCTAssertEqual(Array(declared.prefix(5)), ["Square inherits Shape", "Square.area(): (Square) -> () -> Int", "Square inherits Hashable",
+                                                   "Square.key: Square.Key", "Square.grow(_:): (Square) -> (Int) -> Square"], "\(declared)")
+        XCTAssertTrue(declared.contains("Optional inherits Boxed") && declared.contains("Outer.Mood inherits Shape"), "\(declared)")
         let retargeted = layout!.map { $0 == LiveReload.aliasGroup + "\tSide = Int" ? LiveReload.aliasGroup + "\tSide = Double" : $0 }
         XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: retargeted).problem, "the typealias Side changed from Int to Double")
         let withoutAliases = LiveReload.layoutProblem(before: layout, after: layout!.filter { !$0.hasPrefix(LiveReload.aliasGroup) })
@@ -148,6 +158,31 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertFalse(LiveReload.isGroup(String("\tselection: Mood?".prefix { $0 != "\t" })))
         XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: layout!.filter { !$0.contains("grow(_:)") }))
         XCTAssertFalse(LiveReload.declarationsChanged(before: layout!, after: layout!))
+        // An existential holds a grown enum when it's Any or AnyObject (a value is boxed for it), a protocol the
+        // app doesn't declare (the standard wrappers conform to those on their own), or one of the app's that the
+        // enum conforms to, through an extension and a protocol that inherits it too, or that an extension of a
+        // system type gives, which could wrap the enum; never one of the app's the enum has nothing to do with.
+        let conformances = LiveReload.conformances(inLayout: layout! + [LiveReload.declarationGroup + "\tMood inherits Loud", LiveReload.declarationGroup + "\tLoud inherits Named", "protocol Loud\t", "protocol Named\t"])
+        XCTAssertEqual(conformances.of["Square"], ["Shape", "Hashable"])
+        XCTAssertEqual(conformances.of["Outer.Mood"], ["Shape"])
+        XCTAssertNil(LiveReload.existential(in: "any Shape", holding: "Mood", conformances: conformances))
+        XCTAssertEqual(LiveReload.existential(in: "any Shape", holding: "Outer.Mood", conformances: conformances), "any Shape")
+        XCTAssertEqual(LiveReload.existential(in: "[AnyObject]", holding: "Mood", conformances: conformances), "AnyObject")
+        XCTAssertEqual(LiveReload.existential(in: "(any Named)?", holding: "Mood", conformances: conformances), "any Named")
+        XCTAssertNil(LiveReload.existential(in: "[String: any Shape & Hashable]", holding: "Mood", conformances: conformances))
+        XCTAssertEqual(LiveReload.existential(in: "any Boxed", holding: "Mood", conformances: conformances), "any Boxed")
+        // A generic type of the app's conforming to the protocol may wrap the enum; one made of plain values and the
+        // app's own types can't.
+        XCTAssertEqual(LiveReload.existential(in: "any Lidded", holding: "Mood", conformances: conformances), "any Lidded")
+        XCTAssertNil(LiveReload.existential(in: "any Flat", holding: "Mood", conformances: conformances))
+        // An enum's cases' payloads count as what it holds: a generic payload may wrap the enum, a plain one can't.
+        let noJar = LiveReload.conformances(inLayout: layout!.filter { !$0.hasPrefix("Jar") && !$0.contains("Jar inherits") })
+        XCTAssertEqual(LiveReload.existential(in: "any Lidded", holding: "Mood", conformances: noJar), "any Lidded")
+        XCTAssertEqual(noJar.fields["Coin"], ["(Coin.Type) -> Coin", "(Coin.Type) -> (Int) -> Coin"])
+        XCTAssertEqual(LiveReload.existential(in: "any CustomDebugStringConvertible", holding: "Mood", conformances: conformances), "any CustomDebugStringConvertible")
+        XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
+        XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")
+        XCTAssertEqual(LiveReload.existential(in: "Set<AnyHashable>", holding: "Mood", conformances: conformances), "AnyHashable")
         // An enum that grew is met by code the open app is still running: a timer's closure or an async function
         // switching over it, or printing it; never what a view's body (as the live copy names it) makes again at the
         // next draw.
