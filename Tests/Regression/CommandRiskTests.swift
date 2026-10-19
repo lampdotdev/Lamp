@@ -171,6 +171,22 @@ final class CommandRiskTests: XCTestCase {
         }
     }
 
+    // MARK: A low rating
+
+    /// Dan: a command the card calls low risk, in green, shouldn't wait for an answer; medium and high keep
+    /// asking, and so does anything a check flagged, whatever the in-app model calls it.
+    func testALowRatingRunsWhatNothingFlagged() {
+        func rated(_ risk: String) -> Store.CommandExplanation {
+            Store.CommandExplanation(summary: "Searches the app's source files for words to change.", risk: risk,
+                                     why: "Only reads files inside the app's own folder; nothing is changed.")
+        }
+        XCTAssertTrue(CommandRisk.runsOnRating(rated("low"), flagged: nil))
+        XCTAssertFalse(CommandRisk.runsOnRating(rated("medium"), flagged: nil))
+        XCTAssertFalse(CommandRisk.runsOnRating(rated("high"), flagged: nil))
+        XCTAssertFalse(CommandRisk.runsOnRating(rated("low"), flagged: .sendsOut))
+        XCTAssertFalse(CommandRisk.runsOnRating(nil, flagged: nil))
+    }
+
     // MARK: The reason on the card
 
     /// The text model can call a flagged command low risk; the card doesn't. A rating that's already

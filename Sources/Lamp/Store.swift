@@ -2930,13 +2930,19 @@ final class Store: ObservableObject {
             // A command the sandbox confines can only change the app's own folder (Sandbox), so only one the
             // checks find risky asks: one they're merely unsure of, or that doesn't seem to match the request
             // (looking for the app's process while fixing it), runs. Asking about those was most of the cards,
-            // nearly all of them allowed. A check that couldn't be made at all still asks: the sandbox leaves the
-            // network open, so it isn't the only guard.
+            // nearly all of them allowed. A check that couldn't be made at all goes to the in-app model's rating:
+            // the sandbox leaves the network open, so it isn't the only guard, but a "low" there runs it.
             if judgment.verdict == .run || (sandboxed && judgment.verdict == .unsure && judgment.judged) {
                 log(project, .status, "Ran: \(command)")
                 return true
             }
             // A risky verdict always has its reason; if one were ever missing, the card still comes up as flagged.
+            let flagged = judgment.verdict == .risky ? judgment.reason ?? .reachesBeyond : nil
+            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged)
+        case .risky where shell:
+            // Claude Code's own classifier asked: it doesn't run on the checks alone, but what they flag keeps
+            // its card, so the in-app model's "low" can't run a command they found risky.
+            let judgment = await commandJudgment(command, for: project)
             let flagged = judgment.verdict == .risky ? judgment.reason ?? .reachesBeyond : nil
             return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged)
         default:
@@ -2979,7 +2985,8 @@ final class Store: ObservableObject {
     /// Waits for the user to allow or deny a shell command. One request per app at a time; others queue.
     /// There's no timeout: commands wait until the user answers, stops the turn, or the turn ends.
     /// `flagged`: the check that found the command risky; the card gives that check's reason rather than
-    /// call it low risk. The in-app model's rating is words for the card and never runs a command.
+    /// call it low risk. Under "Only when risky", a shell command nothing flagged that the in-app model rates
+    /// low runs without the card (`CommandRisk.runsOnRating`).
     func requestApproval(for project: LampProject, command: String, title: String? = nil,
                          explanation given: CommandExplanation? = nil, shell: Bool = true, sandboxed: Bool = false,
                          flagged: CommandRisk.Reason? = nil) async -> Bool {
@@ -2994,14 +3001,31 @@ final class Store: ObservableObject {
         guard let turn = turns[project.id], turn.agent != nil else { return false }   // the agent is gone: nobody to answer for
         turn.approving = true
         defer { turn.approving = false }
+        // The rating comes first when it could spare the card: a command the checks left to it, or that Claude
+        // Code asked about itself, runs on a "low".
+        var given = given
+        var asked = false   // the in-app model was asked to describe it, and that's its answer or none
+        if shell, title == nil, flagged == nil, CommandApproval.current == .risky {
+            note("Checking a command", for: project)
+            if given == nil { given = await explain(command, for: project, sandboxed: sandboxed); asked = true }
+            guard turn.agent != nil else { return false }
+            if CommandRisk.runsOnRating(given, flagged: flagged) {
+                log(project, .status, "Ran: \(command)")
+                log(project, .detail, "Ran without asking (low risk): \(given?.summary ?? "")")
+                note("Running a command", for: project)   // as after an Allow, so "Checking a command" doesn't stay
+                return true
+            }
+        }
         NSApp.requestUserAttention(.informationalRequest)
         note(title == nil ? "Waiting for your OK to run a command" : "Waiting for your OK", for: project)
         return await withCheckedContinuation { continuation in
-            var pending = PendingApproval(command: command, answer: continuation, explanation: given?.raised(for: flagged))
+            // Asked already and nothing came back: the card says so rather than wait for an answer that isn't coming.
+            var pending = PendingApproval(command: command, answer: continuation,
+                                          explanation: given?.raised(for: flagged) ?? (asked ? .unexplained(flagged: flagged) : nil))
             if let title { pending.title = title }
             approvals[project.id] = pending
             // Explain it while the card is up; until this arrives the card says it's working it out.
-            if given == nil { Task {
+            if given == nil, !asked { Task {
                 let explanation = await explain(command, for: project, sandboxed: sandboxed)?.raised(for: flagged) ?? .unexplained(flagged: flagged)
                 if approvals[project.id]?.id == pending.id { approvals[project.id]?.explanation = explanation }
             } }
