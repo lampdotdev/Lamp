@@ -143,7 +143,7 @@ final class LiveReloadTests: XCTestCase {
             final class Item: Identifiable { var name = "" }
             protocol Drawn { associatedtype Mark; func mark() -> Mark }
             struct Round: Shape { var r: Int; var name = ""; func area() -> Int { r } }
-            struct Styled: Drawn { func mark() -> some Shape { Square(side: 1, name: "s") } }
+            struct Styled: Drawn { func mark() -> some Shape { Square(side: 1, name: "s") }; func n() -> some Numeric { 1 }; func t() -> some Equatable { "a" }; func p() -> some Equatable { n() } }
             struct Outer { enum Mood: Shape { case a, b; func area() -> Int { 0 }; var name: String { get { "" } set {} } } }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
         let layout = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
@@ -194,9 +194,12 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertEqual(LiveReload.existential(in: "any Lidded", holding: "Mood", conformances: noJar), "any Lidded")
         XCTAssertEqual(noJar.fields["Coin"], ["(Coin.Type) -> Coin", "(Coin.Type) -> (Int) -> Coin"])
         // An associated type the compiler inferred is a typealias of the type's, held like one written out; a
-        // member returning `some …` is held by what it builds from, so a literal may change but not the type.
+        // member returning `some …` is held to the type it builds, by its name when the compiler prints it and by
+        // what its body names when that is opaque too.
         XCTAssertTrue(layout!.contains(LiveReload.aliasGroup + "\tItem.ID = ObjectIdentifier"), "\(layout!.filter { $0.contains("Item") })")
-        XCTAssertEqual(layout!.filter { $0.hasPrefix(LiveReload.opaqueGroup + "\tStyled.mark(): (Styled) -> () -> some Shape: ") }.count, 1)
+        XCTAssertTrue(layout!.contains(LiveReload.opaqueGroup + "\tStyled.mark(): (Styled) -> () -> some Shape\tSquare"), "\(layout!.filter { $0.hasPrefix(LiveReload.opaqueGroup) })")
+        XCTAssertTrue(layout!.contains(LiveReload.opaqueGroup + "\tStyled.n(): (Styled) -> () -> some Numeric\tInt"))
+        XCTAssertEqual(layout!.filter { $0.hasPrefix(LiveReload.opaqueGroup + "\tStyled.p(): (Styled) -> () -> some Equatable\t~") }.count, 1)
         XCTAssertTrue(declared.contains("Styled.mark(): (Styled) -> () -> some Shape"), "\(declared)")
         // The same sources read from another folder (the copy the app runs) give the same digest: a declaration
         // is named with where it is, which isn't part of what it builds.
@@ -212,12 +215,18 @@ final class LiveReloadTests: XCTestCase {
             let changed = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
             return try XCTUnwrap(changed)
         }
-        let sameType = try await layoutWith([("Square(side: 1, name: \"s\")", "Square(side: 2, name: \"t\")")])
+        // A literal, or a call that gives the same type back (`"a".uppercased()`), changes nothing; a literal that
+        // makes another type (`1.5`) does, as does another call where the type is opaque too.
+        let sameType = try await layoutWith([("Square(side: 1, name: \"s\")", "Square(side: 2, name: \"t\")"), ("{ \"a\" }", "{ \"a\".uppercased() }")])
         XCTAssertNil(LiveReload.layoutProblem(before: layout, after: sameType).problem)
-        let otherType = try await layoutWith([("Square(side: 2, name: \"t\")", "Round(r: 1)")])
-        XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: otherType).problem, "Styled.mark(): (Styled) -> () -> some Shape returns another kind of value now (some …), which what the open app made can't take")
+        let otherLiteral = try await layoutWith([("some Numeric { 1 }", "some Numeric { 1.5 }")])
+        XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: otherLiteral).problem, "Styled.n(): (Styled) -> () -> some Numeric returns a Double now, where the open app's returned a Int")
+        let otherCall = try await layoutWith([("some Numeric { 1.5 }", "some Numeric { 1 }"), ("some Equatable { n() }", "some Equatable { t() }")])
+        XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: otherCall).problem, "Styled.p(): (Styled) -> () -> some Equatable returns another kind of value now (some …), which what the open app made can't take")
+        let otherType = try await layoutWith([("some Equatable { t() }", "some Equatable { n() }"), ("Square(side: 2, name: \"t\")", "Round(r: 1)")])
+        XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: otherType).problem, "Styled.mark(): (Styled) -> () -> some Shape returns a Round now, where the open app's returned a Square")
         // One taken away is kept with the layout on its own, so one brought back is held to what it built.
-        let without = try await layoutWith([("struct Styled: Drawn { func mark() -> some Shape { Round(r: 1) } }", "")])
+        let without = try await layoutWith([("struct Styled: Drawn { func mark() -> some Shape { Round(r: 1) }; ", "struct Unstyled { "), ("some Equatable { \"a\".uppercased() }", "some Equatable { \"a\" }")])
         let retained = LiveReload.layoutProblem(before: layout, after: without)
         XCTAssertNil(retained.problem)
         XCTAssertEqual(LiveReload.layoutProblem(before: retained.layout, after: otherType).problem?.hasPrefix("Styled.mark()"), true)
