@@ -564,9 +564,27 @@ final class Store: ObservableObject {
         Runtime.awaitReload(project)
         _ = heldInstalls.mayInstall(project.id, running: true)
         Self.tellReload(project, on: true)
+        dropUnderWay(project)
         let lines = logs[project.id] ?? []
         if !already || !lines.contains(where: { $0.kind == .reload }) { log(project, .reload, "") }
         refreshOpenApps()
+    }
+
+    /// The lines at the chat's end that said what was under way ("Building…", "Waiting for … to close…"): with the change
+    /// waiting for Reload, nothing is, so they go. The details among them (why the app has to reopen) are only shown
+    /// with Agent Details, and stay.
+    private func dropUnderWay(_ project: LampProject) {
+        guard var lines = logs[project.id] else { return }
+        var index = lines.endIndex
+        var removed = false
+        while index > lines.startIndex, case let line = lines[index - 1],
+              line.kind == .detail || (line.kind == .status && line.text.hasSuffix("…")) {
+            index -= 1
+            if line.kind != .detail { lines.remove(at: index); removed = true }
+        }
+        guard removed else { return }
+        logs[project.id] = lines
+        saveChat(project)
     }
 
     /// Shows or takes away the app's Reload button (`LampMagic.setReload`).
@@ -4739,8 +4757,9 @@ final class Store: ObservableObject {
         guard !asked, await quit(project, for: owner, only: .mac) else {
             // The person kept the app open, with whatever it holds. It isn't replaced under them (HeldInstalls
             // says what that breaks, too): the build waits, and goes in when the app closes.
-            // Kept open after Reload was pressed: the button is back for when they're ready.
-            if reload { awaitReload(project, owner: owner); return nil }
+            // Kept open after Reload was pressed, or when Undo, a restore or Rebuild & Open asked it to close: the
+            // Reload button is there for when they're ready, as after a request's change.
+            if reload || (owner?.request == nil && !Template.isWidgetOnly(project)) { awaitReload(project, owner: owner); return nil }
             Runtime.holdBuild(project)
             _ = heldInstalls.mayInstall(project.id, running: true)
             if !asked { log(project, .status, ErrorMessages.stayedOpen(project.name)) }
