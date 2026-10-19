@@ -698,21 +698,38 @@ extension Sharing {
     /// decoding is also how an app reads what it downloads (the tag on each link of a page it fetches), which
     /// hides nothing in the app, and a call that decodes text written into the code is found by that text.
     /// A run of base64 counts when some stretch of it decodes to readable text, at any of the four ways it can
-    /// line up, or when it's long and mixes letters and digits the way encoded bytes do. Text cut into short
-    /// pieces and joined before it's decoded is beyond a search like this; the AI review reads that code.
+    /// line up, or when it's long and has the mix of letters and digits encoded bytes have. Text cut into
+    /// pieces is put back together: strings that are nothing but base64, written close together, are read as
+    /// one, in the order they're written. Pieces written far apart or joined in another order, and other encodings (hex, numbers, a
+    /// reversed or scrambled string), are beyond a search like this; the AI review reads that code.
     static func hidesEncodedText(_ code: String) -> Bool {
         // A literal handed straight to the decoder, however short.
         if code.contains(#/base64Encoded:\s*#*"/#) { return true }
-        var run: [UInt8] = []
+        let quote = UInt8(ascii: "\"")
+        var run: [UInt8] = [], pieces: [UInt8] = []
+        var before: UInt8 = 0
+        var offset = 0, lastPiece = 0
         for byte in code.utf8 {
+            offset += 1
             if base64Value(byte) != nil || byte == UInt8(ascii: "=") {
                 run.append(byte)
                 continue
             }
             if encodes(run) { return true }
+            if before == quote, byte == quote, !run.isEmpty {
+                // Pieces are written close together (`"…" + "…"`, one `let` a line); words far apart in the
+                // code, joined, can read as text by chance.
+                if offset - run.count - lastPiece > 40 {
+                    if readsAsText(pieces.compactMap(base64Value)) { return true }
+                    pieces.removeAll(keepingCapacity: true)
+                }
+                pieces += run
+                lastPiece = offset
+            }
+            before = byte
             run.removeAll(keepingCapacity: true)
         }
-        return encodes(run)
+        return encodes(run) || readsAsText(pieces.compactMap(base64Value))
     }
 
     /// One base64 digit's value, in either alphabet (`+/` or the web's `-_`).
@@ -733,13 +750,22 @@ extension Sharing {
         // readable text (a short command).
         if digits.count >= 8, run.count % 4 == 0, run.last == UInt8(ascii: "="), run.count - digits.count <= 2,
            readable(digits, from: 0) >= digits.count * 6 / 8 { return true }
-        // Sixteen digits make twelve bytes: twelve readable characters in a row don't come out of words, paths
-        // or numbers by chance (about one in a hundred thousand), and an address is longer than that.
         guard digits.count >= 16 else { return false }
-        if digits.count >= 64, run.contains(where: { (UInt8(ascii: "a")...UInt8(ascii: "z")).contains($0) }),
-           run.contains(where: { (UInt8(ascii: "A")...UInt8(ascii: "Z")).contains($0) }),
-           run.contains(where: { (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) }) { return true }
-        return (0..<4).contains { readable(digits, from: $0, enough: 12) >= 12 }
+        // Encoded bytes are about two parts capitals, two parts small letters and one part digits and signs;
+        // a long path or a long name is mostly small letters, or capitals, with few digits.
+        if digits.count >= 64 {
+            let capitals = digits.filter { $0 < 26 }.count, small = digits.filter { (26..<52).contains($0) }.count
+            if capitals * 4 >= digits.count, small * 4 >= digits.count, (digits.count - capitals - small) * 16 >= digits.count {
+                return true
+            }
+        }
+        return readsAsText(digits)
+    }
+
+    /// Sixteen digits make twelve bytes: twelve readable characters in a row don't come out of words, paths
+    /// or numbers by chance (about one in a hundred thousand), and an address is longer than that.
+    private static func readsAsText(_ digits: [UInt8]) -> Bool {
+        digits.count >= 16 && (0..<4).contains { readable(digits, from: $0, enough: 12) >= 12 }
     }
 
     /// The longest stretch of readable characters the digits decode to, starting at `start`; it stops counting
