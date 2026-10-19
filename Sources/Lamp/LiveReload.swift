@@ -172,7 +172,7 @@ enum LiveReload {
     /// read at launch (`SwiftSource.launchEntries`), constants' values (`constantEntries`), typealiases (`aliasGroup`)
     /// and what's declared (`declarationGroup`). Each is compared its own way, never as a type's fields.
     static func isGroup(_ type: String) -> Bool { (type.first?.asciiValue ?? 32) < 32 }
-    static let aliasGroup = "\u{3}alias", declarationGroup = "\u{5}declared"
+    static let aliasGroup = "\u{3}alias", declarationGroup = "\u{5}declared", opaqueGroup = "\u{6}opaque"
 
     /// Whether the new code declares other functions, initializers, subscripts, computed properties or
     /// conformances than the open app's: an unchanged caller may then mean another one (a new overload, a method
@@ -195,6 +195,17 @@ enum LiveReload {
         }
         for (name, was) in aliases(before).sorted(by: { $0.key < $1.key }) {
             if let is_ = aliases(now)[name], is_ != was { return ("the typealias \(name) changed from \(was) to \(is_)", nil) }
+        }
+        // What a `some`-returning member builds is its type, which the open app's witness tables and callers were
+        // laid out for; a member that builds from other calls or types now returns another type under the same name.
+        func opaque(_ entries: [String]) -> [String: String] {
+            Dictionary(entries.filter { $0.hasPrefix(opaqueGroup + "\t") }.compactMap { entry -> (String, String)? in
+                guard let colon = entry.range(of: ": ", options: .backwards) else { return nil }
+                return (String(entry[entry.index(after: entry.firstIndex(of: "\t")!)..<colon.lowerBound]), String(entry[colon.upperBound...]))
+            }, uniquingKeysWith: { first, _ in first })
+        }
+        for (name, was) in opaque(before).sorted(by: { $0.key < $1.key }) {
+            if let is_ = opaque(now)[name], is_ != was { return ("\(name) returns another kind of value now (some …), which what the open app made can't take", nil) }
         }
         // Type by type, each "Owner<tab>member": a type the open app has must hold just what it did, in order;
         // a new type (a new view with its own state) is the library's to lay out. A type taken away keeps its
@@ -220,9 +231,10 @@ enum LiveReload {
         // A type taken away is still in the open app, with its objects and statics, until it reopens: its layout
         // is kept, so one brought back under the same name is held to what it was. So is an alias taken away, each
         // on its own, since a type kept that way still reads by it.
-        let remaining = aliases(now)
-        let kept = now + before.filter { let group = String($0.prefix { $0 != "\t" }); return group != aliasGroup && new[group] == nil }
+        let remaining = aliases(now), remainingOpaque = opaque(now)
+        let kept = now + before.filter { let group = String($0.prefix { $0 != "\t" }); return ![aliasGroup, opaqueGroup].contains(group) && new[group] == nil }
             + before.filter { $0.hasPrefix(aliasGroup + "\t") && aliases([$0]).keys.allSatisfy { remaining[$0] == nil } }
+            + before.filter { $0.hasPrefix(opaqueGroup + "\t") && opaque([$0]).keys.allSatisfy { remainingOpaque[$0] == nil } }
         return (nil, kept)
     }
 
@@ -589,6 +601,16 @@ enum LiveReload {
         // A typealias, with what it names; an extension, which puts its members under its type; what a type or an
         // extension conforms to; and a function, initializer or subscript, by its name and type (`declarationGroup`).
         let aliasDecl = try! NSRegularExpression(pattern: #"^(\s*)\(typealias\b[^"]*? range=\[([^:\]]*):[^\]]*\][^"]*"([^"]+)" interface_type="[^"]*" access=(\w+).*? type="([^"]*)""#)
+        // An associated type the compiler inferred (Identifiable's ID, a Sequence's Iterator, a modifier's Body) is
+        // a typealias it declares itself; one naming an opaque type (`some View`) is held by its member instead.
+        let inferredAlias = try! NSRegularExpression(pattern: #"^(\s*)\(typealias\b[^"]*? implicit "([^"]+)" interface_type="[^"]*" access=\w+ type="([^"]*)""#)
+        // A member returning `some …`: what it builds from (the calls and types in its body) is its type.
+        let opaqueMember = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|var_decl)\b(?! implicit)[^"]*"([^"]+)" interface_type="([^"]*some [^"]*)" access=(\w+)"#)
+        let attribute = try! NSRegularExpression(pattern: #" (?:decl|type)="([^"]*)""#)
+        // The place is a path (which may hold spaces, as the apps folder does), a line and a column.
+        let place = try! NSRegularExpression(pattern: #"@[^"]*?\.swift:\d+:\d+"#)
+        // A literal's value, or an argument left to its default, changes no type: left out of the digest.
+        let valueOnly = try! NSRegularExpression(pattern: #"^\s*\((?:\w+_literal_expr|default_argument_expr)\b"#)
         let extensionDecl = try! NSRegularExpression(pattern: #"^(\s*)\(extension_decl\b[^"]*"([^"]+)""#)
         let inherits = try! NSRegularExpression(pattern: #" inherits="([^"]*)""#)
         let memberDecl = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|constructor_decl|subscript_decl)\b[^"]*"([^"]+)" interface_type="([^"]*)""#)
@@ -596,12 +618,34 @@ enum LiveReload {
         let rawValue = try! NSRegularExpression(pattern: #"^\s*\(raw_value_expr=\w+\b.*? value=("(?:[^"\\]|\\.)*"|[^ )]+)"#)
         var scopes: [(indent: Int, type: String?)] = [], out: [String] = [], seen = Set<String>()
         var lastCase: Int?
+        // The `some`-returning member being read, and what its body names so far.
+        var opaque: (indent: Int, key: String, names: [String])?
+        func closeOpaque() {
+            guard let open = opaque else { return }
+            let entry = opaqueGroup + "\t" + open.key + ": " + SwiftSource.digest(open.names.joined(separator: "\n"))
+            if seen.insert(entry).inserted { out.append(entry) }
+            opaque = nil
+        }
         for raw in dump.split(separator: "\n") {
             let line = String(raw), range = NSRange(line.startIndex..., in: line)
             let indent = line.prefix { $0 == " " }.count
             // Only a line that opens a node says where it sits; the closing brackets of a deep node sometimes
             // come on a line of their own at the left edge, which would otherwise end every scope.
             guard line.dropFirst(indent).first == "(" else { continue }
+            if let open = opaque {
+                if indent > open.indent {
+                    if valueOnly.firstMatch(in: line, range: range) == nil {
+                        for m in attribute.matches(in: line, range: range) {
+                            // A declaration of the app's is named with where it is, which differs between the copy
+                            // the app runs and the new one, and moves with any edit above it.
+                            let value = String(line[Range(m.range(at: 1), in: line)!])
+                            opaque?.names.append(place.stringByReplacingMatches(in: value, range: NSRange(value.startIndex..., in: value), withTemplate: ""))
+                        }
+                    }
+                    continue
+                }
+                closeOpaque()
+            }
             if rawValues, let index = lastCase, let m = rawValue.firstMatch(in: line, range: range) {
                 out[index] += " = " + String(line[Range(m.range(at: 1), in: line)!])
                 lastCase = nil
@@ -652,6 +696,22 @@ enum LiveReload {
                 let type = String(line[Range(m.range(at: 2), in: line)!])
                 conformances(type)
                 scopes.append((indent, type))
+            } else if let m = inferredAlias.firstMatch(in: line, range: range), let owner, !owner.hasPrefix("\u{4}") {
+                let name = String(line[Range(m.range(at: 2), in: line)!]), type = String(line[Range(m.range(at: 3), in: line)!])
+                if !type.contains("some "), seen.insert(aliasGroup + "\t" + owner + "." + name + " = " + type).inserted {
+                    out.append(aliasGroup + "\t" + owner + "." + name + " = " + type)
+                }
+            } else if let m = opaqueMember.firstMatch(in: line, range: range), !["private", "fileprivate"].contains(String(line[Range(m.range(at: 5), in: line)!])),
+                      case let name = String(line[Range(m.range(at: 3), in: line)!]), name != "__lampBody", !name.hasPrefix("$") {
+                // A view's body is wrapped by the live copy (`__lampBody`, read only by `body` beside it), so its type
+                // may change; a private member's callers are all in its file, compiled with it. Keyed with its
+                // signature, since overloads share a name; and declared like any member, so one added recompiles
+                // every caller.
+                let signature = name + ": " + String(line[Range(m.range(at: 4), in: line)!])
+                declared(signature)
+                if let owner, !owner.hasPrefix("\u{4}") { opaque = (indent, owner + "." + signature, []) }
+                else if scopes.isEmpty { opaque = (indent, signature, []) }
+                scopes.append((indent, nil))
             } else if let m = aliasDecl.firstMatch(in: line, range: range) {
                 var name = String(line[Range(m.range(at: 3), in: line)!])
                 let type = String(line[Range(m.range(at: 5), in: line)!]), access = String(line[Range(m.range(at: 4), in: line)!])
@@ -687,6 +747,7 @@ enum LiveReload {
                 scopes.append((indent, nil))
             }
         }
+        closeOpaque()
         return out
     }
 

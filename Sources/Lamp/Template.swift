@@ -15365,7 +15365,7 @@ enum Template {
       for f in Sources/**/*.swift(N); do
         out="$LIVE/$f"
         mkdir -p "${out:h}"
-        perl -0pe 's/var body: some View \\{/var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\\n    \\@ViewBuilder var __lampBody: some View {/g' "$f" > "$out.new"
+        perl -0pe 's/var\\s+body\\s*:\\s*some\\s+View\\s*\\{/var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\\n    \\@ViewBuilder var __lampBody: some View {/g' "$f" > "$out.new"
         # The app starts through Lamp's entry, which watches the classes Swift makes (LampLive.watch) before the App's own.
         # Only an @main at the start of a line, after attributes or modifiers at most: LampSupport.swift shows one in a comment.
         perl -0pi -e 's/^([ \\t]*(?:(?:\\@\\w+(?:\\([^)]*\\))?|public|internal|fileprivate|private|open|final)\\s+)*)\\@main((?:\\s+(?:\\@\\w+(?:\\([^)]*\\))?|public|internal|fileprivate|private|open|final))*\\s+(?:struct|class|enum|actor)\\s+(\\w+))/$1$2/m and $_ .= "\\n\\@main enum __LampEntry { \\@MainActor static func main() { LampLive.watch(); $3.main() } }\\n"' "$out.new"
