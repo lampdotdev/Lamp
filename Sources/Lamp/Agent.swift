@@ -33,6 +33,9 @@ enum AgentEvent {
     case plan([PlanPart])  // the agent's checklist for the build card
     case finished          // the engine has answered: a message written to it now would start another answer
     case received          // the engine gave the model a message of the person's (the request, or one sent mid-turn)
+    /// Codex began (true) or finished (false) something it does on its own (a command, a tool call, an edit, a
+    /// search), by its id: a Codex run is cut to pass a message on only between them (`Store.steer`).
+    case acting(String, Bool)
 }
 
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.

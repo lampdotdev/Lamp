@@ -522,6 +522,13 @@ extension Agent {
         return String(decoding: (try? JSONSerialization.data(withJSONObject: message)) ?? Data(), as: UTF8.self)
     }
 
+    /// Messages the person sent while Codex worked, as the run that resumes its conversation sends them. Codex
+    /// tells the model the person interrupted it on purpose, which reads as "stop": they were only passed on.
+    static func carryOn(_ text: String) -> String {
+        "The person sent this while you were working, and Lamp paused you to pass it on. Take it into account "
+            + "and carry on with the request, unless it says otherwise.\n\n" + text
+    }
+
     /// Claude Code calls Lamp's MCP tools `mcp__lamp__look_at_app`; Lamp knows them by their plain names.
     private static func plainName(_ tool: String) -> String { tool.replacingOccurrences(of: "mcp__lamp__", with: "") }
 
@@ -591,7 +598,17 @@ extension Agent {
             return line.trimmed.isEmpty ? [] : [.raw(line)]
         }
         let item = obj["item"] as? [String: Any] ?? [:]
-        switch (type, item["type"] as? String) {
+        let kind = item["type"] as? String
+        // What Codex does on its own, from its start to its end, so Lamp knows when nothing is half done.
+        if ["command_execution", "mcp_tool_call", "file_change", "web_search"].contains(kind), let id = item["id"] as? String {
+            if type == "item.started" { return [.acting(id, true)] + codexEvents(type, kind, obj, item) }
+            if type == "item.completed" { return codexEvents(type, kind, obj, item) + [.acting(id, false)] }
+        }
+        return codexEvents(type, kind, obj, item)
+    }
+
+    private static func codexEvents(_ type: String, _ kind: String?, _ obj: [String: Any], _ item: [String: Any]) -> [AgentEvent] {
+        switch (type, kind) {
         case ("thread.started", _):
             return (obj["thread_id"] as? String).map { [.session($0)] } ?? []
         case ("turn.started", _):

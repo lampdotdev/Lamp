@@ -116,6 +116,21 @@ enum Subprocess {
         return pids
     }
 
+    /// The first process named `name` among those a process started, nearest it first: the program itself under
+    /// the shell, the sandbox and any launcher (Node's, for an npm install) that Lamp runs it through.
+    static func descendant(of process: Process, named name: String) -> pid_t? {
+        guard process.isRunning else { return nil }
+        var level = [process.processIdentifier]
+        while !level.isEmpty {
+            for pid in level {
+                var buffer = [CChar](repeating: 0, count: 256)
+                if proc_name(pid, &buffer, UInt32(buffer.count)) > 0, String(cString: buffer) == name { return pid }
+            }
+            level = level.flatMap(children(of:))
+        }
+        return nil
+    }
+
     /// Whether any of these processes is still around (a zombie waiting to be reaped doesn't count).
     static func alive(_ pids: [pid_t]) -> Bool {
         pids.contains { pid in
@@ -140,12 +155,15 @@ enum Subprocess {
     nonisolated(unsafe) private static var shuttingDownPids = Set<pid_t>()
 
     private static func descendants(of pid: pid_t) -> [pid_t] {
+        let direct = children(of: pid)
+        return direct + direct.flatMap { descendants(of: $0) }
+    }
+
+    private static func children(of pid: pid_t) -> [pid_t] {
         var children = [pid_t](repeating: 0, count: 256)
         let bytes = Int32(children.count * MemoryLayout<pid_t>.size)
         let count = Int(proc_listchildpids(pid, &children, bytes))
-        guard count > 0 else { return [] }
-        let direct = Array(children.prefix(count))
-        return direct + direct.flatMap { descendants(of: $0) }
+        return count > 0 ? Array(children.prefix(count)) : []
     }
 }
 

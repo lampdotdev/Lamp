@@ -14,6 +14,7 @@ enum PrebuiltStarters {
     static let archiveName = "Prebuilt.zip"
     static let folderName = "Prebuilt"
     static let commandLineFlag = "--prebuild-starters"
+    static let restampFlag = "--restamp-starters"
 
     struct Manifest: Codable {
         var exe: String
@@ -60,6 +61,22 @@ enum PrebuiltStarters {
         // exit doesn't unwind: the projects and their build folders go first.
         try? fm.removeItem(at: root)
         exit(failed ? 1 : 0)
+    }
+
+    /// `Lamp --restamp-starters`: a development build that kept its prebuilt starters from an earlier one (build.sh)
+    /// stamps them as its own. They're the same apps: what they're made from is unchanged, but the stamp also covers
+    /// the chat sidebar, which every build signs again.
+    static func restampFromCommandLine() -> Never {
+        for starter in Starters.bundled {
+            let out = starter.folder.appendingPathComponent(folderName)
+            let manifestURL = out.appendingPathComponent("manifest.json")
+            guard let data = try? Data(contentsOf: manifestURL),
+                  var manifest = try? JSONDecoder().decode(Manifest.self, from: data) else { continue }
+            BuildStamp.stamp(out.appendingPathComponent("\(manifest.exe).app"))
+            manifest.support = BuildStamp.current.support ?? ""
+            try? JSONEncoder().encode(manifest).write(to: manifestURL)
+        }
+        exit(0)
     }
 
     private struct Failure: LocalizedError {

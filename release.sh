@@ -30,7 +30,7 @@ echo "Signing as: $SIGN_IDENTITY"
 # 1. Build + sign the app (hardened runtime, entitlements, secure timestamp)
 rm -rf "$DIST" && mkdir -p "$DIST"
 # Builds into dist/, not build/, so a release never replaces the Lamp you run day to day.
-FLAVOR=release PREBUILD_STARTERS="${PREBUILD_STARTERS:-1}" BUILD_DIR="$DIST/build" APP_VERSION="$VERSION" SIGN_IDENTITY="$SIGN_IDENTITY" "$HERE/build.sh"
+FLAVOR=release BUILD_DIR="$DIST/build" APP_VERSION="$VERSION" SIGN_IDENTITY="$SIGN_IDENTITY" "$HERE/build.sh"
 mv "$DIST/build/Lamp.app" "$DIST/" && rmdir "$DIST/build"
 codesign --verify --deep --strict "$DIST/Lamp.app"
 

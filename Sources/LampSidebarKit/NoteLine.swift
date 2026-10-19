@@ -76,8 +76,10 @@ extension ChatLook {
                 }
                 if let problem { Text(problem).font(.caption).foregroundStyle(.orange).padding(.leading, 22) }
             }
-            .font(.callout)
+            // Set in and sized as the turn's steps are, since it is one of them.
+            .font(ChatLook.stepFont)
             .foregroundStyle(undone ? .tertiary : .secondary)
+            .padding(.leading, ChatLook.stepIndent)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .contain)
         }
