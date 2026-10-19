@@ -6449,7 +6449,8 @@ final class Store: ObservableObject {
         if screenshots.isEmpty {
             let launched = Date()
             since = launched
-            let crash = await install(project, inFront: false, fresh: reopen)
+            // A look with `reopen` asks for the fresh launch itself, so it doesn't wait for Reload.
+            let crash = await install(project, inFront: false, fresh: reopen, reload: reopen)
             if turn.keptOpen { return (200, ["text": Self.keptOpenNote]) }
             if Runtime.waitsForReload(project), isRunning(project) { return (200, ["text": Self.reloadNote]) }
             turn.look.installed = true
