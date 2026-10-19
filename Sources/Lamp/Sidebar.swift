@@ -238,6 +238,13 @@ final class SidebarServer {
             queued.canSendNow = canSendNow && message.id == lastWaiting ? true : nil
             return queued
         }
+        let waiting = store.queued[project.id] ?? []
+        for index in state.lines.indices where state.lines[index].kind == .ask {
+            guard let line = log.first(where: { $0.id == state.lines[index].id }),
+                  let message = Talk.waiting(on: line, in: waiting) else { continue }
+            state.lines[index].takeBack = message.id
+            state.lines[index].waitingForSetup = store.setup.ready ? nil : true
+        }
         state.waitingForSetup = !store.setup.ready
         state.approval = store.approvals[project.id].map {
             SidebarApproval(id: $0.id, title: $0.title, command: $0.command, explanation: $0.explanation?.look)
@@ -935,6 +942,12 @@ final class SidebarServer {
                     message.attachments += asFile(message.pointed)
                     return message
                 }
+            }
+            // Answers clicked on a card and waiting in line are drawn as the folded card; a sidebar from before that
+            // takes them back only from the waiting message.
+            if version >= 8 {
+                let onCards = Set(state.lines.compactMap(\.takeBack))
+                state.queued = state.queued?.filter { !onCards.contains($0.id) }
             }
             guard let data = SidebarWire.encode(state), force || data != last else { return }
             last = data

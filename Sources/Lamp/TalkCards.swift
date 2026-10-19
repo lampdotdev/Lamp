@@ -35,7 +35,10 @@ struct AskCard: View {
 
     var body: some View {
         if let ask = line.ask, let project = store.projects.first(where: { $0.dir == dir }) {
-            AskCardView(ask: ask, isOpen: isOpen, progress: progresses.binding(for: line.id)) { answers in
+            let waiting = Talk.waiting(on: line, in: store.queued[project.id] ?? []).map { message in
+                AskWaiting(forSetup: !store.setup.ready) { store.unqueue(message, from: project) }
+            }
+            AskCardView(ask: ask, isOpen: isOpen, progress: progresses.binding(for: line.id), waiting: waiting) { answers in
                 withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: answers, in: project) }
             }
         }

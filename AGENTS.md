@@ -62,7 +62,8 @@ A capability given to one engine must be given to all of them that can take it, 
   answer (`Talk.message`), for an engine that reads the conversation again later; the chat doesn't show it,
   since the card does (`LogLine.fromCard`, `Talk.shows`). An
   answer that has to wait in line, clicked or typed, folds its card at once and opens it again if it's taken
-  back (`Talk.unqueue`); waiting for setup, it keeps its card across a relaunch (`QueuedMessage.saved`).
+  back (`Talk.unqueue`). A clicked one waits as its folded card alone, taken back from there (`AskWaiting`), not as a
+  waiting message too: that would show until it's sent and then go. Waiting for setup, it keeps its card across a relaunch (`QueuedMessage.saved`).
   `Talk.Ask` also reads the shape cards were first saved in (options as plain words, `chosen`, `dismissed`):
   a chat line that can't be read loses the whole chat. While a card waits for its answer nothing above it changes height and the chat
   doesn't follow what's added below: a new app's card goes to its short form as the questions arrive, a

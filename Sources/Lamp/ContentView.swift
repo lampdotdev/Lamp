@@ -517,6 +517,7 @@ struct ProjectView: View {
         if store.notResponding[project.id] != nil {
             ChatLook.UnresponsiveNotice(text: ErrorMessages.notResponding(project.name)) { store.forceQuit(project) }.padding(.top, 12)
         }
+        let queued = Talk.drawnWaiting(queued, in: lines)
         let places = ChatLook.QueuedPlace.places(sending: queued.map(\.sendNow))
         let canSendNow = store.canSendNow(in: project)
         ForEach(Array(queued.enumerated()), id: \.element.id) { index, message in
