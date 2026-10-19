@@ -848,7 +848,7 @@ struct ProjectView: View {
         gap
         ToolbarItemGroup {
             Toggle(isOn: $showDetails) {
-                Label("Agent Details", systemImage: "wrench.and.screwdriver")
+                Label("Agent Details", systemImage: "chevron.left.forwardslash.chevron.right")
             }
             .help("Agent details")
             // Versions and Wish Info share the side panel: showing one hides the other.

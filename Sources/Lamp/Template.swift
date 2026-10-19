@@ -4648,6 +4648,7 @@ enum Template {
                 chats[ObjectIdentifier(window)] = chat
                 follow(window, chat)
                 watchClicks()
+                watchCycling()
                 show(chat)
             }
         }
@@ -4793,9 +4794,9 @@ enum Template {
                 panel.holder.addChild(chat.host)
                 // In its panel the card leaves the edges that resize it clear (`PanelGround.layout`).
                 chat.card.translatesAutoresizingMaskIntoConstraints = true
-                ground.card = chat.card
-                ground.addSubview(ground.edges)
                 ground.addSubview(chat.card)
+                ground.addSubview(ground.edges)
+                ground.card = chat.card
             }
             panel.holder.view.needsLayout = true
             if !panel.detached {
@@ -4939,8 +4940,9 @@ enum Template {
                     holder.view.window?.invalidateCursorRects(for: (holder.view as? PanelGround)?.edges ?? holder.view)
                 }
             }
-            /// The room around the card, once moved away, where the pointer resizes it.
-            static let margin: CGFloat = 6
+            /// The rim inside the card, around the chat, where the pointer resizes it. Inside, not around: the glass
+            /// glows a little past its edge, and room around the card showed that glow cut off square by the panel.
+            static let rim: CGFloat = 6
 
             init() {
                 super.init(contentRect: NSRect(x: 0, y: 0, width: LampSidebar.width, height: 400), styleMask: [.borderless],
@@ -5014,26 +5016,22 @@ enum Template {
                 RunLoop.main.add(timer, forMode: .common)
             }
 
-            /// Away from the window, with room around the card for resizing by any edge; the card stays where it was.
+            /// Away from the window, resized by any edge from here on.
             private func detach() {
-                let ground = holder.view as? PanelGround
-                let card = ground?.card.map { convertToScreen($0.convert($0.bounds, to: nil)) } ?? frame
                 parent?.removeChildWindow(self)
                 detached = true
-                setFrame(card.insetBy(dx: -Self.margin, dy: -Self.margin), display: true)
             }
 
             /// Bigger or smaller by an edge. Beside the window only its outer edge widens it, between the chat's
             /// narrowest and widest and never past the screen's edge; away from it, any edge or corner, and the
             /// height too. The width is kept for next time.
             func resize(_ zone: Edges.Zone, from start: NSRect, by change: NSSize) {
-                let room = detached ? 2 * Self.margin : 8
                 var frame = start
                 if zone.contains(.left) { frame.size.width = start.width - change.width }
                 if zone.contains(.right) { frame.size.width = start.width + change.width }
                 if zone.contains(.bottom) { frame.size.height = start.height - change.height }
                 if zone.contains(.top) { frame.size.height = start.height + change.height }
-                frame.size.width = min(max(frame.width, LampSidebar.narrowest + room), LampSidebar.widest + room)
+                frame.size.width = min(max(frame.width, LampSidebar.narrowest), LampSidebar.widest)
                 if !detached, let screen = (parent?.screen ?? screen ?? NSScreen.main)?.visibleFrame {
                     frame.size.width = min(frame.width, side == .right ? screen.maxX - start.minX : start.maxX - screen.minX)
                 }
@@ -5041,7 +5039,7 @@ enum Template {
                 if zone.contains(.left) { frame.origin.x = start.maxX - frame.width }
                 if zone.contains(.bottom) { frame.origin.y = start.maxY - frame.height }
                 setFrame(frame, display: true)
-                LampSidebar.width = frame.width - room
+                LampSidebar.width = frame.width
             }
 
             override var canBecomeKey: Bool { true }
@@ -5079,17 +5077,50 @@ enum Template {
             host.view.translatesAutoresizingMaskIntoConstraints = false
             host.view.identifier = chatIdentifier
             pane.addSubview(host.view)
+            // A rim of the card's own around the chat: the chat's process takes every click on its part of the window,
+            // so the edges that resize the panel lie in this rim (`Edges`).
+            let rim = Beside.rim
             NSLayoutConstraint.activate([
-                host.view.topAnchor.constraint(equalTo: pane.topAnchor),
-                host.view.bottomAnchor.constraint(equalTo: pane.bottomAnchor),
-                host.view.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
-                host.view.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
+                host.view.topAnchor.constraint(equalTo: pane.topAnchor, constant: rim),
+                host.view.bottomAnchor.constraint(equalTo: pane.bottomAnchor, constant: -rim),
+                host.view.leadingAnchor.constraint(equalTo: pane.leadingAnchor, constant: rim),
+                host.view.trailingAnchor.constraint(equalTo: pane.trailingAnchor, constant: -rim),
             ])
             return (outer, pane)
         }
 
         private static let chatIdentifier = NSUserInterfaceItemIdentifier("lampSidebarChat")
         nonisolated(unsafe) private static var clicks: Any?
+        nonisolated(unsafe) private static var cycling: Any?
+
+        /// ⌘` goes through the app's windows with each open chat right after its window, so the keyboard alone moves
+        /// between an app and its chat; ⇧⌘` goes back. macOS leaves panels out of its own cycle.
+        @MainActor private static func watchCycling() {
+            guard cycling == nil else { return }
+            cycling = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                MainActor.assumeIsolated {
+                    let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+                    guard event.keyCode == 50, modifiers == .command || modifiers == [.command, .shift] else { return event }
+                    var stops: [NSWindow] = []
+                    // In the order the windows were made, which stays put as they come forward, so each press moves on.
+                    for window in NSApp.windows where LampMagic.isAppWindow(window) && window.isVisible && !window.isMiniaturized {
+                        stops.append(window)
+                        if let chat = chat(in: window), chat.inPanel, let panel = chat.panel { stops.append(panel) }
+                    }
+                    // With nothing but one window, macOS's own cycle has nothing to do either.
+                    guard stops.count > 1 else { return event }
+                    let current = stops.firstIndex { $0 === NSApp.keyWindow } ?? 0
+                    let next = stops[(current + (modifiers.contains(.shift) ? stops.count - 1 : 1)) % stops.count]
+                    next.makeKeyAndOrderFront(nil)
+                    // In the chat the keyboard goes to the chat's own view, as a click there gives it (`watchClicks`).
+                    if let panel = next as? Beside, let view = chats.values.first(where: { $0.panel === panel })?.host.view {
+                        let target = sequence(first: view, next: { $0.subviews.first }).first { $0.acceptsFirstResponder } ?? view
+                        panel.makeFirstResponder(target)
+                    }
+                    return nil
+                }
+            }
+        }
 
         /// The chat is drawn by another process, which AppKit's focus doesn't follow, so what had the keyboard before
         /// keeps it through a click in the chat: once the click has landed, the keyboard goes to the chat.
@@ -5161,28 +5192,21 @@ enum Template {
             }
         }
 
-        /// The panel's ground: the card, and around it the edges that resize it. Beside the window that's a strip along
-        /// the side away from the window; moved away from it, a margin all round.
+        /// The panel's ground: the card, and over its rim the edges that resize it. Beside the window that's the side
+        /// away from the window; moved away from it, every side.
         @MainActor final class PanelGround: NSView {
             weak var panel: Beside?
             weak var card: NSView?
             let edges = Edges()
 
-            /// The card beside the edges, never under them: the chat is drawn by another process, which takes every click
-            /// on its part of the window, so an edge laid over the chat would never be dragged.
+            /// The edges over the card's rim, never over the chat: the chat is drawn by another process, which takes
+            /// every click on its part of the window, so an edge laid over the chat would never be dragged.
             override func layout() {
                 super.layout()
+                card?.frame = bounds
                 edges.frame = bounds
-                if panel?.detached == true {
-                    card?.frame = bounds.insetBy(dx: Beside.margin, dy: Beside.margin)
-                    edges.allowed = [.left, .right, .top, .bottom]
-                } else {
-                    let side: CGFloat = 8
-                    let onLeft = panel?.side == .left
-                    card?.frame = NSRect(x: onLeft ? side : 0, y: 0, width: bounds.width - side, height: bounds.height)
-                    edges.allowed = onLeft ? .left : .right
-                }
-                edges.card = card?.frame ?? .zero
+                edges.card = bounds.insetBy(dx: Beside.rim, dy: Beside.rim)
+                edges.allowed = panel?.detached == true ? [.left, .right, .top, .bottom] : panel?.side == .left ? .left : .right
                 window?.invalidateCursorRects(for: edges)
             }
 
@@ -5200,7 +5224,7 @@ enum Template {
                 static let left = Zone(rawValue: 1), right = Zone(rawValue: 2), top = Zone(rawValue: 4), bottom = Zone(rawValue: 8)
             }
 
-            /// The edges that resize it now, and where the card is, in this view.
+            /// The edges that resize it now, and where the chat is inside the rim, in this view.
             var allowed: Zone = .right
             var card: NSRect = .zero
             /// A drag began, and how far it has gone since, in points.
@@ -5251,7 +5275,7 @@ enum Template {
                 }
             }
 
-            /// The part of a corner beside the card, where the card runs the whole height (beside the window).
+            /// The part of a corner square that's in the rim, not over the chat.
             private func outsideCard(_ rect: NSRect) -> NSRect {
                 guard rect.intersects(card) else { return rect }
                 if rect.minX < card.minX { return NSRect(x: rect.minX, y: rect.minY, width: card.minX - rect.minX, height: rect.height) }

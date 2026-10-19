@@ -10,11 +10,11 @@ extension View {
     }
 }
 
-/// The bar at the top of the chat, one row: the red button that closes the chat, what the chat is for, and Undo,
-/// Versions and a button for the rest. Pressed, that button stays lit and the rest take the title's place: Wish Info,
-/// sharing, Agent Details and Delete. Each does what its button in Lamp's window does: the sidebar only passes the
-/// click on. Closing and the room between the buttons, which moves the chat, are the app's to do (`Host`): the panel
-/// is its window.
+/// The bar at the top of the chat, one row: the red button that closes the chat, what the chat is for, and its
+/// buttons. Where the title and every button fit, they're all there; where they don't, Undo stays and a button for the
+/// rest takes their place, which pressed stays lit and puts them in the title's place: Wish Info, Share, Agent Details,
+/// Delete and Versions. Each does what its button in Lamp's window does: the sidebar only passes the click on. Closing
+/// and the room between the buttons, which moves the chat, are the app's to do (`Host`): the panel is its window.
 struct ChatBar: View {
     @EnvironmentObject private var link: Link
     /// Nil until Lamp is there: the bar still closes and moves the chat.
@@ -26,35 +26,40 @@ struct ChatBar: View {
     @State private var shareAnchor = Anchor()
 
     var body: some View {
-        HStack(spacing: 8) {
-            CloseLight { Host.closeChat() }
-            if let state, let toolbar = state.toolbar, more {
-                Spacer(minLength: 0)
-                ToolGroup { rest(state, toolbar) }
-                    .transition(.opacity.combined(with: .move(edge: .trailing)))
-            } else {
-                Text(state.map { "Customize \($0.app)" } ?? "")
-                    .font(.system(size: NSFont.systemFontSize, weight: .semibold))
-                    .lineLimit(1).truncationMode(.tail)
-                    .frame(maxWidth: .infinity)
-                    // The title is part of the room to drag the chat by.
-                    .allowsHitTesting(false)
-            }
+        Group {
             if let state, let toolbar = state.toolbar {
-                ToolGroup {
-                    ToolButton("arrow.uturn.backward", "Undo Last Change") { link.send(.undo) }
-                        .disabled(!toolbar.canUndo)
-                        .help(toolbar.canUndo ? "Go back to the version before this one" : "Nothing to undo yet")
-                    ToolButton("clock.arrow.circlepath", "Versions", on: state.panel == .versions) {
-                        link.send(.panel(state.panel == .versions ? nil : .versions))
+                ViewThatFits(in: .horizontal) {
+                    // Wide enough for the whole title and every button.
+                    HStack(spacing: 8) {
+                        CloseLight { Host.closeChat() }
+                        title(state).fixedSize()
+                        Spacer(minLength: 0)
+                        ToolGroup { rest(state, toolbar) }
+                        ToolGroup { undo(toolbar); versions(state, toolbar) }
                     }
-                    .disabled(!toolbar.hasVersions)
-                    .help(toolbar.hasVersions ? "See earlier versions of this wish, name them, and go back to one"
-                          : "No versions yet: each change Lamp makes is saved as one")
-                    ToolButton("ellipsis", more ? "Fewer Buttons" : "More Buttons", on: more) {
-                        withAnimation(.snappy(duration: 0.2)) { more.toggle() }
+                    HStack(spacing: 8) {
+                        CloseLight { Host.closeChat() }
+                        if more {
+                            Spacer(minLength: 0)
+                            ToolGroup { rest(state, toolbar) }
+                                .transition(.opacity.combined(with: .move(edge: .trailing)))
+                        } else {
+                            title(state).frame(maxWidth: .infinity)
+                        }
+                        ToolGroup {
+                            undo(toolbar)
+                            if more { versions(state, toolbar) }
+                            ToolButton("ellipsis", more ? "Fewer Buttons" : "More Buttons", on: more) {
+                                withAnimation(.snappy(duration: 0.2)) { more.toggle() }
+                            }
+                            .help(more ? "Show the title again" : "Wish info, sharing, agent details, delete and versions")
+                        }
                     }
-                    .help(more ? "Show the title again" : "Wish info, sharing, agent details and delete")
+                }
+            } else {
+                HStack(spacing: 8) {
+                    CloseLight { Host.closeChat() }
+                    Spacer(minLength: 0)
                 }
             }
         }
@@ -83,7 +88,30 @@ struct ChatBar: View {
         }
     }
 
-    /// What the button for the rest shows: Wish Info, sharing, Agent Details and Delete.
+    private func title(_ state: SidebarState) -> some View {
+        Text("Customize \(state.app)")
+            .font(.system(size: NSFont.systemFontSize, weight: .semibold))
+            .lineLimit(1).truncationMode(.tail)
+            // The title is part of the room to drag the chat by.
+            .allowsHitTesting(false)
+    }
+
+    private func undo(_ toolbar: SidebarToolbar) -> some View {
+        ToolButton("arrow.uturn.backward", "Undo Last Change") { link.send(.undo) }
+            .disabled(!toolbar.canUndo)
+            .help(toolbar.canUndo ? "Go back to the version before this one" : "Nothing to undo yet")
+    }
+
+    private func versions(_ state: SidebarState, _ toolbar: SidebarToolbar) -> some View {
+        ToolButton("clock.arrow.circlepath", "Versions", on: state.panel == .versions) {
+            link.send(.panel(state.panel == .versions ? nil : .versions))
+        }
+        .disabled(!toolbar.hasVersions)
+        .help(toolbar.hasVersions ? "See earlier versions of this wish, name them, and go back to one"
+              : "No versions yet: each change Lamp makes is saved as one")
+    }
+
+    /// What the button for the rest shows (Versions goes beside Undo, the two being about the same thing).
     @ViewBuilder private func rest(_ state: SidebarState, _ toolbar: SidebarToolbar) -> some View {
         ToolButton("info.circle", "Wish Info", on: state.panel == .info) {
             link.send(.panel(state.panel == .info ? nil : .info))
@@ -103,7 +131,7 @@ struct ChatBar: View {
         .background(AnchorView(anchor: shareAnchor))
         .disabled(!toolbar.canShare)
         .help("Share this wish")
-        ToolButton("wrench.and.screwdriver", "Agent Details", on: toolbar.details) { link.send(.details(!toolbar.details)) }
+        ToolButton("chevron.left.forwardslash.chevron.right", "Agent Details", on: toolbar.details) { link.send(.details(!toolbar.details)) }
             .help("Agent details")
         ToolButton("trash", "Delete Wish") { deleting = true }
             .help("Delete this wish")

@@ -668,17 +668,20 @@ in front, and stays there through the window's moves and the chat closing and op
 window goes full screen), when it goes back beside the window. The press lands in the chat's process, so the chat asks the
 app to move it (`startMove`) and the app follows the pointer until the button is let go. Beside the window the chat is
 dragged wider or narrower by an edge of its own (`Edges`, the panel's outer side, or the side facing into the window when
-it's over it); moved away, by any edge or corner, in a margin around the card. The width stays between
+it's over it); moved away, by any edge or corner. The edges are a rim inside the card around the chat (`Beside.rim`), not
+room around it: the glass glows a little past its edge, and a margin showed that glow cut off square by the panel. The width stays between
 `LampSidebar.narrowest` and `widest` and is kept for the app (`LampSidebar.width`). The edges sit beside the
 chat, never over it: the chat is drawn by another process, which takes every click on its part of the window. The panel
 is told outright to take mouse events (`ignoresMouseEvents` off): its glass is drawn by the window server, so its own
 pixels are clear, and a clear window lets clicks on clear pixels through. The panel takes the keyboard for the message box
 without becoming the main window. The chat's bar is one row drawn by the extension (`ChatBar`): a red close button like a
-window's, which asks the app to close the chat (`closeChat`), "Customize" and the app's name, then Undo Last Change,
-Versions and a button for the rest. Pressed, that button stays lit and the rest take the title's place: Wish Info, Share
-(the file is made by Lamp and handed over whole, `SidebarState.sharing`, since the extension can't read it; sent once, so
-the extension keeps it as it's read, `Link.sharing`), Agent Details and Delete. The room between the buttons moves the
-chat. Versions and Wish Info show as panels in place of the chat (`VersionsPanel`, a page of versions at a time with the rest a click away; `InfoPanel`; the info rows are
+window's, which asks the app to close the chat (`closeChat`), "Customize" and the app's name, then the buttons: Wish Info,
+Share (the file is made by Lamp and handed over whole, `SidebarState.sharing`, since the extension can't read it; sent
+once, so the extension keeps it as it's read, `Link.sharing`), Agent Details and Delete, then Undo Last Change and Versions.
+Where the title and every button don't fit, Undo stays and a button for the rest takes their place, which pressed stays
+lit and puts the rest, Versions beside Undo, in the title's place. The room between the buttons moves the chat. ⌘` goes
+through the app's windows with each open chat right after its window (`LampSidebar.watchCycling`), since macOS leaves
+panels out of its own cycle. Versions and Wish Info show as panels in place of the chat (`VersionsPanel`, a page of versions at a time with the rest a click away; `InfoPanel`; the info rows are
 `AppInfoView.sections`, the same list Lamp's window draws). An app's chat is in one place at a time: when it opens beside
 the app, its window in Lamp closes, unless Lamp is in front with that window (`MagicPanel.chatOpenedInApp`). Lamp's window
 keeps the chat where there's no app window to put it beside: a wish not yet made or being found, a menu bar app, a widget,
