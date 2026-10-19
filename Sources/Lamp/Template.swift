@@ -5069,7 +5069,10 @@ enum Template {
         @MainActor private static func chosen() -> Chat? {
             let open = chats.values.filter { $0.inPanel }
             let pointer = NSEvent.mouseLocation
-            return open.first { $0.panel?.frame.insetBy(dx: Beside.shade, dy: Beside.shade).contains(pointer) == true }
+            // Front to back, as the windows are stacked: of two chats moved over each other, the click was on the one
+            // in front.
+            let stacked = NSApp.orderedWindows.compactMap { window in open.first { $0.panel === window } }
+            return stacked.first { $0.panel?.frame.insetBy(dx: Beside.shade, dy: Beside.shade).contains(pointer) == true }
                 ?? open.first { $0.panel?.isKeyWindow == true }
                 ?? (open.count == 1 ? open.first : nil)
         }
