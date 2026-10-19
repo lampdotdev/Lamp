@@ -4306,6 +4306,13 @@ enum Template {
             guard let get = getWitnessTable else { return }
             typealias Call = @convention(thin) (UnsafeRawPointer, UnsafeRawPointer?, UnsafeRawPointer?) -> UnsafeRawPointer?
             for conformance in conformances {
+                // The protocol first: one the app only has on a later system (a conformance under `@available`) is a
+                // slot the loader left empty, and asking for a table through it would crash before any check of
+                // the system's version could run.
+                let toProtocol = conformance.loadUnaligned(as: Int32.self)
+                if toProtocol & 1 != 0 {
+                    guard conformance.advanced(by: Int(toProtocol & ~1)).load(as: UnsafeRawPointer?.self) != nil else { continue }
+                } else if toProtocol == 0 { continue }
                 // The type: its descriptor, directly (0) or through a slot (1); a class named another way is passed over.
                 let kind = (conformance.loadUnaligned(fromByteOffset: 12, as: UInt32.self) >> 3) & 0x7
                 guard kind == 0 || kind == 1 else { continue }
