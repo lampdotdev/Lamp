@@ -20,7 +20,7 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `write_wish`, `read_skill`, the version tools, the notes tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
@@ -31,7 +31,7 @@ A capability given to one engine must be given to all of them that can take it, 
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **How the agent talks** (`Talk`, `TalkCards.swift`): in short sentences and in cards, not paragraphs, so building
   feels like a short wizard. A vague wish gets a good first attempt built from sensible guesses, not questions: the
@@ -43,6 +43,16 @@ A capability given to one engine must be given to all of them that can take it, 
   chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own). What a
   request came to is the agent's last message, in a sentence or two (`Agent.Rules.finish`), under the line that says
   the app is ready or updated; a card for it said no more than that message did and hid what it said beyond it.
+  While longer work goes on, the agent says how it's going with `progress`: a line of 12 words at most, shown at once
+  in both chats as a message like any other, and gathered into "Worked for…" with the turn's steps when it ends
+  (`ChatLook.ProgressLine`; folded, the sidebar gets it as a status line marked with `ChatLook.progressSymbol`, so an
+  older sidebar still reads the chat), so the answer is all that's left to read. Whatever the agent writes as messages
+  on the way is treated the same: each shows as it's said, and all but the last are folded with the steps
+  (`LogLine.visible`, `ChatItem.items`), since models write such updates whether or not they're asked to use the tool. A change to much of what an app already shows is built in passes
+  (`lookRules`: the layout with placeholders, then the parts working, then the detail), each begun with a
+  `progress` line and ended with `look_at_app`, which puts it into the open app, so the person watches the app
+  take shape rather than waiting for the end; what's read only at launch is made right in the first pass, so later
+  ones go in without reopening the app. A new app's first build is still made in one pass.
   Result cards saved by an earlier Lamp still read and aren't shown (`LogLine.visible`). A new app's build card folds
   to its first line (its name, Ready) once the turn is over, with no picture of the app. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither

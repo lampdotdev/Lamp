@@ -369,6 +369,16 @@ final class SidebarServer {
         }
     }
 
+    /// The agent's progress line: a message like any other while its turn goes on, and once it's among a finished
+    /// turn's steps (as the messages it wrote on the way are) a status line with the progress line's mark, which a sidebar from before progress lines draws
+    /// as a status line rather than failing to read the chat.
+    static func progress(_ line: LogLine, gap: Double, folded: Bool = false) -> SidebarLine {
+        guard folded else { return SidebarLine(id: line.id, kind: .agent, text: line.text, gap: gap) }
+        var out = SidebarLine(id: line.id, kind: .status, text: line.text, gap: gap)
+        out.symbol = ChatLook.progressSymbol
+        return out
+    }
+
     /// The chat as Lamp's window shows it without Agent Details (`Transcript`): the same lines, gathered and
     /// spaced the same way. Cards and notes Lamp's window has and this doesn't yet are left out.
     static func lines(_ log: [LogLine], project: LampProject, busy: Bool, progressShown: Bool,
@@ -409,6 +419,7 @@ final class SidebarServer {
                     switch step {
                     case .tools(let run): [tools(run, gap: 4, running: false)]
                     case .statuses(let run): run.map { SidebarLine(id: $0.id, kind: .status, text: $0.text, gap: 4) }
+                    case .line(let line) where line.kind == .progress || line.kind == .agent: [Self.progress(line, gap: 4, folded: true)]
                     default: []
                     }
                 }
@@ -426,6 +437,8 @@ final class SidebarServer {
                     out.append(request)
                 case .agent:
                     out.append(SidebarLine(id: line.id, kind: .agent, text: line.text, gap: gap, growing: busy))
+                case .progress:
+                    out.append(Self.progress(line, gap: gap))
                 case .summary:
                     out.append(SidebarLine(id: line.id, kind: .summary, text: line.text, gap: gap))
                 case .error:

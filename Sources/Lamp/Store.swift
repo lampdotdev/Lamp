@@ -169,7 +169,9 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// made. Their text is the same in plain words.
     /// `iphoneSetup` says a first request that read as an iPhone app was made for the Mac, since this Mac can't
     /// build one yet, and offers the setup (`IPhoneSetupLine`); its text is the kind that was wanted.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup }
+    /// `progress` is the agent's line on how the work is going (`Talk`'s `progress`), folded with the turn's
+    /// steps once it ends.
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -800,6 +802,8 @@ final class Store: ObservableObject {
     /// Updates what the app's turn is doing right now, for the build card and the activity line.
     /// `file` is the file being written or edited, when that's the step.
     private func note(_ activity: String, file: String? = nil, for project: LampProject) {
+        // A step that changes nothing about what's being done (the agent's progress line).
+        guard !activity.isEmpty else { return }
         guard let current = progress[project.id], current.activity != activity || current.currentFile != file else { return }
         progress[project.id]?.activity = activity
         progress[project.id]?.currentFile = file
@@ -3314,7 +3318,7 @@ final class Store: ObservableObject {
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             case "make_app_for": (status, answer) = await agentKind(arguments, for: project)
             case "connectors": (status, answer) = Connectors.answer(arguments, for: project)
-            case "ask", "write_wish": (status, answer) = talk(name, arguments, for: project)
+            case "ask", "progress", "write_wish": (status, answer) = talk(name, arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
@@ -3392,8 +3396,8 @@ final class Store: ObservableObject {
         return (200, ["text": "Deleted \(relative)."])
     }
 
-    /// `ask` and `write_wish`, for every engine: pi's extension posts them to `/agent/talk`, Claude Code and
-    /// Codex call them over MCP.
+    /// `ask`, `progress` and `write_wish`, for every engine: pi's extension posts them to `/agent/talk`, Claude
+    /// Code and Codex call them over MCP.
     func talk(_ tool: String, _ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
         guard let turn = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         switch tool {
@@ -3414,6 +3418,15 @@ final class Store: ObservableObject {
                 turn.asked = true
                 saveChat(project)
                 return (200, ["text": Talk.asked])
+            }
+        case "progress":
+            switch Talk.progress(from: arguments, after: logs[project.id] ?? []) {
+            case .failure(let trouble): return (400, ["error": trouble.text])
+            case .success(nil): return (200, ["text": Talk.saidAlready])
+            case .success(let text?):
+                logs[project.id, default: []].append(LogLine(kind: .progress, text: text))
+                saveChat(project)
+                return (200, ["text": Talk.told])
             }
         case "write_wish":
             // Only for a wish being found: one the person told is already theirs, and a box they're typing in

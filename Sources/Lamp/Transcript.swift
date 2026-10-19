@@ -4,7 +4,7 @@ import LampSidebarKit
 /// A tool call as logged by the engines ("Read App.swift", "Bash: ./build.sh", "Run: ls"), split into
 /// what the agent did and what it did it to.
 struct ToolCall {
-    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, learn, remember, art, offer, kind, connectors, ask, result, wish, other }
+    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, learn, remember, art, offer, kind, connectors, ask, progress, result, wish, other }
 
     let name: String
     let argument: String
@@ -36,7 +36,7 @@ struct ToolCall {
         "ls": .list, "list": .list,
         "webfetch": .web, "web_fetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
-        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "save_notes": .remember, "make_art": .art, "offer_setup": .offer, "make_app_for": .kind, "connectors": .connectors, "ask": .ask, "show_result": .result, "write_wish": .wish,
+        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "save_notes": .remember, "make_art": .art, "offer_setup": .offer, "make_app_for": .kind, "connectors": .connectors, "ask": .ask, "progress": .progress, "show_result": .result, "write_wish": .wish,
     ]
 
     var icon: String {
@@ -61,6 +61,7 @@ struct ToolCall {
         case .kind: "laptopcomputer.and.iphone"
         case .connectors: "link"
         case .ask: "questionmark.bubble"
+        case .progress: "text.bubble"
         case .result: "checkmark.rectangle.stack"
         case .wish: "sparkles"
         case .other: "wrench.adjustable"
@@ -89,6 +90,7 @@ struct ToolCall {
         case .kind: "Changed what it runs on"
         case .connectors: "Looked up a connector"
         case .ask: "Asked you"
+        case .progress: "Said how it's going"
         case .result: "Summed it up"
         case .wish: "Wrote your wish"
         case .other: name
@@ -119,6 +121,7 @@ struct ToolCall {
         case .kind: "changed what it runs on"
         case .connectors: "looked up \(n("connector", "connectors"))"
         case .ask: "asked you"
+        case .progress: "said how it's going"
         case .result: "summed it up"
         case .wish: "wrote your wish"
         case .other: n("step", "steps")
@@ -150,9 +153,10 @@ extension LogLine {
         (lines.lastIndex { $0.kind == .user } ?? start) - start
     }
 
-    /// The chat as most people read it: what they asked, what the agent answered and what happened to the
-    /// app. The agent's working is left out, both its steps and what it says between them, which is where
-    /// the file names and code are; the progress line stands in for it. Agent Details shows everything.
+    /// The chat as most people read it: what they asked, what the agent says and what happened to the app. The
+    /// agent's steps are left out, which is where the file names and code are; the progress line stands in for
+    /// them. What it says between them shows as it's said, so the person follows the work as it goes, and is
+    /// gathered with the steps once the turn is over (`ChatItem.items`). Agent Details shows everything.
     static func visible(_ lines: [LogLine], details: Bool) -> [LogLine] {
         // What a card shows isn't said again as a message: decided from the whole chat, since which card a clicked
         // message came from decides it, and left out only at the end, since a clicked answer still ends the
@@ -161,33 +165,23 @@ extension LogLine {
         // what Lamp is doing.
         let hidden = Talk.cardMessages(in: lines).union(lines.filter { $0.byLamp == true }.map(\.id))
         if details { return lines.filter { !hidden.contains($0.id) } }
-        // The last thing the agent says in a run is its answer. A run ends with its summary; while one is
-        // going, the latest message shows as it's written (it says what the agent is about to do, or is
-        // the answer arriving) and gives way to the next.
-        var answers: Set<UUID> = []
-        var latest: UUID?
         // After the agent's questions its card is the answer: whatever it says on the way out ("Waiting for
         // your answers.") would sit under the card saying the same.
+        var afterAsk: Set<UUID> = []
         var asked = false
         for line in lines {
             switch line.kind {
-            case .agent: latest = asked ? nil : line.id
-            case .ask:
-                asked = true
-                latest = nil
-            case .summary, .user:
-                if let latest { answers.insert(latest) }
-                latest = nil
-                if line.kind == .user { asked = false }
+            case .agent where asked: afterAsk.insert(line.id)
+            case .ask: asked = true
+            case .user: asked = false
             default: break
             }
         }
-        if let latest { answers.insert(latest) }
         // A result card saved by an earlier Lamp isn't shown: the agent's last message says what it did. A turn's summary
         // stays, for how long it worked (`ChatItem.items`), and isn't drawn as a line of its own.
         return lines.filter {
             !hidden.contains($0.id)
-                && ($0.kind == .agent ? answers.contains($0.id) : $0.kind == .summary || !$0.isDetail && $0.kind != .result)
+                && ($0.kind == .agent ? !afterAsk.contains($0.id) : $0.kind == .summary || !$0.isDetail && $0.kind != .result)
         }
     }
 }
@@ -223,24 +217,31 @@ enum ChatItem: Identifiable {
     /// comes after the one before it up to its own: requests don't mark them, since a clicked answer to a card is left
     /// out of the chat and Lamp starts runs of its own (a build to fix). What comes after the last summary is a run
     /// still going, whose steps show as they come. Lamp's note that it reopened the app stays out, since it explains
-    /// the window going away, and so does its note that it's fixing a crash nobody asked about. A summary times its run and is otherwise left out; with Agent Details it's a line of
-    /// its own and nothing is gathered.
+    /// the window going away, and so does its note that it's fixing a crash nobody asked about. A summary times its
+    /// run and is otherwise left out; with Agent Details it's a line of its own and nothing is gathered. A run that
+    /// ended on a question still waiting for its answer isn't gathered until it's answered: the card is clickable
+    /// before the run's summary arrives, and nothing above it may change height while it waits.
     static func items(_ lines: [LogLine], gather: Bool) -> [ChatItem] {
         guard gather else { return items(lines) }
+        let waiting = Talk.open(in: lines)?.id
         var result: [ChatItem] = []
         var run: [LogLine] = []
         for line in lines {
             guard line.kind == .summary else { run.append(line); continue }
-            result += folded(run, summary: line)
+            result += run.contains { $0.id == waiting } ? items(run) : folded(run, summary: line)
             run = []
         }
         return result + items(run)
     }
 
-    /// A finished run's lines, its steps under one line above its last message.
+    /// A finished run's lines, its steps under one line above its last message. What the agent said on the way
+    /// (its progress lines and messages before the last) goes with the steps: the last message is the answer.
     private static func folded(_ run: [LogLine], summary: LogLine) -> [ChatItem] {
+        // A run that asked has its card for an answer: what it said before the card goes with the steps.
+        let answer = run.contains { $0.kind == .ask } ? nil : run.last { $0.kind == .agent }?.id
         let isStep = { (line: LogLine) in
-            (line.kind == .status && line.text != ChatLook.reloaded && line.text != ChatLook.fixingCrash) || line.kind == .tool
+            (line.kind == .status && line.text != ChatLook.reloaded && line.text != ChatLook.fixingCrash)
+                || line.kind == .tool || line.kind == .progress || (line.kind == .agent && line.id != answer)
         }
         let steps = items(run.filter(isStep)).flatMap { item -> [LogLine] in
             switch item {
@@ -251,8 +252,8 @@ enum ChatItem: Identifiable {
         }
         let others = run.filter { !isStep($0) }
         guard !steps.isEmpty else { return items(others) }
-        // Above the answer, the run's last message; at the run's end when it has none.
-        let place = others.lastIndex { $0.kind == .agent } ?? others.count
+        // Above the answer, the run's last message or its card; at the run's end when it has neither.
+        let place = others.lastIndex { $0.kind == .agent || $0.kind == .ask } ?? others.count
         return items(Array(others[..<place])) + [.work(id: summary.id, title: workedFor(summary.text), steps: steps)]
             + items(Array(others[place...]))
     }
@@ -289,7 +290,9 @@ enum ChatItem: Identifiable {
     /// under them, and more room between turns.
     static func gap(after previous: ChatItem?, before item: ChatItem, isFinalAnswer: Bool) -> CGFloat {
         guard let previous else { return 0 }
-        switch (previous.kind, item.kind) {
+        // A progress line is spaced as the agent's message it looks like.
+        func spaced(_ kind: LogLine.Kind) -> LogLine.Kind { kind == .progress ? .agent : kind }
+        switch (spaced(previous.kind), spaced(item.kind)) {
         case (.summary, .user): return 16
         case (_, .user): return 24
         case (.user, _): return 12
@@ -352,6 +355,7 @@ struct Transcript: View {
                             switch step {
                             case .tools(let lines): ToolGroup(lines: lines, running: false).equatable()
                             case .statuses(let lines): StatusGroup(lines: lines, running: false)
+                            case .line(let line) where line.kind == .progress || line.kind == .agent: ChatLook.ProgressLine(line.text)
                             default: EmptyView()
                             }
                         }
@@ -452,6 +456,9 @@ struct LogRow: View, Equatable {
         case .status, .tool:
             // Shown through StatusGroup and ToolGroup.
             EmptyView()
+        case .progress:
+            // A message like any other while the turn goes on; gathered with its steps once it's over.
+            ChatLook.AgentText(line.text)
         case .summary:
             ChatLook.SummaryLine(line.text)
         case .error:

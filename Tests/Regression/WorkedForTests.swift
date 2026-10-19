@@ -27,7 +27,8 @@ final class WorkedForTests: XCTestCase {
     /// gets its own fold, and a run with no summary yet isn't folded under the one before.
     func testRunsEndAtTheirSummaries() {
         let lines = [LogLine(kind: .user, text: "make it"), LogLine(kind: .status, text: "Ran: ls"),
-                     LogLine(kind: .ask, text: "which?"), LogLine(kind: .summary, text: "Worked for 5s · $0"),
+                     LogLine(kind: .ask, text: "which?", ask: Talk.Ask(layout: .steps, questions: [], answers: ["A"])),
+                     LogLine(kind: .summary, text: "Worked for 5s · $0"),
                      LogLine(kind: .status, text: "Ran: pwd"), LogLine(kind: .agent, text: "Done."),
                      LogLine(kind: .summary, text: "Worked for 9s · $0"),
                      LogLine(kind: .status, text: "Building…")]
@@ -39,7 +40,8 @@ final class WorkedForTests: XCTestCase {
             case .work(_, let title, let steps): "\(title):" + steps.map(\.text).joined(separator: ",")
             }
         }
-        XCTAssertEqual(shape, ["make it", "which?", "Worked for 5 s:Ran: ls", "Worked for 9 s:Ran: pwd", "Done.",
+        // A run that asked has its card for an answer, so its steps go above the card.
+        XCTAssertEqual(shape, ["make it", "Worked for 5 s:Ran: ls", "which?", "Worked for 9 s:Ran: pwd", "Done.",
                                "statuses:Building…"])
     }
 
