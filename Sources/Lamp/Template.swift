@@ -3956,6 +3956,9 @@ enum Template {
                 original = Dictionary(Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0), local: true), uniquingKeysWith: { first, _ in first })
                 keep(Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0)))
             }
+            // A change refused leaves what's known of the app as it was, for the changes after it.
+            let (keptBefore, latestBefore) = (kept, latest)
+            func refuse(_ why: String) { (kept, latest) = (keptBefore, latestBefore); result = "failed: \(why)" }
             // The types the change defines over again are the app's, or an earlier change's that first brought
             // one, and only a new type's is the library's own: so there's one of each type however many changes
             // have gone in, and a value made before a change is still of its type after it. One the change brings
@@ -3963,10 +3966,7 @@ enum Template {
             for copy in all where kept[copy.name] == nil || copy.own { kept[copy.name] = copy.own ? copy.address : original[copy.name] ?? copy.address }
             // A kept class's method table is the app's, so the new code's has to have the same shape: a method added,
             // taken away or moved would put a call in another method's place. Such a change reopens the app.
-            if let why = Self.reshapedMethods(defined + copies, against: kept) {
-                result = "failed: \(why)"
-                return
-            }
+            if let why = Self.reshapedMethods(defined + copies, against: kept) { return refuse(why) }
             // Each changed function's code before this change, for the class method tables that still hold it.
             var moved: [UnsafeRawPointer: UnsafeRawPointer] = [:]
             for (name, address) in defined where Self.isCode(name) && !Self.accesses(name, oneOf: Self.stored(in: defined)) {
@@ -3975,10 +3975,7 @@ enum Template {
             }
             // A generic class has a method table in each of the types it's used at, made as the app runs, which
             // nothing here can find: a change to one of its overridable methods reopens the app.
-            if let why = Self.genericClassMethod(changed: Set(defined.map(\.0)), copies: copies) {
-                result = "failed: \(why)"
-                return
-            }
+            if let why = Self.genericClassMethod(changed: Set(defined.map(\.0)), copies: copies) { return refuse(why) }
             // Stored globals and statics, and classes, stay where they were first made: the new code's own copies
             // would be a second set, made afresh. So its calls to them go to the app's, or to the earlier change's
             // that first added one, and only one that's new keeps its own.
@@ -3986,8 +3983,7 @@ enum Template {
             // What the library's data names is worked out, and found possible, before anything is pointed at the
             // new code: a change refused leaves the app as it was.
             guard let descriptors = Self.plannedDescriptors(header, copies: copies, kept: kept) else {
-                result = "failed: the change's types couldn't all be made the app's"
-                return
+                return refuse("the change's types couldn't all be made the app's")
             }
             let bindings = latest.merging(kept) { new, _ in new }
             images.append(String(cString: _dyld_get_image_name(image)))
