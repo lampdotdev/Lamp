@@ -320,15 +320,18 @@ enum LiveReload {
     /// (an escaping closure made outside a view's body, an async closure, an async function), as
     /// "Type<tab>where<tab>switches over" or "…<tab>prints", for every enum: which ones will grow isn't known yet.
     static func oldCodeUses(inDump dump: String) -> [String] {
-        enum Kind { case body, escaping, async, function(String?, async: Bool), other }
+        enum Kind { case body, escaping, async, function(String?, async: Bool), named(String), other }
         // A view's body, or the live copy's name for it (`Template.liveCopySteps` moves the body into `__lampBody`).
         let bodyDecl = try! NSRegularExpression(pattern: #"^(\s*)\(var_decl\b[^"]*"(?:body|__lampBody)" "#)
-        let closure = try! NSRegularExpression(pattern: #"^(\s*)\((?:closure_expr|autoclosure_expr)\b(.*)$"#)
+        // A closure, written out or as a value a property or a binding starts with (`original_init=closure_expr`).
+        let closure = try! NSRegularExpression(pattern: #"^(\s*)\((?:\w+=)?(?:closure_expr|autoclosure_expr)\b(.*)$"#)
+        // What holds a closure other than a call: a property being set, a binding or property it's the value of.
+        let holder = try! NSRegularExpression(pattern: #"^(\s*)\((?:assign_expr|pattern_binding_decl)\b"#)
         let function = try! NSRegularExpression(pattern: #"^(\s*)\((?:func_decl|accessor_decl|constructor_decl)\b[^"]*(?:"([^"]+)")? interface_type="([^"]*)""#)
-        let scope = try! NSRegularExpression(pattern: #"^(\s*)\((?:var_decl|subscript_decl|struct_decl|class_decl|enum_decl|actor_decl|extension_decl|protocol)\b"#)
+        let scope = try! NSRegularExpression(pattern: #"^(\s*)\((?:var_decl|subscript_decl|struct_decl|class_decl|enum_decl|actor_decl|extension_decl|protocol)\b(?:[^"]*"([^"]+)")?"#)
         // What a call calls: the module before "(file)" in the declaration it names, kept with the call itself,
         // since the arguments (a closure among them) are the call's children, beside the function, not under it.
-        let call = try! NSRegularExpression(pattern: #"^(\s*)\(call_expr\b"#)
+        let call = try! NSRegularExpression(pattern: #"^(\s*)\((?:\w+=)?call_expr\b"#)
         let callee = try! NSRegularExpression(pattern: #"^(\s*)\(declref_expr\b.*? decl="([\w.]+?)\.\(file\)"#)
         let switchStmt = try! NSRegularExpression(pattern: #"^(\s*)\(switch_stmt\b"#)
         let casePattern = try! NSRegularExpression(pattern: #"^(\s*)\(pattern_enum_element\b.*? type="([^"]*)""#)
@@ -336,7 +339,7 @@ enum LiveReload {
         var scopes: [(indent: Int, kind: Kind)] = [], uses: [String] = [], seen = Set<String>()
         var switching: Int?
         // The calls around the line being read, by the module each one's function is from.
-        var calls: [Int] = [], callees: [(indent: Int, module: String)] = []
+        var calls: [Int] = [], callees: [(indent: Int, module: String)] = [], holders: [Int] = []
         func note(_ type: String, _ how: String) {
             let use = type + "\t" + place() + "\t" + how
             if seen.insert(use).inserted { uses.append(use) }
@@ -354,7 +357,10 @@ enum LiveReload {
             return false
         }
         func place() -> String {
-            for (_, kind) in scopes.reversed() { if case .function(let name?, _) = kind { return name } }
+            for (_, kind) in scopes.reversed() {
+                if case .function(let name?, _) = kind { return name }
+                if case .named(let name) = kind { return name }
+            }
             return "the app"
         }
         for raw in dump.split(separator: "\n") {
@@ -364,8 +370,10 @@ enum LiveReload {
             while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
             while let last = callees.last, last.indent >= indent { callees.removeLast() }
             while let last = calls.last, last >= indent { calls.removeLast() }
+            while let last = holders.last, last >= indent { holders.removeLast() }
             if let at = switching, at >= indent { switching = nil }
             if call.firstMatch(in: line, range: range) != nil { calls.append(indent) }
+            if holder.firstMatch(in: line, range: range) != nil { holders.append(indent) }
             // The call's function is the first thing named under it; what its arguments name is theirs.
             if let m = callee.firstMatch(in: line, range: range), let at = calls.last, callees.last?.indent != at {
                 callees.append((at, String(line[Range(m.range(at: 2), in: line)!])))
@@ -374,15 +382,19 @@ enum LiveReload {
                 scopes.append((indent, .body))
             } else if let m = closure.firstMatch(in: line, range: range) {
                 let rest = String(line[Range(m.range(at: 2), in: line)!])
-                // An escaping closure handed to anything but SwiftUI is kept by it, however deep in a body it's made.
-                let kept = !["SwiftUI", "SwiftUICore"].contains(callees.last?.module ?? "SwiftUI")
+                // An escaping closure handed to anything but SwiftUI is kept by it, however deep in a body it's made;
+                // so is one set into a property or given as a value, whatever call it's made inside.
+                let stored = (holders.last ?? -1) > (calls.last ?? -1)
+                let kept = stored || !["SwiftUI", "SwiftUICore"].contains(callees.last?.module ?? "SwiftUI")
                 scopes.append((indent, rest.contains(" async") ? .async : rest.contains(" escaping") ? (kept ? .async : .escaping) : .other))
             } else if let m = function.firstMatch(in: line, range: range) {
                 let type = String(line[Range(m.range(at: 3), in: line)!])
                 let name = m.range(at: 2).location == NSNotFound ? nil : String(line[Range(m.range(at: 2), in: line)!])
-                scopes.append((indent, .function(name, async: type.contains(" async"))))
-            } else if scope.firstMatch(in: line, range: range) != nil {
-                scopes.append((indent, .other))
+                // A member that returns a view is drawn by a body, and what it hands SwiftUI is made again with it.
+                scopes.append((indent, type.hasSuffix("some View") ? .body : .function(name, async: type.contains(" async"))))
+            } else if let m = scope.firstMatch(in: line, range: range) {
+                // A type or property, named so a use can say where it is; a type's name is what a body's uses show.
+                scopes.append((indent, m.range(at: 2).location == NSNotFound ? .other : .named(String(line[Range(m.range(at: 2), in: line)!]))))
             } else if switchStmt.firstMatch(in: line, range: range) != nil {
                 if risky() { switching = indent }
             } else if let at = switching, indent > at, let m = casePattern.firstMatch(in: line, range: range) {
@@ -481,7 +493,9 @@ enum LiveReload {
             var seen = Set<String>()
             return !conformances.types.contains(key) || mayWrap(key, &seen)
         })
-        let boxes = try! NSRegularExpression(pattern: #"(?<![\w.])(Any|AnyObject|AnyHashable|any (?:[\w.]+(?: & [\w.]+)*))(?![\w])"#)
+        // Any, AnyObject (a value is boxed for it), AnyHashable, an existential; and the containers that keep their
+        // elements as any value without saying so: a navigation path, Foundation's collections.
+        let boxes = try! NSRegularExpression(pattern: #"(?<![\w.])(Any|AnyObject|AnyHashable|NavigationPath|NS(?:Mutable)?(?:Array|Dictionary|Set|OrderedSet)|NSCache|NSMapTable|NSHashTable|NSPointerArray|any (?:[\w.]+(?: & [\w.]+)*))(?![\w])"#)
         for match in boxes.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)) {
             let box = String(kind[Range(match.range(at: 1), in: kind)!])
             if !box.hasPrefix("any ") { return box }
@@ -814,7 +828,8 @@ enum LiveReload {
 
     /// Asks the open app to load the library, signed with its token (only Lamp has it), and waits a moment for
     /// its answer, which it leaves in its runtime folder.
-    static func send(_ library: URL, to project: LampProject, token: String) async -> Bool {
+    /// Nil when the app took the change; else why not, in the app's words (`LampLive`), or that it didn't answer.
+    static func send(_ library: URL, to project: LampProject, token: String) async -> String? {
         let answer = Runtime.macFolder(project).appendingPathComponent("reloaded.txt")
         try? FileManager.default.removeItem(at: answer)
         let key = SymmetricKey(data: Data(token.utf8))
@@ -825,9 +840,13 @@ enum LiveReload {
             userInfo: ["path": library.path, "signature": signature], deliverImmediately: true)
         for _ in 0..<50 {
             try? await Task.sleep(for: .milliseconds(100))
-            if let text = try? String(contentsOf: answer, encoding: .utf8) { return text.hasPrefix("ok") }
+            if let text = try? String(contentsOf: answer, encoding: .utf8) {
+                if text.hasPrefix("ok") { return nil }
+                let why = text.hasPrefix("failed: ") ? String(text.dropFirst(8)) : "the app couldn't take it"
+                return why.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
         }
-        return false
+        return "the app didn't answer"
     }
 }
 
