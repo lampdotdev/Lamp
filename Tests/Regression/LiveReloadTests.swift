@@ -143,7 +143,7 @@ final class LiveReloadTests: XCTestCase {
             final class Item: Identifiable { var name = "" }
             protocol Drawn { associatedtype Mark; func mark() -> Mark }
             struct Round: Shape { var r: Int; var name = ""; func area() -> Int { r } }
-            struct Styled: Drawn { func mark() -> some Shape { Square(side: 1, name: "s") }; func n() -> some Numeric { 1 }; func t() -> some Equatable { "a" }; func p() -> some Equatable { n() } }
+            struct Styled: Drawn { func mark() -> some Shape { Square(side: 1, name: "s") }; func n() -> some Numeric { 1 }; func t() -> some Equatable { "a" }; func p() -> some Equatable { n() }; func l() -> some Equatable { func local() -> some Equatable { 0 }; return String() } }
             struct Outer { enum Mood: Shape { case a, b; func area() -> Int { 0 }; var name: String { get { "" } set {} } } }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
         let layout = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
@@ -199,6 +199,8 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertTrue(layout!.contains(LiveReload.aliasGroup + "\tItem.ID = ObjectIdentifier"), "\(layout!.filter { $0.contains("Item") })")
         XCTAssertTrue(layout!.contains(LiveReload.opaqueGroup + "\tStyled.mark(): (Styled) -> () -> some Shape\tSquare"), "\(layout!.filter { $0.hasPrefix(LiveReload.opaqueGroup) })")
         XCTAssertTrue(layout!.contains(LiveReload.opaqueGroup + "\tStyled.n(): (Styled) -> () -> some Numeric\tInt"))
+        // A local function's own conversion isn't the member's.
+        XCTAssertTrue(layout!.contains(LiveReload.opaqueGroup + "\tStyled.l(): (Styled) -> () -> some Equatable\tString"), "\(layout!.filter { $0.contains("Styled.l") })")
         XCTAssertEqual(layout!.filter { $0.hasPrefix(LiveReload.opaqueGroup + "\tStyled.p(): (Styled) -> () -> some Equatable\t~") }.count, 1)
         XCTAssertTrue(declared.contains("Styled.mark(): (Styled) -> () -> some Shape"), "\(declared)")
         // The same sources read from another folder (the copy the app runs) give the same digest: a declaration

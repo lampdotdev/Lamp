@@ -629,6 +629,8 @@ enum LiveReload {
         let opaqueMember = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|var_decl)\b(?! implicit)[^"]*"([^"]+)" interface_type="([^"]*some [^"]*)" access=(\w+)"#)
         let attribute = try! NSRegularExpression(pattern: #" (?:decl|type)="([^"]*)""#)
         let toOpaque = try! NSRegularExpression(pattern: #"^\s*\(underlying_to_opaque_expr\b"#)
+        // A declaration inside the member (a local function, a type), whose own conversions aren't the member's.
+        let inner = try! NSRegularExpression(pattern: #"^\s*\((?:func_decl|var_decl|subscript_decl|struct_decl|class_decl|enum_decl|actor_decl)\b"#)
         let typeOf = try! NSRegularExpression(pattern: #" type="([^"]*)""#)
         // The place is a path (which may hold spaces, as the apps folder does), a line and a column.
         let place = try! NSRegularExpression(pattern: #"@[^"]*?\.swift:\d+:\d+"#)
@@ -641,9 +643,9 @@ enum LiveReload {
         let rawValue = try! NSRegularExpression(pattern: #"^\s*\(raw_value_expr=\w+\b.*? value=("(?:[^"\\]|\\.)*"|[^ )]+)"#)
         var scopes: [(indent: Int, type: String?)] = [], out: [String] = [], seen = Set<String>()
         var lastCase: Int?
-        // The `some`-returning member being read, what its body names so far, the type it builds once found, and
-        // the indent of a conversion to the opaque type whose child names that type.
-        var opaque: (indent: Int, key: String, names: [String], builds: String?, converting: Int?)?
+        // The `some`-returning member being read, what its body names so far, the type it builds once found, the
+        // indent of a conversion to the opaque type whose child names that type, and of a declaration inside it.
+        var opaque: (indent: Int, key: String, names: [String], builds: String?, converting: Int?, inner: Int?)?
         func closeOpaque() {
             guard let open = opaque else { return }
             // A literal may change (`1` to `1.5`) without a call or type changing, and a call may change
@@ -660,7 +662,10 @@ enum LiveReload {
             guard line.dropFirst(indent).first == "(" else { continue }
             if let open = opaque {
                 if indent > open.indent {
-                    if let at = open.converting, indent > at {
+                    if let within = open.inner, indent <= within { opaque?.inner = nil }
+                    if opaque?.inner != nil {
+                        // Inside a local declaration: its names count, its conversions don't.
+                    } else if let at = open.converting, indent > at {
                         opaque?.converting = nil
                         if open.builds == nil, let m = typeOf.firstMatch(in: line, range: range) {
                             let type = String(line[Range(m.range(at: 1), in: line)!])
@@ -668,6 +673,8 @@ enum LiveReload {
                         }
                     } else if toOpaque.firstMatch(in: line, range: range) != nil {
                         opaque?.converting = indent
+                    } else if inner.firstMatch(in: line, range: range) != nil {
+                        opaque?.inner = indent
                     }
                     if valueOnly.firstMatch(in: line, range: range) == nil {
                         for m in attribute.matches(in: line, range: range) {
@@ -744,8 +751,8 @@ enum LiveReload {
                 // every caller.
                 let signature = name + ": " + String(line[Range(m.range(at: 4), in: line)!])
                 declared(signature)
-                if let owner, !owner.hasPrefix("\u{4}") { opaque = (indent, owner + "." + signature, [], nil, nil) }
-                else if scopes.isEmpty { opaque = (indent, signature, [], nil, nil) }
+                if let owner, !owner.hasPrefix("\u{4}") { opaque = (indent, owner + "." + signature, [], nil, nil, nil) }
+                else if scopes.isEmpty { opaque = (indent, signature, [], nil, nil, nil) }
                 scopes.append((indent, nil))
             } else if let m = aliasDecl.firstMatch(in: line, range: range) {
                 var name = String(line[Range(m.range(at: 3), in: line)!])
