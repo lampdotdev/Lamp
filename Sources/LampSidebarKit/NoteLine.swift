@@ -52,6 +52,7 @@ extension ChatLook {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .pointingHand()
                     .help(undone ? "Show what was taken back" : "Show what was noted")
                     Spacer(minLength: 8)
                     if !undone, let undo {

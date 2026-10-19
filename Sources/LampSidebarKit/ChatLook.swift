@@ -112,6 +112,7 @@ public enum ChatLook {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointingHand()
                 .font(ChatLook.stepFont)
                 .foregroundStyle(.secondary)
                 .padding(.leading, ChatLook.stepIndent)
@@ -119,7 +120,6 @@ public enum ChatLook {
                 .accessibilityHint(expanded ? "Hides the steps" : "Shows the steps")
                 if expanded {
                     VStack(alignment: .leading, spacing: 4) { steps }
-                        .padding(.leading, 10)
                         .transition(.opacity)
                 }
             }
@@ -149,6 +149,7 @@ public enum ChatLook {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointingHand()
                 .help("Show the command")
                 if expanded {
                     Text(command)
@@ -400,6 +401,22 @@ public enum ChatLook {
         for range in code { string[range].backgroundColor = Color.primary.opacity(0.07) }
         if keep { proseCache[text] = string }
         return string
+    }
+}
+
+extension View {
+    /// The pointing hand over something that opens or closes when clicked (a line of steps, a command to show):
+    /// it says the line is a control, which text alone doesn't.
+    public func pointingHand() -> some View { modifier(PointingHand()) }
+}
+
+private struct PointingHand: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content.pointerStyle(.link)
+        } else {
+            content.onHover { inside in inside ? NSCursor.pointingHand.push() : NSCursor.pop() }
+        }
     }
 }
 

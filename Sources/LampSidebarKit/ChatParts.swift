@@ -244,6 +244,7 @@ extension ChatLook {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointingHand()
                 .foregroundStyle(.secondary)
                 if showCommand {
                     // A short command takes only the room it needs; a long one scrolls rather than pushing the chat

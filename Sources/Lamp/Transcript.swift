@@ -480,6 +480,7 @@ struct LogRow: View, Equatable {
                 if expandedDetail || fullDetailHeight > shownDetailHeight + 1 {
                     Button(expandedDetail ? "Show Less" : "Show Full Output") { expandedDetail.toggle() }
                         .buttonStyle(.link)
+                        .pointingHand()
                         .font(.caption)
                 }
             }
@@ -543,6 +544,7 @@ struct ToolGroup: View, Equatable {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointingHand()
                 if expanded {
                     ForEach(Array(zip(calls, lines)), id: \.1.id) { call, line in
                         ToolRow(call: call, help: line.text, running: running && line.id == lines.last?.id)

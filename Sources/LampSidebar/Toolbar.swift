@@ -300,6 +300,7 @@ struct ToolsLine: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointingHand()
                 if expanded {
                     ForEach(calls.indices, id: \.self) { index in
                         row(calls[index], running: line.running && index == calls.count - 1)
