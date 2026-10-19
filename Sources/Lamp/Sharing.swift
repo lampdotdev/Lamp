@@ -686,8 +686,79 @@ extension Sharing {
                    patterns: ["CGEvent", "AXUIElement", "CGEventTap"]),
         Capability(label: "Loads code at runtime (can hide what it does)", icon: "eye.slash", level: .sensitive,
                    patterns: ["dlopen", "NSClassFromString", "perform(#selector", "NSSelectorFromString"]),
-        Capability(label: "Contains encoded data (can hide what it does)", icon: "eye.slash", level: .sensitive, patterns: ["Data(base64Encoded"]),
+        encodedData,
     ]
+
+    /// Found by `hidesEncodedText`, not by its patterns.
+    static let encodedData = Capability(label: "Contains encoded data (can hide what it does)", icon: "eye.slash", level: .sensitive,
+                                        patterns: [])
+
+    /// Whether the code carries something written in base64, the usual way to keep an address, a script or a
+    /// payload from someone reading it. What's looked for is the encoded text itself, not a call that decodes:
+    /// decoding is also how an app reads what it downloads (the tag on each link of a page it fetches), which
+    /// hides nothing in the app, and a call that decodes text written into the code is found by that text.
+    /// A run of base64 counts when some stretch of it decodes to readable text, at any of the four ways it can
+    /// line up, or when it's long and mixes letters and digits the way encoded bytes do. Text cut into short
+    /// pieces and joined before it's decoded is beyond a search like this; the AI review reads that code.
+    static func hidesEncodedText(_ code: String) -> Bool {
+        // A literal handed straight to the decoder, however short.
+        if code.contains(#/base64Encoded:\s*#*"/#) { return true }
+        var run: [UInt8] = []
+        for byte in code.utf8 {
+            if base64Value(byte) != nil || byte == UInt8(ascii: "=") {
+                run.append(byte)
+                continue
+            }
+            if encodes(run) { return true }
+            run.removeAll(keepingCapacity: true)
+        }
+        return encodes(run)
+    }
+
+    /// One base64 digit's value, in either alphabet (`+/` or the web's `-_`).
+    private static func base64Value(_ byte: UInt8) -> UInt8? {
+        switch byte {
+        case UInt8(ascii: "A")...UInt8(ascii: "Z"): byte - UInt8(ascii: "A")
+        case UInt8(ascii: "a")...UInt8(ascii: "z"): byte - UInt8(ascii: "a") + 26
+        case UInt8(ascii: "0")...UInt8(ascii: "9"): byte - UInt8(ascii: "0") + 52
+        case UInt8(ascii: "+"), UInt8(ascii: "-"): 62
+        case UInt8(ascii: "/"), UInt8(ascii: "_"): 63
+        default: nil
+        }
+    }
+
+    private static func encodes(_ run: [UInt8]) -> Bool {
+        let digits = run.compactMap(base64Value)
+        // Shorter text gives itself away by its padding: a whole run of base64 ending in = that decodes to
+        // readable text (a short command).
+        if digits.count >= 8, run.count % 4 == 0, run.last == UInt8(ascii: "="), run.count - digits.count <= 2,
+           readable(digits, from: 0) >= digits.count * 6 / 8 { return true }
+        // Sixteen digits make twelve bytes: twelve readable characters in a row don't come out of words, paths
+        // or numbers by chance (about one in a hundred thousand), and an address is longer than that.
+        guard digits.count >= 16 else { return false }
+        if digits.count >= 64, run.contains(where: { (UInt8(ascii: "a")...UInt8(ascii: "z")).contains($0) }),
+           run.contains(where: { (UInt8(ascii: "A")...UInt8(ascii: "Z")).contains($0) }),
+           run.contains(where: { (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) }) { return true }
+        return (0..<4).contains { readable(digits, from: $0, enough: 12) >= 12 }
+    }
+
+    /// The longest stretch of readable characters the digits decode to, starting at `start`; it stops counting
+    /// at `enough`.
+    private static func readable(_ digits: [UInt8], from start: Int, enough: Int = .max) -> Int {
+        var longest = 0, stretch = 0
+        var bits = 0, held = 0
+        for digit in digits.dropFirst(start) {
+            held = (held << 6 | Int(digit)) & 0xFFFF
+            bits += 6
+            guard bits >= 8 else { continue }
+            bits -= 8
+            let byte = UInt8((held >> bits) & 0xFF)
+            stretch = (0x20...0x7E).contains(byte) || byte == 0x0A || byte == 0x09 || byte == 0x0D ? stretch + 1 : 0
+            longest = max(longest, stretch)
+            if longest >= enough { break }
+        }
+        return longest
+    }
 
     /// Said under the checklist when Lamp has no AI to read the code with. It tells the reader what they're
     /// not getting and that opening doesn't depend on it; it isn't a problem to fix first.
@@ -934,7 +1005,9 @@ extension Sharing {
         if let browser = package.browser, let data = try? BrowserCompanions.Declaration.encoded(browser) {
             found.files.append((BrowserCompanions.Declaration.file, String(decoding: data, as: UTF8.self)))
         }
-        found.detected = checklist.filter { item in item.patterns.contains { everything.contains($0) } }
+        found.detected = checklist.filter { item in
+            item == encodedData ? hidesEncodedText(everything) : item.patterns.contains { everything.contains($0) }
+        }
         if package.capabilities.background == true, !found.detected.contains(where: { $0.label == startsAtLogin.label }) {
             found.detected.append(startsAtLogin)
         }
