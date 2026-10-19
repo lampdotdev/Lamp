@@ -189,6 +189,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     var pointed: PointedAt? = nil     // for a request: what was pointed at in the app, one of its attachments
     var midTurn: Bool? = nil          // for a request: the agent took it while working on the one before (Store.handOver)
     var byLamp: Bool? = nil           // for a request: Lamp sent it, not the person (`Store.fixCrash`); the line before says so
+    var said: String? = nil           // for a command Lamp let run ("Ran: …"): what the agent said it was for (`AgentEvent.naming`)
 
     /// The offer a setup card is about, for this line and for the older key card.
     var setupOffer: SetupOffer? {
@@ -477,6 +478,9 @@ final class Store: ObservableObject {
         var approving = false               // between the queue check and the approval card
         var look = Look()                   // what the agent's look_at_app has done
         var pendingName: String?            // a name the agent gave the version this request makes
+        /// What the agent last said it's doing, in its own words (`AgentEvent.naming`): the name of the commands
+        /// that follow, until it says something else.
+        var naming: String?
         /// The agent put its questions to the person this turn: the turn is over, whatever the agent does next.
         var asked = false
         /// Lamp ended the agent because it went on working past its own questions. Not a stop and not a failure.
@@ -812,9 +816,9 @@ final class Store: ObservableObject {
     }
 
     func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil, retryPhone: String? = nil,
-             offer: SetupOffer? = nil, noted: NoteReceipt? = nil) {
+             offer: SetupOffer? = nil, noted: NoteReceipt? = nil, said: String? = nil) {
         logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone,
-                                                    offer: offer, noted: noted))
+                                                    offer: offer, noted: noted, said: said))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
         saveChat(project)
     }
@@ -2770,11 +2774,16 @@ final class Store: ObservableObject {
                     Memory.compacted(project)
                     AIStatus.compacted(project)
                     Skills.compacted(project)
+                case .naming(let words):
+                    turn.naming = words.nilIfEmpty
+                    if let words = turn.naming { note(words, for: project) }
                 case .tool(let text, let fullCall):
                     log(project, .tool, text)
                     let call = ToolCall(text)
                     endOnQuestions(turn, before: call.name)
-                    note(TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
+                    // A command the agent named is shown by that name rather than as "Running a command".
+                    let named = call.action == .run ? turn.naming : nil
+                    note(named ?? TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
                     if let file = TurnProgress.file(changedBy: call) { progress[project.id]?.wrote(file) }
                     toolCalls += 1
                     // Compared in full: six different searches of one file all read "grep cache.json".
@@ -3099,10 +3108,12 @@ final class Store: ObservableObject {
 
     /// Applies Settings → Building → "Ask before running commands" to one command.
     /// `sandboxed`: the command will run confined to the app (Sandbox), so where it looks isn't in question.
-    private func approveCommand(_ command: String, for project: LampProject, escalated: Bool, shell: Bool = true, sandboxed: Bool) async -> Bool {
+    /// `said` is what the agent said the command is for, which names it in the chat (`LogLine.said`).
+    private func approveCommand(_ command: String, for project: LampProject, escalated: Bool, shell: Bool = true, sandboxed: Bool,
+                                said: String? = nil) async -> Bool {
         switch CommandApproval.current {
         case .never:
-            log(project, .status, "Ran: \(command)")
+            log(project, .status, "Ran: \(command)", said: said)
             return true
         case .risky where !escalated:
             let judgment = await commandJudgment(command, for: project)
@@ -3112,7 +3123,7 @@ final class Store: ObservableObject {
             // nearly all of them allowed. A check that couldn't be made at all goes to the in-app model's rating:
             // the sandbox leaves the network open, so it isn't the only guard, but a "low" there runs it.
             if judgment.verdict == .run || (sandboxed && judgment.verdict == .unsure && judgment.judged) {
-                log(project, .status, "Ran: \(command)")
+                log(project, .status, "Ran: \(command)", said: said)
                 return true
             }
             // A risky verdict always has its reason; if one were ever missing, the card still comes up as flagged.
@@ -6230,12 +6241,17 @@ final class Store: ObservableObject {
             }
             if request.path.contains("format=codex") {
                 // Codex's PreToolUse hook can only block: an empty answer lets the command run.
-                let allowed = await approveCommand(command, for: project, escalated: false, sandboxed: sandboxed)
+                // Codex says what its commands are for in its reasoning, which comes before them (`AgentEvent.naming`).
+                let allowed = await approveCommand(command, for: project, escalated: false, sandboxed: sandboxed,
+                                                   said: turns[project.id]?.naming)
                 return (200, allowed ? [:] : ["hookSpecificOutput": ["hookEventName": "PreToolUse",
                                                                      "permissionDecision": "deny",
                                                                      "permissionDecisionReason": "The user denied this command in Lamp."]])
             }
-            let allowed = await approveCommand(command, for: project, escalated: escalated, shell: shell, sandboxed: sandboxed)
+            // Claude Code's hook carries the command's own description, so each command keeps its own words
+            // whichever of the hook and the engine's output reaches Lamp first.
+            let said = engine == .claude ? (input["description"] as? String)?.trimmed.nilIfEmpty : nil
+            let allowed = await approveCommand(command, for: project, escalated: escalated, shell: shell, sandboxed: sandboxed, said: said)
             let reason = allowed ? "Approved in Lamp." : "The user denied this command in Lamp."
             // An allowed command goes back confined: the hooks run what Lamp hands them.
             if escalated {

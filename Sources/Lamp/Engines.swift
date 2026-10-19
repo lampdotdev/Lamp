@@ -316,7 +316,7 @@ extension Agent {
             // Shell commands go through a PreToolUse hook that asks Lamp and waits for the user's answer; Lamp
             // replies in Claude Code's hook format. If Lamp can't be reached the hook fails and the command is denied.
             env["LAMP_TOKEN"] = token
-            env["LAMP_SYSTEM"] = systemPrompt(for: project) + tryRules + sandboxNote
+            env["LAMP_SYSTEM"] = systemPrompt(for: project) + tryRules + Self.claudeNote + sandboxNote
             // How commands are approved (Settings → Building):
             // - auto: Claude Code's own classifier (--permission-mode auto) runs routine commands; when it would
             //   ask, its PermissionRequest hook sends the request to Lamp's approval card.
@@ -434,10 +434,12 @@ extension Agent {
             // its folder's skills/.system at every start, which Lamp's sandbox keeps closed, and fail each time.
             // `skills.bundled.enabled` is defined in Codex's config (BundledSkillsConfig in its config schema) but isn't
             // in OpenAI's published reference; a Codex that drops it ignores the setting and the copy fails as before.
+            // Codex sends no summaries of the model's thinking unless asked; their headings name its steps in the
+            // chat (`AgentEvent.naming`), where the shell commands alone said nothing a person could follow.
             let options = (codexModel.isEmpty ? "" : "-m \"$LAMP_MODEL\" ") + """
             --json --ignore-user-config --ignore-rules --dangerously-bypass-hook-trust --skip-git-repo-check \\
               \(sandboxMode) \\
-              -c web_search="live" -c skills.bundled.enabled=false -c "$LAMP_CODEX_INSTRUCTIONS" -c "$LAMP_CODEX_HOOKS" \\
+              -c web_search="live" -c model_reasoning_summary="detailed" -c skills.bundled.enabled=false -c "$LAMP_CODEX_INSTRUCTIONS" -c "$LAMP_CODEX_HOOKS" \\
               -c mcp_servers.lamp.url="http://127.0.0.1:\(Gateway.port)/mcp?files=1" -c mcp_servers.lamp.bearer_token_env_var="LAMP_TOKEN" \\
               -c mcp_servers.lamp.tool_timeout_sec=3600 -c mcp_servers.lamp.default_tools_approval_mode="approve"
             """
@@ -466,6 +468,15 @@ extension Agent {
             return AgentRun(command: command, env: env)
         }
     }
+
+    /// Claude Code asks the model what each shell command is for; Lamp shows that, in place of the command, as
+    /// the step's name in the chat and the line saying what's going on (`AgentEvent.naming`).
+    static let claudeNote = """
+
+    - (Claude Code) A shell command's description is what the person sees for that step, never the command: \
+    write it for them, a few plain words on what you're doing ("Reading how the shelf works", "Checking it \
+    builds"), with no file names, paths or commands.
+    """
 
     /// Which tools the "file tools" of the rules above are, for Codex: its own are the shell and apply_patch.
     static let codexNote = """
@@ -548,13 +559,16 @@ extension Agent {
             if obj["subtype"] as? String == "compact_boundary" { return [.compacted] }
         case "assistant":
             let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
-            return content.compactMap { block in
+            return content.flatMap { block -> [AgentEvent] in
                 switch block["type"] as? String {
-                case "text": (block["text"] as? String)?.trimmed.nilIfEmpty.map(AgentEvent.text)
+                case "text": return (block["text"] as? String)?.trimmed.nilIfEmpty.map { [AgentEvent.text($0)] } ?? []
                 case "tool_use":
-                    .tool(tool(block["name"] as? String ?? "Tool", block["input"] as? [String: Any] ?? [:]),
-                          call: callKey(plainName(block["name"] as? String ?? "Tool"), block["input"] as? [String: Any] ?? [:]))
-                default: nil
+                    let name = block["name"] as? String ?? "Tool", input = block["input"] as? [String: Any] ?? [:]
+                    let call = AgentEvent.tool(tool(name, input), call: callKey(plainName(name), input))
+                    // Claude Code has the model say what each command is for, in a few words of its own.
+                    guard name == "Bash" else { return [call] }
+                    return [.naming((input["description"] as? String)?.trimmed ?? ""), call]
+                default: return []
                 }
             }
         case "stream_event":
@@ -592,6 +606,14 @@ extension Agent {
         return []
     }
 
+    /// The bold heading a Codex reasoning summary opens with, or nil when it has none: the rest is the model
+    /// thinking aloud, too long to name a step.
+    static func heading(of summary: String) -> String? {
+        guard let first = summary.trimmed.components(separatedBy: .newlines).first?.trimmed,
+              first.hasPrefix("**"), first.hasSuffix("**"), first.count > 4 else { return nil }
+        return String(first.dropFirst(2).dropLast(2)).trimmed.nilIfEmpty
+    }
+
     static func parseCodex(_ line: String) -> [AgentEvent] {
         guard let obj = json(line), let type = obj["type"] as? String else {
             // Notices Codex prints for the flags Lamp chose on purpose.
@@ -618,6 +640,10 @@ extension Agent {
         case ("turn.started", _):
             // The model starts by thinking, sometimes for minutes, and says nothing until its first tool call.
             return [.step("")]
+        case ("item.completed", "reasoning"):
+            // A summary of what the model is thinking, which Codex opens with a heading of a few words in bold
+            // ("**Reading the shelf code**"): what the commands after it are for.
+            return Self.heading(of: item["text"] as? String ?? "").map { [.naming($0)] } ?? []
         case ("item.completed", "agent_message"):
             return (item["text"] as? String)?.trimmed.nilIfEmpty.map { [.text($0)] } ?? []
         case ("item.started", "web_search"):

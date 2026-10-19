@@ -389,7 +389,7 @@ private struct LineView: View {
                 // The agent's line on how the work went, among a finished turn's steps.
                 ChatLook.ProgressLine(line.text)
             } else if let command = ChatLook.ranCommand(in: line.text) {
-                ChatLook.RanCommand(command)
+                ChatLook.RanCommand(command, said: line.said)
             } else {
                 ChatLook.StatusLine(line.text, running: line.running)
             }

@@ -206,7 +206,12 @@ A capability given to one engine must be given to all of them that can take it, 
   (`CoverNote`). How it reads as the wait goes on is `Activity.words`, in one place: while the model thinks, its
   phrases turn over every 3.5 seconds and grow more reassuring the longer it goes; a build says "Still building…"
   after 30 seconds and "Taking a little longer…" after 90; anything named ("Working on the interface") stays as it is.
-  The agent's progress lines are messages above the activity and are left as they are.
+  The agent's progress lines are messages above the activity and are left as they are. A shell command is named in
+  the engine's own words, never guessed from its text (`AgentEvent.naming`): Claude Code's description of each Bash
+  call (its parser, and its approval hook, which carries the same input; `Agent.claudeNote` asks for plain words),
+  and for Codex the heading of the reasoning summary before it (`model_reasoning_summary`). The name is the activity
+  while the command runs and the step's row in the chat (`LogLine.said`, `ChatLook.RanCommand`; consecutive commands
+  under one name are one row, `ChatItem.items`); a command with no name stays "Ran a command". pi's commands have none.
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
   Where an app's text AI goes is an `AppAI.TextRoute` (an OpenRouter model, the Claude Code or Codex sign-in,
   pi with its key provider, or a model on this Mac), listed by `AppAI.textRoutes` for the pickers in

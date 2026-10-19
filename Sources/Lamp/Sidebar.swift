@@ -416,7 +416,9 @@ final class SidebarServer {
             case .statuses(let run):
                 for (position, line) in run.enumerated() {
                     let running = isLast && busy && !progressShown && line.id == run.last?.id && line.text.hasSuffix("…")
-                    out.append(SidebarLine(id: line.id, kind: .status, text: line.text, gap: position == 0 ? gap : 4, running: running))
+                    var status = SidebarLine(id: line.id, kind: .status, text: line.text, gap: position == 0 ? gap : 4, running: running)
+                    status.said = line.said
+                    out.append(status)
                 }
             case .tools(let run):
                 // Only with Agent Details on: the steps, summed up, each one under it.
@@ -426,7 +428,11 @@ final class SidebarServer {
                 line.steps = ChatItem.items(steps).flatMap { step -> [SidebarLine] in
                     switch step {
                     case .tools(let run): [tools(run, gap: 4, running: false)]
-                    case .statuses(let run): run.map { SidebarLine(id: $0.id, kind: .status, text: $0.text, gap: 4) }
+                    case .statuses(let run): run.map { line in
+                        var status = SidebarLine(id: line.id, kind: .status, text: line.text, gap: 4)
+                        status.said = line.said
+                        return status
+                    }
                     case .line(let line) where line.kind == .progress || line.kind == .agent: [Self.progress(line, gap: 4, folded: true)]
                     default: []
                     }

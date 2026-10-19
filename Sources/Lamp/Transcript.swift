@@ -279,8 +279,15 @@ enum ChatItem: Identifiable {
             case (.tool, _): items.append(.tools([line]))
             case (.status, .statuses(let run)?):
                 // A progress step ("Building…") is superseded by whatever status follows it.
-                let kept = run.filter { !$0.text.hasSuffix("…") }
-                items[items.count - 1] = .statuses(kept + [line])
+                var kept = run.filter { !$0.text.hasSuffix("…") }
+                // Commands the agent gave one name to are one step: the name once, their commands under it.
+                if let said = line.said, let last = kept.last, last.said == said,
+                   let command = ChatLook.ranCommand(in: line.text), ChatLook.ranCommand(in: last.text) != nil {
+                    kept[kept.count - 1].text += "\n" + command
+                    items[items.count - 1] = .statuses(kept)
+                } else {
+                    items[items.count - 1] = .statuses(kept + [line])
+                }
             case (.status, _): items.append(.statuses([line]))
             default: items.append(.line(line))
             }
@@ -630,7 +637,7 @@ struct StatusGroup: View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(lines) { line in
                 if line.kind == .status, let command = ChatLook.ranCommand(in: line.text) {
-                    ChatLook.RanCommand(command)
+                    ChatLook.RanCommand(command, said: line.said)
                 } else {
                     ChatLook.StatusLine(line.text, running: running && line.id == lines.last?.id && line.text.hasSuffix("…"))
                 }

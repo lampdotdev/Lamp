@@ -36,6 +36,9 @@ enum AgentEvent {
     /// Codex began (true) or finished (false) something it does on its own (a command, a tool call, an edit, a
     /// search), by its id: a Codex run is cut to pass a message on only between them (`Store.steer`).
     case acting(String, Bool)
+    /// What the agent says it's doing, in its own words: Claude Code's description of a command, a Codex reasoning
+    /// summary's heading. Empty for a command that came without one, which leaves it unnamed.
+    case naming(String)
 }
 
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.

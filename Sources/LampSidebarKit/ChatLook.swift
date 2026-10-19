@@ -150,12 +150,17 @@ public enum ChatLook {
         }
     }
 
-    /// A command the agent ran ("Ran: git clone …"). The chat says that it happened; the command
-    /// itself is a click away, for anyone who wants to see it.
+    /// A command the agent ran ("Ran: git clone …"). The chat says that it happened, by what the agent said it was
+    /// for when it said ("Reading how the shelf works"); the command itself is a click away, for anyone who wants
+    /// to see it. Several the agent gave one name to are one row, their commands one under another.
     public struct RanCommand: View {
         let command: String
+        let said: String?
         @State private var expanded = false
-        public init(_ command: String) { self.command = command }
+        public init(_ command: String, said: String? = nil) {
+            self.command = command
+            self.said = said
+        }
 
         public var body: some View {
             VStack(alignment: .leading, spacing: 4) {
@@ -164,7 +169,7 @@ public enum ChatLook {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle").frame(width: 16)
-                        Text("Ran a command")
+                        Text(said ?? "Ran a command")
                         Image(systemName: "chevron.right")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.tertiary)

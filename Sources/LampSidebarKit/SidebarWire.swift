@@ -109,6 +109,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var gap: Double
     /// A status step still going, with its spinner.
     public var running: Bool
+    /// For a command the agent ran: what it said the command was for, its name in the chat (`RanCommand`).
+    public var said: String?
     /// A request's pictures and files.
     public var attachments: [SidebarAttachment]?
     /// An agent's message that may still be growing.
