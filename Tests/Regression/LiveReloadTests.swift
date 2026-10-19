@@ -258,6 +258,7 @@ final class LiveReloadTests: XCTestCase {
                     row()
                 }
                 func row() -> some View { Button("r") { switch model.mood { case .a: break; case .b: break } } }
+                func slow() async -> some View { await Task.yield(); switch model.mood { case .a: return Text("a"); case .b: return Text("b") } }
             }
             """.write(to: sources.appendingPathComponent("Moods.swift"), atomically: true, encoding: .utf8)
         let dumped = await LiveReload.dump(of: sources, in: project, module: project.exe, macOS: "14.0")
@@ -269,7 +270,7 @@ final class LiveReloadTests: XCTestCase {
         // A closure set into a property or given as a property's value is kept too, inside a body or not; what a
         // view helper returning `some View` hands SwiftUI (a Button's action) is made again at the next draw.
         let uses = LiveReload.oldCodeUses(inDump: dump)
-        XCTAssertEqual(uses.filter { $0.hasPrefix("Mood\t") }.sorted(), ["Mood\tModel\tswitches over", "Mood\tW\tswitches over", "Mood\tstart()\tswitches over", "Mood\ttick()\tprints"])
+        XCTAssertEqual(uses.filter { $0.hasPrefix("Mood\t") }.sorted(), ["Mood\tModel\tswitches over", "Mood\tW\tswitches over", "Mood\tslow()\tswitches over", "Mood\tstart()\tswitches over", "Mood\ttick()\tprints"])
         let onlyTick = dump.components(separatedBy: "\n").filter { !$0.contains("Timer") }.joined(separator: "\n")
         XCTAssertTrue(LiveReload.oldCodeUses(inDump: onlyTick).contains("Mood\ttick()\tprints"))
         // The record outlives a change: the timer's switch, recorded from the installed sources, still counts once a

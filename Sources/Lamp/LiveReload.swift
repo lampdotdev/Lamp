@@ -390,8 +390,10 @@ enum LiveReload {
             } else if let m = function.firstMatch(in: line, range: range) {
                 let type = String(line[Range(m.range(at: 3), in: line)!])
                 let name = m.range(at: 2).location == NSNotFound ? nil : String(line[Range(m.range(at: 2), in: line)!])
-                // A member that returns a view is drawn by a body, and what it hands SwiftUI is made again with it.
-                scopes.append((indent, type.hasSuffix("some View") ? .body : .function(name, async: type.contains(" async"))))
+                // A member that returns a view is drawn by a body, and what it hands SwiftUI is made again with it;
+                // one that is async may be suspended across the change, so it stays a function.
+                let async = type.contains(" async")
+                scopes.append((indent, type.hasSuffix("some View") && !async ? .body : .function(name, async: async)))
             } else if let m = scope.firstMatch(in: line, range: range) {
                 // A type or property, named so a use can say where it is; a type's name is what a body's uses show.
                 scopes.append((indent, m.range(at: 2).location == NSNotFound ? .other : .named(String(line[Range(m.range(at: 2), in: line)!]))))
