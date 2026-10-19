@@ -28,7 +28,7 @@ extension ChatLook {
 
         public var body: some View {
             VStack(alignment: .trailing, spacing: 6) {
-                HStack(spacing: 6) { attachments }
+                HStack(spacing: 6) { attachments }.padding(.trailing, ChatLook.tailRoom)
                 HStack(alignment: .center, spacing: 6) {
                     if let goBack {
                         Menu {
@@ -56,8 +56,10 @@ extension ChatLook {
                     // A message that's only attachments shows just them.
                     if !text.isEmpty { UserBubble(text) }
                 }
-                // The width limit goes around the buttons too, so they stay next to a short message.
-                .frame(maxWidth: 480 + 50, alignment: .trailing)
+                // The width limit goes around the buttons too, so they stay next to a short message; the room on
+                // the left keeps a long request from reaching across, as in Messages.
+                .frame(maxWidth: 480 + 50 + ChatLook.tailRoom, alignment: .trailing)
+                .padding(.leading, 40)
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .onHover { hovered = $0 }

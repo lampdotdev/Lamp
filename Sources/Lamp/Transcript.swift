@@ -226,17 +226,21 @@ enum ChatItem: Identifiable {
         return items
     }
 
-    /// Space above an item: tight within a run of work, roomy between turns.
+    /// Space above an item: bubbles from one side close together, as Messages keeps them, the steps tucked
+    /// under them, and more room between turns.
     static func gap(after previous: ChatItem?, before item: ChatItem, isFinalAnswer: Bool) -> CGFloat {
         guard let previous else { return 0 }
         switch (previous.kind, item.kind) {
-        case (_, .user): return 32
-        case (.user, _): return 16
-        case (_, .summary): return 14
+        case (.summary, .user): return 16
+        case (_, .user): return 24
+        case (.user, _): return 12
+        case (_, .summary): return 16
         case (.tool, .detail), (.detail, .detail): return 4
-        case (_, .agent): return isFinalAnswer ? 20 : (previous.kind == .agent ? 10 : 14)
-        case (_, .tool): return 10
-        default: return 12
+        case (.agent, .agent): return 4
+        case (_, .agent): return isFinalAnswer ? 12 : 8
+        case (.agent, .tool), (.agent, .status): return 6
+        case (_, .tool): return 6
+        default: return 10
         }
     }
 }
@@ -441,7 +445,7 @@ struct ToolGroup: View, Equatable {
     var body: some View {
         let calls = lines.map { ToolCall($0.text) }
         if calls.count == 1 {
-            ToolRow(call: calls[0], help: lines[0].text, running: running)
+            ToolRow(call: calls[0], help: lines[0].text, running: running).padding(.leading, ChatLook.stepIndent)
         } else {
             VStack(alignment: .leading, spacing: 4) {
                 Button {
@@ -455,7 +459,7 @@ struct ToolGroup: View, Equatable {
                         Text(Self.summary(calls))
                         if running && !expanded, let last = calls.last, !last.argument.isEmpty {
                             Text(last.argument)
-                                .font(.system(.callout, design: .monospaced))
+                                .font(.system(.subheadline, design: .monospaced))
                                 .foregroundStyle(.tertiary)
                                 .lineLimit(1).truncationMode(.middle)
                         }
@@ -464,7 +468,7 @@ struct ToolGroup: View, Equatable {
                             .foregroundStyle(.tertiary)
                             .rotationEffect(.degrees(expanded ? 90 : 0))
                     }
-                    .font(.callout)
+                    .font(ChatLook.stepFont)
                     .foregroundStyle(.secondary)
                     .contentShape(Rectangle())
                 }
@@ -476,6 +480,7 @@ struct ToolGroup: View, Equatable {
                     .padding(.leading, 10)
                 }
             }
+            .padding(.leading, ChatLook.stepIndent)
         }
     }
 
@@ -516,12 +521,12 @@ struct ToolRow: View {
             Text(call.verb).foregroundStyle(.secondary)
             if !call.argument.isEmpty {
                 Text(call.argument)
-                    .font(.system(.callout, design: .monospaced))
+                    .font(.system(.subheadline, design: .monospaced))
                     .foregroundStyle(.tertiary)
                     .lineLimit(1).truncationMode(.middle)
             }
         }
-        .font(.callout)
+        .font(ChatLook.stepFont)
         .help(help)
     }
 }

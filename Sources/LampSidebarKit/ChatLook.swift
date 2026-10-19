@@ -5,17 +5,26 @@ import AppKit
 /// extension), so the two are drawn by the same code and can't drift apart. Each takes plain values: what a line
 /// says and how it stands, never Lamp's own state.
 public enum ChatLook {
-    /// A request's bubble, on the right.
+    /// A request's bubble, on the right, as Messages draws what you sent: white words on the accent colour.
+    /// A request still waiting its turn is the same bubble, faded.
     public struct UserBubble: View {
         let text: String
-        public init(_ text: String) { self.text = text }
+        let waiting: Bool
+        public init(_ text: String, waiting: Bool = false) {
+            self.text = text
+            self.waiting = waiting
+        }
 
         public var body: some View {
             Text(text)
                 .textSelection(.enabled)
                 .lineSpacing(2)
-                .padding(.horizontal, 12).padding(.vertical, 8)
-                .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
+                .foregroundStyle(.white)
+                .tint(.white)
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .background(Bubble(.trailing).fill(Color.accentColor))
+                .opacity(waiting ? 0.7 : 1)
+                .padding(.trailing, ChatLook.tailRoom)
         }
     }
 
@@ -29,10 +38,16 @@ public enum ChatLook {
             self.keep = keep
         }
 
+        /// In a grey bubble on the left, as Messages draws the other person's. Answers run longer than a text
+        /// message, so the bubble may take most of the width, leaving room on the right to tell it from a request.
         public var body: some View {
             Text(ChatLook.prose(text, keep: keep))
-                .lineSpacing(4)
+                .lineSpacing(3)
                 .textSelection(.enabled)
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .background(Bubble(.leading).fill(ChatLook.agentBubble))
+                .padding(.leading, ChatLook.tailRoom)
+                .padding(.trailing, 32)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -58,10 +73,17 @@ public enum ChatLook {
                 .frame(width: 16)
                 Text(text)
             }
-            .font(.callout)
+            .font(ChatLook.stepFont)
             .foregroundStyle(.secondary)
+            .padding(.leading, ChatLook.stepIndent)
         }
     }
+
+    /// The agent's steps (what it ran, read, checked) are told in small grey words under its bubbles, as Messages
+    /// says a message was delivered: there, but quieter than what's said.
+    public static let stepFont = Font.subheadline
+    /// Steps line up with the words in the agent's bubbles.
+    public static let stepIndent: CGFloat = tailRoom + 4
 
     /// A command the agent ran without asking ("Ran: git clone …"). The chat says that it happened; the command
     /// itself is a click away, for anyone who wants to see it.
@@ -89,14 +111,15 @@ public enum ChatLook {
                 .help("Show the command")
                 if expanded {
                     Text(command)
-                        .font(.system(.callout, design: .monospaced))
+                        .font(.system(.subheadline, design: .monospaced))
                         .foregroundStyle(.tertiary)
                         .textSelection(.enabled)
                         .padding(.leading, 22)
                 }
             }
-            .font(.callout)
+            .font(ChatLook.stepFont)
             .foregroundStyle(.secondary)
+            .padding(.leading, ChatLook.stepIndent)
         }
     }
 
@@ -121,22 +144,23 @@ public enum ChatLook {
                 Text("·")
                 Elapsed(from: started, to: nil)
             }
-            .font(.callout)
+            .font(ChatLook.stepFont)
             .foregroundStyle(.secondary)
+            .padding(.leading, ChatLook.stepIndent)
         }
     }
 
-    /// The line that ends a turn ("Worked for 8s"), between rules.
+    /// The line that ends a turn ("Worked for 8s"), small and centred, the way Messages marks the time between
+    /// messages.
     public struct SummaryLine: View {
         let text: String
         public init(_ text: String) { self.text = text }
 
         public var body: some View {
-            HStack(spacing: 10) {
-                Rectangle().fill(.separator).frame(height: 1)
-                Text(text).font(.caption).foregroundStyle(.tertiary).fixedSize()
-                Rectangle().fill(.separator).frame(height: 1)
-            }
+            Text(text)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
         }
     }
 
@@ -160,7 +184,8 @@ public enum ChatLook {
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+            .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.leading, ChatLook.tailRoom)
         }
     }
 
