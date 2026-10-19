@@ -417,6 +417,8 @@ final class Store: ObservableObject {
         /// A file request sets its own title; a command keeps this one.
         static let commandTitle = "Can the agent do this?"
         var title = commandTitle
+        /// What the agent said the command is for, which goes on naming what it's doing once it's allowed.
+        var said: String?
         let answer: CheckedContinuation<Bool, Never>
         var explanation: CommandExplanation?
     }
@@ -3128,15 +3130,17 @@ final class Store: ObservableObject {
             }
             // A risky verdict always has its reason; if one were ever missing, the card still comes up as flagged.
             let flagged = judgment.verdict == .risky ? judgment.reason ?? .reachesBeyond : nil
-            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged)
+            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged,
+                                         said: said)
         case .risky where shell:
             // Claude Code's own classifier asked: it doesn't run on the checks alone, but what they flag keeps
             // its card, so the in-app model's "low" can't run a command they found risky.
             let judgment = await commandJudgment(command, for: project)
             let flagged = judgment.verdict == .risky ? judgment.reason ?? .reachesBeyond : nil
-            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged)
+            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged,
+                                         said: said)
         default:
-            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed)
+            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, said: said)
         }
     }
 
@@ -3179,7 +3183,7 @@ final class Store: ObservableObject {
     /// low runs without the card (`CommandRisk.runsOnRating`).
     func requestApproval(for project: LampProject, command: String, title: String? = nil,
                          explanation given: CommandExplanation? = nil, shell: Bool = true, sandboxed: Bool = false,
-                         flagged: CommandRisk.Reason? = nil) async -> Bool {
+                         flagged: CommandRisk.Reason? = nil, said: String? = nil) async -> Bool {
         guard !command.trimmed.isEmpty else { return false }
         if turns[project.id]?.allowAll == true {
             log(project, .detail, "Ran (allowed for this turn): \(command)")
@@ -3219,6 +3223,7 @@ final class Store: ObservableObject {
             var pending = PendingApproval(command: command, answer: continuation,
                                           explanation: given?.raised(for: flagged) ?? (asked ? .unexplained(flagged: flagged) : nil))
             if let title { pending.title = title }
+            pending.said = said
             approvals[project.id] = pending
             // Explain it while the card is up; until this arrives the card says it's working it out.
             if given == nil, !asked { Task {
@@ -3252,7 +3257,7 @@ final class Store: ObservableObject {
         guard let pending = approvals.removeValue(forKey: project.id) else { return }
         if allowAll { turns[project.id]?.allowAll = true }
         log(project, .detail, (allow ? "Allowed: " : "Denied: ") + pending.command)
-        note(allow && pending.title == PendingApproval.commandTitle ? "Running a command" : "Thinking", for: project)
+        note(allow && pending.title == PendingApproval.commandTitle ? pending.said ?? "Running a command" : "Thinking", for: project)
         pending.answer.resume(returning: allow)
     }
 
