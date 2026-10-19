@@ -4444,6 +4444,14 @@ final class Store: ObservableObject {
             _ = heldInstalls.mayInstall(project.id, running: true)
             owner?.keptOpen = true
             owner?.didNotOpen = true
+            // The notice beside Open New Version says where things stand now; the line saying Lamp waited for the
+            // app to close, from this request's own wait, no longer does.
+            if let lines = logs[project.id],
+               let index = lines.lastIndex(where: { $0.kind == .status && $0.text == ErrorMessages.waitingToClose(project.name) }),
+               !lines[index...].contains(where: { $0.kind == .user }) {
+                logs[project.id]?.remove(at: index)
+                saveChat(project)
+            }
             noteOpened(false, for: project)
             refreshOpenApps()
             return nil
@@ -5577,7 +5585,7 @@ final class Store: ObservableObject {
                 // Its question may be behind Lamp's window: in front, the person sees what is being waited for,
                 // and a build says in the chat that it's waiting.
                 app.activate()
-                if owner != nil { self.log(project, .status, "Waiting for \(project.name) to close…") }
+                if owner != nil { self.log(project, .status, ErrorMessages.waitingToClose(project.name)) }
             }, silent: { silent in
                 // Stuck, or in the middle of something long: Lamp can't tell which, so ending it is theirs to
                 // do, from the chat (`UnresponsiveNotice`). The app isn't brought in front of that.
@@ -5587,7 +5595,7 @@ final class Store: ObservableObject {
                 }
                 self.notResponding[project.id] = app.processIdentifier
                 NSApp.requestUserAttention(.informationalRequest)
-                if owner != nil { self.log(project, .status, "Waiting for \(project.name) to close…") }
+                if owner != nil { self.log(project, .status, ErrorMessages.waitingToClose(project.name)) }
             })
             if !gone { closed = false }
         }

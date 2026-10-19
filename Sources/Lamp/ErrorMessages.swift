@@ -19,6 +19,8 @@ enum ErrorMessages {
     static let versionNotSaved = "Lamp couldn't save this change as a version. It's in your app, and your next change will save both."
 
     static func openFailed(_ detail: String) -> String { openFailedPrefix + detail }
+    /// While an app asked to quit has a question up: what Lamp is waiting for.
+    static func waitingToClose(_ app: String) -> String { "Waiting for " + app + " to close…" }
     /// Beside Open New Version, for an app that stayed open when a build asked it to quit: the build waits for it.
     static func earlierVersion(_ app: String) -> String { app + " is still the earlier version." }
     /// Beside Force Quit, for an app that was asked to quit and doesn't answer: what the click costs.
