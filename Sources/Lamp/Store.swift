@@ -1578,6 +1578,8 @@ final class Store: ObservableObject {
         draftWrites.removeValue(forKey: old.id)?.cancel()
         logs[project.id] = logs.removeValue(forKey: old.id)
         if chatsToSave.remove(old.id) != nil { chatsToSave.insert(project.id) }
+        // The chat file moved with the folder, still holding what wasn't copied: its saves stay held back.
+        unkeptChats[project.id] = unkeptChats.removeValue(forKey: old.id)
         usage[project.id] = usage.removeValue(forKey: old.id)
         queued[project.id] = queued.removeValue(forKey: old.id)
         if let turn = turns.removeValue(forKey: old.id) {   // the rename itself is a turn: it moves with the app
@@ -2914,6 +2916,7 @@ final class Store: ObservableObject {
         AppSecrets.forget(app: project.instance)
         projects.removeAll { $0.id == project.id }
         logs[project.id] = nil
+        unkeptChats[project.id] = nil
         usage[project.id] = nil
         queued[project.id] = nil
         icons[project.id] = nil
