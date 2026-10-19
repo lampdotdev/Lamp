@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + askEntries + buildEntries + progressEntries + pointedEntries
+    static let entries: [Entry] = chatEntries + askEntries + buildEntries + activityEntries + progressEntries + pointedEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -145,6 +145,62 @@ enum Gallery {
             change(&progress)
             return AnyView(BuildCardView(title: "Tip Calculator", name: "Tip Calculator", iconReady: false, progress: progress) {
                 BlueprintIcon(letter: "T", size: 44)
+            })
+        }
+    }
+
+    // MARK: Activity
+
+    /// What a turn says it's doing as the wait goes on (`Activity`): the build card and the line under a change, fed
+    /// the same activity and clock, at moments of a long think and a long build, and under the agent's progress lines.
+    private static let activityEntries: [Entry] = [
+        activity("Thinking, just begun", Activity.thinking, waited: 1),
+        activity("Thinking, 25 seconds", Activity.thinking, waited: 25),
+        activity("Thinking, 70 seconds", Activity.thinking, waited: 70),
+        activity("Thinking, 3 minutes", Activity.thinking, waited: 200),
+        activity("A named step", "Working on the interface", waited: 40),
+        activity("Building, 45 seconds", "Building…", waited: 45),
+        activity("Building, 2 minutes", "Building…", waited: 120),
+        cover("Cover, building", "Building…", waited: 12),
+        cover("Cover, the turn over", nil, waited: 0),
+        Entry(group: "Activity", name: "Under the agent's progress lines") {
+            let started = Date().addingTimeInterval(-95)
+            return AnyView(VStack(alignment: .leading, spacing: 12) {
+                ChatLook.AgentText("The week's columns are in. Now the tasks in them.")
+                ChatLook.AgentText("Tasks show up. Now dragging them between days.")
+                ChatLook.ActivityLine(Activity.thinking, started: started, since: Date().addingTimeInterval(-25))
+            })
+        },
+    ]
+
+    /// The cover while the app reopens, on a starter's picture of its window.
+    private static func cover(_ name: String, _ activity: String?, waited: TimeInterval) -> Entry {
+        Entry(group: "Activity", name: name) {
+            var progress = TurnProgress(newApp: false)
+            progress.started = Date().addingTimeInterval(-waited - 20)
+            if let activity { progress.activity = activity }
+            progress.activitySince = Date().addingTimeInterval(-waited)
+            if activity == nil { progress.finish(worked: true) }
+            let picture = Starters.folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("countdowns/preview.png")) }
+                ?? NSImage(size: NSSize(width: 340, height: 282))
+            return AnyView(CoverView(image: picture) { CoverNote(progress: progress) }
+                .aspectRatio(picture.size, contentMode: .fit))
+        }
+    }
+
+    private static func activity(_ name: String, _ activity: String, waited: TimeInterval) -> Entry {
+        Entry(group: "Activity", name: name) {
+            var progress = TurnProgress(newApp: true)
+            progress.activity = activity
+            progress.started = Date().addingTimeInterval(-waited)
+            progress.activitySince = progress.started
+            progress.plan = [PlanPart(id: 0, title: "Add a countdown", done: false),
+                             PlanPart(id: 1, title: "See the days left at a glance", done: false)]
+            return AnyView(VStack(alignment: .leading, spacing: 16) {
+                BuildCardView(title: "Countdowns", name: "Countdowns", iconReady: false, progress: progress) {
+                    BlueprintIcon(letter: "C", size: 44)
+                }
+                ChatLook.ActivityLine(progress.activity, started: progress.started, since: progress.activitySince)
             })
         }
     }

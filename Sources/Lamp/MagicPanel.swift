@@ -342,7 +342,7 @@ final class MagicPanel {
         window.hasShadow = true
         window.ignoresMouseEvents = true
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: CoverView(image: image))
+        window.contentView = NSHostingView(rootView: CoverView(image: image) { CoverActivity(app: project.id) })
         window.setFrame(frame, display: true)
         window.orderFrontRegardless()
         state.cover = window
@@ -411,24 +411,49 @@ final class MagicPanel {
     }
 }
 
-/// The app's last picture of itself, standing in its window's place while a change goes in.
-private struct CoverView: View {
+/// The app's last picture of itself, standing in its window's place while a change goes in, with a note on it.
+struct CoverView<Note: View>: View {
     let image: NSImage
+    @ViewBuilder let note: () -> Note
 
     var body: some View {
         Image(nsImage: image)
             .resizable()
             .overlay(Color.black.opacity(0.12))
-            .overlay(alignment: .bottom) {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Updating…").font(.callout.weight(.medium))
-                }
-                .padding(.horizontal, 14).padding(.vertical, 8)
-                .background(.regularMaterial, in: Capsule())
-                .padding(.bottom, 18)
-            }
+            // In the middle: an app's own buttons sit along its bottom and top edges, and a note there hid them.
+            .overlay { note().padding(.horizontal, 12) }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+/// The cover's note for an app, from its turn as it goes. Its own view, so only the note is drawn again.
+private struct CoverActivity: View {
+    let app: String
+    @ObservedObject private var store = Store.shared
+
+    var body: some View { CoverNote(progress: store.progress[app]) }
+}
+
+/// What the app's turn is doing, as the chat says it (`Activity`), or "Updating…" once the turn is over and the
+/// app is still on its way.
+struct CoverNote: View {
+    let progress: TurnProgress?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            if let progress, progress.finished == nil {
+                ChatLook.ActivityText(progress.activity, since: progress.activitySince)
+                Text("·").foregroundStyle(.secondary)
+                Elapsed(from: progress.started, to: nil).foregroundStyle(.secondary)
+            } else {
+                Text("Updating…")
+            }
+        }
+        .font(.callout.weight(.medium))
+        .lineLimit(1)
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(.regularMaterial, in: Capsule())
     }
 }
 

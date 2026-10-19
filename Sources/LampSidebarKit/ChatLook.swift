@@ -194,19 +194,22 @@ public enum ChatLook {
         status.hasPrefix("Ran: ") ? String(status.dropFirst(5)) : nil
     }
 
-    /// A turn's progress: what the agent is doing and for how long.
+    /// A turn's progress: what the agent is doing and for how long. `since` is when the activity began, which a
+    /// long think or build is counted from (the turn's start when it isn't known).
     public struct ActivityLine: View {
         let activity: String
         let started: Date
-        public init(_ activity: String, started: Date) {
+        let since: Date
+        public init(_ activity: String, started: Date, since: Date? = nil) {
             self.activity = activity
             self.started = started
+            self.since = since ?? started
         }
 
         public var body: some View {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.mini).frame(width: 16)
-                Text(activity).lineLimit(1)
+                ActivityText(activity, since: since)
                 Text("·")
                 Elapsed(from: started, to: nil)
             }

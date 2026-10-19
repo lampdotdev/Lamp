@@ -200,7 +200,13 @@ A capability given to one engine must be given to all of them that can take it, 
   run's model is heard from.
 - **What Lamp shows the user** (`BuildCard.activity`, `ToolCall`): tool names must be recognised in every
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
-  Codex reports them as `mcp_tool_call` items.
+  Codex reports them as `mcp_tool_call` items. A turn has one activity (`TurnProgress.activity`, and since when,
+  `activitySince`), and every place that shows it draws it with `ChatLook.ActivityText`: the build card, the line
+  under a change, the chat beside the app (`SidebarState.workingActivitySince`) and the cover while the app reopens
+  (`CoverNote`). How it reads as the wait goes on is `Activity.words`, in one place: while the model thinks, its
+  phrases turn over every 3.5 seconds and grow more reassuring the longer it goes; a build says "Still building…"
+  after 30 seconds and "Taking a little longer…" after 90; anything named ("Working on the interface") stays as it is.
+  The agent's progress lines are messages above the activity and are left as they are.
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
   Where an app's text AI goes is an `AppAI.TextRoute` (an OpenRouter model, the Claude Code or Codex sign-in,
   pi with its key provider, or a model on this Mac), listed by `AppAI.textRoutes` for the pickers in
@@ -673,7 +679,7 @@ the app; the rule (`Agent.Rules.macGenerated`) asks the agent to keep what the p
 `@SceneStorage`, so it comes back as they left it. To make that look like the window changing in place: as the app
 quits it leaves a picture of its front window and where it was in its runtime folder (`LampMagic.leaveCover`); while
 the app's turn is going, Lamp shows that picture where the window was (`MagicPanel.showCover`, a borderless window
-marked "Updating…", with the chat's blank paper where a chat beside it was: `cover-chat-frame.txt`, `MagicPanel.chatCover`), the new
+with the turn's activity in its middle, "Updating…" once the turn is over, and the chat's blank paper where a chat beside it was: `cover-chat-frame.txt`, `MagicPanel.chatCover`), the new
 copy opens its first window in the same place (`putBack`), and the picture fades out once the new copy reports its window
 (or goes when the turn ends without it).
 

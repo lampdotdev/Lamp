@@ -25,7 +25,8 @@ struct PlanPart: Identifiable, Equatable {
 struct TurnProgress {
     /// The first turn of a new app gets the build card; later turns get one line.
     let newApp: Bool
-    let started = Date()
+    /// Set only by the gallery, to show a turn that has been going a while.
+    var started = Date()
     var finished: Date?
     /// The turn ended without a working app.
     var failed = false
@@ -36,16 +37,20 @@ struct TurnProgress {
     /// nothing for the person to use yet.
     var unopened = false
     /// What's happening right now, in the user's words rather than the code's: "Working on the interface",
-    /// "Building…". It's the one place a turn in progress says what it's doing.
+    /// "Building…". It's the one place a turn in progress says what it's doing; how it reads as the wait goes on
+    /// is `Activity.words`.
     var activity: String {
         // Lamp is building what the agent wrote: every part it has worked on is as done as this pass makes it,
         // even with a listed file left unwritten, so none sits unticked above Lamp's own last row, and it stays
         // ticked when the agent goes on.
         didSet {
+            if activity != oldValue { activitySince = Date() }
             guard finishing else { return }
             for index in plan.indices where plan[index].files.contains(where: files.contains) { plan[index].done = true }
         }
     }
+    /// When the activity last changed, which is what a long think or a long build is counted from.
+    var activitySince = Date()
     /// The file being written or edited right now, if that's what the agent is doing. Never shown: it
     /// tells which part of the plan is being worked on.
     var currentFile: String?
@@ -65,23 +70,13 @@ struct TurnProgress {
     /// going a while is being thought about.
     init(newApp: Bool) {
         self.newApp = newApp
-        activity = newApp ? "Getting started" : "Thinking"
+        activity = newApp ? "Getting started" : Activity.thinking
     }
 
     /// A part's mark on the build card. A part being worked on gets a spinner instead.
     static let symbols: [PartState: String] = [
         .open: "circle", .started: "circle.dotted", .done: "checkmark.circle.fill",
     ]
-
-    /// How long the agent may think before the card says that's expected.
-    static let patience: TimeInterval = 20
-
-    /// The line under the app's name: what's happening, or that a long think at the start is normal.
-    func activity(at date: Date) -> String {
-        guard finished == nil, plan.isEmpty, files.isEmpty, activity == "Thinking",
-              date.timeIntervalSince(started) >= Self.patience else { return activity }
-        return "Still thinking it through. First versions take a few minutes."
-    }
 
     enum PartState { case open, started, active, done }
 
@@ -301,9 +296,7 @@ struct BuildCardView<Icon: View>: View {
         if progress.asking {
             Text("A quick question first")
         } else if progress.finished == nil {
-            TimelineView(.periodic(from: progress.started, by: 1)) { context in
-                Text(progress.activity(at: context.date))
-            }
+            ChatLook.ActivityText(progress.activity, since: progress.activitySince)
         } else {
             switch progress.ending {
             case .didNotFinish:
@@ -456,5 +449,7 @@ private extension View {
 struct ActivityRow: View {
     let progress: TurnProgress
 
-    var body: some View { ChatLook.ActivityLine(progress.activity, started: progress.started) }
+    var body: some View {
+        ChatLook.ActivityLine(progress.activity, started: progress.started, since: progress.activitySince)
+    }
 }

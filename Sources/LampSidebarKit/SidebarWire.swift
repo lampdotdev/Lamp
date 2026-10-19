@@ -43,6 +43,8 @@ public struct SidebarState: Codable, Equatable {
     public var attachments: [SidebarAttachment]
     // Optional, like everything added since the first sidebar: a sidebar talking to a Lamp from before these
     // were sent still reads its chat.
+    /// When `working` began, for how its words change as the wait goes on (`Activity.words`).
+    public var workingActivitySince: Date?
     /// Messages waiting for the current change to finish.
     public var queued: [SidebarQueued]?
     /// The first request is waiting for Apple's tools to install, not for a turn.
