@@ -187,6 +187,21 @@ final class CommandRiskTests: XCTestCase {
         XCTAssertFalse(CommandRisk.runsOnRating(nil, flagged: nil))
     }
 
+    /// A rating slower than the wait doesn't hold the card back: Allow and Deny come up at the limit, and one
+    /// in time is used.
+    @MainActor
+    func testASlowRatingDoesntHoldTheCard() async {
+        let slow = Task<String?, Never> { try? await Task.sleep(for: .seconds(5)); return "low" }
+        let start = ContinuousClock.now
+        let gaveUp = await Store.answer(of: slow, within: .milliseconds(200))
+        XCTAssertNil(gaveUp)
+        XCTAssertLessThan(ContinuousClock.now - start, .seconds(2))
+        slow.cancel()
+        let quick = Task<String?, Never> { "low" }
+        let answered = await Store.answer(of: quick, within: .seconds(5))
+        XCTAssertEqual(answered, .some("low"))
+    }
+
     // MARK: The reason on the card
 
     /// The text model can call a flagged command low risk; the card doesn't. A rating that's already

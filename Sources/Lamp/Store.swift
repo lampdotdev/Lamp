@@ -290,6 +290,16 @@ extension QueuedMessage {
     }
 }
 
+/// Whichever of two answers comes first (`Store.answer(of:within:)`): the other is dropped.
+@MainActor
+final class FirstAnswer<T> {
+    var continuation: CheckedContinuation<T?, Never>?
+    func give(_ answer: T?) {
+        continuation?.resume(returning: answer)
+        continuation = nil
+    }
+}
+
 @MainActor
 final class Store: ObservableObject {
     static let shared = Store()
@@ -3002,22 +3012,28 @@ final class Store: ObservableObject {
         turn.approving = true
         defer { turn.approving = false }
         // The rating comes first when it could spare the card: a command the checks left to it, or that Claude
-        // Code asked about itself, runs on a "low".
+        // Code asked about itself, runs on a "low". It gets a few seconds (`ratingWait`); a slower one comes to
+        // the card, which offers Allow and Deny at once and still runs the command if the "low" arrives after.
+        let ratingDecides = shell && title == nil && flagged == nil && CommandApproval.current == .risky
         var given = given
-        var asked = false   // the in-app model was asked to describe it, and that's its answer or none
-        if shell, title == nil, flagged == nil, CommandApproval.current == .risky {
+        var asked = false   // the in-app model's answer is in, or none came
+        var late: Task<CommandExplanation?, Never>?
+        if ratingDecides, given == nil {
             note("Checking a command", for: project)
-            if given == nil { given = await explain(command, for: project, sandboxed: sandboxed); asked = true }
+            let rating = Task { await explain(command, for: project, sandboxed: sandboxed) }
+            if let answer = await Self.answer(of: rating, within: Self.ratingWait) { (given, asked) = (answer, true) } else { late = rating }
             guard turn.agent != nil else { return false }
-            if CommandRisk.runsOnRating(given, flagged: flagged) {
-                log(project, .status, "Ran: \(command)")
-                log(project, .detail, "Ran without asking (low risk): \(given?.summary ?? "")")
-                note("Running a command", for: project)   // as after an Allow, so "Checking a command" doesn't stay
-                return true
-            }
+        }
+        // The setting is read again: it may have changed while the rating was worked out.
+        if ratingDecides, CommandApproval.current == .risky, CommandRisk.runsOnRating(given, flagged: flagged) {
+            log(project, .status, "Ran: \(command)")
+            log(project, .detail, "Ran without asking (low risk): \(given?.summary ?? "")")
+            note("Running a command", for: project)   // as after an Allow, so "Checking a command" doesn't stay
+            return true
         }
         NSApp.requestUserAttention(.informationalRequest)
         note(title == nil ? "Waiting for your OK to run a command" : "Waiting for your OK", for: project)
+        let lateRating = late
         return await withCheckedContinuation { continuation in
             // Asked already and nothing came back: the card says so rather than wait for an answer that isn't coming.
             var pending = PendingApproval(command: command, answer: continuation,
@@ -3026,9 +3042,29 @@ final class Store: ObservableObject {
             approvals[project.id] = pending
             // Explain it while the card is up; until this arrives the card says it's working it out.
             if given == nil, !asked { Task {
-                let explanation = await explain(command, for: project, sandboxed: sandboxed)?.raised(for: flagged) ?? .unexplained(flagged: flagged)
-                if approvals[project.id]?.id == pending.id { approvals[project.id]?.explanation = explanation }
+                let rating: CommandExplanation?
+                if let lateRating { rating = await lateRating.value } else { rating = await explain(command, for: project, sandboxed: sandboxed) }
+                guard approvals[project.id]?.id == pending.id else { return }
+                if ratingDecides, CommandApproval.current == .risky, CommandRisk.runsOnRating(rating, flagged: flagged) {
+                    log(project, .detail, "Ran without asking (low risk): \(rating?.summary ?? "")")
+                    answerApproval(for: project, allow: true)
+                    return
+                }
+                approvals[project.id]?.explanation = rating?.raised(for: flagged) ?? .unexplained(flagged: flagged)
             } }
+        }
+    }
+
+    /// How long a command waits for the in-app model's rating before its card comes up without it.
+    static let ratingWait: Duration = .seconds(10)
+
+    /// The task's answer, or nil when it isn't in within `limit`; the task carries on either way.
+    static func answer<T>(of task: Task<T, Never>, within limit: Duration) async -> T? {
+        let first = FirstAnswer<T>()
+        return await withCheckedContinuation { continuation in
+            first.continuation = continuation
+            Task { @MainActor in first.give(await task.value) }
+            Task { @MainActor in try? await Task.sleep(for: limit); first.give(nil) }
         }
     }
 
