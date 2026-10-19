@@ -2211,8 +2211,7 @@ enum Template {
     struct LampWidgetWand: View {
         var body: some View {
             Link(destination: URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!) {
-                Image(systemName: "wand.and.sparkles")
-                    .font(.system(size: 11, weight: .medium))
+                LampGlyph.Mark(size: 11)
                     .foregroundStyle(.secondary)
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
@@ -2410,7 +2409,110 @@ enum Template {
         }
     }
 
+    """# + lampGlyphSwift
+
+    /// Lamp's flame in place of a symbol, where an app shows the way to change it with Lamp (the wand at the top
+    /// right of its windows, its menu bar panel and menu, its widget): drawn as the system's own `flame` symbol is,
+    /// the icon's outer flame as an outline and its inner one filled, at a symbol's size and weight. It's in
+    /// LampSupport.swift and in the widget's own file, which shares nothing else with it.
+    static let lampGlyphSwift = #"""
+
+    /// Lamp's flame, drawn like an SF Symbol: the app icon's outer flame as an outline, its inner flame filled.
+    enum LampGlyph {
+        /// Width over height.
+        static let aspect: CGFloat = 516 / 725
+
+        /// The two flames in a box one unit tall, y down, from the icon's own drawing. The inner one is smaller
+        /// than in the icon, about its foot, so the outline has room around it at a symbol's size.
+        static let paths: (outer: CGPath, inner: CGPath) = {
+            func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: (x - 254) / 725, y: (y - 150) / 725) }
+            let outer = CGMutablePath()
+            outer.move(to: p(540, 150))
+            outer.addCurve(to: p(770, 600), control1: p(560, 290), control2: p(770, 380))
+            outer.addCurve(to: p(512, 875), control1: p(770, 755), control2: p(655, 875))
+            outer.addCurve(to: p(254, 600), control1: p(369, 875), control2: p(254, 755))
+            outer.addCurve(to: p(398, 325), control1: p(254, 465), control2: p(335, 395))
+            outer.addCurve(to: p(482, 472), control1: p(408, 405), control2: p(440, 450))
+            outer.addCurve(to: p(540, 150), control1: p(468, 350), control2: p(492, 250))
+            outer.closeSubpath()
+            let inner = CGMutablePath()
+            inner.move(to: p(524, 388))
+            inner.addCurve(to: p(662, 648), control1: p(560, 476), control2: p(662, 525))
+            inner.addCurve(to: p(512, 812), control1: p(662, 748), control2: p(597, 812))
+            inner.addCurve(to: p(362, 648), control1: p(427, 812), control2: p(362, 748))
+            inner.addCurve(to: p(452, 474), control1: p(362, 565), control2: p(418, 522))
+            inner.addCurve(to: p(500, 558), control1: p(462, 524), control2: p(480, 548))
+            inner.addCurve(to: p(524, 388), control1: p(494, 486), control2: p(502, 436))
+            inner.closeSubpath()
+            let foot = p(512, 812)
+            var smaller = CGAffineTransform(translationX: foot.x, y: foot.y).scaledBy(x: 0.72, y: 0.72)
+                .translatedBy(x: -foot.x, y: -foot.y)
+            return (outer, inner.copy(using: &smaller) ?? inner)
+        }()
+
+        /// The outline's width as a share of the point size, as heavy as a symbol's lines at that weight.
+        static func line(_ weight: NSFont.Weight) -> CGFloat {
+            switch weight.rawValue {
+            case ..<NSFont.Weight.regular.rawValue: 0.062
+            case ..<NSFont.Weight.medium.rawValue: 0.07
+            case ..<NSFont.Weight.semibold.rawValue: 0.075
+            case ..<NSFont.Weight.bold.rawValue: 0.085
+            default: 0.095
+            }
+        }
+
+        /// An image as a symbol at that point size would be: a template, which a button tints as it does a symbol,
+        /// unless it's given a colour of its own.
+        static func image(pointSize: CGFloat, weight: NSFont.Weight, color: NSColor? = nil,
+                          description: String = "Customize This App") -> NSImage {
+            let width = pointSize * line(weight)
+            let size = NSSize(width: (pointSize * aspect + width).rounded(.up), height: (pointSize + width).rounded(.up))
+            let image = NSImage(size: size, flipped: true) { box in
+                guard let context = NSGraphicsContext.current?.cgContext else { return false }
+                let ink = (color ?? .black).cgColor
+                context.translateBy(x: (box.width - pointSize * aspect) / 2, y: (box.height - pointSize) / 2)
+                context.scaleBy(x: pointSize, y: pointSize)
+                context.addPath(paths.outer)
+                context.setLineWidth(width / pointSize)
+                context.setLineJoin(.round)
+                context.setStrokeColor(ink)
+                context.strokePath()
+                context.addPath(paths.inner)
+                context.setFillColor(ink)
+                context.fillPath()
+                return true
+            }
+            image.isTemplate = color == nil
+            image.accessibilityDescription = description
+            return image
+        }
+
+        /// The flame in SwiftUI, as tall as `size` points, in the foreground style.
+        struct Mark: View {
+            var size: CGFloat
+            var weight: NSFont.Weight = .medium
+
+            var body: some View {
+                ZStack {
+                    Flame(inner: false).stroke(style: StrokeStyle(lineWidth: size * LampGlyph.line(weight), lineJoin: .round))
+                    Flame(inner: true).fill()
+                }
+                .frame(width: size * LampGlyph.aspect, height: size)
+                .padding(size * LampGlyph.line(weight) / 2)
+            }
+        }
+
+        private struct Flame: Shape {
+            let inner: Bool
+
+            func path(in rect: CGRect) -> Path {
+                Path(inner ? LampGlyph.paths.inner : LampGlyph.paths.outer)
+                    .applying(CGAffineTransform(translationX: rect.minX, y: rect.minY).scaledBy(x: rect.height, y: rect.height))
+            }
+        }
+    }
     """#
+
 
     /// Where the app listens for its widget: a port of its own from the range macOS leaves to programs, the
     /// same for every build of the app, since the widget is built knowing it.
@@ -3054,7 +3156,7 @@ enum Template {
 
     """
 
-    static let lampSupportSwift = Connectors.fill(lampSupportTemplate)
+    static let lampSupportSwift = Connectors.fill(lampSupportTemplate) + "\n#if os(macOS)" + lampGlyphSwift + "#endif\n"
 
     private static let lampSupportTemplate = #"""
     // Generated by Lamp before every build. Don't edit: changes are overwritten.
@@ -4278,7 +4380,7 @@ enum Template {
             }
             let holder = NSView()
             holder.identifier = identifier
-            holder.addSubview(button("wand.and.sparkles", "Customize This App", "Customize this app with Lamp", #selector(Opener.open(_:))))
+            holder.addSubview(button(LampGlyph.image(pointSize: 14, weight: .medium), "Customize This App", "Customize this app with Lamp", #selector(Opener.open(_:))))
             let accessory = NSTitlebarAccessoryViewController()
             accessory.view = holder
             accessory.layoutAttribute = .trailing
@@ -4336,8 +4438,7 @@ enum Template {
         /// colours from the window's appearance, and over content of the other shade it all but disappeared.
         @MainActor private final class FloatingWand: NSButton {
             convenience init() {
-                let image = NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: "Customize This App")!
-                    .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))!
+                let image = LampGlyph.image(pointSize: 10, weight: .semibold)
                 self.init(image: image, target: Opener.shared, action: #selector(Opener.open(_:)))
                 toolTip = "Customize this app with Lamp"
                 isBordered = false
@@ -4378,9 +4479,8 @@ enum Template {
         static func buttonSide(_ titlebar: CGFloat) -> CGFloat { titlebar > 40 ? 34 : 22 }
 
         /// A round button like the toolbar's own: the wand, and the chat's own buttons above it.
-        @MainActor static func button(_ symbol: String, _ name: String, _ tip: String, _ action: Selector) -> NSButton {
-            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: name)!
-                .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))!
+        @MainActor static func button(_ image: NSImage, _ name: String, _ tip: String, _ action: Selector) -> NSButton {
+            image.accessibilityDescription = name
             let button = NSButton(image: image, target: Opener.shared, action: action)
             button.toolTip = tip
             if #available(macOS 26, *) {
@@ -4424,9 +4524,7 @@ enum Template {
                 // alone doesn't show on a glass button, nor in a window that isn't in front.
                 wand.setButtonType(.pushOnPushOff)
                 wand.state = open ? .on : .off
-                let symbol = NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: "Customize This App")!
-                    .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))!
-                wand.image = open ? symbol.withSymbolConfiguration(.init(paletteColors: [.controlAccentColor])) : symbol
+                wand.image = LampGlyph.image(pointSize: 14, weight: .medium, color: open ? .controlAccentColor : nil)
             }
         }
 
@@ -14121,7 +14219,7 @@ enum Template {
                 Divider()
                 // The wand every window of a Lamp app has, here as the menu's item, where a menu has its commands.
                 if LampMagic.isOn {
-                    Button { LampMenuBar.customize() } label: { Label("Customize with Lamp…", systemImage: "wand.and.sparkles") }
+                    Button { LampMenuBar.customize() } label: { Label { Text("Customize with Lamp…") } icon: { Image(nsImage: LampGlyph.image(pointSize: 13, weight: .regular)) } }
                 }
                 if settings { Button("Settings…") { LampMenuBar.openSettings() }.keyboardShortcut(",") }
                 Button("Quit \(LampMenuBar.appName)") { NSApp.terminate(nil) }.keyboardShortcut("q")
@@ -14137,7 +14235,7 @@ enum Template {
                     HStack {
                         Spacer()
                         Button { LampMenuBar.customize() } label: {
-                            Image(systemName: "wand.and.sparkles").font(.system(size: 13, weight: .medium))
+                            LampGlyph.Mark(size: 13)
                                 .frame(width: 24, height: 22).contentShape(Rectangle())
                         }
                         .buttonStyle(.borderless)
