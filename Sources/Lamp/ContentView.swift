@@ -509,7 +509,7 @@ struct ProjectView: View {
             let awaited = pinWanted && lines.last { $0.kind == .user }?.id == pinAfter
             let progress = busy && !awaited && Talk.open(in: lines) == nil ? store.progress[project.id] : nil
             transcript(lines, busy: busy, progressShown: progress != nil, pin: pin)
-            if let progress { ActivityRow(progress: progress).padding(.top, 12) }
+            if let progress { ActivityRow(progress: progress, lines: lines).padding(.top, 12) }
         }
         if let change = undoChange {
             ChatLook.UndoChange { Task { await store.undo(project, change: change) } }.padding(.top, 12)

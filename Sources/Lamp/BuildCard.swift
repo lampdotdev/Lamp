@@ -445,11 +445,17 @@ private extension View {
     func shimmering(_ active: Bool) -> some View { modifier(Shimmer(active: active)) }
 }
 
-/// A later turn's progress: one line saying what the agent is doing and for how long.
+/// A later turn's progress: one line saying what the agent is doing and for how long, which opens to the turn's steps
+/// so far (they aren't rows of their own while it goes on, `ChatItem.live`).
 struct ActivityRow: View {
     let progress: TurnProgress
+    /// The chat's lines, for the steps the line opens to.
+    var lines: [LogLine] = []
+    @AppStorage("showDetails") private var details = false
 
     var body: some View {
-        ChatLook.ActivityLine(progress.activity, started: progress.started, since: progress.activitySince)
+        let steps = details ? [] : ChatItem.live(lines).steps
+        ChatLook.ActivityLine(progress.activity, started: progress.started, since: progress.activitySince,
+                              hasSteps: !steps.isEmpty) { StepList(steps: steps) }
     }
 }

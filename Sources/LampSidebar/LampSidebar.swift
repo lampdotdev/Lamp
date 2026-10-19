@@ -261,7 +261,11 @@ private struct Chat: View {
                             ChatLook.UndoChange { link.send(.undoChange(change)) }.padding(.top, 12)
                         }
                         if let working = state.working, let since = state.workingSince {
-                            ChatLook.ActivityLine(working, started: since, since: state.workingActivitySince).padding(.top, 12)
+                            ChatLook.ActivityLine(working, started: since, since: state.workingActivitySince,
+                                                  hasSteps: !(state.workingSteps ?? []).isEmpty) {
+                                ForEach(state.workingSteps ?? []) { step in LineView(line: step, busy: false) }
+                            }
+                            .padding(.top, 12)
                         }
                         if let notResponding = state.notResponding {
                             ChatLook.UnresponsiveNotice(text: notResponding) { link.send(.forceQuit) }.padding(.top, 12)

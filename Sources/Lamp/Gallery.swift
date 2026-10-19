@@ -163,16 +163,15 @@ enum Gallery {
         activity("Building, 2 minutes", "Building…", waited: 120),
         cover("Cover, building", "Building…", waited: 12),
         cover("Cover, the turn over", nil, waited: 0),
-        // Commands the agent named, a few under one name, and one it didn't: as the steps show while a turn goes on
-        // and opened under "Worked for…".
+        // The one line a turn has while it goes on, which opens (click it) to the steps so far: commands the agent
+        // named, a few under one name, and one it didn't. "Worked for…" opens to the same rows once it's over.
         Entry(group: "Activity", name: "Steps the agent named") {
-            AnyView(VStack(alignment: .leading, spacing: 4) {
+            AnyView(ChatLook.ActivityLine("Checking it builds", started: Date().addingTimeInterval(-48),
+                                          since: Date().addingTimeInterval(-6), hasSteps: true) {
                 ChatLook.RanCommand("cat .lamp/starter.md\ncat Sources/App.swift Sources/Model.swift\ncat Sources/ShelfView.swift",
                                     said: "Reading how the shelf works")
                 ChatLook.RanCommand("./build.sh", said: "Checking it builds")
                 ChatLook.RanCommand("ls Assets")
-                ChatLook.ActivityLine("Checking it builds", started: Date().addingTimeInterval(-48),
-                                      since: Date().addingTimeInterval(-6)).padding(.top, 8)
             })
         },
         Entry(group: "Activity", name: "Under the agent's progress lines") {
