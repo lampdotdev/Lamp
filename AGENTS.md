@@ -838,8 +838,11 @@ value once and keeps it in storage the new code goes on reading. So each constan
 as a digest (`SwiftSource.constantEntries`, not compared as what a type holds), and one that changed is rewritten in
 the live copy into a computed property that makes the new value once and keeps it (`LampConstants`, by name and
 value; `LiveSlots.changedConstants`, `rewriteConstant`). The first time a constant is rewritten every file is
-compiled again, so every reader goes through it; it stays rewritten until the app is installed again. One holding an
-object of the app's own classes reopens instead, since a second object would split the app's state.
+compiled again, so every reader goes through it; it stays rewritten until the app is installed again. One that can
+hold an object needs the app reopened instead (it waits for Reload, as above), since a second object would split the
+app's state: one of the app's own classes, and anything that isn't a plain value of Swift's or SwiftUI's
+(`holdsObject`), so a Lamp building block such as `LampAPI.own(…)` or a system class too. A tuple's labels and Lamp's
+own spare places in a struct name no type of their own, so they don't count.
 
 Code already running keeps the version it started with (a closure given to a Timer, a loop in a Task, an observer):
 calls go to new code, but a closure already handed out is the old one. `Agent.liveNote` asks for loops and timers
