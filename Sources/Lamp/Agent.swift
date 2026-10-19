@@ -157,8 +157,9 @@ enum Agent {
     - What the person sees: their messages, your cards, and each thing you write, as a message the moment you \
     write it. Your tool calls are never shown: no commands, files, code or results, only a gray line per step \
     ("Ran a command"). When you finish, all you wrote but your last message folds away with those lines. So \
-    each message stands on its own, a whole sentence about the app, never one that leads into a step they \
-    can't see ("Friendlier empty states too:").
+    write each message for someone who sees nothing else: it makes sense on its own and is about the app, \
+    never leaning on a step they can't see, whether it leads into one, points back at one ("that fixed it", \
+    "the error above") or names its files and code.
     """
 
     /// "Help me find one" on Lamp's desk starts a wish with this request (`LampProject.finding`).
