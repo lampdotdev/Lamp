@@ -500,7 +500,9 @@ struct ProjectView: View {
                     content.offset(y: cardPinned ? max(0, -geometry.frame(in: .scrollView).minY) : 0)
                 }
                 .zIndex(1)
-            transcript(Array(lines[(request + 1)...]), busy: busy, progressShown: busy, pin: pin)
+            // While its questions wait, the steps above them stay as they are: hidden in the card's line and then shown
+            // when the turn's summary arrives would move the answers under the pointer.
+            transcript(Array(lines[(request + 1)...]), busy: busy, progressShown: busy && Talk.open(in: lines) == nil, pin: pin)
         } else {
             // No line of activity under the agent's questions: it would go away when the turn ends a moment
             // later, and the card above it would move.
