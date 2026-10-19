@@ -4650,7 +4650,7 @@ final class Store: ObservableObject {
             return false
         }
         // Files only taken away leave nothing to load: the open app already has what's left.
-        if let library, let why = await LiveReload.send(library, to: project, token: Template.token(for: project)) {
+        if let library, let why = await LiveReload.send(library, to: project, token: Template.token(for: project), whole: changed == LiveReload.appFiles(project)) {
             log(project, .detail, "\(project.name) has to reopen for this change: \(why).")
             return false
         }

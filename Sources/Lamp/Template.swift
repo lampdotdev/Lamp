@@ -3877,7 +3877,8 @@ enum Template {
                 forName: Notification.Name(LampInstall.note + "reload"), object: Bundle.main.bundleIdentifier, queue: .main
             ) { note in
                 let path = note.userInfo?["path"] as? String, signature = note.userInfo?["signature"] as? String
-                MainActor.assumeIsolated { shared.load(path, signature: signature) }
+                let whole = note.userInfo?["whole"] as? String == "1"
+                MainActor.assumeIsolated { shared.load(path, signature: signature, whole: whole) }
             }
         }()
 
@@ -3999,12 +4000,14 @@ enum Template {
             name.hasPrefix("_$s") && ["CMa", "CN", "CMn", "CMm", "CMf", "CMo"].contains { name.hasSuffix($0) }
         }
 
-        private func load(_ path: String?, signature: String?) {
+        /// Loads a change. `whole` says every file of the app's was compiled into it (what's declared changed), so
+        /// what it doesn't define of a class's Objective-C methods was taken away, not left in a file it didn't compile.
+        private func load(_ path: String?, signature: String?, whole: Bool = false) {
             let folder = LampInstall.app + "/.lamp/live/"
             guard let path, let signature, path.hasPrefix(folder), !path.contains(".."), path.hasSuffix(".dylib"),
                   !loaded.contains(path) else { return }
             let key = SymmetricKey(data: Data(LampInstall.token.utf8))
-            let expected = HMAC<SHA256>.authenticationCode(for: Data("reload\n\(path)".utf8), using: key)
+            let expected = HMAC<SHA256>.authenticationCode(for: Data(("reload\n\(path)" + (whole ? "\nwhole" : "")).utf8), using: key)
                 .map { String(format: "%02x", $0) }.joined()
             guard signature == expected else { return }
             loaded.insert(path)
@@ -4026,6 +4029,10 @@ enum Template {
             let everything = Self.definedSymbols(header, slide: slide, local: true)
             let all = Self.copies(in: everything)
             let copies = all.map { ($0.name, $0.address) }
+            // The change's categories (an extension with `@objc` members, an override in one): the runtime doesn't
+            // see them, since their list was renamed before linking, so a change refused leaves the kept class
+            // answering as it did; they're attached by hand once the checks pass.
+            let categories = Self.categories(header)
             if original.isEmpty, let app = _dyld_get_image_header(0) {
                 let everything = Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0), local: true)
                 original = Dictionary(everything, uniquingKeysWith: { first, _ in first })
@@ -4066,8 +4073,9 @@ enum Template {
             // the classes made as the app runs, so a change to the methods of one reopens the app as before.
             if !Self.watching, let why = Self.unwatchedClassMethod(changed: Set(defined.map(\.0)), copies: copies) { return refuse(why) }
             // A class the change has may no longer answer to something from Objective-C that the kept class does (an
-            // override taken out, a selector's target); the kept class would go on answering with old code.
-            if let why = Self.removedMethods(copies: copies, kept: kept, original: original) { return refuse(why) }
+            // override taken out, a selector's target); the kept class would go on answering with old code. Only a
+            // change compiled from every file can say: another leaves what an unchanged file's extension adds.
+            if whole, let why = Self.removedMethods(copies: copies, kept: kept, original: original, categories: categories) { return refuse(why) }
             // Stored globals and statics, and classes, stay where they were first made: the new code's own copies
             // would be a second set, made afresh. So its calls to them go to the app's, or to the earlier change's
             // that first added one, and only one that's new keeps its own. Their accessors are code like any other:
@@ -4115,6 +4123,12 @@ enum Template {
                 if let theirs = kept[name], theirs != copy {
                     rebound += Self.takeMethods(from: copy, to: theirs, accessor: original[String(name.dropLast()) + "Ma"])
                 }
+            }
+            // The change's categories go to the kept classes: one on a class the change defines names the copy.
+            let keptClass = Self.keptClasses(copies: copies, kept: kept)
+            for category in categories {
+                let target = keptClass[category.class_] ?? category.class_
+                rebound += Self.attach(category, to: target, accessor: Self.accessor(of: target, original: original, defined: defined))
             }
             for write in descriptors where write.apply() { rebound += 1 }
             Self.watch(image: image)
@@ -4391,14 +4405,17 @@ enum Template {
         /// answers to a selector of its own (an override of a system class's method, an `@objc` method) that its copy
         /// in the change no longer has. The kept class is completed first (its accessor), so the runtime lists it.
         nonisolated private static func removedMethods(copies: [(String, UnsafeRawPointer)], kept: [String: UnsafeRawPointer],
-                                                       original: [String: UnsafeRawPointer]) -> String? {
+                                                       original: [String: UnsafeRawPointer], categories: [Category]) -> String? {
+            let keptClass = keptClasses(copies: copies, kept: kept)
             for (name, copy) in copies where name.hasSuffix("CN") {
                 guard let theirs = kept[name], theirs != copy else { continue }
                 if let accessor = original[String(name.dropLast()) + "Ma"] { _ = unsafeBitCast(accessor, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0) }
                 guard isRealized(theirs) else { continue }
+                let own = categories.filter { (keptClass[$0.class_] ?? $0.class_) == theirs }
                 for meta in [false, true] {
                     let have = Set(methods(of: meta ? theirs.load(as: UnsafeRawPointer.self) : theirs).map { NSStringFromSelector($0.0) })
-                    let has = Set(methods(of: meta ? copy.load(as: UnsafeRawPointer.self) : copy).map { NSStringFromSelector($0.0) })
+                    var has = Set(methods(of: meta ? copy.load(as: UnsafeRawPointer.self) : copy).map { NSStringFromSelector($0.0) })
+                    for category in own { has.formUnion((meta ? category.classMethods : category.instance).map(methods(in:))?.map { NSStringFromSelector($0.0) } ?? []) }
                     if let gone = have.subtracting(has).sorted().first {
                         return "\(readable(String(name.dropLast()))) no longer answers to \(gone) from Objective-C"
                     }
@@ -4422,13 +4439,7 @@ enum Template {
             // The class's own methods, then its metaclass's (the first word of a class is its metaclass).
             for (source, to) in [(copy, target), (copy.load(as: UnsafeRawPointer.self), object_getClass(target))] {
                 guard let to else { continue }
-                for (selector, code, types) in methods(of: source) {
-                    if class_addMethod(to, selector, code, types) { count += 1; continue }
-                    if let own = class_getInstanceMethod(to, selector), method_getImplementation(own) != code {
-                        method_setImplementation(own, code)
-                        count += 1
-                    }
-                }
+                count += add(methods(of: source), to: to)
             }
             return count
         }
@@ -4442,10 +4453,86 @@ enum Template {
             return data.load(as: UInt32.self) & 0x8000_0000 != 0
         }
 
-        /// A class's methods as the compiler laid them out, from its class data: the list begins with each entry's
-        /// size (in the low bits of its first word; the top bit says the entries are three offsets rather than three
-        /// pointers) and their number. An offset entry names its selector through a slot the loader filled in. A
-        /// class the runtime has set up is asked instead, since its data is the runtime's.
+        /// A category of the change's: an extension with `@objc` members, or an override of a system class's method
+        /// in one, which the compiler puts in a list of its own. The list is renamed before the library is linked
+        /// (`__lamp_catlist`), so the runtime, which attaches every category it finds as an image loads, before any
+        /// check here could run, leaves these to be attached once the change is found to fit.
+        struct Category { var class_: UnsafeRawPointer; var instance: UnsafeRawPointer?; var classMethods: UnsafeRawPointer?; var protocols: UnsafeRawPointer? }
+        nonisolated private static func categories(_ header: UnsafePointer<mach_header>) -> [Category] {
+            let header64 = UnsafeRawPointer(header).assumingMemoryBound(to: mach_header_64.self)
+            var out: [Category] = []
+            for segment in ["__DATA", "__DATA_CONST"] {
+                var size: UInt = 0
+                guard let list = getsectiondata(header64, segment, "__lamp_catlist", &size) else { continue }
+                for index in 0..<(Int(size) / 8) {
+                    // Name, class, instance methods, class methods, protocols, then properties, a word each.
+                    guard let category = UnsafeRawPointer(list).load(fromByteOffset: index * 8, as: UnsafeRawPointer?.self),
+                          let class_ = category.load(fromByteOffset: 8, as: UnsafeRawPointer?.self) else { continue }
+                    out.append(Category(class_: class_, instance: category.load(fromByteOffset: 16, as: UnsafeRawPointer?.self),
+                                        classMethods: category.load(fromByteOffset: 24, as: UnsafeRawPointer?.self),
+                                        protocols: category.load(fromByteOffset: 32, as: UnsafeRawPointer?.self)))
+                }
+            }
+            return out
+        }
+
+        /// The kept class for each class the change defines a copy of, by the copy's address.
+        nonisolated private static func keptClasses(copies: [(String, UnsafeRawPointer)], kept: [String: UnsafeRawPointer]) -> [UnsafeRawPointer: UnsafeRawPointer] {
+            Dictionary(copies.filter { $0.0.hasSuffix("CN") }.compactMap { name, copy in kept[name].map { (copy, $0) } }, uniquingKeysWith: { first, _ in first })
+        }
+
+        /// The metadata accessor of a class, by its address: the app's, or the change's own for a class it brings.
+        nonisolated private static func accessor(of class_: UnsafeRawPointer, original: [String: UnsafeRawPointer],
+                                                 defined: [(String, UnsafeRawPointer)]) -> UnsafeRawPointer? {
+            for (name, address) in original where address == class_ && name.hasSuffix("CN") {
+                if let accessor = original[String(name.dropLast()) + "Ma"] { return accessor }
+            }
+            for (name, address) in defined where address == class_ && name.hasSuffix("CN$lampcopy") {
+                if let accessor = defined.first(where: { $0.0 == String(name.dropLast(10)) + "Ma" })?.1 { return accessor }
+            }
+            return nil
+        }
+
+        /// Attaches a category of the change's to a kept class: its methods as `takeMethods` gives a copy's, and its
+        /// protocols. The class is completed first; one the runtime still doesn't have is left alone.
+        nonisolated private static func attach(_ category: Category, to kept: UnsafeRawPointer, accessor: UnsafeRawPointer?) -> Int {
+            if let accessor { _ = unsafeBitCast(accessor, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0) }
+            let target: AnyClass = unsafeBitCast(kept, to: AnyClass.self)
+            // A class of the system's (an extension of ByteCountFormatter) has no accessor of the app's, and may not
+            // have been used yet: asking the runtime for it by name completes it.
+            if accessor == nil, !isRealized(kept) { _ = objc_getClass(class_getName(target)) }
+            guard isRealized(kept) else { return 0 }
+            var count = 0
+            for (list, to) in [(category.instance, target), (category.classMethods, object_getClass(target))] {
+                guard let list, let to else { continue }
+                count += add(methods(in: list), to: to)
+            }
+            if let protocols = category.protocols {
+                let number = Int(protocols.load(as: UInt64.self))
+                for index in 0..<min(number, 1 << 10) {
+                    guard let protocol_ = protocols.load(fromByteOffset: 8 + index * 8, as: UnsafeRawPointer?.self) else { continue }
+                    if class_addProtocol(target, unsafeBitCast(protocol_, to: Protocol.self)) { count += 1 }
+                }
+            }
+            return count
+        }
+
+        /// Gives a class methods: each is added, or replaces the one it has of its own (a superclass's is left as it
+        /// is, which the add refuses to touch).
+        nonisolated private static func add(_ methods: [(Selector, IMP, UnsafePointer<CChar>?)], to class_: AnyClass) -> Int {
+            var count = 0
+            for (selector, code, types) in methods {
+                if class_addMethod(class_, selector, code, types) { count += 1; continue }
+                if let own = class_getInstanceMethod(class_, selector), method_getImplementation(own) != code {
+                    method_setImplementation(own, code)
+                    count += 1
+                }
+            }
+            return count
+        }
+
+        /// A class's methods as the compiler laid them out, from its class data (`methods(in:)`). A class the runtime
+        /// has set up is asked instead, since its data is the runtime's.
         nonisolated private static func methods(of class_: UnsafeRawPointer) -> [(Selector, IMP, UnsafePointer<CChar>?)] {
             if isRealized(class_) {
                 var number: UInt32 = 0
@@ -4455,6 +4542,13 @@ enum Template {
             }
             guard let data = UnsafeRawPointer(bitPattern: class_.load(fromByteOffset: 32, as: UInt.self) & dataMask),
                   let list = data.load(fromByteOffset: 32, as: UnsafeRawPointer?.self) else { return [] }
+            return methods(in: list)
+        }
+
+        /// The methods in a list as the compiler laid it out: it begins with each entry's size (in the low bits of
+        /// its first word; the top bit says the entries are three offsets rather than three pointers) and their
+        /// number. An offset entry names its selector through a slot the loader filled in.
+        nonisolated private static func methods(in list: UnsafeRawPointer) -> [(Selector, IMP, UnsafePointer<CChar>?)] {
             let header = list.load(as: UInt32.self), count = Int(list.load(fromByteOffset: 4, as: UInt32.self))
             let size = Int(header & 0xFFFC), offsets = header & 0x8000_0000 != 0
             guard count < 1 << 12, offsets ? size == 12 : size == 24 else { return [] }

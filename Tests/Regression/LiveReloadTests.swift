@@ -29,6 +29,13 @@ final class LiveReloadTests: XCTestCase {
             return "other"
         }
         func keyed() -> [AnyHashable: String] { [AnyHashable(Point(x: 1)): "one"] }
+        final class Coord: NSObject { @objc func a() -> String { "a" } }
+        extension Coord { @objc func same() -> String { "same" } }
+        """
+    /// A file the change doesn't compile: what its extension adds from Objective-C stays with the class.
+    private static let ext = """
+        import Foundation
+        extension Coord { @objc func other() -> String { "other" } }
         """
     private static let after = """
         import Foundation
@@ -49,6 +56,8 @@ final class LiveReloadTests: XCTestCase {
             return "OTHER"
         }
         func keyed() -> [AnyHashable: String] { [AnyHashable(Point(x: 1)): "ONE"] }
+        final class Coord: NSObject { @objc func a() -> String { "A" } }
+        extension Coord { @objc func same() -> String { "SAME" } }
         """
     /// The app: what it holds before the change, and what it sees after.
     private static let main = """
@@ -61,14 +70,16 @@ final class LiveReloadTests: XCTestCase {
                 let items: [Any] = [Point(x: 1)]
                 let counter = Counter()
                 let keys = keyed()
-                let box = Box("s"), lab = Lab()
-                print(describe(items[0]), Ids.take(), counter.step(), keys[AnyHashable(Point(x: 1))] ?? "nil", box.show(), lab.m(), boxed(Q(v: 1)))
+                let box = Box("s"), lab = Lab(), coord = Coord()
+                // What the class answers to from Objective-C: its own method, its file's extension's, another file's.
+                func answers() -> String { ["a", "same", "other"].map { (coord.perform(NSSelectorFromString($0))?.takeUnretainedValue() as? String) ?? "nil" }.joined(separator: " ") }
+                print(describe(items[0]), Ids.take(), counter.step(), keys[AnyHashable(Point(x: 1))] ?? "nil", box.show(), lab.m(), boxed(Q(v: 1)), answers())
                 let key = SymmetricKey(data: Data("x".utf8))
                 let signature = HMAC<SHA256>.authenticationCode(for: Data("reload\\n\\(path)".utf8), using: key).map { String(format: "%02x", $0) }.joined()
                 MainActor.assumeIsolated { LampLive.shared.load(path, signature: signature) }
                 print((try? String(contentsOf: URL(fileURLWithPath: folder + "/reloaded.txt"), encoding: .utf8)) ?? "no answer")
                 print(describe(items[0]), Ids.take(), counter.step(), keys[AnyHashable(Point(x: 1))] ?? "nil", keyed()[AnyHashable(Point(x: 1))] ?? "nil",
-                      box.show(), Box(2).show(), lab.m(), boxed(Q(v: 1)))
+                      box.show(), Box(2).show(), lab.m(), boxed(Q(v: 1)), answers())
                 _ = Counter()
             }
         }
@@ -81,18 +92,19 @@ final class LiveReloadTests: XCTestCase {
         let live = root.appendingPathComponent("live")
         try fm.createDirectory(at: live, withIntermediateDirectories: true)
         try Self.before.write(to: live.appendingPathComponent("Model.swift"), atomically: true, encoding: .utf8)
+        try Self.ext.write(to: live.appendingPathComponent("Ext.swift"), atomically: true, encoding: .utf8)
         try Self.main.write(to: live.appendingPathComponent("Main.swift"), atomically: true, encoding: .utf8)
         try Self.lampLive(folder: root).write(to: live.appendingPathComponent("LampLive.swift"), atomically: true, encoding: .utf8)
         let sdk = try run("/usr/bin/xcrun", ["--show-sdk-path"]).trimmingCharacters(in: .whitespacesAndNewlines)
         let plugins = try run("/usr/bin/xcrun", ["-f", "swiftc"]).trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "/bin/swiftc", with: "/lib/swift/host/plugins")
         let common = ["-module-name", "App", "-parse-as-library", "-Onone", "-enable-testing", "-D", "LAMP_LIVE", "-target", "arm64-apple-macosx14.0", "-sdk", sdk]
-        let files = ["Model.swift", "Main.swift", "LampLive.swift"].map { live.appendingPathComponent($0).path }
+        let files = ["Model.swift", "Ext.swift", "Main.swift", "LampLive.swift"].map { live.appendingPathComponent($0).path }
         _ = try run("/usr/bin/xcrun", ["swiftc"] + common + files + ["-Xlinker", "-interposable", "-o", root.appendingPathComponent("app").path])
         // The change, compiled as Lamp compiles it: the changed file as the primary, the rest for context.
         try Self.after.write(to: live.appendingPathComponent("Model.swift"), atomically: true, encoding: .utf8)
         let object = live.appendingPathComponent("Model.o").path
-        _ = try run("/usr/bin/xcrun", ["swiftc", "-frontend", "-c", "-primary-file", files[0], files[1], files[2]] + common
+        _ = try run("/usr/bin/xcrun", ["swiftc", "-frontend", "-c", "-primary-file", files[0]] + Array(files[1...]) + common
                     + ["-plugin-path", plugins, "-o", object])
         var matched = Set<String>()
         XCTAssertNil(LiveObject.rewrite(object, matched: &matched))
@@ -102,7 +114,7 @@ final class LiveReloadTests: XCTestCase {
                                        "-Xlinker", "-weak_reference_mismatches", "-Xlinker", "weak"])
         _ = try run("/usr/bin/codesign", ["--force", "-s", "-", library])
         let output = try run(root.appendingPathComponent("app").path, [root.path]).components(separatedBy: "\n")
-        XCTAssertEqual(output[0], "point 1 101 step 1 one box s m 0 false")
+        XCTAssertEqual(output[0], "point 1 101 step 1 one box s m 0 false a same other")
         XCTAssertTrue(output[1].hasPrefix("ok "), "the app didn't take the change: \(output[1])")
         // The value made before is a Point still, with the conformance the change gave it; the static went on
         // counting; the object's method and deinit are the new ones; the key made before finds the new dictionary's;
@@ -110,7 +122,7 @@ final class LiveReloadTests: XCTestCase {
         // @Observable class, which the Objective-C runtime only meets when Swift first uses it, takes the change; a
         // Comparable reached only through a cast, whose witness table the runtime made before the change, answers
         // with the `>` the change gave it in place of the protocol's default.
-        XCTAssertEqual(output[2], "NAMED p1 102 STEP 11 one ONE BOX s BOX 2 M 0 true")
+        XCTAssertEqual(output[2], "NAMED p1 102 STEP 11 one ONE BOX s BOX 2 M 0 true A SAME other")
         XCTAssertEqual(output[3], "GONE 0")
     }
 
@@ -127,6 +139,7 @@ final class LiveReloadTests: XCTestCase {
         try fm.createDirectory(at: sources.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fm.copyItem(at: project.dir.appendingPathComponent("Sources"), to: sources)
         try """
+            import Foundation
             typealias Side = Int
             private typealias Secret = Int
             protocol Shape { func area() -> Int; var name: String { get set } }
@@ -145,6 +158,7 @@ final class LiveReloadTests: XCTestCase {
             struct Round: Shape { var r: Int; var name = ""; func area() -> Int { r } }
             struct Styled: Drawn { func mark() -> some Shape { Square(side: 1, name: "s") }; func n() -> some Numeric { 1 }; func t() -> some Equatable { "a" }; func p() -> some Equatable { n() }; func l() -> some Equatable { func local() -> some Equatable { 0 }; return String() } }
             struct Outer { enum Mood: Shape { case a, b; func area() -> Int { 0 }; var name: String { get { "" } set {} } } }
+            final class Tagged: NSObject { @objc(oldName) func a() {}; @objc func b() {}; override var description: String { "t" }; @objc(oldStatic) static var value = 1 }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
         let layout = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
         let shape = layout?.filter { $0.hasPrefix("protocol Shape") } ?? []
@@ -203,6 +217,10 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertTrue(layout!.contains(LiveReload.opaqueGroup + "\tStyled.l(): (Styled) -> () -> some Equatable\tString"), "\(layout!.filter { $0.contains("Styled.l") })")
         XCTAssertEqual(layout!.filter { $0.hasPrefix(LiveReload.opaqueGroup + "\tStyled.p(): (Styled) -> () -> some Equatable\t~") }.count, 1)
         XCTAssertTrue(declared.contains("Styled.mark(): (Styled) -> () -> some Shape"), "\(declared)")
+        // What a member answers to from Objective-C is declared: a selector renamed or taken away compiles every file.
+        for entry in ["Tagged.a(): (Tagged) -> () -> () @objc(oldName)", "Tagged.b(): (Tagged) -> () -> () @objc", "Tagged.description: String @objc(description)", "Tagged.value: Int @objc(oldStatic)"] {
+            XCTAssertTrue(declared.contains(entry), "\(declared.filter { $0.hasPrefix("Tagged") })")
+        }
         // The same sources read from another folder (the copy the app runs) give the same digest: a declaration
         // is named with where it is, which isn't part of what it builds.
         let elsewhere = sources.deletingLastPathComponent().appendingPathComponent("running")
@@ -235,6 +253,12 @@ final class LiveReloadTests: XCTestCase {
         let otherID = try await layoutWith([("Round(r: 1)", "Square(side: 1, name: \"s\")"),
                                             ("final class Item: Identifiable { var name = \"\" }", "final class Item: Identifiable { var name = \"\"; var id: String { name } }")])
         XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: otherID).problem, "the typealias Item.ID changed from ObjectIdentifier to String")
+        let renamedSelector = try await layoutWith([("var id: String { name } }", "}"), ("@objc(oldName)", "@objc(newName)")])
+        XCTAssertNil(LiveReload.layoutProblem(before: layout, after: renamedSelector).problem)
+        XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: renamedSelector))
+        let renamedStatic = try await layoutWith([("@objc(newName)", "@objc(oldName)"), ("@objc(oldStatic)", "@objc(newStatic)")])
+        XCTAssertNil(LiveReload.layoutProblem(before: layout, after: renamedStatic).problem)
+        XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: renamedStatic))
         XCTAssertEqual(LiveReload.existential(in: "any CustomDebugStringConvertible", holding: "Mood", conformances: conformances), "any CustomDebugStringConvertible")
         XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
         XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")

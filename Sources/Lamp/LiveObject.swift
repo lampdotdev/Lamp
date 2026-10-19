@@ -14,6 +14,7 @@ import MachO
 /// metadata and conformance records) stay on the copies, and `LampLive` points the records at the app's descriptors.
 /// Types named in `kept` (an enum that gained cases, whose metadata the change must bring) are renamed with a suffix
 /// of their own (`$lampown`), by which `LampLive` takes this library's copy as the one to bind from now on.
+/// The library's list of categories is renamed too (`__lamp_catlist`), so the runtime doesn't attach them as it loads.
 /// Anything the rewrite doesn't understand (a reference shaped another way, an object laid out otherwise) is refused,
 /// with why, and the change reopens the app.
 enum LiveObject {
@@ -78,6 +79,10 @@ enum LiveObject {
                 for _ in 0..<nsects {
                     let name = String(decoding: bytes[section..<(section + 16)].prefix { $0 != 0 }, as: UTF8.self)
                     let segment = String(decoding: bytes[(section + 16)..<(section + 32)].prefix { $0 != 0 }, as: UTF8.self)
+                    // The categories (an extension's `@objc` members) are listed where the runtime attaches them to
+                    // their classes as the library loads, before `LampLive` has checked the change: renamed, the list
+                    // is kept as data the linker leaves alone, and `LampLive` attaches them once the change fits.
+                    if name == "__objc_catlist" { bytes.replaceSubrange(section..<(section + 16), with: Array("__lamp_catlist".utf8) + [0, 0]) }
                     sections.append(Section(name: segment + "," + name, offset: Int(u32(section + 48)), size: Int(u64(section + 40)),
                                             reloff: Int(u32(section + 56)), nreloc: Int(u32(section + 60)), index: sections.count + 1))
                     section += MemoryLayout<section_64>.size

@@ -748,7 +748,7 @@ opaque too (a modifier's `some View`) it's listed by a digest of the calls and t
 compiler prints both as `some View`; a view's own body, wrapped by the live copy, and a private member are left out) (`LiveReload.reloadable`, comparing with the sources the
 open app runs, kept in `.lamp/live/running`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
 linked into a library. Every file is compiled when what's declared changed (a function, an initializer, a computed
-property, a conformance: `LiveReload.declarationGroup`, `declarationsChanged`), since an unchanged caller may then mean
+property, a conformance, a member's `@objc` and its selector: `LiveReload.declarationGroup`, `declarationsChanged`), since an unchanged caller may then mean
 another one (a new overload, a method where a protocol's default stood in), and a file taken away while another
 arrives (one renamed) reopens the app, since what was private to it is named after its file and would start over. The library is what the app loads when asked with a request signed with its token, only from its
 own `.lamp/live` (`LampLive` in LampSupport, under `#if LAMP_LIVE`). It points the app's own calls at the new
@@ -784,10 +784,15 @@ a change brings one, `recordTables`, since the first to ask may be a cast rather
 at the new thunks. A default argument is made by a function of its own, which every caller calls, so it's rebound like any
 function. What a class answers to from Objective-C (an override of a system class's method, a selector's target) is in
 its method list, not its table, so a kept class takes its copy's methods (`takeMethods`, read off the copy's class data,
-since the runtime has never seen the copy). What `LampLive` can't make right it refuses, and the app reopens: a class's
-method table that changed shape, a class whose methods the change lists in another order than the app (one added, taken
-away or moved), since a table made after it would be laid out from the app's list, or a kept class that answers to
-something from Objective-C its copy no longer has (`removedMethods`), which it would go on answering with old code. The
+since the runtime has never seen the copy), and the change's categories (an extension's `@objc` members, an override in
+one): the runtime would attach those to the kept classes as the library loads, before any check, so `LiveObject` renames
+their list (`__lamp_catlist`) and `LampLive` attaches them once the change fits (`attach`). What `LampLive` can't make
+right it refuses, and the app reopens: a class's method table that changed shape, a class whose methods the change lists
+in another order than the app (one added, taken away or moved), since a table made after it would be laid out from the
+app's list, or a kept class that answers to something from Objective-C its copy no longer has (`removedMethods`), which
+it would go on answering with old code; that last is judged only for a change compiled from every file (`whole`, sent
+with the change), which is what a declaration taken away gets, since another leaves what an unchanged file's extension
+adds. The
 build then waits to be installed until the app closes (`LiveReload.awaitInstall`, which unlike a held build doesn't
 keep the agent off the app). Anything else needs the app reopened, with why in the chat's
 details (`LiveReload.Verdict`; what `LampLive` refused, and a change that didn't compile or load, say so there too,
