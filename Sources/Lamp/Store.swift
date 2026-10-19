@@ -4444,13 +4444,20 @@ final class Store: ObservableObject {
             _ = heldInstalls.mayInstall(project.id, running: true)
             owner?.keptOpen = true
             owner?.didNotOpen = true
-            // The notice beside Open New Version says where things stand now; the line saying Lamp waited for the
-            // app to close, from this request's own wait, no longer does.
-            if let lines = logs[project.id],
-               let index = lines.lastIndex(where: { $0.kind == .status && $0.text == ErrorMessages.waitingToClose(project.name) }),
-               !lines[index...].contains(where: { $0.kind == .user }) {
-                logs[project.id]?.remove(at: index)
-                saveChat(project)
+            // The notice beside Open New Version says where things stand now. The lines that said what was under way
+            // ("Building…", "Waiting for … to close…") end the chat with something that has stopped, so they go. The
+            // details after them (why the app had to reopen) are only shown with Agent Details, and stay.
+            if var lines = logs[project.id] {
+                var index = lines.endIndex
+                var removed = false
+                while index > lines.startIndex, lines[index - 1].kind == .detail || Self.isUnderWay(lines[index - 1]) {
+                    index -= 1
+                    if lines[index].kind != .detail { lines.remove(at: index); removed = true }
+                }
+                if removed {
+                    logs[project.id] = lines
+                    saveChat(project)
+                }
             }
             noteOpened(false, for: project)
             refreshOpenApps()
@@ -5504,6 +5511,9 @@ final class Store: ObservableObject {
     @Published private(set) var earlierVersionOpen: Set<String> = []
     /// Apps Open New Version was pressed for, until the new version is in.
     private var reopening: Set<String> = []
+
+    /// A status line that says something is going on, as "Building…" does.
+    private static func isUnderWay(_ line: LogLine) -> Bool { line.kind == .status && line.text.hasSuffix("…") }
 
     /// Whether the chat offers Open New Version now. Not while an app for both points at iOS: what waits is the Mac
     /// copy's build, and like `installHeldIcons` it goes in only once Try On is back on this Mac.
