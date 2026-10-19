@@ -4546,6 +4546,12 @@ final class Store: ObservableObject {
             log(project, .detail, "\(project.name) has to reopen for this change: \(why).")
             return false
         }
+        // What's declared changed (a function added, an overload, a conformance): an unchanged caller may now mean
+        // another one, so every file is compiled again and every call goes to code compiled with the new declarations.
+        if let before, let after, LiveReload.declarationsChanged(before: before, after: after), changed != LiveReload.appFiles(project) {
+            changed = LiveReload.appFiles(project)
+            (library, problem) = await LiveReload.compile(project, changed: changed)
+        }
         // An enum that only gained cases goes in when nothing holds it where a new case would change what's there.
         // Then every file of the app's is compiled again, so no code of the open app's meets a case it never knew
         // (a switch, or printing it), and the enum's own metadata is the change's, which knows the new cases.

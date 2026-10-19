@@ -113,14 +113,36 @@ final class LiveReloadTests: XCTestCase {
         try fm.createDirectory(at: sources.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fm.copyItem(at: project.dir.appendingPathComponent("Sources"), to: sources)
         try """
+            typealias Side = Int
+            private typealias Secret = Int
             protocol Shape { func area() -> Int; var name: String { get set } }
-            struct Square: Shape { var side: Int; var name = ""; func area() -> Int { side * side } }
+            struct Square: Shape { var side: Side; var name = ""; func area() -> Int { side * side } }
+            extension Square: Hashable { typealias Key = String; var key: Key { name }; func grow(_ by: Int = 1) -> Square { self } }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
         let layout = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
         let shape = layout?.filter { $0.hasPrefix("protocol Shape") } ?? []
         XCTAssertEqual(shape.count, 6, "\(shape)")   // the protocol, area(), name, and name's get, set and _modify
         XCTAssertTrue(shape.contains { $0.hasPrefix("protocol Shape\tarea(): ") }, "\(shape)")
         XCTAssertTrue(shape.contains { $0.hasPrefix("protocol Shape\tname: String set: ") }, "\(shape)")
+        // A typealias is printed as itself in what uses it, so it's listed with what it names; what's declared
+        // (functions, computed properties, conformances) is listed apart from what the types hold.
+        XCTAssertEqual(layout?.filter { $0.hasPrefix("Square\t") }, ["Square\t", "Square\tside: Side", "Square\tname: String"])
+        XCTAssertEqual(layout?.filter { $0.hasPrefix(LiveReload.aliasGroup) },
+                       [LiveReload.aliasGroup + "\tSide = Int", LiveReload.aliasGroup + "\tShapes.swift:Secret = Int", LiveReload.aliasGroup + "\tSquare.Key = String"])
+        let declared = layout?.filter { $0.hasPrefix(LiveReload.declarationGroup) }.map { String($0.dropFirst(LiveReload.declarationGroup.count + 1)) } ?? []
+        XCTAssertEqual(declared, ["Square inherits Shape", "Square.area(): (Square) -> () -> Int", "Square inherits Hashable",
+                                  "Square.key: Square.Key", "Square.grow(_:): (Square) -> (Int) -> Square"], "\(declared)")
+        let retargeted = layout!.map { $0 == LiveReload.aliasGroup + "\tSide = Int" ? LiveReload.aliasGroup + "\tSide = Double" : $0 }
+        XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: retargeted).problem, "the typealias Side changed from Int to Double")
+        let withoutAliases = LiveReload.layoutProblem(before: layout, after: layout!.filter { !$0.hasPrefix(LiveReload.aliasGroup) })
+        XCTAssertNil(withoutAliases.problem)
+        // An alias taken away is kept with the open app's layout, like a type, so one brought back is held to it.
+        XCTAssertEqual(withoutAliases.layout?.filter { $0.hasPrefix(LiveReload.aliasGroup) }.count, 3)
+        XCTAssertEqual(LiveReload.layoutProblem(before: withoutAliases.layout, after: retargeted).problem, "the typealias Side changed from Int to Double")
+        // A global holding the enum still counts in the grown-enum check (its owner is empty, not a group).
+        XCTAssertFalse(LiveReload.isGroup(String("\tselection: Mood?".prefix { $0 != "\t" })))
+        XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: layout!.filter { !$0.contains("grow(_:)") }))
+        XCTAssertFalse(LiveReload.declarationsChanged(before: layout!, after: layout!))
         let (library, problem) = await LiveReload.compile(project, changed: ["Shapes.swift"])
         XCTAssertNil(problem)
         let symbols = try run("/usr/bin/nm", ["-m", XCTUnwrap(library).path])
