@@ -5139,11 +5139,23 @@ enum Template {
                 }
                 guard pulse == nil else { return }
                 let start = Date()
-                pulse = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+                pulse = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] timer in
                     MainActor.assumeIsolated {
+                        // A button taken away with its window or its title bar stops, rather than tick on unseen.
+                        guard let self, self.window != nil else { return timer.invalidate() }
                         let phase = (1 - cos(Date().timeIntervalSince(start) * 2 * .pi / 2.2)) / 2
-                        self?.bezelColor = NSColor.controlAccentColor.blended(withFraction: 0.4 * phase, of: .white)
+                        self.bezelColor = NSColor.controlAccentColor.blended(withFraction: 0.4 * phase, of: .white)
                     }
+                }
+            }
+
+            override func viewDidMoveToWindow() {
+                super.viewDidMoveToWindow()
+                if window == nil {
+                    pulse?.invalidate()
+                    pulse = nil
+                } else if !isHidden, isEnabled {
+                    breathe(true)
                 }
             }
 
