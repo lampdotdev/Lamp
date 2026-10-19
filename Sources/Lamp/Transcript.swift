@@ -157,7 +157,9 @@ extension LogLine {
         // What a card shows isn't said again as a message: decided from the whole chat, since which card a clicked
         // message came from decides it, and left out only at the end, since a clicked answer still ends the
         // request before it for what's chosen below.
-        let hidden = Talk.cardMessages(in: lines)
+        // A request Lamp sent itself to fix a crash isn't the person's to see as theirs: the line before it says
+        // what Lamp is doing.
+        let hidden = Talk.cardMessages(in: lines).union(lines.filter { $0.byLamp == true }.map(\.id))
         if details { return lines.filter { !hidden.contains($0.id) } }
         // The last thing the agent says in a run is its answer. A run ends with its summary; while one is
         // going, the latest message shows as it's written (it says what the agent is about to do, or is
@@ -221,7 +223,7 @@ enum ChatItem: Identifiable {
     /// comes after the one before it up to its own: requests don't mark them, since a clicked answer to a card is left
     /// out of the chat and Lamp starts runs of its own (a build to fix). What comes after the last summary is a run
     /// still going, whose steps show as they come. Lamp's note that it reopened the app stays out, since it explains
-    /// the window going away. A summary times its run and is otherwise left out; with Agent Details it's a line of
+    /// the window going away, and so does its note that it's fixing a crash nobody asked about. A summary times its run and is otherwise left out; with Agent Details it's a line of
     /// its own and nothing is gathered.
     static func items(_ lines: [LogLine], gather: Bool) -> [ChatItem] {
         guard gather else { return items(lines) }
@@ -237,7 +239,9 @@ enum ChatItem: Identifiable {
 
     /// A finished run's lines, its steps under one line above its last message.
     private static func folded(_ run: [LogLine], summary: LogLine) -> [ChatItem] {
-        let isStep = { (line: LogLine) in (line.kind == .status && line.text != ChatLook.reloaded) || line.kind == .tool }
+        let isStep = { (line: LogLine) in
+            (line.kind == .status && line.text != ChatLook.reloaded && line.text != ChatLook.fixingCrash) || line.kind == .tool
+        }
         let steps = items(run.filter(isStep)).flatMap { item -> [LogLine] in
             switch item {
             case .statuses(let lines), .tools(let lines): lines

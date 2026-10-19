@@ -186,6 +186,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     var noted: NoteReceipt? = nil     // what a save of Lamp's notes changed, with Undo
     var pointed: PointedAt? = nil     // for a request: what was pointed at in the app, one of its attachments
     var midTurn: Bool? = nil          // for a request: the agent took it while working on the one before (Store.handOver)
+    var byLamp: Bool? = nil           // for a request: Lamp sent it, not the person (`Store.fixCrash`); the line before says so
 
     /// The offer a setup card is about, for this line and for the older key card.
     var setupOffer: SetupOffer? {
@@ -265,6 +266,8 @@ struct QueuedMessage: Identifiable {
     var pointed: PointedAt? = nil
     /// The person pressed Send Now: it goes to the agent in the turn that's running (`Store.handOver`).
     var sendNow = false
+    /// Lamp sent it on its own, to fix a crash (`Store.fixCrash`).
+    var byLamp = false
 }
 
 extension QueuedMessage {
@@ -413,6 +416,9 @@ final class Store: ObservableObject {
         /// The Mac app built but the last install couldn't put it in place or open it: logged, not a crash, so
         /// the turn still counts as a change. Kept so a new app's first run isn't counted when it never opened.
         var didNotOpen = false
+        /// The app was opened and died straight away: a crash, as opposed to an open that never happened (a
+        /// simulator missing, a Stop while it waited), which `install` reports in words too.
+        var diedOnLaunch = false
         /// The person kept the app open when this turn's build asked it to quit: it isn't asked a second time
         /// in the turn, and the agent isn't shown the copy on screen as its work.
         var keptOpen = false
@@ -2169,6 +2175,7 @@ final class Store: ObservableObject {
             Task {
                 await applyIconArt(project, spec: spec)
                 release(project)
+                fixHeldCrash(project)
                 offerHeldDrawing(project)
                 startQueued(project)
                 installHeldIcons(for: [project.id])
@@ -2176,6 +2183,7 @@ final class Store: ObservableObject {
             return
         }
         release(project)
+        fixHeldCrash(project)
         offerHeldDrawing(project)
         startQueued(project)
         refreshUndoOffer(project)
@@ -2283,6 +2291,10 @@ final class Store: ObservableObject {
             }
             if let card = message.card, Talk.shows(logs[project.id]?.first { $0.id == card }), let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].fromCard = true
+                saveChat(project)
+            }
+            if message.byLamp, let last = logs[project.id]?.indices.last {
+                logs[project.id]?[last].byLamp = true
                 saveChat(project)
             }
             if message.replaces != nil || !message.tookBack.isEmpty, let last = logs[project.id]?.indices.last {
@@ -2846,6 +2858,7 @@ final class Store: ObservableObject {
         usage[project.id] = nil
         queued[project.id] = nil
         icons[project.id] = nil
+        crashesAfterRelease[project.id] = nil
         release(project)
         unread.remove(project.id)
         tokens = tokens.filter { $0.value != project.id }
@@ -4374,15 +4387,18 @@ final class Store: ObservableObject {
     /// an app quit on purpose (its Quit, Lamp's Stop) stays closed.
     private func watchAfterReload(_ project: LampProject, app: NSRunningApplication) {
         let since = Date()
+        reloadsWatched.insert(project.id)
         Task { [weak self] in
+            defer { self?.reloadsWatched.remove(project.id) }
             for _ in 0..<16 {
                 try? await Task.sleep(for: .milliseconds(500))
                 guard app.isTerminated else { continue }
-                // macOS writes the report a moment after the process is gone.
+                // macOS writes the report after the process is gone, sometimes ten seconds or more later, and the
+                // crash is this watch's alone to answer (`appEnded` leaves it), so it waits as long as that does.
                 var crashed = false
-                for _ in 0..<10 where !crashed {
+                for _ in 0..<60 where !crashed {
                     crashed = Runtime.crashed(project, since: since)
-                    if !crashed { try? await Task.sleep(for: .milliseconds(300)) }
+                    if !crashed { try? await Task.sleep(for: .milliseconds(500)) }
                 }
                 guard crashed, let self, let current = self.current(project) else { return }
                 self.log(current, .detail, "\(current.name) stopped right after a change went in without reopening it. Opening it again with the full build.")
@@ -4394,6 +4410,9 @@ final class Store: ObservableObject {
             }
         }
     }
+
+    /// Apps whose live change is being watched for a crash, which that watch answers by opening the full build.
+    private var reloadsWatched: Set<String> = []
 
     /// Installs and opens the app. Returns what's known about the failure if it died straight away.
     /// `inFront` is false for the agent's looks, which shouldn't pull the app in front of the user mid-turn.
@@ -4489,6 +4508,7 @@ final class Store: ObservableObject {
         do {
             let app = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
             if await Runtime.diedOnLaunch(app) {
+                owner?.diedOnLaunch = true
                 log(project, .status, "\(project.name) quit right after opening. Looking at why…")
                 crash = await Runtime.launchReport(project)
                 log(project, .detail, crash!)
@@ -4576,6 +4596,7 @@ final class Store: ObservableObject {
             try? await Task.sleep(for: .seconds(3))
             if !Simulator.isRunning(pid: pid) {
                 simulatorApps[project.id] = nil
+                owner.diedOnLaunch = true
                 log(project, .status, "\(project.name) quit right after opening. Looking at why…")
                 var crash = "The app quit right after launching."
                 if Privacy.sharesLog, let tail = Runtime.logTail(project) { crash += "\n\nLast lines it printed:\n" + tail }
@@ -4836,10 +4857,81 @@ final class Store: ObservableObject {
     /// on one device can't both go ahead, and checked before every action the driver takes.
     private var simulatorLeases: [String: String] = [:]
 
-    /// For Open App and Undo, where no agent is running to fix a crash.
+    /// For Open App, Undo, a restore and a rebuild, where no agent is running to fix a crash. Each of them holds the
+    /// app while it installs, so the fix waits for it to let go (`fixHeldCrash`, from `finish`).
     private func installReportingCrash(_ project: LampProject) async {
-        if await install(project) != nil {
-            log(project, .error, ErrorMessages.crashAfterLaunch(project.name))
+        let owner = turns[project.id]
+        guard let crash = await install(project), owner?.stopped != true else { return }
+        // Only an app that opened and died is worth a fix; one that never opened says why in the chat already.
+        if owner?.diedOnLaunch == true { crashesAfterRelease[project.id] = crash }
+        else { log(project, .error, ErrorMessages.crashAfterLaunch(project.name)) }
+    }
+
+    /// Crashes on opening seen while something held the app, to be fixed once it's free.
+    private var crashesAfterRelease: [String: String] = [:]
+
+    /// Called as the hold ends, before anything waiting starts: with a request already in line the agent hears of
+    /// the crash with that, and the chat only says it crashed.
+    private func fixHeldCrash(_ project: LampProject) {
+        guard let crash = crashesAfterRelease.removeValue(forKey: project.id) else { return }
+        if !fixCrash(project, detail: crash) { log(project, .error, ErrorMessages.crashAfterLaunch(project.name)) }
+    }
+
+    /// The crash report each app's last automatic fix answered, so the same crash seen twice (on opening, and as
+    /// the app goes) starts one fix.
+    private var crashesAnswered: [String: Date] = [:]
+
+    /// A crash of an app the person isn't changing starts a fix at once, as if they'd asked for one: Lamp sends the
+    /// request itself, and the crash report goes with it (`Runtime.crashNote`). It does so once in a row: when the
+    /// latest request in the chat is Lamp's own, a fix already had its chance (and its own launch crashes were
+    /// retried within it), so the next crash is the person's to decide on and nothing more is spent until they say
+    /// something. True when the crash is taken care of (a fix started, or one is already under way for it).
+    @discardableResult
+    private func fixCrash(_ project: LampProject, detail: String) -> Bool {
+        guard let project = current(project) else { return true }
+        let report = Runtime.newestCrash(of: project)?.date
+        if let report, crashesAnswered[project.id] == report { return true }
+        // While a turn runs or a request waits, the agent hears of the crash with it.
+        guard setup.ready, !busy.contains(project.id), turns[project.id] == nil,
+              queued[project.id]?.isEmpty ?? true else { return false }
+        guard !lastRequestByLamp(project) else { return false }
+        if let report { crashesAnswered[project.id] = report }
+        log(project, .status, ChatLook.fixingCrash)
+        // The report itself goes with the request when macOS wrote one; otherwise what Lamp saw is all there is.
+        let request = "Fix the crash."
+        queued[project.id, default: []].append(QueuedMessage(text: report == nil ? request + "\n\n" + detail : request, byLamp: true))
+        startQueued(project)
+        return true
+    }
+
+    private func lastRequestByLamp(_ project: LampProject) -> Bool {
+        (logs[project.id] ?? []).last { $0.kind == .user }?.byLamp == true
+    }
+
+    /// An app crashing while it's used, with no turn of Lamp's under way: what the person sees go is fixed the way
+    /// a crash on opening is. Only a crash, which leaves macOS's report: a quit leaves none. A crash just after a
+    /// change went into the open app is the live change's to answer (`watchAfterReload`).
+    private func appEnded(_ app: NSRunningApplication) {
+        guard let project = projects.first(where: { app.bundleIdentifier == $0.bundleID
+                  || app.bundleURL?.standardizedFileURL == $0.installedURL.standardizedFileURL }),
+              !busy.contains(project.id), !reloadsWatched.contains(project.id) else { return }
+        let since = app.launchDate ?? Date().addingTimeInterval(-5)
+        Task { [weak self] in
+            // macOS writes the report after the process is gone, sometimes ten seconds or more later (the time
+            // it shows its own crash dialog).
+            for _ in 0..<60 {
+                guard let self, let current = self.current(project) else { return }
+                if let crash = Runtime.newestCrash(of: current), crash.date > since {
+                    // After Lamp's own fix it's said once, and left to the person.
+                    if !self.fixCrash(current, detail: crash.summary), self.lastRequestByLamp(current),
+                       self.crashesAnswered[current.id] != crash.date {
+                        self.crashesAnswered[current.id] = crash.date
+                        self.log(current, .error, ErrorMessages.crashed(current.name))
+                    }
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
         }
     }
 
@@ -5464,6 +5556,7 @@ final class Store: ObservableObject {
                 let installer = app?.bundleIdentifier == SetupCheck.installerID
                 MainActor.assumeIsolated {
                     Store.shared.refreshOpenApps()
+                    if name == NSWorkspace.didTerminateApplicationNotification, let app { Store.shared.appEnded(app) }
                     if installer { Store.shared.installerChanged(open: name == NSWorkspace.didLaunchApplicationNotification) }
                 }
             }
