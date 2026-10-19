@@ -237,12 +237,22 @@ final class LiveReloadTests: XCTestCase {
                 var body: AnyView { AnyView(__lampBody) }
                 @ViewBuilder var __lampBody: some View { Button("x") { switch model.mood { case .a: break; case .b: break } } }
             }
+            struct W: View {
+                @State var model = Model()
+                var body: AnyView { AnyView(__lampBody) }
+                @ViewBuilder var __lampBody: some View {
+                    Text("w").onAppear { Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in switch model.mood { case .a: break; case .b: break } } }
+                }
+            }
             """.write(to: sources.appendingPathComponent("Moods.swift"), atomically: true, encoding: .utf8)
         let dumped = await LiveReload.dump(of: sources, in: project, module: project.exe, macOS: "14.0")
         let dump = try XCTUnwrap(dumped)
         XCTAssertEqual(LiveReload.oldCode(meeting: ["Mood"], inDump: dump),
                        "start() switches over Mood in code that may still be running (a timer, a task, an observer), which doesn't know the new cases")
         XCTAssertNil(LiveReload.oldCode(meeting: ["Other"], inDump: dump))
+        // A closure a body hands to Foundation (a Timer's, in onAppear) is kept by it, unlike a Button's action.
+        let uses = LiveReload.oldCodeUses(inDump: dump)
+        XCTAssertEqual(uses.filter { $0.hasPrefix("Mood\t") }.count, 3, "\(uses)")   // start()'s timer, tick()'s print, W's timer
         let onlyTick = dump.components(separatedBy: "\n").filter { !$0.contains("Timer") }.joined(separator: "\n")
         XCTAssertEqual(LiveReload.oldCode(meeting: ["Mood"], inDump: onlyTick), "tick() prints Mood in code that may still be running (a timer, a task, an observer), which doesn't know the new cases")
         // The record outlives a change: the timer's switch, recorded from the installed sources, still counts once a
