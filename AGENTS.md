@@ -336,8 +336,10 @@ orange DEV banner), bundle id (`dev.lamp.host.dev`), folders (`~/Library/Applica
 (`lamp-dev://`) and Keychain entries, and no self-updating. `Sources/Lamp/Edition.swift` is the one place
 these come from, read off the bundle id that `build.sh` writes (`FLAVOR=dev` by default; `release.sh` passes
 `FLAVOR=release`). Anything new that names Lamp on disk or on the network goes through `Edition`, and the
-generated apps get it through the `{{SCHEME}}`, `{{NOTE}}`, `{{HOST}}` and `{{APPS}}` placeholders in
-`Template.swift`. The app-signing keychain is shared on purpose, so apps keep their permissions whichever
+generated apps get it from their Info.plist: Lamp writes what an app is told about itself and Lamp (its folder name,
+its secrets, Lamp's ports, scheme and folders: `Template.installValues`) into every copy it installs
+(`Store.setInstallValues`, and the phone project's Info.plist), and LampSupport reads it at launch (`LampInstall`).
+None of it is compiled in, so a compiled app is the same for every install. The app-signing keychain is shared on purpose, so apps keep their permissions whichever
 Lamp rebuilds them. `scripts/dev-data.sh` copies your apps, keys, settings and the agent's sign-ins from the
 installed Lamp into Lamp Dev, so the development build has something to work on. To see what someone with a bare Mac
 sees, `LAMP_PRETEND_MISSING` (`Pretend`, Lamp Dev only) makes Lamp's own checks miss the Command Line Tools,
