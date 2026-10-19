@@ -735,9 +735,13 @@ extension Sharing {
     }
 
     /// Joined pieces are decoded from the start of one of them, as the app joining them would: read from
-    /// partway into a word, words repeated in a list can line up as text.
+    /// partway into a word, words repeated in a list can line up as text. A later start four digits on, or
+    /// any multiple of four, decodes to the end of what the earlier one does, so the first start of each of
+    /// the four ways to line up is enough, and a long list is read four times at most.
     private static func joinedReadsAsText(_ digits: [UInt8], from starts: [Int]) -> Bool {
-        starts.contains { digits.count - $0 >= 16 && readable(digits, from: $0, enough: 12) >= 12 }
+        var first: [Int: Int] = [:]
+        for start in starts where first[start % 4] == nil { first[start % 4] = start }
+        return first.values.contains { digits.count - $0 >= 16 && readable(digits, from: $0, enough: 12) >= 12 }
     }
 
     /// One base64 digit's value, in either alphabet (`+/` or the web's `-_`).
@@ -760,10 +764,14 @@ extension Sharing {
            readable(digits, from: 0) >= digits.count * 6 / 8 { return true }
         guard digits.count >= 16 else { return false }
         // Encoded bytes are about two parts capitals, two parts small letters and one part digits and signs;
-        // a long path or a long name is mostly small letters, or capitals, with few digits.
+        // a long path or a long name is mostly small letters, or capitals, with few digits. The alphabet
+        // itself, written out to make ids from, has that mix too, but in order: in encoded bytes one digit is
+        // followed by the next about once in sixty-four.
         if digits.count >= 64 {
             let capitals = digits.filter { $0 < 26 }.count, small = digits.filter { (26..<52).contains($0) }.count
-            if capitals * 4 >= digits.count, small * 4 >= digits.count, (digits.count - capitals - small) * 16 >= digits.count {
+            let inOrder = zip(digits, digits.dropFirst()).filter { $1 == $0 + 1 }.count
+            if capitals * 4 >= digits.count, small * 4 >= digits.count, (digits.count - capitals - small) * 16 >= digits.count,
+               inOrder * 4 < digits.count {
                 return true
             }
         }

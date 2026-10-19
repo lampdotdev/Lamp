@@ -240,6 +240,16 @@ final class SharedAppReviewTests: XCTestCase {
         XCTAssertNotEqual(review.verdict, .sensitive)
     }
 
+    /// Random ids made from base64's own alphabet: nothing is encoded or decoded.
+    func testAnAlphabetForMakingIdsIsNotFlagged() throws {
+        let review = try checked("""
+        let urlSafe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        let standard = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        func newID() -> String { String((0..<12).map { _ in urlSafe.randomElement()! }) }
+        """)
+        XCTAssertFalse(review.detected.contains { $0.level == .sensitive }, "\(review.detected.map(\.label))")
+    }
+
     // MARK: A rating with no account of the app
 
     func testASummaryThatSaysNothingIsNoAnswer() {
