@@ -12,12 +12,14 @@ import MachO
 /// `LampLive` binds (or, for a type the app doesn't have, the library's own). A protocol's descriptor is treated the
 /// same, so an existential of the app's protocol is the same type in both. References from data (the library's own
 /// metadata and conformance records) stay on the copies, and `LampLive` points the records at the app's descriptors.
-/// Types named in `kept` (an enum that gained cases, whose metadata the change must bring) are left as they are.
+/// Types named in `kept` (an enum that gained cases, whose metadata the change must bring) are renamed with a suffix
+/// of their own (`$lampown`), by which `LampLive` takes this library's copy as the one to bind from now on.
 /// Anything the rewrite doesn't understand (a reference shaped another way, an object laid out otherwise) is refused,
 /// with why, and the change reopens the app.
 enum LiveObject {
-    /// The suffix a copy's definition is renamed with.
+    /// The suffix a copy's definition is renamed with, and the one a kept type's is: the library's own from then on.
     static let copySuffix = "$lampcopy"
+    static let ownSuffix = "$lampown"
 
     /// Whether a defined symbol names what a type or protocol is to the runtime: a nominal type's metadata (`N`,
     /// `Mf` its full form) or descriptor (`Mn`), a protocol's descriptor (`Mp`), or a conformance's descriptor (`Mc`)
@@ -26,7 +28,7 @@ enum LiveObject {
     /// a public one's calls go through a symbol pointer that `LampLive` points at the app's storage, but a private
     /// one's are direct, so the library would keep a second copy of the value, starting over.
     static func isIdentity(_ name: String, local: Bool = false) -> Bool {
-        guard name.hasPrefix("_$s"), !name.hasSuffix(copySuffix) else { return false }
+        guard name.hasPrefix("_$s"), !name.hasSuffix(copySuffix), !name.hasSuffix(ownSuffix) else { return false }
         if local, name.hasSuffix("vau") { return true }
         if name.hasSuffix("Mp") || name.hasSuffix("Mc") || name.hasSuffix("WP") { return true }
         for suffix in ["Mf", "N", "Mn"] where name.hasSuffix(suffix) {
@@ -99,7 +101,7 @@ enum LiveObject {
         // The definitions to rename, by symbol index, each with the index of the undefined symbol that takes its name.
         var renamed: [Int: Int] = [:]
         var added: [(name: String, type: UInt8, desc: UInt16)] = []
-        var names: [String] = []
+        var names: [String] = [], own = Set<Int>()
         for index in 0..<symtab.nsyms {
             let type = bytes[symtab.symoff + index * 16 + 4]
             guard type & UInt8(N_STAB) == 0 else { continue }
@@ -114,7 +116,7 @@ enum LiveObject {
                 continue
             }
             guard type & UInt8(N_TYPE) == UInt8(N_SECT), isIdentity(name, local: type & UInt8(N_EXT) == 0) else { continue }
-            if let keep = kept.first(where: { name.hasPrefix("_$s" + $0) }) { matched.insert(keep); continue }
+            if let keep = kept.first(where: { name.hasPrefix("_$s" + $0) }) { matched.insert(keep); own.insert(index) }
             renamed[index] = symtab.nsyms + added.count
             added.append((name, UInt8(N_UNDF) | UInt8(N_EXT), UInt16(N_WEAK_REF)))
             names.append(name)
@@ -162,7 +164,7 @@ enum LiveObject {
         var table = Array(bytes[symtab.symoff..<symtab.stroff])
         for (index, _) in renamed {
             let strx = UInt32(strings.count)
-            strings += Array((symbolName(index) + copySuffix).utf8) + [0]
+            strings += Array((symbolName(index) + (own.contains(index) ? ownSuffix : copySuffix)).utf8) + [0]
             table.withUnsafeMutableBytes { $0.storeBytes(of: strx, toByteOffset: index * 16, as: UInt32.self) }
         }
         for symbol in added {

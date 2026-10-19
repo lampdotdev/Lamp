@@ -3840,12 +3840,17 @@ enum Template {
         private var original: [String: UnsafeRawPointer] = [:]
 
         /// The suffix Lamp renames a library's own copy of a type's metadata or descriptor with (`LiveObject`): its
-        /// code asks for the one under the original name, which is bound here to the app's.
-        private static let copySuffix = "$lampcopy"
+        /// code asks for the one under the original name, which is bound here to the app's. With the other suffix
+        /// the library's copy is the one to bind from now on (an enum that gained cases, which the app's doesn't know).
+        private static let copySuffix = "$lampcopy", ownSuffix = "$lampown"
 
-        /// The library's copies of types, by the names they were defined under.
-        private static func copies(in symbols: [(String, UnsafeRawPointer)]) -> [(String, UnsafeRawPointer)] {
-            symbols.filter { $0.0.hasSuffix(copySuffix) }.map { (String($0.0.dropLast(copySuffix.count)), $0.1) }
+        /// The library's copies of types, by the names they were defined under, with whether each is its own to keep.
+        private static func copies(in symbols: [(String, UnsafeRawPointer)]) -> [(name: String, address: UnsafeRawPointer, own: Bool)] {
+            symbols.compactMap {
+                if $0.0.hasSuffix(copySuffix) { return (String($0.0.dropLast(copySuffix.count)), $0.1, false) }
+                if $0.0.hasSuffix(ownSuffix) { return (String($0.0.dropLast(ownSuffix.count)), $0.1, true) }
+                return nil
+            }
         }
 
         private func keep(_ symbols: [(String, UnsafeRawPointer)]) {
@@ -3945,15 +3950,17 @@ enum Template {
             let slide = _dyld_get_image_vmaddr_slide(image)
             Self.takeFieldOffsets(header, slide: slide)
             let defined = Self.definedSymbols(header, slide: slide)
-            let copies = Self.copies(in: Self.definedSymbols(header, slide: slide, local: true))
+            let all = Self.copies(in: Self.definedSymbols(header, slide: slide, local: true))
+            let copies = all.map { ($0.name, $0.address) }
             if original.isEmpty, let app = _dyld_get_image_header(0) {
                 original = Dictionary(Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0), local: true), uniquingKeysWith: { first, _ in first })
                 keep(Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0)))
             }
             // The types the change defines over again are the app's, or an earlier change's that first brought
             // one, and only a new type's is the library's own: so there's one of each type however many changes
-            // have gone in, and a value made before a change is still of its type after it.
-            for (name, address) in copies where kept[name] == nil { kept[name] = original[name] ?? address }
+            // have gone in, and a value made before a change is still of its type after it. One the change brings
+            // as its own (an enum that gained cases) is the library's from now on.
+            for copy in all where kept[copy.name] == nil || copy.own { kept[copy.name] = copy.own ? copy.address : original[copy.name] ?? copy.address }
             // A kept class's method table is the app's, so the new code's has to have the same shape: a method added,
             // taken away or moved would put a call in another method's place. Such a change reopens the app.
             if let why = Self.reshapedMethods(defined + copies, against: kept) {
@@ -3976,6 +3983,12 @@ enum Template {
             // would be a second set, made afresh. So its calls to them go to the app's, or to the earlier change's
             // that first added one, and only one that's new keeps its own.
             keep(defined)
+            // What the library's data names is worked out, and found possible, before anything is pointed at the
+            // new code: a change refused leaves the app as it was.
+            guard let descriptors = Self.plannedDescriptors(header, copies: copies, kept: kept) else {
+                result = "failed: the change's types couldn't all be made the app's"
+                return
+            }
             let bindings = latest.merging(kept) { new, _ in new }
             images.append(String(cString: _dyld_get_image_name(image)))
             var rebound = Self.rebind(image: 0, to: latest)
@@ -3984,31 +3997,41 @@ enum Template {
                 rebound += Self.rebind(image: index, to: bindings)
             }
             rebound += Self.redirectMethods(of: kept.filter { $0.key.hasSuffix("CN") }.map(\.value), moved)
-            guard let descriptors = Self.redirectDescriptors(header, slide: slide, copies: copies, kept: kept) else {
-                result = "failed: the change's types couldn't all be made the app's"
-                return
-            }
-            rebound += descriptors
+            for write in descriptors where write.apply() { rebound += 1 }
             generation += 1
             result = "ok \(rebound)"
         }
 
+        /// A change to the library's data: a relative pointer given a new offset, or a slot a new pointer.
+        @MainActor private struct DescriptorWrite {
+            var field: UnsafeRawPointer
+            var relative: Int32?
+            var pointer: UnsafeRawPointer?
+            /// The field's page is opened for the moment; a slot's is in data and stays open, as the symbol pointers'
+            /// pages do, while the library's text is given back as it was, executable.
+            func apply() -> Bool {
+                if let pointer { return write(pointer, to: field, executable: false) }
+                return write(relative ?? 0, to: field, executable: true)
+            }
+        }
+
         /// The library's own copies of the app's types are what its data still names: the mangled type names its
         /// code resolves at run time (a view's body, `[Mood]`, `any Shape`) and its conformance records refer to the
-        /// copies' descriptors by relative pointers, which no symbol reaches. Pointed at the kept descriptors here,
-        /// so an existential of the app's protocol, a conformance the change adds, and every generic type made from
-        /// a mangled name are the app's. The sections sit in the library's text, which is written through for it.
-        /// Nil when a reference can't be pointed over (the app's descriptor is out of a relative pointer's reach,
-        /// or the page can't be opened): the change is then refused rather than left naming two of a type.
-        private static func redirectDescriptors(_ header: UnsafePointer<mach_header>, slide: Int,
-                                                copies: [(String, UnsafeRawPointer)], kept: [String: UnsafeRawPointer]) -> Int? {
+        /// copies' descriptors by relative pointers, which no symbol reaches. Pointed at the kept descriptors
+        /// (`DescriptorWrite`), so an existential of the app's protocol, a conformance the change adds, and every
+        /// generic type made from a mangled name are the app's. The sections sit in the library's text. Nil when a
+        /// reference can't be pointed over (the app's descriptor is out of a relative pointer's reach, or a page can't
+        /// be opened): the change is then refused, before anything else has changed, rather than left naming two of
+        /// a type.
+        private static func plannedDescriptors(_ header: UnsafePointer<mach_header>, copies: [(String, UnsafeRawPointer)],
+                                               kept: [String: UnsafeRawPointer]) -> [DescriptorWrite]? {
             var replacements: [UnsafeRawPointer: UnsafeRawPointer] = [:]
             for (name, address) in copies where name.hasSuffix("Mn") || name.hasSuffix("Mp") {
                 if let theirs = kept[name], theirs != address { replacements[address] = theirs }
             }
-            guard !replacements.isEmpty else { return 0 }
+            guard !replacements.isEmpty else { return [] }
             let header64 = UnsafeRawPointer(header).assumingMemoryBound(to: mach_header_64.self)
-            var count = 0, failed = false
+            var writes: [DescriptorWrite] = [], failed = false
             // A relative pointer to a descriptor, made to point at the kept one when it points at a copy; one through
             // a slot (`indirect`, or the low bit set where the pointer may say so itself, `flagged`) has the slot's
             // pointer changed instead.
@@ -4017,12 +4040,12 @@ enum Template {
                 if indirect || (flagged && value & 1 != 0) {
                     let slot = field.advanced(by: Int(value & ~1))
                     guard let pointer = slot.loadUnaligned(as: UnsafeRawPointer?.self), let theirs = replacements[pointer] else { return }
-                    if write(theirs, to: slot, executable: false) { count += 1 } else { failed = true }
+                    if canWrite(slot) { writes.append(DescriptorWrite(field: slot, pointer: theirs)) } else { failed = true }
                 } else {
                     guard let theirs = replacements[field.advanced(by: Int(value))] else { return }
                     let distance = Int(bitPattern: theirs) - Int(bitPattern: field)
-                    guard let relative = Int32(exactly: distance), write(relative, to: field, executable: true) else { return failed = true }
-                    count += 1
+                    guard let relative = Int32(exactly: distance), canWrite(field) else { return failed = true }
+                    writes.append(DescriptorWrite(field: field, relative: relative))
                 }
             }
             var size: UInt = 0
@@ -4056,7 +4079,16 @@ enum Template {
                     }
                 }
             }
-            return failed ? nil : count
+            return failed ? nil : writes
+        }
+
+        /// Whether the page holding `pointer` can be opened for writing: tried, and given back as it was.
+        private static func canWrite(_ pointer: UnsafeRawPointer) -> Bool {
+            let page = Int(vm_page_size)
+            let start = UnsafeMutableRawPointer(bitPattern: UInt(bitPattern: pointer) & ~UInt(page - 1))
+            guard mprotect(start, page, PROT_READ | PROT_WRITE) == 0 else { return false }
+            mprotect(start, page, PROT_READ | PROT_EXEC)
+            return true
         }
 
         /// Stores a value in memory that may be read-only, opening its page for the moment: the library's text is

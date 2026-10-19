@@ -726,8 +726,9 @@ metadata, descriptor and protocol descriptor it defines is renamed (`$lampcopy`)
 loads through the global offset table of a weak undefined symbol with the original name, which `LampLive` binds to the
 app's copy, or to the library's own for a type the app doesn't have (a new one, kept for the changes after it). A
 conformance's descriptor and witness table are treated the same, since the runtime tells generic types apart by them
-too (`[AnyHashable: …]` keys), which is why a protocol's requirements are part of the layout a change is held to
-(`LiveReload.members`): the app's witness tables must fit. So is a private stored global's or static's addressor,
+too (`[AnyHashable: …]` keys), which is why a protocol's requirements, their accessors included, are part of the
+layout a change is held to (`LiveReload.members`): the app's witness tables must fit. What the library's data names
+is worked out before anything is pointed at the new code, so a change refused leaves the app as it was. So is a private stored global's or static's addressor,
 since calls to it are direct too, and the library would otherwise keep a second copy of the value. The mangled type
 names and the records of conformances the change adds, which the library's data still holds, are pointed at the app's
 descriptors as it loads (`LampLive.redirectDescriptors`, writing through the library's text, which a Mac app without
@@ -775,7 +776,8 @@ the new code and in the types the spares keep (`LiveReload.enumsHeld`), before t
 values of any type (`Any`, `AnyObject`, `AnyHashable`, `any P`) reopens instead, since one could hide there. When an enum
 grew, every file of the app's is compiled again, so no code of the open app's meets a case it never knew (a switch over
 it, or printing it, reads past what its metadata describes), and the enum's metadata stays the change's own rather
-than the app's (`LiveReload.compile(keep:)`), since the app's doesn't know the new cases. Which property is in which spare
+than the app's (`LiveReload.compile(keep:)`, renamed `$lampown` so `LampLive` binds every later change to it), since
+the app's doesn't know the new cases. Which property is in which spare
 (`.lamp/live/slots.json`) is put back into each fresh copy (they come back as additions, and `LiveSlots.fit` puts
 them in the same places) until the app is installed again: the
 whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs

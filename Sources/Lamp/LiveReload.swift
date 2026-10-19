@@ -317,6 +317,9 @@ enum LiveReload {
         // the protocol holds, so one that gained or lost a requirement reopens the app like a type that changed.
         let protocolDecl = try! NSRegularExpression(pattern: #"^(\s*)\(protocol(_decl)?\b[^"]*"([^"]+)""#)
         let requirement = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|var_decl|subscript_decl|constructor_decl|associated_type_decl)\b[^"]*"([^"]+)" interface_type="([^"]*)""#)
+        // A property's or subscript's accessors are requirements of their own (`{ get }` against `{ get set }`),
+        // printed under it: each is listed with the requirement, by what it is.
+        let accessor = try! NSRegularExpression(pattern: #"^(\s*)\(accessor_decl\b.*? interface_type="([^"]*)".*? (get|set|_modify|_read|unsafeAddress|unsafeMutableAddress|init|read|modify) for="#)
         let scopeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|accessor_decl|constructor_decl|destructor_decl|closure_expr|subscript_decl|top_level_code_decl)\b"#)
         // A declaration's position (decl_context=…, range=[…]) comes before its name; neither holds a quote.
         let varDecl = try! NSRegularExpression(pattern: #"^(\s*)\(var_decl\b[^"]*"([^"]+)" interface_type="([^"]*)"(.*)$"#)
@@ -347,6 +350,10 @@ enum LiveReload {
                 if seen.insert(type + "\t").inserted { out.append(type + "\t") }
             } else if let owner, owner.hasPrefix("protocol "), let m = requirement.firstMatch(in: line, range: range) {
                 let entry = owner + "\t" + String(line[Range(m.range(at: 3), in: line)!]) + ": " + String(line[Range(m.range(at: 4), in: line)!])
+                if seen.insert(entry).inserted { out.append(entry) }
+                scopes.append((indent, "\u{4}" + entry))
+            } else if let owner, owner.hasPrefix("\u{4}"), let m = accessor.firstMatch(in: line, range: range) {
+                let entry = String(owner.dropFirst()) + " " + String(line[Range(m.range(at: 3), in: line)!]) + ": " + String(line[Range(m.range(at: 2), in: line)!])
                 if seen.insert(entry).inserted { out.append(entry) }
                 scopes.append((indent, nil))
             } else if let m = typeDecl.firstMatch(in: line, range: range) {

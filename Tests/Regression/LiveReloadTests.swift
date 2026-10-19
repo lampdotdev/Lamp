@@ -106,11 +106,14 @@ final class LiveReloadTests: XCTestCase {
         try fm.createDirectory(at: sources.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fm.copyItem(at: project.dir.appendingPathComponent("Sources"), to: sources)
         try """
-            protocol Shape { func area() -> Int }
-            struct Square: Shape { var side: Int; func area() -> Int { side * side } }
+            protocol Shape { func area() -> Int; var name: String { get set } }
+            struct Square: Shape { var side: Int; var name = ""; func area() -> Int { side * side } }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
         let layout = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
-        XCTAssertEqual(layout?.filter { $0.hasPrefix("protocol Shape") }, ["protocol Shape\t", "protocol Shape\tarea(): <Self where Self : Shape> (Self) -> () -> Int"], "\(layout as Any)")
+        let shape = layout?.filter { $0.hasPrefix("protocol Shape") } ?? []
+        XCTAssertEqual(shape.count, 6, "\(shape)")   // the protocol, area(), name, and name's get, set and _modify
+        XCTAssertTrue(shape.contains { $0.hasPrefix("protocol Shape\tarea(): ") }, "\(shape)")
+        XCTAssertTrue(shape.contains { $0.hasPrefix("protocol Shape\tname: String set: ") }, "\(shape)")
         let (library, problem) = await LiveReload.compile(project, changed: ["Shapes.swift"])
         XCTAssertNil(problem)
         let symbols = try run("/usr/bin/nm", ["-m", XCTUnwrap(library).path])
