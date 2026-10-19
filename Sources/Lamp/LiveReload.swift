@@ -246,14 +246,19 @@ enum LiveReload {
         guard let dump = await dump(of: sources(project), in: project, module: project.exe, macOS: Template.macMinimum(project)) else {
             return "the compiler couldn't say what holds the enums that grew"
         }
-        let held = members(inDump: dump, held: true).compactMap { entry -> (String, String)? in
+        let entries = members(inDump: dump, held: true)
+        let held = entries.compactMap { entry -> (String, String)? in
             guard !isGroup(String(entry.prefix { $0 != "\t" })), let colon = entry.range(of: ": ") else { return nil }
             return (String(entry.prefix { $0 != "\t" }), String(entry[colon.upperBound...]))
         } + LiveSlots.mapping(project).flatMap { type, properties in properties.map { (type, $0.value.type) } }
-        // A value of the enum could hide in what holds anything at all, where its type can't be seen.
-        let untyped = try! NSRegularExpression(pattern: #"(?<![\w.])(Any|AnyObject|AnyHashable|any [\w.]+)(?![\w])"#)
-        for (owner, kind) in held where untyped.firstMatch(in: kind, range: NSRange(kind.startIndex..., in: kind)) != nil {
-            return "\(owner.isEmpty ? "a global" : owner) keeps values of any type (\(kind)), which may hold \(grown.joined(separator: ", "))"
+        // A value of the enum could hide in what holds anything at all, where its type can't be seen: a value of
+        // any type, or of any type conforming to a protocol the enum conforms to.
+        for type in grown {
+            for (owner, kind) in held {
+                if let box = existential(in: kind, holding: type, conformances: conformances(inLayout: entries)) {
+                    return "\(owner.isEmpty ? "a global" : owner) keeps values of any type (\(box)), which may hold \(type)"
+                }
+            }
         }
         for type in grown {
             let name = NSRegularExpression.escapedPattern(for: type)
@@ -358,6 +363,45 @@ enum LiveReload {
             }
         }
         return uses
+    }
+
+    /// What each type and protocol conforms to or inherits, from the layout's declarations ("Mood inherits P, Q",
+    /// an extension's included).
+    static func conformances(inLayout entries: [String]) -> [String: Set<String>] {
+        var out: [String: Set<String>] = [:]
+        for entry in entries where entry.hasPrefix(declarationGroup + "\t") {
+            let declared = entry.dropFirst(declarationGroup.count + 1)
+            guard let at = declared.range(of: " inherits ") else { continue }
+            let type = String(declared[..<at.lowerBound])
+            for name in declared[at.upperBound...].split(separator: ",") {
+                out[type, default: []].insert(name.trimmingCharacters(in: .whitespaces))
+            }
+        }
+        return out
+    }
+
+    /// The existential in a stored type that a value of the enum could be kept in, if there is one: `Any` and
+    /// `AnyHashable` take any enum (one whose cases carry nothing, the only kind that grows, is Hashable by itself);
+    /// `any P` takes it when the enum conforms to P, or to a protocol that inherits P, directly or in an extension.
+    /// `AnyObject` holds no enum, and an existential of a protocol the enum has nothing to do with holds none either:
+    /// a model keeping `any Shape` isn't a reason to reopen for a Mood that grew.
+    static func existential(in kind: String, holding type: String, conformances: [String: Set<String>]) -> String? {
+        let simple = String(type.split(separator: ".").last ?? Substring(type))
+        // What the enum conforms to, followed through the protocols those inherit; a no-payload enum has these by itself.
+        var own: Set<String> = ["Equatable", "Hashable", "Sendable", "Copyable", "Escapable"]
+        var queue = Array(conformances[type] ?? []) + Array(conformances[simple] ?? [])
+        while let next = queue.popLast() {
+            guard own.insert(next).inserted else { continue }
+            queue += conformances[next] ?? []
+        }
+        let boxes = try! NSRegularExpression(pattern: #"(?<![\w.])(Any|AnyHashable|any (?:[\w.]+(?: & [\w.]+)*))(?![\w])"#)
+        for match in boxes.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)) {
+            let box = String(kind[Range(match.range(at: 1), in: kind)!])
+            if !box.hasPrefix("any ") { return box }
+            let protocols = box.dropFirst(4).split(separator: "&").map { $0.trimmingCharacters(in: .whitespaces) }
+            if protocols.allSatisfy({ own.contains($0) || own.contains(String($0.split(separator: ".").last ?? "")) }) { return box }
+        }
+        return nil
     }
 
     /// What the open app's types hold (kept from the last time, or worked out from the sources it runs) and what
@@ -520,6 +564,7 @@ enum LiveReload {
             }
             if let m = protocolDecl.firstMatch(in: line, range: range) {
                 let type = "protocol " + String(line[Range(m.range(at: 3), in: line)!])
+                conformances(String(line[Range(m.range(at: 3), in: line)!]))
                 scopes.append((indent, type))
                 if seen.insert(type + "\t").inserted { out.append(type + "\t") }
             } else if let owner, owner.hasPrefix("protocol "), let m = requirement.firstMatch(in: line, range: range) {

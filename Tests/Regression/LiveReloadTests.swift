@@ -148,6 +148,18 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertFalse(LiveReload.isGroup(String("\tselection: Mood?".prefix { $0 != "\t" })))
         XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: layout!.filter { !$0.contains("grow(_:)") }))
         XCTAssertFalse(LiveReload.declarationsChanged(before: layout!, after: layout!))
+        // An existential holds a grown enum only when the enum conforms to what it names: `any Shape` can't hold
+        // a Mood, `any Named` can when Mood is Named (even through an extension and a protocol that inherits
+        // Named), and Any or AnyHashable always can; AnyObject never.
+        let conformances = LiveReload.conformances(inLayout: layout! + [LiveReload.declarationGroup + "\tMood inherits Loud", LiveReload.declarationGroup + "\tLoud inherits Named"])
+        XCTAssertEqual(conformances["Square"], ["Shape", "Hashable"])
+        XCTAssertNil(LiveReload.existential(in: "any Shape", holding: "Mood", conformances: conformances))
+        XCTAssertNil(LiveReload.existential(in: "[AnyObject]", holding: "Mood", conformances: conformances))
+        XCTAssertEqual(LiveReload.existential(in: "(any Named)?", holding: "Mood", conformances: conformances), "any Named")
+        XCTAssertEqual(LiveReload.existential(in: "[String: any Shape & Hashable]", holding: "Mood", conformances: conformances), nil)
+        XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
+        XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")
+        XCTAssertEqual(LiveReload.existential(in: "Set<AnyHashable>", holding: "Mood", conformances: conformances), "AnyHashable")
         // An enum that grew is met by code the open app is still running: a timer's closure or an async function
         // switching over it, or printing it; never what a view's body (as the live copy names it) makes again at the
         // next draw.

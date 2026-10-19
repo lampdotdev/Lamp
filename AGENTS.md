@@ -813,7 +813,9 @@ spare: its values keep their size (`LiveSlots.casesAdded`). Only while nothing t
 in a plain collection: Swift uses the numbers after the last case for `nil` in an optional of it and for other enums'
 cases that carry it, which a new case would take over. That's looked for in every stored field, static and global of
 the new code and in the types the spares keep (`LiveReload.enumsHeld`), before the change goes in; an app that keeps
-values of any type (`Any`, `AnyObject`, `AnyHashable`, `any P`) reopens instead, since one could hide there. When an enum
+values of any type reopens instead, since one could hide there: `Any` or `AnyHashable`, or `any P` when the enum
+conforms to P, directly, in an extension or through a protocol that inherits P (`LiveReload.existential`; a model
+keeping `any Shape` is no reason to reopen for a Mood that grew, and `AnyObject` holds no enum). When an enum
 grew, every file of the app's is compiled again, so no code of the open app's meets a case it never knew (a switch over
 it, or printing it, reads past what its metadata describes); code already running keeps the version it started with,
 so the sources the open app runs, and those of every change that went in since it opened (`.lamp/live/old-code.txt`,
