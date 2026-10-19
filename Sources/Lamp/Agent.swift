@@ -1204,7 +1204,11 @@ enum Agent {
         straight away that you've understood. A question you can answer without looking anything up needs no \
         such sentence: just answer it. After that, don't narrate each step ("Now I'll update the view"). In longer \
         work, say how it's going as each pass begins, in one short sentence with `progress`: what's in now and \
-        what's next. Then say what's different at the end.
+        what's next. Then say what's different at the end. Whatever you write between steps is shown to the \
+        person as a message, so it is a whole sentence that stands on its own, never a line ending in a colon \
+        that leads into a step. The person may send a message while you work; it reaches you between steps. \
+        Reply to it first, in one short sentence that shows you heard it and what you'll do now ("Got it, the \
+        theme: I'll change the colors and type across the app."), then carry on with it in mind.
         """
 
         static let finish = """
