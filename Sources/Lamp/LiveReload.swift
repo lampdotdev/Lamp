@@ -655,10 +655,16 @@ enum LiveReload {
         let extensionDecl = try! NSRegularExpression(pattern: #"^(\s*)\(extension_decl\b[^"]*"([^"]+)""#)
         let inherits = try! NSRegularExpression(pattern: #" inherits="([^"]*)""#)
         let memberDecl = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|constructor_decl|subscript_decl)\b[^"]*"([^"]+)" interface_type="([^"]*)""#)
+        // What a member answers to from Objective-C, the node right under it: `@objc`, with the selector when one is
+        // given or implied (an override of a system class's method). Declared, since the open app's class goes on
+        // answering to a selector taken away or renamed unless every file is compiled.
+        let objcAttr = try! NSRegularExpression(pattern: #"^(\s*)\(objc_attr\b(?:.*? name="([^"]+)")?"#)
         // A case's raw value is the node right under it: a string's in quotes, a number's bare.
         let rawValue = try! NSRegularExpression(pattern: #"^\s*\(raw_value_expr=\w+\b.*? value=("(?:[^"\\]|\\.)*"|[^ )]+)"#)
         var scopes: [(indent: Int, type: String?)] = [], out: [String] = [], seen = Set<String>()
         var lastCase: Int?
+        // The member just read, whose `@objc` would be the next node under it: its indent and its entry so far.
+        var objcPending: (indent: Int, entry: String)?
         // The `some`-returning member being read, what its body names so far, the type it builds once found, the
         // indent of a conversion to the opaque type whose child names that type, and of a declaration inside it.
         var opaque: (indent: Int, key: String, names: [String], builds: String?, converting: Int?, inner: Int?)?
@@ -704,6 +710,16 @@ enum LiveReload {
                 }
                 closeOpaque()
             }
+            if let pending = objcPending {
+                if indent == pending.indent + 2, let m = objcAttr.firstMatch(in: line, range: range) {
+                    let selector = m.range(at: 2).location == NSNotFound ? "" : "(" + String(line[Range(m.range(at: 2), in: line)!]) + ")"
+                    let entry = pending.entry + " @objc" + selector
+                    if seen.insert(entry).inserted { out.append(entry) }
+                    objcPending = nil
+                    continue
+                }
+                if indent <= pending.indent { objcPending = nil }
+            }
             if rawValues, let index = lastCase, let m = rawValue.firstMatch(in: line, range: range) {
                 out[index] += " = " + String(line[Range(m.range(at: 1), in: line)!])
                 lastCase = nil
@@ -715,14 +731,15 @@ enum LiveReload {
             // nothing when it's a function, an accessor or a closure (a local).
             let owner = scopes.last?.type
             // Something declared at the top or in a type, never a function's local, under `declarationGroup`.
-            func declared(_ what: String) {
+            func declared(_ what: String, listed: Bool = true) {
                 // What the compiler declares by itself (a memberwise initializer, a conformance's synthesized
                 // methods) follows from what's written, which is listed already.
                 guard !line.contains(" implicit") else { return }
                 let place: String
                 if let owner, !owner.hasPrefix("\u{4}") { place = owner + "." } else if scopes.isEmpty { place = "" } else { return }
                 let entry = declarationGroup + "\t" + place + what
-                if seen.insert(entry).inserted { out.append(entry) }
+                if listed, seen.insert(entry).inserted { out.append(entry) }
+                objcPending = (indent, entry)
             }
             func conformances(_ type: String) {
                 if let m = inherits.firstMatch(in: line, range: range) { declared(type + " inherits " + String(line[Range(m.range(at: 1), in: line)!])) }
@@ -789,6 +806,8 @@ enum LiveReload {
                 if let owner = owner ?? (global ? "" : nil), rest.contains("readImpl=stored"), held || !rest.contains(" static") {
                     let entry = owner + "\t" + name + ": " + type
                     if seen.insert(entry).inserted { out.append(entry) }
+                    // A stored property's `@objc` is its accessors' from Objective-C, declared without listing it.
+                    declared(name + ": " + type, listed: false)
                 } else if !rest.contains("readImpl=stored") {
                     declared(name + ": " + type)
                 }

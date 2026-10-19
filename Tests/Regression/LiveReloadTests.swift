@@ -139,6 +139,7 @@ final class LiveReloadTests: XCTestCase {
         try fm.createDirectory(at: sources.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fm.copyItem(at: project.dir.appendingPathComponent("Sources"), to: sources)
         try """
+            import Foundation
             typealias Side = Int
             private typealias Secret = Int
             protocol Shape { func area() -> Int; var name: String { get set } }
@@ -157,6 +158,7 @@ final class LiveReloadTests: XCTestCase {
             struct Round: Shape { var r: Int; var name = ""; func area() -> Int { r } }
             struct Styled: Drawn { func mark() -> some Shape { Square(side: 1, name: "s") }; func n() -> some Numeric { 1 }; func t() -> some Equatable { "a" }; func p() -> some Equatable { n() }; func l() -> some Equatable { func local() -> some Equatable { 0 }; return String() } }
             struct Outer { enum Mood: Shape { case a, b; func area() -> Int { 0 }; var name: String { get { "" } set {} } } }
+            final class Tagged: NSObject { @objc(oldName) func a() {}; @objc func b() {}; override var description: String { "t" } }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
         let layout = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
         let shape = layout?.filter { $0.hasPrefix("protocol Shape") } ?? []
@@ -215,6 +217,10 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertTrue(layout!.contains(LiveReload.opaqueGroup + "\tStyled.l(): (Styled) -> () -> some Equatable\tString"), "\(layout!.filter { $0.contains("Styled.l") })")
         XCTAssertEqual(layout!.filter { $0.hasPrefix(LiveReload.opaqueGroup + "\tStyled.p(): (Styled) -> () -> some Equatable\t~") }.count, 1)
         XCTAssertTrue(declared.contains("Styled.mark(): (Styled) -> () -> some Shape"), "\(declared)")
+        // What a member answers to from Objective-C is declared: a selector renamed or taken away compiles every file.
+        for entry in ["Tagged.a(): (Tagged) -> () -> () @objc(oldName)", "Tagged.b(): (Tagged) -> () -> () @objc", "Tagged.description: String @objc(description)"] {
+            XCTAssertTrue(declared.contains(entry), "\(declared.filter { $0.hasPrefix("Tagged") })")
+        }
         // The same sources read from another folder (the copy the app runs) give the same digest: a declaration
         // is named with where it is, which isn't part of what it builds.
         let elsewhere = sources.deletingLastPathComponent().appendingPathComponent("running")
@@ -247,6 +253,9 @@ final class LiveReloadTests: XCTestCase {
         let otherID = try await layoutWith([("Round(r: 1)", "Square(side: 1, name: \"s\")"),
                                             ("final class Item: Identifiable { var name = \"\" }", "final class Item: Identifiable { var name = \"\"; var id: String { name } }")])
         XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: otherID).problem, "the typealias Item.ID changed from ObjectIdentifier to String")
+        let renamedSelector = try await layoutWith([("var id: String { name } }", "}"), ("@objc(oldName)", "@objc(newName)")])
+        XCTAssertNil(LiveReload.layoutProblem(before: layout, after: renamedSelector).problem)
+        XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: renamedSelector))
         XCTAssertEqual(LiveReload.existential(in: "any CustomDebugStringConvertible", holding: "Mood", conformances: conformances), "any CustomDebugStringConvertible")
         XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
         XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")

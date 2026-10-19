@@ -4497,8 +4497,11 @@ enum Template {
         /// protocols. The class is completed first; one the runtime still doesn't have is left alone.
         nonisolated private static func attach(_ category: Category, to kept: UnsafeRawPointer, accessor: UnsafeRawPointer?) -> Int {
             if let accessor { _ = unsafeBitCast(accessor, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0) }
-            guard isRealized(kept) else { return 0 }
             let target: AnyClass = unsafeBitCast(kept, to: AnyClass.self)
+            // A class of the system's (an extension of ByteCountFormatter) has no accessor of the app's, and may not
+            // have been used yet: asking the runtime for it by name completes it.
+            if accessor == nil, !isRealized(kept) { _ = objc_getClass(class_getName(target)) }
+            guard isRealized(kept) else { return 0 }
             var count = 0
             for (list, to) in [(category.instance, target), (category.classMethods, object_getClass(target))] {
                 guard let list, let to else { continue }

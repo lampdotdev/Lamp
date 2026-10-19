@@ -748,7 +748,7 @@ opaque too (a modifier's `some View`) it's listed by a digest of the calls and t
 compiler prints both as `some View`; a view's own body, wrapped by the live copy, and a private member are left out) (`LiveReload.reloadable`, comparing with the sources the
 open app runs, kept in `.lamp/live/running`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
 linked into a library. Every file is compiled when what's declared changed (a function, an initializer, a computed
-property, a conformance: `LiveReload.declarationGroup`, `declarationsChanged`), since an unchanged caller may then mean
+property, a conformance, a member's `@objc` and its selector: `LiveReload.declarationGroup`, `declarationsChanged`), since an unchanged caller may then mean
 another one (a new overload, a method where a protocol's default stood in), and a file taken away while another
 arrives (one renamed) reopens the app, since what was private to it is named after its file and would start over. The library is what the app loads when asked with a request signed with its token, only from its
 own `.lamp/live` (`LampLive` in LampSupport, under `#if LAMP_LIVE`). It points the app's own calls at the new
