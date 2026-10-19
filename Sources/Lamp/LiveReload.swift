@@ -1015,10 +1015,16 @@ enum LiveSlots {
     /// named in it that holds one, as far down as it goes, or any type that isn't a plain value Swift or SwiftUI has
     /// (an object of Lamp's building blocks, `LampAPI`, or of the system's). Made again, such an object would be a
     /// second one beside the one the open app already holds, and what's done to one wouldn't reach the other.
-    private static func holdsObject(_ type: String, classes: Set<String>, layout: [String: [String]], seen: inout Set<String>) -> Bool {
+    static func holdsObject(_ type: String, classes: Set<String>, layout: [String: [String]], seen: inout Set<String>) -> Bool {
         let names = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
         for match in names.matches(in: type, range: NSRange(type.startIndex..., in: type)) {
-            var name = String(type[Range(match.range, in: type)!])
+            let range = Range(match.range, in: type)!
+            // A tuple's or a case's label (`(width: Int, height: Int)`) names an element, not a type: it comes just
+            // after `(` or `,` and before a colon. A dictionary's key comes after `[`, so it's still read.
+            let before = type[..<range.lowerBound].last(where: { !$0.isWhitespace })
+            let after = type[range.upperBound...].first(where: { !$0.isWhitespace })
+            if after == ":", before == "(" || before == "," { continue }
+            var name = String(type[range])
             // A metatype is a value, whatever it names.
             for suffix in [".Type", ".Protocol"] where name.hasSuffix(suffix) { name.removeLast(suffix.count) }
             let last = String(name.split(separator: ".").last ?? "")
@@ -1027,6 +1033,9 @@ enum LiveSlots {
                 guard seen.insert(name).inserted else { continue }
                 for member in members {
                     guard let colon = member.range(of: ": ") else { continue }
+                    // Lamp's own spare places hold only properties moved into them, which the layout lists as the
+                    // type's own fields with their own types.
+                    if member[..<colon.lowerBound].split(separator: "\t").last?.hasPrefix("__lamp") == true { continue }
                     if holdsObject(String(member[colon.upperBound...]), classes: classes, layout: layout, seen: &seen) { return true }
                 }
                 continue
