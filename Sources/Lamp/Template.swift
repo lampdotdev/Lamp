@@ -5094,20 +5094,27 @@ enum Template {
             for window in NSApp.windows where isAppWindow(window) && isOn { attach(to: window) }
         }
 
-        /// The button that reloads the app for a change waiting on it: a capsule in the accent colour beside the wand,
-        /// with a soft glow that comes and goes, so it's seen without being in the way. A glass button in the title
-        /// bar draws no capsule of its own until it's pointed at, so this one draws its own, the same over a full-bleed
-        /// window's content. A click asks Lamp to put the change in, by reopening the app as it was.
+        /// The button that reloads the app for a change waiting on it, beside the wand: tinted glass in the accent
+        /// colour whose tint brightens and settles again, so it's seen without being in the way (a push button in
+        /// the accent colour before macOS 26). Its tint is all that moves: faded as a whole it would look disabled.
+        /// A click asks Lamp to put the change in, by reopening the app as it was.
         @MainActor final class ReloadButton: NSButton {
+            private var pulse: Timer?
+
             static func make(floating: Bool) -> ReloadButton {
                 let button = ReloadButton(title: "Reload", image: NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil) ?? NSImage(),
                                           target: Opener.shared, action: #selector(Opener.reload(_:)))
                 button.identifier = NSUserInterfaceItemIdentifier("lampReload")
                 button.imagePosition = .imageLeading
                 button.imageHugsTitle = true
-                button.isBordered = false
-                button.contentTintColor = .white
-                button.wantsLayer = true
+                if #available(macOS 26, *) {
+                    button.bezelStyle = .glass
+                    button.borderShape = .capsule
+                    button.tintProminence = .primary
+                } else {
+                    button.bezelStyle = .push
+                }
+                button.bezelColor = .controlAccentColor
                 button.toolTip = "Reload the app to see the latest change"
                 button.setAccessibilityLabel("Reload to see the latest change")
                 button.isHidden = true
@@ -5118,45 +5125,28 @@ enum Template {
             func show(_ state: ReloadState, height: CGFloat) {
                 isHidden = state == .none
                 isEnabled = state == .ready
-                let words = state == .reloading ? "Reloading…" : "Reload"
-                attributedTitle = NSAttributedString(string: words, attributes: [
-                    .foregroundColor: NSColor.white, .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)])
-                guard !isHidden else { return glow(false) }
+                title = state == .reloading ? "Reloading…" : "Reload"
                 sizeToFit()
-                frame.size = NSSize(width: frame.width + 22, height: min(height, 24))
-                glow(state == .ready)
-                needsDisplay = true
+                breathe(state == .ready)
             }
 
-            private func glow(_ on: Bool) {
-                guard let layer else { return }
-                if on, layer.animation(forKey: "lampGlow") == nil {
-                    layer.shadowColor = NSColor.controlAccentColor.cgColor
-                    layer.shadowOffset = .zero
-                    layer.shadowRadius = 7
-                    let pulse = CABasicAnimation(keyPath: "shadowOpacity")
-                    pulse.fromValue = 0
-                    pulse.toValue = 0.9
-                    pulse.duration = 1.1
-                    pulse.autoreverses = true
-                    pulse.repeatCount = .infinity
-                    pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                    layer.add(pulse, forKey: "lampGlow")
-                } else if !on {
-                    layer.removeAnimation(forKey: "lampGlow")
-                    layer.shadowOpacity = 0
+            private func breathe(_ on: Bool) {
+                guard on else {
+                    pulse?.invalidate()
+                    pulse = nil
+                    bezelColor = .controlAccentColor
+                    return
+                }
+                guard pulse == nil else { return }
+                let start = Date()
+                pulse = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        let phase = (1 - cos(Date().timeIntervalSince(start) * 2 * .pi / 2.2)) / 2
+                        self?.bezelColor = NSColor.controlAccentColor.blended(withFraction: 0.4 * phase, of: .white)
+                    }
                 }
             }
 
-            override var wantsUpdateLayer: Bool { true }
-            override func updateLayer() {
-                guard let layer else { return }
-                layer.masksToBounds = false
-                layer.cornerRadius = bounds.height / 2
-                layer.backgroundColor = NSColor.controlAccentColor
-                    .withAlphaComponent(!isEnabled ? 0.6 : isHighlighted ? 0.8 : 1).cgColor
-            }
-            override var isHighlighted: Bool { didSet { needsDisplay = true } }
             // One click works in a window in the back too, as it does on the wand beside it.
             override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
         }
@@ -15479,6 +15469,13 @@ enum Template {
     rm -rf "$APP"
     mkdir -p "$APP/Contents/MacOS"
     cp "$BIN" "$APP/Contents/MacOS/{{EXE}}"
+    # SwiftPM records the oldest macOS the app runs on as the SDK it was built with, and macOS draws an app the way
+    # the SDK it names did: Liquid Glass only for one built with macOS 26's or later. So the copy names the SDK it
+    # was really built with, the oldest macOS staying as it is.
+    if SDKVER="$(xcrun --sdk "${SDKROOT:-macosx}" --show-sdk-version 2>/dev/null)" \
+      && MINOS="$(otool -l "$APP/Contents/MacOS/{{EXE}}" | awk '/minos/ {print $2; exit}')" && [ -n "$MINOS" ]; then
+      xcrun vtool -set-build-version macos "$MINOS" "$SDKVER" -replace -output "$APP/Contents/MacOS/{{EXE}}" "$APP/Contents/MacOS/{{EXE}}" >/dev/null 2>&1 || true
+    fi
     cat > "$APP/Contents/Info.plist" <<PLIST
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
