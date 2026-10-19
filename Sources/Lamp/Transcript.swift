@@ -216,14 +216,17 @@ enum ChatItem: Identifiable {
     /// out of the chat and Lamp starts runs of its own (a build to fix). What comes after the last summary is a run
     /// still going, whose steps show as they come. Lamp's note that it reopened the app stays out, since it explains
     /// the window going away. A summary times its run and is otherwise left out; with Agent Details it's a line of
-    /// its own and nothing is gathered.
+    /// its own and nothing is gathered. A run that ended on a question still waiting for its answer isn't gathered
+    /// until it's answered: the card is clickable before the run's summary arrives, and nothing above it may change
+    /// height while it waits.
     static func items(_ lines: [LogLine], gather: Bool) -> [ChatItem] {
         guard gather else { return items(lines) }
+        let waiting = Talk.open(in: lines)?.id
         var result: [ChatItem] = []
         var run: [LogLine] = []
         for line in lines {
             guard line.kind == .summary else { run.append(line); continue }
-            result += folded(run, summary: line)
+            result += run.contains { $0.id == waiting } ? items(run) : folded(run, summary: line)
             run = []
         }
         return result + items(run)
@@ -232,7 +235,8 @@ enum ChatItem: Identifiable {
     /// A finished run's lines, its steps under one line above its last message. What the agent said on the way
     /// (its progress lines and messages before the last) goes with the steps: the last message is the answer.
     private static func folded(_ run: [LogLine], summary: LogLine) -> [ChatItem] {
-        let answer = run.last { $0.kind == .agent }?.id
+        // A run that asked has its card for an answer: what it said before the card goes with the steps.
+        let answer = run.contains { $0.kind == .ask } ? nil : run.last { $0.kind == .agent }?.id
         let isStep = { (line: LogLine) in
             (line.kind == .status && line.text != ChatLook.reloaded) || line.kind == .tool || line.kind == .progress
                 || (line.kind == .agent && line.id != answer)
@@ -246,8 +250,8 @@ enum ChatItem: Identifiable {
         }
         let others = run.filter { !isStep($0) }
         guard !steps.isEmpty else { return items(others) }
-        // Above the answer, the run's last message; at the run's end when it has none.
-        let place = others.lastIndex { $0.kind == .agent } ?? others.count
+        // Above the answer, the run's last message or its card; at the run's end when it has neither.
+        let place = others.lastIndex { $0.kind == .agent || $0.kind == .ask } ?? others.count
         return items(Array(others[..<place])) + [.work(id: summary.id, title: workedFor(summary.text), steps: steps)]
             + items(Array(others[place...]))
     }

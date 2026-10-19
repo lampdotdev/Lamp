@@ -86,6 +86,18 @@ final class ProgressLineTests: XCTestCase {
         XCTAssertEqual(folded.symbol, ChatLook.progressSymbol)
     }
 
+    /// A run that ended on a question still waiting isn't gathered when its summary arrives, so nothing above the
+    /// card moves; once it's answered, it is.
+    func testNothingAboveAWaitingCardFolds() {
+        var lines = [LogLine(kind: .user, text: "go"), LogLine(kind: .agent, text: "I'll look."),
+                     LogLine(kind: .progress, text: "One."), LogLine(kind: .ask, text: "which?",
+                                                                    ask: Talk.Ask(layout: .steps, questions: [])),
+                     LogLine(kind: .summary, text: "Worked for 9s · $0")]
+        XCTAssertEqual(shape(ChatItem.items(lines, gather: true)), ["go", "I'll look.", "progress:One.", "which?"])
+        lines[3].ask?.answers = ["A"]
+        XCTAssertEqual(shape(ChatItem.items(lines, gather: true)), ["go", "Worked for 9 s:I'll look.,One.", "which?"])
+    }
+
     /// Spaced as the agent's messages are, two in a row close together.
     func testSpacedAsMessages() {
         let progress = ChatItem.line(LogLine(kind: .progress, text: "One."))
