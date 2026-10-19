@@ -292,8 +292,10 @@ enum LiveReload {
     /// there was compiled for the cases it had, and a new case lands in another's arm or past the end; printing
     /// it reads the old description of the enum. So the sources the open app runs, and those of every change that
     /// went in before (`recordOldCode`, since what an earlier change's code started may still be running), are read
-    /// for a `switch` over the enum, or an interpolation of it, in an escaping closure made outside a view's body
-    /// (what a body makes is made again at the next draw), in an async closure anywhere, or in an async function.
+    /// for a `switch` over the enum, or an interpolation of it, in an escaping closure that outlives a draw: one
+    /// made outside a view's body, or one a body hands to anything but SwiftUI (a Timer, a dispatch queue, a Task,
+    /// the app's own code keep theirs; what SwiftUI is handed, a Button's action, is made again at the next draw),
+    /// in an async closure anywhere, or in an async function.
     @MainActor static func enumsMetByOldCode(_ project: LampProject, grown: [String]) async -> String? {
         guard let dump = await dump(of: running(project), in: project, module: project.exe, macOS: Template.macMinimum(project)) else {
             return "the compiler couldn't say where the open app uses the enums that grew"
@@ -324,11 +326,17 @@ enum LiveReload {
         let closure = try! NSRegularExpression(pattern: #"^(\s*)\((?:closure_expr|autoclosure_expr)\b(.*)$"#)
         let function = try! NSRegularExpression(pattern: #"^(\s*)\((?:func_decl|accessor_decl|constructor_decl)\b[^"]*(?:"([^"]+)")? interface_type="([^"]*)""#)
         let scope = try! NSRegularExpression(pattern: #"^(\s*)\((?:var_decl|subscript_decl|struct_decl|class_decl|enum_decl|actor_decl|extension_decl|protocol)\b"#)
+        // What a call calls: the module before "(file)" in the declaration it names, kept with the call itself,
+        // since the arguments (a closure among them) are the call's children, beside the function, not under it.
+        let call = try! NSRegularExpression(pattern: #"^(\s*)\(call_expr\b"#)
+        let callee = try! NSRegularExpression(pattern: #"^(\s*)\(declref_expr\b.*? decl="([\w.]+?)\.\(file\)"#)
         let switchStmt = try! NSRegularExpression(pattern: #"^(\s*)\(switch_stmt\b"#)
         let casePattern = try! NSRegularExpression(pattern: #"^(\s*)\(pattern_enum_element\b.*? type="([^"]*)""#)
         let interpolation = try! NSRegularExpression(pattern: #"^(\s*)\(declref_expr\b.*? type="[^"]*\(([^"()]*)\) -> \(\)".*? decl="Swift\.\(file\)\.DefaultStringInterpolation\.appendInterpolation"#)
         var scopes: [(indent: Int, kind: Kind)] = [], uses: [String] = [], seen = Set<String>()
         var switching: Int?
+        // The calls around the line being read, by the module each one's function is from.
+        var calls: [Int] = [], callees: [(indent: Int, module: String)] = []
         func note(_ type: String, _ how: String) {
             let use = type + "\t" + place() + "\t" + how
             if seen.insert(use).inserted { uses.append(use) }
@@ -354,12 +362,21 @@ enum LiveReload {
             let indent = line.prefix { $0 == " " }.count
             guard line.dropFirst(indent).first == "(" else { continue }
             while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
+            while let last = callees.last, last.indent >= indent { callees.removeLast() }
+            while let last = calls.last, last >= indent { calls.removeLast() }
             if let at = switching, at >= indent { switching = nil }
+            if call.firstMatch(in: line, range: range) != nil { calls.append(indent) }
+            // The call's function is the first thing named under it; what its arguments name is theirs.
+            if let m = callee.firstMatch(in: line, range: range), let at = calls.last, callees.last?.indent != at {
+                callees.append((at, String(line[Range(m.range(at: 2), in: line)!])))
+            }
             if bodyDecl.firstMatch(in: line, range: range) != nil {
                 scopes.append((indent, .body))
             } else if let m = closure.firstMatch(in: line, range: range) {
                 let rest = String(line[Range(m.range(at: 2), in: line)!])
-                scopes.append((indent, rest.contains(" async") ? .async : rest.contains(" escaping") ? .escaping : .other))
+                // An escaping closure handed to anything but SwiftUI is kept by it, however deep in a body it's made.
+                let kept = !["SwiftUI", "SwiftUICore"].contains(callees.last?.module ?? "SwiftUI")
+                scopes.append((indent, rest.contains(" async") ? .async : rest.contains(" escaping") ? (kept ? .async : .escaping) : .other))
             } else if let m = function.firstMatch(in: line, range: range) {
                 let type = String(line[Range(m.range(at: 3), in: line)!])
                 let name = m.range(at: 2).location == NSNotFound ? nil : String(line[Range(m.range(at: 2), in: line)!])

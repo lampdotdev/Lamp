@@ -763,8 +763,10 @@ app's copy, or to the library's own for a type the app doesn't have (a new one, 
 conformance's descriptor and witness table are treated the same, since the runtime tells generic types apart by them
 too (`[AnyHashable: …]` keys), which is why a protocol's requirements, their accessors included, are part of the
 layout a change is held to (`LiveReload.members`): the app's witness tables must fit. What the library's data names
-is worked out before anything is pointed at the new code, so a change refused leaves the app as it was. So is a private stored global's or static's addressor,
-since calls to it are direct too, and the library would otherwise keep a second copy of the value. The mangled type
+is worked out before anything is pointed at the new code, so a change refused leaves the app as it was. So is every
+stored global's or static's addressor, since the library's own code calls its own copy directly and would otherwise
+keep a second copy of the value; through the table the library's accessors reach the app's storage, so they are
+code like any other, and a `didSet` added to a static goes in. The mangled type
 names and the records of conformances the change adds, which the library's data still holds, are pointed at the app's
 descriptors as it loads (`LampLive.redirectDescriptors`, writing through the library's text, which a Mac app without
 the hardened runtime may). A class Swift makes as the app runs (a generic class at each type it's used at, a class under
@@ -775,13 +777,16 @@ as any call) at `LampLive.classMade`, which records every class made and points 
 change points every table made so far the same way. A witness table (what a call through a protocol goes through) holds a
 thunk for each requirement, which calls whichever method answers it, so one compiled when the protocol's own default
 answered goes on calling it after the change answers it in the type: the app's tables, and those the runtime makes
-from them for a generic type (recorded through `swift_getWitnessTable` the same way, `tableMade`), are pointed at the
-new thunks. A default argument is made by a function of its own, which every caller calls, so it's rebound like any
+(recorded through `swift_getWitnessTable` the same way, `tableMade`; a conformance with no table of its own in the
+image, to a system protocol that may change between releases, has its table asked for and recorded at launch and when
+a change brings one, `recordTables`, since the first to ask may be a cast rather than a hooked request), are pointed
+at the new thunks. A default argument is made by a function of its own, which every caller calls, so it's rebound like any
 function. What a class answers to from Objective-C (an override of a system class's method, a selector's target) is in
-its method list, not its table, so a kept class takes its copy's methods (`takeMethods`). What `LampLive` can't make
-right it refuses, and the app reopens: a class's method table that changed shape, or a class whose methods the change
-lists in another order than the app (one added, taken away or moved), since a table made after it would be laid out
-from the app's list. The
+its method list, not its table, so a kept class takes its copy's methods (`takeMethods`, read off the copy's class data,
+since the runtime has never seen the copy). What `LampLive` can't make right it refuses, and the app reopens: a class's
+method table that changed shape, a class whose methods the change lists in another order than the app (one added, taken
+away or moved), since a table made after it would be laid out from the app's list, or a kept class that answers to
+something from Objective-C its copy no longer has (`removedMethods`), which it would go on answering with old code. The
 build then waits to be installed until the app closes (`LiveReload.awaitInstall`, which unlike a held build doesn't
 keep the agent off the app). Anything else needs the app reopened, with why in the chat's
 details (`LiveReload.Verdict`), so the rules can be tuned by what happens. For a request's change, while the app is open, Lamp doesn't reopen it under the person: the build is held (`Store.awaitReload`, `Runtime.awaitReload`), the app shows a Reload button beside the wand in its title bar (`LampMagic.ReloadButton`, an accent capsule with a glow that comes and goes, shown with a `reloadReady` notification) and the chat a line with one too (`.reload`, under the agent's answer), and a click on either reopens it where it was (`Store.reloadWaiting`; the app asks with `reloadNow`, which puts in only a change Lamp holds). The agent is told the change waits for the person (`reloadNote`) and doesn't look or use the app again in that request. Closing the app installs it too. Open App, Undo and a look with `reopen` still reopen it; when the person keeps the app open at its question (unsaved work), the build waits for Reload the same way. A live build reads the app's own files
@@ -827,8 +832,10 @@ grew, every file of the app's is compiled again, so no code of the open app's me
 it, or printing it, reads past what its metadata describes); code already running keeps the version it started with,
 so the sources the open app runs, and those of every change that went in since it opened (`.lamp/live/old-code.txt`,
 `LiveReload.recordOldCode`: what an earlier change's code started may still be running), are read for a switch over the
-enum, or an interpolation of it, in an escaping closure made outside a view's body, an async closure or an async
-function (`LiveReload.enumsMetByOldCode`), and the app reopens when there is one. The enum's metadata stays the change's own rather
+enum, or an interpolation of it, in an escaping closure that outlives a draw (one made outside a view's body, or one a
+body hands to anything but SwiftUI: a Timer's, a dispatch queue's, the app's own; a Button's action is made again at
+the next draw), an async closure or an async function (`LiveReload.enumsMetByOldCode`), and the app reopens when there
+is one. The enum's metadata stays the change's own rather
 than the app's (`LiveReload.compile(keep:)`, renamed `$lampown` so `LampLive` binds every later change to it), since
 the app's doesn't know the new cases. Which property is in which spare
 (`.lamp/live/slots.json`) is put back into each fresh copy (they come back as additions, and `LiveSlots.fit` puts

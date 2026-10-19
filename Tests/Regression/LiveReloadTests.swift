@@ -15,6 +15,9 @@ final class LiveReloadTests: XCTestCase {
         import Foundation
         import Observation
         @Observable final class Lab { var n = 0; func m() -> String { "m \\(n)" } }
+        struct Q: Comparable { var v: Int; static func < (a: Q, b: Q) -> Bool { a.v < b.v } }
+        func boxed(_ a: Any) -> Bool { if let c = a as? any Comparable { return above(c) }; return false }
+        func above<T: Comparable>(_ x: T) -> Bool { x > x }
         struct Point: Hashable { var x: Int }
         protocol Named { var name: String { get } }
         enum Ids { private static var next = 100; static func take() -> Int { next += 1; return next } }
@@ -31,6 +34,9 @@ final class LiveReloadTests: XCTestCase {
         import Foundation
         import Observation
         @Observable final class Lab { var n = 0; func m() -> String { "M \\(n)" } }
+        struct Q: Comparable { var v: Int; static func < (a: Q, b: Q) -> Bool { a.v < b.v }; static func > (a: Q, b: Q) -> Bool { true } }
+        func boxed(_ a: Any) -> Bool { if let c = a as? any Comparable { return above(c) }; return false }
+        func above<T: Comparable>(_ x: T) -> Bool { x > x }
         struct Point: Hashable { var x: Int }
         protocol Named { var name: String { get } }
         extension Point: Named { var name: String { "p\\(x)" } }
@@ -56,13 +62,13 @@ final class LiveReloadTests: XCTestCase {
                 let counter = Counter()
                 let keys = keyed()
                 let box = Box("s"), lab = Lab()
-                print(describe(items[0]), Ids.take(), counter.step(), keys[AnyHashable(Point(x: 1))] ?? "nil", box.show(), lab.m())
+                print(describe(items[0]), Ids.take(), counter.step(), keys[AnyHashable(Point(x: 1))] ?? "nil", box.show(), lab.m(), boxed(Q(v: 1)))
                 let key = SymmetricKey(data: Data("x".utf8))
                 let signature = HMAC<SHA256>.authenticationCode(for: Data("reload\\n\\(path)".utf8), using: key).map { String(format: "%02x", $0) }.joined()
                 MainActor.assumeIsolated { LampLive.shared.load(path, signature: signature) }
                 print((try? String(contentsOf: URL(fileURLWithPath: folder + "/reloaded.txt"), encoding: .utf8)) ?? "no answer")
                 print(describe(items[0]), Ids.take(), counter.step(), keys[AnyHashable(Point(x: 1))] ?? "nil", keyed()[AnyHashable(Point(x: 1))] ?? "nil",
-                      box.show(), Box(2).show(), lab.m())
+                      box.show(), Box(2).show(), lab.m(), boxed(Q(v: 1)))
                 _ = Counter()
             }
         }
@@ -96,13 +102,15 @@ final class LiveReloadTests: XCTestCase {
                                        "-Xlinker", "-weak_reference_mismatches", "-Xlinker", "weak"])
         _ = try run("/usr/bin/codesign", ["--force", "-s", "-", library])
         let output = try run(root.appendingPathComponent("app").path, [root.path]).components(separatedBy: "\n")
-        XCTAssertEqual(output[0], "point 1 101 step 1 one box s m 0")
+        XCTAssertEqual(output[0], "point 1 101 step 1 one box s m 0 false")
         XCTAssertTrue(output[1].hasPrefix("ok "), "the app didn't take the change: \(output[1])")
         // The value made before is a Point still, with the conformance the change gave it; the static went on
         // counting; the object's method and deinit are the new ones; the key made before finds the new dictionary's;
         // the generic class's method is the new one at the type it was used at before and at a new one; an
-        // @Observable class, which the Objective-C runtime only meets when Swift first uses it, takes the change.
-        XCTAssertEqual(output[2], "NAMED p1 102 STEP 11 one ONE BOX s BOX 2 M 0")
+        // @Observable class, which the Objective-C runtime only meets when Swift first uses it, takes the change; a
+        // Comparable reached only through a cast, whose witness table the runtime made before the change, answers
+        // with the `>` the change gave it in place of the protocol's default.
+        XCTAssertEqual(output[2], "NAMED p1 102 STEP 11 one ONE BOX s BOX 2 M 0 true")
         XCTAssertEqual(output[3], "GONE 0")
     }
 
@@ -237,12 +245,22 @@ final class LiveReloadTests: XCTestCase {
                 var body: AnyView { AnyView(__lampBody) }
                 @ViewBuilder var __lampBody: some View { Button("x") { switch model.mood { case .a: break; case .b: break } } }
             }
+            struct W: View {
+                @State var model = Model()
+                var body: AnyView { AnyView(__lampBody) }
+                @ViewBuilder var __lampBody: some View {
+                    Text("w").onAppear { Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in switch model.mood { case .a: break; case .b: break } } }
+                }
+            }
             """.write(to: sources.appendingPathComponent("Moods.swift"), atomically: true, encoding: .utf8)
         let dumped = await LiveReload.dump(of: sources, in: project, module: project.exe, macOS: "14.0")
         let dump = try XCTUnwrap(dumped)
         XCTAssertEqual(LiveReload.oldCode(meeting: ["Mood"], inDump: dump),
                        "start() switches over Mood in code that may still be running (a timer, a task, an observer), which doesn't know the new cases")
         XCTAssertNil(LiveReload.oldCode(meeting: ["Other"], inDump: dump))
+        // A closure a body hands to Foundation (a Timer's, in onAppear) is kept by it, unlike a Button's action.
+        let uses = LiveReload.oldCodeUses(inDump: dump)
+        XCTAssertEqual(uses.filter { $0.hasPrefix("Mood\t") }.count, 3, "\(uses)")   // start()'s timer, tick()'s print, W's timer
         let onlyTick = dump.components(separatedBy: "\n").filter { !$0.contains("Timer") }.joined(separator: "\n")
         XCTAssertEqual(LiveReload.oldCode(meeting: ["Mood"], inDump: onlyTick), "tick() prints Mood in code that may still be running (a timer, a task, an observer), which doesn't know the new cases")
         // The record outlives a change: the timer's switch, recorded from the installed sources, still counts once a
