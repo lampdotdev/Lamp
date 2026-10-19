@@ -192,8 +192,11 @@ enum LiveReload {
             }
         }
         // A type taken away is still in the open app, with its objects and statics, until it reopens: its layout
-        // is kept, so one brought back under the same name is held to what it was.
-        let kept = now + before.filter { new[String($0.prefix { $0 != "\t" })] == nil }
+        // is kept, so one brought back under the same name is held to what it was. So is an alias taken away, each
+        // on its own, since a type kept that way still reads by it.
+        let remaining = aliases(now)
+        let kept = now + before.filter { let group = String($0.prefix { $0 != "\t" }); return group != aliasGroup && new[group] == nil }
+            + before.filter { $0.hasPrefix(aliasGroup + "\t") && aliases([$0]).keys.allSatisfy { remaining[$0] == nil } }
         return (nil, kept)
     }
 
@@ -220,7 +223,7 @@ enum LiveReload {
                                                 macOS: Template.macMinimum(project)) + " 2>/dev/null", for: project, cwd: sources(project)) { output.append($0) }
         guard status == 0 else { return "the compiler couldn't say what holds the enums that grew" }
         let held = members(inDump: output.joined(separator: "\n"), held: true).compactMap { entry -> (String, String)? in
-            guard !isGroup(entry), let colon = entry.range(of: ": ") else { return nil }
+            guard !isGroup(String(entry.prefix { $0 != "\t" })), let colon = entry.range(of: ": ") else { return nil }
             return (String(entry.prefix { $0 != "\t" }), String(entry[colon.upperBound...]))
         } + LiveSlots.mapping(project).flatMap { type, properties in properties.map { (type, $0.value.type) } }
         // A value of the enum could hide in what holds anything at all, where its type can't be seen.
@@ -356,7 +359,7 @@ enum LiveReload {
         let caseDecl = try! NSRegularExpression(pattern: #"^(\s*)\(enum_element_decl\b[^"]*"([^"]+)" interface_type="([^"]*)""#)
         // A typealias, with what it names; an extension, which puts its members under its type; what a type or an
         // extension conforms to; and a function, initializer or subscript, by its name and type (`declarationGroup`).
-        let aliasDecl = try! NSRegularExpression(pattern: #"^(\s*)\(typealias\b[^"]*"([^"]+)" interface_type="[^"]*".*? type="([^"]*)""#)
+        let aliasDecl = try! NSRegularExpression(pattern: #"^(\s*)\(typealias\b[^"]*? range=\[([^:\]]*):[^\]]*\][^"]*"([^"]+)" interface_type="[^"]*" access=(\w+).*? type="([^"]*)""#)
         let extensionDecl = try! NSRegularExpression(pattern: #"^(\s*)\(extension_decl\b[^"]*"([^"]+)""#)
         let inherits = try! NSRegularExpression(pattern: #" inherits="([^"]*)""#)
         let memberDecl = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|constructor_decl|subscript_decl)\b[^"]*"([^"]+)" interface_type="([^"]*)""#)
@@ -419,7 +422,12 @@ enum LiveReload {
                 conformances(type)
                 scopes.append((indent, type))
             } else if let m = aliasDecl.firstMatch(in: line, range: range) {
-                let name = String(line[Range(m.range(at: 2), in: line)!]), type = String(line[Range(m.range(at: 3), in: line)!])
+                var name = String(line[Range(m.range(at: 3), in: line)!])
+                let type = String(line[Range(m.range(at: 5), in: line)!]), access = String(line[Range(m.range(at: 4), in: line)!])
+                // One private to its file is known by its file too: another file may have one of the same name.
+                if ["private", "fileprivate"].contains(access) {
+                    name = ((String(line[Range(m.range(at: 2), in: line)!]) as NSString).lastPathComponent) + ":" + name
+                }
                 if let owner, !owner.hasPrefix("\u{4}") {
                     if seen.insert(aliasGroup + "\t" + owner + "." + name + " = " + type).inserted { out.append(aliasGroup + "\t" + owner + "." + name + " = " + type) }
                 } else if scopes.isEmpty, seen.insert(aliasGroup + "\t" + name + " = " + type).inserted {
