@@ -325,8 +325,9 @@ final class Shelf: ObservableObject {
 
     // MARK: Taste map
 
+    /// By id, so the same shelf gives the same signature however its bottles were loaded.
     private var signature: String {
-        bottles.map { "\($0.id)\($0.score ?? 0)\($0.intensity)\($0.family)\($0.isRetired)\($0.verdict ?? "")" }.joined() + profile
+        bottles.sorted { $0.id < $1.id }.map { "\($0.id)\($0.score ?? 0)\($0.intensity)\($0.family)\($0.isRetired)\($0.verdict ?? "")" }.joined() + profile
     }
 
     func refreshTasteMapSoon(force: Bool = false) {

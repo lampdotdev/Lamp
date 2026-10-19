@@ -34,10 +34,10 @@ struct ShelfView: View {
             }
         }
         let retired = shelf.retired
-        let perRetired = perPlank + 2
-        for i in stride(from: 0, to: retired.count, by: perRetired) {
+        // Retired bottles are shorter but just as wide, so they fit as many to a plank as the others.
+        for i in stride(from: 0, to: retired.count, by: perPlank) {
             result.append(Plank(id: "retired-\(i)", title: i == 0 ? "retired" : nil,
-                                bottles: Array(retired.dropFirst(i).prefix(perRetired)), retired: true))
+                                bottles: Array(retired.dropFirst(i).prefix(perPlank)), retired: true))
         }
         return result
     }
