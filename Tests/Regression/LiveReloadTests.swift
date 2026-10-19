@@ -3,7 +3,8 @@ import XCTest
 
 /// A change put into an open app (LiveReload) must leave the app's types the app's: a value made before the change
 /// is still of its type after it (a cast, a dictionary key, a view's identity), a conformance the change adds is
-/// found, a private static keeps its value, and a class's methods and deinit are the new ones. Run for real: a small
+/// found, a private static keeps its value, and a class's methods and deinit are the new ones, a generic class's at
+/// every type it's used at. Run for real: a small
 /// app built as a live build is, with `LampLive` out of the template, loads a change compiled, rewritten
 /// (`LiveObject`) and linked as Lamp does it.
 final class LiveReloadTests: XCTestCase {
@@ -16,6 +17,7 @@ final class LiveReloadTests: XCTestCase {
         protocol Named { var name: String { get } }
         enum Ids { private static var next = 100; static func take() -> Int { next += 1; return next } }
         class Counter { var n = 0; func step() -> String { n += 1; return "step \\(n)" }; deinit { print("gone \\(n)") } }
+        class Box<T> { var value: T; init(_ v: T) { value = v }; func show() -> String { "box \\(value)" } }
         func describe(_ a: Any) -> String {
             if let p = a as? Point { return "point \\(p.x)" }
             if let n = a as? Named { return "named \\(n.name)" }
@@ -30,6 +32,7 @@ final class LiveReloadTests: XCTestCase {
         extension Point: Named { var name: String { "p\\(x)" } }
         enum Ids { private static var next = 100; static func take() -> Int { next += 1; return next } }
         class Counter { var n = 0; func step() -> String { n += 10; return "STEP \\(n)" }; deinit { print("GONE \\(n)") } }
+        class Box<T> { var value: T; init(_ v: T) { value = v }; func show() -> String { "BOX \\(value)" } }
         func describe(_ a: Any) -> String {
             if let n = a as? Named { return "NAMED \\(n.name)" }
             if let p = a as? Point { return "POINT \\(p.x)" }
@@ -41,18 +44,21 @@ final class LiveReloadTests: XCTestCase {
     private static let main = """
         import Foundation
         import CryptoKit
-        @main struct Main {
+        @main enum Entry { @MainActor static func main() { LampLive.watch(); Main.main() } }
+        struct Main {
             static func main() {
                 let folder = CommandLine.arguments[1], path = folder + "/live/hot.dylib"
                 let items: [Any] = [Point(x: 1)]
                 let counter = Counter()
                 let keys = keyed()
-                print(describe(items[0]), Ids.take(), counter.step(), keys[AnyHashable(Point(x: 1))] ?? "nil")
+                let box = Box("s")
+                print(describe(items[0]), Ids.take(), counter.step(), keys[AnyHashable(Point(x: 1))] ?? "nil", box.show())
                 let key = SymmetricKey(data: Data("x".utf8))
                 let signature = HMAC<SHA256>.authenticationCode(for: Data("reload\\n\\(path)".utf8), using: key).map { String(format: "%02x", $0) }.joined()
                 MainActor.assumeIsolated { LampLive.shared.load(path, signature: signature) }
                 print((try? String(contentsOf: URL(fileURLWithPath: folder + "/reloaded.txt"), encoding: .utf8)) ?? "no answer")
-                print(describe(items[0]), Ids.take(), counter.step(), keys[AnyHashable(Point(x: 1))] ?? "nil", keyed()[AnyHashable(Point(x: 1))] ?? "nil")
+                print(describe(items[0]), Ids.take(), counter.step(), keys[AnyHashable(Point(x: 1))] ?? "nil", keyed()[AnyHashable(Point(x: 1))] ?? "nil",
+                      box.show(), Box(2).show())
                 _ = Counter()
             }
         }
@@ -86,11 +92,12 @@ final class LiveReloadTests: XCTestCase {
                                        "-Xlinker", "-weak_reference_mismatches", "-Xlinker", "weak"])
         _ = try run("/usr/bin/codesign", ["--force", "-s", "-", library])
         let output = try run(root.appendingPathComponent("app").path, [root.path]).components(separatedBy: "\n")
-        XCTAssertEqual(output[0], "point 1 101 step 1 one")
+        XCTAssertEqual(output[0], "point 1 101 step 1 one box s")
         XCTAssertTrue(output[1].hasPrefix("ok "), "the app didn't take the change: \(output[1])")
         // The value made before is a Point still, with the conformance the change gave it; the static went on
-        // counting; the object's method and deinit are the new ones; the key made before finds the new dictionary's.
-        XCTAssertEqual(output[2], "NAMED p1 102 STEP 11 one ONE")
+        // counting; the object's method and deinit are the new ones; the key made before finds the new dictionary's;
+        // the generic class's method is the new one at the type it was used at before and at a new one.
+        XCTAssertEqual(output[2], "NAMED p1 102 STEP 11 one ONE BOX s BOX 2")
         XCTAssertEqual(output[3], "GONE 0")
     }
 

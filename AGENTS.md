@@ -749,9 +749,14 @@ is worked out before anything is pointed at the new code, so a change refused le
 since calls to it are direct too, and the library would otherwise keep a second copy of the value. The mangled type
 names and the records of conformances the change adds, which the library's data still holds, are pointed at the app's
 descriptors as it loads (`LampLive.redirectDescriptors`, writing through the library's text, which a Mac app without
-the hardened runtime may). What `LampLive` can't make right it refuses, and the app reopens: a class's method table
-that changed shape, or a method of a generic class that can be overridden (its tables are made as the app runs, one
-for each type it's used at, where nothing finds them). The
+the hardened runtime may). A class Swift makes as the app runs (a generic class at each type it's used at, a class under
+a generic superclass) gets its method table from the app's description of it, which holds the app's code: so the live
+copy starts the app through an entry of Lamp's (`__LampEntry`, added by the copy step before the App's own), which
+first points the runtime's call that fills such tables in (`swift_initClassMetadata2`, through the same symbol pointer
+as any call) at `LampLive.classMade`, which records every class made and points its table at the newest code, and a
+change points every table made so far the same way. What `LampLive` can't make right it refuses, and the app reopens: a
+class's method table that changed shape, or a class whose methods the change lists in another order than the app (one
+added, taken away or moved), since a table made after it would be laid out from the app's list. The
 build then waits to be installed until the app closes (`LiveReload.awaitInstall`, which unlike a held build doesn't
 keep the agent off the app). Anything else is installed the usual way, by reopening the app, with why in the chat's
 details (`LiveReload.Verdict`), so the rules can be tuned by what happens. The person sees only that it happened: one

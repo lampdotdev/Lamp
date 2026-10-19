@@ -3892,11 +3892,24 @@ enum Template {
         private var kept: [String: UnsafeRawPointer] = [:]
         /// What the app itself defines, by name, its private names included.
         private var original: [String: UnsafeRawPointer] = [:]
+        /// Every version of each changed function so far, from the app's on: a method table made after a change
+        /// from the app's description holds the app's code, and is pointed at the newest.
+        private var versions: [String: [UnsafeRawPointer]] = [:]
+        /// The order each class lists its methods in, by the class, as the app or the change that first brought
+        /// the class had it: what a table made as the app runs is laid out from.
+        private var orders: [String: [String]] = [:]
+        /// What `classMade` reads on whatever thread makes a class, so kept under a lock rather than on the main
+        /// actor: the classes Swift has made as the app ran, from its launch on; the newest code for every version
+        /// of each changed function; and the descriptions of the app's and the changes' classes.
+        nonisolated private static let lock = NSLock()
+        nonisolated(unsafe) private static var made: [UnsafeRawPointer] = []
+        nonisolated(unsafe) private static var newest: [UnsafeRawPointer: UnsafeRawPointer] = [:]
+        nonisolated(unsafe) private static var descriptions = Set<UnsafeRawPointer>()
 
         /// The suffix Lamp renames a library's own copy of a type's metadata or descriptor with (`LiveObject`): its
         /// code asks for the one under the original name, which is bound here to the app's. With the other suffix
         /// the library's copy is the one to bind from now on (an enum that gained cases, which the app's doesn't know).
-        private static let copySuffix = "$lampcopy", ownSuffix = "$lampown"
+        nonisolated private static let copySuffix = "$lampcopy", ownSuffix = "$lampown"
 
         /// The library's copies of types, by the names they were defined under, with whether each is its own to keep.
         private static func copies(in symbols: [(String, UnsafeRawPointer)]) -> [(name: String, address: UnsafeRawPointer, own: Bool)] {
@@ -3920,7 +3933,7 @@ enum Template {
         /// (`isClass`), so their tables are pointed at the changed methods here, for the objects the app made and
         /// those the new code makes alike. A table runs from the metadata's description to its end, which the
         /// metadata gives (its size, and where its address point is in it).
-        private static func redirectMethods(of classes: [UnsafeRawPointer], _ moved: [UnsafeRawPointer: UnsafeRawPointer]) -> Int {
+        nonisolated private static func redirectMethods(of classes: [UnsafeRawPointer], _ moved: [UnsafeRawPointer: UnsafeRawPointer]) -> Int {
             guard !moved.isEmpty else { return 0 }
             let page = Int(vm_page_size)
             var count = 0
@@ -3962,10 +3975,10 @@ enum Template {
                 guard let theirs = kept[name], theirs != mine else { continue }
                 let class_ = String(name.dropLast(2))
                 guard let old = table(theirs), let new = table(mine) else { continue }
-                guard old.count == new.count else { return "the methods of \(class_) changed" }
+                guard old.count == new.count else { return "the methods of \(readable(class_)) changed" }
                 for (a, b) in zip(old, new) {
                     guard let a, let b, let before = names[a], let after = names[b] else { continue }
-                    if before != after { return "the methods of \(class_) changed" }
+                    if before != after { return "the methods of \(readable(class_)) changed" }
                 }
             }
             return nil
@@ -4004,10 +4017,13 @@ enum Template {
             let slide = _dyld_get_image_vmaddr_slide(image)
             Self.takeFieldOffsets(header, slide: slide)
             let defined = Self.definedSymbols(header, slide: slide)
-            let all = Self.copies(in: Self.definedSymbols(header, slide: slide, local: true))
+            let everything = Self.definedSymbols(header, slide: slide, local: true)
+            let all = Self.copies(in: everything)
             let copies = all.map { ($0.name, $0.address) }
             if original.isEmpty, let app = _dyld_get_image_header(0) {
-                original = Dictionary(Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0), local: true), uniquingKeysWith: { first, _ in first })
+                let everything = Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0), local: true)
+                original = Dictionary(everything, uniquingKeysWith: { first, _ in first })
+                orders = Self.methodOrder(everything)
                 keep(Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0)))
             }
             // A change refused leaves what's known of the app as it was, for the changes after it.
@@ -4027,9 +4043,15 @@ enum Template {
                 if let before = latest[name] ?? original[name] { moved[before] = address }
                 latest[name] = address
             }
-            // A generic class has a method table in each of the types it's used at, made as the app runs, which
-            // nothing here can find: a change to one of its overridable methods reopens the app.
-            if let why = Self.genericClassMethod(changed: Set(defined.map(\.0)), copies: copies) { return refuse(why) }
+            // A class whose metadata is made as the app runs (a generic one at each type it's used at, a class under
+            // a generic superclass) gets its table from the description that first brought the class, in the order
+            // its methods are listed there: the change's have to be listed the same, or its calls would land in
+            // other methods' places.
+            let listed = Self.methodOrder(everything)
+            for (class_, methods) in listed {
+                guard let before = orders[class_], before != methods else { continue }
+                return refuse("the methods of \(Self.readable(String(class_.dropLast(2)))) changed")
+            }
             // Stored globals and statics, and classes, stay where they were first made: the new code's own copies
             // would be a second set, made afresh. So its calls to them go to the app's, or to the earlier change's
             // that first added one, and only one that's new keeps its own.
@@ -4042,12 +4064,21 @@ enum Template {
             let bindings = latest.merging(kept) { new, _ in new }
             images.append(String(cString: _dyld_get_image_name(image)))
             var rebound = Self.rebind(image: 0, to: latest)
-            for earlier in images {
-                guard let index = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == earlier }) else { continue }
-                rebound += Self.rebind(image: index, to: bindings)
+            for index in images.compactMap(Self.imageIndex) { rebound += Self.rebind(image: index, to: bindings) }
+            orders.merge(listed) { first, _ in first }
+            let changed = Set(moved.values)
+            Self.lock.lock()
+            for (name, address) in defined where changed.contains(address) {
+                versions[name, default: [original[name]].compactMap { $0 }].append(address)
+                for earlier in versions[name] ?? [] where earlier != address { Self.newest[earlier] = address }
             }
-            rebound += Self.redirectMethods(of: kept.filter { $0.key.hasSuffix("CN") }.map(\.value), moved)
+            Self.descriptions = Self.allDescriptions
+            let classes = Self.classes(kept.filter { $0.key.hasSuffix("CN") }.map(\.value))
+            Self.lock.unlock()
+            // Only now, outside the lock: listing the runtime's classes can make a class, which takes the lock.
+            rebound += Self.redirectMethods(of: classes + Self.dynamicSubclasses(of: classes), Self.newest)
             for write in descriptors where write.apply() { rebound += 1 }
+            Self.watch(image: image)
             generation += 1
             result = "ok \(rebound)"
         }
@@ -4153,17 +4184,114 @@ enum Template {
             return true
         }
 
-        /// Why the change can't go in for a generic class's methods, if it can't: one of the overridable methods
-        /// (those with a method descriptor, `Tq`) of a class whose descriptor says it's generic is among the changed
-        /// functions.
-        private static func genericClassMethod(changed: Set<String>, copies: [(String, UnsafeRawPointer)]) -> String? {
-            for (name, descriptor) in copies where name.hasSuffix("CMn") && descriptor.load(as: UInt32.self) & 0x80 != 0 {
-                let prefix = String(name.dropLast(2))
-                if changed.contains(where: { $0.hasPrefix(prefix) && isCode($0) && changed.contains($0 + "Tq") }) {
-                    return "a method of the generic class \(prefix) changed"
+        /// The loaded image with this path, by its index now.
+        nonisolated private static func imageIndex(_ path: String) -> UInt32? {
+            (0..<_dyld_image_count()).first { String(cString: _dyld_get_image_name($0)) == path }
+        }
+
+        /// Whether a class's metadata is one Swift made from a description in the app or a change: a Swift class
+        /// says so in the low bits of its data word, and its description is then at the end of its header.
+        nonisolated private static func isOwnClass(_ metadata: UnsafeRawPointer, _ descriptions: Set<UnsafeRawPointer>) -> Bool {
+            guard metadata.load(fromByteOffset: 32, as: UInt.self) & 2 != 0,
+                  let description = metadata.load(fromByteOffset: 64, as: UnsafeRawPointer?.self) else { return false }
+            return descriptions.contains(description)
+        }
+
+        /// The descriptions of every class in the app and the changes, where a class made as the app runs points.
+        nonisolated private static var allDescriptions: Set<UnsafeRawPointer> {
+            var all = Set<UnsafeRawPointer>()
+            for image in 0..<_dyld_image_count() where image == 0 || String(cString: _dyld_get_image_name(image)).contains("/.lamp/live/") {
+                guard let header = _dyld_get_image_header(image) else { continue }
+                // A change's are renamed as copies, or as its own (`LiveObject`); a class born in a change is its own.
+                for (name, address) in definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image), local: true)
+                where name.hasSuffix("CMn") || name.hasSuffix("CMn" + copySuffix) || name.hasSuffix("CMn" + ownSuffix) {
+                    all.insert(address)
                 }
             }
-            return nil
+            return all
+        }
+
+        /// The kept classes' metadata and every class Swift has made since the launch (`made`): nothing of the
+        /// app's makes one before its entry runs. Called with the lock held.
+        nonisolated private static func classes(_ kept: [UnsafeRawPointer]) -> [UnsafeRawPointer] {
+            var all = kept, seen = Set(kept)
+            for metadata in made where seen.insert(metadata).inserted { all.append(metadata) }
+            return all
+        }
+
+        /// The classes the Objective-C runtime has made under the app's (key-value observing makes one for each
+        /// class it observes, with a copy of its method table as it was then), by their superclass chain. Listed
+        /// without realizing every class in the process, and never as classes, which would send them messages.
+        nonisolated private static func dynamicSubclasses(of classes: [UnsafeRawPointer]) -> [UnsafeRawPointer] {
+            let own = Set(classes)
+            var found: [UnsafeRawPointer] = []
+            for class_ in objc_enumerateClasses(fromImage: .dynamicClasses) {
+                let metadata = unsafeBitCast(class_, to: UnsafeRawPointer.self)
+                var above = metadata.load(fromByteOffset: 8, as: UnsafeRawPointer?.self)
+                var depth = 0
+                while let superclass = above, depth < 64 {
+                    if own.contains(superclass) { found.append(metadata); break }
+                    above = superclass.load(fromByteOffset: 8, as: UnsafeRawPointer?.self)
+                    depth += 1
+                }
+            }
+            return found
+        }
+
+        /// A class Swift makes as the app runs (a generic class at each type it's used at, a class under a generic
+        /// superclass) gets its method table from its description, which holds the app's code. So the runtime's
+        /// call that fills such a table in is pointed, in the app from its launch (`LampLive.watch()`, from the
+        /// entry the live copy adds before the App's own) and in each change as it loads, at `classMade`, which
+        /// lets it fill the table and then points the table at the newest code. The pointer the runtime's function
+        /// is called through is the one `rebind` reaches, as any function's; once pointed over it stays so.
+        nonisolated static func watch(image: UInt32 = 0) {
+            guard initClassMetadata != nil else { return }
+            lock.lock()
+            if image == 0 { descriptions = allDescriptions }
+            lock.unlock()
+            _ = rebind(image: image, to: ["_swift_initClassMetadata2": unsafeBitCast(classMade, to: UnsafeRawPointer.self)])
+        }
+        /// The runtime's own `swift_initClassMetadata2`, found by name.
+        nonisolated(unsafe) private static let initClassMetadata: UnsafeRawPointer? = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "swift_initClassMetadata2").map { UnsafeRawPointer($0) }
+        /// Takes `swift_initClassMetadata2`'s five arguments and returns its two words as the runtime's does.
+        nonisolated private static let classMade: @convention(thin) (UnsafeRawPointer, Int, Int, UnsafeRawPointer?, UnsafeRawPointer?) -> (UnsafeRawPointer?, Int) = { metadata, flags, fields, types, offsets in
+            typealias Call = @convention(thin) (UnsafeRawPointer, Int, Int, UnsafeRawPointer?, UnsafeRawPointer?) -> (UnsafeRawPointer?, Int)
+            guard let real = initClassMetadata else { return (nil, 0) }
+            let result = unsafeBitCast(real, to: Call.self)(metadata, flags, fields, types, offsets)
+            // Only once the metadata is complete: the runtime asks again for one that isn't.
+            guard result.0 == nil else { return result }
+            lock.lock()
+            defer { lock.unlock() }
+            if isOwnClass(metadata, descriptions) {
+                made.append(metadata)
+                _ = redirectMethods(of: [metadata], newest)
+            }
+            return result
+        }
+
+        /// The method descriptors (`Tq`) of each class in an image, in their order, by the class's descriptor they
+        /// follow: a class's methods are listed after its description.
+        private static func methodOrder(_ symbols: [(String, UnsafeRawPointer)]) -> [String: [String]] {
+            let sorted = symbols.filter { $0.0.hasSuffix("CMn") || $0.0.hasSuffix("CMn" + copySuffix) || $0.0.hasSuffix("CMn" + ownSuffix) || $0.0.hasSuffix("Tq") }
+                .sorted { $0.1 < $1.1 }
+            var order: [String: [String]] = [:], current: String?
+            for (name, _) in sorted {
+                if name.hasSuffix("Tq") { if let current { order[current, default: []].append(name) } }
+                else if name.hasSuffix(copySuffix) { current = String(name.dropLast(copySuffix.count)) }
+                else if name.hasSuffix(ownSuffix) { current = String(name.dropLast(ownSuffix.count)) }
+                else { current = name }
+            }
+            return order
+        }
+
+        /// A mangled name in plain words for the chat's details, by the runtime's own demangler.
+        private static func readable(_ name: String) -> String {
+            guard name.hasPrefix("_$s"), let demangle = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "swift_demangle") else { return name }
+            typealias Demangle = @convention(c) (UnsafePointer<CChar>, Int, UnsafeMutablePointer<CChar>?, UnsafeMutablePointer<Int>?, UInt32) -> UnsafeMutablePointer<CChar>?
+            let mangled = String(name.dropFirst())
+            guard let out = unsafeBitCast(demangle, to: Demangle.self)(mangled, mangled.utf8.count, nil, nil, 0) else { return name }
+            defer { free(out) }
+            return String(cString: out)
         }
 
         /// Functions, getters, setters and deinits, by their Swift names: never a type's metadata, descriptors,
@@ -4194,7 +4322,7 @@ enum Template {
             return stored.contains(String(name.dropLast(2)))
         }
 
-        private static func commands(_ header: UnsafePointer<mach_header>) -> [UnsafeRawPointer] {
+        nonisolated private static func commands(_ header: UnsafePointer<mach_header>) -> [UnsafeRawPointer] {
             let header64 = UnsafeRawPointer(header).assumingMemoryBound(to: mach_header_64.self)
             var command = UnsafeRawPointer(header64).advanced(by: MemoryLayout<mach_header_64>.size)
             var all: [UnsafeRawPointer] = []
@@ -4205,12 +4333,12 @@ enum Template {
             return all
         }
 
-        private static func segmentName(_ segment: UnsafePointer<segment_command_64>) -> String {
+        nonisolated private static func segmentName(_ segment: UnsafePointer<segment_command_64>) -> String {
             withUnsafeBytes(of: segment.pointee.segname) { String(cString: Array($0.bindMemory(to: CChar.self)) + [0]) }
         }
 
         /// The symbol and string tables of an image, where they sit in memory.
-        private static func tables(_ header: UnsafePointer<mach_header>, slide: Int)
+        nonisolated private static func tables(_ header: UnsafePointer<mach_header>, slide: Int)
             -> (symbols: UnsafePointer<nlist_64>, strings: UnsafePointer<CChar>, count: Int, base: UnsafeRawPointer, dysymtab: UnsafePointer<dysymtab_command>?)? {
             var symtab: UnsafePointer<symtab_command>?, dysymtab: UnsafePointer<dysymtab_command>?, linkedit: UnsafePointer<segment_command_64>?
             for command in commands(header) {
@@ -4230,7 +4358,7 @@ enum Template {
                     Int(symtab.pointee.nsyms), base, dysymtab)
         }
 
-        private static func definedSymbols(_ header: UnsafePointer<mach_header>, slide: Int, local: Bool = false) -> [(String, UnsafeRawPointer)] {
+        nonisolated private static func definedSymbols(_ header: UnsafePointer<mach_header>, slide: Int, local: Bool = false) -> [(String, UnsafeRawPointer)] {
             guard let tables = tables(header, slide: slide) else { return [] }
             var out: [(String, UnsafeRawPointer)] = []
             for index in 0..<tables.count {
@@ -4245,38 +4373,45 @@ enum Template {
 
         /// Where a class's fields are is worked out as the app runs when it can't be known when it's compiled (a
         /// subclass, or fields after one of the system's types, such as an @Observable class's registrar), and kept
-        /// in a global for each field. A library has its own copies, which nothing fills in: its code would read
-        /// every such field at the start of the object. So they take the app's values, once the app has worked
-        /// the class out (asking for its metadata does that). A field the app has none for is new, and stays the
-        /// library's.
+        /// in a global for each field (`Wvd`); so is where a class's own members begin when its superclass is one of
+        /// the system's whose size may change between releases (`CMo`, the class's bounds), which is how its code
+        /// finds its method table. A library has its own copies, which nothing fills in: its code would read every
+        /// such field at the start of the object, and look for the table where there is none. So they take the
+        /// app's values, once the app has worked the class out (asking for its metadata does that). A field's
+        /// value the compiler knew may differ from the app's too (a guess under a system class), so a copy that
+        /// differs is replaced, not only an empty one. A field the app has none for is new, and stays the library's.
         private static func takeFieldOffsets(_ header: UnsafePointer<mach_header>, slide: Int) {
             guard let app = _dyld_get_image_header(0) else { return }
             let theirs = Dictionary(definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0), local: true), uniquingKeysWith: { first, _ in first })
             let accessors = theirs.filter { $0.key.hasSuffix("CMa") }
             let mine = definedSymbols(header, slide: slide, local: true)
             let ownAccessors = Dictionary(mine.filter { $0.0.hasSuffix("CMa") }, uniquingKeysWith: { first, _ in first })
-            for (name, address) in mine where name.hasSuffix("Wvd") {
-                // One the compiler knew is already right, and may be in memory that can't be written.
-                guard address.load(as: Int.self) == 0 else { continue }
+            func complete(_ name: String, in accessors: [String: UnsafeRawPointer]) {
+                if let accessor = accessors.filter({ name.hasPrefix($0.key.dropLast(2)) }).max(by: { $0.key.count < $1.key.count }) {
+                    _ = unsafeBitCast(accessor.value, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0)
+                }
+            }
+            for (name, address) in mine where name.hasSuffix("Wvd") || name.hasSuffix("CMo") {
+                let bounds = name.hasSuffix("CMo")
                 guard let source = theirs[name] else {
                     // A field the app has under no such name: a new class's, or a private one whose code moved to
                     // another file (a private name carries its file's). The library works its class out itself,
                     // which lays it out as the app did when it's the same class.
-                    if let accessor = ownAccessors.filter({ name.hasPrefix($0.key.dropLast(2)) }).max(by: { $0.key.count < $1.key.count }) {
-                        _ = unsafeBitCast(accessor.value, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0)
-                    }
+                    if address.load(as: Int.self) == 0 { complete(name, in: ownAccessors) }
                     continue
                 }
-                if source.load(as: Int.self) == 0,
-                   let accessor = accessors.filter({ name.hasPrefix($0.key.dropLast(2)) }).max(by: { $0.key.count < $1.key.count }) {
-                    _ = unsafeBitCast(accessor.value, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0)
+                if source.load(as: Int.self) == 0 { complete(name, in: accessors) }
+                // The bounds are where the members begin, then two sizes; a field's place is one word.
+                for offset in bounds ? [0, 8] : [0] {
+                    let value = source.load(fromByteOffset: offset, as: Int.self)
+                    guard address.load(fromByteOffset: offset, as: Int.self) != value else { continue }
+                    _ = write(value, to: address.advanced(by: offset), executable: false)
                 }
-                UnsafeMutableRawPointer(mutating: address).storeBytes(of: source.load(as: Int.self), as: Int.self)
             }
         }
 
         /// Points the image's symbol pointers, which its calls to its own functions go through, at the new code.
-        private static func rebind(image: UInt32, to replacements: [String: UnsafeRawPointer]) -> Int {
+        nonisolated private static func rebind(image: UInt32, to replacements: [String: UnsafeRawPointer]) -> Int {
             guard let header = _dyld_get_image_header(image) else { return 0 }
             let slide = _dyld_get_image_vmaddr_slide(image)
             guard let tables = tables(header, slide: slide), let dysymtab = tables.dysymtab else { return 0 }
@@ -14924,6 +15059,8 @@ enum Template {
         out="$LIVE/$f"
         mkdir -p "${out:h}"
         perl -0pe 's/var body: some View \\{/var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\\n    \\@ViewBuilder var __lampBody: some View {/g' "$f" > "$out.new"
+        # The app starts through Lamp's entry, which watches the classes Swift makes (LampLive.watch) before the App's own.
+        perl -0pi -e 's/\\@main(\\s+(?:\\@\\w+\\s+)*(?:final\\s+)?(?:struct|class|enum|actor)\\s+(\\w+))/$1/ and $_ .= "\\n\\@main enum __LampEntry { \\@MainActor static func main() { LampLive.watch(); $2.main() } }\\n"' "$out.new"
         # Spare places for properties added while the app is open (LiveSlots), unless they kept the app from building.
         case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) [[ -e "$LIVE/no-spares" ]] || perl "$LIVE/spares.pl" \(LiveSlots.count) "$out.new" ;; esac
         if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi
