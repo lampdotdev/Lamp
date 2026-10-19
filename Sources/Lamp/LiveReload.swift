@@ -197,15 +197,18 @@ enum LiveReload {
             if let is_ = aliases(now)[name], is_ != was { return ("the typealias \(name) changed from \(was) to \(is_)", nil) }
         }
         // What a `some`-returning member builds is its type, which the open app's witness tables and callers were
-        // laid out for; a member that builds from other calls or types now returns another type under the same name.
+        // laid out for; one that builds another type under the same name, or from other calls where the type can't
+        // be printed, returns what they can't take. A value beginning "~" is a digest of the body, not a type.
         func opaque(_ entries: [String]) -> [String: String] {
             Dictionary(entries.filter { $0.hasPrefix(opaqueGroup + "\t") }.compactMap { entry -> (String, String)? in
-                guard let colon = entry.range(of: ": ", options: .backwards) else { return nil }
-                return (String(entry[entry.index(after: entry.firstIndex(of: "\t")!)..<colon.lowerBound]), String(entry[colon.upperBound...]))
+                let parts = entry.split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false)
+                return parts.count == 3 ? (String(parts[1]), String(parts[2])) : nil
             }, uniquingKeysWith: { first, _ in first })
         }
         for (name, was) in opaque(before).sorted(by: { $0.key < $1.key }) {
-            if let is_ = opaque(now)[name], is_ != was { return ("\(name) returns another kind of value now (some …), which what the open app made can't take", nil) }
+            guard let is_ = opaque(now)[name], is_ != was else { continue }
+            if !was.hasPrefix("~"), !is_.hasPrefix("~") { return ("\(name) returns a \(is_) now, where the open app's returned a \(was)", nil) }
+            return ("\(name) returns another kind of value now (some …), which what the open app made can't take", nil)
         }
         // Type by type, each "Owner<tab>member": a type the open app has must hold just what it did, in order;
         // a new type (a new view with its own state) is the library's to lay out. A type taken away keeps its
@@ -637,9 +640,14 @@ enum LiveReload {
         // An associated type the compiler inferred (Identifiable's ID, a Sequence's Iterator, a modifier's Body) is
         // a typealias it declares itself; one naming an opaque type (`some View`) is held by its member instead.
         let inferredAlias = try! NSRegularExpression(pattern: #"^(\s*)\(typealias\b[^"]*? implicit "([^"]+)" interface_type="[^"]*" access=\w+ type="([^"]*)""#)
-        // A member returning `some …`: what it builds from (the calls and types in its body) is its type.
+        // A member returning `some …`: the type it builds, which the compiler prints where the body's value becomes
+        // the opaque one; when that is itself opaque (a modifier's `some View`), what the body builds from instead.
         let opaqueMember = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|var_decl)\b(?! implicit)[^"]*"([^"]+)" interface_type="([^"]*some [^"]*)" access=(\w+)"#)
         let attribute = try! NSRegularExpression(pattern: #" (?:decl|type)="([^"]*)""#)
+        let toOpaque = try! NSRegularExpression(pattern: #"^\s*\(underlying_to_opaque_expr\b"#)
+        // A declaration inside the member (a local function, a type), whose own conversions aren't the member's.
+        let inner = try! NSRegularExpression(pattern: #"^\s*\((?:func_decl|var_decl|subscript_decl|struct_decl|class_decl|enum_decl|actor_decl)\b"#)
+        let typeOf = try! NSRegularExpression(pattern: #" type="([^"]*)""#)
         // The place is a path (which may hold spaces, as the apps folder does), a line and a column.
         let place = try! NSRegularExpression(pattern: #"@[^"]*?\.swift:\d+:\d+"#)
         // A literal's value, or an argument left to its default, changes no type: left out of the digest.
@@ -651,11 +659,14 @@ enum LiveReload {
         let rawValue = try! NSRegularExpression(pattern: #"^\s*\(raw_value_expr=\w+\b.*? value=("(?:[^"\\]|\\.)*"|[^ )]+)"#)
         var scopes: [(indent: Int, type: String?)] = [], out: [String] = [], seen = Set<String>()
         var lastCase: Int?
-        // The `some`-returning member being read, and what its body names so far.
-        var opaque: (indent: Int, key: String, names: [String])?
+        // The `some`-returning member being read, what its body names so far, the type it builds once found, the
+        // indent of a conversion to the opaque type whose child names that type, and of a declaration inside it.
+        var opaque: (indent: Int, key: String, names: [String], builds: String?, converting: Int?, inner: Int?)?
         func closeOpaque() {
             guard let open = opaque else { return }
-            let entry = opaqueGroup + "\t" + open.key + ": " + SwiftSource.digest(open.names.joined(separator: "\n"))
+            // A literal may change (`1` to `1.5`) without a call or type changing, and a call may change
+            // (`.bold()`) without the type: the type decides, when the compiler can print it.
+            let entry = opaqueGroup + "\t" + open.key + "\t" + (open.builds ?? "~" + SwiftSource.digest(open.names.joined(separator: "\n")))
             if seen.insert(entry).inserted { out.append(entry) }
             opaque = nil
         }
@@ -667,6 +678,20 @@ enum LiveReload {
             guard line.dropFirst(indent).first == "(" else { continue }
             if let open = opaque {
                 if indent > open.indent {
+                    if let within = open.inner, indent <= within { opaque?.inner = nil }
+                    if opaque?.inner != nil {
+                        // Inside a local declaration: its names count, its conversions don't.
+                    } else if let at = open.converting, indent > at {
+                        opaque?.converting = nil
+                        if open.builds == nil, let m = typeOf.firstMatch(in: line, range: range) {
+                            let type = String(line[Range(m.range(at: 1), in: line)!])
+                            if !type.contains("some ") { opaque?.builds = place.stringByReplacingMatches(in: type, range: NSRange(type.startIndex..., in: type), withTemplate: "") }
+                        }
+                    } else if toOpaque.firstMatch(in: line, range: range) != nil {
+                        opaque?.converting = indent
+                    } else if inner.firstMatch(in: line, range: range) != nil {
+                        opaque?.inner = indent
+                    }
                     if valueOnly.firstMatch(in: line, range: range) == nil {
                         for m in attribute.matches(in: line, range: range) {
                             // A declaration of the app's is named with where it is, which differs between the copy
@@ -742,8 +767,8 @@ enum LiveReload {
                 // every caller.
                 let signature = name + ": " + String(line[Range(m.range(at: 4), in: line)!])
                 declared(signature)
-                if let owner, !owner.hasPrefix("\u{4}") { opaque = (indent, owner + "." + signature, []) }
-                else if scopes.isEmpty { opaque = (indent, signature, []) }
+                if let owner, !owner.hasPrefix("\u{4}") { opaque = (indent, owner + "." + signature, [], nil, nil, nil) }
+                else if scopes.isEmpty { opaque = (indent, signature, [], nil, nil, nil) }
                 scopes.append((indent, nil))
             } else if let m = aliasDecl.firstMatch(in: line, range: range) {
                 var name = String(line[Range(m.range(at: 3), in: line)!])
