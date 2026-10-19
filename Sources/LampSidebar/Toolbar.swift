@@ -90,12 +90,19 @@ struct ChatBar: View {
         }
     }
 
+    /// Lamp's icon and name before the app's: the chat sits beside someone else's window, so it says whose it is.
     private func title(_ state: SidebarState) -> some View {
-        Text("Customize \(state.app)")
-            .font(.system(size: NSFont.systemFontSize, weight: .semibold))
-            .lineLimit(1).truncationMode(.tail)
-            // The title is part of the room to drag the chat by.
-            .allowsHitTesting(false)
+        HStack(spacing: 6) {
+            Button { link.send(.showLamp) } label: { ChatLook.LampMark(side: 18) }
+                .buttonStyle(.plain)
+                .help("Open Lamp")
+                .accessibilityLabel("Open Lamp")
+            Text("Lamp: \(state.app)")
+                .font(.system(size: NSFont.systemFontSize, weight: .semibold))
+                .lineLimit(1).truncationMode(.tail)
+                // The title is part of the room to drag the chat by.
+                .allowsHitTesting(false)
+        }
     }
 
     private func undo(_ toolbar: SidebarToolbar) -> some View {
