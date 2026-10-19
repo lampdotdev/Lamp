@@ -888,6 +888,16 @@ final class SidebarServer {
             guard !outbox.isHolding else { waiting = true; return }
             guard let server, let project = Store.shared.projects.first(where: { $0.id == projectID }) else { return }
             var state = server.state(for: project)
+            // A sidebar from before a turn's steps were folded can't read the fold, and would drop the whole chat: it
+            // gets the steps as lines, as it showed them.
+            if version < 7 {
+                state.lines = state.lines.flatMap { line -> [SidebarLine] in
+                    guard line.kind == .work else { return [line] }
+                    var steps = line.steps ?? []
+                    if !steps.isEmpty { steps[0].gap = line.gap }
+                    return steps
+                }
+            }
             // A sidebar from before the summary line can't read one, and would drop the whole chat.
             if version < 2 { state.lines.removeAll { $0.kind == .summary } }
             // Nor one from before the notes receipt a receipt.

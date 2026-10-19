@@ -215,45 +215,42 @@ enum ChatItem: Identifiable {
         }
     }
 
-    /// With `gather` (the chat without Agent Details), each finished turn's steps (what the agent ran, the app built
+    /// With `gather` (the chat without Agent Details), each finished run's steps (what the agent ran, the app built
     /// and opened) go into one line above its answer, as ChatGPT and Codex show the work behind an answer: the answer
-    /// is what's read, and the steps are a click away. A turn still going shows its steps as they come. Lamp's note
-    /// that it reopened the app stays out, since it explains the window going away. A turn's summary times it and
-    /// is otherwise left out; with Agent Details it's a line of its own and nothing is gathered.
+    /// is what's read, and the steps are a click away. Every finished run ends with its summary, so a run is what
+    /// comes after the one before it up to its own: requests don't mark them, since a clicked answer to a card is left
+    /// out of the chat and Lamp starts runs of its own (a build to fix). What comes after the last summary is a run
+    /// still going, whose steps show as they come. Lamp's note that it reopened the app stays out, since it explains
+    /// the window going away. A summary times its run and is otherwise left out; with Agent Details it's a line of
+    /// its own and nothing is gathered.
     static func items(_ lines: [LogLine], gather: Bool) -> [ChatItem] {
         guard gather else { return items(lines) }
         var result: [ChatItem] = []
-        var start = 0
-        while start < lines.count {
-            var end = start + 1
-            while end < lines.count, lines[end].kind != .user { end += 1 }
-            let turn = lines[start..<end]
-            start = end
-            let rest = turn.filter { $0.kind != .summary }
-            guard let summary = turn.first(where: { $0.kind == .summary }) else {
-                result += items(Array(rest))
-                continue
-            }
-            let isStep = { (line: LogLine) in (line.kind == .status && line.text != ChatLook.reloaded) || line.kind == .tool }
-            let steps = items(rest.filter(isStep)).flatMap { item -> [LogLine] in
-                switch item {
-                case .statuses(let lines), .tools(let lines): lines
-                case .line(let line): [line]
-                case .work(_, _, let steps): steps
-                }
-            }
-            let others = rest.filter { !isStep($0) }
-            guard !steps.isEmpty else {
-                result += items(others)
-                continue
-            }
-            // Above the answer, the turn's last message; at the turn's end when it has none.
-            let place = others.lastIndex { $0.kind == .agent } ?? others.count
-            result += items(Array(others[..<place]))
-            result.append(.work(id: summary.id, title: workedFor(summary.text), steps: steps))
-            result += items(Array(others[place...]))
+        var run: [LogLine] = []
+        for line in lines {
+            guard line.kind == .summary else { run.append(line); continue }
+            result += folded(run, summary: line)
+            run = []
         }
-        return result
+        return result + items(run)
+    }
+
+    /// A finished run's lines, its steps under one line above its last message.
+    private static func folded(_ run: [LogLine], summary: LogLine) -> [ChatItem] {
+        let isStep = { (line: LogLine) in (line.kind == .status && line.text != ChatLook.reloaded) || line.kind == .tool }
+        let steps = items(run.filter(isStep)).flatMap { item -> [LogLine] in
+            switch item {
+            case .statuses(let lines), .tools(let lines): lines
+            case .line(let line): [line]
+            case .work(_, _, let steps): steps
+            }
+        }
+        let others = run.filter { !isStep($0) }
+        guard !steps.isEmpty else { return items(others) }
+        // Above the answer, the run's last message; at the run's end when it has none.
+        let place = others.lastIndex { $0.kind == .agent } ?? others.count
+        return items(Array(others[..<place])) + [.work(id: summary.id, title: workedFor(summary.text), steps: steps)]
+            + items(Array(others[place...]))
     }
 
     /// "Worked for 2 min 3 s", from a turn's summary ("Worked for 2m 3s · $0.12").

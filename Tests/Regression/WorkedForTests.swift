@@ -23,6 +23,26 @@ final class WorkedForTests: XCTestCase {
                                "Done.", "more", "statuses:Ran: pwd"])
     }
 
+    /// A card answered by a click leaves no request in the chat, and Lamp starts runs of its own: each run still
+    /// gets its own fold, and a run with no summary yet isn't folded under the one before.
+    func testRunsEndAtTheirSummaries() {
+        let lines = [LogLine(kind: .user, text: "make it"), LogLine(kind: .status, text: "Ran: ls"),
+                     LogLine(kind: .ask, text: "which?"), LogLine(kind: .summary, text: "Worked for 5s · $0"),
+                     LogLine(kind: .status, text: "Ran: pwd"), LogLine(kind: .agent, text: "Done."),
+                     LogLine(kind: .summary, text: "Worked for 9s · $0"),
+                     LogLine(kind: .status, text: "Building…")]
+        let shape = ChatItem.items(lines, gather: true).map { item -> String in
+            switch item {
+            case .line(let line): line.text
+            case .statuses(let run): "statuses:" + run.map(\.text).joined(separator: ",")
+            case .tools: "tools"
+            case .work(_, let title, let steps): "\(title):" + steps.map(\.text).joined(separator: ",")
+            }
+        }
+        XCTAssertEqual(shape, ["make it", "which?", "Worked for 5 s:Ran: ls", "Worked for 9 s:Ran: pwd", "Done.",
+                               "statuses:Building…"])
+    }
+
     func testHowLongItWorked() {
         XCTAssertEqual(ChatItem.workedFor("Worked for 8s · $0.01"), "Worked for 8 s")
         XCTAssertEqual(ChatItem.workedFor("Worked for 3m 0s · $0.01"), "Worked for 3 min")

@@ -4781,11 +4781,12 @@ enum Template {
                 let titlebar = max(frame.height - window.contentLayoutRect.height, 0)
                 let right = min(frame.maxX, screen?.maxX ?? frame.maxX) - gap
                 return NSRect(x: right - shown, y: frame.minY + gap, width: shown, height: max(frame.height - titlebar - 2 * gap, 200))
+                    .insetBy(dx: -Beside.shade, dy: -Beside.shade)
             }
             var shown = width
             if let screen { shown = max(narrowest, min(width, room(on: chat.side, of: frame, in: screen))) }
             let x = chat.side == .right ? frame.maxX + gap : frame.minX - gap - shown
-            return NSRect(x: x, y: frame.minY, width: shown, height: frame.height)
+            return NSRect(x: x, y: frame.minY, width: shown, height: frame.height).insetBy(dx: -Beside.shade, dy: -Beside.shade)
         }
 
         /// Into its panel, which is put where the chat now goes.
@@ -4945,20 +4946,21 @@ enum Template {
                     holder.view.window?.invalidateCursorRects(for: (holder.view as? PanelGround)?.edges ?? holder.view)
                 }
             }
-            /// The rim inside the card, around the chat, where the pointer resizes it. Inside, not around: the glass
-            /// glows a little past its edge, and room around the card showed that glow cut off square by the panel.
+            /// The rim inside the card, around the chat, where the pointer resizes it: the room around the card is its
+            /// shadow, which clicks go through.
             static let rim: CGFloat = 6
+            /// The room around the card for its own shadow. The window's shadow drew a hard grey line round the card, as
+            /// macOS outlines every window; this one is soft, and gone within the room, so clicks there reach what's
+            /// behind (the app's own edge, beside it).
+            static let shade: CGFloat = 14
 
             init() {
                 super.init(contentRect: NSRect(x: 0, y: 0, width: LampSidebar.width, height: 400), styleMask: [.borderless],
                            backing: .buffered, defer: false)
                 isOpaque = false
                 backgroundColor = .clear
-                hasShadow = true
-                // Its glass is drawn by the window server, so the panel's own pixels are clear almost everywhere, and a
-                // clear window lets clicks on clear pixels through to whatever is behind it. Said outright, the whole
-                // panel takes them: blank glass in the chat, and the edges that resize it.
-                ignoresMouseEvents = false
+                // The card draws its own shadow (`Card`), and the clear room around it lets clicks through.
+                hasShadow = false
                 isMovable = false
                 hidesOnDeactivate = false
                 isReleasedWhenClosed = false
@@ -5036,19 +5038,30 @@ enum Template {
                 if zone.contains(.right) { frame.size.width = start.width + change.width }
                 if zone.contains(.bottom) { frame.size.height = start.height - change.height }
                 if zone.contains(.top) { frame.size.height = start.height + change.height }
-                frame.size.width = min(max(frame.width, LampSidebar.narrowest), LampSidebar.widest)
+                let shadows = 2 * Self.shade
+                frame.size.width = min(max(frame.width, LampSidebar.narrowest + shadows), LampSidebar.widest + shadows)
                 if !detached, let screen = (parent?.screen ?? screen ?? NSScreen.main)?.visibleFrame {
-                    frame.size.width = min(frame.width, side == .right ? screen.maxX - start.minX : start.maxX - screen.minX)
+                    frame.size.width = min(frame.width, (side == .right ? screen.maxX - start.minX : start.maxX - screen.minX) + Self.shade)
                 }
-                frame.size.height = max(frame.height, 300)
+                frame.size.height = max(frame.height, 300 + shadows)
                 if zone.contains(.left) { frame.origin.x = start.maxX - frame.width }
                 if zone.contains(.bottom) { frame.origin.y = start.maxY - frame.height }
                 setFrame(frame, display: true)
-                LampSidebar.width = frame.width
+                LampSidebar.width = frame.width - shadows
             }
 
             override var canBecomeKey: Bool { true }
             override var canBecomeMain: Bool { false }
+        }
+
+        /// The chat a request from the chats' process is for (`Answering`): the one under the pointer, else the one
+        /// with the keyboard.
+        @MainActor static func asked() -> Chat? {
+            let open = chats.values.filter { $0.inPanel }
+            let pointer = NSEvent.mouseLocation
+            return open.first { $0.panel?.frame.insetBy(dx: Beside.shade, dy: Beside.shade).contains(pointer) == true }
+                ?? open.first { $0.panel?.isKeyWindow == true }
+                ?? (open.count == 1 ? open.first : nil)
         }
 
         /// The window a panel's chat belongs to, attached or not.
@@ -5061,7 +5074,7 @@ enum Template {
         /// panel (`LampSidebarHost`): what changes the wish (undo, versions, sharing…) is in the chat, which only Lamp
         /// speaks to.
         @MainActor private static func card(for host: EXHostViewController, in window: NSWindow) -> (card: NSView, pane: NSView) {
-            let outer = Passing()
+            let outer = Card()
             let pane = Passing()
             let paper = Paper()
             paper.frame = outer.bounds
@@ -5149,7 +5162,7 @@ enum Template {
         /// it (`LampMagic.leaveCover`); nothing when it's closed.
         @MainActor static func panelFrame(of window: NSWindow) -> NSRect? {
             guard let chat = chat(in: window), chat.inPanel, let panel = chat.panel else { return nil }
-            return panel.frame
+            return panel.frame.insetBy(dx: Beside.shade, dy: Beside.shade)
         }
 
         /// The chat's paper, as the chat draws it (`ChatLook.paper`): a warm off-white, a warm near-black in the dark.
@@ -5171,10 +5184,29 @@ enum Template {
             }
         }
 
-        private final class Passing: NSView {
+        private class Passing: NSView {
             override func hitTest(_ point: NSPoint) -> NSView? {
                 let hit = super.hitTest(point)
                 return hit === self ? nil : hit
+            }
+        }
+
+        /// The card, with a soft shadow of its own round it.
+        private final class Card: Passing {
+            override init(frame: NSRect) {
+                super.init(frame: frame)
+                wantsLayer = true
+                layer?.masksToBounds = false
+                layer?.shadowColor = NSColor.black.cgColor
+                layer?.shadowOpacity = 0.14
+                layer?.shadowRadius = 7
+                layer?.shadowOffset = CGSize(width: 0, height: -2)
+            }
+            required init?(coder: NSCoder) { fatalError() }
+
+            override func layout() {
+                super.layout()
+                layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: 20, cornerHeight: 20, transform: nil)
             }
         }
 
@@ -5189,9 +5221,10 @@ enum Template {
             /// every click on its part of the window, so an edge laid over the chat would never be dragged.
             override func layout() {
                 super.layout()
-                card?.frame = bounds
-                edges.frame = bounds
-                edges.card = bounds.insetBy(dx: Beside.rim, dy: Beside.rim)
+                let card = bounds.insetBy(dx: Beside.shade, dy: Beside.shade)
+                self.card?.frame = card
+                edges.frame = card
+                edges.card = edges.bounds.insetBy(dx: Beside.rim, dy: Beside.rim)
                 edges.allowed = panel?.detached == true ? [.left, .right, .top, .bottom] : panel?.side == .left ? .left : .right
                 window?.invalidateCursorRects(for: edges)
             }
@@ -5364,7 +5397,9 @@ enum Template {
             }
         }
 
-        /// What the chat asks of its panel (`LampSidebarHost`), for the chat it was asked from.
+        /// What the chat asks of its panel (`LampSidebarHost`). The chat's process asks over every chat's connection,
+        /// not knowing which is its own, so each connection acts only for the chat the request was meant for: the one the
+        /// pointer is on, where the click or drag was; with none (a press from VoiceOver), the one with the keyboard.
         final class Answering: NSObject, LampSidebarHost {
             private weak var controller: EXHostViewController?
             init(_ controller: EXHostViewController) { self.controller = controller }
@@ -5372,7 +5407,8 @@ enum Template {
             private func chat(_ act: @escaping @MainActor (Chat) -> Void) {
                 DispatchQueue.main.async { [weak controller] in
                     MainActor.assumeIsolated {
-                        guard let controller, let chat = LampSidebar.chats.values.first(where: { $0.host === controller }) else { return }
+                        guard let controller, let chat = LampSidebar.chats.values.first(where: { $0.host === controller }),
+                              chat === LampSidebar.asked() else { return }
                         act(chat)
                     }
                 }

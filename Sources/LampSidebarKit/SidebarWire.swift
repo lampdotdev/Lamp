@@ -6,7 +6,7 @@ import Foundation
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
     /// What this side reads and writes; see `SidebarCommand.hello`.
-    public static let version = 6
+    public static let version = 7
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }

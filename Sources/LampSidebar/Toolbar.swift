@@ -53,6 +53,8 @@ struct ChatBar: View {
                                 withAnimation(.snappy(duration: 0.2)) { more.toggle() }
                             }
                             .help(more ? "Show the title again" : "Wish info, sharing, agent details, delete and versions")
+                            // Changed where it stands, the symbol simply filled: not faded or slid in as a new button.
+                            .transaction { $0.animation = nil }
                         }
                     }
                 }

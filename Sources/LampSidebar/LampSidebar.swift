@@ -22,7 +22,7 @@ struct SidebarExtension: AppExtension {
                 connection.exportedObject = Placement()
                 connection.remoteObjectInterface = NSXPCInterface(with: SidebarHost.self)
                 connection.resume()
-                DispatchQueue.main.async { MainActor.assumeIsolated { Host.connection = connection } }
+                DispatchQueue.main.async { MainActor.assumeIsolated { Host.add(connection) } }
                 return true
             })
     }
@@ -38,14 +38,24 @@ private final class Placement: NSObject, SidebarPlacement {
     }
 }
 
-/// The app hosting the chat, for what only it can do with the chat's panel (`SidebarHost`).
+/// The app hosting the chat, for what only it can do with the chat's panel (`SidebarHost`). An app with a chat beside
+/// each of several windows has one connection for each, and nothing here says which connection is which chat's: each
+/// is asked, and the app acts on the chat the pointer is on (`LampSidebar.Answering`), where the click was.
 @MainActor
 enum Host {
-    static var connection: NSXPCConnection?
-    private static var app: SidebarHost? { connection?.remoteObjectProxy as? SidebarHost }
+    private static var connections: [NSXPCConnection] = []
 
-    static func closeChat() { app?.closeChat() }
-    static func startMove() { app?.startMove() }
+    static func add(_ connection: NSXPCConnection) {
+        connections.append(connection)
+        connection.invalidationHandler = { [weak connection] in
+            DispatchQueue.main.async { MainActor.assumeIsolated { connections.removeAll { $0 === connection || $0 == nil } } }
+        }
+    }
+
+    private static var apps: [SidebarHost] { connections.compactMap { $0.remoteObjectProxy as? SidebarHost } }
+
+    static func closeChat() { apps.forEach { $0.closeChat() } }
+    static func startMove() { apps.forEach { $0.startMove() } }
 }
 
 /// The line to Lamp: a connection on this Mac's own address, at the port Lamp wrote into this extension's
