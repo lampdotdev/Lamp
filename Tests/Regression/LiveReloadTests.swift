@@ -168,6 +168,13 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertNil(LiveReload.oldCode(meeting: ["Other"], inDump: dump))
         let onlyTick = dump.components(separatedBy: "\n").filter { !$0.contains("Timer") }.joined(separator: "\n")
         XCTAssertEqual(LiveReload.oldCode(meeting: ["Mood"], inDump: onlyTick), "tick() prints Mood in code that may still be running (a timer, a task, an observer), which doesn't know the new cases")
+        // The record outlives a change: the timer's switch, recorded from the installed sources, still counts once a
+        // later change has taken it out of the sources that run.
+        XCTAssertFalse(LiveReload.hasOldCodeRecord(project))
+        LiveReload.recordOldCode(LiveReload.oldCodeUses(inDump: dump), for: project)
+        XCTAssertTrue(LiveReload.hasOldCodeRecord(project))
+        LiveReload.recordOldCode(LiveReload.oldCodeUses(inDump: onlyTick), for: project)
+        XCTAssertEqual(LiveReload.oldCode(meeting: ["Mood"], uses: LiveReload.oldCodeRecorded(project) + LiveReload.oldCodeUses(inDump: onlyTick))?.hasPrefix("start() switches over Mood"), true)
         let (library, problem) = await LiveReload.compile(project, changed: ["Shapes.swift"])
         XCTAssertNil(problem)
         let symbols = try run("/usr/bin/nm", ["-m", XCTUnwrap(library).path])

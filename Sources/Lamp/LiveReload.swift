@@ -67,10 +67,20 @@ enum LiveReload {
     static func recordOldCode(_ uses: [String], for project: LampProject) {
         let known = oldCodeRecorded(project)
         let all = known + uses.filter { !known.contains($0) }
-        if all.count != known.count { try? AppFolder.write(all.joined(separator: "\n"), to: oldCodeURL(project), in: project.dir) }
+        // Written even when there's nothing: the record's being there says the installed generation's is in it.
+        if all.count != known.count || !hasOldCodeRecord(project) {
+            try? AppFolder.write(all.joined(separator: "\n"), to: oldCodeURL(project), in: project.dir)
+        }
     }
     static func oldCodeRecorded(_ project: LampProject) -> [String] {
         AppFile.text(oldCodeURL(project), in: project)?.components(separatedBy: "\n").filter { !$0.isEmpty } ?? []
+    }
+    /// Whether anything has been recorded since the app was installed: before the first change, the installed
+    /// generation's uses are read off the sources it runs, before those are replaced.
+    static func hasOldCodeRecord(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: oldCodeURL(project).path) }
+    /// The uses in the sources the open app runs, for the record; nil when the compiler can't say.
+    @MainActor static func oldCodeUsesOfRunning(_ project: LampProject) async -> [String]? {
+        await dump(of: running(project), in: project, module: project.exe, macOS: Template.macMinimum(project)).map(oldCodeUses(inDump:))
     }
 
     /// The open app has a change the copy in the apps folder doesn't: the build goes in when the app closes.

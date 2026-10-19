@@ -4572,9 +4572,14 @@ final class Store: ObservableObject {
         }
         // Files only taken away leave nothing to load: the open app already has what's left.
         if let library { guard await LiveReload.send(library, to: project, token: Template.token(for: project)) else { return false } }
+        // What a generation's code may leave running (a timer, a task) outlives the next change's replacing its
+        // sources: the installed generation's uses are recorded before the first change replaces them, each
+        // change's as it goes in.
+        if !LiveReload.hasOldCodeRecord(project), let installed = await LiveReload.oldCodeUsesOfRunning(project) {
+            LiveReload.recordOldCode(installed, for: project)
+        }
         LiveReload.markRunning(project)
         LiveReload.keepLayout(layout, for: project)
-        // What this change's code may leave running (a timer, a task) outlives the next change's replacing its sources.
         LiveReload.recordOldCode(oldCode, for: project)
         watchAfterReload(project, app: app)
         LiveReload.awaitInstall(project)
