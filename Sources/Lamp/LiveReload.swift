@@ -371,8 +371,8 @@ enum LiveReload {
     struct Conformances {
         var of: [String: Set<String>] = [:]
         var protocols = Set<String>(), types = Set<String>()
-        /// Each type's stored fields' types, to tell a type that may wrap anything (a generic parameter, `Any`, a
-        /// system type) from one made of plain values and the app's own types.
+        /// Each type's stored fields' types, an enum's cases' payloads included, to tell a type that may wrap
+        /// anything (a generic parameter, `Any`, a system type) from one made of plain values and the app's own types.
         var fields: [String: [String]] = [:]
         /// Each typealias and what it names, by its name and its qualified name.
         var aliases: [String: String] = [:]
@@ -389,8 +389,7 @@ enum LiveReload {
             }
             if entry.hasSuffix("\t"), !isGroup(entry) { out.types.insert(String(entry.dropLast())); continue }
             if !isGroup(entry), !entry.hasPrefix("protocol "), let tab = entry.firstIndex(of: "\t"), let colon = entry.range(of: ": ") {
-                let field = entry[entry.index(after: tab)..<colon.lowerBound]
-                if !field.hasPrefix("case ") { out.fields[String(entry[..<tab]), default: []].append(String(entry[colon.upperBound...])) }
+                out.fields[String(entry[..<tab]), default: []].append(String(entry[colon.upperBound...]))
                 continue
             }
             guard entry.hasPrefix(declarationGroup + "\t") else { continue }
@@ -434,7 +433,10 @@ enum LiveReload {
         }
         func mayWrap(kind: String, _ seen: inout Set<String>) -> Bool {
             for match in names.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)) {
-                let name = String(kind[Range(match.range, in: kind)!]), last = String(name.split(separator: ".").last ?? "")
+                var name = String(kind[Range(match.range, in: kind)!])
+                // A case's type names its enum's metatype; the type itself is what's looked at.
+                for suffix in [".Type", ".Protocol"] where name.hasSuffix(suffix) { name.removeLast(suffix.count) }
+                let last = String(name.split(separator: ".").last ?? "")
                 if ["any", "some", "inout"].contains(name) || LiveSlots.plainValues.contains(last) { continue }
                 if let named = conformances.aliases[name] ?? conformances.aliases[last] {
                     if seen.insert("=" + name).inserted, mayWrap(kind: named, &seen) { return true } else { continue }

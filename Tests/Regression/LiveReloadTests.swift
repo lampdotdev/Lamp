@@ -129,6 +129,8 @@ final class LiveReloadTests: XCTestCase {
             struct Jar<T>: Lidded { var value: T }
             protocol Flat {}
             struct Tile: Flat { var n: Int; var square: Square }
+            enum Parcel<T>: Lidded { case value(T), none }
+            enum Coin: Flat { case heads, tails(Int) }
             struct Outer { enum Mood: Shape { case a, b; func area() -> Int { 0 }; var name: String { get { "" } set {} } } }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
         let layout = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
@@ -173,6 +175,10 @@ final class LiveReloadTests: XCTestCase {
         // app's own types can't.
         XCTAssertEqual(LiveReload.existential(in: "any Lidded", holding: "Mood", conformances: conformances), "any Lidded")
         XCTAssertNil(LiveReload.existential(in: "any Flat", holding: "Mood", conformances: conformances))
+        // An enum's cases' payloads count as what it holds: a generic payload may wrap the enum, a plain one can't.
+        let noJar = LiveReload.conformances(inLayout: layout!.filter { !$0.hasPrefix("Jar") && !$0.contains("Jar inherits") })
+        XCTAssertEqual(LiveReload.existential(in: "any Lidded", holding: "Mood", conformances: noJar), "any Lidded")
+        XCTAssertEqual(noJar.fields["Coin"], ["(Coin.Type) -> Coin", "(Coin.Type) -> (Int) -> Coin"])
         XCTAssertEqual(LiveReload.existential(in: "any CustomDebugStringConvertible", holding: "Mood", conformances: conformances), "any CustomDebugStringConvertible")
         XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
         XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")
