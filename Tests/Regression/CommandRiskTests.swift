@@ -173,15 +173,16 @@ final class CommandRiskTests: XCTestCase {
 
     // MARK: A low rating
 
-    /// Dan: a command the card calls low risk, in green, shouldn't wait for an answer; medium and high keep
-    /// asking, and so does anything a check flagged, whatever the in-app model calls it.
-    func testALowRatingRunsWhatNothingFlagged() {
+    /// A command the card calls low or medium risk, green or yellow, doesn't wait for an answer; high
+    /// keeps asking, and so does anything a check flagged, whatever the in-app model calls it.
+    func testALowOrMediumRatingRunsWhatNothingFlagged() {
         func rated(_ risk: String) -> Store.CommandExplanation {
             Store.CommandExplanation(summary: "Searches the app's source files for words to change.", risk: risk,
                                      why: "Only reads files inside the app's own folder; nothing is changed.")
         }
         XCTAssertTrue(CommandRisk.runsOnRating(rated("low"), flagged: nil))
-        XCTAssertFalse(CommandRisk.runsOnRating(rated("medium"), flagged: nil))
+        XCTAssertTrue(CommandRisk.runsOnRating(rated("medium"), flagged: nil))
+        XCTAssertFalse(CommandRisk.runsOnRating(rated("medium"), flagged: .reachesBeyond))
         XCTAssertFalse(CommandRisk.runsOnRating(rated("high"), flagged: nil))
         XCTAssertFalse(CommandRisk.runsOnRating(rated("low"), flagged: .sendsOut))
         XCTAssertFalse(CommandRisk.runsOnRating(nil, flagged: nil))
@@ -202,20 +203,32 @@ final class CommandRiskTests: XCTestCase {
         XCTAssertEqual(answered, .some("low"))
     }
 
+    /// A reply that doesn't say low, medium or high is never taken for a colour that runs: medium runs now, so
+    /// a missing or unknown risk keeps the card.
+    func testARatingWithoutAValidRiskAsks() async {
+        for reply in [#"{"summary": "Builds the app.", "why": "w"}"#, #"{"summary": "Builds the app.", "risk": "none"}"#,
+                      #"{"summary": "Builds the app.", "risk": 1}"#, #"{"summary": "Builds the app.", "risk": "Medium"}"#] {
+            let rating = await CommandRisk.rating(command: "swift build", request: "", building: "an app") { _, _ in reply }
+            XCTAssertEqual(rating?.summary, "Builds the app.")
+            XCTAssertEqual(CommandRisk.runsOnRating(rating, flagged: nil), reply.contains("Medium"), reply)
+        }
+    }
+
     // MARK: The reason on the card
 
-    /// The text model can call a flagged command low risk; the card doesn't. A rating that's already
-    /// medium or high is the model's own and stays.
+    /// The text model can call a flagged command low or medium risk; the card doesn't, since those are the
+    /// colours that run. A rating that's already high is the model's own and stays.
     func testTheCardNeverCallsAFlaggedCommandLowRisk() {
         let low = Store.CommandExplanation(summary: "Installs a tool.", risk: "low", why: "Only edits files in the app.")
         let raised = low.raised(for: .reachesBeyond)
-        XCTAssertEqual([raised.summary, raised.risk, raised.why], ["Installs a tool.", "medium", "It reaches beyond this app: other apps, the Mac's software, or something published."])
+        XCTAssertEqual([raised.summary, raised.risk, raised.why], ["Installs a tool.", "high", "It reaches beyond this app: other apps, the Mac's software, or something published."])
         XCTAssertEqual(low.raised(for: .sendsOut).risk, "high")
         XCTAssertEqual(low.raised(for: nil).risk, "low")
         let high = Store.CommandExplanation(summary: "s", risk: "high", why: "Runs code from the internet.")
         XCTAssertEqual(high.raised(for: .reachesBeyond).why, "Runs code from the internet.")
         for reason in [CommandRisk.Reason.sendsOut, .readsSecrets, .hidesWhatItDoes, .reachesFar, .reachesBeyond] {
-            XCTAssertNotEqual(low.raised(for: reason).risk, "low")
+            XCTAssertEqual(low.raised(for: reason).risk, "high")
+            XCTAssertEqual(Store.CommandExplanation(summary: "s", risk: "medium", why: "w").raised(for: reason).risk, "high")
         }
     }
 }
