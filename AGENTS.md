@@ -762,9 +762,16 @@ a generic superclass) gets its method table from the app's description of it, wh
 copy starts the app through an entry of Lamp's (`__LampEntry`, added by the copy step before the App's own), which
 first points the runtime's call that fills such tables in (`swift_initClassMetadata2`, through the same symbol pointer
 as any call) at `LampLive.classMade`, which records every class made and points its table at the newest code, and a
-change points every table made so far the same way. What `LampLive` can't make right it refuses, and the app reopens: a
-class's method table that changed shape, or a class whose methods the change lists in another order than the app (one
-added, taken away or moved), since a table made after it would be laid out from the app's list. The
+change points every table made so far the same way. A witness table (what a call through a protocol goes through) holds a
+thunk for each requirement, which calls whichever method answers it, so one compiled when the protocol's own default
+answered goes on calling it after the change answers it in the type: the app's tables, and those the runtime makes
+from them for a generic type (recorded through `swift_getWitnessTable` the same way, `tableMade`), are pointed at the
+new thunks. A default argument is made by a function of its own, which every caller calls, so it's rebound like any
+function. What a class answers to from Objective-C (an override of a system class's method, a selector's target) is in
+its method list, not its table, so a kept class takes its copy's methods (`takeMethods`). What `LampLive` can't make
+right it refuses, and the app reopens: a class's method table that changed shape, or a class whose methods the change
+lists in another order than the app (one added, taken away or moved), since a table made after it would be laid out
+from the app's list. The
 build then waits to be installed until the app closes (`LiveReload.awaitInstall`, which unlike a held build doesn't
 keep the agent off the app). Anything else is installed the usual way, by reopening the app, with why in the chat's
 details (`LiveReload.Verdict`), so the rules can be tuned by what happens. The chat says nothing about which it was:
