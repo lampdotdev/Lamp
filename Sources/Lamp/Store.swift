@@ -4556,7 +4556,9 @@ final class Store: ObservableObject {
         // Then every file of the app's is compiled again, so no code of the open app's meets a case it never knew
         // (a switch, or printing it), and the enum's own metadata is the change's, which knows the new cases.
         if let before, let layout = check.layout, case let grown = LiveReload.grownEnums(before: before, after: layout), !grown.isEmpty {
-            if let why = await LiveReload.enumsHeld(project, grown: grown) {
+            var why = await LiveReload.enumsHeld(project, grown: grown)
+            if why == nil { why = await LiveReload.enumsMetByOldCode(project, grown: grown) }
+            if let why {
                 log(project, .detail, "\(project.name) has to reopen for this change: \(why).")
                 return false
             }

@@ -217,12 +217,10 @@ enum LiveReload {
     /// meanings that a new case takes over. Looked for in every stored field, static and global of the new code,
     /// and in what the spares keep, whose types the compiler no longer sees.
     @MainActor static func enumsHeld(_ project: LampProject, grown: [String]) async -> String? {
-        let primaries = swiftFiles(in: sources(project)).keys.filter { ($0 as NSString).lastPathComponent != "LampSupport.swift" }.sorted()
-        var output: [String] = []
-        let status = await Sandbox.run(frontend("-dump-ast", in: sources(project), primaries: primaries, module: project.exe,
-                                                macOS: Template.macMinimum(project)) + " 2>/dev/null", for: project, cwd: sources(project)) { output.append($0) }
-        guard status == 0 else { return "the compiler couldn't say what holds the enums that grew" }
-        let held = members(inDump: output.joined(separator: "\n"), held: true).compactMap { entry -> (String, String)? in
+        guard let dump = await dump(of: sources(project), in: project, module: project.exe, macOS: Template.macMinimum(project)) else {
+            return "the compiler couldn't say what holds the enums that grew"
+        }
+        let held = members(inDump: dump, held: true).compactMap { entry -> (String, String)? in
             guard !isGroup(String(entry.prefix { $0 != "\t" })), let colon = entry.range(of: ": ") else { return nil }
             return (String(entry.prefix { $0 != "\t" }), String(entry[colon.upperBound...]))
         } + LiveSlots.mapping(project).flatMap { type, properties in properties.map { (type, $0.value.type) } }
@@ -239,6 +237,82 @@ enum LiveReload {
                 let range = NSRange(kind.startIndex..., in: kind)
                 if mention.firstMatch(in: kind, range: range) != nil, plainly.firstMatch(in: kind, range: range) == nil {
                     return "\(owner.isEmpty ? "a global" : owner) holds \(type) as \(kind), which a new case would change"
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Why a grown enum can't go in for the code the open app is still running, if it can't. Every file is compiled
+    /// again for one, but code already running keeps the version it started with: a closure given to a timer, a
+    /// task or an observer, a `.task` of a view's, a function waiting on an `await`. A `switch` over the enum
+    /// there was compiled for the cases it had, and a new case lands in another's arm or past the end; printing
+    /// it reads the old description of the enum. So the sources the open app runs are read for a `switch` over
+    /// the enum, or an interpolation of it, in an escaping closure made outside a view's body (what a body makes
+    /// is made again at the next draw), in an async closure anywhere, or in an async function.
+    @MainActor static func enumsMetByOldCode(_ project: LampProject, grown: [String]) async -> String? {
+        guard let dump = await dump(of: running(project), in: project, module: project.exe, macOS: Template.macMinimum(project)) else {
+            return "the compiler couldn't say where the open app uses the enums that grew"
+        }
+        return oldCode(meeting: grown, inDump: dump)
+    }
+
+    static func oldCode(meeting enums: [String], inDump dump: String) -> String? {
+        enum Kind { case body, escaping, async, function(String?, async: Bool), other }
+        let bodyDecl = try! NSRegularExpression(pattern: #"^(\s*)\(var_decl\b[^"]*"body" "#)
+        let closure = try! NSRegularExpression(pattern: #"^(\s*)\((?:closure_expr|autoclosure_expr)\b(.*)$"#)
+        let function = try! NSRegularExpression(pattern: #"^(\s*)\((?:func_decl|accessor_decl|constructor_decl)\b[^"]*(?:"([^"]+)")? interface_type="([^"]*)""#)
+        let scope = try! NSRegularExpression(pattern: #"^(\s*)\((?:var_decl|subscript_decl|struct_decl|class_decl|enum_decl|actor_decl|extension_decl|protocol)\b"#)
+        let switchStmt = try! NSRegularExpression(pattern: #"^(\s*)\(switch_stmt\b"#)
+        let casePattern = try! NSRegularExpression(pattern: #"^(\s*)\(pattern_enum_element\b.*? type="([^"]*)""#)
+        let interpolation = try! NSRegularExpression(pattern: #"^(\s*)\(declref_expr\b.*? type="[^"]*\(([^"()]*)\) -> \(\)".*? decl="Swift\.\(file\)\.DefaultStringInterpolation\.appendInterpolation"#)
+        let names = Set(enums), optional = Set(enums.map { $0 + "?" })
+        var scopes: [(indent: Int, kind: Kind)] = []
+        var switching: Int?
+        func risky() -> Bool {
+            var inBody = false
+            for (_, kind) in scopes {
+                switch kind {
+                case .body: inBody = true
+                case .async, .function(_, async: true): return true
+                case .escaping where !inBody: return true
+                default: break
+                }
+            }
+            return false
+        }
+        func place() -> String {
+            for (_, kind) in scopes.reversed() { if case .function(let name?, _) = kind { return name } }
+            return "the app"
+        }
+        for raw in dump.split(separator: "\n") {
+            let line = String(raw), range = NSRange(line.startIndex..., in: line)
+            let indent = line.prefix { $0 == " " }.count
+            guard line.dropFirst(indent).first == "(" else { continue }
+            while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
+            if let at = switching, at >= indent { switching = nil }
+            if bodyDecl.firstMatch(in: line, range: range) != nil {
+                scopes.append((indent, .body))
+            } else if let m = closure.firstMatch(in: line, range: range) {
+                let rest = String(line[Range(m.range(at: 2), in: line)!])
+                scopes.append((indent, rest.contains(" async") ? .async : rest.contains(" escaping") ? .escaping : .other))
+            } else if let m = function.firstMatch(in: line, range: range) {
+                let type = String(line[Range(m.range(at: 3), in: line)!])
+                let name = m.range(at: 2).location == NSNotFound ? nil : String(line[Range(m.range(at: 2), in: line)!])
+                scopes.append((indent, .function(name, async: type.contains(" async"))))
+            } else if scope.firstMatch(in: line, range: range) != nil {
+                scopes.append((indent, .other))
+            } else if switchStmt.firstMatch(in: line, range: range) != nil {
+                if risky() { switching = indent }
+            } else if let at = switching, indent > at, let m = casePattern.firstMatch(in: line, range: range) {
+                let type = String(line[Range(m.range(at: 2), in: line)!])
+                if names.contains(type) || optional.contains(type) {
+                    return "\(place()) switches over \(type) in code that may still be running (a timer, a task, an observer), which doesn't know the new cases"
+                }
+            } else if let m = interpolation.firstMatch(in: line, range: range), risky() {
+                let type = String(line[Range(m.range(at: 2), in: line)!])
+                if names.contains(type) || optional.contains(type) {
+                    return "\(place()) prints \(type) in code that may still be running (a timer, a task, an observer), which doesn't know the new cases"
                 }
             }
         }
@@ -326,16 +400,21 @@ enum LiveReload {
         return members(inDump: output.joined(separator: "\n"), rawValues: rawValues)
     }
 
-    /// A live copy's layout as `layout` gives it, with what's read only at launch (`SwiftSource.launchEntries`)
-    /// and where each property is declared, all from the one printout.
-    static func analysis(of folder: URL, in project: LampProject, module: String, macOS: String) async -> (layout: [String], declarations: SwiftSource.Declarations)? {
+    /// The compiler's printout of a live copy's whole code but Lamp's own, or nil when it doesn't type-check (or
+    /// there's none): empty for a copy with no files of the app's.
+    static func dump(of folder: URL, in project: LampProject, module: String, macOS: String) async -> String? {
         let primaries = swiftFiles(in: folder).keys.filter { ($0 as NSString).lastPathComponent != "LampSupport.swift" }.sorted()
-        guard !primaries.isEmpty else { return ([], SwiftSource.Declarations()) }
+        guard !primaries.isEmpty else { return "" }
         var output: [String] = []
         let status = await Sandbox.run(frontend("-dump-ast", in: folder, primaries: primaries, module: module, macOS: macOS) + " 2>/dev/null",
                                        for: project, cwd: folder) { output.append($0) }
-        guard status == 0 else { return nil }
-        let dump = output.joined(separator: "\n")
+        return status == 0 ? output.joined(separator: "\n") : nil
+    }
+
+    /// A live copy's layout as `layout` gives it, with what's read only at launch (`SwiftSource.launchEntries`)
+    /// and where each property is declared, all from the one printout.
+    static func analysis(of folder: URL, in project: LampProject, module: String, macOS: String) async -> (layout: [String], declarations: SwiftSource.Declarations)? {
+        guard let dump = await dump(of: folder, in: project, module: module, macOS: macOS) else { return nil }
         let declarations = SwiftSource.declarations(inDump: dump)
         return (members(inDump: dump) + SwiftSource.launchEntries(inDump: dump, folder: folder) + SwiftSource.constantEntries(declarations),
                 declarations)
