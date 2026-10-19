@@ -135,7 +135,7 @@
   {
     "name": "plan",
     "label": "Plan",
-    "description": "Shows the user what you're building, as a short checklist in Lamp while they wait. For a new app, call it once before writing any code with the 3 to 5 main parts, each in plain words the user would use (what they'll be able to do, not file or type names), and the files you'll write for each part. Lamp ticks a part off when all of its files are written, so there's no need to call it again. Call it again only if the plan changes; every call replaces the whole list.",
+    "description": "Shows the user what you're building, as a short checklist in Lamp while they wait. For a new app, call it once before writing any code with the 3 to 5 main parts in the order you'll build them, each in plain words the user would use (what they'll be able to do, not file or type names), and the files you'll write for each part. Lamp ticks a part off when all of its files are written, so there's no need to call it again. Write the files part by part in the list's order, so it fills in from the top; what later parts rely on (the app's saved data, a connection to a service) belongs to the first part that uses it. Call it again only if the plan changes; every call replaces the whole list.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
