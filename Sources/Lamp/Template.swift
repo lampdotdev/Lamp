@@ -3731,14 +3731,25 @@ enum Template {
         /// a library's calls to functions it doesn't hold were bound to the app's first copies.
         private var latest: [String: UnsafeRawPointer] = [:]
         private var images: [String] = []
-        /// The accessors of each stored global and static, by name, from the image that first had it.
+        /// The accessors of each stored global and static, and each class's metadata, by name, from the image that
+        /// first had it.
         private var kept: [String: UnsafeRawPointer] = [:]
 
         private func keep(_ symbols: [(String, UnsafeRawPointer)]) {
             let stored = Self.stored(in: symbols)
-            for (name, address) in symbols where kept[name] == nil && (name.hasSuffix("vau") || Self.accesses(name, oneOf: stored)) {
+            for (name, address) in symbols where kept[name] == nil
+                && (name.hasSuffix("vau") || Self.accesses(name, oneOf: stored) || Self.isClass(name)) {
                 kept[name] = address
             }
+        }
+
+        /// A class's metadata and what finds it. The library has its own copy of each class in the files it was
+        /// compiled from, and code asking for the class there would get that one: an object the app made is then
+        /// not of its type, and what's looked up by type (an environment object, a cast) isn't found. So the new
+        /// code is pointed at the app's, whose layout the change kept (a new stored property has its own slot).
+        /// A struct's or an enum's stays the library's: an enum may have gained cases.
+        private static func isClass(_ name: String) -> Bool {
+            name.hasPrefix("_$s") && ["CMa", "CN", "CMn", "CMm", "CMf", "CMo"].contains { name.hasSuffix($0) }
         }
 
         private func load(_ path: String?, signature: String?) {
@@ -3765,9 +3776,9 @@ enum Template {
             for (name, address) in defined where Self.isCode(name) && !Self.accesses(name, oneOf: Self.stored(in: defined)) {
                 latest[name] = address
             }
-            // Stored globals and statics stay where they were first made: the new code's own accessors for them
-            // would reach a second copy, made afresh. So its calls to them go to the app's, or to the earlier
-            // change's that first added one, and only one that's new keeps its own.
+            // Stored globals and statics, and classes, stay where they were first made: the new code's own copies
+            // would be a second set, made afresh. So its calls to them go to the app's, or to the earlier change's
+            // that first added one, and only one that's new keeps its own.
             if kept.isEmpty, let app = _dyld_get_image_header(0) {
                 keep(Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0)))
             }
