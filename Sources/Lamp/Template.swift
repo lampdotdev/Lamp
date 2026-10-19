@@ -199,26 +199,44 @@ enum Template {
         try put(contents, at: url, for: project, executable: executable)
     }
 
+    /// What an app is told about itself and Lamp, read by LampSupport's `LampInstall` from its Info.plist. Lamp
+    /// writes it into every copy it installs (`Store.setInstallValues`), and into the phone project's Info.plist,
+    /// so the compiled app is the same for every install and every app.
+    static func installValues(for project: LampProject) -> [String: String] {
+        [
+            "slug": project.id,
+            "dataID": Edition.appBundlePrefix + project.id,
+            "token": token(for: project),
+            "port": String(Gateway.port),
+            "scheme": Edition.urlScheme,
+            "note": Edition.notificationPrefix,
+            "host": Edition.bundleID,
+            "apps": Edition.supportFolder.appendingPathComponent("Apps").path,
+            "macHost": Devices.macHost,
+            "widgetPort": String(widgetPort(for: project)),
+            "widgetToken": project.platform == .mac ? widgetToken(for: project) : "",
+            "sidebarPort": String(sidebarPort(for: project)),
+            "sidebarTries": String(sidebarPortTries),
+            "sidebarHost": sidebarHost(for: project),
+            "sidebarKey": project.platform.hasMac ? sidebarKey(for: project) : "",
+            "sidebarFramer": sidebarFramer,
+        ]
+    }
+
+    /// The same, as lines of an Info.plist.
+    static func installPlistLines(for project: LampProject) -> String {
+        func escaped(_ text: String) -> String {
+            text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
+        }
+        let pairs = installValues(for: project).sorted { $0.key < $1.key }
+            .map { "<key>\($0.key)</key><string>\(escaped($0.value))</string>" }.joined()
+        return "<key>LampInstall</key><dict>\(pairs)</dict>"
+    }
+
     /// Lamp owns LampSupport.swift and rewrites it before every agent turn and build,
     /// so existing apps pick up helper improvements automatically.
     static func writeSupport(for project: LampProject) throws {
         let contents = lampSupportSwift
-            .replacingOccurrences(of: "{{SLUG}}", with: project.id)
-            .replacingOccurrences(of: "{{DATAID}}", with: Edition.appBundlePrefix + project.id)
-            .replacingOccurrences(of: "{{TOKEN}}", with: token(for: project))
-            .replacingOccurrences(of: "{{PORT}}", with: String(Gateway.port))
-            .replacingOccurrences(of: "{{SCHEME}}", with: Edition.urlScheme)
-            .replacingOccurrences(of: "{{NOTE}}", with: Edition.notificationPrefix)
-            .replacingOccurrences(of: "{{HOST}}", with: Edition.bundleID)
-            .replacingOccurrences(of: "{{APPS}}", with: Edition.supportFolder.appendingPathComponent("Apps").path)
-            .replacingOccurrences(of: "{{MACHOST}}", with: Devices.macHost)
-            .replacingOccurrences(of: "{{WIDGET_PORT}}", with: String(widgetPort(for: project)))
-            .replacingOccurrences(of: "{{WIDGET_TOKEN}}", with: project.platform == .mac ? widgetToken(for: project) : "")
-            .replacingOccurrences(of: "{{SIDEBAR_PORT}}", with: String(sidebarPort(for: project)))
-            .replacingOccurrences(of: "{{SIDEBAR_TRIES}}", with: String(sidebarPortTries))
-            .replacingOccurrences(of: "{{SIDEBAR_HOST}}", with: sidebarHost(for: project))
-            .replacingOccurrences(of: "{{SIDEBAR_KEY}}", with: project.platform.hasMac ? sidebarKey(for: project) : "")
-            .replacingOccurrences(of: "{{SIDEBAR_FRAMER}}", with: sidebarFramer)
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
         try put(contents, at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
         try writeWidgetSupport(for: project)
@@ -1866,6 +1884,7 @@ enum Template {
         for (path, template) in files {
             let contents = template
                 .replacingOccurrences(of: "{{PHONE_SECRET}}", with: secret)
+                .replacingOccurrences(of: "{{LAMP_INSTALL}}", with: installPlistLines(for: project))
                 .replacingOccurrences(of: "{{WIDGET_PLIST}}", with: widgetPlist)
                 .replacingOccurrences(of: "{{APP_GROUP}}", with: group)
                 .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
@@ -1969,6 +1988,7 @@ enum Template {
       <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
       <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
       <key>LampPhoneSecret</key><string>{{PHONE_SECRET}}</string>
+      {{LAMP_INSTALL}}
     {{USAGE}}
     {{BACKGROUND}}
     {{ICLOUD}}
@@ -3546,12 +3566,40 @@ enum Template {
     }
     #endif
 
+    /// What Lamp told this copy of the app when it installed it, in its Info.plist: who the app is to Lamp, the
+    /// secrets it shows Lamp, and where Lamp and its folders are. None of it is compiled in, so a copy built once
+    /// (a starter Lamp ships) works on any Mac and for either Lamp once Lamp has written its own values in.
+    enum LampInstall {
+        static let values = Bundle.main.object(forInfoDictionaryKey: "LampInstall") as? [String: String] ?? [:]
+        static func value(_ key: String) -> String { values[key] ?? "" }
+        static func number(_ key: String) -> Int { Int(value(key)) ?? 0 }
+        /// The app's folder name, which is how Lamp knows it.
+        static var slug: String { value("slug") }
+        /// Shown to Lamp with each request; only Lamp and this app have it.
+        static var token: String { value("token") }
+        static var dataID: String { value("dataID") }
+        static var port: Int { number("port") }
+        static var scheme: String { value("scheme") }
+        /// What Lamp's notifications to and from its apps begin with.
+        static var note: String { value("note") }
+        /// Lamp's own bundle id.
+        static var host: String { value("host") }
+        /// The folder of Lamp's apps, and this app's in it.
+        static var apps: String { value("apps") }
+        static var app: String { apps + "/" + slug }
+        static var macHost: String { value("macHost") }
+        /// A link that asks Lamp to do something for this app.
+        static func link(_ action: String) -> URL {
+            URL(string: "\(scheme.isEmpty ? "lamp" : scheme)://\(action)?app=\(slug)") ?? URL(fileURLWithPath: "/")
+        }
+    }
+
     /// Where Lamp is: on this Mac for a Mac app and for the simulator, and the Mac's name on the local
     /// network for an app on a phone, which Lamp answers on the same Wi‑Fi.
     #if os(iOS) && !targetEnvironment(simulator)
-    let lampGateway = "http://{{MACHOST}}:{{PORT}}"
+    let lampGateway = "http://\(LampInstall.macHost):\(LampInstall.port)"
     #else
-    let lampGateway = "http://127.0.0.1:{{PORT}}"
+    let lampGateway = "http://127.0.0.1:\(LampInstall.port)"
     #endif
 
     /// Where the person turns a permission on: System Settings on a Mac, Settings on a phone.
@@ -3640,8 +3688,8 @@ enum Template {
         static func share() {
             Task {
                 var answer = await ask()
-                if answer == nil, NSRunningApplication.runningApplications(withBundleIdentifier: "{{HOST}}").isEmpty,
-                   let lamp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "{{HOST}}") {
+                if answer == nil, NSRunningApplication.runningApplications(withBundleIdentifier: LampInstall.host).isEmpty,
+                   let lamp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: LampInstall.host) {
                     let config = NSWorkspace.OpenConfiguration()
                     config.activates = false
                     _ = try? await NSWorkspace.shared.openApplication(at: lamp, configuration: config)
@@ -3687,7 +3735,7 @@ enum Template {
             var request = URLRequest(url: url, timeoutInterval: 120)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
+            request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
             request.httpBody = Data("{}".utf8)
             guard let (data, response) = try? await URLSession.shared.data(for: request) else { return nil }
             let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
@@ -3820,7 +3868,7 @@ enum Template {
 
         static let start: Void = {
             DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("{{NOTE}}reload"), object: Bundle.main.bundleIdentifier, queue: .main
+                forName: Notification.Name(LampInstall.note + "reload"), object: Bundle.main.bundleIdentifier, queue: .main
             ) { note in
                 let path = note.userInfo?["path"] as? String, signature = note.userInfo?["signature"] as? String
                 MainActor.assumeIsolated { shared.load(path, signature: signature) }
@@ -3911,10 +3959,10 @@ enum Template {
         }
 
         private func load(_ path: String?, signature: String?) {
-            let folder = "{{APPS}}/{{SLUG}}/.lamp/live/"
+            let folder = LampInstall.app + "/.lamp/live/"
             guard let path, let signature, path.hasPrefix(folder), !path.contains(".."), path.hasSuffix(".dylib"),
                   !loaded.contains(path) else { return }
-            let key = SymmetricKey(data: Data("{{TOKEN}}".utf8))
+            let key = SymmetricKey(data: Data(LampInstall.token.utf8))
             let expected = HMAC<SHA256>.authenticationCode(for: Data("reload\n\(path)".utf8), using: key)
                 .map { String(format: "%02x", $0) }.joined()
             guard signature == expected else { return }
@@ -4147,13 +4195,13 @@ enum Template {
                 }
                 // Lamp hands the chat over to the app (`LampSidebar.openForLamp`).
                 DistributedNotificationCenter.default().addObserver(
-                    forName: Notification.Name("{{NOTE}}openSidebar"), object: Bundle.main.bundleIdentifier, queue: .main
+                    forName: Notification.Name(LampInstall.note + "openSidebar"), object: Bundle.main.bundleIdentifier, queue: .main
                 ) { _ in
                     MainActor.assumeIsolated { if isOn { LampSidebar.openForLamp() } }
                 }
                 // Lamp's chat asks for something on the screen to be pointed at.
                 DistributedNotificationCenter.default().addObserver(
-                    forName: Notification.Name("{{NOTE}}pick"), object: Bundle.main.bundleIdentifier, queue: .main
+                    forName: Notification.Name(LampInstall.note + "pick"), object: Bundle.main.bundleIdentifier, queue: .main
                 ) { _ in
                     MainActor.assumeIsolated { Picker.start() }
                 }
@@ -4261,10 +4309,10 @@ enum Template {
                 if Picker.current === self { Picker.current = nil }
                 // Pointing may have been asked for from Lamp's window, which then comes back in front: macOS lets
                 // Lamp do that only when the app in front hands it over.
-                NSApp.yieldActivation(toApplicationWithBundleIdentifier: "{{HOST}}")
+                NSApp.yieldActivation(toApplicationWithBundleIdentifier: LampInstall.host)
                 if tell {
                     DistributedNotificationCenter.default().postNotificationName(
-                        Notification.Name("{{NOTE}}pickEnded"), object: Bundle.main.bundleIdentifier, userInfo: nil, deliverImmediately: true)
+                        Notification.Name(LampInstall.note + "pickEnded"), object: Bundle.main.bundleIdentifier, userInfo: nil, deliverImmediately: true)
                 }
             }
 
@@ -4392,7 +4440,7 @@ enum Template {
                         }
                     }
                     DistributedNotificationCenter.default().postNotificationName(
-                        Notification.Name("{{NOTE}}picked"), object: Bundle.main.bundleIdentifier, userInfo: info, deliverImmediately: true)
+                        Notification.Name(LampInstall.note + "picked"), object: Bundle.main.bundleIdentifier, userInfo: info, deliverImmediately: true)
                 } }
             }
 
@@ -4431,7 +4479,7 @@ enum Template {
         }
 
         /// Whether Lamp's experiment is on (Settings → Experimental): a file Lamp keeps beside the apps' folders.
-        static var isOn: Bool { FileManager.default.fileExists(atPath: "{{APPS}}/.magic") }
+        static var isOn: Bool { FileManager.default.fileExists(atPath: LampInstall.apps + "/.magic") }
 
         @MainActor private static func detach(from window: NSWindow) {
             while let index = window.titlebarAccessoryViewControllers.firstIndex(where: { $0.view.identifier == identifier }) {
@@ -4618,7 +4666,7 @@ enum Template {
             reported = true
             let shown = window.isVisible && !window.isMiniaturized && !window.styleMask.contains(.fullScreen)
             DistributedNotificationCenter.default().postNotificationName(
-                Notification.Name("{{NOTE}}windowFrame"), object: Bundle.main.bundleIdentifier,
+                Notification.Name(LampInstall.note + "windowFrame"), object: Bundle.main.bundleIdentifier,
                 userInfo: ["frame": shown ? NSStringFromRect(window.frame) : ""], deliverImmediately: true)
         }
 
@@ -4769,7 +4817,7 @@ enum Template {
         @MainActor static func openFromMenu() {
             if LampMagic.isOn, frontWindow() == nil, LampMenuBar.isInstalled { return LampMenuBar.customize() }
             guard LampMagic.isOn, let window = frontWindow(), !window.isMiniaturized else {
-                NSWorkspace.shared.open(URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!)
+                NSWorkspace.shared.open(LampInstall.link("edit"))
                 return
             }
             window.makeKeyAndOrderFront(nil)
@@ -5616,20 +5664,20 @@ enum Template {
         /// Lamp listens for the chat: told directly when it's running (so this Lamp answers, not another copy),
         /// else started by its link, without coming in front.
         @MainActor private static func tellLamp() {
-            if !NSRunningApplication.runningApplications(withBundleIdentifier: "{{HOST}}").isEmpty {
+            if !NSRunningApplication.runningApplications(withBundleIdentifier: LampInstall.host).isEmpty {
                 DistributedNotificationCenter.default().postNotificationName(
-                    Notification.Name("{{NOTE}}sidebar"), object: nil, userInfo: ["app": "{{SLUG}}"], deliverImmediately: true)
+                    Notification.Name(LampInstall.note + "sidebar"), object: nil, userInfo: ["app": LampInstall.slug], deliverImmediately: true)
                 return
             }
             let configuration = NSWorkspace.OpenConfiguration()
             configuration.activates = false
-            NSWorkspace.shared.open(URL(string: "{{SCHEME}}://sidebar?app={{SLUG}}")!, configuration: configuration)
+            NSWorkspace.shared.open(LampInstall.link("sidebar"), configuration: configuration)
         }
 
         /// No chat in this copy of the app (installed by a Lamp from before it): the chat in Lamp's window.
         @MainActor private static func fallback() {
             UserDefaults.standard.set(false, forKey: openKey)
-            NSWorkspace.shared.open(URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!)
+            NSWorkspace.shared.open(LampInstall.link("edit"))
         }
     }
 
@@ -5641,7 +5689,7 @@ enum Template {
         static let start: Void = {
             LampBackground.start
             DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("{{NOTE}}showWindow"), object: Bundle.main.bundleIdentifier, queue: .main
+                forName: Notification.Name(LampInstall.note + "showWindow"), object: Bundle.main.bundleIdentifier, queue: .main
             ) { _ in
                 MainActor.assumeIsolated { show() }
             }
@@ -5710,7 +5758,7 @@ enum Template {
         /// take a missing ordinary window for a failure and relaunch the app.
         private static func shown() {
             DistributedNotificationCenter.default().postNotificationName(
-                Notification.Name("{{NOTE}}windowShown"), object: Bundle.main.bundleIdentifier, userInfo: nil, deliverImmediately: true)
+                Notification.Name(LampInstall.note + "windowShown"), object: Bundle.main.bundleIdentifier, userInfo: nil, deliverImmediately: true)
         }
 
         /// The menu item that opens a window: File ▸ New Window (⌘N) while it still does that, or for an app with
@@ -5754,7 +5802,7 @@ enum Template {
     /// Saves what this app prints (`print`, `NSLog`, SwiftUI runtime warnings, fatal errors) and a picture of
     /// its windows to its Lamp project, where Lamp's builder looks to see what happened while the app ran.
     enum LampRuntime {
-        static let folder = URL(fileURLWithPath: "{{APPS}}/{{SLUG}}/.lamp/runtime")
+        static let folder = URL(fileURLWithPath: LampInstall.app + "/.lamp/runtime")
 
         /// Runs once, at launch. Each launch starts a new log.txt and keeps the one before as previous-log.txt.
         static let start: Void = {
@@ -5771,17 +5819,17 @@ enum Template {
             }
             // Lamp asks for fresh pictures when its builder wants to look at the app.
             DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("{{NOTE}}snapshot.{{SLUG}}"), object: nil, queue: .main) { _ in
+                forName: Notification.Name(LampInstall.note + "snapshot." + LampInstall.slug), object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { snapshot() }
             }
             // ...and a few seconds of its front window, frame after frame, when the builder wants to see what moves.
             DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("{{NOTE}}motion.{{SLUG}}"), object: nil, queue: .main) { _ in
+                forName: Notification.Name(LampInstall.note + "motion." + LampInstall.slug), object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { recordMotion() }
             }
             // ...and clicks, types and presses keys in it when the builder wants to try something (LampDriver).
             DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("{{NOTE}}useApp.{{SLUG}}"), object: nil, queue: .main) { note in
+                forName: Notification.Name(LampInstall.note + "useApp." + LampInstall.slug), object: nil, queue: .main) { note in
                 let actions = note.userInfo?["actions"] as? String, id = note.userInfo?["id"] as? String
                 let signature = note.userInfo?["lampUseAppSignature"] as? String
                 MainActor.assumeIsolated { LampDriver.perform(actions, id: id, signature: signature) }
@@ -5791,9 +5839,9 @@ enum Template {
             // since that's the one a stuck app has lost. The file says this copy listens.
             let pid = String(ProcessInfo.processInfo.processIdentifier)
             DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("{{NOTE}}stillThere.{{SLUG}}"), object: nil, queue: .main) { _ in
+                forName: Notification.Name(LampInstall.note + "stillThere." + LampInstall.slug), object: nil, queue: .main) { _ in
                 DistributedNotificationCenter.default().postNotificationName(
-                    Notification.Name("{{NOTE}}here.{{SLUG}}"), object: pid, userInfo: nil, deliverImmediately: true)
+                    Notification.Name(LampInstall.note + "here." + LampInstall.slug), object: pid, userInfo: nil, deliverImmediately: true)
             }
             try? pid.write(to: folder.appendingPathComponent("listening"), atomically: true, encoding: .utf8)
             let log = folder.appendingPathComponent("log.txt")
@@ -6038,8 +6086,8 @@ enum Template {
             // On a Mac the data is kept under the app's plain id, whatever the app is signed as: an app made for
             // the Mac and later made for the iPhone too carries its team in its id, and its data stays where it
             // was. One that was kept under its signed id before is moved here once.
-            let url = base.appendingPathComponent("{{DATAID}}")
-            if let signed = Bundle.main.bundleIdentifier, signed != "{{DATAID}}" {
+            let url = base.appendingPathComponent(LampInstall.dataID)
+            if let signed = Bundle.main.bundleIdentifier, signed != LampInstall.dataID {
                 let old = base.appendingPathComponent(signed)
                 if FileManager.default.fileExists(atPath: old.path), !FileManager.default.fileExists(atPath: url.path) {
                     try? FileManager.default.moveItem(at: old, to: url)
@@ -6562,7 +6610,7 @@ enum Template {
         static func perform(_ json: String?, id: String?, signature: String?) {
             guard let id, let json, let signature, let data = json.data(using: .utf8),
                   let actions = try? JSONDecoder().decode([Action].self, from: data) else { return }
-            let key = SymmetricKey(data: Data("{{TOKEN}}".utf8))
+            let key = SymmetricKey(data: Data(LampInstall.token.utf8))
             let expected = HMAC<SHA256>.authenticationCode(for: Data("\(id)\n\(json)".utf8), using: key)
                 .map { String(format: "%02x", $0) }.joined()
             guard signature == expected else { return }
@@ -8784,7 +8832,7 @@ enum Template {
     enum LampAssets {
         #if LAMP_LIVE
         // A live build reads them from the app's folder, so a file added while the app is open is there at once.
-        static var folder: URL? { URL(fileURLWithPath: "{{APPS}}/{{SLUG}}/Assets") }
+        static var folder: URL? { URL(fileURLWithPath: LampInstall.app + "/Assets") }
         #else
         static var folder: URL? { Bundle.main.resourceURL?.appendingPathComponent("Assets") }
         #endif
@@ -9234,7 +9282,7 @@ enum Template {
                     var request = URLRequest(url: URL(string: lampGateway + "/browser/surface")!)
                     request.httpMethod = "POST"
                     request.timeoutInterval = 5
-                    request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
+                    request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     request.httpBody = try JSONSerialization.data(withJSONObject: body)
                     let (data, response) = try await URLSession.shared.data(for: request)
@@ -9311,15 +9359,15 @@ enum Template {
         fileprivate enum PageServer {
             /// The first of the ports the app may use; when another program has it, the next few are tried, as
             /// Chrome's sidebar and Lamp's preview do. Only this app answers its own name on any of them.
-            static let firstPort: UInt16 = {{SIDEBAR_PORT}}
-            static let tries: UInt16 = {{SIDEBAR_TRIES}}
+            static let firstPort = UInt16(clamping: LampInstall.number("sidebarPort"))
+            static let tries = UInt16(clamping: max(1, LampInstall.number("sidebarTries")))
             nonisolated(unsafe) static var port: UInt16 = firstPort
-            static let host = "{{SIDEBAR_HOST}}"
-            static let key = "{{SIDEBAR_KEY}}"
+            static let host = LampInstall.value("sidebarHost")
+            static let key = LampInstall.value("sidebarKey")
             static let queue = DispatchQueue(label: "LampBrowser.page")
             nonisolated(unsafe) static var listeners: [NWListener] = []
             nonisolated(unsafe) static var version = 0
-            static let policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors {{SIDEBAR_FRAMER}}"
+            static let policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors \(LampInstall.value("sidebarFramer"))"
 
             static var folder: URL? { LampAssets.folder?.appendingPathComponent("Sidebar") }
 
@@ -9789,7 +9837,7 @@ enum Template {
             var request = URLRequest(url: url, timeoutInterval: 5)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
+            request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
             let done = DispatchSemaphore(value: 0)
             nonisolated(unsafe) var answer: [String: Any]?
@@ -11592,7 +11640,7 @@ enum Template {
             func direct() async throws -> [String: Any] {
                 try await LampDirect.handle(path, (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:])
             }
-            if await !LampDirect.useMac(token: "{{TOKEN}}"), LampDirect.keys != nil { return try await direct() }
+            if await !LampDirect.useMac(token: LampInstall.token), LampDirect.keys != nil { return try await direct() }
             do {
                 return try await postToLamp(path, body: body, timeout: timeout)
             } catch where LampDirect.unreachable(error) && LampDirect.keys != nil {
@@ -11608,7 +11656,7 @@ enum Template {
             var request = URLRequest(url: URL(string: lampGateway + path)!)
             request.httpMethod = "POST"
             request.timeoutInterval = timeout
-            request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
+            request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = body
 
@@ -11626,7 +11674,7 @@ enum Template {
                     #if os(macOS)
                     let config = NSWorkspace.OpenConfiguration()
                     config.activates = false
-                    if let lamp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "{{HOST}}") {
+                    if let lamp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: LampInstall.host) {
                         _ = try? await NSWorkspace.shared.openApplication(at: lamp, configuration: config)
                     }
                     #endif
@@ -13189,7 +13237,7 @@ enum Template {
         }()
 
         /// The link the widget's wand opens: the same one the app opens to show its chat in Lamp's window.
-        static let wand = URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!
+        static let wand = LampInstall.link("edit")
 
         @objc private func open(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
             guard let text = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
@@ -13257,8 +13305,8 @@ enum Template {
     ///         if name == "addWater" { model.add(payload.decode(Int.self) ?? 250) }
     ///     }
     enum LampWidget {
-        private static let firstPort: UInt16 = {{WIDGET_PORT}}
-        private static let token = "{{WIDGET_TOKEN}}"
+        private static let firstPort = UInt16(clamping: LampInstall.number("widgetPort"))
+        private static let token = LampInstall.value("widgetToken")
         private static let queue = DispatchQueue(label: "LampWidget")
 
         /// What a widget's button sent with its action.

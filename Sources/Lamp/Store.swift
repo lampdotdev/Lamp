@@ -4752,6 +4752,7 @@ final class Store: ObservableObject {
     private func finishSimulatorBundle(_ project: LampProject) async {
         let fm = FileManager.default
         let app = project.builtURL
+        Self.setInstallValues(for: project, in: app.appendingPathComponent("Info.plist"))
         var script = """
             P="$LAMP_APP/Info.plist"
             plutil -replace CFBundleName -string "$LAMP_NAME" "$P" && \\
@@ -4946,6 +4947,7 @@ final class Store: ObservableObject {
         defer { try? fm.removeItem(at: signing) }
         let resources = app.appendingPathComponent("Contents/Resources")
         try fm.createDirectory(at: resources, withIntermediateDirectories: true)
+        Self.setInstallValues(for: project, in: app.appendingPathComponent("Contents/Info.plist"))
         // Every usage description, from the one list: without its reason macOS kills the app the moment it
         // asks for the microphone, photos and the rest. Added here as well as in build.sh so apps made before
         // a reason was added get it too.
@@ -6366,6 +6368,15 @@ final class Store: ObservableObject {
               !FileManager.default.fileExists(atPath: Template.shareURL(in: project.installedURL, of: project).path),
               (try? String(contentsOf: teamSigningFailure(project), encoding: .utf8)) != Devices.team else { return false }
         return await Devices.signingIdentity(for: Devices.team) != nil
+    }
+
+    /// Writes what the app is told about itself and Lamp (`Template.installValues`) into a bundle's Info.plist,
+    /// before it's signed: LampSupport reads it there at launch rather than having it compiled in.
+    nonisolated static func setInstallValues(for project: LampProject, in plistURL: URL) {
+        guard let data = try? Data(contentsOf: plistURL),
+              var plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return }
+        plist["LampInstall"] = Template.installValues(for: project)
+        if let out = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) { try? out.write(to: plistURL) }
     }
 
     /// Writes, or takes out, the name of the folder a Mac app shares with its widget, in each bundle's Info.plist,
