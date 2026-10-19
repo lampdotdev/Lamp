@@ -668,7 +668,9 @@ full screen takes the panel down and puts it back where it now goes. Dragged by 
 the window (`Beside.detached`): no longer its child, it goes where it's put, floats over the app's windows while the app is
 in front, and stays there through the window's moves and the chat closing and opening again, until the app quits (or the
 window goes full screen), when it goes back beside the window. The press lands in the chat's process, so the chat asks the
-app to move it (`startMove`) and the app follows the pointer until the button is let go. Beside the window the chat is
+app to move it (`startMove`) and the app follows the pointer until the button is let go. The chats' process can't
+tell which of an app's chat connections is its own, so it asks over each with one request id, and the app picks the
+chat once per request (`LampSidebar.isAsked`: the one under the pointer, else the one with the keyboard). Beside the window the chat is
 dragged wider or narrower by an edge of its own (`Edges`, the panel's outer side, or the side facing into the window when
 it's over it); moved away, by any edge or corner. The edges are a rim inside the card around the chat (`Beside.rim`), not
 room around it: the glass glows a little past its edge, and a margin showed that glow cut off square by the panel. The width stays between

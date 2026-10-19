@@ -54,8 +54,14 @@ enum Host {
 
     private static var apps: [SidebarHost] { connections.compactMap { $0.remoteObjectProxy as? SidebarHost } }
 
-    static func closeChat() { apps.forEach { $0.closeChat() } }
-    static func startMove() { apps.forEach { $0.startMove() } }
+    static func closeChat() {
+        let request = UUID().uuidString
+        apps.forEach { $0.closeChat(request: request) }
+    }
+    static func startMove() {
+        let request = UUID().uuidString
+        apps.forEach { $0.startMove(request: request) }
+    }
 }
 
 /// The line to Lamp: a connection on this Mac's own address, at the port Lamp wrote into this extension's

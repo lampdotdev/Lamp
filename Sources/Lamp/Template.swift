@@ -4462,8 +4462,8 @@ enum Template {
     /// What the chat asks of the app about its own panel, which only the app can do: close it, or move it with the
     /// pointer, since the chat draws its bar (the extension declares the same). Nothing about the app goes this way.
     @objc(LampSidebarHost) protocol LampSidebarHost {
-        func closeChat()
-        func startMove()
+        func closeChat(request: String)
+        func startMove(request: String)
     }
 
     enum LampSidebar {
@@ -5054,9 +5054,19 @@ enum Template {
             override var canBecomeMain: Bool { false }
         }
 
-        /// The chat a request from the chats' process is for (`Answering`): the one under the pointer, else the one
-        /// with the keyboard.
-        @MainActor static func asked() -> Chat? {
+        /// The chat a request from the chats' process is for (`Answering`), chosen when the request first arrives and
+        /// kept for its other copies: the one under the pointer, else the one with the keyboard.
+        @MainActor private static var answered: [(request: String, chat: ObjectIdentifier?)] = []
+
+        @MainActor static func isAsked(_ chat: Chat, for request: String) -> Bool {
+            if let earlier = answered.first(where: { $0.request == request }) { return earlier.chat == ObjectIdentifier(chat) }
+            let target = chosen().map(ObjectIdentifier.init)
+            answered.append((request, target))
+            if answered.count > 20 { answered.removeFirst() }
+            return target == ObjectIdentifier(chat)
+        }
+
+        @MainActor private static func chosen() -> Chat? {
             let open = chats.values.filter { $0.inPanel }
             let pointer = NSEvent.mouseLocation
             return open.first { $0.panel?.frame.insetBy(dx: Beside.shade, dy: Beside.shade).contains(pointer) == true }
@@ -5400,22 +5410,24 @@ enum Template {
         /// What the chat asks of its panel (`LampSidebarHost`). The chat's process asks over every chat's connection,
         /// not knowing which is its own, so each connection acts only for the chat the request was meant for: the one the
         /// pointer is on, where the click or drag was; with none (a press from VoiceOver), the one with the keyboard.
+        /// That's chosen once for each request, by the first connection it arrives on (`isAsked`): chosen again,
+        /// a chat the first one closed would no longer be a choice, and another could be taken for it.
         final class Answering: NSObject, LampSidebarHost {
             private weak var controller: EXHostViewController?
             init(_ controller: EXHostViewController) { self.controller = controller }
 
-            private func chat(_ act: @escaping @MainActor (Chat) -> Void) {
+            private func chat(_ request: String, _ act: @escaping @MainActor (Chat) -> Void) {
                 DispatchQueue.main.async { [weak controller] in
                     MainActor.assumeIsolated {
                         guard let controller, let chat = LampSidebar.chats.values.first(where: { $0.host === controller }),
-                              chat === LampSidebar.asked() else { return }
+                              LampSidebar.isAsked(chat, for: request) else { return }
                         act(chat)
                     }
                 }
             }
 
-            func closeChat() { chat { chat in if let window = chat.window { LampSidebar.close(window) } } }
-            func startMove() { chat { chat in chat.panel?.startMove() } }
+            func closeChat(request: String) { chat(request) { chat in if let window = chat.window { LampSidebar.close(window) } } }
+            func startMove(request: String) { chat(request) { chat in chat.panel?.startMove() } }
         }
 
         /// Lamp listens for the chat: told directly when it's running (so this Lamp answers, not another copy),

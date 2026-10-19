@@ -480,11 +480,12 @@ public final class SidebarOutbox {
 /// room to drag the chat by, and the app closes or moves the panel when asked. Nothing about the wish goes this way.
 /// LampSupport.swift declares the same.
 @objc(LampSidebarHost) public protocol SidebarHost {
-    /// Close the chat, as the wand does when it's open.
-    func closeChat()
+    /// Close the chat, as the wand does when it's open. `request` is the same on every connection a request is sent
+    /// over, so the app chooses its chat once for all of them.
+    func closeChat(request: String)
     /// The person pressed on the bar and started dragging: the app moves the panel with the pointer until the button
     /// is let go.
-    func startMove()
+    func startMove(request: String)
 }
 
 /// Something the person needs to know before a thing can work, as an alert: its title, what to do, and the
