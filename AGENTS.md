@@ -65,7 +65,7 @@ A capability given to one engine must be given to all of them that can take it, 
   back (`Talk.unqueue`). A clicked one waits as its folded card alone, taken back from there (`AskWaiting`), not as a
   waiting message too: that would show until it's sent and then go. Waiting for setup, it keeps its card across a relaunch (`QueuedMessage.saved`).
   `Talk.Ask` also reads the shape cards were first saved in (options as plain words, `chosen`, `dismissed`):
-  a chat line that can't be read loses the whole chat. While a card waits for its answer nothing above it changes height and the chat
+  a chat line that can't be read is skipped and the rest opens (`LogLine.readChat`), with the file as it was kept beside it as `chat.json.unreadable`, but that line is gone from the chat. While a card waits for its answer nothing above it changes height and the chat
   doesn't follow what's added below: a new app's card goes to its short form as the questions arrive, a
   second `ask` before the answer is turned away, and a one-at-a-time card is laid out for all its questions
   at once (`AskSteps`), so nothing moves under the pointer. Its questions are kept the same height, so the card

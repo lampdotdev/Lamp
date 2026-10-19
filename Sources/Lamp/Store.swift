@@ -248,6 +248,40 @@ struct LogLine: Identifiable, Codable, Equatable {
         if ToolCall(text).isKnown { return LogLine(id: id, kind: .tool, text: text) }
         return self
     }
+
+    /// Reads an app's chat file a line at a time, so a line this Lamp can't read (a kind written by a newer Lamp,
+    /// or a Lamp Dev built from another branch, sharing the same folder) costs that line and not the whole chat.
+    /// The next save writes the chat without what was skipped, so the file as it was is kept beside it first, under
+    /// a name nothing else uses (`chat.json.unreadable`, then `-2`…). When that copy can't be made (a full disk),
+    /// `unkept` holds the file as it was, and nothing may write over it until `keepAside` has kept it.
+    /// Nil when there is no file.
+    static func readChat(_ file: URL) -> (lines: [LogLine], unkept: Data?)? {
+        guard let data = try? Data(contentsOf: file) else { return nil }
+        let read = try? JSONDecoder().decode([Readable].self, from: data)
+        let lines = read?.compactMap(\.line) ?? []
+        let skipped = read == nil || lines.count < read!.count
+        return (lines.map(\.upgraded), skipped && !keepAside(data, of: file) ? data : nil)
+    }
+
+    private struct Readable: Decodable {
+        let line: LogLine?
+        init(from decoder: Decoder) throws { line = try? LogLine(from: decoder) }
+    }
+
+    /// Keeps a chat file's bytes beside it, without overwriting any copy already there. True once they're kept.
+    static func keepAside(_ data: Data, of file: URL) -> Bool {
+        for n in 1... {
+            let copy = file.deletingLastPathComponent()
+                .appendingPathComponent(file.lastPathComponent + ".unreadable" + (n == 1 ? "" : "-\(n)"))
+            // Without overwriting, which also refuses a link left where the copy goes.
+            do { try data.write(to: copy, options: .withoutOverwriting); return true } catch {}
+            if (try? Data(contentsOf: copy)) == data { return true }
+            // Only a name already taken is worth trying the next one for; anything else (a full disk) fails them all.
+            // (Looked at without following a link: a link there takes the name too.)
+            if (try? FileManager.default.attributesOfItem(atPath: copy.path)) == nil { return false }
+        }
+        return false
+    }
 }
 
 /// A message typed while the app was busy. It waits in the chat until the current work finishes.
@@ -703,9 +737,9 @@ final class Store: ObservableObject {
         for project in projects { stamps[project.id] = BuildStamp.read(project.installedURL) }
         for project in projects where logs[project.id] == nil {
             let lamp = project.dir.appendingPathComponent(".lamp")
-            if let data = try? Data(contentsOf: lamp.appendingPathComponent("chat.json")),
-               let saved = try? JSONDecoder().decode([LogLine].self, from: data) {
-                logs[project.id] = saved.map(\.upgraded)
+            if let saved = LogLine.readChat(lamp.appendingPathComponent("chat.json")) {
+                logs[project.id] = saved.lines
+                if let unkept = saved.unkept { unkeptChats[project.id] = unkept }
             }
             if let data = try? Data(contentsOf: lamp.appendingPathComponent("usage.json")),
                let saved = try? JSONDecoder().decode(AppUsage.self, from: data) {
@@ -739,6 +773,9 @@ final class Store: ObservableObject {
     /// One queue for every chat's file, so a later write of a chat never lands before an earlier one.
     private static let chatWrites = DispatchQueue(label: "dev.lamp.chat-writes", qos: .utility)
     private var chatsToSave: Set<String> = []
+    /// Chat files holding lines this Lamp couldn't read, whose copy couldn't be made when they were read: each save
+    /// tries the copy again and writes nothing until it's made (`LogLine.readChat`).
+    private var unkeptChats: [String: Data] = [:]
     private var chatSaveScheduled = false
 
     private func writeChats() {
@@ -753,6 +790,10 @@ final class Store: ObservableObject {
         guard let project = projects.first(where: { $0.id == id }) else { return }
         let lines = logs[id] ?? []
         let file = project.dir.appendingPathComponent(".lamp/chat.json")
+        if let unkept = unkeptChats[id] {
+            guard LogLine.keepAside(unkept, of: file) else { return }
+            unkeptChats[id] = nil
+        }
         Self.chatWrites.async {
             guard let data = try? JSONEncoder().encode(lines) else { return }
             try? data.write(to: file, options: .atomic)
@@ -1545,6 +1586,8 @@ final class Store: ObservableObject {
         draftWrites.removeValue(forKey: old.id)?.cancel()
         logs[project.id] = logs.removeValue(forKey: old.id)
         if chatsToSave.remove(old.id) != nil { chatsToSave.insert(project.id) }
+        // The chat file moved with the folder, still holding what wasn't copied: its saves stay held back.
+        unkeptChats[project.id] = unkeptChats.removeValue(forKey: old.id)
         usage[project.id] = usage.removeValue(forKey: old.id)
         queued[project.id] = queued.removeValue(forKey: old.id)
         if let turn = turns.removeValue(forKey: old.id) {   // the rename itself is a turn: it moves with the app
@@ -2940,6 +2983,7 @@ final class Store: ObservableObject {
         AppSecrets.forget(app: project.instance)
         projects.removeAll { $0.id == project.id }
         logs[project.id] = nil
+        unkeptChats[project.id] = nil
         usage[project.id] = nil
         queued[project.id] = nil
         icons[project.id] = nil
