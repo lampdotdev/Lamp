@@ -12,8 +12,10 @@ struct LampApp: App {
 
     init() {
         // A release builds the starters it ships before it's signed (PrebuiltStarters), with this program.
-        if CommandLine.arguments.contains(PrebuiltStarters.commandLineFlag),
-           ProcessInfo.processInfo.environment["PREBUILD_STARTERS"] == "1" { PrebuiltStarters.runFromCommandLine() }
+        if ProcessInfo.processInfo.environment["PREBUILD_STARTERS"] == "1" {
+            if CommandLine.arguments.contains(PrebuiltStarters.commandLineFlag) { PrebuiltStarters.runFromCommandLine() }
+            if CommandLine.arguments.contains(PrebuiltStarters.restampFlag) { PrebuiltStarters.restampFromCommandLine() }
+        }
     }
 
     var body: some Scene {
