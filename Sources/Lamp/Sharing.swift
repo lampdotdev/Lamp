@@ -706,7 +706,7 @@ extension Sharing {
         // A literal handed straight to the decoder, however short.
         if code.contains(#/base64Encoded:\s*#*"/#) { return true }
         let quote = UInt8(ascii: "\"")
-        var run: [UInt8] = [], pieces: [UInt8] = []
+        var run: [UInt8] = [], pieces: [UInt8] = [], starts: [Int] = []
         var before: UInt8 = 0
         var offset = 0, lastPiece = 0
         for byte in code.utf8 {
@@ -720,16 +720,24 @@ extension Sharing {
                 // Pieces are written close together (`"…" + "…"`, one `let` a line); words far apart in the
                 // code, joined, can read as text by chance.
                 if offset - run.count - lastPiece > 40 {
-                    if readsAsText(pieces.compactMap(base64Value)) { return true }
+                    if joinedReadsAsText(pieces, from: starts) { return true }
                     pieces.removeAll(keepingCapacity: true)
+                    starts.removeAll(keepingCapacity: true)
                 }
-                pieces += run
+                starts.append(pieces.count)
+                pieces += run.compactMap(base64Value)
                 lastPiece = offset
             }
             before = byte
             run.removeAll(keepingCapacity: true)
         }
-        return encodes(run) || readsAsText(pieces.compactMap(base64Value))
+        return encodes(run) || joinedReadsAsText(pieces, from: starts)
+    }
+
+    /// Joined pieces are decoded from the start of one of them, as the app joining them would: read from
+    /// partway into a word, words repeated in a list can line up as text.
+    private static func joinedReadsAsText(_ digits: [UInt8], from starts: [Int]) -> Bool {
+        starts.contains { digits.count - $0 >= 16 && readable(digits, from: $0, enough: 12) >= 12 }
     }
 
     /// One base64 digit's value, in either alphabet (`+/` or the web's `-_`).
