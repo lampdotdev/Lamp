@@ -3178,7 +3178,7 @@ final class Store: ObservableObject {
         // The setting is read again: it may have changed while the rating was worked out.
         if ratingDecides, CommandApproval.current == .risky, CommandRisk.runsOnRating(given, flagged: flagged) {
             log(project, .status, "Ran: \(command)")
-            log(project, .detail, "Ran without asking (low risk): \(given?.summary ?? "")")
+            log(project, .detail, "Ran without asking (\(given?.risk ?? "") risk): \(given?.summary ?? "")")
             note("Running a command", for: project)   // as after an Allow, so "Checking a command" doesn't stay
             return true
         }
@@ -3197,7 +3197,7 @@ final class Store: ObservableObject {
                 if let lateRating { rating = await lateRating.value } else { rating = await explain(command, for: project, sandboxed: sandboxed) }
                 guard approvals[project.id]?.id == pending.id else { return }
                 if ratingDecides, CommandApproval.current == .risky, CommandRisk.runsOnRating(rating, flagged: flagged) {
-                    log(project, .detail, "Ran without asking (low risk): \(rating?.summary ?? "")")
+                    log(project, .detail, "Ran without asking (\(rating?.risk ?? "") risk): \(rating?.summary ?? "")")
                     answerApproval(for: project, allow: true)
                     return
                 }
