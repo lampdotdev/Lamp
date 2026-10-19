@@ -26,12 +26,12 @@ enum LiveReload {
 
     /// What the open app runs is now `from` (the live copy, after a change went in, or what the build compiled,
     /// after an install), with the other things the build puts in the app as they are.
+    /// All of it is in the agent's folder, where a build may have left a link, so it's copied and written there
+    /// without following one (`AppFolder`).
     static func markRunning(_ project: LampProject, from: URL? = nil) {
-        let fm = FileManager.default
-        try? fm.removeItem(at: running(project))
-        try? fm.copyItem(at: from ?? sources(project), to: running(project))
-        try? inputs(project).write(to: runningInputs(project), atomically: true, encoding: .utf8)
-        try? fm.removeItem(at: runningLayout(project))
+        try? AppFolder.copy(from ?? sources(project), to: running(project), in: project.dir)
+        try? AppFolder.write(inputs(project), to: runningInputs(project), in: project.dir)
+        AppFolder.remove(runningLayout(project), in: project.dir)
     }
 
     private static func runningInputs(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-inputs.txt") }
@@ -53,7 +53,7 @@ enum LiveReload {
     }
 
     static func forget(_ project: LampProject) {
-        try? FileManager.default.removeItem(at: running(project))
+        AppFolder.remove(running(project), in: project.dir)
         LiveSlots.clear(project)
     }
 
@@ -61,21 +61,15 @@ enum LiveReload {
     /// Not `Runtime.holdBuild`, which says the reverse (the open copy is the older one) and keeps the agent off it.
     /// Kept on disk, so the install still happens after Lamp itself has been quit and opened again.
     private static func pendingURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("install-pending") }
-    static func awaitInstall(_ project: LampProject) {
-        try? FileManager.default.createDirectory(at: folder(project), withIntermediateDirectories: true)
-        try? Data().write(to: pendingURL(project))
-    }
-    static func installed(_ project: LampProject) { try? FileManager.default.removeItem(at: pendingURL(project)) }
+    static func awaitInstall(_ project: LampProject) { try? AppFolder.write(Data(), to: pendingURL(project), in: project.dir) }
+    static func installed(_ project: LampProject) { AppFolder.remove(pendingURL(project), in: project.dir) }
 
     /// A whole build running after a change went in early (`Store.reloadBeforeBuilding`), kept on disk: if Lamp
     /// quits before it's done, nothing says the open app's change was ever built, so at the next launch what Lamp
     /// knows of the open app is dropped and the next change takes the usual build.
     private static func buildingURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("building") }
-    static func startedBuilding(_ project: LampProject) {
-        try? FileManager.default.createDirectory(at: folder(project), withIntermediateDirectories: true)
-        try? Data().write(to: buildingURL(project))
-    }
-    static func finishedBuilding(_ project: LampProject) { try? FileManager.default.removeItem(at: buildingURL(project)) }
+    static func startedBuilding(_ project: LampProject) { try? AppFolder.write(Data(), to: buildingURL(project), in: project.dir) }
+    static func finishedBuilding(_ project: LampProject) { AppFolder.remove(buildingURL(project), in: project.dir) }
     /// At launch: a build that was still going when Lamp quit.
     static func recoverUnfinishedBuild(_ project: LampProject) {
         guard FileManager.default.fileExists(atPath: buildingURL(project).path) else { return }
@@ -192,8 +186,8 @@ enum LiveReload {
     @MainActor static func enumsHeld(_ project: LampProject, grown: [String]) async -> String? {
         let primaries = swiftFiles(in: sources(project)).keys.filter { ($0 as NSString).lastPathComponent != "LampSupport.swift" }.sorted()
         var output: [String] = []
-        let status = await Shell.run(frontend("-dump-ast", in: sources(project), primaries: primaries, module: project.exe,
-                                              macOS: Template.macMinimum(project)) + " 2>/dev/null", cwd: sources(project)) { output.append($0) }
+        let status = await Sandbox.run(frontend("-dump-ast", in: sources(project), primaries: primaries, module: project.exe,
+                                                macOS: Template.macMinimum(project)) + " 2>/dev/null", for: project, cwd: sources(project)) { output.append($0) }
         guard status == 0 else { return "the compiler couldn't say what holds the enums that grew" }
         let held = members(inDump: output.joined(separator: "\n"), held: true).compactMap { entry -> (String, String)? in
             guard let colon = entry.range(of: ": ") else { return nil }
@@ -223,11 +217,12 @@ enum LiveReload {
     /// With the new code's, where each of its properties is declared, for `LiveSlots` to rewrite.
     @MainActor static func layouts(_ project: LampProject) async
         -> (before: [String]?, after: [String]?, declarations: SwiftSource.Declarations) {
-        async let after = analysis(of: sources(project), module: project.exe, macOS: Template.macMinimum(project))
-        var before = (try? String(contentsOf: runningLayout(project), encoding: .utf8)).map { $0.components(separatedBy: "\n").filter { !$0.isEmpty } }
+        async let after = analysis(of: sources(project), in: project, module: project.exe, macOS: Template.macMinimum(project))
+        // Written back after a reload, so never read through a link: it would bring what it leads to into the folder.
+        var before = AppFile.text(runningLayout(project), in: project).map { $0.components(separatedBy: "\n").filter { !$0.isEmpty } }
         if before == nil {
-            before = await analysis(of: running(project), module: project.exe, macOS: Template.macMinimum(project))?.layout
-            if let before { try? before.joined(separator: "\n").write(to: runningLayout(project), atomically: true, encoding: .utf8) }
+            before = await analysis(of: running(project), in: project, module: project.exe, macOS: Template.macMinimum(project))?.layout
+            if let before { try? AppFolder.write(before.joined(separator: "\n"), to: runningLayout(project), in: project.dir) }
         }
         let new = await after
         return (before, new?.layout, new?.declarations ?? SwiftSource.Declarations())
@@ -238,7 +233,7 @@ enum LiveReload {
     private static func runningLayout(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-layout.txt") }
 
     static func keepLayout(_ layout: [String], for project: LampProject) {
-        try? layout.joined(separator: "\n").write(to: runningLayout(project), atomically: true, encoding: .utf8)
+        try? AppFolder.write(layout.joined(separator: "\n"), to: runningLayout(project), in: project.dir)
     }
 
     /// A path for a shell command line, quoted.
@@ -283,7 +278,7 @@ enum LiveReload {
     /// code's says whether a library can go in: no reading of the text, which formatting, comments, strings and
     /// inferred types all fool. Nil when the compiler can't say (the code doesn't type-check). `rawValues` adds
     /// each case's raw value (`= "plant_name"`), which is what a coding key or a saved enum writes.
-    static func layout(of folder: URL, files: [String]?, module: String, macOS: String, ios: Bool = false,
+    static func layout(of folder: URL, in project: LampProject, files: [String]?, module: String, macOS: String, ios: Bool = false,
                        rawValues: Bool = false) async -> [String]? {
         if files?.isEmpty == true { return [] }
         // All of the app's own files, by name: the compiler prints (and checks the bodies of) only the files it's
@@ -292,20 +287,20 @@ enum LiveReload {
         let primaries = files ?? swiftFiles(in: folder).keys.filter { ($0 as NSString).lastPathComponent != "LampSupport.swift" }.sorted()
         guard !primaries.isEmpty else { return [] }
         var output: [String] = []
-        let status = await Shell.run(frontend("-dump-ast", in: folder, primaries: primaries, module: module, macOS: macOS, ios: ios) + " 2>/dev/null",
-                                     cwd: folder) { output.append($0) }
+        let status = await Sandbox.run(frontend("-dump-ast", in: folder, primaries: primaries, module: module, macOS: macOS, ios: ios) + " 2>/dev/null",
+                                       for: project, cwd: folder) { output.append($0) }
         guard status == 0 else { return nil }
         return members(inDump: output.joined(separator: "\n"), rawValues: rawValues)
     }
 
     /// A live copy's layout as `layout` gives it, with what's read only at launch (`SwiftSource.launchEntries`)
     /// and where each property is declared, all from the one printout.
-    static func analysis(of folder: URL, module: String, macOS: String) async -> (layout: [String], declarations: SwiftSource.Declarations)? {
+    static func analysis(of folder: URL, in project: LampProject, module: String, macOS: String) async -> (layout: [String], declarations: SwiftSource.Declarations)? {
         let primaries = swiftFiles(in: folder).keys.filter { ($0 as NSString).lastPathComponent != "LampSupport.swift" }.sorted()
         guard !primaries.isEmpty else { return ([], SwiftSource.Declarations()) }
         var output: [String] = []
-        let status = await Shell.run(frontend("-dump-ast", in: folder, primaries: primaries, module: module, macOS: macOS) + " 2>/dev/null",
-                                     cwd: folder) { output.append($0) }
+        let status = await Sandbox.run(frontend("-dump-ast", in: folder, primaries: primaries, module: module, macOS: macOS) + " 2>/dev/null",
+                                       for: project, cwd: folder) { output.append($0) }
         guard status == 0 else { return nil }
         let dump = output.joined(separator: "\n")
         let declarations = SwiftSource.declarations(inDump: dump)
@@ -396,7 +391,7 @@ enum LiveReload {
             codesign --force -s - \(quoted(library.path)) 2>&1
             """
         var output: [String] = []
-        let status = await Shell.run(script, cwd: project.dir) { output.append($0) }
+        let status = await Sandbox.run(script, for: project) { output.append($0) }
         guard status == 0 else { return (nil, output.suffix(30).joined(separator: "\n")) }
         return (library, nil)
     }
@@ -632,6 +627,8 @@ enum LiveSlots {
             guard let variable = declarations.constants[key] else { return nil }
             byFile[variable.position.file, default: []].append((variable.binding, [], key))
         }
+        let initializers = memberwiseInitializers(for: planned.filter { $0.slot.holder == .value }.map { ($0.type, $0.name) },
+                                                  declarations: declarations)
         var written: [(path: String, text: String)] = []
         for (file, edits) in byFile {
             guard let original = SwiftSource.Text(path: file) else { return nil }
@@ -650,6 +647,7 @@ enum LiveSlots {
             var text = String(decoding: bytes, as: UTF8.self)
             // A view's `$name` was its state's binding: now the box's.
             for name in views { text = SwiftText.replacing(identifier: "$" + name, with: "__lampBinding_" + name, in: text) }
+            text += initializers[file] ?? ""
             written.append((file, text))
         }
         for item in planned {
@@ -672,6 +670,58 @@ enum LiveSlots {
                     layout: after.filter { !moved.contains($0) },
                     files: written.map { URL(fileURLWithPath: $0.path).standardizedFileURL.path }.map { $0.hasPrefix(base) ? String($0.dropFirst(base.count)) : $0 },
                     constants: constants.filter { !earlier.contains($0) }.map(displayName))
+    }
+
+    /// A struct's new properties, moved into its spare, are no longer stored, so the initializer Swift made for it
+    /// (`CityPart(edges:…, fuel:…)`) no longer takes them, and the new code that passes them doesn't compile. So it's
+    /// made again beside the struct, in extensions in its file, calling the one Swift now makes and setting the moved
+    /// properties after. A call may pass any of the moved ones, so there's one for each: the n-th takes the n-th moved
+    /// property without a default, the later ones with theirs, and none of the earlier ones (left at their starting
+    /// values). A call is then matched by the first moved property it passes and by nothing else, and one that passes
+    /// none only by Swift's own. The call inside passes the spare's argument, which only Swift's takes; without a spare
+    /// there's nothing to tell them apart by, and none is added. By file, the text to add to its end.
+    static func memberwiseInitializers(for moved: [(type: String, name: String)],
+                                       declarations: SwiftSource.Declarations) -> [String: String] {
+        var out: [String: String] = [:]
+        for (type, items) in Dictionary(grouping: moved, by: \.type).sorted(by: { $0.key < $1.key }) {
+            let names = Set(items.map(\.name))
+            guard let file = items.compactMap({ declarations.variables[type + "\t" + $0.name]?.position.file }).first else { continue }
+            func initial(_ label: String) -> String? {
+                declarations.variables[type + "\t" + label].flatMap { initialText(of: $0, in: declarations) }
+            }
+            for made in declarations.memberwise[type] ?? [] {
+                // Swift's own, told apart from these by the spare's argument, which only it takes.
+                let kept = made.labels.filter { !names.contains($0) }.compactMap { label -> String? in
+                    guard label.hasPrefix("__lamp") else { return "\(label): \(label)" }
+                    return initial(label).map { "\(label): \($0)" }
+                }
+                guard kept.contains(where: { $0.hasPrefix("__lamp") }) else { continue }
+                let order = made.labels.filter(names.contains)
+                // One the app declares itself with the same labels and types is the app's: a second would be a
+                // redeclaration. One with other types is another overload, and this one is still needed beside it.
+                let declared = declarations.initializers[type] ?? []
+                for (n, first) in order.enumerated() {
+                    let later = Set(order[(n + 1)...])
+                    let taken = zip(made.labels, made.types).filter { label, _ in
+                        !label.hasPrefix("__lamp") && (!names.contains(label) || label == first || later.contains(label))
+                    }
+                    guard !declared.contains(where: { $0.labels == taken.map(\.0) && $0.types == taken.map(\.1) }) else { continue }
+                    let params = zip(made.labels, made.types).filter { label, _ in
+                        !label.hasPrefix("__lamp") && (!names.contains(label) || label == first || later.contains(label))
+                    }.map { label, kind in
+                        var param = "\(label): \(kind)"
+                        if label != first {
+                            if let value = initial(label) { param += " = " + value } else if kind.hasSuffix("?") { param += " = nil" }
+                        }
+                        return param
+                    }
+                    let set = ([first] + order[(n + 1)...]).map { "        self.\($0) = \($0)\n" }.joined()
+                    out[file, default: ""] += "\n\nextension \(type) {\n    init(\(params.joined(separator: ", "))) {\n"
+                        + "        self.init(\(kept.joined(separator: ", ")))\n" + set + "    }\n}\n"
+                }
+            }
+        }
+        return out
     }
 
     /// A constant whose value changed, rewritten to give the new one: `static let size: Float = 200` becomes a

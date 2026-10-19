@@ -45,13 +45,20 @@
 
 /* How much of the top of the window the floating menu bar covers, with the space above it (MenuBar.astro). */
 :root {
-  --menu-height: 4.25rem;
+  --menu-height: 4.5rem;
+}
+@media (width >= 40rem) {
+  :root { --menu-height: 5rem; }
 }
 
 @layer base {
   html {
     /* A link to a section scrolls it to just under the menu bar, not behind it. */
     scroll-padding-top: var(--menu-height);
+    /* The menu bar's links to the homepage's sections glide there, unless motion's been turned down. */
+    @media (prefers-reduced-motion: no-preference) {
+      scroll-behavior: smooth;
+    }
     color-scheme: light;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
@@ -70,9 +77,9 @@
 
 /* The hero's opening (index.astro): the card starts as tall as the window, with the icon large in its middle,
    then shrinks to its own height (its minimum height falls to nothing, so it stops where its content does) as
-   the icon settles and the words rise under it; the button follows, and the lamp comes up from the bottom. */
+   the icon settles and the words rise under it; the button follows. */
 /* The hero's card: the page's light grey, washed from the top with a faint, see-through indigo (the night sky of
-   the app icon, barely there), and a hint of the lamp's warm light behind the porcelain at the bottom. */
+   the app icon, barely there), and a hint of the lamp's warm light at the bottom. */
 .hero-sky {
   background:
     linear-gradient(180deg, rgb(44 38 110 / 0.13) 0%, rgb(44 38 110 / 0.04) 40%, rgb(44 38 110 / 0) 65%),
@@ -81,29 +88,25 @@
 }
 
 @keyframes hero-card {
-  0%, 18% { min-height: calc(100svh - var(--menu-height) - 1.5rem); }
+  0%, 18% { min-height: calc(100svh - 1.5rem); }
   100% { min-height: 0; }
 }
 @keyframes hero-icon {
-  0%, 18% { translate: 0 calc(50svh - 126px - var(--menu-height) / 2); scale: 2.6; }
+  0%, 18% { translate: 0 calc(50svh - 160px); scale: 2.6; }
   100% { translate: 0 0; scale: 1; }
 }
 @keyframes hero-rise {
   from { opacity: 0; translate: 0 36px; }
   to { opacity: 1; translate: 0 0; }
 }
-@keyframes hero-lamp {
-  from { opacity: 0; translate: 0 45%; }
-  to { opacity: 1; translate: 0 0; }
-}
 .hero-card { animation: hero-card 1.3s cubic-bezier(.22,.8,.2,1) both; }
 .hero-icon { animation: hero-icon 1.3s cubic-bezier(.22,.8,.2,1) both; }
 .hero-words { animation: hero-rise 0.9s cubic-bezier(.22,.8,.2,1) 0.55s both; }
 .hero-button { animation: hero-rise 0.8s cubic-bezier(.22,.8,.2,1) 0.8s both; }
-.hero-lamp { animation: hero-lamp 1.3s cubic-bezier(.22,.8,.2,1) 0.95s both; }
 @media (prefers-reduced-motion: reduce) {
-  .hero-card, .hero-icon, .hero-words, .hero-button, .hero-lamp { animation: none; }
+  .hero-card, .hero-icon, .hero-words, .hero-button { animation: none; }
 }
+.no-intro :is(.hero-card, .hero-icon, .hero-words, .hero-button) { animation: none; }
 
 /* The ideas page's categories (ideas.astro): each rises from the bottom of the row and fades in, a moment after
    the one before it (--i is its place in the row). The row's own edge hides them until they're in. */

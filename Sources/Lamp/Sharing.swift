@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import LampFileLook
 import UniformTypeIdentifiers
 
 extension UTType {
@@ -55,10 +56,15 @@ enum Sharing {
         Task {
             do {
                 // Copying assets and compressing the file must leave the interface free to respond.
-                let file = try await Task.detached(priority: .userInitiated) { try export(project) }.value
+                let icon = await sharedIcon(of: project)
+                let (file, picture) = try await Task.detached(priority: .userInitiated) {
+                    let file = try Store.sharedFile(of: project, icon: icon)
+                    return (file, Store.sharePicture(for: file))
+                }.value
                 guard shareRequest == request, window.isVisible else { return }
-                // Separate native items keep the opening instructions beside the attachment in Mail and Messages.
-                let picker = NSSharingServicePicker(items: ["Open this with Lamp https://lamp.dev", file])
+                // Separate native items keep the opening instructions beside the attachment in Mail and Messages,
+                // and the picture before it, so it shows large where the file alone is a blank document.
+                let picker = NSSharingServicePicker(items: ["Open this with Lamp https://lamp.dev"] + [picture, file].compactMap { $0 })
                 self.picker = picker
                 // The picker opens from the control, as the system's own Share menus do; a rectangle with no
                 // size isn't a place to it, and it opens beside the window instead.
@@ -127,7 +133,7 @@ enum Sharing {
             let fm = FileManager.default
             let assets = project.dir.appendingPathComponent(folder)
             guard !fm.fileExists(atPath: assets.path) else { return }
-            defer { try? fm.createDirectory(at: assets, withIntermediateDirectories: true) }
+            defer { try? AppFolder.createDirectory(assets, in: project.dir) }
             let attachments = regularFiles(in: project.dir.appendingPathComponent(Attachments.folder))
             guard !attachments.isEmpty else { return }
             let code = swiftSources(in: project.dir.appendingPathComponent("Sources"))
@@ -139,18 +145,27 @@ enum Sharing {
             for file in attachments where everything || code.contains("\"\(file.lastPathComponent)\"") {
                 let target = assets.appendingPathComponent(file.lastPathComponent)
                 guard !fm.fileExists(atPath: target.path) else { continue }
-                try? fm.createDirectory(at: assets, withIntermediateDirectories: true)
-                try? fm.copyItem(at: file, to: target)
+                // Copied as it is: an attachment the agent swapped for a link brings nothing else in.
+                try? AppFolder.copy(file, to: target, in: project.dir)
             }
         }
     }
 
-    /// Writes `<Name>.lampapp` to a temporary folder and returns its URL.
-    static func export(_ project: LampProject) throws -> URL {
+    /// Where `export` and `open` make their folders. Tests give each test a folder of its own here, so what one leaves
+    /// behind is told apart from the folders a running Lamp makes at the same moment.
+    nonisolated(unsafe) static var workFolder = FileManager.default.temporaryDirectory
+
+    /// Writes `<Name>.lampapp` to a temporary folder and returns its URL. `icon` is the drawn icon to carry
+    /// (`sharedIcon`); without one, Lamp's own drawing of the same design goes in.
+    static func export(_ project: LampProject, icon: Data? = nil) throws -> URL {
         let fm = FileManager.default
-        let work = fm.temporaryDirectory.appendingPathComponent("forge-share-\(UUID().uuidString)")
+        let work = workFolder.appendingPathComponent("forge-share-\(UUID().uuidString)")
         let stage = work.appendingPathComponent("app")
         try fm.createDirectory(at: stage, withIntermediateDirectories: true)
+        // Only the finished file is left in the folder, and whoever takes it out removes the folder: nothing
+        // empties the temporary folder while Lamp runs, and a file that can't be made leaves nothing at all.
+        var made = false
+        defer { removeStaged(made ? stage : work) }
 
         for file in swiftSources(in: project.dir.appendingPathComponent("Sources"))
         where file.lastPathComponent != "LampSupport.swift" && file.lastPathComponent != Template.sceneSupportFile {
@@ -181,7 +196,8 @@ enum Sharing {
         for file in assetFiles(of: project) {
             attachedBytes += (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             guard attachedBytes <= maxAttachedBytes else {
-                throw ImportError("This app's files are over \(maxAttachedBytes / 1_000_000) MB, too big to share.")
+                throw ImportError("\(project.name) is too big to share.",
+                                  detail: "Its pictures and other files come to over \(maxAttachedBytes / 1_000_000) MB.")
             }
             let target = stage.appendingPathComponent(Assets.folder).appendingPathComponent(relativePath(of: file, in: assets))
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -202,8 +218,17 @@ enum Sharing {
         if let browser = BrowserCompanions.Declaration.load(project) {
             try BrowserCompanions.Declaration.encoded(browser).write(to: stage.appendingPathComponent(BrowserCompanions.Declaration.file))
         }
-        if let spec = Icons.load(project), fm.fileExists(atPath: Icons.artURL(project, spec: spec).path) {
-            try fm.copyItem(at: Icons.artURL(project, spec: spec), to: stage.appendingPathComponent("icon-art.png"))
+        if let spec = Icons.load(project) {
+            switch Icons.artwork(project, spec: spec) {
+            case .glass(let glass): try glass.encoded().write(to: stage.appendingPathComponent(glassEntry))
+            case .picture: try fm.copyItem(at: Icons.artURL(project, spec: spec), to: stage.appendingPathComponent("icon-art.png"))
+            case nil: break
+            }
+        }
+        // The icon as drawn here, for Quick Look and the picture sent with the file. The Mac that opens the file
+        // draws its own from icon.json; an older Lamp leaves this one unread.
+        if let icon = icon ?? drawnIcon(of: project) {
+            try icon.write(to: stage.appendingPathComponent(LampFile.iconEntry))
         }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -219,15 +244,52 @@ enum Sharing {
         // Everything staged, counted and measured the way the importer's listing does (files and folders,
         // bytes before compression), so Lamp never makes a file another Lamp refuses.
         let staged = fm.enumerator(at: stage, includingPropertiesForKeys: [.fileSizeKey])?.compactMap { $0 as? URL } ?? []
-        guard staged.count <= maxFiles else { throw ImportError("This app has too many files to share (over \(maxFiles)).") }
+        guard staged.count <= maxFiles else { throw ImportError("\(project.name) has too many files to share.") }
         let unpacked = staged.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) }
-        guard unpacked <= maxUnpackedBytes else { throw ImportError("This app is over \(maxUnpackedBytes / 1_000_000) MB, too big to share.") }
+        guard unpacked <= maxUnpackedBytes else { throw ImportError("\(project.name) is too big to share.") }
         let output = work.appendingPathComponent("\(project.name).lampapp")
         try run("/usr/bin/ditto", ["-c", "-k", "--norsrc", stage.path, output.path])
         // Media is already compressed, so the archive can be as big as what went in: make sure it's one Lamp opens.
         let size = (try? output.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-        guard size <= maxArchiveBytes else { throw ImportError("This app is over \(maxArchiveBytes / 1_000_000) MB packed, too big to share.") }
+        guard size <= maxArchiveBytes else { throw ImportError("\(project.name) is too big to share.") }
+        made = true
         return output
+    }
+
+    /// The icon a shared file carries, drawn from the design and artwork being shared, as the Mac that opens it
+    /// will draw it. Not the .icns: artwork that arrives during a turn reaches that only when the turn ends.
+    static func sharedIcon(of project: LampProject) async -> Data? {
+        guard Icons.load(project) != nil, let url = await Icons.largePreview(project),
+              let image = NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            return drawnIcon(of: project)
+        }
+        return png(image, side: 512)
+    }
+
+    /// Where a shared file carries an icon's glass design (`GlassArt`), beside a picture's icon-art.png.
+    static let glassEntry = "icon-glass.json"
+
+    /// The same without waiting, for a drag: Lamp's own drawing of the design (`Icons.drawnTile`), or for an app
+    /// with no design the icon Lamp last wrote. Nil before it has one.
+    static func drawnIcon(of project: LampProject) -> Data? {
+        if let spec = Icons.load(project) {
+            let tile = Icons.drawnTile(spec, art: Icons.artwork(project, spec: spec))
+            return tile.cgImage.flatMap { png($0, side: 512) }
+        }
+        let largest = NSImage(contentsOf: Icons.icnsURL(project))?.representations
+            .compactMap { $0 as? NSBitmapImageRep }.max { $0.pixelsWide < $1.pixelsWide }
+        guard let image = largest?.cgImage else { return try? Data(contentsOf: Icons.previewURL(project)) }
+        return png(image, side: 512)
+    }
+
+    private static func png(_ image: CGImage, side: Int) -> Data? {
+        let side = min(side, image.width)
+        guard let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+        return context.makeImage().flatMap { NSBitmapImageRep(cgImage: $0).representation(using: .png, properties: [:]) }
     }
 
     /// Attached files up to this much go into a shared app: under the archive limit, with room for the code.
@@ -236,6 +298,19 @@ enum Sharing {
     /// The files in the app's Assets/ folder, subfolders included (`LampAssets.image("images/logo.png")`).
     static func assetFiles(of project: LampProject) -> [URL] {
         filesUnder(project.dir.appendingPathComponent(Assets.folder))
+    }
+
+    /// Removes a folder `export` made. A copy keeps the flags of the file it was copied from, and one the person
+    /// locked in Finder can't be deleted, nor the folders around it, until the copy is unlocked. Only Lamp's copies
+    /// are unlocked: a link is passed over, since unlocking it would unlock the file it points to.
+    private static func removeStaged(_ folder: URL) {
+        let fm = FileManager.default
+        if let items = fm.enumerator(at: folder, includingPropertiesForKeys: [.isSymbolicLinkKey]) {
+            for case let item as URL in items where (try? item.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink != true {
+                try? fm.setAttributes([.immutable: false, .appendOnly: false], ofItemAtPath: item.path)
+            }
+        }
+        try? fm.removeItem(at: folder)
     }
 
     /// Where a file sits inside a folder ("images/logo.png"), for copying it somewhere else at the same spot.
@@ -297,13 +372,15 @@ enum Sharing {
         let fm = FileManager.default
         let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         guard size <= maxArchiveBytes else { throw ImportError("This file is too large to be a Lamp app (over 64 MB).") }
-        let folder = fm.temporaryDirectory.appendingPathComponent("forge-import-\(UUID().uuidString)")
+        let folder = workFolder.appendingPathComponent("forge-import-\(UUID().uuidString)")
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        // The unpacked app is handed to whoever opened the file, who removes it; a file that's refused leaves nothing.
+        var opened = false
+        defer { if !opened { try? fm.removeItem(at: folder) } }
         // The archive's own listing says what it would unpack to, before anything is written.
         let listing = try output("/usr/bin/zipinfo", ["-t", file.path])   // "N files, X bytes uncompressed, …"
         let numbers = listing.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
         guard numbers.count >= 2, numbers[0] <= maxFiles, numbers[1] <= maxUnpackedBytes else {
-            try? fm.removeItem(at: folder)
             throw ImportError("This file holds more than a Lamp app would (over \(maxFiles) files or 256 MB unpacked).")
         }
         try run("/usr/bin/ditto", ["-x", "-k", file.path, folder.path])
@@ -335,6 +412,7 @@ enum Sharing {
         // Assets/, or Attachments/ from a Lamp that bundled the chat's files: either way the app's own now.
         let attachments = filesUnder(folder.appendingPathComponent(Assets.folder))
             + filesUnder(folder.appendingPathComponent(Attachments.folder))
+        opened = true
         return Package(name: name(from: manifest.name), identity: identity(from: manifest.app),
                        description: manifest.description.flatMap(AppDescription.valid),
                        capabilities: Template.Capabilities.load(folder.appendingPathComponent(Template.Capabilities.file)).checked,
@@ -414,13 +492,20 @@ enum Sharing {
         if let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
            let spec = try? JSONDecoder().decode(IconSpec.self, from: data) {
             Icons.save(spec, for: project)
-            // Files from older Lamp versions carry full-square artwork; only cut-out objects fit the new icons.
-            if let art = try? Data(contentsOf: package.folder.appendingPathComponent("icon-art.png")),
-               Icons.isCutOut(art) {
+            // A glass design is kept only once it passes the same checks as one Lamp drew.
+            if let glass = GlassArt.load(from: package.folder.appendingPathComponent(glassEntry)) {
+                newArtwork = GlassArt.load(from: Icons.glassURL(project, spec: spec)) != glass
+                try? Icons.save(glass, for: project, spec: spec)
+            // Files from older Lamp versions carry full-square artwork; only cut-out objects fit the new icons, but a
+            // game's painting fills its tile.
+            } else if let art = try? Data(contentsOf: package.folder.appendingPathComponent("icon-art.png")),
+               spec.game || Icons.isCutOut(art) {
                 let url = Icons.artURL(project, spec: spec)
                 newArtwork = (try? Data(contentsOf: url)) != art
                 try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? art.write(to: url)
+                // The sender's picture takes the place of a glass design kept here for the same icon.
+                try? fm.removeItem(at: Icons.glassURL(project, spec: spec))
             }
         }
         return newArtwork
@@ -428,8 +513,11 @@ enum Sharing {
 
     struct ImportError: LocalizedError {
         let message: String
-        init(_ message: String) { self.message = message }
+        /// The smaller line under the message in an alert: why, when it's something the person can change.
+        let detail: String?
+        init(_ message: String, detail: String? = nil) { self.message = message; self.detail = detail }
         var errorDescription: String? { message }
+        var recoverySuggestion: String? { detail }
     }
 
     /// `.swift` files under a folder, ignoring symlinks so nothing outside it can be pulled in.
@@ -624,18 +712,22 @@ extension Sharing {
     static func icon(of package: Package) async -> NSImage? {
         guard let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
               let spec = try? JSONDecoder().decode(IconSpec.self, from: data) else { return nil }
-        return await Icons.preview(spec, art: artwork(at: package.folder.appendingPathComponent("icon-art.png")))
+        if let glass = GlassArt.load(from: package.folder.appendingPathComponent(glassEntry)) {
+            return await Icons.preview(spec, art: .glass(glass))
+        }
+        return await Icons.preview(spec, art: artwork(at: package.folder.appendingPathComponent("icon-art.png"), game: spec.game)
+            .map(Icons.Artwork.picture))
     }
 
     /// The artwork, when it's a cut-out object (what `finishImport` keeps) no larger than Lamp paints them.
     /// The size comes from the file's header, so a picture made to exhaust memory is never unpacked.
-    private static func artwork(at url: URL) -> NSImage? {
+    private static func artwork(at url: URL, game: Bool) -> NSImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int,
               max(width, height) <= 4096,
-              let art = try? Data(contentsOf: url), Icons.isCutOut(art) else { return nil }
+              let art = try? Data(contentsOf: url), game || Icons.isCutOut(art) else { return nil }
         return NSImage(data: art)
     }
 

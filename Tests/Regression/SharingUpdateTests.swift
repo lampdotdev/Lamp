@@ -6,6 +6,7 @@ import AppKit
 /// second copy; and updating replaces the app's code and files while leaving what Lamp keeps for it.
 final class SharingUpdateTests: XCTestCase {
     private var root: URL?
+    override func setUp() { expectNoSharingFoldersLeft() }
     override func tearDown() { if let root { try? FileManager.default.removeItem(at: root) } }
 
     private func project(_ id: String = "tally", code: String = "let version = 1") throws -> LampProject {
@@ -34,7 +35,7 @@ final class SharingUpdateTests: XCTestCase {
             zip.arguments = ["-c", "-k", "--norsrc", stage.path, file.path]
             try zip.run()
             zip.waitUntilExit()
-            let package = try Sharing.open(file)
+            let package = try opened(file)
             XCTAssertEqual(package.name, "Tally")
             XCTAssertNil(package.identity)
             XCTAssertEqual(package.sources.count, 1)
@@ -46,7 +47,7 @@ final class SharingUpdateTests: XCTestCase {
         let sender = try project("sender", code: "let version = 2")
         try fm.createDirectory(at: sender.dir.appendingPathComponent(Sharing.Assets.folder), withIntermediateDirectories: true)
         try Data([2]).write(to: sender.dir.appendingPathComponent("\(Sharing.Assets.folder)/new.png"))
-        let package = try Sharing.open(try Sharing.export(sender))
+        let package = try opened(try exported(sender))
 
         let mine = try project("mine")
         try "mine".write(to: mine.dir.appendingPathComponent("Sources/Mine.swift"), atomically: true, encoding: .utf8)

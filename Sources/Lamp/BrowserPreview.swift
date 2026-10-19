@@ -143,7 +143,21 @@ enum BrowserPreview {
                 try? await Task.sleep(for: .seconds(min(action["amount"] as? Double ?? 1, 10)))
                 happened.append("\(number): waited."); continue
             }
-            guard kind == "click" || kind == "type" else { happened.append("\(number): the sidebar page only takes click, type and wait."); break }
+            if kind == "menu" {
+                // The app's right-click item, chosen as in Chrome: the page's `lamp.onMenu` runs, and may read the page.
+                guard let declaration = BrowserCompanions.Declaration.load(project), let menu = declaration.menu else { happened.append("\(number): this app has no right-click item (`menu` in browser.json)."); break }
+                guard let page = pages[project.id] else { happened.append("\(number): give use_app a `page` to choose \"\(menu)\" on."); break }
+                // Only where Chrome would offer it: an address a fit names without a selector.
+                guard let url = URL(string: page.url), declaration.menuFits.contains(where: { $0.fitsAddress(url) }) else {
+                    happened.append("\(number): Chrome doesn't offer \"\(menu)\" on \(page.url); it shows only on \(declaration.menuFits.map { $0.site! + ($0.path ?? "") }.joined(separator: ", "))."); break
+                }
+                let asked = Date()
+                if let trouble = await preview.chooseMenu() { happened.append("\(number): \(trouble)"); break }
+                await preview.settle()
+                happened.append("\(number): chose \"\(menu)\" on the page; the page's calls to the app came back in \(Int(Date().timeIntervalSince(asked).rounded())) s.")
+                continue
+            }
+            guard kind == "click" || kind == "type" else { happened.append("\(number): the sidebar page only takes click, type, menu and wait."); break }
             guard let target = action["target"] as? String, !target.isEmpty else {
                 happened.append("\(number): name what to act on with `target` (an id or exact name from the sidebar page as text)."); break
             }
@@ -200,10 +214,23 @@ enum BrowserPreview {
         Dictionary(uniqueKeysWithValues: surface.fields.map { ($0.id, typed[project.id]?[$0.id] ?? $0.value) })
     }
 
-    /// Chrome lights the icon for a fit whose selector matches something shown; a click on Lamp chooses the app by
-    /// whether the selector matches anything at all, so a hidden match opens the app on a page whose icon stayed dim.
+    /// What the builder is told about how Chrome treats this page, from browser.json.
     private static func fitNote(_ declaration: BrowserCompanions.Declaration, _ page: PageReader.Page) -> String {
         guard let url = URL(string: page.url) else { return "" }
+        return [addressNote(declaration, page, url), menuNote(declaration, url)].compactMap { $0 }.joined(separator: " ")
+    }
+
+    /// Chrome shows the right-click item from the address alone, so whether this page gets it is said apart from the fit.
+    private static func menuNote(_ declaration: BrowserCompanions.Declaration, _ url: URL) -> String? {
+        guard let menu = declaration.menu else { return nil }
+        let gets = declaration.menuFits.contains { $0.fitsAddress(url) }
+        return gets ? "Right-clicking this page in Chrome offers \"\(menu)\": choosing it opens the sidebar on this app and runs the page's `lamp.onMenu` handler, which may read the page once. Try it with use_app's `menu` action."
+            : "Right-clicking this page in Chrome doesn't offer \"\(menu)\": it shows only on \(declaration.menuFits.map { $0.site! + ($0.path ?? "") }.joined(separator: ", "))."
+    }
+
+    /// Chrome lights the icon for a fit whose selector matches something shown; a click on Lamp chooses the app by
+    /// whether the selector matches anything at all, so a hidden match opens the app on a page whose icon stayed dim.
+    private static func addressNote(_ declaration: BrowserCompanions.Declaration, _ page: PageReader.Page, _ url: URL) -> String {
         let address = declaration.fits.filter { $0.fitsAddress(url) }
         let how = { (fit: BrowserCompanions.Declaration.Fit) in
             [fit.site.map { "site \($0)" }, fit.path.map { "path \($0)" }, fit.selector.map { "selector \($0) is shown on the page" }].compactMap { $0 }.joined(separator: ", ")
@@ -495,12 +522,14 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
             guard await Self.proves(address, key: key) else { continue }
             proven = URL(string: address)?.port ?? 0
             helloed = false
-            web.load(URLRequest(url: URL(string: address + "#tab=\(BrowserPreview.tab)")!, timeoutInterval: 6))
-            let error = await withCheckedContinuation { done in
-                loaded = done
-                Task { [weak self] in try? await Task.sleep(for: .seconds(8)); self?.finish(URLError(.timedOut)) }
+            // The page drops the `#tab=` from its address once read, so loading it again from that page would only
+            // move to the fragment: WebKit asks for nothing and the load never finishes. A blank page in between
+            // makes each load a real one, and the cache is skipped so it's the page's files as they are now.
+            if web.url != nil { _ = await navigate(URLRequest(url: URL(string: "about:blank")!)) }
+            let url = URL(string: address + "#tab=\(BrowserPreview.tab)")!
+            if let error = await navigate(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 6)) {
+                trouble = error.localizedDescription; continue
             }
-            if let error { trouble = error.localizedDescription; continue }
             let asked = Date()
             while !helloed && Date().timeIntervalSince(asked) < 3 { try? await Task.sleep(for: .milliseconds(100)) }
             if helloed { loadedFrom = Self.source(project); await settle(); return nil }
@@ -509,6 +538,20 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
         return "The app's sidebar page didn't load from the app (\(trouble)). Call LampBrowser.startPage once when the app launches, from its shared model, put the page in Assets/Sidebar/index.html, and load /lamp.js first."
     }
     private var host = "", key = "", reads = ""
+    /// Each load's own count, so a load that timed out can't end the one after it.
+    private var navigations = 0
+    private func navigate(_ request: URLRequest) async -> Error? {
+        navigations += 1
+        let mine = navigations
+        return await withCheckedContinuation { done in
+            loaded = done
+            web.load(request)
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(8))
+                if self?.navigations == mine { self?.finish(URLError(.timedOut)) }
+            }
+        }
+    }
     /// The port that proved it's the app's: the key goes to a page there and nowhere else.
     private var proven = 0
     private var helloed = false
@@ -681,6 +724,12 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
         return (try? png.write(to: file)) != nil
     }
 
+    /// The right-click item chosen: what Chrome's sidebar tells the page, told the same way (`lamp.js`'s preview hook).
+    func chooseMenu() async -> String? {
+        let result = (try? await web.callAsyncJavaScript("if (!window.__lampChooseMenu) return 'none'; window.__lampChooseMenu(); return 'ok';", contentWorld: .page)) as? String
+        return result == "ok" ? nil : "The sidebar page doesn't load lamp.js, so it can't hear its right-click item."
+    }
+
     /// One click or typing, by target: an id from the page as text, a control's exact name, or a CSS selector.
     func act(_ kind: String, target: String, text: String?) async -> String? {
         let find = """
@@ -710,10 +759,10 @@ final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerW
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finish(nil) }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { finish(error) }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finish(error) }
-    /// Only the app's own page, nothing it links to.
+    /// Only the app's own page (and the blank one between loads), nothing it links to.
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
         let url = navigationAction.request.url
-        decisionHandler(url?.host == host && url?.port == proven || navigationAction.targetFrame?.isMainFrame == false ? .allow : .cancel)
+        decisionHandler(url?.host == host && url?.port == proven || url?.absoluteString == "about:blank" || navigationAction.targetFrame?.isMainFrame == false ? .allow : .cancel)
     }
 
     /// What the page's `lamp.readPage` and `lamp.readSelection` get here: the page Lamp opened beside the preview.

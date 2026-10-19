@@ -442,58 +442,6 @@ struct ChipRow: View {
     }
 }
 
-/// What a request came to, drawn from plain values: by Lamp's window, its gallery, and the chat inside each app's
-/// window. It says one thing, in the agent's own words: what changed and where to find it. A picture of the app
-/// beside it, and a row offering to have Lamp test what it hadn't, left people unsure how the two went together and
-/// what the row's words were; the app is open beside the chat, and with changes going in live people try them
-/// themselves. What wasn't tried stays, as a plain sentence, so they know what to look at.
-public struct ResultCardView: View {
-    let result: TalkCard.Result
-
-    public init(result: TalkCard.Result) {
-        self.result = result
-    }
-
-    public var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(result.summary).font(.headline).fixedSize(horizontal: false, vertical: true)
-            // A card saved while it had rows of what's new: where to find each, as part of its sentence.
-            ForEach(Array((result.news ?? []).enumerated()), id: \.offset) { _, news in
-                Text("\(news.what): \(news.place)").foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            // A card saved while guesses were buttons keeps the one the person turned, as what they chose:
-            // the chat doesn't show the message that click sent (`Talk.shows`).
-            ForEach(Array(result.guesses.enumerated()), id: \.offset) { index, guess in
-                if result.switched?.contains(index) == true {
-                    Label {
-                        Text(guess.instead)
-                    } icon: {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                    }
-                }
-            }
-            if let untried = result.untried {
-                Text(Self.notTried(untried)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .textSelection(.enabled)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// "Saving a bill, viewing History" after the sentence that says what it is: "Lamp hasn't tried this yet:
-    /// saving a bill, viewing History." A first word in capitals throughout (a name like "PDF") keeps them.
-    static func notTried(_ untried: String) -> String {
-        var words = untried.trimmingCharacters(in: .whitespacesAndNewlines)
-        while let last = words.last, ".!".contains(last) { words.removeLast() }
-        let first = words.prefix { !$0.isWhitespace }
-        if first.dropFirst().contains(where: \.isUppercase) == false {
-            words = words.prefix(1).lowercased() + words.dropFirst()
-        }
-        return "Lamp hasn't tried this yet: \(words)."
-    }
-}
-
 private extension String {
     var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
     var nilIfEmpty: String? { isEmpty ? nil : self }

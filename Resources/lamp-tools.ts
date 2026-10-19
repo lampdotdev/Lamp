@@ -22,9 +22,9 @@
  *   adapt the code.
  * - `connectors`: lists the services an app can connect to with the person's own account, and open data that
  *   needs none, or says how to build on one.
- * - `ask`, `show_result`: the agent's cards. `ask` puts questions in the chat as a card the person answers by
- *   clicking; `show_result` is the card for what a request made: its picture and one sentence. Lamp
- *   draws both and turns a click into the person's next message, so neither waits for an answer here.
+ * - `ask`, `write_wish`: `ask` puts questions in the chat as a card the person answers by clicking, and
+ *   `write_wish` writes a found wish into the message box. Lamp draws the card and turns a click into the
+ *   person's next message, so nothing waits for an answer here.
  * - `web_fetch`: reads a web page (or any URL) as text. Reading needs no approval.
  * - pi's file tools (read, edit, write, grep, find, ls) are checked before they run: inside the app's folder
  *   they need nothing, outside it Lamp decides (system files are fine, Lamp's own keys never, the rest asks
@@ -33,11 +33,13 @@
  *   shows the command in the app's chat with Allow / Allow All This Turn / Deny, and blocks it if denied.
  * - `plan`: the agent's checklist of what it's building, with the files behind each part. Lamp reads the
  *   list from pi's event stream, shows it on the build card, and ticks parts as their files are written,
- *   so the tool itself has nothing to do.
+ *   so the tool itself has nothing to do. * - Messages the person sends while the agent works reach it in the same turn: after each of pi's turns (a
+ *   reply and the tools it called) this asks Lamp for them and hands them to pi as steering, which pi gives
+ *   the model before its next request.
  */
 
 import { readFileSync } from "node:fs";
-import { lstat, readFile, realpath, rm } from "node:fs/promises";
+import { lstat, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "@earendil-works/pi-ai";
@@ -74,9 +76,18 @@ const lookAtApp = defineTool({
 	},
 });
 
-/** Lamp's answer to look_at_app or use_app: its text, then the pictures it names (if the model can see them). */
+/**
+ * Lamp's answer to look_at_app, use_app or make_art: its text, then its pictures (if the model can see them). Lamp
+ * sends the pictures' bytes, read where no link can lead elsewhere; a path read here could have been swapped for a
+ * link to any file by then.
+ */
 async function pictureReply(response: Response, model: { input: string[] } | undefined, failure: string) {
-	const reply = (await response.json()) as { text?: string; error?: string; screenshots?: string[] };
+	const reply = (await response.json()) as {
+		text?: string;
+		error?: string;
+		screenshots?: string[];
+		pictures?: { data: string; mimeType: string }[];
+	};
 	if (!response.ok) throw new Error(reply.error ?? failure);
 
 	const content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[] = [
@@ -86,16 +97,9 @@ async function pictureReply(response: Response, model: { input: string[] } | und
 	if (pictures.length > 0 && model && !model.input.includes("image")) {
 		content.push({ type: "text", text: "This model can't view images, so the pictures of the windows were left out." });
 	} else {
-		for (const path of pictures) {
-			content.push({ type: "image", data: (await readFile(path)).toString("base64"), mimeType: mimeType(path) });
-		}
+		for (const picture of reply.pictures ?? []) content.push({ type: "image", data: picture.data, mimeType: picture.mimeType });
 	}
 	return { content, details: { screenshots: pictures } };
-}
-
-/** Lamp hands the agent small JPEG copies of its pictures (Previews.forAgent); the files it names say which. */
-function mimeType(path: string) {
-	return /\.jpe?g$/i.test(path) ? "image/jpeg" : "image/png";
 }
 
 /**
@@ -178,6 +182,29 @@ function keepsPicturesFew(pi: ExtensionAPI) {
 			}
 		}
 		return entries.length > (event.entries as unknown[]).length ? { entries } : undefined;
+	});
+}
+
+/** The person's messages sent since the agent started, taken from Lamp after each turn (Store.steer). pi puts
+ * them in the conversation as the person's own, before the model's next request; after the agent's last
+ * reply that request is made for them, so none is left for the turn after. */
+function takesMessagesMidTurn(pi: ExtensionAPI) {
+	pi.on("turn_end", async (_event, ctx) => {
+		const url = process.env.LAMP_STEER_URL;
+		if (!url) return undefined;
+		try {
+			const response = await fetch(url, {
+				method: "POST",
+				headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+				body: "{}",
+				signal: ctx.signal ? AbortSignal.any([ctx.signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
+			});
+			const reply = (await response.json()) as { message?: string };
+			if (reply.message) pi.sendUserMessage(reply.message, { deliverAs: "steer" });
+		} catch {
+			// Lamp couldn't be reached: what's waiting there goes as the next request.
+		}
+		return undefined;
 	});
 }
 
@@ -281,13 +308,24 @@ async function resolved(given: string): Promise<string> {
 }
 
 /**
+ * The app's folder by its own name, the folders above it worked out. The agent may swap the folder for a link,
+ * Lamp's own folder included, and the working folder is then wherever that leads, so it isn't what's trusted.
+ * Without Lamp's word for it, nothing is inside and every path asks.
+ */
+async function appFolder(): Promise<string | undefined> {
+	const named = process.env.LAMP_DIR;
+	if (!named) return undefined;
+	return path.join(await realpath(path.dirname(named)), path.basename(named));
+}
+
+/**
  * Asks Lamp whether a file tool may touch a path; resolves to an error message when it may not. Paths inside the
  * app's folder need no asking, except what the running app saves there (its log and pictures), which the user
  * can keep from the agent in Lamp's settings.
  */
 async function checkFile(tool: string, given: string, signal?: AbortSignal): Promise<string | undefined> {
-	const [target, home] = await Promise.all([resolved(given), resolved(".")]);
-	const inside = target === home || target.startsWith(home + path.sep);
+	const [target, home] = await Promise.all([resolved(given), appFolder()]);
+	const inside = home !== undefined && (target === home || target.startsWith(home + path.sep));
 	if (inside && !target.startsWith(path.join(home, ".lamp", "runtime") + path.sep)) return undefined;
 	const url = process.env.LAMP_APPROVE_URL;
 	if (!url) return inside ? undefined : "Files outside the app's folder need approval in Lamp, and Lamp isn't available.";
@@ -311,7 +349,8 @@ const protectedPaths = [".lamp", ".git", ".build", "build", ".gitignore", "Packa
 const deleteFile = defineTool({
 	...spec("delete_file"),
 	async execute(_toolCallId, params) {
-		const root = await realpath(process.cwd());
+		const root = await appFolder();
+		if (!root) throw new Error("Lamp isn't available to delete files.");
 		const target = path.resolve(root, params.path);
 		const relative = path.relative(root, target);
 		if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
@@ -556,6 +595,7 @@ export default function (pi: ExtensionAPI) {
 		return undefined;
 	});
 	keepsPicturesFew(pi);
+	takesMessagesMidTurn(pi);
 	pi.registerTool(webFetch);
 	pi.registerTool(lookAtApp);
 	pi.registerTool(useApp);
@@ -568,7 +608,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(offerSetup);
 	pi.registerTool(makeAppFor);
 	pi.registerTool(connectors);
-	for (const name of ["ask", "show_result", "write_wish"]) pi.registerTool(talkTool(name));
+	for (const name of ["ask", "write_wish"]) pi.registerTool(talkTool(name));
 	for (const name of ["read_notes", "save_notes"]) pi.registerTool(notesTool(name));
 	pi.registerTool(readSkill);
 }

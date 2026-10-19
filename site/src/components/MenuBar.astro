@@ -5,21 +5,25 @@ import { DOWNLOAD_URL } from "../lib/download";
 
 // The page we're on, so its link can say so.
 const here = Astro.url.pathname.replace(/\/$/, "") || "/";
-// On a phone Home is left out: the name beside it goes home too.
+// On a phone Home is left out: the name beside it goes home too. AI and Features go to the homepage's sections of
+// those names, and only where there's room for them beside the rest.
 const links = [
   { href: "/", label: "Home", wide: true },
+  { href: "/#ai", label: "AI", wider: true },
+  { href: "/#features", label: "Features", wider: true },
   { href: "/ideas", label: "Ideas" },
 ];
 ---
 
 <!--
   A floating menu bar on every page: a pill as wide as the page's content, of frosted glass, held a little below
-  the top of the window over whatever is there, the homepage's hero card included, as the page scrolls under it.
+  the top of the window over whatever is there, as the page scrolls under it. On the homepage it starts inside the
+  hero card, which runs to the top of the window, inset from the card's edges as far on top as on the sides.
   The name on the left; a few links and a small Download on the right, inset from the pill's edge as far as it
   is from top and bottom, so the curves nest. What it covers (the pill and the space above it) is --menu-height
   (global.css): pages start below it, and the ideas page's filters stay under it.
 -->
-<header class="pointer-events-none fixed inset-x-0 top-0 z-40 px-3 pt-3 sm:px-6">
+<header class="pointer-events-none fixed inset-x-0 top-0 z-40 px-4 pt-4 sm:px-6 sm:pt-6">
   <nav
     aria-label="Lamp"
     class="pointer-events-auto mx-auto flex h-14 max-w-[69rem] items-center justify-between rounded-full bg-white/78 pr-2 pl-3 shadow-[0_12px_36px_-14px_rgba(0,0,0,0.22),0_2px_6px_-2px_rgba(0,0,0,0.06)] backdrop-blur-2xl backdrop-saturate-[1.8]"
@@ -38,6 +42,7 @@ const links = [
             class:list={[
               "group flex h-10 items-center rounded-full px-3 text-[14px] text-ink/70 transition hover:bg-black/[0.04] hover:text-ink focus-visible:outline-2 focus-visible:outline-graphite aria-[current=page]:text-ink sm:px-4",
               link.wide && "hidden sm:flex",
+              link.wider && "hidden md:flex",
             ]}
           >
             <!-- The page we're on is in bold. The bold word is always there, unseen, so the link keeps its width. -->

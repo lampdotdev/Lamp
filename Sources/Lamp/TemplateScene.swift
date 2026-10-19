@@ -23,15 +23,13 @@ extension Template {
     static func writeSceneSupport(for project: LampProject) throws {
         let url = project.dir.appendingPathComponent(sceneSupportPath)
         guard usesScene(project) else {
-            if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+            if FileManager.default.fileExists(atPath: url.path) { AppFolder.remove(url, in: project.dir) }
             return
         }
         let contents = lampSceneSwift
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
             .replacingOccurrences(of: "{{NOTE}}", with: Edition.notificationPrefix)
-        if (try? String(contentsOf: url, encoding: .utf8)) != contents {
-            try contents.write(to: url, atomically: true, encoding: .utf8)
-        }
+        try put(contents, at: url, for: project)
     }
 
     /// The oldest macOS a Mac app runs on: 15 with a 3D scene (RealityView begins there), else 14. Whatever compiles
@@ -173,8 +171,14 @@ extension Template {
         weak var marker: NSView?
         /// Whether the scene has keyboard focus (see `LampSceneView.focused`).
         var hasFocus = false
-        private var subscription: EventSubscription?
+        /// One for each view the scene was started in; only the one showing the world ticks it (`start`).
+        private var subscriptions: [EventSubscription] = []
         private var monitor: Any?
+        /// The app's `build`, run once. SwiftUI can make the RealityView again with the scene's state kept (a live
+        /// change that alters the views around it does): the new view gets the world already built, or waits for
+        /// the build still going, since building it twice leaves the app holding what it made the first time beside
+        /// what it makes the second.
+        private var building: Task<Void, Never>?
         private var update: ((LampScene, Float) -> Void)?
         private var drag: Drag?
         private var orbitYaw: Float = 0.6, orbitPitch: Float = 0.35, orbitDistance: Float = 4
@@ -296,7 +300,7 @@ extension Template {
         }
 
         func start(_ content: inout RealityViewCameraContent, sky: LampSky, rig: LampCameraRig, props: [String: @MainActor () -> Entity],
-                   build: (LampScene) async -> Void, update: ((LampScene, Float) -> Void)?) async {
+                   build: @escaping (LampScene) async -> Void, update: ((LampScene, Float) -> Void)?) async {
             self.rig = rig
             self.update = update
             self.props = props
@@ -311,10 +315,20 @@ extension Template {
             content.add(camera)
             content.camera = .virtual
             await sky.apply(to: &content, lighting: root)
-            await build(self)
-            subscription = content.subscribe(to: SceneEvents.Update.self) { [weak self] event in
-                MainActor.assumeIsolated { self?.tick(min(Float(event.deltaTime), 1 / 20)) }
-            }
+            // Said in the app's log: a view made more than once, or never ticking, shows up there and nowhere else.
+            print("LampScene: started in a view\(building == nil ? "" : " again, with the world already built")")
+            if building == nil { building = Task { await build(self) } }
+            await building?.value
+            // Every view gets its frames, and the one whose scene holds the world ticks it: which of the views SwiftUI
+            // made is the one on screen isn't known here (a window that hosts the app's chat beside it makes the
+            // view more than once), and the world is in whichever had it added last.
+            subscriptions.append(content.subscribe(to: SceneEvents.Update.self) { [weak self] event in
+                MainActor.assumeIsolated {
+                    guard let self, event.scene === self.root.scene else { return }
+                    self.tick(min(Float(event.deltaTime), 1 / 20))
+                }
+            })
+            if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .scrollWheel, .leftMouseDown, .rightMouseDown]) { [weak self] event in
                 guard let self else { return event }
                 if event.type == .keyUp {

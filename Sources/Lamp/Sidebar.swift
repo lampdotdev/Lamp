@@ -31,7 +31,7 @@ enum Sidebar {
 
     /// Puts the extension into a built app, before it's signed. Its program is the same for every app; what
     /// tells them apart is the Info.plist, which names the app's own extension point.
-    static func install(into app: URL, for project: LampProject) throws {
+    static func install(into app: URL, for project: LampProject, entitlementsIn folder: URL) throws {
         let fm = FileManager.default
         let appex = extensionURL(in: app)
         try? fm.removeItem(at: appex)
@@ -60,7 +60,7 @@ enum Sidebar {
             .write(to: appex.appendingPathComponent("Contents/Info.plist"))
         let point: [String: Any] = [pointID(for: project): ["EXPresentsUserInterface": true]]
         try PropertyListSerialization.data(fromPropertyList: point, format: .xml, options: 0).write(to: pointURL(in: app))
-        try entitlements.write(to: entitlementsURL(for: project), atomically: true, encoding: .utf8)
+        try entitlements.write(to: entitlementsURL(in: folder), atomically: true, encoding: .utf8)
     }
 
     /// Sandboxed, which macOS asks of every extension it loads, with the ways out it needs: to reach Lamp, and to
@@ -74,7 +74,7 @@ enum Sidebar {
 
         """
 
-    static func entitlementsURL(for project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/sidebar-entitlements.plist") }
+    static func entitlementsURL(in folder: URL) -> URL { folder.appendingPathComponent("sidebar-entitlements.plist") }
 
     /// The signing step, before the app's: with the hardened runtime, so nothing can be loaded into it that
     /// would make it act otherwise than its code.
@@ -82,8 +82,8 @@ enum Sidebar {
         "{ [ ! -d \"$LAMP_SIDEBAR\" ] || \(sign) --options runtime --entitlements \"$LAMP_SIDEBAR_ENTITLEMENTS\" \"$LAMP_SIDEBAR\" 2>&1; }"
     }
 
-    static func signingEnvironment(for project: LampProject) -> [String: String] {
-        ["LAMP_SIDEBAR": extensionURL(in: project.builtURL).path, "LAMP_SIDEBAR_ENTITLEMENTS": entitlementsURL(for: project).path]
+    static func signingEnvironment(in app: URL, entitlementsIn folder: URL) -> [String: String] {
+        ["LAMP_SIDEBAR": extensionURL(in: app).path, "LAMP_SIDEBAR_ENTITLEMENTS": entitlementsURL(in: folder).path]
     }
 
     // MARK: Which extension is the real one
@@ -96,8 +96,8 @@ enum Sidebar {
     }()
 
     /// After signing: the hash of what was signed, the one thing a process can't fake about what it runs.
-    static func remember(_ project: LampProject) {
-        let appex = extensionURL(in: project.builtURL)
+    static func remember(_ project: LampProject, signed app: URL) {
+        let appex = extensionURL(in: app)
         var code: SecStaticCode?
         var info: CFDictionary?
         guard FileManager.default.fileExists(atPath: appex.path),
@@ -173,6 +173,7 @@ final class SidebarServer {
         let connection = Connection(socket: socket, projectID: project.id, server: self)
         connections[ObjectIdentifier(connection)] = connection
         MagicPanel.shared.follow(project.id)
+        MagicPanel.shared.chatOpenedInApp(project)
         Store.shared.refreshUndoOffer(project)
         connection.push(force: true)
     }
@@ -202,6 +203,8 @@ final class SidebarServer {
     /// Bumped when the draft is changed anywhere but the sidebar itself, which then takes it up.
     private var draftVersions: [String: Int] = [:]
     private var draftsFromSidebar: [String: String] = [:]
+    /// How many times the sidebar's words were taken to be sent (`submit`), by app.
+    private var sends: [String: Int] = [:]
     private var shownDrafts: [String: String] = [:]
 
     fileprivate func state(for project: LampProject) -> SidebarState {
@@ -213,19 +216,26 @@ final class SidebarServer {
         }
         let log = store.logs[project.id] ?? []
         let busy = store.busy.contains(project.id)
+        let details = Self.details
         // The progress line, as Lamp's window shows it: not under the agent's questions.
         let progress = busy && Talk.open(in: log) == nil ? store.progress[project.id] : nil
         var state = SidebarState(app: project.name, lines: Self.lines(log, project: project, busy: busy, progressShown: progress != nil,
                                                                                          reach: reach[project.id] ?? LogLine.recentCount,
-                                                                                         canSendAgain: !busy && !store.pendingSubmissions.contains(project.id)),
+                                                                                         canSendAgain: !busy && !store.pendingSubmissions.contains(project.id),
+                                                                                         details: details),
                                  working: progress?.activity, workingSince: progress?.started, empty: log.isEmpty, busy: busy,
                                  draft: draft.text, draftVersion: draftVersions[project.id] ?? 0,
                                  attachments: draft.attachments.map { Self.attachment($0) })
         state.pointed = draft.pointed.map { Self.pointed($0, canChooseAgain: store.canPoint(in: project)) }
+        let canSendNow = store.canSendNow(in: project)
+        let lastWaiting = store.waitingToSend(in: project).last?.id
         state.queued = (store.queued[project.id] ?? []).map { message in
             var queued = SidebarQueued(id: message.id, text: message.text,
                                        attachments: message.attachments.map { Self.attachment($0) })
             queued.pointed = message.pointed.map { Self.pointed($0) }
+            queued.sendingNow = message.sendNow ? true : nil
+            // Send Now is the group's: offered once, under the latest waiting message.
+            queued.canSendNow = canSendNow && message.id == lastWaiting ? true : nil
             return queued
         }
         state.waitingForSetup = !store.setup.ready
@@ -234,7 +244,7 @@ final class SidebarServer {
         }
         state.notResponding = store.notResponding[project.id] != nil ? ErrorMessages.notResponding(project.name) : nil
         state.replacing = draft.replacing != nil
-        state.hasEarlier = LogLine.recentStart(in: LogLine.visible(log, details: false), atLeast: reach[project.id] ?? LogLine.recentCount) > 0
+        state.hasEarlier = LogLine.recentStart(in: LogLine.visible(log, details: details), atLeast: reach[project.id] ?? LogLine.recentCount) > 0
         state.suggestion = suggestion(for: project, log: log, busy: busy)
         state.listening = dictations[project.id]?.isListening ?? false
         state.canDictate = Dictation.hasMicrophone
@@ -242,26 +252,145 @@ final class SidebarServer {
             SidebarProblem(title: $0.title, message: $0.message, settingsButton: $0.settingsURL == nil ? nil : $0.settingsButton)
         }
         state.submitting = store.pendingSubmissions.contains(project.id)
+        state.sends = sends[project.id, default: 0]
         // As Lamp's window offers it: not while anything waits to go after the change.
         state.undoChange = busy || !(store.queued[project.id] ?? []).isEmpty ? nil : store.undoOffers[project.id]
+        let history = history(for: project, busy: busy, lines: log.count)
+        state.toolbar = SidebarToolbar(canUndo: !busy && (history?.undoable ?? false), canShare: store.canShare(project) && (history?.made ?? false),
+                                       hasVersions: history?.saved ?? false, details: details, usage: store.usageSummary(project))
+        state.panel = panels[project.id]
+        switch state.panel {
+        case .versions:
+            let versions = versions(for: project, busy: busy)
+            state.versions = versions.list
+            state.hasEarlierVersions = versions.more
+        case .info: state.info = AppInfoView.sections(for: project, models: AppModels.load(project), store: store)
+        case nil: break
+        }
+        state.sharing = sharing.removeValue(forKey: project.id)
         return state
+    }
+
+    /// Agent Details, one setting for both chats as in Lamp's window.
+    private static var details: Bool { UserDefaults.standard.bool(forKey: "showDetails") }
+
+    // MARK: The toolbar's
+
+    /// The panel each app's sidebar shows in place of the chat.
+    private var panels: [String: SidebarPanel] = [:]
+    /// The wish's file after Share…, until it's been sent.
+    private var sharing: [String: SidebarSharing] = [:]
+
+    /// What the toolbar knows of each app's history, read again as Lamp's window reads it: when a turn starts or ends
+    /// and when the chat changes.
+    private var histories: [String: (key: String, value: ProjectView.History?)] = [:]
+
+    private func history(for project: LampProject, busy: Bool, lines: Int) -> ProjectView.History? {
+        let key = "\(busy) \(lines)"
+        if histories[project.id]?.key != key {
+            let known = histories[project.id]?.value
+            histories[project.id] = (key, known)
+            Task { [weak self] in
+                let read = await ProjectView.History.read(project)
+                guard let self, self.histories[project.id]?.key == key else { return }
+                self.histories[project.id] = (key, read)
+                self.scheduleUpdate()
+            }
+        }
+        return histories[project.id]?.value
+    }
+
+    /// The Versions panel's list, read again as Lamp's window reads it: when a turn starts or ends and when a version
+    /// changes (a picture, a title, a name). The newest first, with a small picture each.
+    private var versionLists: [String: (key: String, value: [SidebarVersion]?)] = [:]
+
+    /// How many of each app's versions the panel shows, newest first, grown when it asks for earlier ones.
+    private var versionReach: [String: Int] = [:]
+    private static let versionPage = 60
+
+    private func versions(for project: LampProject, busy: Bool) -> (list: [SidebarVersion]?, more: Bool) {
+        let store = Store.shared
+        let reach = versionReach[project.id] ?? Self.versionPage
+        let key = "\(busy)-\(store.versionsRevision)-\(reach)"
+        if versionLists[project.id]?.key != key {
+            let known = versionLists[project.id]?.value
+            versionLists[project.id] = (key, known)
+            Task { [weak self] in
+                let list = await Versions.list(project)
+                if let current = list.first { await store.fillCurrentPicture(project, current: current) }
+                store.titleVersions(project)
+                // A page at a time, so what's sent with each change stays small; the rest is a click away.
+                let shown = await Task.detached {
+                    list.prefix(reach).enumerated().map { index, version in
+                        SidebarVersion(id: version.id, label: version.label, named: version.name != nil, date: version.date,
+                                       current: index == 0, picture: Self.versionPicture(Versions.pictureURL(in: project, for: version.id)))
+                    }
+                }.value
+                guard let self, self.versionLists[project.id]?.key == key else { return }
+                self.versionLists[project.id] = (key, shown)
+                self.versionsTotal[project.id] = list.count
+                self.scheduleUpdate()
+            }
+        }
+        let list = versionLists[project.id]?.value
+        return (list, (versionsTotal[project.id] ?? 0) > (list?.count ?? 0))
+    }
+
+    private var versionsTotal: [String: Int] = [:]
+
+    /// A version's picture, small enough to send with the list every time the chat changes.
+    private nonisolated static func versionPicture(_ url: URL) -> Data? {
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        let width: CGFloat = 360
+        let scale = min(width / max(image.size.width, 1), 1)
+        let size = NSSize(width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
+        let small = NSImage(size: size, flipped: false) { rect in
+            image.draw(in: rect)
+            return true
+        }
+        guard let tiff = small.tiffRepresentation else { return nil }
+        return NSBitmapImageRep(data: tiff)?.representation(using: .jpeg, properties: [.compressionFactor: 0.7])
+    }
+
+    /// Share…: the file is made here, where the wish is, and handed to the sidebar, which shows the share menu.
+    private func share(_ project: LampProject) {
+        Task { [weak self] in
+            do {
+                let file = try await Task.detached(priority: .userInitiated) { () -> SidebarFile in
+                    let url = try Sharing.export(project)
+                    defer { try? FileManager.default.removeItem(at: url) }
+                    return SidebarFile(name: url.lastPathComponent, data: try Data(contentsOf: url))
+                }.value
+                self?.sharing[project.id] = SidebarSharing(id: UUID(), file: file)
+                self?.scheduleUpdate()
+            } catch {
+                Store.shared.log(project, .error, error.localizedDescription)
+            }
+        }
     }
 
     /// The chat as Lamp's window shows it without Agent Details (`Transcript`): the same lines, gathered and
     /// spaced the same way. Cards and notes Lamp's window has and this doesn't yet are left out.
     static func lines(_ log: [LogLine], project: LampProject, busy: Bool, progressShown: Bool,
-                      reach: Int = LogLine.recentCount, canSendAgain: Bool = false) -> [SidebarLine] {
+                      reach: Int = LogLine.recentCount, canSendAgain: Bool = false, details: Bool = false) -> [SidebarLine] {
         let dir = project.dir
         // Offers with nothing left to offer (an icon drawn, a widget gone) are left out, as in Lamp's window.
-        let lines = Transcript.withoutSpentOffers(LogLine.visible(log, details: false), dir: dir)
+        let lines = Transcript.withoutSpentOffers(LogLine.visible(log, details: details), dir: dir)
         let finalAnswers = Transcript.finalAnswers(in: lines, busy: busy)
         let openAsk = Talk.open(in: lines)?.id
         // Only the end of a long chat, as Lamp's window opens on it; the rest is a click away in Lamp.
         let start = LogLine.recentStart(in: lines, atLeast: reach)
         let latestRequest = lines.last { $0.kind == .user }?.id
-        let shown = lines[start...].filter { $0.fromCard != true }
-        let items = ChatItem.items(progressShown ? Transcript.withoutStepInProgress(shown) : shown)
+        let shown = Array(lines[start...])
+        let items = ChatItem.items(progressShown ? Transcript.withoutStepInProgress(shown) : shown, gather: !details)
         var out: [SidebarLine] = []
+        func tools(_ run: [LogLine], gap: Double, running: Bool) -> SidebarLine {
+            let calls = run.map { ToolCall($0.text) }
+            var line = SidebarLine(id: run[0].id, kind: .tools, text: ToolGroup.summary(calls), gap: gap, running: running)
+            line.symbol = ToolGroup.icon(calls)
+            line.calls = calls.map { SidebarToolCall(symbol: $0.icon, verb: $0.verb, argument: $0.argument) }
+            return line
+        }
         for (index, item) in items.enumerated() {
             let isLast = index == items.count - 1
             let gap = Double(ChatItem.gap(after: index > 0 ? items[index - 1] : nil, before: item, isFinalAnswer: finalAnswers.contains(item.id)))
@@ -271,8 +400,19 @@ final class SidebarServer {
                     let running = isLast && busy && !progressShown && line.id == run.last?.id && line.text.hasSuffix("…")
                     out.append(SidebarLine(id: line.id, kind: .status, text: line.text, gap: position == 0 ? gap : 4, running: running))
                 }
-            case .tools:
-                continue
+            case .tools(let run):
+                // Only with Agent Details on: the steps, summed up, each one under it.
+                out.append(tools(run, gap: gap, running: isLast && busy && !progressShown))
+            case .work(let id, let title, let steps):
+                var line = SidebarLine(id: id, kind: .work, text: title, gap: gap)
+                line.steps = ChatItem.items(steps).flatMap { step -> [SidebarLine] in
+                    switch step {
+                    case .tools(let run): [tools(run, gap: 4, running: false)]
+                    case .statuses(let run): run.map { SidebarLine(id: $0.id, kind: .status, text: $0.text, gap: 4) }
+                    default: []
+                    }
+                }
+                out.append(line)
             case .line(let line):
                 switch line.kind {
                 case .user:
@@ -307,10 +447,7 @@ final class SidebarServer {
                     card.progressVersion = progressVersion(for: line.id, progress)
                     out.append(card)
                 case .result:
-                    guard let result = line.result else { continue }
-                    var card = SidebarLine(id: line.id, kind: .result, text: result.summary, gap: gap)
-                    card.result = result
-                    out.append(card)
+                    continue
                 case .needsKey, .offer:
                     // The card's header: setting it up (a key, a download, a sign-in) happens in Lamp's window.
                     guard let offer = line.setupOffer else { continue }
@@ -421,6 +558,9 @@ final class SidebarServer {
         guard !submitted.isEmpty else { return }
         let replaced = submitted.replacing.flatMap { id in store.logs[project.id]?.first { $0.id == id } }
         guard replaced == nil || !store.busy.contains(project.id), let token = store.beginSubmission(project) else { return }
+        // The box's words are taken: a Send the sidebar made before it heard so isn't sent again.
+        sends[project.id, default: 0] += 1
+        scheduleUpdate()
         dictations[project.id]?.cancel()
         store.endArrival(for: project.id)
         func finish(sent: Bool) {
@@ -486,7 +626,9 @@ final class SidebarServer {
         let store = Store.shared
         guard let project = store.projects.first(where: { $0.id == projectID }) else { return }
         switch command {
-        case .send(let text):
+        case .send(let text, let seen):
+            // Sent already: the box still showed these words when Return was pressed again.
+            if let seen, seen < sends[project.id, default: 0] { return }
             // The words as the sidebar has them, in case its last edit is still on its way.
             var draft = store.draft(for: project)
             if draft.text != text {
@@ -599,6 +741,8 @@ final class SidebarServer {
         case .unqueue(let id):
             guard let message = store.queued[project.id]?.first(where: { $0.id == id }) else { return }
             store.unqueue(message, from: project)
+        case .sendNow(let latest):
+            store.sendNow(in: project, latest: latest)
         case .approve(let id, let allow, let allowAll):
             // Only the approval still waiting: a click that arrives after it was answered in Lamp does nothing.
             guard store.approvals[project.id]?.id == id else { return }
@@ -606,6 +750,48 @@ final class SidebarServer {
         case .forceQuit:
             guard store.notResponding[project.id] != nil else { return }
             store.forceQuit(project)
+        case .showLamp:
+            // Asked for from another app's window, so Lamp has to take the front for itself.
+            NSApp.activate(ignoringOtherApps: true)
+            store.showDesk()
+        case .undo:
+            Task { await store.undo(project) }
+        case .delete:
+            Task { await store.delete(project) }
+        case .copyWishFile:
+            store.copyAppFile(project)
+        case .share:
+            share(project)
+        case .export:
+            // Lamp's own save panel, in front of the app.
+            NSApp.activate(ignoringOtherApps: true)
+            store.chooseExport(project)
+        case .details(let on):
+            UserDefaults.standard.set(on, forKey: "showDetails")
+        case .panel(let panel):
+            panels[project.id] = panel
+            scheduleUpdate()
+        case .earlierVersions:
+            versionReach[project.id] = (versionReach[project.id] ?? Self.versionPage) + Self.versionPage
+            scheduleUpdate()
+        case .goBackToVersion(let id):
+            guard !store.busy.contains(project.id) else { return }
+            Task {
+                guard let version = await Versions.list(project).first(where: { $0.id == id }) else { return }
+                await store.restore(project, to: version)
+            }
+        case .nameVersion(let id, let name):
+            Task {
+                guard let version = await Versions.list(project).first(where: { $0.id == id }) else { return }
+                await store.name(version, of: project, as: name.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        case .infoAction(let action):
+            AppInfoView.perform(action, for: project) { tab in
+                UserDefaults.standard.set(tab, forKey: "settingsTab")
+                NSApp.activate(ignoringOtherApps: true)
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            }
+            scheduleUpdate()
         case .hello:
             break   // answered by the connection
         }
@@ -687,6 +873,8 @@ final class SidebarServer {
             if count < 0, errno == EAGAIN || errno == EINTR { return }
             guard count > 0 else { return end() }
             buffer.append(contentsOf: chunk[0..<count])
+            // A long line (files attached) comes in many pieces: the buffer is looked through only once one ends a line.
+            guard chunk[0..<count].contains(0x0A) else { return }
             for line in SidebarWire.lines(from: &buffer) {
                 guard let command = try? JSONDecoder().decode(SidebarCommand.self, from: line) else { continue }
                 if case .hello(let version) = command {
@@ -704,11 +892,22 @@ final class SidebarServer {
             guard !outbox.isHolding else { waiting = true; return }
             guard let server, let project = Store.shared.projects.first(where: { $0.id == projectID }) else { return }
             var state = server.state(for: project)
+            // A sidebar from before a turn's steps were folded can't read the fold, and would drop the whole chat: it
+            // gets the steps as lines, as it showed them.
+            if version < 7 {
+                state.lines = state.lines.flatMap { line -> [SidebarLine] in
+                    guard line.kind == .work else { return [line] }
+                    var steps = line.steps ?? []
+                    if !steps.isEmpty { steps[0].gap = line.gap }
+                    return steps
+                }
+            }
             // A sidebar from before the summary line can't read one, and would drop the whole chat.
             if version < 2 { state.lines.removeAll { $0.kind == .summary } }
             // Nor one from before the notes receipt a receipt.
             if version < 3 { state.lines.removeAll { $0.kind == .note } }
             if version < 4 { state.lines.removeAll { $0.kind == .offer || $0.kind == .action } }
+            if version < 6 { state.lines.removeAll { $0.kind == .tools } }
             // What was pointed at, as the file it was before it had a pill of its own.
             if version < 5 {
                 func asFile(_ pointed: SidebarPointed?) -> [SidebarAttachment] {

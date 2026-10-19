@@ -194,6 +194,10 @@ enum KeyStore {
 
     static var openRouterKey: String? { key(for: "openrouter") }
 
+    /// A key for this process alone, kept nowhere: for drawing the starters' icons with Lamp's own pipeline
+    /// (`StarterIconsTests`), which runs outside Lamp and has no Keychain item or key file of its own.
+    static func useForThisRun(_ key: String, for provider: String) { remember(key, for: provider) }
+
     /// Posted on the main thread once the keys have been read at launch: what was drawn without them draws again.
     static let loaded = Notification.Name("LampKeysLoaded")
     nonisolated(unsafe) private static var preloaded = false

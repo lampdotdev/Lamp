@@ -1,7 +1,9 @@
 import SwiftUI
 import LampSidebarKit
 import CryptoKit
+import Security
 import AppKit
+import LampFileLook
 
 /// What an app is for: a Mac app that installs beside the user's others, an iPhone app that runs in the
 /// iOS Simulator on this Mac or on the person's own phone, or one app for both, as Xcode's multiplatform
@@ -74,6 +76,13 @@ struct LampProject: Identifiable, Hashable {
     let name: String    // display name
     let exe: String     // Swift target / executable name
     let dir: URL
+    /// Where the app's folder really is: the folders above it worked out (they're Lamp's), the folder itself
+    /// taken by its name. The agent may write at that name, so it can swap the folder for a link to anywhere,
+    /// Lamp's own folder included; what is opened or trusted as the app's must never follow that link.
+    var realDir: URL {
+        let named = dir.standardizedFileURL
+        return named.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent(named.lastPathComponent)
+    }
     /// Who this app is, whatever its folder is called: given when it's made and kept through renames, so
     /// something started on a draft still finds the app it became, and a later draft that takes the same
     /// folder name is a different app. Apps from before it existed use their folder name.
@@ -173,9 +182,10 @@ struct LogLine: Identifiable, Codable, Equatable {
     var offer: SetupOffer? = nil      // a setup offer: what it's about (its text is the reason)
     var ask: Talk.Ask? = nil          // the agent's questions, and what was clicked
     var fromCard: Bool? = nil         // for a request: it was clicked on the agent's card, which shows it
-    var result: Talk.Result? = nil    // what a request made, as the agent put it
+    var result: Talk.Result? = nil    // read from chats saved with a result card, which no longer shows
     var noted: NoteReceipt? = nil     // what a save of Lamp's notes changed, with Undo
     var pointed: PointedAt? = nil     // for a request: what was pointed at in the app, one of its attachments
+    var midTurn: Bool? = nil          // for a request: the agent took it while working on the one before (Store.handOver)
 
     /// The offer a setup card is about, for this line and for the older key card.
     var setupOffer: SetupOffer? {
@@ -253,6 +263,8 @@ struct QueuedMessage: Identifiable {
     var tookBack: [String] = []
     /// What was pointed at in the app, its picture going with the message besides `attachments`.
     var pointed: PointedAt? = nil
+    /// The person pressed Send Now: it goes to the agent in the turn that's running (`Store.handOver`).
+    var sendNow = false
 }
 
 extension QueuedMessage {
@@ -314,6 +326,8 @@ final class Store: ObservableObject {
     @Published var chatFocusRequest = 0
     /// Wishes whose chat window should close, its chat having moved into the app's own window (`MagicPanel.handOff`).
     @Published var chatsHandedOff: Set<String> = []
+    /// Wishes whose chat has a window of its own open now (`WishWindow`).
+    var chatWindows: Set<String> = []
     /// A wish from the site's link that came while the welcome is up, for the welcome to take (`take(wish:)`).
     @Published var arrivedWish: String?
     /// The wishes being written into a message box right now, by app (`Wish.Arrival`). The drafts hold them whole.
@@ -404,13 +418,15 @@ final class Store: ObservableObject {
         var keptOpen = false
         /// The chat has said this turn closed the open app and opened it again (`ChatLook.reloaded`).
         var saidReloaded = false
+        /// The turn's last install put the change into the open app without reopening it: its end says the app
+        /// is updated, not ready, whether that install was the agent's look or the turn's own.
+        var updatedInPlace = false
         /// Nil for a simulator/Mac turn; false until the chosen phone acknowledges opening the app.
         var phoneReady: Bool?
         var allowAll = false                // "Allow all for this turn"
         var approving = false               // between the queue check and the approval card
         var look = Look()                   // what the agent's look_at_app has done
         var pendingName: String?            // a name the agent gave the version this request makes
-        var pendingResult: Talk.Result?     // the agent's card for what this request made, shown once it's open
         /// The agent put its questions to the person this turn: the turn is over, whatever the agent does next.
         var asked = false
         /// Lamp ended the agent because it went on working past its own questions. Not a stop and not a failure.
@@ -418,6 +434,19 @@ final class Store: ObservableObject {
         var artCost = 0.0                   // what make_art's pictures cost, for the turn's summary
         var request: String?                // the user's words, for the command classifiers
         var messages: [String] = []         // each queued message this turn took, as sent, from the moment it took them
+        /// Where the app was when the turn began: a request the agent takes while it works was sent from there too.
+        var sentFrom: String?
+        /// The chat lines of the requests the agent took while it worked (`handOver`), which go with the turn's
+        /// own to the version it makes.
+        var midTurn: [UUID] = []
+        /// Requests handed to the engine that its output hasn't yet shown reaching the model (`received`).
+        var handed: [UUID] = []
+        /// The engine running now, when it takes messages while it works (pi, Claude Code); nil otherwise.
+        var steering: Engine?
+        /// Claude Code's input, from its start until it has answered.
+        var input: AgentInput?
+        /// The engine is running a tool: a message written to it now reaches the model with the tool's result.
+        var toolRunning = false
         var claudeSession: String?          // Claude Code's conversation, as its own output says (Privacy.isOwnOutput)
         var writing: (line: UUID, unshown: String)?   // the message the agent is writing right now
         var showingWritten = false
@@ -676,11 +705,54 @@ final class Store: ObservableObject {
         saveChat(project)
     }
 
+    /// Saves the chat a moment later, with whatever else is added meanwhile, away from the main thread. The file is
+    /// the whole chat, and a turn adds a line for every step: written at once each time, a long chat's encoding held
+    /// the main thread for milliseconds per line, many times a turn. Lines added within `chatSavePause` of each other
+    /// go in one write; Lamp quitting writes what's waiting (`flushChats`), and so does anything that copies, moves
+    /// or deletes the app's folder first (`settleChat`).
     private func saveChat(_ project: LampProject) {
         guard exists(project) else { return }
-        if let data = try? JSONEncoder().encode(logs[project.id]) {
-            try? data.write(to: project.dir.appendingPathComponent(".lamp/chat.json"))
+        chatsToSave.insert(project.id)
+        guard !chatSaveScheduled else { return }
+        chatSaveScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.chatSavePause) { [weak self] in self?.writeChats() }
+    }
+
+    private static let chatSavePause: TimeInterval = 0.5
+    /// One queue for every chat's file, so a later write of a chat never lands before an earlier one.
+    private static let chatWrites = DispatchQueue(label: "dev.lamp.chat-writes", qos: .utility)
+    private var chatsToSave: Set<String> = []
+    private var chatSaveScheduled = false
+
+    private func writeChats() {
+        chatSaveScheduled = false
+        let ids = chatsToSave
+        chatsToSave = []
+        ids.forEach(writeChat)
+    }
+
+    /// Hands the chat as it is now to the writing queue. The lines are a copy, so the main thread goes on changing them.
+    private func writeChat(_ id: String) {
+        guard let project = projects.first(where: { $0.id == id }) else { return }
+        let lines = logs[id] ?? []
+        let file = project.dir.appendingPathComponent(".lamp/chat.json")
+        Self.chatWrites.async {
+            guard let data = try? JSONEncoder().encode(lines) else { return }
+            try? data.write(to: file, options: .atomic)
         }
+    }
+
+    /// Writes what's waiting of this chat now and waits until its file is written, before the app's folder is
+    /// copied, moved or deleted: a write landing afterwards would go to a folder that's no longer the app's.
+    private func settleChat(_ project: LampProject) {
+        if chatsToSave.remove(project.id) != nil { writeChat(project.id) }
+        Self.chatWrites.sync {}
+    }
+
+    /// Writes every chat that's waiting, for when Lamp quits.
+    func flushChats() {
+        writeChats()
+        Self.chatWrites.sync {}
     }
 
     /// The message each app's agent is writing right now: its chat line, and text that has arrived but isn't
@@ -1227,6 +1299,7 @@ final class Store: ObservableObject {
         guard let project = projects.first(where: { $0.id == id }), project.untitled, nothingAsked(of: id),
               draft(for: project).text.trimmed.isEmpty,
               !FileManager.default.fileExists(atPath: project.builtURL.path) else { return }
+        settleChat(project)
         try? FileManager.default.removeItem(at: project.dir)
         projects.removeAll { $0.id == id }
     }
@@ -1285,13 +1358,15 @@ final class Store: ObservableObject {
         let sources = dir.appendingPathComponent("Sources")
         let files = (fm.enumerator(at: sources, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
             .filter { $0.pathExtension == "swift" && $0.lastPathComponent != "LampSupport.swift" }
+        // Read as `AppFile` reads: written back in place, a file read through a link would bring what it leads to
+        // into the app's folder.
         for file in files {
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            guard let text = AppFile.text(file, inFolder: dir) else { continue }
             let updated = text.replacingOccurrences(of: "\"\(old)\"", with: "\"\(new)\"")
             if updated != text { try? updated.write(to: file, atomically: true, encoding: .utf8) }
         }
         let appMd = dir.appendingPathComponent("APP.md")
-        if let text = try? String(contentsOf: appMd, encoding: .utf8), text.hasPrefix("# \(old)\n") {
+        if let text = AppFile.text(appMd, inFolder: dir), text.hasPrefix("# \(old)\n") {
             try? ("# \(new)\n" + text.dropFirst(old.count + 3)).write(to: appMd, atomically: true, encoding: .utf8)
         }
     }
@@ -1327,8 +1402,13 @@ final class Store: ObservableObject {
             if let spec = Icons.load(project) {
                 var recolored = spec
                 recolored.background = otherBackground(than: spec).name
-                // The same artwork, filed under the new background so the copy's icon finds it.
-                if fm.fileExists(atPath: Icons.artURL(copy, spec: spec).path) {
+                // The same artwork, filed under the new background so the copy's icon finds it. A glass design is
+                // made of the background's shades, so it takes the new background's hue.
+                if let glass = GlassArt.load(from: Icons.glassURL(copy, spec: spec)) {
+                    let hue = Icons.background(named: recolored.background).bottom
+                    try? Icons.save(GlassArt(design: glass.design.recolored(to: hue), paintings: glass.paintings),
+                                    for: copy, spec: recolored)
+                } else if fm.fileExists(atPath: Icons.artURL(copy, spec: spec).path) {
                     try? fm.copyItem(at: Icons.artURL(copy, spec: spec), to: Icons.artURL(copy, spec: recolored))
                 }
                 Icons.save(recolored, for: copy)
@@ -1382,6 +1462,7 @@ final class Store: ObservableObject {
             NSAlert(error: error).runModal()
             return old
         }
+        settleChat(old)
         for path in [".lamp/chat.json", ".lamp/usage.json", ".lamp/notes.md", ".lamp/share-id", Attachments.folder, Sharing.Assets.folder] {
             let from = old.dir.appendingPathComponent(path)
             if fm.fileExists(atPath: from.path) {
@@ -1392,6 +1473,11 @@ final class Store: ObservableObject {
         await quit(old)
         await WidgetProcess.end(for: old)
         try? fm.removeItem(at: old.installedURL)
+        try? fm.removeItem(at: Devices.buildFolder(for: old))
+        try? fm.removeItem(at: Devices.signingFolder(for: old))
+        // Lines logged while the copy was made and the old app quit are written to the new folder instead.
+        await settleFiles(old)
+        settleChat(old)
         try? fm.removeItem(at: old.dir)
 
         if let device = old.device {   // the phone chosen before the first message stays chosen
@@ -1400,6 +1486,7 @@ final class Store: ObservableObject {
             try? Template.saveMeta(kept)
         }
         follow(old, to: project)
+        saveChat(project)
         return project
     }
 
@@ -1410,7 +1497,10 @@ final class Store: ObservableObject {
         let project = LampProject(id: slug, name: name, exe: exe, dir: root.appendingPathComponent(slug), instance: old.instance,
                                   platform: old.platform, family: old.family, device: old.device, chosen: old.chosen, simulator: old.simulator)
         do {
-            if slug != old.id { try FileManager.default.moveItem(at: old.dir, to: project.dir) }
+            if slug != old.id {
+                settleChat(old)
+                try FileManager.default.moveItem(at: old.dir, to: project.dir)
+            }
             try Template.saveMeta(project)
         } catch {
             log(old, .error, "Couldn't rename the app: \(error.localizedDescription)")
@@ -1435,6 +1525,7 @@ final class Store: ObservableObject {
         if let draft = drafts.removeValue(forKey: old.id) { drafts[project.id] = draft }
         draftWrites.removeValue(forKey: old.id)?.cancel()
         logs[project.id] = logs.removeValue(forKey: old.id)
+        if chatsToSave.remove(old.id) != nil { chatsToSave.insert(project.id) }
         usage[project.id] = usage.removeValue(forKey: old.id)
         queued[project.id] = queued.removeValue(forKey: old.id)
         if let turn = turns.removeValue(forKey: old.id) {   // the rename itself is a turn: it moves with the app
@@ -1485,31 +1576,67 @@ final class Store: ObservableObject {
         importApp(from: url)
     }
 
-    /// Puts the app's .lampapp file on the clipboard, ready to paste into Slack, Messages, Mail or Finder.
+    /// Puts the app's .lampapp file on the clipboard with its picture, ready to paste into a message: a chat
+    /// shows the picture large beside the file, where the file alone is a blank document.
     func canShare(_ project: LampProject) -> Bool { project.scaffolded }
 
     func copyAppFile(_ project: LampProject) {
         guard canShare(project) else { return }
+        Task { await copyAppFile(project, icon: Sharing.sharedIcon(of: project)) }
+    }
+
+    private func copyAppFile(_ project: LampProject, icon: Data?) {
         do {
-            let file = try Self.sharedFile(of: project)
+            let file = try Self.sharedFile(of: project, icon: icon)
+            // Two files, as Finder copies them, so every app that takes a pasted file takes both.
+            let items = ([Self.sharePicture(for: file), file].compactMap { $0 }) as [NSURL]
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.writeObjects([file as NSURL])
-            log(project, .status, "Copied \(file.lastPathComponent). Paste it into Slack, Messages, Mail or a Finder window.")
+            NSPasteboard.general.writeObjects(items)
+            log(project, .status, "\(project.name) is copied with its picture. Paste it into a message to send it.")
         } catch {
             NSAlert(error: error).runModal()
         }
     }
 
+    /// The picture sent with a shared app (`ShareCard`), written beside its file as "<name>.png". It's drawn from
+    /// the finished file, so it can show nothing the file doesn't already carry: the name and the icon.
+    nonisolated static func sharePicture(for file: URL) -> URL? {
+        guard let look = LampFile(contentsOf: file), let png = ShareCard.png(look) else { return nil }
+        let picture = file.deletingPathExtension().appendingPathExtension("png")
+        // Written whole: another share of the same wish may be writing the same picture.
+        return (try? png.write(to: picture, options: .atomic)) == nil ? nil : picture
+    }
+
     /// The app's .lampapp, written where it outlives the paste or the drop that hands it on: another app may
     /// read it after Lamp has moved on.
-    nonisolated static func sharedFile(of project: LampProject, at file: URL? = nil) throws -> URL {
-        let exported = try Sharing.export(project)
+    nonisolated static func sharedFile(of project: LampProject, at file: URL? = nil, icon: Data? = nil) throws -> URL {
+        sharing.lock()
+        defer { sharing.unlock() }
+        let exported = try Sharing.export(project, icon: icon)
         let file = file ?? sharedFolder.appendingPathComponent(exported.lastPathComponent)
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? FileManager.default.removeItem(at: file)
-        try FileManager.default.moveItem(at: exported, to: file)
+        let fm = FileManager.default
+        defer { try? fm.removeItem(at: exported.deletingLastPathComponent()) }
+        try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // The new file is first put whole on the same disk as the old one, which stays as it was if that fails
+        // (a full disk), and then takes the old one's place in one step: whatever was handed the old file (a paste,
+        // the picker, a drop) finds a file there at every moment.
+        let nearby = try fm.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: file, create: true)
+        defer { try? fm.removeItem(at: nearby) }
+        let staged = nearby.appendingPathComponent(file.lastPathComponent)
+        try fm.moveItem(at: exported, to: staged)
+        if fm.fileExists(atPath: file.path) {
+            _ = try fm.replaceItemAt(file, withItemAt: staged)
+        } else {
+            try fm.moveItem(at: staged, to: file)
+        }
         return file
     }
+
+    /// One shared file is made at a time. Shares of one wish go to the same file, so two at once could leave the
+    /// copy that began first, or trip over each other putting it in place. Made one after the other, the file left
+    /// is the one that read the app last. Nothing made under it waits for the main
+    /// thread, which may be waiting here.
+    nonisolated private static let sharing = NSLock()
 
     nonisolated static var sharedFolder: URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("Forge/Shared", isDirectory: true)
@@ -1521,9 +1648,7 @@ final class Store: ObservableObject {
         panel.nameFieldStringValue = "\(project.name).lampapp"
         guard panel.runModal() == .OK, let destination = panel.url else { return }
         do {
-            let file = try Sharing.export(project)
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.moveItem(at: file, to: destination)
+            _ = try Self.sharedFile(of: project, at: destination)
         } catch {
             NSAlert(error: error).runModal()
         }
@@ -1869,6 +1994,34 @@ final class Store: ObservableObject {
         return project
     }
 
+    /// The waiting messages Send Now would hand over: those not already on their way, in the order they were sent.
+    func waitingToSend(in project: LampProject) -> [QueuedMessage] {
+        (queued[project.id] ?? []).filter { !$0.sendNow }
+    }
+
+    /// Whether the waiting messages can be sent to the agent in the turn that's running (Send Now). They go as one
+    /// group, so every one of them must be able to: the engine takes messages while it works (not Codex), and each is
+    /// a plain request. An answer to a card or a request sent again changes what the turn is for, and so does anything
+    /// while a wish is being found or once the agent has asked its questions; then they all wait for the next turn.
+    func canSendNow(in project: LampProject) -> Bool {
+        let waiting = waitingToSend(in: project)
+        guard !waiting.isEmpty, let turn = turns[project.id], Builder.engine != .codex, !turn.asked, !turn.stopped,
+              current(project)?.finding == false else { return false }
+        return waiting.allSatisfy { $0.card == nil && $0.replaces == nil && $0.tookBack.isEmpty }
+    }
+
+    /// Send Now: every waiting message goes to the agent at its next step, in the order they were sent, if it still
+    /// has one; otherwise they start the next turn as any waiting messages do. `latest` is the message the button
+    /// was under: a button drawn for a group that has since gone (sent, taken back) or grown sends nothing, so a
+    /// late click can't send messages the person never saw it offered for.
+    func sendNow(in project: LampProject, latest: UUID) {
+        guard canSendNow(in: project), waitingToSend(in: project).last?.id == latest, var waiting = queued[project.id]
+        else { return }
+        for index in waiting.indices { waiting[index].sendNow = true }
+        queued[project.id] = waiting
+        steer(project)
+    }
+
     func unqueue(_ message: QueuedMessage, from project: LampProject) {
         // A first request waiting for setup has no chat yet: it can still be taken back.
         guard var waiting = queued[project.id] else { return }
@@ -1964,7 +2117,10 @@ final class Store: ObservableObject {
                 project = ready
             }
             // Where the app is as the turn starts, so the request can be changed and sent again from here.
-            if let head = await Versions.head(project) { mark(asked, sentFrom: head, in: project) }
+            if let head = await Versions.head(project) {
+                mark(asked, sentFrom: head, in: project)
+                owner.sentFrom = head
+            }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
             worked = result.end != .failed
         }
@@ -2149,6 +2305,17 @@ final class Store: ObservableObject {
         var watched: Bool
     }
 
+    /// What the agent is told of a request that is only files, with no words.
+    private static func onlyFiles(_ count: Int) -> String {
+        """
+        The user sent only the attached file\(count == 1 ? "" : "s"), with no message. Work out what \
+        they most likely want from it: a screenshot or mockup usually means "make the app look or work like \
+        this" (or, if it shows this app, "fix what's wrong here"); a document or data file usually means \
+        "use this in the app". If it's clear, do it. If it could mean several different things, ask one \
+        short question instead of guessing.
+        """
+    }
+
     /// One turn of the loop: agent edits → build (agent fixes failures) → commit → relaunch.
     /// `asked` are the chat lines of the requests, which are linked to the version the turn makes.
     private func turn(_ messages: [QueuedMessage], attachments saved: [String], asked: [UUID],
@@ -2159,15 +2326,7 @@ final class Store: ObservableObject {
         guard let owner = turns[project.id] else { return TurnResult(end: .failed, watched: true) }
         var prompt = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
         // Attachments with no words: usually a screenshot or mockup meaning "like this", or a file to use.
-        if prompt.isEmpty {
-            prompt = """
-            The user sent only the attached file\(saved.count == 1 ? "" : "s"), with no message. Work out what \
-            they most likely want from it: a screenshot or mockup usually means "make the app look or work like \
-            this" (or, if it shows this app, "fix what's wrong here"); a document or data file usually means \
-            "use this in the app". If it's clear, do it. If it could mean several different things, ask one \
-            short question instead of guessing.
-            """
-        }
+        if prompt.isEmpty { prompt = Self.onlyFiles(saved.count) }
 
         let files = Attachments.inline(saved, in: project).map { "\(Attachments.folder)/\($0)" }
         // After a request is sent again the build on disk is still of the code that was just taken back, so
@@ -2202,7 +2361,7 @@ final class Store: ObservableObject {
         }
         // Only build when something changed: not after a question, and not again when the agent's last
         // look already built and opened exactly this code.
-        try? Template.writeSupport(for: project)
+        try? await writeOwnFiles(project, all: false)
         let changed = Runtime.sourcesChanged(project)
         if changed {
             guard await buildFixingErrors(project) else {
@@ -2213,7 +2372,7 @@ final class Store: ObservableObject {
         // Opening the app brings it in front of Lamp, so whether the user was watching is decided first.
         let watched = isWatching(project.id)
         // Nothing is committed when the agent changed no files.
-        let label = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n").nilIfEmpty
+        let label = owner.messages.filter { !$0.isEmpty }.joined(separator: "\n\n").nilIfEmpty
             ?? Self.label(attachments: saved)
         let saving = await Versions.commitAll("-qm \"$LAMP_PROMPT\"", in: project.dir, env: ["LAMP_PROMPT": label])
         var committed = saving == .saved
@@ -2232,7 +2391,7 @@ final class Store: ObservableObject {
                     DistributedNotificationCenter.default().postNotificationName(
                         Notification.Name(Edition.notificationPrefix + "showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
                     app.activate()
-                    log(project, .status, "\(project.name) is ready")
+                    log(project, .status, "\(project.name) is \(owner.updatedInPlace ? "updated" : "ready")")
                 } else {
                     crash = await install(project)
                 }
@@ -2272,7 +2431,7 @@ final class Store: ObservableObject {
                 await Versions.name(project, head, name)
             }
             if committed {
-                link(asked, to: head, in: project)
+                link(asked + owner.midTurn, to: head, in: project)
                 // Not of a copy the person kept open: it's the version before this one.
                 if crash == nil, !owner.keptOpen { keepPicture(of: project, version: head) }
                 titleVersions(project, limit: 1)
@@ -2282,15 +2441,6 @@ final class Store: ObservableObject {
         let failed = crash != nil || owner.stopped || owner.phoneReady == false
         // Not over an app that couldn't be put in place or opened either: that isn't a failed turn, but the
         // card would say it's ready next to the line saying it didn't open.
-        if !failed, edited, !owner.didNotOpen, var result = owner.pendingResult {
-            result.version = await Versions.head(project)
-            // The card is the word that it's ready: the line saying so just above it would say it twice.
-            if let last = logs[project.id]?.last, last.kind == .status, last.text == "\(project.name) is ready" {
-                logs[project.id]?.removeLast()
-            }
-            logs[project.id, default: []].append(LogLine(kind: .result, text: result.text, result: result))
-            saveChat(project)
-        }
         // A new app that opened in a window of its own: its chat goes on beside it from now on.
         if !failed, edited, !owner.didNotOpen, !owner.keptOpen { Task { await MagicPanel.shared.handOff(project) } }
         return TurnResult(end: failed ? .failed : edited ? .changed : .replied, watched: watched)
@@ -2348,7 +2498,6 @@ final class Store: ObservableObject {
 
     /// Returns false when the agent couldn't run at all (bad key, no credit, …), after telling the user why.
     private func runAgent(_ prompt: String, files: [String] = [], on project: LampProject) async -> Bool {
-        try? Template.writeSupport(for: project)
         // A turn started at launch (one waiting from before) may come before the look for the person's own
         // Claude Code or Codex has finished: it waits for it rather than finding no copy.
         if Builder.engine != .pi, EngineInstall.path(for: Builder.engine) == nil, !EngineInstall.hasLooked {
@@ -2386,6 +2535,8 @@ final class Store: ObservableObject {
         let artBefore = turn.artCost
         turn.stopped = false
         let sessionFile = Self.sessionFile(for: project, engine: engine)
+        // After the stopped mark is cleared, so a Stop pressed while the file is written is seen by the check below.
+        try? await writeOwnFiles(project, all: false)
         // What the agent is told about the app's AI follows the sign-ins as they are. Checking them can take a
         // while, and Stop pressed meanwhile has no agent to end yet: if the turn was stopped or replaced, or the
         // app deleted, during the wait, the agent isn't started.
@@ -2406,11 +2557,26 @@ final class Store: ObservableObject {
         }
         let run = Agent.run(prompt: prompt, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
-        let status = await Shell.run(run.command, cwd: project.dir, env: run.env,
+        let input = run.opening.map { opening in
+            let input = AgentInput()
+            input.write(opening)
+            return input
+        }
+        turn.input = input
+        // Codex's `exec` reads nothing once it has started, so with Codex a message waits for the next turn.
+        turn.steering = engine == .codex ? nil : engine
+        let status = await Shell.run(run.command, cwd: project.dir, env: run.env, input: input,
                                      started: { turn.agent = $0 }) { [weak self] line in
             guard let self else { return }
             for event in Agent.parseLine(line) {
-                if case .raw = event {} else if case .failed = event {} else { answered = true }
+                // A tool is running from the call until the model is heard from again.
+                switch event {
+                case .tool: turn.toolRunning = true
+                case .text, .textPiece, .step, .finished: turn.toolRunning = false
+                default: break
+                }
+                // Not the engine saying it passed a message of the person's on: that isn't the model answering.
+                if case .raw = event {} else if case .failed = event {} else if case .received = event {} else { answered = true }
                 // The model carrying on after a failed attempt means the engine recovered from it (pi sends again
                 // after a dropped connection, after compacting a conversation that overflowed, and after its
                 // extension drops the pictures of a request that was too big: lamp-tools.ts), so that attempt is
@@ -2469,6 +2635,7 @@ final class Store: ObservableObject {
                             : "The model made over 150 changes in one go, so Lamp stopped it."
                         if let process = turn.agent { Subprocess.terminateTree(process) }
                     }
+                    steer(project)
                 case .cost(let amount): cost += amount
                 case .failed(let text):
                     if engine == .pi, Agent.isRequestTooLarge(text), failure.map(Agent.isRequestTooLarge) != true {
@@ -2476,6 +2643,12 @@ final class Store: ObservableObject {
                     }
                     failure = text
                 case .raw(let text): log(project, .detail, text)
+                case .received:
+                    received(project)
+                case .finished:
+                    // Claude Code has answered. A message sent from now on is the next request.
+                    turn.input?.close()
+                    turn.input = nil
                 case .session(let id):
                     if engine == .claude { turn.claudeSession = id }
                     if engine != .pi {
@@ -2488,6 +2661,10 @@ final class Store: ObservableObject {
             }
         }
         turn.agent = nil
+        turn.input = nil
+        turn.steering = nil
+        turn.toolRunning = false
+        takeBackHanded(project)
         if answered { Memory.delivered(to: project); AIStatus.delivered(to: project); Skills.delivered(to: project) }
         endApprovals(for: project)
         // A message cut short (the run was stopped, or failed) keeps what was written of it.
@@ -2532,6 +2709,69 @@ final class Store: ObservableObject {
         return false
     }
 
+    /// A waiting message the person sent with Send Now goes to the agent in the same turn: the engine gives it to
+    /// the model after the tools it is running, before the model goes on. Any other waiting message is the next
+    /// request, as before. pi asks for them after each of its turns (`/agent/steer`, lamp-tools.ts); Claude Code is
+    /// written to while a tool runs (`steer`). Each goes into the chat as it's handed over, and is a request of this
+    /// turn (its version is the turn's) once the engine's output shows the model has it (`received`); until then
+    /// it can still go back in line. Returns what the agent is sent, nil when nothing can go.
+    private func handOver(_ project: LampProject) -> String? {
+        // Nothing more while a handover is unconfirmed: a receipt confirms everything handed over, so one that
+        // never arrived could otherwise be counted by the next one's receipt instead of going back in line.
+        guard let turn = turns[project.id], turn.agent != nil, turn.steering != nil, !turn.asked, !turn.stopped,
+              turn.handed.isEmpty, current(project)?.finding == false, let waiting = queued[project.id] else { return nil }
+        let taken = waiting.filter { $0.sendNow && $0.card == nil && $0.replaces == nil && $0.tookBack.isEmpty }
+        guard !taken.isEmpty else { return nil }
+        let rest = waiting.filter { message in !taken.contains { $0.id == message.id } }
+        queued[project.id] = rest.isEmpty ? nil : rest
+        saveWaiting()
+        let saved = post(taken, to: project)
+        guard var chat = logs[project.id] else { return nil }
+        let lines = chat.indices.filter { chat[$0].kind == .user }.suffix(taken.count)
+        for index in lines {
+            chat[index].midTurn = true
+            if let head = turn.sentFrom { chat[index].before = head }
+        }
+        logs[project.id] = chat
+        saveChat(project)
+        turn.handed += lines.map { chat[$0].id }
+        let words = taken.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
+        return (words.isEmpty ? Self.onlyFiles(saved.count) : words)
+            + Attachments.note(for: saved, inlined: false) + PointedAt.note(for: lines.compactMap { chat[$0].pointed })
+    }
+
+    /// The engine's output shows the model has the requests handed to it: from now on they're the turn's.
+    private func received(_ project: LampProject) {
+        guard let turn = turns[project.id], !turn.handed.isEmpty else { return }
+        let lines = logs[project.id] ?? []
+        turn.midTurn += turn.handed
+        turn.messages += turn.handed.compactMap { id in lines.first { $0.id == id }?.text }
+        turn.handed = []
+    }
+
+    /// Requests handed to an engine that ended without giving them to the model (it failed, was stopped, or Lamp's
+    /// answer never reached it) leave the chat and wait at the front of the line again, as the next request.
+    private func takeBackHanded(_ project: LampProject) {
+        guard let turn = turns[project.id], !turn.handed.isEmpty, var chat = logs[project.id] else { return }
+        let handed = Set(turn.handed)
+        turn.handed = []
+        let again = chat.filter { handed.contains($0.id) }.map {
+            QueuedMessage(text: $0.text, kept: $0.attachments ?? [], pointed: $0.pointed?.waiting(in: project))
+        }
+        chat.removeAll { handed.contains($0.id) }
+        logs[project.id] = chat
+        saveChat(project)
+        queued[project.id, default: []].insert(contentsOf: again, at: 0)
+    }
+
+    /// Claude Code takes the person's messages on its input: written while a tool runs, a message is there when
+    /// the tool's result is, and the model reads both before it goes on.
+    private func steer(_ project: LampProject) {
+        guard let turn = turns[project.id], turn.steering == .claude, turn.toolRunning, let input = turn.input,
+              let message = handOver(project) else { return }
+        input.write(Agent.claudeMessage(message))
+    }
+
     /// Asking ends the turn. The tool says so, and an agent that goes on to another step anyway (it has been
     /// seen to ask and then build the app without waiting) is ended here, the way a runaway one is: what it
     /// would build is a guess at the answer, under a card the person hasn't answered yet.
@@ -2554,7 +2794,7 @@ final class Store: ObservableObject {
     /// One pi conversation per app, so the agent remembers earlier requests, including ones that were undone.
     private static func piSession(for project: LampProject) -> String {
         let url = project.dir.appendingPathComponent(".lamp/pi-session")
-        if let id = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !id.isEmpty { return id }
+        if let id = Template.ownSecret(at: url, in: project) { return id }
         let id = "lamp-" + UUID().uuidString.lowercased()
         try? id.write(to: url, atomically: true, encoding: .utf8)
         return id
@@ -2565,8 +2805,11 @@ final class Store: ObservableObject {
         project.dir.appendingPathComponent(".lamp/session-\(engine.rawValue)")
     }
 
+    /// An engine's conversation id as Lamp kept it. It goes to the engine, and to its environment, so it's read as
+    /// `AppFile` reads and only as engines write them.
     private static func savedSession(_ url: URL) -> String? {
-        (try? String(contentsOf: url, encoding: .utf8))?.trimmed.nilIfEmpty
+        let folder = url.deletingLastPathComponent().deletingLastPathComponent()
+        return Template.ownSecret(at: url, in: LampProject(id: folder.lastPathComponent, name: "", exe: "", dir: folder))
     }
 
     /// Deletes an app: quits it, stops its agent, and moves its source and built app to the Trash.
@@ -2585,6 +2828,8 @@ final class Store: ObservableObject {
         if fm.fileExists(atPath: project.installedURL.path) {
             try? fm.trashItem(at: project.installedURL, resultingItemURL: nil)
         }
+        await settleFiles(project)
+        settleChat(project)
         do {
             try fm.trashItem(at: project.dir, resultingItemURL: nil)
         } catch {
@@ -2592,6 +2837,8 @@ final class Store: ObservableObject {
             return
         }
         Self.trashData(of: project)
+        try? fm.removeItem(at: Devices.buildFolder(for: project))
+        try? fm.removeItem(at: Devices.signingFolder(for: project))
         // Its sign-ins too: an app made later under the same name is another app, and starts disconnected.
         AppSecrets.forget(app: project.instance)
         projects.removeAll { $0.id == project.id }
@@ -2915,9 +3162,9 @@ final class Store: ObservableObject {
 
     /// `look_at_app` with `sidebar`: the app is built and opened as for any look, then its sidebar in Chrome is
     /// drawn by Lamp (BrowserPreview) in place of its windows, beside the page the agent names.
-    private func lookAtSidebar(_ project: LampProject, page: String?) async -> (Int, [String: Any]) {
+    private func lookAtSidebar(_ project: LampProject, page: String?, reopen: Bool = false) async -> (Int, [String: Any]) {
         guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
-        let window = await look(at: project)
+        let window = await look(at: project, reopen: reopen)
         guard window.0 == 200, !macCopies(of: project).isEmpty else { return window }
         var (status, sidebar) = await BrowserPreview.look(project, page: page)
         // The window beside it, so the sidebar's items are judged against the app's, not on their own.
@@ -3026,8 +3273,9 @@ final class Store: ObservableObject {
             switch name {
             case "look_at_app":
                 (status, answer) = arguments["sidebar"] as? Bool == true
-                    ? await lookAtSidebar(project, page: arguments["page"] as? String)
-                    : await look(at: project, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false)
+                    ? await lookAtSidebar(project, page: arguments["page"] as? String, reopen: arguments["reopen"] as? Bool ?? false)
+                    : await look(at: project, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
+                                 reopen: arguments["reopen"] as? Bool ?? false)
             case "use_app":
                 let actions = (try? JSONSerialization.data(withJSONObject: arguments)) ?? Data("{}".utf8)
                 (status, answer) = await use(project, request: actions)
@@ -3053,7 +3301,7 @@ final class Store: ObservableObject {
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             case "make_app_for": (status, answer) = await agentKind(arguments, for: project)
             case "connectors": (status, answer) = Connectors.answer(arguments, for: project)
-            case "ask", "show_result", "write_wish": (status, answer) = talk(name, arguments, for: project)
+            case "ask", "write_wish": (status, answer) = talk(name, arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
@@ -3061,10 +3309,8 @@ final class Store: ObservableObject {
                 return reply(["content": [["type": "text", "text": answer["error"] as? String ?? "Lamp couldn't do that."]], "isError": true])
             }
             var content: [[String: Any]] = [["type": "text", "text": answer["text"] as? String ?? ""]]
-            for path in answer["screenshots"] as? [String] ?? [] {
-                if let data = try? Data(contentsOf: URL(fileURLWithPath: path)) {
-                    content.append(["type": "image", "data": data.base64EncodedString(), "mimeType": Previews.mimeType(of: path)])
-                }
+            for picture in Self.pictureData(answer["screenshots"] as? [String] ?? [], in: project) {
+                content.append(["type": "image", "data": picture["data"] ?? "", "mimeType": picture["mimeType"] ?? "image/png"])
             }
             return reply(["content": content])
         default:
@@ -3107,7 +3353,7 @@ final class Store: ObservableObject {
     /// The agent's `delete_file`: one file inside the app's folder, never Lamp's own files, never through a
     /// link that leads out. The same rules as pi's version in lamp-tools.ts.
     static func deleteFile(_ path: String, in project: LampProject) -> (Int, [String: Any]) {
-        let root = project.dir.resolvingSymlinksInPath().standardizedFileURL
+        let root = project.realDir
         let target = URL(fileURLWithPath: path, relativeTo: project.dir).standardizedFileURL
         let relative = target.path.hasPrefix(root.path + "/") || target.path.hasPrefix(project.dir.path + "/")
             ? String(target.path.dropFirst((target.path.hasPrefix(root.path + "/") ? root.path : project.dir.path).count + 1)) : ""
@@ -3133,7 +3379,7 @@ final class Store: ObservableObject {
         return (200, ["text": "Deleted \(relative)."])
     }
 
-    /// `ask` and `show_result`, for every engine: pi's extension posts them to `/agent/talk`, Claude Code and
+    /// `ask` and `write_wish`, for every engine: pi's extension posts them to `/agent/talk`, Claude Code and
     /// Codex call them over MCP.
     func talk(_ tool: String, _ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
         guard let turn = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
@@ -3156,15 +3402,6 @@ final class Store: ObservableObject {
                 saveChat(project)
                 return (200, ["text": Talk.asked])
             }
-        case "show_result":
-            switch Talk.result(from: arguments) {
-            case .failure(let trouble): return (400, ["error": trouble.text])
-            case .success(let result):
-                // Kept until the app is built and open: a card saying it's ready over a build that failed
-                // would be the one thing on screen that isn't true.
-                turn.pendingResult = result
-                return (200, ["text": Talk.resultKept])
-            }
         case "write_wish":
             // Only for a wish being found: one the person told is already theirs, and a box they're typing in
             // isn't the agent's to fill.
@@ -3183,9 +3420,8 @@ final class Store: ObservableObject {
 
     /// A card's answers, chosen by clicking: noted on the card, then sent as the person's message.
     func answer(_ line: LogLine, with answers: [String], in project: LampProject) {
-        guard var ask = line.ask, let index = logs[project.id]?.firstIndex(where: { $0.id == line.id }) else { return }
-        ask.answers = answers
-        logs[project.id]?[index].ask = ask
+        guard var lines = logs[project.id], let ask = Talk.give(answers, to: line.id, in: &lines) else { return }
+        logs[project.id] = lines
         saveChat(project)
         send(Talk.message(for: ask, answers: answers), answering: line.id, to: project)
     }
@@ -3277,7 +3513,7 @@ final class Store: ObservableObject {
             }
         }
         if current.platform.hasMac, kind.hasMac, current.bundleID != changed.bundleID {
-            _ = await Shell.run("defaults export \"$LAMP_OLD\" - | defaults import \"$LAMP_NEW\" -", cwd: changed.dir,
+            _ = await Shell.run("/usr/bin/defaults export \"$LAMP_OLD\" - | /usr/bin/defaults import \"$LAMP_NEW\" -", cwd: changed.dir,
                                 env: ["LAMP_OLD": current.bundleID, "LAMP_NEW": changed.bundleID]) { _ in }
         }
         syncLocalNetwork()
@@ -3389,7 +3625,7 @@ final class Store: ObservableObject {
             let size = NSBitmapImageRep(data: png).map { " (\($0.pixelsWide)×\($0.pixelsHigh) pixels)" } ?? ""
             let around = scene ? "" : ", transparent around the object"
             return (200, ["text": "Saved Assets/\(name)\(size)\(around). Show it with LampAssets.image(\"\(name)\"). It follows.",
-                          "screenshots": [Previews.forAgent(url, in: project).path]])
+                          "screenshots": [Previews.forAgent(url, in: project)?.path].compactMap { $0 }])
         } catch let failure as AppAI.Failure where failure.needs == .pictures {
             offerSetup(project, SetupOffer(capability: .pictures), because: because)
             return (200, ["text": unavailable])
@@ -3407,7 +3643,7 @@ final class Store: ObservableObject {
     /// that leads anywhere else; nil when either does.
     private func artDestination(_ name: String, in project: LampProject) -> URL? {
         let fm = FileManager.default
-        let root = project.dir.resolvingSymlinksInPath().standardizedFileURL
+        let root = project.realDir
         let folder = project.dir.appendingPathComponent("Assets")
         if let type = (try? fm.attributesOfItem(atPath: folder.path))?[.type] as? FileAttributeType {
             guard type == .typeDirectory else { return nil }
@@ -3495,23 +3731,7 @@ final class Store: ObservableObject {
     private func installStarters() {
         guard !UserDefaults.standard.bool(forKey: Starters.installedKey) else { return }
         UserDefaults.standard.set(true, forKey: Starters.installedKey)
-        var made: [LampProject] = []
-        for starter in Starters.bundled {
-            do {
-                let project = try Template.draft(name: uniqueName(starter.name), in: root)
-                do {
-                    try Template.fill(project)
-                    try Starters.copy(starter, into: project)
-                    try Template.writeOwnedFiles(for: project)   // again, now it's known whether it has a widget
-                    made.append(project)
-                } catch {
-                    try? FileManager.default.removeItem(at: project.dir)
-                    throw error
-                }
-            } catch {
-                NSLog("Lamp couldn't add the wish \(starter.name): \(error.localizedDescription)")
-            }
-        }
+        let made = Starters.bundled.compactMap(add(starter:))
         guard !made.isEmpty else { return }
         reload()
         startersInstall = Task {
@@ -3522,6 +3742,42 @@ final class Store: ObservableObject {
         }
     }
     private var startersInstall: Task<Void, Never>?
+
+    /// One starter put on the desk from Lamp's bundle, as on the first launch: its files in a new app, saved as
+    /// its first version and built by `prepareStarters`. The caller reloads the desk. Nil when it couldn't be
+    /// written, and then nothing of it is left.
+    func add(starter: Starters.Starter) -> LampProject? {
+        do {
+            let project = try Template.draft(name: uniqueName(starter.name), in: root)
+            do {
+                try Template.fill(project)
+                try Starters.copy(starter, into: project)
+                try Template.writeOwnedFiles(for: project)   // again, now it's known whether it has a widget
+                // A copy deleted after its build failed leaves its folder name free for this one, which is built afresh.
+                unpreparedStarters.remove(project.id)
+                return project
+            } catch {
+                try? FileManager.default.removeItem(at: project.dir)
+                throw error
+            }
+        } catch {
+            NSLog("Lamp couldn't add the wish \(starter.name): \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// A starter put back on the desk after the first launch (More from Lamp's Add): added, shown on the desk, and
+    /// saved and built out of sight like the first launch's (`prepareStarters`).
+    @discardableResult func put(starter: Starters.Starter) -> LampProject? {
+        guard let added = add(starter: starter) else { return nil }
+        reload()
+        guard let project = current(added) else { return nil }
+        if !Starters.hasShippedIcon(project), let spec = Icons.load(project) {
+            Task { await renderIcon(project, spec: spec) }
+        }
+        prepareStarters()
+        return project
+    }
 
     /// A starter's chat begins with what it offers to change first (`Starters.card`), added a moment after the chat
     /// is first shown, beside the app or in Lamp's window, so it arrives there rather than being there already.
@@ -3558,7 +3814,11 @@ final class Store: ObservableObject {
             defer { preparingStarters = false }
             await startersInstall?.value
             await saveStartersFirstVersions()
-            while let next = nextStarterToPrepare() { await prepare(next) }
+            while let next = nextStarterToPrepare() {
+                // Again for each: one put back on the desk meanwhile gets its first version before its build.
+                await saveStartersFirstVersions()
+                await prepare(next)
+            }
         }
     }
 
@@ -3706,11 +3966,16 @@ final class Store: ObservableObject {
             Versions.copyPicture(in: project, from: target.id, to: head)
             versionsRevision += 1
         }
-        // Requests that went out together made one change, so the ones just before this one go out with it again.
+        // Requests that went out together made one change, so the ones just before this one go out with it again:
+        // those sent at once, and, for one the agent took while it worked, the requests of its turn before it.
         var first = index
-        while first > chat.startIndex, chat[first - 1].kind == .user { first -= 1 }
+        var midTurn = line.midTurn == true
+        while first > chat.startIndex, chat[first - 1].kind == .user || midTurn {
+            first -= 1
+            if chat[first].kind == .user { midTurn = chat[first].midTurn == true }
+        }
         // They keep what they had taken back themselves: it's the chat's only record of it.
-        var again = chat[first..<index].map {
+        var again = chat[first..<index].filter { $0.kind == .user }.map {
             QueuedMessage(text: $0.text, kept: $0.attachments ?? [], replaces: $0.replaced, tookBack: $0.tookBack ?? [],
                           pointed: $0.pointed?.waiting(in: project))
         }
@@ -3851,17 +4116,50 @@ final class Store: ObservableObject {
     }
 
     /// Returns nil on success, or the tail of the compiler output on failure.
+    /// Lamp's own files in an app (`Template.writeOwnedFiles`, or only LampSupport.swift), written away from the main
+    /// thread. Filling in the support file's template copies several hundred kilobytes once for each placeholder and
+    /// asks the system for this Mac's network name, which held the main thread, and so the chat, for about a tenth of
+    /// a second at every agent run and build. An app's writes go one after another and are remembered
+    /// (`fileWrites`), so deleting or remaking its folder waits for them (`settleFiles`): one finishing afterwards
+    /// would make parts of the folder again.
+    private func writeOwnFiles(_ project: LampProject, all: Bool) async throws {
+        let before = fileWrites[project.id]
+        let write = Task.detached(priority: .userInitiated) {
+            _ = await before?.result
+            if all { try Template.writeOwnedFiles(for: project) } else { try Template.writeSupport(for: project) }
+        }
+        fileWrites[project.id] = write
+        defer { if fileWrites[project.id] == write { fileWrites[project.id] = nil } }
+        try await write.value
+    }
+    private var fileWrites: [String: Task<Void, Error>] = [:]
+
+    /// Waits for Lamp's own files being written in the app's folder, before the folder is deleted or made again: the
+    /// latest write, and again for any started while waiting (a look the agent asked for meanwhile). The caller goes
+    /// on to the folder without waiting for anything else, so nothing can start in between.
+    private func settleFiles(_ project: LampProject) async {
+        var waited: Task<Void, Error>?
+        while let write = fileWrites[project.id], write != waited {
+            _ = await write.result
+            waited = write
+        }
+    }
+
     private func build(_ project: LampProject) async -> String? {
         guard exists(project) else { return "The app was deleted." }
         log(project, .status, "Building…")
         // Lamp's own files first, and no build without them: the build runs build.sh and Package.swift.
+        let owner = turns[project.id]
         do {
-            try Template.writeOwnedFiles(for: project)
+            try await writeOwnFiles(project, all: true)
         } catch {
             let problem = "Lamp couldn't write the app's build files: \(error.localizedDescription)"
             log(project, .error, problem)
             return problem
         }
+        // Stop pressed, or the app deleted, while they were written: there's no build yet for Stop to end.
+        guard exists(project) else { return "The app was deleted." }
+        if let owner, owner.stopped || turns[project.id] !== owner { return "Stopped." }
         // Taken before the build, so an edit made while it runs still counts as a change afterwards.
         let fingerprint = Runtime.fingerprint(project)
         var output: [String] = []
@@ -3887,25 +4185,35 @@ final class Store: ObservableObject {
         await liveBuilds[project.id]?.value
         liveBuildFailed.remove(project.id)
         if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1" }   // a change can go into the open app (LiveReload)
-        var status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: env,
-                                     started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
+        var status = await Self.runBuild(command, for: project, env: env,
+                                         started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
         // The live copy's spare places must never be what keeps an app from building: if they are, it's built
         // without them from now on, and the agent only ever sees errors in its own code.
         if status != 0, env["LAMP_LIVE"] == "1", LiveSlots.brokeBuild(output.joined(separator: "\n")), LiveSlots.giveUp(project) {
             output = []
-            status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: env,
-                                     started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
+            status = await Self.runBuild(command, for: project, env: env,
+                                         started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
         }
         turns[project.id]?.build = nil
         guard exists(project) else { return "The app was deleted." }
         guard status != 0 else {
             Runtime.markBuilt(project, from: fingerprint)
-            BuildStamp.write(to: project.builtURL)   // deploy signs the app afterwards
+            BuildStamp.write(for: project)   // deploy signs the app afterwards
             return nil
         }
         let tail = output.suffix(40).joined(separator: "\n")
         log(project, .detail, "Build failed:\n" + tail)
         return tail
+    }
+
+    /// Runs the app's build.sh. It's Lamp's file, written just before, but in the agent's folder: a command the agent
+    /// left running can put its own there in between, and Package.swift and the code it compiles are the agent's
+    /// anyway. So the build runs as the agent's commands do, in the app's sandbox (`Sandbox.run`), and only what it
+    /// made is taken further, by Lamp, from a copy (`deploy`), which is where anything is signed for the person's team.
+    static func runBuild(_ command: String, for project: LampProject, env: [String: String],
+                         started: (@MainActor (Process) -> Void)? = nil,
+                         onLine: @escaping @MainActor (String) -> Void) async -> Int32 {
+        await Sandbox.run(Shell.compatibleSDK + command, for: project, env: env, started: started, onLine: onLine)
     }
 
     /// A new app's card that has already said how its turn ended follows what happens to the app afterwards
@@ -3935,7 +4243,7 @@ final class Store: ObservableObject {
         var copy = env
         copy["LAMP_LIVE"] = "1"
         copy["LAMP_LIVE_COPY"] = "1"
-        guard await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: copy) { _ in } == 0,
+        guard await Self.runBuild(command, for: project, env: copy) { _ in } == 0,
               await reloadInPlace(project, inFront: false) else { return false }
         reloadedBeforeBuild.insert(project.id)
         // Nothing to install until the whole build is done: the copy in build/ is the one before this change. Only
@@ -3947,14 +4255,14 @@ final class Store: ObservableObject {
         full["LAMP_LIVE"] = "1"
         liveBuilds[project.id] = Task { [weak self] in
             var output: [String] = []
-            let status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: full) { output.append($0) }
+            let status = await Self.runBuild(command, for: project, env: full) { output.append($0) }
             guard let self else { return }
             self.liveBuilds[project.id] = nil
             LiveReload.finishedBuilding(project)
             guard let current = self.current(project) else { return }
             if status == 0 {
                 Runtime.markBuilt(current, from: fingerprint)
-                BuildStamp.write(to: current.builtURL)
+                BuildStamp.write(for: current)
                 LiveReload.awaitInstall(current)
                 // Waiting for the app to close; closed already (while this built), it goes in now.
                 _ = self.heldInstalls.mayInstall(current.id, running: true)
@@ -4089,7 +4397,8 @@ final class Store: ObservableObject {
 
     /// Installs and opens the app. Returns what's known about the failure if it died straight away.
     /// `inFront` is false for the agent's looks, which shouldn't pull the app in front of the user mid-turn.
-    private func install(_ project: LampProject, inFront: Bool = true) async -> String? {
+    /// `fresh` closes an open Mac app and opens it again even when the change could go into it as it runs.
+    private func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false) async -> String? {
         guard exists(project) else { return nil }
         // The turn this install belongs to, taken before the icon wait: a Stop during it can end the turn
         // and start the next one's, which must not inherit this launch.
@@ -4114,7 +4423,10 @@ final class Store: ObservableObject {
         }
         // A change that can go into the open app goes in there, keeping what's on screen; the build waits to be
         // installed until the app closes (LiveReload).
-        if await reloadInPlace(project, inFront: inFront) { return nil }
+        if !fresh, await reloadInPlace(project, inFront: inFront) {
+            owner?.updatedInPlace = true
+            return nil
+        }
         // A whole build after an early change may still be writing build/: what's installed is what it makes,
         // and nothing when it failed (build/ is the version before the change).
         await liveBuilds[project.id]?.value
@@ -4142,6 +4454,7 @@ final class Store: ObservableObject {
         }
         guard exists(project) else { return nil }   // deleted while its old copy was quitting
         owner?.didNotOpen = false
+        owner?.updatedInPlace = false
         do {
             WidgetCard.forget(project)
             try await deploy(project)
@@ -4367,16 +4680,29 @@ final class Store: ObservableObject {
             return nil
         }
         do {
-            try Template.writeDeviceProject(for: project, team: team)
+            try await Devices.stage(project, team: team, started: { owner.build = $0 })
+            owner.build = nil
+            // Where the phone's project and builds were kept before, inside the app's folder. An app for both
+            // still builds its Mac half there.
+            if project.platform == .iphone { try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(".lamp/device")) }
+        } catch let error as Devices.LinkedFiles {
+            owner.build = nil
+            failed(error.localizedDescription)
+            return nil
         } catch {
+            owner.build = nil
             failed("Lamp couldn't get the app ready for \(name). Click Retry. If it fails again, ask Lamp to fix it and include the error from Agent Details.", output: error.localizedDescription)
             return nil
         }
+        guard stillOwns() else { return nil }
         log(project, .status, "Building for \(name)…")
         var output: [String] = []
         let app: URL
         do {
-            app = try await Devices.build(project, team: team, udid: udid, started: { owner.build = $0 }) { output.append($0) }
+            let build = try await Devices.build(project, team: team, destination: "id=\(udid)", started: { owner.build = $0 }) { output.append($0) }
+            guard stillOwns() else { owner.build = nil; return nil }
+            app = try await Devices.signedCopy(of: build, for: project, team: team, destination: "id=\(udid)",
+                                               started: { owner.build = $0 }) { output.append($0) }
             owner.build = nil
         } catch {
             owner.build = nil
@@ -4386,6 +4712,7 @@ final class Store: ObservableObject {
         }
         guard stillOwns() else { return nil }
         log(project, .status, "Putting \(project.name) on \(name)…")
+        defer { try? FileManager.default.removeItem(at: app.deletingLastPathComponent()) }
         do {
             try await Devices.install(app, on: udid)
             guard stillOwns() else { return nil }
@@ -4465,31 +4792,34 @@ final class Store: ObservableObject {
 
                 """
         }
-        _ = await Shell.run(script, cwd: project.dir,
-                            env: ["LAMP_APP": app.path, "LAMP_NAME": project.name, "LAMP_ICON": Icons.squareURL(project).path]) { _ in }
+        // The bundle is the build's, in the agent's folder, so what works on it runs in the app's sandbox: a
+        // plist or an icon there that leads elsewhere leads nowhere.
+        _ = await Sandbox.run(script, for: project,
+                              env: ["LAMP_APP": app.path, "LAMP_NAME": project.name, "LAMP_ICON": Icons.squareURL(project).path]) { _ in }
         Sharing.Assets.adopt(in: project)
+        // The bundle and the files copied into it are the agent's, so neither is reached through a link.
         let assets = project.dir.appendingPathComponent(Sharing.Assets.folder)
-        try? fm.removeItem(at: app.appendingPathComponent(Attachments.folder))
-        try? fm.removeItem(at: app.appendingPathComponent(Sharing.Assets.folder))
+        AppFolder.remove(app.appendingPathComponent(Attachments.folder), in: project.dir)
+        AppFolder.remove(app.appendingPathComponent(Sharing.Assets.folder), in: project.dir)
         if fm.fileExists(atPath: assets.path) {
-            try? fm.copyItem(at: assets, to: app.appendingPathComponent(Sharing.Assets.folder))
+            try? AppFolder.copy(assets, to: app.appendingPathComponent(Sharing.Assets.folder), in: project.dir)
         }
         // The watch app's icon: watchOS takes one only from a compiled asset catalog, so Xcode's own compiler makes
         // it from the same square as the iPhone's, and Info.plist names it.
         if fm.fileExists(atPath: app.appendingPathComponent("Watch").path), fm.fileExists(atPath: Icons.squareURL(project).path) {
             let work = project.dir.appendingPathComponent(".lamp/watch-icon")
-            try? Template.writeWatchIconCatalog(at: work.appendingPathComponent("Icon.xcassets"), icon: Icons.squareURL(project))
-            _ = await Shell.run("""
+            try? Template.writeWatchIconCatalog(at: work.appendingPathComponent("Icon.xcassets"), icon: AppFile.read(Icons.squareURL(project), in: project), in: project.dir)
+            _ = await Sandbox.run("""
                 for watch in "$LAMP_APP"/Watch/*.app(N); do
                   xcrun actool "$LAMP_WORK/Icon.xcassets" --compile "$watch" --platform watchsimulator --minimum-deployment-target 10.0 \\
                     --app-icon AppIcon --output-partial-info-plist "$LAMP_WORK/partial.plist" >/dev/null 2>&1 && \\
                   plutil -replace CFBundleIcons -json '{"CFBundlePrimaryIcon":{"CFBundleIconName":"AppIcon"}}' "$watch/Info.plist"
                 done
-                """, cwd: project.dir, env: ["LAMP_APP": app.path, "LAMP_WORK": work.path]) { _ in }
+                """, for: project, env: ["LAMP_APP": app.path, "LAMP_WORK": work.path]) { _ in }
         }
         // A widget extension inside is signed first, as Xcode does: the app's signature then seals it. The watch
         // app the same way, its complications before it.
-        _ = await Shell.run("""
+        _ = await Sandbox.run("""
             xattr -cr "$LAMP_APP"
             for widget in "$LAMP_APP"/PlugIns/*.appex(N); do codesign --force -s - "$widget"; done
             for watch in "$LAMP_APP"/Watch/*.app(N); do
@@ -4497,7 +4827,7 @@ final class Store: ObservableObject {
               codesign --force -s - "$watch"
             done
             codesign --force -s - "$LAMP_APP"
-            """, cwd: project.dir, env: ["LAMP_APP": app.path]) { _ in }
+            """, for: project, env: ["LAMP_APP": app.path]) { _ in }
     }
 
     /// iPhone apps running in the simulator: which simulator each was launched on, and its process id.
@@ -4513,26 +4843,123 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Puts the icon into the freshly built bundle, re-signs it, and swaps it into the apps folder.
-    /// The swap is atomic, so it's safe even while the app is running.
+    struct ForeignBuild: LocalizedError {
+        let id: String?
+        var errorDescription: String? { "its build says it's another app (\(id ?? "no id")), so Lamp won't sign it as this one." }
+    }
+
+    /// Throws unless the built app and each piece Lamp signs inside it (the chat, a widget, a share extension)
+    /// carry the ids Lamp gave them. Once it's `signed`, each signature must be whole and name the same id: a
+    /// signature made while a file said something else wouldn't.
+    nonisolated static func checkOwnIDs(in app: URL, for project: LampProject, signed: Bool = false) throws {
+        let fm = FileManager.default
+        let pieces = [(app, project.bundleID),
+                      (Sidebar.extensionURL(in: app), Sidebar.bundleID(for: project)),
+                      (Template.widgetURL(in: app, of: project), Template.widgetBundleID(for: project)),
+                      (Template.shareURL(in: app, of: project), project.bundleID + ".share")]
+        for (bundle, expected) in pieces where bundle == app || fm.fileExists(atPath: bundle.path) {
+            let id = NSDictionary(contentsOf: bundle.appendingPathComponent("Contents/Info.plist"))?["CFBundleIdentifier"] as? String
+            guard id == expected else { throw ForeignBuild(id: id) }
+            guard signed else { continue }
+            var code: SecStaticCode?
+            var info: CFDictionary?
+            guard SecStaticCodeCreateWithPath(bundle as CFURL, [], &code) == errSecSuccess, let code,
+                  SecStaticCodeCheckValidity(code, [], nil) == errSecSuccess,
+                  SecCodeCopySigningInformation(code, [], &info) == errSecSuccess else { throw ForeignBuild(id: nil) }
+            let signedID = (info as? [String: Any])?[kSecCodeInfoIdentifier as String] as? String
+            guard signedID == expected else { throw ForeignBuild(id: signedID) }
+        }
+    }
+
+    struct LinkedBuild: LocalizedError {
+        var errorDescription: String? { "its build reaches outside itself, so Lamp won't sign it." }
+    }
+
+    /// A copy of the app's build in `folder`, hidden until it's swapped in, for Lamp alone to finish and sign.
+    /// A copy keeps symbolic links as links, so one that leads out of the copy (or a build that is itself a link)
+    /// would have Lamp change, read and sign files the agent can still write: such a build isn't staged. The copy
+    /// is what's checked, not the build, which can be swapped for a link between a look at it and the copy.
+    nonisolated static func stage(_ project: LampProject, in folder: URL) throws -> URL {
+        let fm = FileManager.default
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        let copy = folder.appendingPathComponent(".\(project.exe)-\(UUID().uuidString).app")
+        // Reached without following a link: a build/ that is one would bring in a bundle from anywhere.
+        try AppFolder.copy(project.builtURL, in: project.dir, to: copy, in: folder)
+        do { try checkContained(copy) } catch { try? fm.removeItem(at: copy); throw error }
+        return copy
+    }
+
+    /// Throws when a link in the bundle leads out of it. Asked of the copy as it's made and again of the finished
+    /// one before it's signed, since what deploy copies in from the app's folder (its assets, the icon) keeps
+    /// its links too.
+    nonisolated static func checkContained(_ app: URL) throws {
+        let fm = FileManager.default
+        if (try? fm.destinationOfSymbolicLink(atPath: app.path)) != nil { throw LinkedBuild() }
+        let inside = app.standardizedFileURL.path + "/"
+        for case let file as URL in fm.enumerator(at: app, includingPropertiesForKeys: nil) ?? FileManager.DirectoryEnumerator() {
+            guard let target = try? fm.destinationOfSymbolicLink(atPath: file.path) else { continue }
+            let resolved = target.hasPrefix("/") ? URL(fileURLWithPath: target) : file.deletingLastPathComponent().appendingPathComponent(target)
+            if !resolved.standardizedFileURL.path.hasPrefix(inside) { throw LinkedBuild() }
+        }
+    }
+
+    /// Signs `app`, Lamp's copy of the Mac half of an app for both, for the team: with the profile and entitlements
+    /// Xcode signed Lamp's own project with for the Mac (`TeamSigning`), and the chat inside it first. True when it
+    /// came out signed with the team's certificate. The certificate is looked up after Xcode's signing, which makes
+    /// one when this Mac has none for the team yet.
+    nonisolated static func signForTeam(_ app: URL, for project: LampProject, team: String,
+                                        env: [String: String]) async throws -> Bool {
+        let fm = FileManager.default
+        var output: [String] = []
+        let (plan, planDir) = try await TeamSigning.plan(for: project, team: team, place: .mac, destination: "platform=macOS") { output.append($0) }
+        guard let identity = await Devices.signingIdentity(for: team) else { return false }
+        guard let piece = plan.app else { throw TeamSigning.Problem(message: "Lamp couldn't tell what to sign it with.") }
+        // Nothing that runs but the app's own program and the chat Lamp put in it.
+        try TeamSigning.checkCode(in: app, allowing: [app, Sidebar.extensionURL(in: app)])
+        let embedded = app.appendingPathComponent("Contents/embedded.provisionprofile")
+        try? fm.removeItem(at: embedded)
+        if let profile = piece.profile { try fm.copyItem(at: planDir.appendingPathComponent(profile), to: embedded) }
+        let entitlements = planDir.appendingPathComponent(piece.entitlements)
+        let signed = await Shell.run(AppSigning.universalCommand, cwd: FileManager.default.temporaryDirectory,
+                                     env: env.merging(["LAMP_APP": app.path, "LAMP_IDENTITY": identity, "LAMP_APP_ENTITLEMENTS": entitlements.path]) { $1 }) {
+            output.append($0)
+        } == 0 && AppSigning.isCertificateSigned(app)
+        if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
+        return signed
+    }
+
+    /// Copies the freshly built bundle into the apps folder, puts the icon in, signs it and swaps it in place of
+    /// the installed copy. The swap is atomic, so it's safe even while the app is running.
     private func deploy(_ project: LampProject) async throws {
         let fm = FileManager.default
-        let resources = project.builtURL.appendingPathComponent("Contents/Resources")
+        // Everything from here to the swap is done to a copy in the apps folder, which the agent's commands can't
+        // write: the build folder is theirs, and a bundle there could be changed between Lamp's look at it and its
+        // signature.
+        let app = try Self.stage(project, in: Self.installDir)
+        AppsLink.ensure()
+        var swapped = false
+        defer { if !swapped { try? fm.removeItem(at: app) } }
+        // The entitlements it's signed with are written beside it, for the same reason: in the app's folder they
+        // could be changed between Lamp writing them and codesign reading them.
+        let signing = app.deletingPathExtension().appendingPathExtension("signing")
+        try fm.createDirectory(at: signing, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: signing) }
+        let resources = app.appendingPathComponent("Contents/Resources")
         try fm.createDirectory(at: resources, withIntermediateDirectories: true)
         // Every usage description, from the one list: without its reason macOS kills the app the moment it
         // asks for the microphone, photos and the rest. Added here as well as in build.sh so apps made before
         // a reason was added get it too.
         var plist = """
             P="$LAMP_APP/Contents/Info.plist"
-            plutil -replace CFBundleName -string "$LAMP_NAME" "$P" && \\
-            plutil -replace CFBundleDisplayName -string "$LAMP_NAME" "$P"
+            /usr/bin/plutil -replace CFBundleName -string "$LAMP_NAME" "$P" && \\
+            /usr/bin/plutil -replace CFBundleDisplayName -string "$LAMP_NAME" "$P"
 
             """
         for (key, text) in Template.macUsageDescriptions {
             let reason = text.replacingOccurrences(of: "{{NAME}}", with: project.name).replacingOccurrences(of: "'", with: "'\\''")
-            plist += "plutil -replace \(key) -string '\(reason)' \"$P\"\n"
+            plist += "/usr/bin/plutil -replace \(key) -string '\(reason)' \"$P\"\n"
         }
-        _ = await Shell.run(plist, cwd: project.dir, env: ["LAMP_APP": project.builtURL.path, "LAMP_NAME": project.name]) { _ in }
+        _ = await Shell.run(plist, cwd: project.dir, env: ["LAMP_APP": app.path, "LAMP_NAME": project.name]) { _ in }
         if fm.fileExists(atPath: Icons.icnsURL(project).path) {
             try? fm.removeItem(at: resources.appendingPathComponent("AppIcon.icns"))
             try fm.copyItem(at: Icons.icnsURL(project), to: resources.appendingPathComponent("AppIcon.icns"))
@@ -4541,11 +4968,11 @@ final class Store: ObservableObject {
             let hasCar = fm.fileExists(atPath: Icons.carURL(project).path)
             if hasCar { try fm.copyItem(at: Icons.carURL(project), to: resources.appendingPathComponent("Assets.car")) }
             let iconName = hasCar
-                ? "plutil -replace CFBundleIconName -string AppIcon \"$LAMP_APP/Contents/Info.plist\""
-                : "{ plutil -remove CFBundleIconName \"$LAMP_APP/Contents/Info.plist\" 2>/dev/null || true; }"
+                ? "/usr/bin/plutil -replace CFBundleIconName -string AppIcon \"$LAMP_APP/Contents/Info.plist\""
+                : "{ /usr/bin/plutil -remove CFBundleIconName \"$LAMP_APP/Contents/Info.plist\" 2>/dev/null || true; }"
             _ = await Shell.run("""
-                plutil -replace CFBundleIconFile -string AppIcon "$LAMP_APP/Contents/Info.plist" && \(iconName)
-                """, cwd: project.dir, env: ["LAMP_APP": project.builtURL.path]) { _ in }
+                /usr/bin/plutil -replace CFBundleIconFile -string AppIcon "$LAMP_APP/Contents/Info.plist" && \(iconName)
+                """, cwd: project.dir, env: ["LAMP_APP": app.path]) { _ in }
         }
         // The app's own files (Assets/) ship inside it, where LampAssets finds them; the chat's attachments
         // don't. A binary built by an older Lamp (a new icon installed without a rebuild) still looks for
@@ -4557,7 +4984,7 @@ final class Store: ObservableObject {
             try fm.copyItem(at: assets, to: resources.appendingPathComponent(Sharing.Assets.folder))
         }
         try? fm.removeItem(at: resources.appendingPathComponent(Attachments.folder))
-        if BuildStamp.read(project.builtURL)?.isOutdated ?? true {
+        if BuildStamp.read(app)?.isOutdated ?? true {
             let attachments = project.dir.appendingPathComponent(Attachments.folder)
             if fm.fileExists(atPath: attachments.path) {
                 try fm.copyItem(at: attachments, to: resources.appendingPathComponent(Attachments.folder))
@@ -4565,7 +4992,7 @@ final class Store: ObservableObject {
         }
         // What the agent declared in capabilities.json, as the simulator's bundle gets its own (finishSimulatorBundle).
         let capabilities = Template.Capabilities.load(project)
-        capabilities.apply(to: project.builtURL, for: project)
+        capabilities.apply(to: app, for: project)
         // Told once: from now on the app opens at login and keeps running, which is the person's to undo.
         let told = project.dir.appendingPathComponent(".lamp/background-told")
         if capabilities.background == true, !FileManager.default.fileExists(atPath: told.path) {
@@ -4578,33 +5005,37 @@ final class Store: ObservableObject {
         // certificate one ("resource fork, Finder information, or similar detritus not allowed"), which is
         // how apps silently ended up ad hoc. Strip them first.
         // The chat the app shows inside its window, signed with the app.
-        try Sidebar.install(into: project.builtURL, for: project)
-        _ = await Shell.run("xattr -cr \"$LAMP_APP\"", cwd: project.dir, env: ["LAMP_APP": project.builtURL.path]) { _ in }
+        try Sidebar.install(into: app, for: project, entitlementsIn: signing)
+        _ = await Shell.run("/usr/bin/xattr -cr \"$LAMP_APP\"", cwd: project.dir, env: ["LAMP_APP": app.path]) { _ in }
         // A widget keeps its own signature inside the app's (AppSigning.command), with entitlements Lamp
-        // writes here rather than takes from the build folder, where anything could have changed them.
-        let widget = Template.widgetURL(in: project.builtURL, of: project)
+        // writes beside the copy rather than takes from the build folder, where anything could have changed them.
+        let widget = Template.widgetURL(in: app, of: project)
         let hasWidget = fm.fileExists(atPath: widget.path)
-        let entitlements = project.dir.appendingPathComponent(".lamp/widget-entitlements.plist")
+        let entitlements = signing.appendingPathComponent("widget-entitlements.plist")
         if hasWidget { try Template.widgetEntitlementsPlist.write(to: entitlements, atomically: true, encoding: .utf8) }
         // A share extension the same way. It hands what it's given to the app through a folder they share,
         // which macOS allows only to a signature with a team, so it stays only in an app signed for one.
-        let share = Template.shareURL(in: project.builtURL, of: project)
+        let share = Template.shareURL(in: app, of: project)
         var hasShare = project.platform == .mac && fm.fileExists(atPath: share.path)
-        let shareEntitlements = project.dir.appendingPathComponent(".lamp/share-entitlements.plist")
-        var signingEnv = ["LAMP_APP": project.builtURL.path, "LAMP_WIDGET": widget.path, "LAMP_WIDGET_ENTITLEMENTS": entitlements.path,
+        let shareEntitlements = signing.appendingPathComponent("share-entitlements.plist")
+        var signingEnv = ["LAMP_APP": app.path, "LAMP_WIDGET": widget.path, "LAMP_WIDGET_ENTITLEMENTS": entitlements.path,
                           "LAMP_SHARE": share.path, "LAMP_SHARE_ENTITLEMENTS": shareEntitlements.path]
-            .merging(Sidebar.signingEnvironment(for: project)) { $1 }
-        // An app for both was signed by Xcode for the person's team; what was put in since is sealed with the
-        // same certificate and the same entitlements, never Lamp's own, which could carry neither.
-        let identity = project.platform == .universal ? (await Devices.signingIdentity(for: Devices.team) ?? "-") : await AppSigning.identity()
+            .merging(Sidebar.signingEnvironment(in: app, entitlementsIn: signing)) { $1 }
+        // Only a build that is this app is signed as it: an id rewritten after build.sh, signed with Lamp's
+        // certificate, would get that other app's permissions and keychain items. Read from the copy, which only
+        // Lamp writes, just before it's signed, as a bundle that leads nowhere else.
+        try Self.checkContained(app)
+        try Self.checkOwnIDs(in: app, for: project)
+        // An app for both is signed for the person's team, never with Lamp's own certificate, which could carry neither
+        // its team's ids nor what Apple ties to a team. Its build is unsigned (it ran in the app's sandbox, without the
+        // keys); what it's signed with is what Xcode signed Lamp's own project with for the Mac (`TeamSigning`): that
+        // profile, put in the copy, and those entitlements.
+        // For an app for both, the team's certificate is looked up only after Xcode has signed Lamp's own project, which
+        // makes one the first time.
+        let identity = project.platform == .universal ? "-" : await AppSigning.identity()
         var signed = false
-        if project.platform == .universal, identity != "-" {
-            var output: [String] = []
-            signed = await Shell.run(Sidebar.signingStep("codesign --force -s \"$LAMP_IDENTITY\"")
-                                     + " && codesign --force --preserve-metadata=entitlements -s \"$LAMP_IDENTITY\" \"$LAMP_APP\" 2>&1",
-                                     cwd: project.dir, env: signingEnv.merging(["LAMP_IDENTITY": identity]) { $1 }) { output.append($0) } == 0
-                && AppSigning.isCertificateSigned(project.builtURL)
-            if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
+        if project.platform == .universal, !Devices.team.isEmpty {
+            signed = try await Self.signForTeam(app, for: project, team: Devices.team, env: signingEnv)
         } else {
             // A Mac app is signed for the person's Apple team when there is one: macOS runs an app's App Intents
             // (Siri, Shortcuts, Spotlight) only for an app signed with a team. Otherwise Lamp's own certificate.
@@ -4615,8 +5046,8 @@ final class Store: ObservableObject {
                 var env = signingEnv.merging(["LAMP_IDENTITY": team]) { $1 }
                 if hasWidget || hasShare {
                     let group = Template.macAppGroup(team: Devices.team, for: project)
-                    Self.setAppGroup(group, in: [project.builtURL] + (hasWidget ? [widget] : []) + (hasShare ? [share] : []))
-                    let appEntitlements = project.dir.appendingPathComponent(".lamp/app-entitlements.plist")
+                    Self.setAppGroup(group, in: [app] + (hasWidget ? [widget] : []) + (hasShare ? [share] : []))
+                    let appEntitlements = signing.appendingPathComponent("app-entitlements.plist")
                     try Template.Capabilities().entitlementsPlist(container: nil, platform: .mac, appGroup: group)
                         .write(to: appEntitlements, atomically: true, encoding: .utf8)
                     if hasWidget { try Template.widgetEntitlementsPlist(appGroup: group).write(to: entitlements, atomically: true, encoding: .utf8) }
@@ -4627,7 +5058,7 @@ final class Store: ObservableObject {
                 signed = await Shell.run(AppSigning.command(adHoc: false, widget: hasWidget, share: hasShare, ownKeychain: false,
                                                             appEntitlements: hasWidget || hasShare),
                                          cwd: project.dir, env: env) { output.append($0) } == 0
-                    && AppSigning.isCertificateSigned(project.builtURL) && (!hasWidget || AppSigning.isCertificateSigned(widget))
+                    && AppSigning.isCertificateSigned(app) && (!hasWidget || AppSigning.isCertificateSigned(widget))
                     && (!hasShare || AppSigning.isCertificateSigned(share))
                 if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
                 Self.rememberTeamSigning(failed: !signed, for: project)
@@ -4636,9 +5067,9 @@ final class Store: ObservableObject {
                 // Not signed for a team, the app's intents would be listed by macOS and never run: they're taken
                 // out. The widget's stay: its buttons run them inside the widget, which needs no team. Nor is
                 // there a shared folder: the widget sends its actions to the app over their connection instead.
-                try? fm.removeItem(at: project.builtURL.appendingPathComponent("Contents/Resources/Metadata.appintents"))
+                try? fm.removeItem(at: app.appendingPathComponent("Contents/Resources/Metadata.appintents"))
                 if hasWidget {
-                    Self.setAppGroup(nil, in: [project.builtURL, widget])
+                    Self.setAppGroup(nil, in: [app, widget])
                     try Template.widgetEntitlementsPlist.write(to: entitlements, atomically: true, encoding: .utf8)
                 }
                 // A share extension with no folder to leave things in would take what people share and lose it:
@@ -4656,7 +5087,7 @@ final class Store: ObservableObject {
             signed = await Shell.run(AppSigning.command(adHoc: false, widget: hasWidget),
                                      cwd: project.dir, env: signingEnv) { output.append($0) } == 0
             // Trust the result, not the exit status: check the app really carries the certificate.
-            if signed && !(AppSigning.isCertificateSigned(project.builtURL) && (!hasWidget || AppSigning.isCertificateSigned(widget))) {
+            if signed && !(AppSigning.isCertificateSigned(app) && (!hasWidget || AppSigning.isCertificateSigned(widget))) {
                 signed = false
                 output.append("codesign returned 0 but the app is not certificate-signed")
             }
@@ -4672,8 +5103,12 @@ final class Store: ObservableObject {
             }
         }
 
+        // Read once more from what was signed, last thing before the swap: the copy, its ids and its signatures.
+        try Self.checkContained(app)
+        try Self.checkOwnIDs(in: app, for: project, signed: true)
+
         // What Lamp signed as the app's sidebar, the one program it will talk to there.
-        Sidebar.remember(project)
+        Sidebar.remember(project, signed: app)
 
         // What the copy being replaced was signed as, to notice when this build is signed differently. Only a copy
         // of this app, by its id: one of another id at the same place (an app of the same name since deleted, or
@@ -4682,18 +5117,15 @@ final class Store: ObservableObject {
         let previousID = NSDictionary(contentsOf: project.installedURL.appendingPathComponent("Contents/Info.plist"))?["CFBundleIdentifier"] as? String
         let replaced = previousID == project.bundleID ? await AppSigning.requirement(of: project.installedURL) : nil
 
-        try fm.createDirectory(at: Self.installDir, withIntermediateDirectories: true)
-        AppsLink.ensure()
-        let staging = Self.installDir.appendingPathComponent(".\(project.exe)-\(UUID().uuidString).app")
-        try fm.copyItem(at: project.builtURL, to: staging)
         // The app isn't running by now (a build quits it, an icon waits for it to close), but its widget's
         // process may be: ended here, last thing before the swap, so no program outlives the copy it came from.
         await WidgetProcess.end(for: project)
         if fm.fileExists(atPath: project.installedURL.path) {
-            _ = try fm.replaceItemAt(project.installedURL, withItemAt: staging)
+            _ = try fm.replaceItemAt(project.installedURL, withItemAt: app)
         } else {
-            try fm.moveItem(at: staging, to: project.installedURL)
+            try fm.moveItem(at: app, to: project.installedURL)
         }
+        swapped = true
         // What the app now runs when it opens is this build's sources (LiveReload compares a change with them).
         LiveReload.installed(project)
         // The installed app's classes hold every property it was built with, and its spare places are empty.
@@ -4741,7 +5173,7 @@ final class Store: ObservableObject {
 
     private func renderIcon(_ project: LampProject, spec: IconSpec) async {
         do {
-            let art = Icons.cachedArt(project, spec: spec)
+            let art = Icons.artwork(project, spec: spec)
             if art != nil { artApplied[project.id] = spec }
             icons[project.id] = try await Icons.write(spec, art: art, for: project)
         } catch {
@@ -4809,10 +5241,11 @@ final class Store: ObservableObject {
     }
 
     /// Generates artwork for the icon's object in the background (best of a few candidates) and swaps it in
-    /// when ready, with whatever can make pictures. With nothing, the first app asks for a key instead.
+    /// when ready: layers of glass where the model that draws them can be reached, else a painting with whatever
+    /// can make pictures, and always a painting for a game. With nothing, the first app asks for a key instead.
     private func upgradeIconArt(_ project: LampProject) {
         guard !Starters.isStarter(project), let spec = Icons.load(project), !spec.subject.trimmed.isEmpty,
-              Icons.cachedArt(project, spec: spec) == nil else { return }
+              Icons.artwork(project, spec: spec) == nil else { return }
         // The person chose to draw icons themselves: Lamp draws nothing, key or no key, and asks for no key.
         guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
         guard artInProgress.insert(project.id).inserted else { return }
@@ -4827,17 +5260,27 @@ final class Store: ObservableObject {
             // Lamp drew is used, and the drawing is theirs to do.
             guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
             do {
-                let art = try await Icons.generateBestArt(spec, appName: project.name) { [weak self] in
-                    self?.log(project, .detail, $0)
+                let log: @MainActor (String) -> Void = { [weak self] in self?.log(project, .detail, $0) }
+                let art: Icons.Artwork
+                if !spec.game, GlassIcons.canDraw {
+                    let about = AppFile.text(project.dir.appendingPathComponent("APP.md"), in: project) ?? ""
+                    art = .glass(try await GlassIcons.generateBest(for: spec, appName: project.name, about: about, log: log))
+                } else {
+                    art = .picture(try await Icons.generateBestArt(spec, appName: project.name, log: log))
                 }
                 guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
                 // A picture picked in Image Playground while these were being drawn is the person's choice: it stays.
-                guard Icons.cachedArt(project, spec: spec) == nil else { return }
-                let url = Icons.artURL(project, spec: spec)
-                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                guard let tiff = art.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?
-                    .representation(using: .png, properties: [:]) else { return }
-                try png.write(to: url)
+                guard Icons.artwork(project, spec: spec) == nil else { return }
+                switch art {
+                case .glass(let glass):
+                    try Icons.save(glass, for: project, spec: spec)
+                case .picture(let image):
+                    let url = Icons.artURL(project, spec: spec)
+                    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    guard let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?
+                        .representation(using: .png, properties: [:]) else { return }
+                    try png.write(to: url)
+                }
                 guard Icons.load(project) == spec else { return }   // the icon was redesigned meanwhile
                 // During a build the install that ends it picks the artwork up; if that install came first,
                 // finish() applies it. Otherwise apply it now.
@@ -4938,12 +5381,14 @@ final class Store: ObservableObject {
             let url = Icons.artURL(project, spec: spec)
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try png.write(to: url)
+            // The person's picture takes the place of a glass design drawn for the same icon.
+            try? FileManager.default.removeItem(at: Icons.glassURL(project, spec: spec))
             artApplied[project.id] = nil   // the icon on show was made with other artwork, or none
             // As with generated artwork: a turn that has the app installs the picture when it ends. The chat
             // shows it at once and says so, or picking it would look like nothing happened.
             guard begin(project) != nil else {
                 pendingIconArt.insert(project.id)
-                let preview = await Icons.preview(spec, art: NSImage(data: png))
+                let preview = await Icons.preview(spec, art: NSImage(data: png).map(Icons.Artwork.picture))
                 if exists(project), Icons.load(project) == spec {
                     icons[project.id] = preview
                     log(project, .status, "Your picture is \(project.name)'s icon now. It goes on the app when this turn ends.")
@@ -5150,7 +5595,7 @@ final class Store: ObservableObject {
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/art", "/agent/talk", "/mcp", "/pi/key", "/app/secrets"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -5205,8 +5650,33 @@ final class Store: ObservableObject {
         if route == "/ai/keys" { return keysForPhone(project) }
         if route == "/ai/status" { return await aiStatus(for: project) }
         if route == "/app/secrets" { return appSecrets(request, for: project) }
+        if route == "/app/share" { return await appShare(request, for: project) }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
+    }
+
+    /// File ▸ Share… in a Mac app (`LampShareApp`): the app as a file to open with Lamp, the same one Lamp's own Share…
+    /// makes, with its picture. Lamp writes them and the app shows the system's share picker from its own window,
+    /// which Lamp can't open over another app's. Only the app itself is answered, as for its secrets, and it can ask
+    /// only for itself: the file is made from the app's folder here, never from anything the app sends.
+    private func appShare(_ request: Gateway.Request, for project: LampProject) async -> (Int, [String: Any]) {
+        guard !request.fromNetwork, let port = request.peerPort,
+              PeerProcess.isApp(at: project.installedURL, connectedFrom: port, to: Gateway.port) else {
+            return (403, ["error": "Only the app itself, as Lamp installed it, can do that."])
+        }
+        do {
+            let icon = await Sharing.sharedIcon(of: project)
+            // Where Lamp keeps an app's shared file, written over each time: a share never leaves a copy behind.
+            let (file, picture) = try await Task.detached(priority: .userInitiated) {
+                let file = try Store.sharedFile(of: project, icon: icon)
+                return (file, Store.sharePicture(for: file))
+            }.value
+            var answer = ["file": file.path, "note": "Open this with Lamp https://lamp.dev"]
+            if let picture { answer["picture"] = picture.path }
+            return (200, answer)
+        } catch {
+            return (500, ["error": "\(project.name) couldn't be made into a file to share: \(error.localizedDescription)"])
+        }
     }
 
     /// `LampSecrets` in a Mac app: what it keeps secret, kept here (AppSecrets). Only the app itself is answered, the
@@ -5264,11 +5734,12 @@ final class Store: ObservableObject {
         if route == "/mcp" { return await mcp(request.body, for: project, fileTools: request.path.contains("files=1")) }
         if request.path == "/agent/look" {
             let arguments = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
-            return arguments["sidebar"] as? Bool == true
-                ? await lookAtSidebar(project, page: arguments["page"] as? String)
-                : await look(at: project, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false)
+            return Self.withPictureData(arguments["sidebar"] as? Bool == true
+                ? await lookAtSidebar(project, page: arguments["page"] as? String, reopen: arguments["reopen"] as? Bool ?? false)
+                : await look(at: project, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
+                                 reopen: arguments["reopen"] as? Bool ?? false), in: project)
         }
-        if request.path == "/agent/use" { return await use(project, request: request.body) }
+        if request.path == "/agent/use" { return Self.withPictureData(await use(project, request: request.body), in: project) }
         if request.path.hasPrefix("/agent/versions") {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             return await versions(String(request.path.dropFirst("/agent/versions".count)), body, of: project)
@@ -5281,7 +5752,7 @@ final class Store: ObservableObject {
             return Skills.read((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:])
         }
         if route == "/agent/art" {
-            return await makeArt((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
+            return Self.withPictureData(await makeArt((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project), in: project)
         }
         if route == "/agent/talk" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
@@ -5292,6 +5763,10 @@ final class Store: ObservableObject {
         }
         if route == "/agent/kind" {
             return await agentKind((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
+        }
+        if route == "/agent/steer" {
+            guard turns[project.id]?.steering == .pi else { return (200, [:]) }
+            return (200, handOver(project).map { ["message": $0] } ?? [:])
         }
         if route == "/agent/connectors" {
             return Connectors.answer((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
@@ -5480,7 +5955,7 @@ final class Store: ObservableObject {
         // Sealed with the secret that went to the phone inside its build, never over the network: the token
         // in the request is on the air too, so it can't be what protects the key.
         guard let json = try? JSONSerialization.data(withJSONObject: keys),
-              let box = try? AES.GCM.seal(json, using: SymmetricKey(data: SHA256.hash(data: Data(Template.phoneSecret(for: project).utf8)))),
+              let box = try? AES.GCM.seal(json, using: SymmetricKey(data: SHA256.hash(data: Data(Template.phoneSecret(in: Devices.buildFolder(for: project)).utf8)))),
               let sealed = box.combined else { return (500, ["error": "Couldn't prepare the keys."]) }
         return (200, ["sealed": sealed.base64EncodedString()])
     }
@@ -5663,7 +6138,24 @@ final class Store: ObservableObject {
     /// the art (`Previews.forAgent`), so a conversation holds many before a request is too big to send; none
     /// when the person keeps pictures from the model. The files given are left as they are.
     static func agentPictures(_ pictures: [URL], in project: LampProject) -> [String] {
-        Privacy.sharesPictures ? pictures.map { Previews.forAgent($0, in: project).path } : []
+        Privacy.sharesPictures ? pictures.compactMap { Previews.forAgent($0, in: project)?.path } : []
+    }
+
+    /// Those pictures' bytes, as every engine is given them: read by Lamp as `AppFile` reads, so a picture swapped
+    /// for a link after its copy was made brings the agent nothing else. An engine handed only the path would read
+    /// it itself, through whatever link was there by then.
+    static func pictureData(_ paths: [String], in project: LampProject) -> [[String: String]] {
+        paths.compactMap { path in
+            AppFile.read(URL(fileURLWithPath: path), in: project).map { ["data": $0.base64EncodedString(), "mimeType": Previews.mimeType(of: path)] }
+        }
+    }
+
+    /// A tool's answer with its pictures' bytes beside their paths, for pi's extension.
+    private static func withPictureData(_ result: (Int, [String: Any]), in project: LampProject) -> (Int, [String: Any]) {
+        guard let paths = result.1["screenshots"] as? [String], !paths.isEmpty else { return result }
+        var answer = result.1
+        answer["pictures"] = pictureData(paths, in: project)
+        return (result.0, answer)
     }
 
     /// What a look says when the person kept the earlier build open (`Turn.keptOpen`).
@@ -5677,8 +6169,11 @@ final class Store: ObservableObject {
     /// The agent's `look_at_app` tool: builds what it has written so far, opens the app behind the
     /// user's windows, and reports what happened. The pictures are sent as file paths for pi to read. For a Mac
     /// app it can instead show one of the app's 3D props from four sides (`prop`), or watch the window for a
-    /// couple of seconds and say what moved and what flickered (`motion`).
-    private func look(at project: LampProject, prop: String? = nil, motion: Bool = false) async -> (Int, [String: Any]) {
+    /// couple of seconds and say what moved and what flickered (`motion`). `reopen` closes the open app the usual
+    /// way, asking about unsaved work, and opens a fresh copy: for what only a launch shows (how long it takes to
+    /// open, code run once at the start), where otherwise a change goes into the open app. The agent ending the
+    /// app's process itself skipped that question, and Lamp rightly asked the person about every such command.
+    private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false) async -> (Int, [String: Any]) {
         // Only for the agent Lamp is running right now. The app knows the same token and must not
         // be able to rebuild itself.
         guard let turn = turns[project.id], turn.agent != nil else {
@@ -5689,7 +6184,7 @@ final class Store: ObservableObject {
         turn.look.installed = false
         defer { turn.look.inProgress = false }
 
-        try? Template.writeSupport(for: project)
+        try? await writeOwnFiles(project, all: false)
         let changed = Runtime.sourcesChanged(project)
         if changed, let errors = await build(project) {
             if errors == macMembershipProblem(project) {
@@ -5703,12 +6198,13 @@ final class Store: ObservableObject {
             // The simulator photographs the screen; nothing in the app has to cooperate.
             // Open, and the device still this app's: otherwise it's opened again (which takes the device back).
             let running = simulatorApps[project.id].map { Simulator.isRunning(pid: $0.pid) && simulatorLeases[$0.udid] == project.id } ?? false
-            if changed || !running {
+            if changed || !running || reopen {
                 let crash = await install(project, inFront: false)
                 turn.look.installed = true
                 turn.look.crash = crash
                 if let crash { return (200, ["text": "The app \(changed ? "built" : "is built"), but it didn't stay open.\n\n\(crash)"]) }
                 if !changed { note = "The app is running your latest code; it was reopened without rebuilding." }
+                if reopen { note = "The app was closed and opened again, so it started fresh." }
             } else {
                 note = "The app is running your latest code; nothing needed rebuilding."
             }
@@ -5743,7 +6239,7 @@ final class Store: ObservableObject {
         if turn.keptOpen, isRunning(project) { return (200, ["text": Self.keptOpenNote]) }
         var since = Date()
         // A copy kept open in an earlier request is older than the build too: it's asked to quit, once.
-        if !changed, !Runtime.holdsBuild(project), macCopies(of: project).first != nil {
+        if !reopen, !changed, !Runtime.holdsBuild(project), macCopies(of: project).first != nil {
             // Nothing to rebuild and the app is open: ask it for fresh pictures instead of relaunching it.
             let asked = Date()
             since = asked
@@ -5756,7 +6252,7 @@ final class Store: ObservableObject {
         if screenshots.isEmpty {
             let launched = Date()
             since = launched
-            let crash = await install(project, inFront: false)
+            let crash = await install(project, inFront: false, fresh: reopen)
             if turn.keptOpen { return (200, ["text": Self.keptOpenNote]) }
             turn.look.installed = true
             turn.look.crash = crash
@@ -5764,6 +6260,7 @@ final class Store: ObservableObject {
                 return (200, ["text": "The app \(changed ? "built" : "is built"), but it quit right after launching.\n\n\(crash)"])
             }
             if !changed { note = "The app is running your latest code; it was reopened without rebuilding." }
+            if reopen { note = "The app was closed and opened again, so it started fresh." }
             screenshots = await Runtime.screenshots(of: project, since: launched)
         }
         var lead = ""

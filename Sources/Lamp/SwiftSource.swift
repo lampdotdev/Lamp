@@ -46,6 +46,12 @@ enum SwiftSource {
         var constants: [String: Variable] = [:]
         /// The app's own classes, whose objects a constant may hold.
         var classes: Set<String> = []
+        /// Each type's memberwise initializers that the compiler made itself and code outside the type can call: their
+        /// labels and parameter types in order (`init(a:c:)`, `[Int, [Int]?]`). What a struct's code calls to make one.
+        var memberwise: [String: [(labels: [String], types: [String])]] = [:]
+        /// Each type's initializers written in its code, its extensions' included: labels and parameter types, as
+        /// `memberwise` has them, so one can be told from another with the same labels and other types.
+        var initializers: [String: [(labels: [String], types: [String])]] = [:]
     }
 
     private static let rangePattern = try! NSRegularExpression(pattern: #"range=\[([^\]]+?):(\d+):(\d+) - line:(\d+):(\d+)\]"#)
@@ -91,7 +97,18 @@ enum SwiftSource {
                 if line[Range(m.range(at: 2), in: line)!] == "class" { out.classes.insert(full); out.classes.insert(name) }
                 continue
             }
-            if scopeDecl.firstMatch(in: line, range: range) != nil { scopes.append((indent, nil)); continue }
+            if scopeDecl.firstMatch(in: line, range: range) != nil {
+                if let owner, line.contains("(constructor_decl"), !line.contains(" implicit "), let made = memberwise(in: line) {
+                    out.initializers[owner, default: []].append(made)
+                }
+                if let owner, line.contains("(constructor_decl"), line.contains(" implicit "),
+                   !line.contains("access=private"), !line.contains("access=fileprivate"),
+                   let made = memberwise(in: line), !made.labels.isEmpty {
+                    out.memberwise[owner, default: []].append(made)
+                }
+                scopes.append((indent, nil))
+                continue
+            }
             if let open = binding {
                 // Inside a binding: its entries, each with its name and its starting value.
                 if line.contains("(pattern_entry") { out.bindings[open.index].entries.append(Entry(name: "", initial: nil)); entryOpen = true; continue }
@@ -151,6 +168,26 @@ enum SwiftSource {
             }
         }
         return out
+    }
+
+    /// An implicit initializer's labels and parameter types, from its line in the dump: `"init(a:c:)"` and
+    /// `interface_type="(P.Type) -> (Int, [Int]?) -> P"`. Nil for one whose parameters can't be told apart.
+    private static func memberwise(in line: String) -> (labels: [String], types: [String])? {
+        guard let name = line.range(of: #""init\(([^)"]*)\)""#, options: .regularExpression),
+              let type = line.range(of: #"interface_type=""#) else { return nil }
+        let labels = line[name].dropFirst(6).dropLast(2).split(separator: ":", omittingEmptySubsequences: false).dropLast().map(String.init)
+        // The parameters are the second parenthesised group: after "(P.Type) -> ".
+        let rest = line[type.upperBound...]
+        guard let arrow = rest.range(of: ") -> (") else { return nil }
+        var depth = 0, current = "", types: [String] = []
+        for ch in rest[arrow.upperBound...] {
+            if depth == 0, ch == ")" { types.append(current.trimmingCharacters(in: .whitespaces)); break }
+            if depth == 0, ch == "," { types.append(current.trimmingCharacters(in: .whitespaces)); current = ""; continue }
+            if "([<".contains(ch) { depth += 1 } else if ")]>".contains(ch), current.last != "-" { depth -= 1 }
+            current.append(ch)
+        }
+        guard types.count == labels.count, !types.contains(where: \.isEmpty) else { return nil }
+        return (labels, types)
     }
 
     /// The types SwiftUI or AppKit read only at launch, at any depth: the App, its scenes, its menu commands and

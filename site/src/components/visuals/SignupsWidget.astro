@@ -1,0 +1,42 @@
+---
+// For the homepage's analytics dashboard made into a widget: two widgets on a Mac's desktop, as macOS 26 draws them
+// with no window in front (full colour on glass; with a window in front they dim), holding numbers fetched from the
+// person's analytics: today's sign-ups against the same day last week, hour by hour, and who's on the site now. A
+// stand-in until there's a picture of a real one. Drawn at the card's 3:2 and sized in the card's width (cqw), so
+// it's the same picture at every width.
+const hours = [2, 1, 1, 3, 5, 7, 6, 8, 5, 6, 3, 1];
+const lastWeek = [2, 1, 2, 2, 4, 5, 5, 6, 4, 4, 2, 2];
+const top = Math.max(...hours, ...lastWeek);
+---
+
+<div aria-hidden="true" class="@container relative aspect-[3/2] w-full overflow-hidden bg-[linear-gradient(165deg,#16305f_0%,#2f63a8_45%,#7aa3d0_75%,#e8b07c_100%)] select-none">
+  <!-- The menu bar along the top, so it reads as a desktop. -->
+  <div class="absolute inset-x-0 top-0 h-[4.5cqw] bg-white/15 backdrop-blur-sm"></div>
+
+  <div class="absolute top-[21cqw] left-[7cqw] flex gap-[3cqw] text-ink">
+    <!-- Medium: today's sign-ups, with last week's day as faint bars behind this week's. -->
+    <div class="flex h-[27cqw] w-[56cqw] gap-[3cqw] rounded-[5cqw] bg-white/80 p-[3.5cqw] shadow-[0_2cqw_6cqw_rgba(0,0,0,0.25)] ring-1 ring-white/50 backdrop-blur-xl">
+      <div class="flex shrink-0 flex-col">
+        <p class="text-[2.6cqw] font-semibold text-black/55">Sign-ups today</p>
+        <p class="mt-[0.5cqw] text-[9cqw] leading-none font-bold tracking-tight">48</p>
+        <p class="mt-auto text-[2.4cqw] font-semibold text-[#1f9d4c]">↑ 9 on last Tuesday</p>
+      </div>
+      <div class="flex flex-1 items-end gap-[0.6cqw]">
+        {
+          hours.map((count, index) => (
+            <div class="relative flex h-full flex-1 items-end">
+              <span class="absolute inset-x-0 bottom-0 rounded-[0.6cqw] bg-black/8" style={`height: ${(lastWeek[index] / top) * 100}%`} />
+              <span class="relative w-full rounded-[0.6cqw] bg-[#cf620c]" style={`height: ${(count / top) * 100}%`} />
+            </div>
+          ))
+        }
+      </div>
+    </div>
+    <!-- Small: who's on the site right now. -->
+    <div class="flex size-[27cqw] flex-col rounded-[5cqw] bg-white/80 p-[3.5cqw] shadow-[0_2cqw_6cqw_rgba(0,0,0,0.25)] ring-1 ring-white/50 backdrop-blur-xl">
+      <p class="flex items-center gap-[1cqw] text-[2.6cqw] font-semibold text-black/55"><span class="size-[1.6cqw] rounded-full bg-[#1f9d4c]"></span>On the site</p>
+      <p class="mt-[0.5cqw] text-[9cqw] leading-none font-bold tracking-tight">126</p>
+      <p class="mt-auto text-[2.4cqw] font-semibold text-black/55">Most on Pricing</p>
+    </div>
+  </div>
+</div>

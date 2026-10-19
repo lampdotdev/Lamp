@@ -21,7 +21,7 @@ enum Simulator {
     /// already booted, else the newest available, among those on a runtime the apps can run on. Sorted by name
     /// after the runtime, so the choice is the same every time.
     static func device(_ family: DeviceFamily = .iphone, preferring chosen: String? = nil) -> String? {
-        let listing = Subprocess.runBlocking("/usr/bin/xcrun", ["simctl", "list", "devices", "available", "-j"], mergeErrors: false, timeout: 30).output
+        let listing = Subprocess.runBlocking(DeveloperTools.path("simctl"), ["list", "devices", "available", "-j"], mergeErrors: false, timeout: 30).output
         if let chosen, choices(listing: listing).contains(where: { $0.udid == chosen }) { return chosen }
         return device(family, listing: listing)
     }
@@ -69,7 +69,7 @@ enum Simulator {
     }
 
     static func choices() async -> [Choice] {
-        choices(listing: await Subprocess.run("/usr/bin/xcrun", ["simctl", "list", "devices", "available", "-j"], mergeErrors: false, timeout: 30).output)
+        choices(listing: await Subprocess.run(DeveloperTools.path("simctl"), ["list", "devices", "available", "-j"], mergeErrors: false, timeout: 30).output)
     }
 
     /// The name of a simulator, for saying where the app opened. Asked without waiting on the main thread:
@@ -100,20 +100,20 @@ enum Simulator {
 
     /// Boots the iPhone (a no-op when it already is) and opens the Simulator app so the user can see it.
     static func boot(_ udid: String, show: Bool) async throws {
-        _ = await Subprocess.run("/usr/bin/xcrun", ["simctl", "boot", udid], timeout: 60)   // "already booted" is fine
-        let status = await Subprocess.run("/usr/bin/xcrun", ["simctl", "bootstatus", udid, "-b"], timeout: 120)
+        _ = await Subprocess.run(DeveloperTools.path("simctl"), ["boot", udid], timeout: 60)   // "already booted" is fine
+        let status = await Subprocess.run(DeveloperTools.path("simctl"), ["bootstatus", udid, "-b"], timeout: 120)
         guard status.ok else { throw Failure(message: "The simulator didn't start.") }
         if show { await self.show(udid) }
     }
 
     static func install(_ app: URL, on udid: String) async throws {
-        let result = await Subprocess.run("/usr/bin/xcrun", ["simctl", "install", udid, app.path], timeout: 120)
+        let result = await Subprocess.run(DeveloperTools.path("simctl"), ["install", udid, app.path], timeout: 120)
         guard result.ok else { throw Failure(message: "Couldn't put the app on the simulator: \(result.output.trimmed)") }
     }
 
     /// Launches the app with its output going to `log`. Returns its process id.
     static func launch(_ bundleID: String, on udid: String, log: URL) async throws -> Int32 {
-        let result = await Subprocess.run("/usr/bin/xcrun", ["simctl", "launch", "--stdout=\(log.path)", "--stderr=\(log.path)", udid, bundleID],
+        let result = await Subprocess.run(DeveloperTools.path("simctl"), ["launch", "--stdout=\(log.path)", "--stderr=\(log.path)", udid, bundleID],
                                           mergeErrors: false, timeout: 60)
         // "bundle.id: 12345"
         guard result.ok, let pid = result.output.split(separator: ":").last.flatMap({ Int32(String($0).trimmed) }) else {
@@ -127,7 +127,7 @@ enum Simulator {
     /// that can't be done (no watchOS added to Xcode, or none that pairs with this iPhone's iOS).
     static func pairedWatch(of phone: String) async -> String? {
         guard !Pretend.isMissing("watch") else { return nil }
-        let pairs = await Subprocess.run("/usr/bin/xcrun", ["simctl", "list", "pairs", "-j"], mergeErrors: false, timeout: 30).output
+        let pairs = await Subprocess.run(DeveloperTools.path("simctl"), ["list", "pairs", "-j"], mergeErrors: false, timeout: 30).output
         if let data = pairs.data(using: .utf8),
            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
            let list = json["pairs"] as? [String: [String: Any]] {
@@ -136,7 +136,7 @@ enum Simulator {
             let ordered = mine.sorted { (($0["state"] as? String) ?? "").contains("active") && !(($1["state"] as? String) ?? "").contains("active") }
             if let watch = (ordered.first?["watch"] as? [String: Any])?["udid"] as? String { return watch }
         }
-        let runtimes = await Subprocess.run("/usr/bin/xcrun", ["simctl", "list", "runtimes", "-j"], mergeErrors: false, timeout: 30).output
+        let runtimes = await Subprocess.run(DeveloperTools.path("simctl"), ["list", "runtimes", "-j"], mergeErrors: false, timeout: 30).output
         guard let data = runtimes.data(using: .utf8),
               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let list = json["runtimes"] as? [[String: Any]] else { return nil }
@@ -147,17 +147,17 @@ enum Simulator {
             guard let id = runtime["identifier"] as? String,
                   let types = runtime["supportedDeviceTypes"] as? [[String: Any]],
                   let type = types.last(where: { ($0["productFamily"] as? String) == "Apple Watch" })?["identifier"] as? String else { continue }
-            let made = await Subprocess.run("/usr/bin/xcrun", ["simctl", "create", "Apple Watch", type, id], mergeErrors: false, timeout: 60)
+            let made = await Subprocess.run(DeveloperTools.path("simctl"), ["create", "Apple Watch", type, id], mergeErrors: false, timeout: 60)
             let watch = made.output.trimmed
             guard made.ok, !watch.isEmpty else { continue }
-            if await Subprocess.run("/usr/bin/xcrun", ["simctl", "pair", watch, phone], timeout: 60).ok { return watch }
-            _ = await Subprocess.run("/usr/bin/xcrun", ["simctl", "delete", watch], timeout: 60)
+            if await Subprocess.run(DeveloperTools.path("simctl"), ["pair", watch, phone], timeout: 60).ok { return watch }
+            _ = await Subprocess.run(DeveloperTools.path("simctl"), ["delete", watch], timeout: 60)
         }
         return nil
     }
 
     static func terminate(_ bundleID: String, on udid: String) async {
-        _ = await Subprocess.run("/usr/bin/xcrun", ["simctl", "terminate", udid, bundleID], timeout: 30)
+        _ = await Subprocess.run(DeveloperTools.path("simctl"), ["terminate", udid, bundleID], timeout: 30)
     }
 
     /// Whether the launched app is still running (it crashed if not).
@@ -166,9 +166,9 @@ enum Simulator {
     /// A picture of the iPhone's screen, at the screen's size in points rather than pixels: smaller for the
     /// model to look at, and a pixel in it is a point on the screen, so the agent's aim needs no scaling.
     static func screenshot(on udid: String, to file: URL) async -> Bool {
-        guard await Subprocess.run("/usr/bin/xcrun", ["simctl", "io", udid, "screenshot", "--type=png", file.path], timeout: 30).ok else { return false }
-        if let scale = Double((await Subprocess.run("/usr/bin/xcrun", ["simctl", "getenv", udid, "SIMULATOR_MAINSCREEN_SCALE"], timeout: 20)).output.trimmed),
-           let width = Double((await Subprocess.run("/usr/bin/xcrun", ["simctl", "getenv", udid, "SIMULATOR_MAINSCREEN_WIDTH"], timeout: 20)).output.trimmed),
+        guard await Subprocess.run(DeveloperTools.path("simctl"), ["io", udid, "screenshot", "--type=png", file.path], timeout: 30).ok else { return false }
+        if let scale = Double((await Subprocess.run(DeveloperTools.path("simctl"), ["getenv", udid, "SIMULATOR_MAINSCREEN_SCALE"], timeout: 20)).output.trimmed),
+           let width = Double((await Subprocess.run(DeveloperTools.path("simctl"), ["getenv", udid, "SIMULATOR_MAINSCREEN_WIDTH"], timeout: 20)).output.trimmed),
            scale > 1 {
             _ = await Subprocess.run("/usr/bin/sips", ["--resampleWidth", String(Int(width / scale)), file.path], timeout: 30)
         }
@@ -371,9 +371,9 @@ extension Simulator {
                 }
             }
             guard let (pid, oneAtATime) = found else { return .failure(.notOpen) }
-            let width = Double((await Subprocess.run("/usr/bin/xcrun", ["simctl", "getenv", udid, "SIMULATOR_MAINSCREEN_WIDTH"], timeout: 20)).output.trimmed) ?? 0
-            let height = Double((await Subprocess.run("/usr/bin/xcrun", ["simctl", "getenv", udid, "SIMULATOR_MAINSCREEN_HEIGHT"], timeout: 20)).output.trimmed) ?? 0
-            let scale = Double((await Subprocess.run("/usr/bin/xcrun", ["simctl", "getenv", udid, "SIMULATOR_MAINSCREEN_SCALE"], timeout: 20)).output.trimmed) ?? 0
+            let width = Double((await Subprocess.run(DeveloperTools.path("simctl"), ["getenv", udid, "SIMULATOR_MAINSCREEN_WIDTH"], timeout: 20)).output.trimmed) ?? 0
+            let height = Double((await Subprocess.run(DeveloperTools.path("simctl"), ["getenv", udid, "SIMULATOR_MAINSCREEN_HEIGHT"], timeout: 20)).output.trimmed) ?? 0
+            let scale = Double((await Subprocess.run(DeveloperTools.path("simctl"), ["getenv", udid, "SIMULATOR_MAINSCREEN_SCALE"], timeout: 20)).output.trimmed) ?? 0
             guard width > 0, height > 0, scale > 0 else { return .failure(.noDevice) }
             let app = AXUIElementCreateApplication(pid)
             // Each window is titled "<device> – <runtime>", which is the whole identity it shows: the one
@@ -1180,7 +1180,7 @@ extension Simulator {
 
         /// The Simulator window's title for a device: "iPhone 16 – iOS 18.6", from its name and runtime.
         private static func deviceTitle(_ udid: String) -> String? {
-            let listing = Subprocess.runBlocking("/usr/bin/xcrun", ["simctl", "list", "devices", "-j"], mergeErrors: false, timeout: 30).output
+            let listing = Subprocess.runBlocking(DeveloperTools.path("simctl"), ["list", "devices", "-j"], mergeErrors: false, timeout: 30).output
             guard let data = listing.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let devices = json["devices"] as? [String: [[String: Any]]] else { return nil }

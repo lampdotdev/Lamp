@@ -1,1 +1,6 @@
-{"subject": "a row of books on a shelf", "symbol": "books.vertical.fill", "background": "blue", "tint": "#FFFFFF"}
+{
+  "subject": "three white books standing side by side, of different heights, each with a pale orange band on its spine",
+  "symbol": "books.vertical.fill",
+  "background": "orange",
+  "tint": "#FFFFFF"
+}

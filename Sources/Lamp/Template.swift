@@ -67,24 +67,53 @@ enum Template {
         try writeOwnedFiles(for: project)   // Package.swift last: it's what marks the app as no longer a draft
     }
 
-    /// Per-app secret the app sends to Lamp's AI gateway. Created on first use.
-    static func token(for project: LampProject) -> String {
-        let url = project.dir.appendingPathComponent(".lamp/token")
-        if let token = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !token.isEmpty { return token }
-        let token = UUID().uuidString + UUID().uuidString
-        try? token.write(to: url, atomically: true, encoding: .utf8)
-        return token
+    /// A secret Lamp made for the app and keeps in its folder, or nil to make a new one. It's written into the
+    /// app's own code, where the agent reads it, so it's read as `AppFile` reads (never through a link the agent
+    /// put in its place) and only as Lamp writes them: letters, digits and dashes.
+    static func ownSecret(at url: URL, in project: LampProject) -> String? {
+        guard let text = AppFile.text(url, in: project)?.trimmed, !text.isEmpty, text.count <= 128,
+              text.unicodeScalars.allSatisfy({ ($0.isASCII && CharacterSet.alphanumerics.contains($0)) || $0 == "-" }) else { return nil }
+        return text
     }
 
-    /// A second secret for iPhone apps, which only ever reaches the phone inside the build (over the cable
-    /// or Xcode's install), never over the network: what the keys an app keeps are sealed with, so a copy of
-    /// the Wi‑Fi traffic, token and all, gives nobody the key.
-    static func phoneSecret(for project: LampProject) -> String {
-        let url = project.dir.appendingPathComponent(".lamp/phone-secret")
+    /// Per-app secret the app sends to Lamp's AI gateway. Created on first use.
+    static func token(for project: LampProject) -> String {
+        secret(".lamp/token", for: project)
+    }
+
+    /// A second secret for iPhone apps, what the keys a phone keeps are sealed with (`Store.keysForPhone`), so a
+    /// copy of the Wi‑Fi traffic, token and all, gives nobody the key. It's kept in the folder the phone is built
+    /// in (`Devices.buildFolder`), in Lamp's own folder, and goes only into the Info.plist written there: never
+    /// into the app's folder, which the agent's commands read, since with the token there and the secret beside
+    /// it a command could ask for the keys and open them. Created on first use.
+    static func phoneSecret(in folder: URL) -> String {
+        let url = folder.appendingPathComponent("phone-secret")
         if let secret = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !secret.isEmpty { return secret }
         let secret = UUID().uuidString + UUID().uuidString
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try? secret.write(to: url, atomically: true, encoding: .utf8)
         return secret
+    }
+
+    /// One of the app's secrets, kept in its folder and made on first use: read as `ownSecret` reads it, and written
+    /// without following a link (`AppFolder`), since it goes into the code the agent reads.
+    private static func secret(_ path: String, for project: LampProject) -> String {
+        let url = project.dir.appendingPathComponent(path)
+        if let saved = ownSecret(at: url, in: project) { return saved }
+        let made = UUID().uuidString + UUID().uuidString
+        try? AppFolder.write(made, to: url, in: project.dir)
+        return made
+    }
+
+    /// Writes one of Lamp's own files into the app's folder when it isn't already what it should be (so its date
+    /// moves only when the app needs a rebuild), without following a link on the way (`AppFolder`), and
+    /// executable when asked.
+    static func put(_ contents: String, at url: URL, for project: LampProject, executable: Bool = false) throws {
+        if AppFile.read(url, in: project) != Data(contents.utf8) {
+            try AppFolder.write(contents, to: url, in: project.dir, mode: executable ? 0o755 : 0o644)
+        } else if executable {
+            try AppFolder.setMode(0o755, of: url, in: project.dir)
+        }
     }
 
     /// The three files Lamp owns in every app, written afresh before every build: LampSupport.swift, build.sh
@@ -93,29 +122,32 @@ enum Template {
     /// the agent read, put in them ever runs: they're replaced, not checked. A failure to write any of them is
     /// a failure to build, since the old file would be what runs.
     static func writeOwnedFiles(for project: LampProject) throws {
+        // Where an earlier Lamp kept the phone's secret, readable by the agent's commands; a new one is made in
+        // Lamp's own folder (`phoneSecret(in:)`).
+        AppFolder.remove(project.dir.appendingPathComponent(".lamp/phone-secret"), in: project.dir)
         try writeSupport(for: project)
         let widget = hasWidget(project)
         let share = hasShare(project)
         // The simulator build's entitlements, for build.sh to put in the binary (see iPhoneBuildSh), and each
         // extension's beside them.
         if project.platform.hasIOS {
-            try Capabilities.load(project).simulatorEntitlementsPlist(for: project)
-                .write(to: project.dir.appendingPathComponent(".lamp/entitlements.plist"), atomically: true, encoding: .utf8)
+            try put(Capabilities.load(project).simulatorEntitlementsPlist(for: project),
+                    at: project.dir.appendingPathComponent(".lamp/entitlements.plist"), for: project)
             for (has, suffix) in [(widget, "widget"), (share, "share")] {
                 let entitlements = project.dir.appendingPathComponent(".lamp/\(suffix)-entitlements.plist")
                 if has {
-                    try simulatorExtensionEntitlementsPlist(for: project, suffix: suffix).write(to: entitlements, atomically: true, encoding: .utf8)
+                    try put(simulatorExtensionEntitlementsPlist(for: project, suffix: suffix), at: entitlements, for: project)
                 } else {
-                    try? FileManager.default.removeItem(at: entitlements)
+                    AppFolder.remove(entitlements, in: project.dir)
                 }
             }
             try linkSharedWidgetCode(for: project)
             // The watch app's, for build.sh to put in its binaries the same way.
             let watchEntitlements = project.dir.appendingPathComponent(".lamp/watch-entitlements.plist")
             if hasWatch(project) {
-                try simulatorWatchEntitlementsPlist(for: project).write(to: watchEntitlements, atomically: true, encoding: .utf8)
+                try put(simulatorWatchEntitlementsPlist(for: project), at: watchEntitlements, for: project)
             } else {
-                try? FileManager.default.removeItem(at: watchEntitlements)
+                AppFolder.remove(watchEntitlements, in: project.dir)
             }
         }
         switch project.platform {
@@ -162,12 +194,9 @@ enum Template {
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
             .replacingOccurrences(of: "{{BUNDLE}}", with: project.bundleID)
         let url = project.dir.appendingPathComponent(path)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        // Left alone when it's already right, so its date only moves when the app needs a rebuild.
-        if (try? String(contentsOf: url, encoding: .utf8)) != contents {
-            try contents.write(to: url, atomically: true, encoding: .utf8)
-        }
-        if executable { try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path) }
+        // Never makes the app's folder itself, which would leave a folder of build files where an app was.
+        guard FileManager.default.fileExists(atPath: project.dir.path) else { throw CocoaError(.fileNoSuchFile) }
+        try put(contents, at: url, for: project, executable: executable)
     }
 
     /// Lamp owns LampSupport.swift and rewrites it before every agent turn and build,
@@ -183,7 +212,6 @@ enum Template {
             .replacingOccurrences(of: "{{HOST}}", with: Edition.bundleID)
             .replacingOccurrences(of: "{{APPS}}", with: Edition.supportFolder.appendingPathComponent("Apps").path)
             .replacingOccurrences(of: "{{MACHOST}}", with: Devices.macHost)
-            .replacingOccurrences(of: "{{PHONE_SECRET}}", with: project.platform.hasIOS ? phoneSecret(for: project) : "")
             .replacingOccurrences(of: "{{WIDGET_PORT}}", with: String(widgetPort(for: project)))
             .replacingOccurrences(of: "{{WIDGET_TOKEN}}", with: project.platform == .mac ? widgetToken(for: project) : "")
             .replacingOccurrences(of: "{{SIDEBAR_PORT}}", with: String(sidebarPort(for: project)))
@@ -192,10 +220,7 @@ enum Template {
             .replacingOccurrences(of: "{{SIDEBAR_KEY}}", with: project.platform.hasMac ? sidebarKey(for: project) : "")
             .replacingOccurrences(of: "{{SIDEBAR_FRAMER}}", with: sidebarFramer)
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
-        let url = project.dir.appendingPathComponent("Sources/LampSupport.swift")
-        if (try? String(contentsOf: url, encoding: .utf8)) != contents {
-            try contents.write(to: url, atomically: true, encoding: .utf8)
-        }
+        try put(contents, at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
         try writeWidgetSupport(for: project)
         try writeShareSupport(for: project)
         try writeWatchSupport(for: project)
@@ -342,10 +367,10 @@ enum Template {
         var isFolder: ObjCBool = false
         if hasWidget(project), fm.fileExists(atPath: shared.path, isDirectory: &isFolder), isFolder.boolValue {
             guard (try? fm.destinationOfSymbolicLink(atPath: link.path)) != target else { return }
-            if isLink { try fm.removeItem(at: link) } else if fm.fileExists(atPath: link.path) { return }
-            try fm.createSymbolicLink(atPath: link.path, withDestinationPath: target)
+            if !isLink, fm.fileExists(atPath: link.path) { return }
+            try AppFolder.link(link, to: target, in: project.dir)
         } else if isLink {
-            try fm.removeItem(at: link)
+            AppFolder.remove(link, in: project.dir)
         }
     }
 
@@ -459,7 +484,8 @@ enum Template {
     """
 
     /// An app for both: the simulator's build is the iPhone's, and the Mac's is Xcode's, from the project
-    /// Lamp writes under .lamp/device, signed for the team Lamp was given (LAMP_TEAM, from Settings → Building).
+    /// Lamp writes under .lamp/device, with signing off: it runs in the app's sandbox, where the person's keys
+    /// aren't, and Lamp signs a copy of it for the team (LAMP_TEAM, from Settings → Building) when it installs it.
     static var universalBuildSh: String { universalBuildSh(widget: false) }
 
     static func universalBuildSh(widget: Bool, share: Bool = false) -> String {
@@ -476,7 +502,8 @@ enum Template {
         \(ios)
           exit 0
         fi
-        # The Mac build is Xcode's, signed for the person's Apple team, so the app can use what Apple ties to a team.
+        # The Mac build is Xcode's, for the person's Apple team, so the app can use what Apple ties to a team. Lamp signs
+        # it for the team when it installs it (Store.deploy): this build runs in the app's sandbox, without the keys.
         if [[ -z "${LAMP_TEAM:-}" ]]; then
           echo "The Mac build of an app for both needs your Apple team: choose it in Lamp's Settings → Building." >&2
           exit 1
@@ -510,7 +537,7 @@ enum Template {
             "SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG LAMP_LIVE" "OTHER_LDFLAGS=-Xlinker -interposable $RESTRICT_FLAGS")
         fi
         xcodebuild -project "$PROJECT/{{EXE}}.xcodeproj" -scheme "{{EXE}}" -configuration Release -destination "platform=macOS" \\
-          -derivedDataPath "$PROJECT/DerivedData" -allowProvisioningUpdates -allowProvisioningDeviceRegistration \\
+          -derivedDataPath "$PROJECT/DerivedData" CODE_SIGNING_ALLOWED=NO \\
           DEVELOPMENT_TEAM="$LAMP_TEAM" "OTHER_LDFLAGS=$RESTRICT_FLAGS" "${LIVE_SETTINGS[@]}" build 2>&1
         APP="build/{{EXE}}.app"
         rm -rf "$APP"
@@ -893,11 +920,9 @@ enum Template {
         for (place, wanted) in places {
             let url = place.appendingPathComponent(watchSupportFile)
             if wanted {
-                if (try? String(contentsOf: url, encoding: .utf8)) != lampWatchSupportSwift {
-                    try lampWatchSupportSwift.write(to: url, atomically: true, encoding: .utf8)
-                }
+                try put(lampWatchSupportSwift, at: url, for: project)
             } else if fm.fileExists(atPath: url.path) {
-                try fm.removeItem(at: url)
+                AppFolder.remove(url, in: project.dir)
             }
         }
     }
@@ -1042,16 +1067,16 @@ enum Template {
     /// An asset catalog holding the app's icon for watchOS, which takes its icon only from a compiled catalog:
     /// compiled into the simulator's watch app by `actool` (Store.finishSimulatorBundle), and the watch
     /// target's own catalog in the Xcode project.
-    static func writeWatchIconCatalog(at catalog: URL, icon: URL?) throws {
-        let fm = FileManager.default
+    /// `icon` is the picture, read by the caller as `AppFile` reads; `root` is the folder the catalog is written in (the
+    /// app's, or Lamp's own), where it isn't reached through a link (`AppFolder`).
+    static func writeWatchIconCatalog(at catalog: URL, icon picture: Data?, in root: URL) throws {
         let iconset = catalog.appendingPathComponent("AppIcon.appiconset")
-        try fm.createDirectory(at: iconset, withIntermediateDirectories: true)
-        try #"{ "info": { "author": "xcode", "version": 1 } }"#.write(to: catalog.appendingPathComponent("Contents.json"), atomically: true, encoding: .utf8)
-        try? fm.removeItem(at: iconset.appendingPathComponent("AppIcon.png"))
-        if let icon, fm.fileExists(atPath: icon.path) { try fm.copyItem(at: icon, to: iconset.appendingPathComponent("AppIcon.png")) }
-        let image = (icon.map { fm.fileExists(atPath: $0.path) } ?? false) ? #""filename": "AppIcon.png", "# : ""
-        try #"{ "images": [ { \#(image)"idiom": "universal", "platform": "watchos", "size": "1024x1024" } ], "info": { "author": "xcode", "version": 1 } }"#
-            .write(to: iconset.appendingPathComponent("Contents.json"), atomically: true, encoding: .utf8)
+        try AppFolder.write(#"{ "info": { "author": "xcode", "version": 1 } }"#, to: catalog.appendingPathComponent("Contents.json"), in: root)
+        AppFolder.remove(iconset.appendingPathComponent("AppIcon.png"), in: root)
+        if let picture { try AppFolder.write(picture, to: iconset.appendingPathComponent("AppIcon.png"), in: root) }
+        let image = picture != nil ? #""filename": "AppIcon.png", "# : ""
+        try AppFolder.write(#"{ "images": [ { \#(image)"idiom": "universal", "platform": "watchos", "size": "1024x1024" } ], "info": { "author": "xcode", "version": 1 } }"#,
+                            to: iconset.appendingPathComponent("Contents.json"), in: root)
     }
 
     /// The watch app's Info.plist in the Xcode project, for a phone or an app for both's iPhone half.
@@ -1749,23 +1774,37 @@ enum Template {
 
     // MARK: - On the person's own phone
 
-    /// The Xcode project that builds the app for a real iPhone or iPad, written under .lamp/device: one app
-    /// target over the package's Sources, with Xcode's automatic signing for the person's team, the icon in
-    /// an asset catalog and the app's own files (Assets/) copied in as a folder. Nothing else about the app changes:
-    /// Package.swift stays what the simulator and the agent build with.
-    static func writeDeviceProject(for project: LampProject, team: String) throws {
+    /// The Xcode project that builds the app for a real iPhone or iPad, and the Mac half of an app for both: one app
+    /// target over the package's Sources, the icon in an asset catalog and the app's own files (Assets/) copied in as
+    /// a folder. Nothing else about the app changes: Package.swift stays what the simulator and the agent build with.
+    /// The Mac half's is written in the app's folder (.lamp/device) and built there by build.sh; the phone's in
+    /// `folder`, Lamp's own (`Devices.buildFolder`), reading the copy of the app's files in `files` that
+    /// `Devices.stage` makes, since Xcode copies whatever a link in the app's own folder leads to. Both are built in
+    /// the app's sandbox with signing off, so nothing in them is trusted: what they're signed with comes from the same
+    /// project written `forSigning`, in Lamp's folder over Lamp's own code in `files` (`TeamSigning`).
+    static func writeDeviceProject(for project: LampProject, team: String, in folder: URL? = nil, reading files: URL? = nil,
+                                   forSigning: Bool = false) throws {
         let fm = FileManager.default
         let universal = project.platform == .universal
-        let dir = project.dir.appendingPathComponent(".lamp/device")
-        let xcodeproj = dir.appendingPathComponent("\(project.exe).xcodeproj")
-        try fm.createDirectory(at: xcodeproj.appendingPathComponent("xcshareddata/xcschemes"), withIntermediateDirectories: true)
-        Sharing.Assets.adopt(in: project)
-        try fm.createDirectory(at: project.dir.appendingPathComponent(Sharing.Assets.folder), withIntermediateDirectories: true)
+        let dir = folder ?? project.dir.appendingPathComponent(".lamp/device")
+        // Where its writes are kept to without following a link: the app's folder, or Lamp's own one.
+        let root = folder ?? project.dir
+        if let folder { try fm.createDirectory(at: folder, withIntermediateDirectories: true) }
+        // Where the watch complications' files are listed from: Lamp's own code for its signing project; otherwise the
+        // app's folder, since the phone's copy of the files is made only after its project is written.
+        let sources = forSigning ? (files ?? project.dir) : project.dir
+        if !forSigning {
+            Sharing.Assets.adopt(in: project)
+            try AppFolder.createDirectory(project.dir.appendingPathComponent(Sharing.Assets.folder), in: project.dir)
+        }
+        try AppFolder.createDirectory(dir.appendingPathComponent("\(project.exe).xcodeproj/xcshareddata/xcschemes"), in: root)
         let iconset = dir.appendingPathComponent("Assets.xcassets/AppIcon.appiconset")
-        try fm.createDirectory(at: iconset, withIntermediateDirectories: true)
-        try? fm.removeItem(at: iconset.appendingPathComponent("AppIcon.png"))
-        let hasIcon = fm.fileExists(atPath: Icons.squareURL(project).path)
-        if hasIcon { try fm.copyItem(at: Icons.squareURL(project), to: iconset.appendingPathComponent("AppIcon.png")) }
+        AppFolder.remove(iconset.appendingPathComponent("AppIcon.png"), in: root)
+        // The icon is read from the app's folder without following a link (`AppFile`). Lamp's signing project is never
+        // built into anything anyone runs, and needs none.
+        let icon = forSigning ? nil : AppFile.read(Icons.squareURL(project), in: project)
+        let hasIcon = icon != nil
+        if let icon { try AppFolder.write(icon, to: iconset.appendingPathComponent("AppIcon.png"), in: root) }
         let capabilities = Capabilities.load(project)
         let widget = hasWidget(project), share = hasShare(project)
         let group = appGroup(for: project, onDevice: true, team: team)
@@ -1774,16 +1813,17 @@ enum Template {
         if widget { pbxproj = withWidgetTarget(pbxproj) }
         if share { pbxproj = withShareTarget(pbxproj) }
         if watch {
-            let folder = project.dir.appendingPathComponent(watchFolder).appendingPathComponent(complicationsFolder)
-            let inComplications = (fm.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey])?.compactMap { $0 as? URL } ?? [])
+            let complicationsDir = sources.appendingPathComponent(watchFolder).appendingPathComponent(complicationsFolder)
+            let inComplications = (fm.enumerator(at: complicationsDir, includingPropertiesForKeys: [.isRegularFileKey])?.compactMap { $0 as? URL } ?? [])
                 .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
                 .compactMap { file -> String? in
-                    let path = file.standardizedFileURL.path, base = folder.standardizedFileURL.path + "/"
+                    let path = file.standardizedFileURL.path, base = complicationsDir.standardizedFileURL.path + "/"
                     return path.hasPrefix(base) ? complicationsFolder + "/" + path.dropFirst(base.count) : nil
                 }
                 .sorted()
             pbxproj = withWatchTarget(pbxproj, complications: complications, leftOut: inComplications)
         }
+        if folder != nil { pbxproj = reaching(files ?? project.dir, in: pbxproj) }
         var files: [(String, String)] = [
             ("\(project.exe).xcodeproj/project.pbxproj", pbxproj),
             ("App.entitlements", capabilities.entitlementsPlist(for: project, platform: .ios, appGroup: widget || share ? group : nil)),
@@ -1813,15 +1853,19 @@ enum Template {
         if watch {
             files.append(("Watch-Info.plist", deviceWatchInfoPlist))
             files.append(("Watch.entitlements", watchCapabilities(project).entitlementsPlist(container: nil, platform: .ios, appGroup: group)))
-            try writeWatchIconCatalog(at: dir.appendingPathComponent("WatchAssets.xcassets"), icon: hasIcon ? Icons.squareURL(project) : nil)
+            try writeWatchIconCatalog(at: dir.appendingPathComponent("WatchAssets.xcassets"), icon: icon, in: root)
         }
         if complications {
             files.append(("Complications-Info.plist", deviceComplicationsInfoPlist))
             files.append(("Complications.entitlements", Capabilities().entitlementsPlist(container: nil, platform: .ios, appGroup: group)))
         }
         let widgetPlist = widget || share ? appGroupPlistLines(group: group, liveActivities: widget) : ""
+        // Only the phone's project, in Lamp's own folder, carries the secret its keys are sealed with; the one an
+        // app for both keeps under .lamp/device for its Mac half is in the app's folder and never goes to a phone.
+        let secret = folder != nil && !forSigning && project.platform.hasIOS ? phoneSecret(in: dir) : ""
         for (path, template) in files {
             let contents = template
+                .replacingOccurrences(of: "{{PHONE_SECRET}}", with: secret)
                 .replacingOccurrences(of: "{{WIDGET_PLIST}}", with: widgetPlist)
                 .replacingOccurrences(of: "{{APP_GROUP}}", with: group)
                 .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
@@ -1834,14 +1878,23 @@ enum Template {
                 .replacingOccurrences(of: "{{BUNDLE}}", with: universal ? project.bundleID : project.deviceBundleID(team: team))
                 .replacingOccurrences(of: "{{TEAM}}", with: team)
             let url = dir.appendingPathComponent(path)
-            if (try? String(contentsOf: url, encoding: .utf8)) != contents {
-                try contents.write(to: url, atomically: true, encoding: .utf8)
-            }
+            if AppFile.read(url, inFolder: root) != Data(contents.utf8) { try AppFolder.write(contents, to: url, in: root) }
         }
+    }
+
+    /// The project names the app's folders by where it sits inside the app (../../Sources). Written anywhere
+    /// else, it names them by their full path.
+    static func reaching(_ app: URL, in pbxproj: String) -> String {
+        let base = app.standardizedFileURL.path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let pattern = try! NSRegularExpression(pattern: #"path = \.\./\.\./([^;"]+); sourceTree = "<group>";"#)
+        return pattern.stringByReplacingMatches(in: pbxproj, range: NSRange(pbxproj.startIndex..., in: pbxproj),
+                                                withTemplate: NSRegularExpression.escapedTemplate(for: "path = \"\(base)/") + "$1\"; sourceTree = \"<absolute>\";")
     }
 
     /// Xcode 16's project format: the Sources folder is a synchronized group, so every file in it is in
     /// the target without being listed here. Only a Release configuration, which is what's built.
+    /// `-disable-sandbox`: the compiler runs Swift's macros in a helper with a sandbox of its own, which macOS
+    /// won't start inside the app's (`Sandbox`), where this project is built.
     static let devicePbxproj = """
     // !$*UTF8*$!
     {
@@ -1865,7 +1918,7 @@ enum Template {
     		A0000000000000000000000F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; TargetAttributes = {A0000000000000000000000B = {CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = A00000000000000000000010; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A00000000000000000000009; minimizedProjectReferenceProxies = 1; preferredProjectObjectVersion = 77; productRefGroup = A0000000000000000000000A /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A0000000000000000000000B /* {{EXE}} */); };
     		A0000000000000000000000E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* Assets in Resources */, A00000000000000000000003 /* Assets.xcassets in Resources */); runOnlyForDeploymentPostprocessing = 0; };
     		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-    		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MTL_ENABLE_DEBUG_INFO = NO; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
+    		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MTL_ENABLE_DEBUG_INFO = NO; OTHER_SWIFT_FLAGS = "$(inherited) -disable-sandbox"; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
     		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = App.entitlements; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
     		A00000000000000000000010 /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000011 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
     		A0000000000000000000000C /* Build configuration list for PBXNativeTarget */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000012 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
@@ -1915,6 +1968,7 @@ enum Template {
       <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
       <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
       <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+      <key>LampPhoneSecret</key><string>{{PHONE_SECRET}}</string>
     {{USAGE}}
     {{BACKGROUND}}
     {{ICLOUD}}
@@ -1949,7 +2003,7 @@ enum Template {
     		A0000000000000000000000F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; TargetAttributes = {A0000000000000000000000B = {CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = A00000000000000000000010; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A00000000000000000000009; minimizedProjectReferenceProxies = 1; preferredProjectObjectVersion = 77; productRefGroup = A0000000000000000000000A /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A0000000000000000000000B /* {{EXE}} */); };
     		A0000000000000000000000E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* Assets in Resources */, A00000000000000000000003 /* Assets.xcassets in Resources */); runOnlyForDeploymentPostprocessing = 0; };
     		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-    		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MACOSX_DEPLOYMENT_TARGET = 14.0; MTL_ENABLE_DEBUG_INFO = NO; SDKROOT = auto; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
+    		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MACOSX_DEPLOYMENT_TARGET = 14.0; MTL_ENABLE_DEBUG_INFO = NO; OTHER_SWIFT_FLAGS = "$(inherited) -disable-sandbox"; SDKROOT = auto; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
     		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {"ASSETCATALOG_COMPILER_APPICON_NAME[sdk=iphone*]" = AppIcon; CODE_SIGN_ENTITLEMENTS = App.entitlements; "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "App-macOS.entitlements"; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; "INFOPLIST_FILE[sdk=macosx*]" = "Info-macOS.plist"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); "LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = ("$(inherited)", "@executable_path/../Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
     		A00000000000000000000010 /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000011 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
     		A0000000000000000000000C /* Build configuration list for PBXNativeTarget */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000012 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
@@ -2157,8 +2211,7 @@ enum Template {
     struct LampWidgetWand: View {
         var body: some View {
             Link(destination: URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!) {
-                Image(systemName: "wand.and.sparkles")
-                    .font(.system(size: 11, weight: .medium))
+                LampGlyph.Mark(size: 11)
                     .foregroundStyle(.secondary)
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
@@ -2356,7 +2409,110 @@ enum Template {
         }
     }
 
+    """# + lampGlyphSwift
+
+    /// Lamp's flame in place of a symbol, where an app shows the way to change it with Lamp (the wand at the top
+    /// right of its windows, its menu bar panel and menu, its widget): drawn as the system's own `flame` symbol is,
+    /// the icon's outer flame as an outline and its inner one filled, at a symbol's size and weight. It's in
+    /// LampSupport.swift and in the widget's own file, which shares nothing else with it.
+    static let lampGlyphSwift = #"""
+
+    /// Lamp's flame, drawn like an SF Symbol: the app icon's outer flame as an outline, its inner flame filled.
+    enum LampGlyph {
+        /// Width over height.
+        static let aspect: CGFloat = 516 / 725
+
+        /// The two flames in a box one unit tall, y down, from the icon's own drawing. The inner one is smaller
+        /// than in the icon, about its foot, so the outline has room around it at a symbol's size.
+        static let paths: (outer: CGPath, inner: CGPath) = {
+            func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: (x - 254) / 725, y: (y - 150) / 725) }
+            let outer = CGMutablePath()
+            outer.move(to: p(540, 150))
+            outer.addCurve(to: p(770, 600), control1: p(560, 290), control2: p(770, 380))
+            outer.addCurve(to: p(512, 875), control1: p(770, 755), control2: p(655, 875))
+            outer.addCurve(to: p(254, 600), control1: p(369, 875), control2: p(254, 755))
+            outer.addCurve(to: p(398, 325), control1: p(254, 465), control2: p(335, 395))
+            outer.addCurve(to: p(482, 472), control1: p(408, 405), control2: p(440, 450))
+            outer.addCurve(to: p(540, 150), control1: p(468, 350), control2: p(492, 250))
+            outer.closeSubpath()
+            let inner = CGMutablePath()
+            inner.move(to: p(524, 388))
+            inner.addCurve(to: p(662, 648), control1: p(560, 476), control2: p(662, 525))
+            inner.addCurve(to: p(512, 812), control1: p(662, 748), control2: p(597, 812))
+            inner.addCurve(to: p(362, 648), control1: p(427, 812), control2: p(362, 748))
+            inner.addCurve(to: p(452, 474), control1: p(362, 565), control2: p(418, 522))
+            inner.addCurve(to: p(500, 558), control1: p(462, 524), control2: p(480, 548))
+            inner.addCurve(to: p(524, 388), control1: p(494, 486), control2: p(502, 436))
+            inner.closeSubpath()
+            let foot = p(512, 812)
+            var smaller = CGAffineTransform(translationX: foot.x, y: foot.y).scaledBy(x: 0.72, y: 0.72)
+                .translatedBy(x: -foot.x, y: -foot.y)
+            return (outer, inner.copy(using: &smaller) ?? inner)
+        }()
+
+        /// The outline's width as a share of the point size, as heavy as a symbol's lines at that weight.
+        static func line(_ weight: NSFont.Weight) -> CGFloat {
+            switch weight.rawValue {
+            case ..<NSFont.Weight.regular.rawValue: 0.062
+            case ..<NSFont.Weight.medium.rawValue: 0.07
+            case ..<NSFont.Weight.semibold.rawValue: 0.075
+            case ..<NSFont.Weight.bold.rawValue: 0.085
+            default: 0.095
+            }
+        }
+
+        /// An image as a symbol at that point size would be: a template, which a button tints as it does a symbol,
+        /// unless it's given a colour of its own.
+        static func image(pointSize: CGFloat, weight: NSFont.Weight, color: NSColor? = nil,
+                          description: String = "Customize This App") -> NSImage {
+            let width = pointSize * line(weight)
+            let size = NSSize(width: (pointSize * aspect + width).rounded(.up), height: (pointSize + width).rounded(.up))
+            let image = NSImage(size: size, flipped: true) { box in
+                guard let context = NSGraphicsContext.current?.cgContext else { return false }
+                let ink = (color ?? .black).cgColor
+                context.translateBy(x: (box.width - pointSize * aspect) / 2, y: (box.height - pointSize) / 2)
+                context.scaleBy(x: pointSize, y: pointSize)
+                context.addPath(paths.outer)
+                context.setLineWidth(width / pointSize)
+                context.setLineJoin(.round)
+                context.setStrokeColor(ink)
+                context.strokePath()
+                context.addPath(paths.inner)
+                context.setFillColor(ink)
+                context.fillPath()
+                return true
+            }
+            image.isTemplate = color == nil
+            image.accessibilityDescription = description
+            return image
+        }
+
+        /// The flame in SwiftUI, as tall as `size` points, in the foreground style.
+        struct Mark: View {
+            var size: CGFloat
+            var weight: NSFont.Weight = .medium
+
+            var body: some View {
+                ZStack {
+                    Flame(inner: false).stroke(style: StrokeStyle(lineWidth: size * LampGlyph.line(weight), lineJoin: .round))
+                    Flame(inner: true).fill()
+                }
+                .frame(width: size * LampGlyph.aspect, height: size)
+                .padding(size * LampGlyph.line(weight) / 2)
+            }
+        }
+
+        private struct Flame: Shape {
+            let inner: Bool
+
+            func path(in rect: CGRect) -> Path {
+                Path(inner ? LampGlyph.paths.inner : LampGlyph.paths.outer)
+                    .applying(CGAffineTransform(translationX: rect.minX, y: rect.minY).scaledBy(x: rect.height, y: rect.height))
+            }
+        }
+    }
     """#
+
 
     /// Where the app listens for its widget: a port of its own from the range macOS leaves to programs, the
     /// same for every build of the app, since the widget is built knowing it.
@@ -2401,11 +2557,7 @@ enum Template {
     }
     /// The key the sidebar page's calls carry: Lamp hands it to Chrome's sidebar with the page's address.
     static func sidebarKey(for project: LampProject) -> String {
-        let url = project.dir.appendingPathComponent(".lamp/sidebar-key")
-        if let key = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !key.isEmpty { return key }
-        let key = UUID().uuidString + UUID().uuidString
-        try? key.write(to: url, atomically: true, encoding: .utf8)
-        return key
+        secret(".lamp/sidebar-key", for: project)
     }
     /// Only Lamp's extension may frame an app's sidebar page.
     static var sidebarFramer: String {
@@ -2420,11 +2572,7 @@ enum Template {
 
     /// The secret an app and its widget are both built with, so the app answers its own widget and nobody else.
     static func widgetToken(for project: LampProject) -> String {
-        let url = project.dir.appendingPathComponent(".lamp/widget-token")
-        if let token = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !token.isEmpty { return token }
-        let token = UUID().uuidString + UUID().uuidString
-        try? token.write(to: url, atomically: true, encoding: .utf8)
-        return token
+        secret(".lamp/widget-token", for: project)
     }
 
     /// Lamp's own file in a widget's folder, written like LampSupport.swift: before every turn and build.
@@ -2436,10 +2584,7 @@ enum Template {
             .replacingOccurrences(of: "{{WIDGET_TOKEN}}", with: widgetToken(for: project))
             .replacingOccurrences(of: "{{SCHEME}}", with: Edition.urlScheme)
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
-        let url = project.dir.appendingPathComponent(widgetFolder).appendingPathComponent(widgetSupportFile)
-        if (try? String(contentsOf: url, encoding: .utf8)) != contents {
-            try contents.write(to: url, atomically: true, encoding: .utf8)
-        }
+        try put(contents, at: project.dir.appendingPathComponent(widgetFolder).appendingPathComponent(widgetSupportFile), for: project)
     }
 
     // MARK: - Share extensions
@@ -2472,10 +2617,7 @@ enum Template {
     /// Lamp's own file in the Share folder, written like LampSupport.swift: before every turn and build.
     static func writeShareSupport(for project: LampProject) throws {
         guard hasShare(project) else { return }
-        let url = project.dir.appendingPathComponent(shareFolder).appendingPathComponent(shareSupportFile)
-        if (try? String(contentsOf: url, encoding: .utf8)) != lampShareSupportSwift {
-            try lampShareSupportSwift.write(to: url, atomically: true, encoding: .utf8)
-        }
+        try put(lampShareSupportSwift, at: project.dir.appendingPathComponent(shareFolder).appendingPathComponent(shareSupportFile), for: project)
     }
 
     /// The share extension's side of `LampShare`, one source for the Mac and iOS. The system starts
@@ -3014,7 +3156,7 @@ enum Template {
 
     """
 
-    static let lampSupportSwift = Connectors.fill(lampSupportTemplate)
+    static let lampSupportSwift = Connectors.fill(lampSupportTemplate) + "\n#if os(macOS)" + lampGlyphSwift + "#endif\n"
 
     private static let lampSupportTemplate = #"""
     // Generated by Lamp before every build. Don't edit: changes are overwritten.
@@ -3128,6 +3270,7 @@ enum Template {
                     if let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                        let sealed = (reply["sealed"] as? String).flatMap({ Data(base64Encoded: $0) }),
                        let box = try? AES.GCM.SealedBox(combined: sealed),
+                       let sealingKey,
                        let opened = try? AES.GCM.open(box, using: sealingKey),
                        let keys = try? JSONSerialization.jsonObject(with: opened) as? [String: Any] {
                         save(keys)
@@ -3143,7 +3286,11 @@ enum Template {
             }
         }
 
-        private static var sealingKey: SymmetricKey { SymmetricKey(data: SHA256.hash(data: Data("{{PHONE_SECRET}}".utf8))) }
+        /// From the secret Lamp put in this build's Info.plist: only the phone's own build carries it.
+        private static var sealingKey: SymmetricKey? {
+            guard let secret = Bundle.main.object(forInfoDictionaryKey: "LampPhoneSecret") as? String, !secret.isEmpty else { return nil }
+            return SymmetricKey(data: SHA256.hash(data: Data(secret.utf8)))
+        }
 
         /// The keys and model choices the phone keeps, or nil when it has none.
         static var keys: [String: Any]? {
@@ -3458,7 +3605,8 @@ enum Template {
     // Mac only: the Customize with Lamp command, windows, and what Lamp needs to watch and try the app.
 
     /// Adds "Customize with Lamp…" (⇧⌘E), which opens this app's chat beside the window in front
-    /// (`LampSidebar.openFromMenu`); its button up top opens the same chat in Lamp's own window.
+    /// (`LampSidebar.openFromMenu`); its button up top opens the same chat in Lamp's own window. And File ▸ Share…,
+    /// which sends the app to someone as a file to open with Lamp (`LampShareApp`).
     struct LampCommands: Commands {
         init() {
             LampRuntime.start
@@ -3477,6 +3625,77 @@ enum Template {
                 }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
             }
+            CommandGroup(after: .saveItem) {
+                Button("Share…") { LampShareApp.share() }
+            }
+        }
+    }
+
+    /// File ▸ Share…: the app as a file someone else opens with Lamp. Lamp makes it from the app's folder, the same
+    /// file as Lamp's own Share…, and the app shows the system's share picker for it from its window, as Apple's apps
+    /// do. When Lamp isn't open it's opened, and asked again once it answers.
+    @MainActor enum LampShareApp {
+        private static var picker: NSSharingServicePicker?
+
+        static func share() {
+            Task {
+                var answer = await ask()
+                if answer == nil, NSRunningApplication.runningApplications(withBundleIdentifier: "{{HOST}}").isEmpty,
+                   let lamp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "{{HOST}}") {
+                    let config = NSWorkspace.OpenConfiguration()
+                    config.activates = false
+                    _ = try? await NSWorkspace.shared.openApplication(at: lamp, configuration: config)
+                    for _ in 0..<40 where answer == nil {
+                        try? await Task.sleep(for: .milliseconds(500))
+                        answer = await ask()
+                    }
+                }
+                guard let answer, let path = answer["file"] as? String else {
+                    let alert = NSAlert()
+                    alert.messageText = "This app couldn't be shared"
+                    alert.informativeText = "Lamp makes the file to share it. Open Lamp and try again."
+                    alert.runModal()
+                    return
+                }
+                let items: [Any] = [answer["note"] as? String, (answer["picture"] as? String).map(URL.init(fileURLWithPath:)),
+                                    URL(fileURLWithPath: path)].compactMap { $0 }
+                let picker = NSSharingServicePicker(items: items)
+                self.picker = picker
+                // From the top of the window, where a toolbar's Share button would be: a menu command has no control
+                // of its own to open from. With every window closed one is opened again first, as a click in the Dock
+                // would; an app with none to open shows the file in Finder, whose Share is the same.
+                var window = NSApp.keyWindow ?? NSApp.windows.first { $0.isVisible && $0.canBecomeKey }
+                if window == nil {
+                    LampWindows.show(relaunching: false)
+                    for _ in 0..<20 where window == nil {
+                        try? await Task.sleep(for: .milliseconds(100))
+                        window = NSApp.keyWindow ?? NSApp.windows.first { $0.isVisible && $0.canBecomeKey }
+                    }
+                }
+                guard let content = window?.contentView else {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                    return
+                }
+                let top = NSRect(x: content.bounds.midX, y: content.isFlipped ? 0 : content.bounds.maxY - 1, width: 1, height: 1)
+                picker.show(relativeTo: top, of: content, preferredEdge: content.isFlipped ? .minY : .maxY)
+            }
+        }
+
+        /// Lamp's answer: where the file and its picture are. Nil when Lamp didn't answer or couldn't make it.
+        private static func ask() async -> [String: Any]? {
+            guard let url = URL(string: lampGateway + "/app/share") else { return nil }
+            var request = URLRequest(url: url, timeoutInterval: 120)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
+            request.httpBody = Data("{}".utf8)
+            guard let (data, response) = try? await URLSession.shared.data(for: request) else { return nil }
+            let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                fputs("LampShareApp: \(answer?["error"] as? String ?? "Lamp didn't make the file")\n", stderr)
+                return nil
+            }
+            return answer
         }
     }
 
@@ -3614,14 +3833,81 @@ enum Template {
         /// a library's calls to functions it doesn't hold were bound to the app's first copies.
         private var latest: [String: UnsafeRawPointer] = [:]
         private var images: [String] = []
-        /// The accessors of each stored global and static, by name, from the image that first had it.
+        /// The accessors of each stored global and static, and each class's metadata, by name, from the image that
+        /// first had it.
         private var kept: [String: UnsafeRawPointer] = [:]
+        /// What the app itself defines, by name.
+        private var original: [String: UnsafeRawPointer] = [:]
 
         private func keep(_ symbols: [(String, UnsafeRawPointer)]) {
             let stored = Self.stored(in: symbols)
-            for (name, address) in symbols where kept[name] == nil && (name.hasSuffix("vau") || Self.accesses(name, oneOf: stored)) {
+            for (name, address) in symbols where kept[name] == nil
+                && (name.hasSuffix("vau") || Self.accesses(name, oneOf: stored) || Self.isClass(name)) {
                 kept[name] = address
             }
+        }
+
+        /// A call to a class's method that can be overridden goes through the method table in the class's
+        /// metadata, which holds each method's code itself, not a pointer `rebind` reaches. The classes are kept
+        /// (`isClass`), so their tables are pointed at the changed methods here, for the objects the app made and
+        /// those the new code makes alike. A table runs from the metadata's description to its end, which the
+        /// metadata gives (its size, and where its address point is in it).
+        private static func redirectMethods(of classes: [UnsafeRawPointer], _ moved: [UnsafeRawPointer: UnsafeRawPointer]) -> Int {
+            guard !moved.isEmpty else { return 0 }
+            let page = Int(vm_page_size)
+            var count = 0
+            for metadata in classes {
+                let size = Int(metadata.load(fromByteOffset: 56, as: UInt32.self))
+                let point = Int(metadata.load(fromByteOffset: 60, as: UInt32.self))
+                guard size < 1 << 20, point <= size, size - point > 72 else { continue }
+                let words = UnsafeMutablePointer<UnsafeRawPointer?>(mutating: metadata.assumingMemoryBound(to: UnsafeRawPointer?.self))
+                for index in 9..<((size - point) / 8) {
+                    guard let code = words[index], let new = moved[code] else { continue }
+                    let start = UInt(bitPattern: words.advanced(by: index)) & ~UInt(page - 1)
+                    mprotect(UnsafeMutableRawPointer(bitPattern: start), page, PROT_READ | PROT_WRITE)
+                    words[index] = new
+                    count += 1
+                }
+            }
+            return count
+        }
+
+        /// Why a class the change has (`defined`) can't take its changed methods into the table of the copy that's
+        /// kept, if it can't: the two tables differ in size, or a slot holds a different method in each.
+        private static func reshapedMethods(_ defined: [(String, UnsafeRawPointer)], against kept: [String: UnsafeRawPointer]) -> String? {
+            var names: [UnsafeRawPointer: String] = [:]
+            // The app's and the libraries' names, since an earlier change's method may be in a table now.
+            for image in 0..<_dyld_image_count() where image == 0 || String(cString: _dyld_get_image_name(image)).contains("/.lamp/live/") {
+                guard let header = _dyld_get_image_header(image) else { continue }
+                for (name, address) in definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image)) where isCode(name) { names[address] = name }
+            }
+            func table(_ metadata: UnsafeRawPointer) -> [UnsafeRawPointer?]? {
+                let size = Int(metadata.load(fromByteOffset: 56, as: UInt32.self))
+                let point = Int(metadata.load(fromByteOffset: 60, as: UInt32.self))
+                guard size < 1 << 20, point <= size, size - point > 72 else { return nil }
+                let words = metadata.assumingMemoryBound(to: UnsafeRawPointer?.self)
+                return (9..<((size - point) / 8)).map { words[$0] }
+            }
+            for (name, mine) in defined where name.hasSuffix("CN") {
+                guard let theirs = kept[name], theirs != mine else { continue }
+                let class_ = String(name.dropLast(2))
+                guard let old = table(theirs), let new = table(mine) else { continue }
+                guard old.count == new.count else { return "the methods of \(class_) changed" }
+                for (a, b) in zip(old, new) {
+                    guard let a, let b, let before = names[a], let after = names[b] else { continue }
+                    if before != after { return "the methods of \(class_) changed" }
+                }
+            }
+            return nil
+        }
+
+        /// A class's metadata and what finds it. The library has its own copy of each class in the files it was
+        /// compiled from, and code asking for the class there would get that one: an object the app made is then
+        /// not of its type, and what's looked up by type (an environment object, a cast) isn't found. So the new
+        /// code is pointed at the app's, whose layout the change kept (a new stored property has its own slot).
+        /// A struct's or an enum's stays the library's: an enum may have gained cases.
+        private static func isClass(_ name: String) -> Bool {
+            name.hasPrefix("_$s") && ["CMa", "CN", "CMn", "CMm", "CMf", "CMo"].contains { name.hasSuffix($0) }
         }
 
         private func load(_ path: String?, signature: String?) {
@@ -3645,15 +3931,26 @@ enum Template {
                   let header = _dyld_get_image_header(image) else { return }
             Self.takeFieldOffsets(header, slide: _dyld_get_image_vmaddr_slide(image))
             let defined = Self.definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image))
+            if original.isEmpty, let app = _dyld_get_image_header(0) {
+                let symbols = Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0))
+                original = Dictionary(symbols, uniquingKeysWith: { first, _ in first })
+                keep(symbols)
+            }
+            // A kept class's method table is the app's, so the new code's has to have the same shape: a method added,
+            // taken away or moved would put a call in another method's place. Such a change reopens the app.
+            if let why = Self.reshapedMethods(defined, against: kept) {
+                result = "failed: \(why)"
+                return
+            }
+            // Each changed function's code before this change, for the class method tables that still hold it.
+            var moved: [UnsafeRawPointer: UnsafeRawPointer] = [:]
             for (name, address) in defined where Self.isCode(name) && !Self.accesses(name, oneOf: Self.stored(in: defined)) {
+                if let before = latest[name] ?? original[name] { moved[before] = address }
                 latest[name] = address
             }
-            // Stored globals and statics stay where they were first made: the new code's own accessors for them
-            // would reach a second copy, made afresh. So its calls to them go to the app's, or to the earlier
-            // change's that first added one, and only one that's new keeps its own.
-            if kept.isEmpty, let app = _dyld_get_image_header(0) {
-                keep(Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0)))
-            }
+            // Stored globals and statics, and classes, stay where they were first made: the new code's own copies
+            // would be a second set, made afresh. So its calls to them go to the app's, or to the earlier change's
+            // that first added one, and only one that's new keeps its own.
             keep(defined)
             let bindings = latest.merging(kept) { new, _ in new }
             images.append(path)
@@ -3662,6 +3959,7 @@ enum Template {
                 guard let index = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == earlier }) else { continue }
                 rebound += Self.rebind(image: index, to: bindings)
             }
+            rebound += Self.redirectMethods(of: kept.filter { $0.key.hasSuffix("CN") }.map(\.value), moved)
             generation += 1
             result = "ok \(rebound)"
         }
@@ -3671,6 +3969,9 @@ enum Template {
         /// and state.
         private static func isCode(_ name: String) -> Bool {
             guard name.hasPrefix("_$s") else { return false }
+            // An async function is called through a small record of its own (its code and how much room it needs),
+            // which is what calls and method tables hold.
+            if name.hasSuffix("Tu") { return isCode(String(name.dropLast(2))) }
             // A type's own (static) functions and properties are named as an instance's, with a Z after.
             let name = name.hasSuffix("Z") ? String(name.dropLast()) : name
             for kept in ["Mn", "Mf", "MV", "Ma", "Mm", "MF", "Mc", "Ml", "MXX", "Ms", "Wp", "WP", "Wl", "WL", "lau", "vau", "Wz", "Qo", "QO", "So", "WV", "Wvd", "MQ"]
@@ -3873,16 +4174,22 @@ enum Template {
 
         private static var cover: URL { LampRuntime.folder.appendingPathComponent("cover.png") }
         private static var coverFrame: URL { LampRuntime.folder.appendingPathComponent("cover-frame.txt") }
+        /// Where the chat was beside the window, for Lamp to stand its own glass in until the new copy's chat is up.
+        private static var coverChatFrame: URL { LampRuntime.folder.appendingPathComponent("cover-chat-frame.txt") }
 
         /// The front window's picture and place, as the app quits. Lamp shows the picture where the window was
         /// until the new copy is up; the new copy opens its window in that place (`putBack`).
         @MainActor private static func leaveCover() {
             guard isOn, let window = NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible && ($0.isKeyWindow || $0.isMainWindow) })
-                    ?? NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible }),
-                  !window.isMiniaturized, !window.styleMask.contains(.fullScreen),
+                    ?? NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible })
+                    ?? NSApp.windows.first(where: { isAppWindow($0) && $0.isMiniaturized }) else { return }
+            // Whether or not there's a picture to leave: a window in full screen or the Dock is still owed its width.
+            LampSidebar.handOn(window)
+            guard !window.isMiniaturized, !window.styleMask.contains(.fullScreen),
                   let picture = LampRuntime.picture(of: window) else { return }
             try? picture.write(to: cover)
             try? NSStringFromRect(window.frame).write(to: coverFrame, atomically: true, encoding: .utf8)
+            try? NSStringFromRect(LampSidebar.panelFrame(of: window) ?? .zero).write(to: coverChatFrame, atomically: true, encoding: .utf8)
         }
 
         /// The first window of a copy started for a change goes where the last one was, once.
@@ -3895,6 +4202,7 @@ enum Template {
                   NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) }) else { return }
             window.setFrame(frame, display: true)
             putBackWindow = window
+            LampSidebar.takeOn(window)
         }
 
         /// The window put back where the last copy's was, with the chat's width if it had the chat open then.
@@ -4149,27 +4457,28 @@ enum Template {
             }
             floating(in: window)?.removeFromSuperview()
             if let holder = window.titlebarAccessoryViewControllers.first(where: { $0.view.identifier == identifier })?.view {
-                return fit(holder, in: window)
+                fit(holder, in: window)
+                return showWand(in: window)
             }
             let holder = NSView()
             holder.identifier = identifier
-            holder.addSubview(button("wand.and.sparkles", "Customize This App", "Customize this app with Lamp", #selector(Opener.open(_:))))
+            holder.addSubview(button(LampGlyph.image(pointSize: 14, weight: .medium), "Customize This App", "Customize this app with Lamp", #selector(Opener.open(_:))))
             let accessory = NSTitlebarAccessoryViewController()
             accessory.view = holder
             accessory.layoutAttribute = .trailing
             window.addTitlebarAccessoryViewController(accessory)
             fit(holder, in: window)
+            showWand(in: window)
             DispatchQueue.main.async { fit(holder, in: window) }
         }
 
         /// The button as tall as the toolbar's buttons when there's a toolbar, smaller in a plain title bar, in
-        /// the middle of the title bar's height. It stays at the right of the app's own content: with the chat
-        /// open beside it, it's kept clear of the chat by the chat's width.
+        /// the middle of the title bar's height, at the right of the app's own content.
         @MainActor private static func fit(_ holder: NSView, in window: NSWindow) {
             guard let button = holder.subviews.first else { return }
             let titlebar = max(window.frame.height - window.contentLayoutRect.height, 28)
             let side = buttonSide(titlebar)
-            holder.frame.size = NSSize(width: side + 14 + LampSidebar.openWidth(in: window), height: titlebar)
+            holder.frame.size = NSSize(width: side + 14, height: titlebar)
             button.frame = NSRect(x: 4, y: ((titlebar - side) / 2).rounded(), width: side, height: side)
         }
 
@@ -4197,13 +4506,13 @@ enum Template {
                 return made
             }()
             // At the top right, where the title bar's wand is in other windows: a touch larger than the traffic
-            // lights, level with them, as far from the right edge as they are from the left, and left of the chat
-            // while it's open. It keeps to the right edge as the window is resized.
+            // lights, level with them, as far from the right edge as they are from the left. It keeps to the right edge as the window is resized.
             let side = (zoom.frame.height + 6).rounded()
             let inset = window.standardWindowButton(.closeButton)?.frame.minX ?? 12
-            let right = bar.bounds.width - LampSidebar.openWidth(in: window) - inset
+            let right = bar.bounds.width - inset
             wand.autoresizingMask = [.minXMargin]
             wand.frame = NSRect(x: (right - side).rounded(), y: (zoom.frame.midY - side / 2).rounded(), width: side, height: side)
+            showWand(in: window)
         }
 
         /// The wand floating over the app's own content: a dark disc with a white wand, legible over a game's night
@@ -4211,8 +4520,7 @@ enum Template {
         /// colours from the window's appearance, and over content of the other shade it all but disappeared.
         @MainActor private final class FloatingWand: NSButton {
             convenience init() {
-                let image = NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: "Customize This App")!
-                    .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))!
+                let image = LampGlyph.image(pointSize: 10, weight: .semibold)
                 self.init(image: image, target: Opener.shared, action: #selector(Opener.open(_:)))
                 toolTip = "Customize this app with Lamp"
                 isBordered = false
@@ -4221,11 +4529,16 @@ enum Template {
                 wantsLayer = true
             }
 
+            /// The chat is open: the disc takes the accent colour.
+            var active = false { didSet { needsDisplay = true } }
+
             override var wantsUpdateLayer: Bool { true }
             override func updateLayer() {
                 guard let layer else { return }
                 layer.cornerRadius = bounds.height / 2
-                layer.backgroundColor = NSColor.black.withAlphaComponent(isHighlighted ? 0.62 : 0.45).cgColor
+                layer.backgroundColor = active
+                    ? NSColor.controlAccentColor.withAlphaComponent(isHighlighted ? 0.8 : 1).cgColor
+                    : NSColor.black.withAlphaComponent(isHighlighted ? 0.62 : 0.45).cgColor
                 layer.borderWidth = 1
                 layer.borderColor = NSColor.white.withAlphaComponent(0.25).cgColor
             }
@@ -4248,9 +4561,8 @@ enum Template {
         static func buttonSide(_ titlebar: CGFloat) -> CGFloat { titlebar > 40 ? 34 : 22 }
 
         /// A round button like the toolbar's own: the wand, and the chat's own buttons above it.
-        @MainActor static func button(_ symbol: String, _ name: String, _ tip: String, _ action: Selector) -> NSButton {
-            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: name)!
-                .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))!
+        @MainActor static func button(_ image: NSImage, _ name: String, _ tip: String, _ action: Selector) -> NSButton {
+            image.accessibilityDescription = name
             let button = NSButton(image: image, target: Opener.shared, action: action)
             button.toolTip = tip
             if #available(macOS 26, *) {
@@ -4277,6 +4589,25 @@ enum Template {
             }
             guard let holder = window.titlebarAccessoryViewControllers.first(where: { $0.view.identifier == identifier })?.view else { return }
             fit(holder, in: window)
+            showWand(in: window)
+        }
+
+        /// The wand is always where people know to find it, lit while the chat is open, and a click on it then closes
+        /// the chat, as the chat's own close button does.
+        @MainActor private static func showWand(in window: NSWindow) {
+            guard let wand = wand(in: window) else { return }
+            let open = LampSidebar.isOpen(in: window)
+            wand.isHidden = false
+            wand.toolTip = open ? "Close the chat" : "Customize this app with Lamp"
+            if let floating = wand as? FloatingWand {
+                floating.active = open
+            } else {
+                // A toggle that's on, as a toolbar's are drawn lit, and the symbol in the accent colour itself: a tint
+                // alone doesn't show on a glass button, nor in a window that isn't in front.
+                wand.setButtonType(.pushOnPushOff)
+                wand.state = open ? .on : .off
+                wand.image = LampGlyph.image(pointSize: 14, weight: .medium, color: open ? .controlAccentColor : nil)
+            }
         }
 
         /// Where the window is, in screen coordinates, for the picture Lamp shows in its place while a change
@@ -4297,13 +4628,6 @@ enum Template {
                 guard let window = sender.window ?? NSApp.keyWindow ?? NSApp.mainWindow, isAppWindow(window) else { return }
                 LampSidebar.toggle(window)
             }
-            @objc func close(_ sender: NSButton) {
-                guard let window = sender.window else { return }
-                LampSidebar.close(window)
-            }
-            @objc func openInLamp(_ sender: NSButton) {
-                NSWorkspace.shared.open(URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!)
-            }
         }
     }
 
@@ -4315,21 +4639,75 @@ enum Template {
         func place(x: Double, y: Double)
     }
 
+    /// What the chat asks of the app about its own panel, which only the app can do: close it, or move it with the
+    /// pointer, since the chat draws its bar (the extension declares the same). Nothing about the app goes this way.
+    @objc(LampSidebarHost) protocol LampSidebarHost {
+        func closeChat(request: String)
+        func startMove(request: String)
+    }
+
     enum LampSidebar {
-        private static let width: CGFloat = 420
+        /// How wide the chat is: dragged wider or narrower by its edge, and kept for
+        /// the app, so it comes back at the width the person left it.
+        fileprivate static let narrowest: CGFloat = 320
+        fileprivate static let widest: CGFloat = 640
+        private static let widthKey = "LampSidebarWidth"
+        fileprivate static var width: CGFloat {
+            get {
+                let kept = UserDefaults.standard.double(forKey: widthKey)
+                return kept > 0 ? min(max(kept, narrowest), widest) : 400
+            }
+            set { UserDefaults.standard.set(Double(min(max(newValue, narrowest), widest)), forKey: widthKey) }
+        }
         private static let openKey = "LampSidebarOpen"
+        private static let narrowedKey = "LampSidebarNarrowedBy"
         private static let coachedKey = "LampSidebarCoached"
-        private static let identifier = NSUserInterfaceItemIdentifier("lampSidebar")
         private static var pointID: String { (Bundle.main.bundleIdentifier ?? "") + ".lamp-sidebar" }
         @MainActor private static var restored = false
         /// Lamp asked for the chat while every window was closed: it opens beside the next one to come forward.
         @MainActor private static var openWhenShown = false
 
-        @MainActor private static func item(in window: NSWindow) -> NSSplitViewItem? {
-            (window.contentViewController as? NSSplitViewController)?.splitViewItems.first { $0.viewController.view.identifier == identifier }
+        /// One window's chat: the chat itself (`host`, drawn by the extension) on its card with its bar, in a panel of
+        /// its own beside the window (`Beside`). It never goes inside the window: the room a column takes from the app
+        /// is more than it gives the chat.
+        @MainActor final class Chat {
+            let host: EXHostViewController
+            let card: NSView
+            /// What the chat is laid out in.
+            var pane: NSView = NSView()
+            weak var window: NSWindow?
+            var panel: Beside?
+            var side: Side = .right
+            /// Over the window's own edge rather than beside it: where there's no room beside it and none can be made
+            /// (full screen, or a window that can't be made narrow enough).
+            var over = false
+            /// Open, whether or not its panel is on screen this moment (it's taken down while the window goes in or
+            /// out of full screen, or to the Dock).
+            var wanted = false
+            /// How much narrower the window was made to leave room for the chat, given back when it closes. A change
+            /// that reopens the app hands it on to the window put back in this one's place (`handOn`, `takeOn`).
+            var narrowedBy: CGFloat = 0
+            var observers: [NSObjectProtocol] = []
+
+            init(host: EXHostViewController, card: NSView, window: NSWindow) {
+                self.host = host
+                self.card = card
+                self.window = window
+            }
+
+            /// Moved away from the window by the person (`Beside.startMove`): it stays where they put it, whatever the
+            /// window does, until the app quits.
+            var detached: Bool { panel?.detached == true }
+
+            var inPanel: Bool { panel?.isVisible == true && (panel?.parent != nil || detached) }
         }
 
-        @MainActor static func isOpen(in window: NSWindow) -> Bool { item(in: window).map { !$0.isCollapsed } ?? false }
+        enum Side { case right, left }
+
+        @MainActor private static var chats: [ObjectIdentifier: Chat] = [:]
+        @MainActor private static func chat(in window: NSWindow) -> Chat? { chats[ObjectIdentifier(window)] }
+
+        @MainActor static func isOpen(in window: NSWindow) -> Bool { chat(in: window)?.wanted == true }
 
         /// Whether the chat was open when the app last quit: a menu bar app opens its panel as a window to hold it
         /// again (`LampMenuBar.arrive`), since it has no first window of its own to bring it back with.
@@ -4338,17 +4716,11 @@ enum Template {
         /// The window the chat was in was closed: it isn't opened with the app next time.
         @MainActor static func forget() { UserDefaults.standard.set(false, forKey: openKey) }
 
-        @MainActor static func openWidth(in window: NSWindow) -> CGFloat {
-            guard let item = item(in: window), !item.isCollapsed else { return 0 }
-            return item.viewController.view.frame.width
-        }
-
         @MainActor static func toggle(_ window: NSWindow) {
             isOpen(in: window) ? close(window) : open(window)
         }
 
-        /// A change that reopens the app brings its sidebar back with its first window, which macOS (or Lamp,
-        /// putting it back where it was) opens at its size with the sidebar: it isn't made wider again.
+        /// A change that reopens the app brings its chat back with its first window.
         @MainActor static func restore(_ window: NSWindow) {
             if openWhenShown {
                 openWhenShown = false
@@ -4357,19 +4729,19 @@ enum Template {
             }
             guard !restored else { return }
             restored = true
-            // A window that had the chat open last time comes back at a size that already holds it.
-            let wasOpen = UserDefaults.standard.bool(forKey: openKey)
+            // Not put back where a cover was left (full screen, the Dock): the first window takes on what's owed.
+            takeOn(window)
             if let wait = askedToOpen() {
                 // A wish Lamp came with, opened for the first time, is seen on its own a moment before its chat
                 // comes in beside it: the file says how long (`MagicPanel.startWithChat`).
-                guard wait > 0 else { return open(window, grow: !wasOpen) }
+                guard wait > 0 else { return open(window) }
                 DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
                     MainActor.assumeIsolated {
-                        if window.isVisible, !isOpen(in: window) { open(window, grow: !wasOpen) }
+                        if window.isVisible, !isOpen(in: window) { open(window) }
                     }
                 }
             }
-            else if wasOpen { open(window, grow: false) }
+            else if wasOpen { open(window) }
         }
 
         /// Lamp hands a new app's chat over to the app once it's first built (`Store.handOff`): it leaves a file in
@@ -4423,21 +4795,12 @@ enum Template {
             open(window)
         }
 
-        @MainActor static func open(_ window: NSWindow, grow: Bool = true) {
+        @MainActor static func open(_ window: NSWindow) {
             UserDefaults.standard.set(true, forKey: openKey)
             tellLamp()
-            if let item = item(in: window) {
-                guard item.isCollapsed else { return }
-                // All at once, in one screen update: the window grows by the chat as the chat appears, so the app's
-                // content and the wand stay exactly where they were. The chat fades in rather than slides.
-                window.disableScreenUpdatesUntilFlush()
-                let content = window.frame.width
-                if grow { resize(window, by: width) }
-                item.viewController.view.alphaValue = 0
-                item.isCollapsed = false
-                keep(content: grow ? content : nil, in: window)
-                LampMagic.refit(window)
-                fadeIn(item.viewController.view)
+            if let chat = chat(in: window) {
+                guard !isOpen(in: window) else { return }
+                show(chat)
                 return
             }
             Task { @MainActor in
@@ -4459,22 +4822,257 @@ enum Template {
                     return first
                 }
                 guard let identity else { return fallback() }
+                guard self.chat(in: window) == nil else { return show(self.chat(in: window)!) }
                 let host = EXHostViewController()
                 host.delegate = Placing.shared
                 host.configuration = .init(appExtension: identity, sceneID: "chat")
-                embed(host, in: window, grow: grow)
+                let made = card(for: host, in: window)
+                let chat = Chat(host: host, card: made.card, window: window)
+                chat.narrowedBy = owed.removeValue(forKey: ObjectIdentifier(window)) ?? 0
+                chat.pane = made.pane
+                chats[ObjectIdentifier(window)] = chat
+                follow(window, chat)
+                watchClicks()
+                watchCycling()
+                show(chat)
             }
         }
 
         @MainActor static func close(_ window: NSWindow) {
             UserDefaults.standard.set(false, forKey: openKey)
-            guard let item = item(in: window), !item.isCollapsed else { return }
-            let thickness = item.viewController.view.frame.width
-            window.disableScreenUpdatesUntilFlush()
-            item.isCollapsed = true
-            resize(window, by: -thickness)
+            guard isOpen(in: window), let chat = chat(in: window) else { return }
+            chat.wanted = false
+            hidePanel(chat)
+            giveBackWidth(chat)
             LampMagic.refit(window)
             coach(window)
+        }
+
+        /// The width a window was made narrower by, handed on as the app quits for a change (`LampMagic.leaveCover`)
+        /// to the window put back in its place (`LampMagic.putBack`), or the new copy's first window when none is put
+        /// back, whose chat gives it back when it closes. Only that window takes it: another was never narrowed.
+        @MainActor static func handOn(_ window: NSWindow) {
+            UserDefaults.standard.set(Double(chat(in: window)?.narrowedBy ?? 0), forKey: narrowedKey)
+        }
+
+        @MainActor private static var owed: [ObjectIdentifier: CGFloat] = [:]
+
+        @MainActor static func takeOn(_ window: NSWindow) {
+            let width = CGFloat(UserDefaults.standard.double(forKey: narrowedKey))
+            UserDefaults.standard.removeObject(forKey: narrowedKey)
+            if width > 0 { owed[ObjectIdentifier(window)] = width }
+        }
+
+        /// A window made narrower for the chat gets its width back once the chat is closed; in full screen, once it
+        /// leaves full screen, where its own size comes back.
+        @MainActor private static func giveBackWidth(_ chat: Chat) {
+            guard let window = chat.window, !chat.wanted, chat.narrowedBy > 0, !window.styleMask.contains(.fullScreen) else { return }
+            resize(window, by: chat.narrowedBy)
+            chat.narrowedBy = 0
+        }
+
+        /// The chat shown beside the window, on the side with room for it (`makeRoom`).
+        @MainActor private static func show(_ chat: Chat) {
+            guard let window = chat.window else { return }
+            chat.wanted = true
+            chat.card.alphaValue = 0
+            // Moved away from the window, it opens again where it was left.
+            if !chat.detached { makeRoom(for: chat) }
+            putInPanel(chat)
+            LampMagic.refit(window)
+            fadeIn(chat.card)
+        }
+
+        private static let gap: CGFloat = 10
+
+        /// Where the chat goes as it opens. Beside the window on a side with room for it; with room on neither side
+        /// the window makes some: it moves over on its screen when that's enough, else it's made narrower (never
+        /// below its own smallest width) to leave the chat its narrowest on the right, and gets the width back when the
+        /// chat closes. Only where neither can be done (full screen, a window that can't be that narrow) does the chat
+        /// go over the window's right edge, still a panel of its own.
+        @MainActor private static func makeRoom(for chat: Chat) {
+            guard let window = chat.window else { return }
+            chat.over = false
+            if let side = side(for: window, preferring: chat.side) {
+                chat.side = side
+                return
+            }
+            chat.side = .right
+            if let room = roomBeside(window) {
+                window.setFrame(room, display: true)
+            } else if let narrower = narrowed(window) {
+                chat.narrowedBy += window.frame.width - narrower.width
+                window.setFrame(narrower, display: true, animate: false)
+            } else {
+                chat.over = true
+            }
+        }
+
+        /// Where beside the window the chat has room, on the screen the window is on: the side it was on while it still
+        /// fits there, else the right, else the left. None in full screen, where the window is the whole screen.
+        @MainActor private static func side(for window: NSWindow, preferring preferred: Side) -> Side? {
+            guard !window.styleMask.contains(.fullScreen), let screen = (window.screen ?? NSScreen.main)?.visibleFrame else { return nil }
+            // A side with room for the chat at its width first, else one with room for it at its narrowest.
+            let order = preferred == .right ? [Side.right, .left] : [Side.left, .right]
+            for need in [width, narrowest] {
+                if let side = order.first(where: { room(on: $0, of: window.frame, in: screen) >= need }) { return side }
+            }
+            return nil
+        }
+
+        /// The room beside the window on one side, up to its screen's edge, less the gap between them.
+        private static func room(on side: Side, of frame: NSRect, in screen: NSRect) -> CGFloat {
+            (side == .right ? screen.maxX - frame.maxX : frame.minX - screen.minX) - gap
+        }
+
+        /// Where the window would go to leave room for the chat on its right, kept on its screen; nil when it can't: in
+        /// full screen, or wider than its screen leaves room for.
+        @MainActor private static func roomBeside(_ window: NSWindow) -> NSRect? {
+            guard !window.styleMask.contains(.fullScreen), let screen = (window.screen ?? NSScreen.main)?.visibleFrame else { return nil }
+            // Room for the chat at its width when the screen has it, else at its narrowest.
+            guard let need = [width + gap, narrowest + gap].first(where: { window.frame.width + $0 <= screen.width }) else { return nil }
+            var frame = window.frame
+            frame.origin.x = max(screen.minX, min(frame.minX, screen.maxX - need - frame.width))
+            return frame
+        }
+
+        /// The window at the left of its screen, as wide as leaves the chat its narrowest on the right; nil in full
+        /// screen, or when that's narrower than the window can be.
+        @MainActor private static func narrowed(_ window: NSWindow) -> NSRect? {
+            guard !window.styleMask.contains(.fullScreen), window.styleMask.contains(.resizable),
+                  let screen = (window.screen ?? NSScreen.main)?.visibleFrame else { return nil }
+            let target = screen.width - narrowest - gap
+            let smallest = max(window.minSize.width, window.frameRect(forContentRect: NSRect(origin: .zero, size: window.contentMinSize)).width)
+            guard target >= smallest, target < window.frame.width else { return nil }
+            var frame = window.frame
+            frame.origin.x = screen.minX
+            frame.size.width = target
+            return frame
+        }
+
+        /// The panel's frame: beside the window on the chat's side, as wide as it's kept or the room there is, or over
+        /// the window's right edge, below its title bar.
+        @MainActor private static func panelFrame(for chat: Chat) -> NSRect {
+            guard let window = chat.window else { return .zero }
+            let frame = window.frame
+            let screen = (window.screen ?? NSScreen.main)?.visibleFrame
+            if chat.over {
+                let shown = max(narrowest, min(width, frame.width / 2))
+                let titlebar = max(frame.height - window.contentLayoutRect.height, 0)
+                let right = min(frame.maxX, screen?.maxX ?? frame.maxX) - gap
+                return NSRect(x: right - shown, y: frame.minY + gap, width: shown, height: max(frame.height - titlebar - 2 * gap, 200))
+                    .insetBy(dx: -Beside.shade, dy: -Beside.shade)
+            }
+            var shown = width
+            if let screen { shown = max(narrowest, min(width, room(on: chat.side, of: frame, in: screen))) }
+            let x = chat.side == .right ? frame.maxX + gap : frame.minX - gap - shown
+            return NSRect(x: x, y: frame.minY, width: shown, height: frame.height).insetBy(dx: -Beside.shade, dy: -Beside.shade)
+        }
+
+        /// Into its panel, which is put where the chat now goes.
+        @MainActor private static func putInPanel(_ chat: Chat) {
+            guard let window = chat.window else { return }
+            let panel = chat.panel ?? Beside()
+            chat.panel = panel
+            // Its outer edge widens it: over the window that's the one facing into it.
+            panel.side = chat.over ? .left : chat.side
+            if chat.host.parent !== panel.holder, let ground = panel.holder.view as? PanelGround {
+                panel.holder.addChild(chat.host)
+                // In its panel the card leaves the edges that resize it clear (`PanelGround.layout`).
+                chat.card.translatesAutoresizingMaskIntoConstraints = true
+                ground.addSubview(chat.card)
+                ground.addSubview(ground.edges)
+                ground.card = chat.card
+            }
+            panel.holder.view.needsLayout = true
+            if !panel.detached {
+                panel.setFrame(panelFrame(for: chat), display: true)
+                if panel.parent == nil { window.addChildWindow(panel, ordered: .above) }
+            }
+            panel.orderFront(nil)
+            Placing.shared.place(chat.host)
+        }
+
+        @MainActor private static func hidePanel(_ chat: Chat) {
+            guard let panel = chat.panel else { return }
+            panel.parent?.removeChildWindow(panel)
+            panel.orderOut(nil)
+        }
+
+        /// What happens to the window decides where its chat goes: a move or a size that leaves no room on its side
+        /// moves the panel to the other side, or over the window's edge when neither has room; room again takes it back
+        /// beside. Going in or out of full screen takes the panel down for the change and puts it back after. The panel
+        /// goes with the window when it closes or goes to the Dock.
+        @MainActor private static func follow(_ window: NSWindow, _ chat: Chat) {
+            let center = NotificationCenter.default
+            func on(_ name: Notification.Name, _ act: @escaping @MainActor (Chat) -> Void) {
+                chat.observers.append(center.addObserver(forName: name, object: window, queue: .main) { [weak chat] _ in
+                    MainActor.assumeIsolated { if let chat { act(chat) } }
+                })
+            }
+            on(NSWindow.didResizeNotification) { chat in
+                guard let window = chat.window, !chat.detached else { return }
+                if chat.inPanel, let panel = chat.panel { panel.setFrame(panelFrame(for: chat), display: true) }
+                // A size set all at once (zoom, a tile, a size the app sets) may leave room beside it, or take it away.
+                if !window.inLiveResize { replace(chat) }
+            }
+            on(NSWindow.didEndLiveResizeNotification) { replace($0) }
+            on(NSWindow.didMoveNotification) { replace($0) }
+            on(NSWindow.didChangeScreenNotification) { replace($0) }
+            on(NSWindow.willEnterFullScreenNotification) { chat in
+                // A chat moved away goes back beside the window, which is now the whole screen.
+                chat.panel?.detached = false
+                if chat.wanted { hidePanel(chat) }
+            }
+            on(NSWindow.didEnterFullScreenNotification) { chat in
+                guard chat.wanted else { return }
+                makeRoom(for: chat)
+                putInPanel(chat)
+            }
+            on(NSWindow.willExitFullScreenNotification) { chat in if chat.wanted { hidePanel(chat) } }
+            on(NSWindow.didExitFullScreenNotification) { chat in
+                // Back from full screen, the chat goes beside the window again as when it opened; closed while in full
+                // screen, the window gets back the width it gave it.
+                guard chat.wanted else { return giveBackWidth(chat) }
+                makeRoom(for: chat)
+                putInPanel(chat)
+            }
+            on(NSWindow.didMiniaturizeNotification) { chat in if chat.inPanel { chat.panel?.orderOut(nil) } }
+            on(NSWindow.didDeminiaturizeNotification) { chat in
+                guard let window = chat.window, let panel = chat.panel, chat.wanted,
+                      panel.parent === window || chat.detached else { return }
+                panel.orderFront(nil)
+            }
+            on(NSWindow.willCloseNotification) { chat in
+                hidePanel(chat)
+                chat.observers.forEach { NotificationCenter.default.removeObserver($0) }
+                if let window = chat.window { chats[ObjectIdentifier(window)] = nil }
+            }
+        }
+
+        /// The chat where it now fits, if it's open and that isn't where it is. The window isn't moved or narrowed
+        /// here, while the person is placing it: with no room beside it, the chat goes over its edge.
+        @MainActor private static func replace(_ chat: Chat) {
+            guard let window = chat.window, chat.inPanel, !chat.detached, !window.inLiveResize else { return }
+            if let side = side(for: window, preferring: chat.side) {
+                if !chat.over, side == chat.side {
+                    // Same side: only its width may change, back towards the kept width when there's more room now.
+                    if let panel = chat.panel {
+                        let fitted = panelFrame(for: chat)
+                        if abs(fitted.width - panel.frame.width) > 0.5 { panel.setFrame(fitted, display: true) }
+                    }
+                    return
+                }
+                chat.side = side
+                chat.over = false
+            } else {
+                guard !chat.over else { return }
+                chat.side = .right
+                chat.over = true
+            }
+            window.disableScreenUpdatesUntilFlush()
+            putInPanel(chat)
+            LampMagic.refit(window)
         }
 
         /// The first time the chat is closed, a note points at the wand, so the way back is known: the chat may have
@@ -4510,125 +5108,237 @@ enum Template {
             }
         }
 
-        /// The app's content and the chat side by side, the chat as the window's inspector; the window grows by
-        /// the chat's width so the app keeps the room it had.
-        @MainActor private static func embed(_ host: EXHostViewController, in window: NSWindow, grow: Bool) {
-            let frame = window.frame
-            let content: NSViewController
-            if let current = window.contentViewController {
-                content = current
-            } else {
-                content = NSViewController()
-                content.view = window.contentView ?? NSView()
-            }
-            window.disableScreenUpdatesUntilFlush()
-            window.contentViewController = nil
-            let split = NSSplitViewController()
-            split.splitView.isVertical = true
-            split.addSplitViewItem(NSSplitViewItem(viewController: content))
-            // The chat on the chat's own paper, which runs up behind the bar above it to the window's top edge.
-            let column = NSViewController()
-            column.view = Backing()
-            column.view.wantsLayer = true
-            column.view.identifier = identifier
-            column.addChild(host)
-            host.view.translatesAutoresizingMaskIntoConstraints = false
-            host.view.identifier = chatIdentifier
-            column.view.addSubview(host.view)
-            watchClicks()
-            // The bar above the chat, drawn as the message box's row is at its foot: round buttons floating on the
-            // paper with nothing behind them, closing the chat at the left (as an inspector closes) and opening it
-            // in Lamp at the right, with what the chat is for between them. They're the column's, not the title
-            // bar's, which the window's split view covers above the chat. They do only what the app could do
-            // anyway (close its own inspector, open Lamp), so they needn't be the chat's. Pointing at part of the
-            // app is in the message box's + menu.
-            let titlebar = max(window.frame.height - window.contentLayoutRect.height, 28)
-            let size = RoundButton.side
-            let close = RoundButton("sidebar.trailing", "Close Chat", "Close the chat", #selector(LampMagic.Opener.close(_:)))
-            let expand = RoundButton("arrow.up.left.and.arrow.down.right", "Open in Lamp", "Open this chat in Lamp",
-                                     #selector(LampMagic.Opener.openInLamp(_:)))
-            let title = Caption(labelWithString: "Customize \(appName)")
-            title.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
-            title.textColor = .labelColor
-            title.alignment = .center
-            title.lineBreakMode = .byTruncatingTail
-            title.maximumNumberOfLines = 1
-            title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            title.translatesAutoresizingMaskIntoConstraints = false
-            column.view.addSubview(title)
-            let strip = NSLayoutGuide()
-            column.view.addLayoutGuide(strip)
-            var constraints = [
-                strip.topAnchor.constraint(equalTo: column.view.topAnchor),
-                strip.heightAnchor.constraint(equalToConstant: max(titlebar, size + 20)),
-                host.view.topAnchor.constraint(equalTo: strip.bottomAnchor),
-                host.view.bottomAnchor.constraint(equalTo: column.view.bottomAnchor),
-                host.view.leadingAnchor.constraint(equalTo: column.view.leadingAnchor),
-                host.view.trailingAnchor.constraint(equalTo: column.view.trailingAnchor),
-            ]
-            for button in [close, expand] {
-                button.translatesAutoresizingMaskIntoConstraints = false
-                column.view.addSubview(button)
-                constraints += [button.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
-                                button.widthAnchor.constraint(equalToConstant: size), button.heightAnchor.constraint(equalToConstant: size)]
-            }
-            // The same 12 points from the edges as the message box's row.
-            constraints += [close.leadingAnchor.constraint(equalTo: column.view.leadingAnchor, constant: 12),
-                            expand.trailingAnchor.constraint(equalTo: column.view.trailingAnchor, constant: -12),
-                            title.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
-                            title.leadingAnchor.constraint(greaterThanOrEqualTo: close.trailingAnchor, constant: 10),
-                            title.trailingAnchor.constraint(lessThanOrEqualTo: expand.leadingAnchor, constant: -10)]
-            // Centred in the column while there's room, else as much as fits between the buttons.
-            let centred = title.centerXAnchor.constraint(equalTo: column.view.centerXAnchor)
-            centred.priority = .defaultHigh
-            constraints.append(centred)
-            NSLayoutConstraint.activate(constraints)
-            let side = NSSplitViewItem(inspectorWithViewController: column)
-            side.minimumThickness = 320
-            side.maximumThickness = 640
-            side.canCollapse = true
-            // No line under the bar: it floats on the paper, as the message box's row does.
-            side.titlebarSeparatorStyle = .none
-            host.view.alphaValue = 0
-            split.addSplitViewItem(side)
-            window.contentViewController = split
-            window.setFrame(frame, display: false)
-            if grow { resize(window, by: width) }
-            split.splitView.layoutSubtreeIfNeeded()
-            keep(content: grow ? frame.width : nil, in: window)
-            NotificationCenter.default.addObserver(forName: NSSplitView.didResizeSubviewsNotification, object: split.splitView,
-                                                   queue: .main) { [weak window] _ in
-                MainActor.assumeIsolated {
-                    guard let window else { return }
-                    LampMagic.refit(window)
-                    LampSidebar.Placing.shared.place(in: window)
+        /// The chat beside the window: a borderless panel of the app's, attached to the window as its child so macOS
+        /// moves, stacks and hides it with the window, holding the card on its glass. It takes the keyboard for the
+        /// message box without becoming the main window, so the app's window stays the active one, as with any
+        /// inspector panel. Dragged by the chat's bar it comes away from the window (`detached`) and goes where it's put,
+        /// resized by any edge, floating over the app's windows while the app is in front.
+        @MainActor final class Beside: NSPanel {
+            let holder = NSViewController()
+            /// Which side of the window it's on: its outer edge, away from the window, is the one that widens it.
+            var side: Side = .right
+            /// Moved away from the window: no longer its child, and resized by every edge.
+            var detached = false {
+                didSet {
+                    guard detached != oldValue else { return }
+                    level = detached && NSApp.isActive ? .floating : .normal
+                    holder.view.needsLayout = true
+                    holder.view.window?.invalidateCursorRects(for: (holder.view as? PanelGround)?.edges ?? holder.view)
                 }
             }
-            LampMagic.refit(window)
-            fadeIn(host.view)
+            /// The rim inside the card, around the chat, where the pointer resizes it: the room around the card is its
+            /// shadow, which clicks go through.
+            static let rim: CGFloat = 6
+            /// The room around the card for its own shadow. The window's shadow drew a hard grey line round the card, as
+            /// macOS outlines every window; this one is soft, and gone within the room, so clicks there reach what's
+            /// behind (the app's own edge, beside it).
+            static let shade: CGFloat = 14
+
+            init() {
+                super.init(contentRect: NSRect(x: 0, y: 0, width: LampSidebar.width, height: 400), styleMask: [.borderless],
+                           backing: .buffered, defer: false)
+                isOpaque = false
+                backgroundColor = .clear
+                // The card draws its own shadow (`Card`), and the clear room around it lets clicks through.
+                hasShadow = false
+                isMovable = false
+                hidesOnDeactivate = false
+                isReleasedWhenClosed = false
+                let ground = PanelGround()
+                ground.panel = self
+                holder.view = ground
+                contentViewController = holder
+                ground.edges.began = { [weak self] in self?.dragStart = self?.frame }
+                ground.edges.moved = { [weak self] zone, change in
+                    guard let self, let start = self.dragStart else { return }
+                    self.resize(zone, from: start, by: change)
+                }
+                // A new size or place moves the chat on the screen, which the window's own moves are all the chat is
+                // otherwise told of: say where it is now, for the input method's candidates and the emoji picker.
+                for name in [NSWindow.didResizeNotification, NSWindow.didMoveNotification] {
+                    observers.append(NotificationCenter.default.addObserver(forName: name, object: self, queue: .main) { [weak self] _ in
+                        MainActor.assumeIsolated {
+                            guard let self else { return }
+                            self.contentView?.layoutSubtreeIfNeeded()
+                            if let parent = self.parent ?? LampSidebar.window(of: self) { LampSidebar.Placing.shared.place(in: parent) }
+                        }
+                    })
+                }
+                // Moved away, it floats over the app's windows while the app is in front, as an inspector does, and
+                // keeps its place among other apps' windows when it isn't.
+                for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
+                    observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                        MainActor.assumeIsolated {
+                            guard let self, self.detached else { return }
+                            self.level = NSApp.isActive ? .floating : .normal
+                        }
+                    })
+                }
+            }
+
+            private var observers: [any NSObjectProtocol] = []
+            private var dragStart: NSRect?
+            private var moving: Timer?
+
+            /// The person pressed on the chat's bar and is dragging (`LampSidebarHost.startMove`): the press went to the
+            /// chat's own process, so the panel follows the pointer from here until the button is let go. The first
+            /// move takes it away from the window.
+            func startMove() {
+                guard moving == nil, NSEvent.pressedMouseButtons & 1 != 0 else { return }
+                let pointer = NSEvent.mouseLocation
+                if !detached { detach() }
+                let origin = frame.origin
+                let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] timer in
+                    MainActor.assumeIsolated {
+                        guard let self, NSEvent.pressedMouseButtons & 1 != 0 else {
+                            timer.invalidate()
+                            self?.moving = nil
+                            return
+                        }
+                        let now = NSEvent.mouseLocation
+                        self.setFrameOrigin(NSPoint(x: (origin.x + now.x - pointer.x).rounded(), y: (origin.y + now.y - pointer.y).rounded()))
+                    }
+                }
+                moving = timer
+                RunLoop.main.add(timer, forMode: .common)
+            }
+
+            /// Away from the window, resized by any edge from here on.
+            private func detach() {
+                parent?.removeChildWindow(self)
+                detached = true
+            }
+
+            /// Bigger or smaller by an edge. Beside the window only its outer edge widens it, between the chat's
+            /// narrowest and widest and never past the screen's edge; away from it, any edge or corner, and the
+            /// height too. The width is kept for next time.
+            func resize(_ zone: Edges.Zone, from start: NSRect, by change: NSSize) {
+                var frame = start
+                if zone.contains(.left) { frame.size.width = start.width - change.width }
+                if zone.contains(.right) { frame.size.width = start.width + change.width }
+                if zone.contains(.bottom) { frame.size.height = start.height - change.height }
+                if zone.contains(.top) { frame.size.height = start.height + change.height }
+                let shadows = 2 * Self.shade
+                frame.size.width = min(max(frame.width, LampSidebar.narrowest + shadows), LampSidebar.widest + shadows)
+                if !detached, let screen = (parent?.screen ?? screen ?? NSScreen.main)?.visibleFrame {
+                    frame.size.width = min(frame.width, (side == .right ? screen.maxX - start.minX : start.maxX - screen.minX) + Self.shade)
+                }
+                frame.size.height = max(frame.height, 300 + shadows)
+                if zone.contains(.left) { frame.origin.x = start.maxX - frame.width }
+                if zone.contains(.bottom) { frame.origin.y = start.maxY - frame.height }
+                setFrame(frame, display: true)
+                LampSidebar.width = frame.width - shadows
+            }
+
+            override var canBecomeKey: Bool { true }
+            override var canBecomeMain: Bool { false }
+        }
+
+        /// The chat a request from the chats' process is for (`Answering`), chosen when the request first arrives and
+        /// kept for its other copies: the one under the pointer, else the one with the keyboard.
+        @MainActor private static var answered: [(request: String, chat: ObjectIdentifier?)] = []
+
+        @MainActor static func isAsked(_ chat: Chat, for request: String) -> Bool {
+            if let earlier = answered.first(where: { $0.request == request }) { return earlier.chat == ObjectIdentifier(chat) }
+            let target = chosen().map(ObjectIdentifier.init)
+            answered.append((request, target))
+            if answered.count > 20 { answered.removeFirst() }
+            return target == ObjectIdentifier(chat)
+        }
+
+        @MainActor private static func chosen() -> Chat? {
+            let open = chats.values.filter { $0.inPanel }
+            let pointer = NSEvent.mouseLocation
+            // Front to back, as the windows are stacked: of two chats moved over each other, the click was on the one
+            // in front.
+            let stacked = NSApp.orderedWindows.compactMap { window in open.first { $0.panel === window } }
+            return stacked.first { $0.panel?.frame.insetBy(dx: Beside.shade, dy: Beside.shade).contains(pointer) == true }
+                ?? open.first { $0.panel?.isKeyWindow == true }
+                ?? (open.count == 1 ? open.first : nil)
+        }
+
+        /// The window a panel's chat belongs to, attached or not.
+        @MainActor static func window(of panel: Beside) -> NSWindow? {
+            chats.values.first { $0.panel === panel }?.window
+        }
+
+        /// The chat on a card in its panel, on the chat's own paper (`Paper`): opaque, since what's behind the window
+        /// showing through glass drew the eye from the chat, and glass drew a bright line round its edge. The chat draws its own bar, close button included, and asks the app to close or move the
+        /// panel (`LampSidebarHost`): what changes the wish (undo, versions, sharing…) is in the chat, which only Lamp
+        /// speaks to.
+        @MainActor private static func card(for host: EXHostViewController, in window: NSWindow) -> (card: NSView, pane: NSView) {
+            let outer = Card()
+            let pane = Passing()
+            let paper = Paper()
+            paper.frame = outer.bounds
+            paper.autoresizingMask = [.width, .height]
+            pane.frame = paper.bounds
+            pane.autoresizingMask = [.width, .height]
+            paper.addSubview(pane)
+            outer.addSubview(paper)
+            host.view.translatesAutoresizingMaskIntoConstraints = false
+            host.view.identifier = chatIdentifier
+            pane.addSubview(host.view)
+            // A rim of the card's own around the chat: the chat's process takes every click on its part of the window,
+            // so the edges that resize the panel lie in this rim (`Edges`).
+            let rim = Beside.rim
+            NSLayoutConstraint.activate([
+                host.view.topAnchor.constraint(equalTo: pane.topAnchor, constant: rim),
+                host.view.bottomAnchor.constraint(equalTo: pane.bottomAnchor, constant: -rim),
+                host.view.leadingAnchor.constraint(equalTo: pane.leadingAnchor, constant: rim),
+                host.view.trailingAnchor.constraint(equalTo: pane.trailingAnchor, constant: -rim),
+            ])
+            return (outer, pane)
         }
 
         private static let chatIdentifier = NSUserInterfaceItemIdentifier("lampSidebarChat")
         nonisolated(unsafe) private static var clicks: Any?
+        nonisolated(unsafe) private static var cycling: Any?
 
-        /// Two things AppKit doesn't do for the chat beside the app, done as each click arrives. The bar's buttons
-        /// sit where the window's title bar is, and a window with a toolbar lays the toolbar over them, which takes
-        /// their clicks: a click on one presses it. And the chat is drawn by another process, which AppKit's focus
-        /// doesn't follow, so what had the keyboard before (a list, a field) keeps it through a click in the chat:
-        /// once the click has landed, the keyboard goes to the chat.
+        /// ⌘` goes through the app's windows with each open chat right after its window, so the keyboard alone moves
+        /// between an app and its chat; ⇧⌘` goes back. macOS leaves panels out of its own cycle.
+        @MainActor private static func watchCycling() {
+            guard cycling == nil else { return }
+            cycling = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                MainActor.assumeIsolated {
+                    let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+                    guard event.keyCode == 50, modifiers == .command || modifiers == [.command, .shift] else { return event }
+                    var stops: [NSWindow] = []
+                    // In the order the windows were made, which stays put as they come forward, so each press moves on.
+                    for window in NSApp.windows where LampMagic.isAppWindow(window) && window.isVisible && !window.isMiniaturized {
+                        stops.append(window)
+                        if let chat = chat(in: window), chat.inPanel, let panel = chat.panel { stops.append(panel) }
+                    }
+                    // With nothing but one window, macOS's own cycle has nothing to do either.
+                    guard stops.count > 1 else { return event }
+                    let current = stops.firstIndex { $0 === NSApp.keyWindow } ?? 0
+                    let next = stops[(current + (modifiers.contains(.shift) ? stops.count - 1 : 1)) % stops.count]
+                    next.makeKeyAndOrderFront(nil)
+                    // In the chat the keyboard goes to the chat's own view, as a click there gives it (`watchClicks`).
+                    if let panel = next as? Beside, let view = chats.values.first(where: { $0.panel === panel })?.host.view {
+                        let target = sequence(first: view, next: { $0.subviews.first }).first { $0.acceptsFirstResponder } ?? view
+                        panel.makeFirstResponder(target)
+                    }
+                    return nil
+                }
+            }
+        }
+
+        /// The chat is drawn by another process, which AppKit's focus doesn't follow, so what had the keyboard before
+        /// keeps it through a click in the chat: once the click has landed, the keyboard goes to the chat.
         @MainActor private static func watchClicks() {
             guard clicks == nil else { return }
             clicks = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
                 MainActor.assumeIsolated {
-                    guard let window = event.window, let item = item(in: window), !item.isCollapsed else { return event }
-                    let column = item.viewController.view
-                    let point = column.convert(event.locationInWindow, from: nil)
-                    guard column.bounds.contains(point) else { return event }
-                    for case let button as RoundButton in column.subviews where !button.isHidden && button.isEnabled && button.frame.contains(point) {
-                        button.performClick(nil)
-                        return nil
-                    }
-                    if let chat = column.subviews.first(where: { $0.identifier == chatIdentifier }), chat.frame.contains(point) {
+                    guard let panel = event.window as? Beside else { return event }
+                    let window: NSWindow = panel
+                    let area = panel.holder.view
+                    let point = area.convert(event.locationInWindow, from: nil)
+                    guard area.bounds.contains(point) else { return event }
+                    func all(_ view: NSView) -> [NSView] { view.subviews + view.subviews.flatMap(all) }
+                    let inside = all(area)
+                    if let chat = inside.first(where: { $0.identifier == chatIdentifier }),
+                       chat.convert(chat.bounds, to: area).contains(point) {
                         let location = event.locationInWindow
                         DispatchQueue.main.async {
                             guard let hit = chat.hitTest(chat.superview?.convert(location, from: nil) ?? .zero) else { return }
@@ -4641,69 +5351,179 @@ enum Template {
             }
         }
 
-        /// The app's content as wide as it was before the chat opened (`content`), or else the chat at its own
-        /// width, so the content and the wand stay where they were.
-        @MainActor private static func keep(content: CGFloat?, in window: NSWindow) {
-            guard let split = window.contentViewController as? NSSplitViewController else { return }
-            split.splitView.layoutSubtreeIfNeeded()
-            let position = content ?? (window.frame.width - width)
-            split.splitView.setPosition(min(position, window.frame.width - 320), ofDividerAt: 0)
+        /// Where the chat beside a window is now, for the picture Lamp shows in the app's place while a change reopens
+        /// it (`LampMagic.leaveCover`); nothing when it's closed.
+        @MainActor static func panelFrame(of window: NSWindow) -> NSRect? {
+            guard let chat = chat(in: window), chat.inPanel, let panel = chat.panel else { return nil }
+            return panel.frame.insetBy(dx: Beside.shade, dy: Beside.shade)
         }
 
         /// The chat's paper, as the chat draws it (`ChatLook.paper`): a warm off-white, a warm near-black in the dark.
-        private final class Backing: NSView {
+        private final class Paper: NSView {
+            override init(frame: NSRect) {
+                super.init(frame: frame)
+                wantsLayer = true
+                layer?.cornerRadius = 20
+                layer?.cornerCurve = .continuous
+                layer?.masksToBounds = true
+            }
+            required init?(coder: NSCoder) { fatalError() }
+
             override var wantsUpdateLayer: Bool { true }
             override func updateLayer() {
                 let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
                 layer?.backgroundColor = dark ? CGColor(srgbRed: 0x1F / 255, green: 0x1E / 255, blue: 0x1C / 255, alpha: 1)
                                               : CGColor(srgbRed: 0xF7 / 255, green: 0xF5 / 255, blue: 0xF1 / 255, alpha: 1)
             }
-            // It only paints behind the bar: a click there is the title bar's, for moving the window.
+        }
+
+        private class Passing: NSView {
             override func hitTest(_ point: NSPoint) -> NSView? {
                 let hit = super.hitTest(point)
                 return hit === self ? nil : hit
             }
         }
 
-        /// The bar's title, which takes no clicks: the window moves by it as by its title bar.
-        private final class Caption: NSTextField {
-            override func hitTest(_ point: NSPoint) -> NSView? { nil }
-        }
-
-        /// A round button as the message box's row draws its own (`ChatLook.Round`): as tall as a one-line box, a
-        /// text background ringed by a separator, its symbol in the secondary colour.
-        private final class RoundButton: NSButton {
-            static let side = (NSLayoutManager().defaultLineHeight(for: .systemFont(ofSize: NSFont.systemFontSize)) + 20).rounded()
-
-            convenience init(_ symbol: String, _ name: String, _ tip: String, _ action: Selector) {
-                let image = NSImage(systemSymbolName: symbol, accessibilityDescription: name)!
-                    .withSymbolConfiguration(.init(pointSize: 14, weight: .semibold))!
-                self.init(image: image, target: LampMagic.Opener.shared, action: action)
-                toolTip = tip
-                isBordered = false
-                imagePosition = .imageOnly
-                contentTintColor = .secondaryLabelColor
+        /// The card, with a soft shadow of its own round it.
+        private final class Card: Passing {
+            override init(frame: NSRect) {
+                super.init(frame: frame)
                 wantsLayer = true
+                layer?.masksToBounds = false
+                layer?.shadowColor = NSColor.black.cgColor
+                layer?.shadowOpacity = 0.14
+                layer?.shadowRadius = 7
+                layer?.shadowOffset = CGSize(width: 0, height: -2)
             }
+            required init?(coder: NSCoder) { fatalError() }
 
-            override var wantsUpdateLayer: Bool { true }
-            override func updateLayer() {
-                guard let layer else { return }
-                layer.cornerRadius = bounds.height / 2
-                layer.borderWidth = 1
-                effectiveAppearance.performAsCurrentDrawingAppearance {
-                    layer.backgroundColor = NSColor.textBackgroundColor.cgColor
-                    layer.borderColor = NSColor.separatorColor.cgColor
-                }
-                layer.opacity = isHighlighted ? 0.7 : 1
-            }
             override func layout() {
                 super.layout()
-                needsDisplay = true
+                layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: 20, cornerHeight: 20, transform: nil)
             }
-            override var isHighlighted: Bool { didSet { needsDisplay = true } }
-            // One click works in a window in the back too, as it does on the traffic lights beside it.
+        }
+
+        /// The panel's ground: the card, and over its rim the edges that resize it. Beside the window that's the side
+        /// away from the window; moved away from it, every side.
+        @MainActor final class PanelGround: NSView {
+            weak var panel: Beside?
+            weak var card: NSView?
+            let edges = Edges()
+
+            /// The edges over the card's rim, never over the chat: the chat is drawn by another process, which takes
+            /// every click on its part of the window, so an edge laid over the chat would never be dragged.
+            override func layout() {
+                super.layout()
+                let card = bounds.insetBy(dx: Beside.shade, dy: Beside.shade)
+                self.card?.frame = card
+                edges.frame = card
+                edges.card = edges.bounds.insetBy(dx: Beside.rim, dy: Beside.rim)
+                edges.allowed = panel?.detached == true ? [.left, .right, .top, .bottom] : panel?.side == .left ? .left : .right
+                window?.invalidateCursorRects(for: edges)
+            }
+
+            override func hitTest(_ point: NSPoint) -> NSView? {
+                let hit = super.hitTest(point)
+                return hit === self ? nil : hit
+            }
+        }
+
+        /// The room around the card where the pointer turns into the resize arrows and a drag makes the chat bigger or
+        /// smaller, as a window's own edges do; near a corner, both ways.
+        @MainActor final class Edges: NSView {
+            struct Zone: OptionSet {
+                let rawValue: Int
+                static let left = Zone(rawValue: 1), right = Zone(rawValue: 2), top = Zone(rawValue: 4), bottom = Zone(rawValue: 8)
+            }
+
+            /// The edges that resize it now, and where the chat is inside the rim, in this view.
+            var allowed: Zone = .right
+            var card: NSRect = .zero
+            /// A drag began, and how far it has gone since, in points.
+            var began: (() -> Void)?
+            var moved: ((Zone, NSSize) -> Void)?
+            private var start: NSPoint?
+            private var dragging: Zone = []
+            /// How far along an edge from a corner counts as the corner.
+            private let corner: CGFloat = 16
+
+            func zone(at point: NSPoint) -> Zone {
+                guard bounds.contains(point), !card.contains(point) else { return [] }
+                var zone: Zone = []
+                if point.x < card.minX { zone.insert(.left) }
+                if point.x > card.maxX { zone.insert(.right) }
+                if point.y < card.minY { zone.insert(.bottom) }
+                if point.y > card.maxY { zone.insert(.top) }
+                if zone == .left || zone == .right {
+                    if point.y < bounds.minY + corner { zone.insert(.bottom) } else if point.y > bounds.maxY - corner { zone.insert(.top) }
+                } else if zone == .top || zone == .bottom {
+                    if point.x < bounds.minX + corner { zone.insert(.left) } else if point.x > bounds.maxX - corner { zone.insert(.right) }
+                }
+                return zone.intersection(allowed)
+            }
+
+            override func hitTest(_ point: NSPoint) -> NSView? {
+                guard let superview else { return nil }
+                return zone(at: convert(point, from: superview)).isEmpty ? nil : self
+            }
+
+            override func resetCursorRects() {
+                let c = corner
+                let areas: [(NSRect, Zone)] = [
+                    (NSRect(x: 0, y: c, width: card.minX, height: bounds.height - 2 * c), .left),
+                    (NSRect(x: card.maxX, y: c, width: bounds.maxX - card.maxX, height: bounds.height - 2 * c), .right),
+                    (NSRect(x: c, y: card.maxY, width: bounds.width - 2 * c, height: bounds.maxY - card.maxY), .top),
+                    (NSRect(x: c, y: 0, width: bounds.width - 2 * c, height: card.minY), .bottom),
+                    (NSRect(x: 0, y: 0, width: c, height: c), [.left, .bottom]),
+                    (NSRect(x: bounds.maxX - c, y: 0, width: c, height: c), [.right, .bottom]),
+                    (NSRect(x: 0, y: bounds.maxY - c, width: c, height: c), [.left, .top]),
+                    (NSRect(x: bounds.maxX - c, y: bounds.maxY - c, width: c, height: c), [.right, .top]),
+                ]
+                for (area, zone) in areas {
+                    let usable = zone.intersection(allowed)
+                    guard !usable.isEmpty, let cursor = Self.cursor(usable) else { continue }
+                    let rect = outsideCard(area)
+                    if !rect.isEmpty { addCursorRect(rect, cursor: cursor) }
+                }
+            }
+
+            /// The part of a corner square that's in the rim, not over the chat.
+            private func outsideCard(_ rect: NSRect) -> NSRect {
+                guard rect.intersects(card) else { return rect }
+                if rect.minX < card.minX { return NSRect(x: rect.minX, y: rect.minY, width: card.minX - rect.minX, height: rect.height) }
+                if rect.maxX > card.maxX { return NSRect(x: card.maxX, y: rect.minY, width: rect.maxX - card.maxX, height: rect.height) }
+                return .zero
+            }
+
+            private static func cursor(_ zone: Zone) -> NSCursor? {
+                let sideways = zone.contains(.left) || zone.contains(.right)
+                let upright = zone.contains(.top) || zone.contains(.bottom)
+                if sideways && upright {
+                    if #available(macOS 15, *) {
+                        let position: NSCursor.FrameResizePosition = zone.contains(.top)
+                            ? (zone.contains(.left) ? .topLeft : .topRight) : (zone.contains(.left) ? .bottomLeft : .bottomRight)
+                        return .frameResize(position: position, directions: .all)
+                    }
+                    return .crosshair
+                }
+                return sideways ? .resizeLeftRight : upright ? .resizeUpDown : nil
+            }
+
             override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+            override func mouseDown(with event: NSEvent) {
+                dragging = zone(at: convert(event.locationInWindow, from: nil))
+                start = NSEvent.mouseLocation
+                began?()
+            }
+            override func mouseDragged(with event: NSEvent) {
+                guard let start, !dragging.isEmpty else { return }
+                let now = NSEvent.mouseLocation
+                moved?(dragging, NSSize(width: now.x - start.x, height: now.y - start.y))
+            }
+            override func mouseUp(with event: NSEvent) {
+                start = nil
+                dragging = []
+            }
         }
 
         /// The app's name as the person knows it, for what the chat says about it.
@@ -4742,6 +5562,8 @@ enum Template {
                 MainActor.assumeIsolated {
                     guard let connection = try? controller.makeXPCConnection() else { return }
                     connection.remoteObjectInterface = NSXPCInterface(with: LampSidebarPlacement.self)
+                    connection.exportedInterface = NSXPCInterface(with: LampSidebarHost.self)
+                    connection.exportedObject = Answering(controller)
                     connection.resume()
                     connections[ObjectIdentifier(controller)] = connection
                     place(controller)
@@ -4757,20 +5579,38 @@ enum Template {
             /// says it again (`LampMagic`).
             func place(_ controller: EXHostViewController) {
                 guard let connection = connections[ObjectIdentifier(controller)], let window = controller.view.window,
-                      window.isKeyWindow else { return }
+                      window.isKeyWindow || window.parent?.isKeyWindow == true || (window as? Beside)?.detached == true else { return }
                 let origin = window.convertToScreen(controller.view.convert(controller.view.bounds, to: nil)).origin
                 (connection.remoteObjectProxy as? LampSidebarPlacement)?.place(x: origin.x, y: origin.y)
             }
 
             /// Every chat in this window, after it moved or changed size.
             func place(in window: NSWindow) {
-                guard let split = window.contentViewController as? NSSplitViewController else { return }
-                for item in split.splitViewItems {
-                    for child in item.viewController.children {
-                        if let host = child as? EXHostViewController { place(host) }
+                if let chat = LampSidebar.chats[ObjectIdentifier(window)] { place(chat.host) }
+            }
+        }
+
+        /// What the chat asks of its panel (`LampSidebarHost`). The chat's process asks over every chat's connection,
+        /// not knowing which is its own, so each connection acts only for the chat the request was meant for: the one the
+        /// pointer is on, where the click or drag was; with none (a press from VoiceOver), the one with the keyboard.
+        /// That's chosen once for each request, by the first connection it arrives on (`isAsked`): chosen again,
+        /// a chat the first one closed would no longer be a choice, and another could be taken for it.
+        final class Answering: NSObject, LampSidebarHost {
+            private weak var controller: EXHostViewController?
+            init(_ controller: EXHostViewController) { self.controller = controller }
+
+            private func chat(_ request: String, _ act: @escaping @MainActor (Chat) -> Void) {
+                DispatchQueue.main.async { [weak controller] in
+                    MainActor.assumeIsolated {
+                        guard let controller, let chat = LampSidebar.chats.values.first(where: { $0.host === controller }),
+                              LampSidebar.isAsked(chat, for: request) else { return }
+                        act(chat)
                     }
                 }
             }
+
+            func closeChat(request: String) { chat(request) { chat in if let window = chat.window { LampSidebar.close(window) } } }
+            func startMove(request: String) { chat(request) { chat in chat.panel?.startMove() } }
         }
 
         /// Lamp listens for the chat: told directly when it's running (so this Lamp answers, not another copy),
@@ -4813,6 +5653,7 @@ enum Template {
             }
         }()
 
+        // begin LampWindows.reopen
         @MainActor private final class ReopenHandler: NSObject {
             static let shared = ReopenHandler()
 
@@ -4822,12 +5663,22 @@ enum Template {
                     forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEReopenApplication))
             }
 
+            /// After the Apple Event is handled, not inside it. A new window is the app's own code (its views' first
+            /// `makeNSView`), which may throw an Objective-C exception, such as WebKit's for a script message handler
+            /// added twice. Thrown inside the Apple Event it's caught there and the app goes on, but Swift can't be
+            /// unwound by one: what the skipped code had set, such as SwiftUI's record of what a view is reading, is
+            /// never put back, and the app crashes later, somewhere unrelated, with a report that names neither the
+            /// exception nor the code that threw it. Thrown here, it ends the app with a report that names both
+            /// (`Runtime.crash`).
             @objc func reopen(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
-                LampWindows.show()
+                DispatchQueue.main.async { MainActor.assumeIsolated { LampWindows.show() } }
             }
         }
+        // end LampWindows.reopen
 
-        @MainActor static func show() {
+        /// `relaunching` false for a caller with work in hand (Share…): then a window that can't be brought back is
+        /// left for it to deal with, rather than the app starting again and ending that work.
+        @MainActor static func show(relaunching: Bool = true) {
             NSApp.unhide(nil)
             let windows = NSApp.windows.filter { $0.canBecomeMain }
             if !windows.contains(where: \.isVisible) {
@@ -4849,6 +5700,7 @@ enum Template {
             }
             // Nothing could bring a window back: the app replaced New Window with something else, or its only
             // window has no menu item. Rather than sit in the Dock with nothing to show, start again with one.
+            guard relaunching else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 if !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) { relaunch() }
             }
@@ -4996,14 +5848,8 @@ enum Template {
         /// each launch, without Lamp's chat beside it, so it keeps up with the app as it changes.
         @MainActor
         private static func preview(of window: NSWindow) {
-            guard let png = picture(of: window), var image = NSBitmapImageRep(data: png)?.cgImage,
-                  let view = window.contentView?.superview ?? window.contentView, view.bounds.width > 0 else { return }
+            guard let png = picture(of: window), let image = NSBitmapImageRep(data: png)?.cgImage else { return }
             previewTaken = true
-            let chat = LampSidebar.openWidth(in: window)
-            if chat > 0 {
-                let kept = Int((Double(image.width) * (view.bounds.width - chat) / view.bounds.width).rounded())
-                if kept > 40, let cropped = image.cropping(to: CGRect(x: 0, y: 0, width: kept, height: image.height)) { image = cropped }
-            }
             try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
                 .write(to: folder.appendingPathComponent("preview.png"), options: .atomic)
         }
@@ -8435,7 +9281,8 @@ enum Template {
         /// The app serves its sidebar page itself (Assets/Sidebar, index.html first) on this Mac's own address, at a
         /// name and port of its own, so its sidebar works while the app is open whether Lamp is or not. Chrome's
         /// sidebar frames it; the page asks the app for its data and actions with `lamp.call`, and for the page the
-        /// person is on with `lamp.readPage()` after a click. `api` answers the calls, on the main actor:
+        /// person is on with `lamp.readPage()` after a click, or when the app's right-click item is chosen (`lamp.onMenu`).
+        /// `api` answers the calls, on the main actor:
         ///
         ///     LampBrowser.startPage { call in
         ///         switch call.name {
@@ -8676,7 +9523,8 @@ enum Template {
             }
         }
 
-        /// `lamp.js`, which the page loads first: `lamp.call`, `lamp.readPage`, `lamp.readSelection`, `lamp.onChange`.
+        /// `lamp.js`, which the page loads first: `lamp.call`, `lamp.readPage`, `lamp.readSelection`, `lamp.onChange`,
+        /// `lamp.onMenu`.
         nonisolated fileprivate static let script = """
         // Lamp's bridge for this app's sidebar page. The page sits in Chrome's sidebar, framed by Lamp's extension;
         // what it knows of the person's tab comes only through that frame, after a click.
@@ -8715,6 +9563,19 @@ enum Template {
           addEventListener('message', event => {
             if (event.source === parent && event.origin === framer && event.data && event.data.lamp === 'prove') prove();
           });
+          // The app's right-click item was chosen on this tab: the handler does what the item says, as the person's
+          // click would. Held until the page has given its handler, so one given after the news still gets it.
+          const menuHandlers = []; let menuWaiting = false;
+          function chosen() {
+            if (!menuHandlers.length) { menuWaiting = true; return; }
+            menuWaiting = false;
+            menuHandlers.forEach(f => { try { Promise.resolve(f()).catch(() => {}); } catch {} });
+          }
+          addEventListener('message', event => {
+            if (event.source === parent && event.origin === framer && event.data && event.data.lamp === 'menu') chosen();
+          });
+          // Lamp's own preview of the sidebar (the builder's) chooses the item through this, as Chrome's sidebar does above.
+          if (preview) Object.defineProperty(window, '__lampChooseMenu', {value: chosen});
           async function call(name, body) {
             await ready;
             let reply;
@@ -8774,6 +9635,9 @@ enum Template {
             readSelection: () => read('selection'),
             /// Called when the app says what the page shows changed (LampBrowser.pageChanged()).
             onChange(f) { watchers.push(f); },
+            /// Called when the person chose the app's right-click item for this page: do what it says, reading the
+            /// page once with lamp.readPage() or lamp.readSelection() as a click would.
+            onMenu(f) { menuHandlers.push(f); if (menuWaiting) chosen(); },
           };
         })();
         """
@@ -8844,6 +9708,7 @@ enum Template {
         .page-top{height:12px}
         .segmented{display:flex;margin:0 var(--gutter) 10px;padding:2px;border-radius:8px;background:var(--fill)}.segmented button{flex:1;min-height:24px;border-radius:6px;background:transparent;font-size:.75rem}.segmented button[aria-pressed=true]{background:var(--raised);box-shadow:var(--raised-shadow)}
         .pill{display:inline-flex;align-items:center;gap:3px;height:20px;padding:0 8px;border-radius:999px;font:600 .6875rem/1 var(--font);background:var(--tint-wash);color:var(--tint-text);white-space:nowrap}.pill.neutral{background:var(--fill);color:var(--muted)}
+        .verdict{display:inline-flex;align-items:center;gap:4px;font:600 .8125rem/1.2 var(--font);white-space:nowrap}.verdict .sym{font-size:.75rem}.verdict.bad{color:var(--danger)}.verdict.good{color:var(--tint-text)}.verdict.unknown{color:var(--muted);font-weight:500}
         .dot{flex:none;width:9px;height:9px;border-radius:50%;background:var(--tint)}.dot.off{background:transparent}
         .status,.status-line{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.75rem;margin:10px calc(var(--gutter) + 4px) 0}.status:empty,.status-line:empty{display:none}.error{color:var(--danger)}
         .empty{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;padding:36px 28px;color:var(--muted)}.empty .sym{font-size:2.5rem;color:var(--tertiary);margin-bottom:6px}.empty .title{font-size:1.0625rem;font-weight:600;color:var(--ink)}
@@ -8853,7 +9718,7 @@ enum Template {
         label{display:block}
         .bottom-bar,.actions{position:sticky;bottom:0;display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-top:18px;padding:10px var(--gutter) 14px;background:color-mix(in srgb,var(--bg) 85%,transparent);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border-top:.5px solid var(--separator)}
         ul.list{list-style:none;margin:0 var(--gutter);padding:0;background:var(--surface);border-radius:var(--radius);overflow:hidden}ul.list li{position:relative;padding:11px 12px}ul.list li+li::before{content:"";position:absolute;top:0;right:0;left:12px;height:.5px;background:var(--separator)}
-        @media (max-width:19em){.offer{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start}.offer>button{grid-column:2;justify-self:start;margin:0}.row{flex-wrap:wrap;align-items:flex-start;--thumb:32px}.row .trailing{flex-basis:100%;padding-left:calc(var(--inset) - 12px)}.meta>span,.facts-line>span,.facts>span{white-space:normal}.clamp-1{-webkit-line-clamp:3}.collection-header{flex-wrap:wrap}.field{display:block;padding:8px 12px}.field>label{width:auto}.grid{grid-template-columns:1fr}}
+        @media (max-width:19em){.offer{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start}.offer>button{grid-column:2;justify-self:start;margin:0}.row{flex-wrap:wrap;align-items:flex-start;--thumb:32px}.row .trailing{flex-basis:100%;padding-left:calc(var(--inset) - 12px)}.meta>span,.facts-line>span,.facts>span,.verdict{white-space:normal}.clamp-1{-webkit-line-clamp:3}.collection-header{flex-wrap:wrap}.field{display:block;padding:8px 12px}.field>label{width:auto}.grid{grid-template-columns:1fr}}
         [hidden]{display:none!important}
         """
     }
@@ -13436,7 +14301,7 @@ enum Template {
                 Divider()
                 // The wand every window of a Lamp app has, here as the menu's item, where a menu has its commands.
                 if LampMagic.isOn {
-                    Button { LampMenuBar.customize() } label: { Label("Customize with Lamp…", systemImage: "wand.and.sparkles") }
+                    Button { LampMenuBar.customize() } label: { Label { Text("Customize with Lamp…") } icon: { Image(nsImage: LampGlyph.image(pointSize: 13, weight: .regular)) } }
                 }
                 if settings { Button("Settings…") { LampMenuBar.openSettings() }.keyboardShortcut(",") }
                 Button("Quit \(LampMenuBar.appName)") { NSApp.terminate(nil) }.keyboardShortcut("q")
@@ -13452,7 +14317,7 @@ enum Template {
                     HStack {
                         Spacer()
                         Button { LampMenuBar.customize() } label: {
-                            Image(systemName: "wand.and.sparkles").font(.system(size: 13, weight: .medium))
+                            LampGlyph.Mark(size: 13)
                                 .frame(width: 24, height: 22).contentShape(Rectangle())
                         }
                         .buttonStyle(.borderless)
@@ -13474,18 +14339,16 @@ enum Template {
         @MainActor static func customize() {
             guard LampMagic.isOn else { return LampSidebar.openFromMenu() }
             close()
-            // The window is new each launch, at the panel's size: the chat makes it wider, rather than coming back
-            // into it as into a window macOS restored at a size that already held it (`LampSidebar.restore`).
+            // The window is new each launch, at the panel's size: the chat opens beside it below, not with it as
+            // a restored window's would (`LampSidebar.restore`).
             LampSidebar.forget()
             showWindow()
             guard let window else { return }
-            // Once the window is in front and has its wand. Put back where the copy before a change left it, its
-            // frame already holds the chat.
+            // Once the window is in front and has its wand.
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    let putBack = LampMagic.putBackWindow === window
                     LampMagic.putBackWindow = nil
-                    LampSidebar.open(window, grow: !putBack)
+                    LampSidebar.open(window)
                 }
             }
         }

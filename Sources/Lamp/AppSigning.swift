@@ -38,7 +38,7 @@ enum AppSigning {
     /// `LAMP_SHARE` with `LAMP_SHARE_ENTITLEMENTS`.
     static func command(adHoc: Bool, widget: Bool, share: Bool = false, ownKeychain: Bool = true, appEntitlements: Bool = false) -> String {
         let keychain = ownKeychain ? " --keychain \"$LAMP_KEYCHAIN\"" : ""
-        let sign = adHoc ? "codesign --force -s -" : "codesign --force\(keychain) -s \"$LAMP_IDENTITY\""
+        let sign = adHoc ? "/usr/bin/codesign --force -s -" : "/usr/bin/codesign --force\(keychain) -s \"$LAMP_IDENTITY\""
         let app = "\(sign)\(appEntitlements ? " --entitlements \"$LAMP_APP_ENTITLEMENTS\"" : "") \"$LAMP_APP\" 2>&1"
         // The chat inside the app's window (`Sidebar`), when the app has it, before the app around it.
         var steps: [String] = [Sidebar.signingStep(sign)]
@@ -46,6 +46,11 @@ enum AppSigning {
         if share { steps.append("\(sign) --entitlements \"$LAMP_SHARE_ENTITLEMENTS\" \"$LAMP_SHARE\" 2>&1") }
         return (steps + [app]).joined(separator: " && ")
     }
+
+    /// The Mac half of an app for both, sealed again for the person's team after Lamp has put its icon and chat in,
+    /// reading `LAMP_APP`, `LAMP_IDENTITY` and `LAMP_APP_ENTITLEMENTS`.
+    static let universalCommand = Sidebar.signingStep("/usr/bin/codesign --force -s \"$LAMP_IDENTITY\"")
+        + " && /usr/bin/codesign --force --entitlements \"$LAMP_APP_ENTITLEMENTS\" -s \"$LAMP_IDENTITY\" \"$LAMP_APP\" 2>&1"
 
     /// The identity to sign with, or "-" (ad-hoc) if one can't be made.
     @MainActor
@@ -88,7 +93,7 @@ enum AppSigning {
     static func requirement(of app: URL) async -> String? {
         guard FileManager.default.fileExists(atPath: app.path) else { return nil }
         var lines: [String] = []
-        _ = await Shell.run("codesign -d -r- \"$LAMP_APP\" 2>&1", cwd: FileManager.default.temporaryDirectory,
+        _ = await Shell.run("/usr/bin/codesign -d -r- \"$LAMP_APP\" 2>&1", cwd: FileManager.default.temporaryDirectory,
                             env: ["LAMP_APP": app.path]) { lines.append($0) }
         return requirement(in: lines)
     }
@@ -111,7 +116,7 @@ enum AppSigning {
     /// app that hasn't been given anything yet, and asking again works. macOS has to know the app (lsregister).
     static func forgetPermissions(of bundleID: String) async -> Bool {
         var lines: [String] = []
-        let status = await Shell.run("tccutil reset All \"$LAMP_BUNDLE\" 2>&1", cwd: FileManager.default.temporaryDirectory,
+        let status = await Shell.run("/usr/bin/tccutil reset All \"$LAMP_BUNDLE\" 2>&1", cwd: FileManager.default.temporaryDirectory,
                                      env: ["LAMP_BUNDLE": bundleID]) { lines.append($0) }
         if status != 0 { print("AppSigning: couldn't clear the permissions of \(bundleID):\n" + lines.joined(separator: "\n")) }
         return status == 0

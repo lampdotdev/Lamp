@@ -3,7 +3,7 @@ import AppKit
 @testable import Lamp
 
 /// The wishes Lamp comes with are the first thing a new person uses, so each one must be whole: its own
-/// starter.md read (a name, an offer and three short changes to suggest), APP.md for the agent, a symbol icon,
+/// starter.md read (a name, an offer and three short changes to suggest), APP.md for the agent, an icon with its artwork,
 /// and none of the files Lamp writes itself, which a copy would otherwise freeze at this Lamp's version.
 final class StartersTests: XCTestCase {
     private var starters: URL {
@@ -62,13 +62,19 @@ final class StartersTests: XCTestCase {
             let spec = try JSONDecoder().decode(IconSpec.self, from: Data(contentsOf: folder.appendingPathComponent("icon.json")))
             XCTAssertTrue(Icons.backgrounds.contains { $0.name == spec.background }, name)
             let about = try XCTUnwrap(AppDescription.description(at: folder.appendingPathComponent("about.json")), name)
-            // The desk shows it in large type beside the app's picture, in three lines at most.
-            XCTAssertLessThanOrEqual(about.count, WishDesk.describedIn, "\(name): \(about)")
+            // The desk shows it in large type beside the app's picture, in four lines at most.
+            XCTAssertLessThanOrEqual(about.count, AppDescription.limit, "\(name): \(about)")
             // Its icon ships drawn (StarterIconsTests), from the icon.json it has now.
             let icon = folder.appendingPathComponent(Starters.iconFolder)
             XCTAssertTrue(fm.fileExists(atPath: icon.appendingPathComponent("icon.png").path), "\(name) ships no icon")
             let drawn = try? JSONDecoder().decode(IconSpec.self, from: Data(contentsOf: icon.appendingPathComponent("icon.json")))
             XCTAssertEqual(drawn, spec, "\(name)'s icon was drawn from another icon.json: draw it again")
+            // Glass, or a painting for a game, as an app's icon would be drawn.
+            if spec.game {
+                XCTAssertNotNil(NSImage(contentsOf: icon.appendingPathComponent(Starters.artFile)), "\(name)'s icon has no painting")
+            } else {
+                XCTAssertNotNil(GlassArt.load(from: icon.appendingPathComponent(Starters.glassFile)), "\(name)'s icon has no glass design")
+            }
             // What the desk shows when the pointer rests on it, before anyone has opened it.
             XCTAssertNotNil(NSImage(contentsOf: folder.appendingPathComponent("preview.png")), "\(name) ships no preview.png")
             for owned in ["Sources/LampSupport.swift", "Widget/LampWidgetSupport.swift", "Share/LampShareSupport.swift", "build.sh", "Package.swift"] {

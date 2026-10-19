@@ -5,6 +5,29 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.14.0
+
+- Change an app while you use it: the wand in its title bar opens its chat beside the window, and most changes
+  go into the open app without it restarting, so what you were looking at stays put.
+- Point at part of an app, a button or a spot in a game, and it goes into your message as a picture.
+- Lamp opens on your wishes, and starts from what would make your day easier or more fun rather than from an
+  app. A vague wish gets a good first attempt instead of a round of questions.
+- No more choosing Mac or iPhone: Lamp works out where a wish belongs. An app can be for the Mac and the iPhone
+  at once, with iCloud keeping its data the same on every device.
+- iPhone apps can have home screen widgets, Live Activities and an Apple Watch app with complications, and keep
+  working while they're closed.
+- Mac widgets' buttons work. Apps' actions show up in Siri, Shortcuts and Spotlight, apps can take things in
+  from the Share menu, and every Mac app has File ▸ Share….
+- New building blocks: Apple Health, Photos, location, weather, music, the home, 3D scenes and maps. Apps
+  connect to Notion, Linear, Todoist, Jira, monday.com, Home Assistant and more, signing in through the
+  service itself.
+- Send Now hands waiting messages to the agent while it works, and Undo Last Change sits under the latest
+  change.
+- Safer builds: they run in the app's own sandbox, and the agent's commands can't change your Applications
+  folder, Homebrew or Xcode.
+- A rebuild waits while an app asks about unsaved work, and leaves it open if you say so. Rebuilding no longer
+  asks for your keychain password, and deleting an app takes its data to the Trash too.
+
 ## 0.13.0
 
 - Building with your Claude or ChatGPT subscription no longer needs their apps or a command-line install:

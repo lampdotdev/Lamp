@@ -45,6 +45,17 @@ enum Memory {
 
     /// Each set of notes holds this many characters: a few dozen lines, cheap to open.
     static let limit = 2000
+    /// A file of the notes'. The app's notes, and Lamp's records of them beside them, are in the app's folder, where
+    /// the agent may have put a link: what's read there goes back to the agent (`read_notes`, the summary with each
+    /// request, what was taken back), so it's read as `AppFile` reads, never through one. The person's are in Lamp's
+    /// own folder, which the agent's commands can't reach.
+    private static func contents(of file: URL, for place: Place) -> Data? {
+        switch place {
+        case .you: try? Data(contentsOf: file)
+        case .app(let project): AppFile.read(file, in: project)
+        }
+    }
+
     /// The summary is what rides along with requests, so it stays a line.
     static let summaryLimit = 120
 
@@ -66,7 +77,7 @@ enum Memory {
 
     /// The file is the summary on a first line of its own (`summary: …`), then the notes.
     static func read(_ place: Place) -> Notes {
-        guard let content = try? String(contentsOf: place.file, encoding: .utf8) else { return Notes() }
+        guard let data = contents(of: place.file, for: place), let content = String(data: data, encoding: .utf8) else { return Notes() }
         var lines = content.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
         var notes = Notes()
         if let first = lines.first, first.hasPrefix("summary: ") {
@@ -219,7 +230,7 @@ enum Memory {
     private static func shownFile(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/notes-shown.json") }
 
     private static func allShown(in project: LampProject) -> [String: Shown] {
-        (try? Data(contentsOf: shownFile(project))).flatMap { try? JSONDecoder().decode([String: Shown].self, from: $0) } ?? [:]
+        contents(of: shownFile(project), for: .app(project)).flatMap { try? JSONDecoder().decode([String: Shown].self, from: $0) } ?? [:]
     }
 
     private static func shown(to engine: Engine, in project: LampProject) -> Shown? { allShown(in: project)[engine.rawValue] }
@@ -284,7 +295,7 @@ enum Memory {
     private static func undoneFile(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/notes-undone.json") }
 
     private static func undone(in project: LampProject) -> Undone {
-        (try? Data(contentsOf: undoneFile(project))).flatMap { try? JSONDecoder().decode(Undone.self, from: $0) } ?? Undone()
+        contents(of: undoneFile(project), for: .app(project)).flatMap { try? JSONDecoder().decode(Undone.self, from: $0) } ?? Undone()
     }
 
     private static func writeUndone(_ undone: Undone, in project: LampProject) {

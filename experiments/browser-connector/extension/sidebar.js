@@ -130,7 +130,7 @@ async function refresh() {
       return;
     }
     delete opening[app.id];
-    note(info.moved ? 'This tab is on a new page. Click Lamp in Chrome’s toolbar to use it here.' : '');
+    note(pageNote());
     document.querySelector('main').hidden = false;
     render(state);
   } catch (e) { document.querySelector('main').hidden = true; transportProblem = true; error(e); }
@@ -159,7 +159,7 @@ function showPage(app) {
   }
   // A page that stopped answering (its app quit, or reopened at another of its ports) is looked for again.
   if (frameReady && now - lastAlive > 8000) { frameReady = false; pageToken = ''; frameAsked = 0; }
-  if (frameReady) { frame.hidden = false; note(info.moved ? 'This tab is on a new page. Click Lamp in Chrome’s toolbar to use it here.' : ''); return; }
+  if (frameReady) { void deliverMenu(); frame.hidden = false; note(pageNote()); return; }
   frame.hidden = true;
   if (tried < app.page.urls.length && !opening[app.id]) return;
   if (!lampClosed) opening[app.id] ??= {at: now, asked: call({op: 'surface-open', app: app.id}).catch(() => {})};
@@ -171,6 +171,36 @@ function showPage(app) {
 // that page's memory, and asked of every read, so a document that replaced it (it navigated, the app went and
 // another program took its port) can't read on what the app's page proved.
 let readSpent = false, nonces = new Set(), pageToken = '';
+// The app's right-click item, chosen for this tab, stands for the person's click in its page: the proved page is told
+// once (`lamp.onMenu`), and may read once without a click, within a few seconds, only the page it was chosen on.
+// A choice that came too late is said, never dropped quietly: the page opened but didn't do what the item said, and
+// choosing the item again (with the app now open) does it. It stays said until the next choice or a click in the page.
+let menuSeen = 0, menuRead = null, menuMissed = null;
+function pageNote() {
+  if (info.moved) return 'This tab is on a new page. Click Lamp in Chrome’s toolbar to use it here.';
+  if (menuMissed && menuMissed.app === framed) return menuMissed.text;
+  return '';
+}
+async function deliverMenu() {
+  const menu = info.menu, frame = $('page');
+  if (!menu || !frameReady || !pageToken || menu.app !== framed || menu.at === menuSeen) return;
+  menuSeen = menu.at; menuMissed = null;
+  // The page this choice is for, as it is now: the person may switch apps, or the frame reload, while the write below
+  // waits, and then the choice goes nowhere rather than to another page.
+  const app = framed, origin = frame.dataset.origin, token = pageToken, moved = info.moved;
+  const {menu: _, ...rest} = info; info = rest;
+  await chrome.storage.session.set({[keys.tab]: rest});
+  if (framed !== app || frame.dataset.origin !== origin || pageToken !== token || !frameReady) return;
+  if (moved || info.moved) return note(pageNote());
+  // 15 seconds from the click on the item, however long the app took to open its page.
+  if (Date.now() >= menu.at + 15000) {
+    const chosen = apps.find(a => a.id === app);
+    menuMissed = {app, text: `“${chosen?.menu || 'The item'}” didn’t run: ${chosen?.name || 'the app'} took too long to open. Right-click the page and choose it again.`};
+    return note(pageNote());
+  }
+  menuRead = {token, url: menu.url, until: menu.at + 15000};
+  frame.contentWindow.postMessage({lamp: 'menu'}, origin);
+}
 // Every document the frame loads proves itself again, so a page that replaced the app's (the app gone, another
 // program on its port) can't use what the app's page proved.
 $('page').addEventListener('load', () => {
@@ -184,7 +214,7 @@ $('page').addEventListener('load', () => {
 // back, so the next click in the page arms the next one. A press on the sidebar's own parts (the app menu, the strip)
 // isn't a click in the page and arms nothing.
 let lastAlive = 0;
-window.addEventListener('blur', () => setTimeout(() => { if (document.activeElement === $('page')) readSpent = false; }));
+window.addEventListener('blur', () => setTimeout(() => { if (document.activeElement === $('page')) { readSpent = false; menuMissed = null; } }));
 for (const kind of ['pointerdown', 'keydown']) document.addEventListener(kind, () => { readSpent = true; }, true);
 function takeFocusBack() { $('top').tabIndex = -1; $('top').focus({preventScroll: true}); }
 const hex = bytes => [...new Uint8Array(bytes)].map(b => b.toString(16).padStart(2, '0')).join('');
@@ -226,21 +256,24 @@ window.addEventListener('message', async event => {
     // Only for the frame that asked: the sidebar may have moved to another address or app meanwhile.
     if (framed !== asker || frame.dataset.origin !== origin) return;
     if (!ok) { frameAsked = 0; return answer({}); }
-    frameReady = true; delete opening[framed]; frame.hidden = false; note(info.moved ? 'This tab is on a new page. Click Lamp in Chrome’s toolbar to use it here.' : '');
+    frameReady = true; delete opening[framed]; frame.hidden = false; note(pageNote());
     const reads = app.page.reads, name = app.name;
     $('consent-top').textContent = reads === 'selection' ? `Using a selection shares only that passage with ${name}.`
       : reads === 'page' ? `Using this page shares its text with ${name}.` : '';
     pageToken = crypto.randomUUID(); lastAlive = Date.now();
-    return answer({key: app.page.key, token: pageToken});
+    answer({key: app.page.key, token: pageToken});
+    return void deliverMenu();
   }
   if (message.lamp !== 'read' || !frameReady || !pageToken || message.token !== pageToken) return answer({error: 'Open the app’s sidebar again, then try again.'});
   const reads = app?.page?.reads;
   if (!reads) return answer({error: 'This sidebar doesn’t read pages.'});
   // A click in the frame counts here too (Chrome passes a click's activation up to the frames above it).
   // Refused, the sidebar takes focus back too, so the person's next click in the page arms a read.
-  if (!navigator.userActivation.isActive || readSpent) { takeFocusBack(); return answer({error: 'Reading the page needs a click.'}); }
+  const chosen = menuRead && menuRead.token === pageToken && Date.now() < menuRead.until ? menuRead : null;
+  menuRead = null;   // the item's one read, used or not, goes with the first read asked
+  if (!chosen && (!navigator.userActivation.isActive || readSpent)) { takeFocusBack(); return answer({error: 'Reading the page needs a click.'}); }
   readSpent = true;
-  try { answer({page: await call({op: 'page-read', scope: reads === 'selection' ? 'selection' : message.scope})}); } catch (e) { answer({error: e.message}); }
+  try { answer({page: await call({op: 'page-read', scope: reads === 'selection' ? 'selection' : message.scope, ...(chosen ? {expect: chosen.url} : {})})}); } catch (e) { answer({error: e.message}); }
   finally { takeFocusBack(); }
 });
 

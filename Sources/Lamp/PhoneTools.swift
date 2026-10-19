@@ -87,10 +87,12 @@ enum PhoneTools {
                     return failed("You have not agreed to the Xcode license agreements.")
                 }
                 if arguments.contains("--show-sdk-path"), Pretend.xcodeMissing("platform") { return failed() }
-                if arguments.starts(with: ["simctl", "list", "runtimes"]), Pretend.xcodeMissing("runtime") {
+                // The tool by its name, then what it was asked: simctl is run by its full path.
+                let call = [URL(fileURLWithPath: tool).lastPathComponent] + arguments
+                if call.starts(with: ["simctl", "list", "runtimes"]), Pretend.xcodeMissing("runtime") {
                     return answer(#"{"runtimes": []}"#)
                 }
-                if arguments.starts(with: ["simctl", "list", "devices"]), Pretend.xcodeMissing("simulator") {
+                if call.starts(with: ["simctl", "list", "devices"]), Pretend.xcodeMissing("simulator") {
                     return answer(#"{"devices": {}}"#)
                 }
                 return real.run(tool, arguments, env)
@@ -165,10 +167,70 @@ enum PhoneTools {
         setenv("DEVELOPER_DIR", developer, 1)
     }
 
+    /// At launch: the Xcode chosen in Lamp's setup, else one Lamp finds by itself (`installedXcode`). Without
+    /// either, a Mac whose xcode-select names the Command Line Tools has no devicectl, so no phone shows in Try On.
     static func restoreChoice() {
-        if !Pretend.isMissing("xcode"), let saved = UserDefaults.standard.string(forKey: preference), isXcode(saved) {
+        guard !Pretend.isMissing("xcode") else { return }
+        if let saved = UserDefaults.standard.string(forKey: preference), isXcode(saved) {
             setenv("DEVELOPER_DIR", saved, 1)
+            return
         }
+        // Xcode's own check takes a moment, so it's made off the main thread; until it answers Lamp's tools are
+        // the Mac's own choice, as they were before.
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let found = installedXcode() else { return }
+            DispatchQueue.main.async {
+                if ProcessInfo.processInfo.environment["DEVELOPER_DIR"]?.isEmpty ?? true { setenv("DEVELOPER_DIR", found, 1) }
+            }
+        }
+    }
+
+    /// The Xcode Lamp uses without being asked, when nothing else names one: Lamp wasn't started with
+    /// `DEVELOPER_DIR` and xcode-select names the Command Line Tools (or nothing that works). It's kept to Lamp's
+    /// process, like a choice made in setup, and isn't saved, so it's looked for again at each launch.
+    /// Lamp runs this Xcode's tools as itself, so it is only ever one in /Applications, through every link: the
+    /// agent's commands can't write there (`Sandbox.profile`), where an Xcode in the home folder or elsewhere may be
+    /// one a command left. And only one that's ready to build: with its agreements not yet accepted, every build
+    /// would fail where the Command Line Tools would have built.
+    static func installedXcode(env: [String: String] = ProcessInfo.processInfo.environment,
+                               selected: () -> String = { Subprocess.runBlocking("/usr/bin/xcode-select", ["-p"], mergeErrors: false, timeout: 10)
+                                   .output.trimmingCharacters(in: .whitespacesAndNewlines) },
+                               applications: String = "/Applications",
+                               isReady: (String) -> Bool = { Subprocess.runBlocking($0 + "/usr/bin/xcodebuild", ["-checkFirstLaunchStatus"],
+                                                                                    env: ["DEVELOPER_DIR": $0], timeout: 30).ok }) -> String? {
+        guard env["DEVELOPER_DIR"]?.isEmpty ?? true else { return nil }
+        let current = selected()
+        guard current.isEmpty || !isXcode(current) else { return nil }
+        let root = realpath(applications, nil).map { pointer in defer { free(pointer) }; return String(cString: pointer) } ?? applications
+        let apps = ((try? FileManager.default.contentsOfDirectory(atPath: applications)) ?? []).filter { $0.hasSuffix(".app") }
+        // Xcode.app first, as the one Apple's App Store puts there, then any other (Xcode-beta.app) by name.
+        let ordered = apps.filter { $0 == "Xcode.app" } + apps.filter { $0 != "Xcode.app" }.sorted()
+        for app in ordered {
+            guard let resolved = realpath(applications + "/" + app, nil) else { continue }
+            let bundle = String(cString: resolved)
+            free(resolved)
+            let developer = bundle + "/Contents/Developer"
+            guard (bundle as NSString).deletingLastPathComponent == root, staysInside(bundle),
+                  isXcode(developer), isReady(developer) else { continue }
+            return developer
+        }
+        return nil
+    }
+
+    /// Whether the developer folder and the tools Lamp runs from it as itself are the bundle's own, not links
+    /// out of it to a folder a command could write. Apple's Xcode has no link that leads outside itself.
+    private static func staysInside(_ bundle: String) -> Bool {
+        let developer = bundle + "/Contents/Developer"
+        func resolved(_ path: String) -> String? {
+            realpath(path, nil).map { pointer in defer { free(pointer) }; return String(cString: pointer) }
+        }
+        guard resolved(developer) == developer else { return false }
+        for tool in ["xcodebuild", "simctl", "devicectl", "xcdevice", "git"] {
+            let path = developer + "/usr/bin/" + tool
+            guard FileManager.default.fileExists(atPath: path) else { continue }
+            guard let real = resolved(path), real.hasPrefix(bundle + "/") else { return false }
+        }
+        return true
     }
 
     struct OlderPhone: Identifiable {
@@ -182,7 +244,7 @@ enum PhoneTools {
     /// show an update action rather than trying to pair or install on an unsupported phone.
     static func olderPhones() async -> [OlderPhone] {
         guard let developer = discover() else { return [] }
-        let result = await Subprocess.run("/usr/bin/xcrun", ["xcdevice", "list", "--timeout", "5"],
+        let result = await Subprocess.run(developer + "/usr/bin/xcdevice", ["list", "--timeout", "5"],
                                           env: ["DEVELOPER_DIR": developer], mergeErrors: false, timeout: 30)
         return result.ok ? olderPhones(listing: result.output) : []
     }
@@ -250,7 +312,7 @@ enum PhoneTools {
             }
         }
         report.passed.append(.platform)
-        let runtimes = probe.run("/usr/bin/xcrun", ["simctl", "list", "runtimes", "-j"], env)
+        let runtimes = probe.run(developer + "/usr/bin/simctl", ["list", "runtimes", "-j"], env)
         guard runtimes.ok, let data = runtimes.output.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let list = json["runtimes"] as? [[String: Any]] else {
@@ -263,7 +325,7 @@ enum PhoneTools {
             return stop(.runtime, "Download iOS for the simulator", "Lamp tries your app in a simulator, an iPhone or iPad that appears on your Mac's screen, and that needs iOS \(minimumIOS) or later. Click Open Xcode, choose Xcode → Settings from the menu bar, then click Components (Platforms in older versions of Xcode) and click Get beside the newest iOS. Come back to Lamp when the download finishes.", .components)
         }
         report.passed.append(.runtime)
-        let devices = probe.run("/usr/bin/xcrun", ["simctl", "list", "devices", "available", "-j"], env)
+        let devices = probe.run(developer + "/usr/bin/simctl", ["list", "devices", "available", "-j"], env)
         guard devices.ok, Simulator.device(family, listing: devices.output) != nil else {
             return stop(.simulator, "Add an \(family.name) simulator", "There's no \(family.name) for Lamp to try your app on yet. Click Open Simulator, then choose File → New Simulator from the menu bar. Pick any \(family.name) with iOS \(minimumIOS) or later, click Create, and come back to Lamp.", .simulator)
         }
@@ -311,14 +373,14 @@ enum PhoneTools {
         if let phone {
             let file = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-phone-version-\(UUID().uuidString).json")
             defer { try? FileManager.default.removeItem(at: file) }
-            let result = probe.run("/usr/bin/xcrun", ["devicectl", "list", "devices", "--timeout", "5", "--json-output", file.path], env)
+            let result = probe.run(developer + "/usr/bin/devicectl", ["list", "devices", "--timeout", "5", "--json-output", file.path], env)
             guard result.ok, let data = probe.read(file),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let devices = (json["result"] as? [String: Any])?["devices"] as? [[String: Any]],
                   let device = devices.first(where: { ($0["hardwareProperties"] as? [String: Any])?["udid"] as? String == phone }),
                   let properties = device["deviceProperties"] as? [String: Any],
                   let version = properties["osVersionNumber"] as? String, major(version) > 0 else {
-                let legacy = probe.run("/usr/bin/xcrun", ["xcdevice", "list", "--timeout", "5"], env)
+                let legacy = probe.run(developer + "/usr/bin/xcdevice", ["list", "--timeout", "5"], env)
                 if legacy.ok, let old = olderPhones(listing: legacy.output).first(where: { $0.id == phone }) {
                     report.issue = updateIssue(name: old.name, version: old.version)
                     return report

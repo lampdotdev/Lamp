@@ -48,17 +48,57 @@ extension ChatLook {
         }
     }
 
-    /// A message waiting for the current change to finish. It can still be taken back.
+    /// Where each waiting message sits in its group. Waiting messages go out together, so they're shown as one
+    /// group: close together, with one caption under the latest saying how many there are and, where the agent can
+    /// take them while it works, Send Now for all of them. Those already sent now (`sending`) are a group of their
+    /// own, with its own caption.
+    public struct QueuedPlace: Equatable {
+        /// The latest of its group: the caption goes under it.
+        public var last: Bool
+        /// How many messages its group holds.
+        public var count: Int
+        /// It starts a group, so it stands apart from what's above it.
+        public var first: Bool
+
+        public init(last: Bool, count: Int, first: Bool) {
+            self.last = last
+            self.count = count
+            self.first = first
+        }
+
+        public static func places(sending: [Bool]) -> [QueuedPlace] {
+            sending.indices.map { index in
+                let first = index == 0 || sending[index - 1] != sending[index]
+                let last = index == sending.count - 1 || sending[index + 1] != sending[index]
+                var start = index, end = index
+                while start > 0, sending[start - 1] == sending[index] { start -= 1 }
+                while end < sending.count - 1, sending[end + 1] == sending[index] { end += 1 }
+                return QueuedPlace(last: last, count: end - start + 1, first: first)
+            }
+        }
+    }
+
+    /// A message waiting for the current change to finish. It can still be taken back. The latest of its group has
+    /// the group's caption, and, where the agent can take them while it works, Send Now for the whole group
+    /// (`sendNow`); once that's asked, the caption says they're on their way.
     public struct QueuedRow<Chips: View>: View {
         let text: String
         let waitingForSetup: Bool
+        let sending: Bool
+        let place: QueuedPlace
         let onRemove: () -> Void
+        let sendNow: (() -> Void)?
         let chips: Chips
 
-        public init(text: String, waitingForSetup: Bool, onRemove: @escaping () -> Void, @ViewBuilder chips: () -> Chips) {
+        public init(text: String, waitingForSetup: Bool, sending: Bool = false,
+                    place: QueuedPlace = QueuedPlace(last: true, count: 1, first: true), onRemove: @escaping () -> Void,
+                    sendNow: (() -> Void)? = nil, @ViewBuilder chips: () -> Chips) {
             self.text = text
             self.waitingForSetup = waitingForSetup
+            self.sending = sending
+            self.place = place
             self.onRemove = onRemove
+            self.sendNow = sendNow
             self.chips = chips()
         }
 
@@ -68,20 +108,39 @@ extension ChatLook {
                 HStack(spacing: 6) {
                     Button(action: onRemove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                         .buttonStyle(.plain)
-                        .help("Remove from the queue")
-                        .accessibilityLabel("Remove from the queue")
-                    Text(text)
-                        .lineSpacing(2)
-                        .padding(.horizontal, 12).padding(.vertical, 8)
-                        .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
-                        .foregroundStyle(.secondary)
+                        .help("Unsend")
+                        .accessibilityLabel("Unsend")
+                    UserBubble(text, waiting: true)
                 }
                 // The width limit goes around the button too, so it stays next to the bubble.
-                .frame(maxWidth: 480 + 22, alignment: .trailing)
-                Label(waitingForSetup ? "Starts when Apple's app-building tools finish installing" : "Queued",
-                      systemImage: "clock").font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: 480 + 22 + ChatLook.tailRoom, alignment: .trailing)
+                .padding(.leading, 40)
+                if place.last { caption.padding(.trailing, ChatLook.tailRoom) }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+
+        @ViewBuilder private var caption: some View {
+            let several = place.count > 1
+            HStack(spacing: 10) {
+                if sending {
+                    Label(several ? "Sending \(place.count) now" : "Sending now", systemImage: "arrow.up.circle")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    if waitingForSetup {
+                        Label("Starts when Apple's app-building tools finish installing", systemImage: "clock")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        // Worded like a text the other side hasn't read yet, with no icon, as Messages shows it.
+                        Text(several ? "\(place.count) unread" : "Unread").font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let sendNow {
+                        Button(several ? "Send All Now" : "Send Now", action: sendNow)
+                            .buttonStyle(.link).font(.caption)
+                            .help(several ? "Send these to the agent while it works" : "Send this to the agent while it works")
+                    }
+                }
+            }
         }
     }
 
@@ -189,6 +248,7 @@ extension ChatLook {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointingHand()
                 .foregroundStyle(.secondary)
                 if showCommand {
                     // A short command takes only the room it needs; a long one scrolls rather than pushing the chat

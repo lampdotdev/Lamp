@@ -44,7 +44,8 @@ final class PreviewsTests: XCTestCase {
         try fm.createSymbolicLink(at: project.dir.appendingPathComponent(".lamp/runtime"), withDestinationURL: elsewhere)
         let outsideShot = elsewhere.appendingPathComponent("screenshot.png")
         try writePNG(outsideShot, width: 300, height: 200)
-        XCTAssertEqual(Previews.forAgent(project.dir.appendingPathComponent(".lamp/runtime/screenshot.png"), in: project).lastPathComponent, "screenshot.png")
+        // And the picture there, reached through the link, isn't the app's to hand over.
+        XCTAssertNil(Previews.forAgent(project.dir.appendingPathComponent(".lamp/runtime/screenshot.png"), in: project))
         XCTAssertEqual(try fm.contentsOfDirectory(atPath: elsewhere.path), ["screenshot.png"])
         try fm.removeItem(at: project.dir.appendingPathComponent(".lamp/runtime"))
         try fm.removeItem(at: outsideShot)

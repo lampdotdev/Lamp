@@ -20,6 +20,24 @@ enum Sandbox {
         return launch(command, profile: file)
     }
 
+    /// What a confined command returns when the sandbox couldn't be set up: it isn't run loose instead.
+    static let unconfined: Int32 = 126
+
+    /// Runs one of Lamp's own commands over an app's folder (its build, the compiler's look at its code, the
+    /// finishing of what the build made) under the profile the agent's commands get, in zsh. Everything in that
+    /// folder is the agent's to write, build.sh included at any moment between Lamp writing it and running it, so
+    /// whatever runs there runs as the agent's commands do, never as Lamp: with Lamp's keys, sign-ins and the
+    /// other apps out of reach.
+    static func run(_ command: String, for project: LampProject, cwd: URL? = nil, env: [String: String] = [:],
+                    started: (@MainActor (Process) -> Void)? = nil,
+                    onLine: @escaping @MainActor (String) -> Void) async -> Int32 {
+        guard let confined = wrap("/bin/zsh -c " + quoted(command), for: project) else {
+            await onLine("Lamp couldn't set up the sandbox for \(project.name), so nothing was run.")
+            return unconfined
+        }
+        return await Shell.run(confined, cwd: cwd ?? project.dir, env: env, started: started, onLine: onLine)
+    }
+
     /// The shell line that runs `command` under `profile`, with Lamp's `swift` first on the path (below). A
     /// login shell started inside (Codex runs its commands with `zsh -lc`) rebuilds the path with the system's
     /// folders first, so zsh is also given Lamp's startup files, which put the shims back in front; the
@@ -120,7 +138,8 @@ enum Sandbox {
                         keeping: [String] = []) -> String {
         let fm = FileManager.default
         let home = real(fm.homeDirectoryForCurrentUser.path)
-        let app = real(project.dir.path)
+        // The app's folder by its own name, never where it leads: a command may have swapped it for a link.
+        let app = project.realDir.path
         let support = real(home + "/Library/Application Support")
         var lines = [
             "(version 1)",
@@ -146,11 +165,20 @@ enum Sandbox {
             // app's secrets out of Lamp through it (PeerProcess). The app's own build is unaffected: it's
             // built in its folder, not here.
             lines.append("(deny process-exec* (subpath \(quotedPath(real(home + "/Applications/" + name + " Apps")))))")
+            // Nor what Xcode makes there for the phone (`Devices.buildsFolder`), for the same reason: closed to
+            // reading, but a program in it could still be started.
+            lines.append("(deny process-exec* (subpath \(quotedPath(support + "/" + name + "/Phone Builds"))))")
             // The caller check (PeerProcess.isApp) would also accept a whole bundle replaced at the installed
             // path, signature valid by that copy's own requirement. That's safe only while this folder stays
             // unwritable from the command's sandbox (the file denies above), so nothing the builder makes can
             // be put there: keep it that way, or the check needs the replacement refused too.
         }
+        // Xcode's interface and asset compilers hand their work to helpers that stay running and are found through
+        // shared memory named "ib…", whoever started them. A helper started outside the sandbox (by Lamp drawing an
+        // icon, or by the person's own Xcode) would read and write for a command wherever it asked; one started in
+        // another app's sandbox would see nothing of this app. Without that memory each command starts its own,
+        // confined as it is. Other shared memory (Python's, say) stays open.
+        lines.append(#"(deny ipc-posix-shm* (ipc-posix-name-regex #"^/?ib"))"#)
         // Lamp's shims and shell startup files may be read and run, and not changed.
         lines.append("(allow file-read* (subpath \(quotedPath(real(bin.path)))) (subpath \(quotedPath(real(zdot.path)))))")
         lines.append("(allow file-read* file-write* (subpath \(quotedPath(app))))")
@@ -167,6 +195,17 @@ enum Sandbox {
         for path in keeping {
             lines.append("(deny file-write* (literal \(quotedPath(real(path)))))")
         }
+        // Homebrew's folders belong to the person, so without this a command could put a program there (a
+        // `codesign`, a `git`) that something running outside the sandbox later finds on its path and runs
+        // unconfined. Reading and running what's there stays open; installing with brew doesn't. Last, so no
+        // folder opened above reopens them.
+        lines.append("(deny file-write* (subpath \(quotedPath(real("/opt/homebrew")))) (subpath \(quotedPath(real("/usr/local")))))")
+        // The same goes for /Applications, which an admin can write: an Xcode dragged there is the person's,
+        // so a command could swap its xcodebuild or simctl for Lamp to run as itself at the next simulator or
+        // phone step, or change Lamp itself, or leave an app there that Lamp takes for Xcode. And the developer
+        // folder in use wherever it lives, for the same reason. Running and reading what's there stays open.
+        lines.append("(deny file-write* " + ([kernelPath("/Applications")] + developerFolders()).map { "(subpath \(quotedPath($0)))" }
+            .joined(separator: " ") + ")")
         // The folders on the way to each opened one, the home folder included, can be looked at (not read):
         // a program resolving a path stats every step of it, and Node refuses to start otherwise.
         var ancestors: [String] = []
@@ -186,6 +225,32 @@ enum Sandbox {
             lines.append("(deny file-read* (subpath \(quotedPath(app + "/.lamp/runtime"))))")
         }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Where the developer tools Lamp runs as itself come from (`DeveloperTools.folder`): the one Lamp was
+    /// given and the one chosen with xcode-select, read off its link rather than by running a program for each
+    /// command. For an Xcode that's the whole app, not just its developer folder.
+    static func developerFolders(env: [String: String] = ProcessInfo.processInfo.environment,
+                                 selectLink: String = "/var/db/xcode_select_link") -> [String] {
+        let given = [env["DEVELOPER_DIR"], try? FileManager.default.destinationOfSymbolicLink(atPath: selectLink)]
+        var folders: [String] = []
+        let needed = ["/tmp", NSTemporaryDirectory(), FileManager.default.homeDirectoryForCurrentUser.path].map(kernelPath)
+        for case let folder? in given where folder.hasPrefix("/") {
+            let path = kernelPath(folder)
+            let bundle = path.range(of: ".app/").map { String(path[..<$0.lowerBound]) + ".app" } ?? path
+            // Never a folder holding ones a command must write (a DEVELOPER_DIR of /tmp, say).
+            guard bundle != "/", !needed.contains(where: { ($0 + "/").hasPrefix(bundle + "/") }), !folders.contains(bundle) else { continue }
+            folders.append(bundle)
+        }
+        return folders
+    }
+
+    /// The path the kernel reports, through every link: `real` leaves /tmp as it is (resolving a link drops
+    /// /private again), which a rule that must hold can't afford.
+    private static func kernelPath(_ path: String) -> String {
+        guard let resolved = realpath(path, nil) else { return real(path) }
+        defer { free(resolved) }
+        return String(cString: resolved)
     }
 
     /// A path inside a profile rule: double-quoted, with backslashes and quotes escaped.

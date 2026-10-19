@@ -5,6 +5,7 @@ import XCTest
 /// the code names is adopted into Assets/ first, so apps from before the folder existed share what they use.
 final class SharingAssetsTests: XCTestCase {
     private var root: URL?
+    override func setUp() { expectNoSharingFoldersLeft() }
     override func tearDown() { if let root { try? FileManager.default.removeItem(at: root) } }
 
     private func project() throws -> LampProject {
@@ -35,7 +36,7 @@ final class SharingAssetsTests: XCTestCase {
 
     func testOnlyAssetsAreShared() throws {
         let project = try project()
-        let entries = try entries(of: try Sharing.export(project))
+        let entries = try entries(of: try exported(project))
         XCTAssertTrue(entries.contains { $0.hasSuffix("Sources/ContentView.swift") }, "\(entries)")
         XCTAssertTrue(entries.contains { $0.hasSuffix("\(Sharing.Assets.folder)/heads.png") }, "\(entries)")
         XCTAssertFalse(entries.contains { $0.contains("bug-screenshot") }, "\(entries)")

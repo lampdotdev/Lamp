@@ -20,7 +20,7 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `show_result`, `write_wish`, `read_skill`, the version tools, the notes tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `write_wish`, `read_skill`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
@@ -31,7 +31,7 @@ A capability given to one engine must be given to all of them that can take it, 
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `show_result`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **How the agent talks** (`Talk`, `TalkCards.swift`): in short sentences and in cards, not paragraphs, so building
   feels like a short wizard. A vague wish gets a good first attempt built from sensible guesses, not questions: the
@@ -40,16 +40,11 @@ A capability given to one engine must be given to all of them that can take it, 
   taken when it's left to Lamp; an answer never grants access or approves an outside action (`Agent.Rules.ask`). Each piece of a card has a word limit (`Talk.Words`, the same numbers as the
   tools' descriptions), and a call over it is turned away for the agent to say shorter, whichever engine it is. Its
   pieces are tools: `ask` puts questions in the chat as a card answered by clicking, laid out as the agent
-  chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own), and `show_result` is
-  the card for what a request came to, saying one thing: one sentence, for a new app or a big change what they
-  now have, for an ordinary change that adds things what's new and where, and under it, as a plain sentence, what
-  wasn't tried. No picture of the app and no buttons: the app is open beside the chat and people try a change
-  themselves, and a picture beside an offer to test left them unsure how the two went together. No rows either:
-  a new app's guesses and idea there made a form to go through when it's the app the person wants to try. Cards saved with them still read
-  (`Talk.News`, `Talk.Guess`, `Talk.Idea`): what's new as lines under the sentence, a guess the person turned as
-  what they chose, and nothing else. A new app's build card folds to its first line (its name, Ready) once the turn is over, with no
-  picture of the app, so the result card under it is the one thing that says what came of it. The card takes the place of the reply and of the line saying the app is ready (`LogLine.visible`); a
-  small change or a fix keeps one sentence and that line. What each piece
+  chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own). What a
+  request came to is the agent's last message, in a sentence or two (`Agent.Rules.finish`), under the line that says
+  the app is ready or updated; a card for it said no more than that message did and hid what it said beyond it.
+  Result cards saved by an earlier Lamp still read and aren't shown (`LogLine.visible`). A new app's build card folds
+  to its first line (its name, Ready) once the turn is over, with no picture of the app. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
   tool waits for the person: it returns at once, the agent ends its reply, and a click is sent as the
   person's next message (`Store.answer`), so a click and a typed answer reach every engine the same way and
@@ -59,8 +54,7 @@ A capability given to one engine must be given to all of them that can take it, 
   answer that has to wait in line, clicked or typed, folds its card at once and opens it again if it's taken
   back (`Talk.unqueue`); waiting for setup, it keeps its card across a relaunch (`QueuedMessage.saved`).
   `Talk.Ask` also reads the shape cards were first saved in (options as plain words, `chosen`, `dismissed`):
-  a chat line that can't be read loses the whole chat. `show_result` is kept on the turn and shown only once
-  the app is built and open. While a card waits for its answer nothing above it changes height and the chat
+  a chat line that can't be read loses the whole chat. While a card waits for its answer nothing above it changes height and the chat
   doesn't follow what's added below: a new app's card goes to its short form as the questions arrive, a
   second `ask` before the answer is turned away, and a one-at-a-time card is laid out for all its questions
   at once (`AskSteps`), so nothing moves under the pointer. Its questions are kept the same height, so the card
@@ -108,8 +102,34 @@ A capability given to one engine must be given to all of them that can take it, 
   where it looks. Codex's hook can't change a command and a sandbox can't be nested, so Codex itself runs
   inside the profile (`Sandbox.wrapEngine`, with the copy in use and its folder opened and Codex's own sandbox off) and its
   commands with it. SwiftPM's own sandbox can't start inside Lamp's, so a `swift` shim first on the path
-  (`Sandbox.bin`) gives `swift build`/`test`/`run`/`package` `--disable-sandbox`. Nothing reads a command's text
+  (`Sandbox.bin`) gives `swift build`/`test`/`run`/`package` `--disable-sandbox`; the compiler's helper for macros is
+  the same, so Lamp's Xcode projects pass it `-disable-sandbox` too. Xcode's interface and asset compilers hand their
+  work to helpers that stay running and are found through shared memory named `ib…`, whoever started them, so the
+  profile closes that memory (and no other): a command starts helpers of its own, confined as it is. Nothing reads a command's text
   for paths any more; don't bring that back.
+  A command may write at the app's folder's own name, so it can swap the folder for a link to anywhere, Lamp's
+  folder included. The profile, the file checks (`Privacy.verdict`, pi's `checkFile` and `delete_file`, which take
+  the folder from `LAMP_DIR`) and Lamp's own writes for the agent (`Store.deleteFile`, `artDestination`,
+  `Previews.destination`) all take the app's folder as `LampProject.realDir`: the folders above it worked out, the
+  folder itself by its name, never where it leads. Don't resolve `project.dir` itself to decide what's the app's.
+  What Lamp reads there outside the sandbox and passes on goes through `AppFile`: each step of the path opened from
+  the one before it, none of them a link, and only a plain file read. That's what reaches the agent (what the app
+  printed, its screen as text, its answers to Lamp, its pictures and their copies, the app's notes and what was taken
+  back from them, the note after a restore), what Lamp writes into the app's code or hands an engine (its secrets,
+  `Template.ownSecret`, and the conversation ids), and what Lamp rewrites in place (the migration, a rename, the
+  live layout), which would otherwise bring what a link leads to into the folder. A new such read belongs there. Lamp's own
+  writes there around a build go through `AppFolder` on the same terms (see "Generated apps").
+  The profile also closes Homebrew's folders (`/opt/homebrew`, `/usr/local`) for writing (reading and running
+  what's there stays open): they're on the path of everything Lamp runs as itself, so a command could otherwise
+  leave a program there for Lamp to run unconfined. The agent can't `brew install`. `/Applications` and the developer folder in use
+  (`Sandbox.developerFolders`: `DEVELOPER_DIR` and xcode-select's choice, the whole Xcode wherever it is) are closed
+  for writing the same way: an Xcode dragged there is the person's to write, and Lamp runs its tools as itself. A program Lamp runs outside
+  the sandbox (in a `Shell.run` command, `signing-identity.sh`, Claude Code's hook) is named by its full path
+  (`/usr/bin/codesign`), never found on the path. Apple's developer tools are the exception to `/usr/bin`: `xcrun`, `xcodebuild`,
+  `git`, `swift` and the rest there are wrappers that find the real program through a cache in the temporary
+  folder, which the sandbox leaves writable. So what Lamp runs of them as itself (`simctl`, `devicectl`, the phone's
+  `xcodebuild`, the look at the person's git settings) is the real program in the developer folder in use
+  (`DeveloperTools.path`), never the wrapper. Inside the sandbox the wrappers are fine.
   Lamp's own git (saving a version, Undo, restore, version names, the look for unsaved work) runs under the
   same sandbox, through `Versions.git` (`gitBlocking` where it can't await): the app's folder is the agent's
   to write, its `.git` included, and git runs the programs a repository names (hooks, filters, a signing
@@ -133,7 +153,8 @@ A capability given to one engine must be given to all of them that can take it, 
 - **Pictures the agent is shown** (`look_at_app`, `use_app`, `make_art`): the conversation is sent whole with
   every request, so its pictures add up until the provider refuses the request (Anthropic takes 30 MB of images
   in one; OpenRouter drops the connection at about 5 MB of body). Every engine is handed a JPEG copy
-  (`Previews.forAgent`, under `.lamp/runtime/previews`, through `Store.agentPictures`), never the file itself:
+  (`Previews.forAgent`, under `.lamp/runtime/previews`, through `Store.agentPictures`), never the file itself, and
+  as bytes Lamp read (`Store.pictureData`: pi's extension gets them with the answer, never a path to read):
   the screenshots and the art stay as they are for the person and the app. A screenshot's copy keeps its pixels,
   since `use_app`'s points are pixels in the picture at the scale it was taken; art is shrunk to 1280 px. Lamp
   writes the copies unconfined, so their folder and file are checked like `Store.artDestination` checks art. pi's extension (`keepsPicturesFew` in
@@ -143,6 +164,20 @@ A capability given to one engine must be given to all of them that can take it, 
   copies keep ahead of the byte limit. When a request is still refused (`Agent.isRequestTooLarge`), the turn
   says so in plain words and the conversation ends (`Store.forgetConversation`): the next request starts a
   fresh one rather than failing the same way.
+- **Messages sent while the agent works**: they wait in line for the next turn as one group, and the person chooses
+  whether it goes now. The group sits close together under one caption at its latest message, with Send Now (Send
+  All Now for several) beside it (`ChatLook.QueuedRow`, `QueuedPlace`, in both chats; `Store.canSendNow`), which hands
+  every waiting message, in the order they were sent, to the model in the turn that's running, after the tools it
+  is running and before its next request (`Store.handOver`). pi's extension asks `/agent/steer` after each of pi's turns and hands such messages to pi's own
+  steering (`sendUserMessage` with `deliverAs: "steer"`); Claude Code reads its request on its input
+  (`--input-format stream-json`, `Store.steer`), which Lamp writes to while a tool runs and closes once Claude Code
+  has answered. A message goes into the chat as it's handed over and is a request of the turn (its version,
+  `LogLine.midTurn`) once the engine's output shows the model has it (pi's user `message_end`, Claude Code's
+  `--replay-user-messages` echo); nothing more is handed over until then, and one the run ends without goes back to
+  the front of the line. Send Now isn't offered while the group holds an answer to a card or a request sent again, while a
+  wish is being found, or after the agent has asked. The one exception among the engines is Codex, which has no Send Now:
+  `codex exec` reads nothing once started, and `codex app-server`, which can steer, can't keep the person's own
+  Codex settings out of Lamp's runs.
 - **What Lamp shows the user** (`BuildCard.activity`, `ToolCall`): tool names must be recognised in every
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items.
@@ -203,7 +238,7 @@ typed in the bar, or said with the talk button beside it (`TalkButton`, moving w
 way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so it passes the same
 setup checks as anything typed in a chat. A click on a wish (or Return, or Open on its menu) opens it to use and
 change at once (`Store.open(fromDesk:)`): a Mac app with windows opens with
-its chat beside it (`Store.change`, below); a wish that opens no window is used (`Store.use`), and one still coming
+its chat beside it (`Store.change`, below; a notification's click goes the same way, `Store.openChat`); a wish that opens no window is used (`Store.use`), and one still coming
 true, or waiting on an answer, opens its chat. Change… on its menu changes it the same way, or in Lamp's window. Under each icon is only its
 name: a spinner or a dot says what's going on with it, and VoiceOver also hears where it lives (`WishPlace`, read
 from its files). While the pointer is on a wish, its picture and what it is take the place where a new wish is made
@@ -219,7 +254,7 @@ send. Until that message, nothing is named, scaffolded, built or saved (`startQu
 becomes may be an iPhone app, which a scaffold already written as a Mac app would rule out. The message that
 isn't an answer to a card names it like any first request and ends `finding`.
 
-A new person's desk isn't empty: Lamp comes with eleven wishes (`Starters`, from `Resources/Starters`), working
+A new person's desk isn't empty: Lamp comes with twelve wishes (`Starters`, from `Resources/Starters`), working
 apps to use as they are and to change into their own, which shows what Lamp does better than a question about
 what to make. So the welcome is the hello and setup, and ends on the desk (a wish from the site is still made
 once setup is done). They're copied once, on the first launch, each saved as its first version ("From Lamp"),
@@ -233,8 +268,11 @@ Lamp's own card (`Starters.card`, an `ask` marked `offer`): the starter's line a
 the first request when clicked, with the message box answering it too. Nothing waits on it (`Talk.waiting`), so the
 desk doesn't say it has a question and using it still opens it. Each
 folder holds the app's code, APP.md (which the agent reads first, so it knows the app it's changing), icon.json
-(a symbol icon: Lamp paints no art for a starter, which would offer to set up pictures in its chat), the icon drawn
-from it in icon/ (`StarterIconsTests` draws them again, with Xcode set up for the Liquid Glass one), so the desk
+(its design), the icon drawn from it in icon/ with its artwork, drawn once the way an app's is: layers of glass
+(icon/art.json, `GlassIcons`) or, for a game, a painting (icon/art.png). The artwork goes where an app keeps its icon's,
+since Lamp draws none for a starter on the person's Mac, which would offer to set up pictures in its chat;
+`StarterIconsTests` draws the icons again, with Xcode set up for the Liquid Glass one, and the artwork again with
+`LAMP_PAINT_STARTER_ART=1` and a key), so the desk
 shows them at once and Lamp draws one again only once its icon.json changes (`Starters.hasShippedIcon`),
 preview.png, a picture of its window that the desk shows while the pointer is on the icon,
 with the app's about.json line beside it in large type, 90 characters at most (`WishStage`, `WishDesk.describedIn`; every
@@ -244,6 +282,12 @@ with its tile's symbol (`- drop: Add a water counter`): changes the app doesn't 
 one request with no key, account or pictures to draw. They
 are Mac apps that need no key or account, use the AI the person builds with when they use any, and come with
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
+
+Starters not on the desk (never added, or deleted since; `Starters.missing`) are offered at its end as one dashed
+tile, More from Lamp (`MoreFromLamp`): up to four of their icons and how many there are, and a click lists them with
+an Add each. Add puts that one back (`Store.put(starter:)`, through `Store.add(starter:)`, the one way a starter is put
+on the desk, which the first launch uses too), saved and built out of sight like the first launch's. The tile goes
+once every one is there.
 
 **A starter added or changed in how it looks ships a new preview.png in the same change** (`StartersTests` fails
 without one). Take it from the app itself, not a mock-up: open the starter's build in Lamp Dev with its chat closed,
@@ -270,7 +314,8 @@ Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp). Into a new `Resource
    Symbol. They're changes the app doesn't already make, that the agent can make in one request with no key,
    account or pictures to draw.
 5. Take `preview.png` as above (the app's own `.lamp/runtime/preview.png` is the picture when it shows only example
-   content), draw the icon with `LAMP_RENDER_STARTER_ICONS=<folder> swift test --filter StarterIconsTests`, then run
+   content), paint and draw the icon with `LAMP_RENDER_STARTER_ICONS=<folder> LAMP_PAINT_STARTER_ART=1
+   OPENROUTER_API_KEY=… swift test --filter StarterIconsTests` and look at the artwork it picked, then run
    `scripts/check-starters.sh <folder>` and `swift test --filter StartersTests`, and update the count of wishes above.
 
 ## Two Lamps on one Mac
@@ -305,7 +350,13 @@ plain id (`{{DATAID}}`, `Edition.appBundlePrefix` and the folder name) whatever 
 once from a folder named after its signed id. New App makes a draft, a folder with only `.lamp/meta.json`
 (`Template.draft`), so its kind and name are just that file; the scaffold is written and committed when it first
 builds (`Store.materialize`, in the first turn after naming and in `run`), and `LampProject.scaffolded` tells the two apart. An iOS app is one app for both devices, as Apple has it; **Try On** (in the toolbar and the app's right-click menu) picks which simulator it opens in (`LampProject.family`, iPhone to begin with), or one simulator by name under Choose Simulator (`LampProject.simulator`, kept in `meta.json`; the list is `Simulator.choices`), for what only some models have, such as the Dynamic Island. Lamp's own pick of the family is used when the chosen one is no longer installed, and `look_at_app` tells the agent which simulator the app is open on. It runs in the iPhone or iPad simulator on this Mac (`LampProject.platform == .iphone`,
-kept in `meta.json` and through renames). It needs Xcode, not just the Command Line Tools: `Simulator`
+kept in `meta.json` and through renames). It needs Xcode, not just the Command Line Tools. Lamp's choice of Xcode stays in its own
+process (`DEVELOPER_DIR`, which its shells, the engines, simctl and devicectl inherit; xcode-select is never changed): the one
+chosen in setup (Use Xcode), else, when xcode-select names the Command Line Tools, one Lamp finds by itself at launch
+(`PhoneTools.installedXcode`): only in /Applications, through every link (the bundle, its developer folder and each
+tool Lamp runs from it), since Lamp runs its tools as itself and the agent
+can't write there, and only once its agreements are accepted, or every build would fail. Builds then use Xcode's toolchain
+too, and `Shell.compatibleSDK` goes by `DEVELOPER_DIR` before xcode-select. `Simulator`
 (`Sources/Lamp/Simulator.swift`) picks a booted or available iPhone with `simctl`, installs the built bundle,
 launches it with its output going to the app's log, and photographs the screen for `look_at_app`. The
 scaffold is a Swift package built for the simulator SDK by its own `build.sh` (no Xcode project, no signing
@@ -362,12 +413,24 @@ are. `SimulatorLiveTests` runs the driver against a real window when `LAMP_LIVE_
 `devicectl`): paired ones to choose, and plugged-in ones that haven't trusted the Mac yet, which it offers
 to pair (`Devices.pair`, `devicectl manage pair`, which puts the Trust prompt on the phone) before telling
 the person about Developer Mode. `LampProject.device` remembers the chosen one. Play and the end of a turn then go through
-`Store.installOnDevice`: `Template.writeDeviceProject` writes a small Xcode project under `.lamp/device`
-(one app target over the package's Sources as a synchronized group, the icon in an asset catalog, the
-attachments as a folder reference, a real Info.plist) and `Devices.build` runs `xcodebuild` with automatic
-signing for the team in Settings → Building (`Devices.team`, found from the Mac's Apple Development certificates), so
-Xcode registers the phone and makes the certificate and profile with the account signed in to Xcode; Lamp
-never holds the account. The bundle id carries the team (`deviceBundleID(team:)`). `devicectl` installs and
+`Store.installOnDevice`: `Devices.stage` puts together what Xcode builds from in Lamp's own folder
+(`Devices.buildFolder`, under `Phone Builds`): `Template.writeDeviceProject` writes a small Xcode project there (one
+app target over the package's Sources as a synchronized group, the icon in an asset catalog, the attachments as a
+folder reference, a real Info.plist), and the app's Sources, Assets, Widget, Share and Watch are copied beside it, in
+`app/`, by a command under the app's sandbox, links kept as links; the project reads that copy by full path
+(`Template.reaching`). Xcode copies whatever a link leads to into the app, and on the phone the app can send what it
+carries anywhere, so a build folder holding any link but Lamp's own to the widget's shared code is refused
+(`Devices.LinkedFiles`). `Devices.build` builds it with `xcodebuild` in the app's sandbox, with only that folder opened
+and signing off, so what Xcode does with the agent's code runs as the agent's commands would. Signing for the team in
+Settings → Building (`Devices.team`, found from the Mac's Apple Development certificates) happens only as Lamp, on a
+copy in a folder the build can't write (`Devices.signingFolder`, `Phone Builds/.signing`), in `Devices.signedCopy`.
+What each piece is signed with comes from `TeamSigning`: the same project written there over a few lines of Lamp's
+own code and under names of its own (the app's name and program name are in meta.json, the agent's to write; its ids
+come from its folder name and the team), which Xcode builds with automatic signing, registering the phone and making
+the certificate and profiles with the account signed in to Xcode (Lamp never holds the account); each piece of the
+real build, matched by its id, then gets that piece's profile and the entitlements Xcode signed it with, and a build
+holding a piece Lamp's project doesn't, or a program or library that isn't a piece's own (`TeamSigning.checkCode`),
+isn't signed. Nothing the agent wrote is read for it. The bundle id carries the team (`deviceBundleID(team:)`). `devicectl` installs and
 launches the app with `--console`, so what it prints reaches the app's log. The agent's looks stay on the
 simulator: the phone's screen can't be photographed. The app reaches Lamp's gateway at the Mac's Bonjour
 name (`Devices.macHost`, the `{{MACHOST}}` placeholder, chosen in LampSupport by `targetEnvironment`): the
@@ -377,7 +440,10 @@ Away from the Mac, a phone app answers for itself (`LampDirect` in LampSupport, 
 first asks `/ai/keys` with a four-second timeout, at most every half minute; while the Mac answers, the
 call goes through Lamp as ever and the reply (the OpenRouter key, the TypeSafe key when decisions go there,
 and the app's model choices, served by `Store.keysForPhone` only for iPhone apps) is kept in the
-phone's Keychain; when it doesn't, `LampDirect.handle` does
+phone's Keychain. The reply is sealed with a secret (`Template.phoneSecret(in:)`) kept in the phone's build folder
+and written only into the Info.plist there, which the app reads (`LampPhoneSecret`): the app's token is in its
+folder, where the agent's commands read it, so the secret must never be there too, nor in LampSupport.swift or the
+`.lamp/device` project of an app for both, or a command could ask for the keys and open them. When the Mac doesn't answer, `LampDirect.handle` does
 what the gateway would with the provider directly (chat completions with the JSON retry, systemone
 decisions, images). The prompt's fencing and dates are made in the library either way. What's spent this
 way isn't recorded in Lamp, and `/ai/computer` says it needs the Mac.
@@ -400,12 +466,15 @@ their own (`Template.universalAppSwift`, `universalPackageSwift` listing both pl
 which takes `mac` or `ios`), and `Store.build` passes the destination; the destination is part of
 `Runtime.fingerprint`, so moving the app rebuilds it. The iOS build is the iPhone app's. The Mac build is Xcode's,
 from the same project the phone uses (`Template.writeDeviceProject`, with `universalPbxproj`: one target for
-`iphoneos iphonesimulator macosx`, the Mac's own `Info-macOS.plist`), signed with automatic signing for the team
-in Settings → Building, so the app can use what Apple ties to a team, which Lamp's own certificate can't give it
-(see `Template.WidgetSharing` for why). Without a team the build stops with the fix, and the setup check
-(`PhoneSetup`, `requiresTeam`) asks for one before the first request. Its bundle id carries the team on both
-platforms (`LampProject.bundleID`), and `Store.deploy` seals what it adds (icon, assets, Info.plist) with the
-team's certificate and the entitlements Xcode gave it (`Devices.signingIdentity`), never Lamp's. The agent gets
+`iphoneos iphonesimulator macosx`, the Mac's own `Info-macOS.plist`), built by build.sh in the app's sandbox with
+signing off, and signed for the team in Settings → Building when it's installed, so the app can use what Apple ties to
+a team, which Lamp's own certificate can't give it (see `Template.WidgetSharing` for why). Without a team the build
+stops with the fix, and the setup check (`PhoneSetup`, `requiresTeam`) asks for one before the first request. Its
+bundle id carries the team on both platforms (`LampProject.bundleID`), and `Store.deploy` signs its copy, with what
+it added (icon, assets, Info.plist), with the team's certificate (`Devices.signingIdentity`), the profile and the
+entitlements Xcode signed Lamp's own project with for the Mac (`Store.signForTeam`, `TeamSigning`), never Lamp's
+certificate. Those entitlements never include `get-task-allow`, which would let a debugger into the app while it
+holds its secrets. The agent gets
 both kinds' rules, each marked for its half, after one rule on sharing the code (`Agent.universalPrompt`). An app
 for both is shared as a `.lampapp` like any other (the file says what it's made for, format 6, and carries `Watch/` when it has one); its widgets and Live Activities are the iPhone half's (below).
 
@@ -494,6 +563,17 @@ and `Package.swift` are written afresh before every build (`Template.writeOwnedF
 that fails. The last two are what the build runs (the shell runs build.sh; SwiftPM compiles and executes
 Package.swift as a program), so they're replaced rather than checked: nothing the agent's file tools wrote
 into them, with no card, can run. Shared apps never carry them: import writes its own.
+Replacing them isn't enough on its own: they sit in the agent's folder, and a command it left running can put
+its own there between Lamp writing them and running them. So the build runs as the agent's commands do, in the
+app's sandbox (`Store.runBuild`, through `Sandbox.run`), and so does everything else Lamp runs over what's in
+that folder: the compiler's looks at the code for live changes and Undo (`LiveReload`), and the finishing of a
+simulator bundle (`finishSimulatorBundle`). Xcode's builds are no different: the phone's and the Mac half of an app
+for both build in the sandbox with signing off. Only a copy Lamp made in its own folder is signed with Lamp's or the
+person's keys (`Store.deploy`, `Devices.signedCopy`, `TeamSigning`). A new command of Lamp's that reads or runs what's
+in an app's folder belongs in `Sandbox.run`, never in `Shell.run` directly.
+What Lamp itself writes there around a build (its own files, what the build was made from, the stamp in the built
+app, the live copy's records, the simulator bundle's files) goes through `AppFolder`, which follows no link on the
+way: a build can leave one where any of them goes. Writes that aren't part of a build (the notes, meta.json) don't go through it.
 
 `Sources/Lamp/Template.swift` holds `LampSupport.swift`, the support code copied into every generated
 app (`LampAI`, `LampStore`, `LampScript`, the connectors, `LampDriver` for `use_app`). It is a Swift
@@ -521,9 +601,9 @@ heading in its binary (`Store.screenTextMarker`): such an app is told to be rebu
 
 A Mac app can be changed while it's in use (apps show the wand while the file `MagicPanel.flag`, which Lamp writes
 at launch, is beside their folders, checked each time a window comes forward): `LampMagic` in LampSupport.swift puts a
-wand at the top right of each of its windows, which opens and closes the app's chat inside that window, as its
-inspector (`LampSidebar`: an `NSSplitViewController` around the window's content, the window growing by the chat's
-width); the app menu's Customize with Lamp… (⇧⌘E) opens it too (`LampSidebar.openFromMenu`), and in Lamp's window
+wand at the top right of each of its windows, which opens the app's chat beside that window
+(`LampSidebar`; where it goes is below) and stays where it is while the chat is open, lit, closing the chat when
+clicked again, so people always find it in the same place (`LampMagic.showWand`); the app menu's Customize with Lamp… (⇧⌘E) opens it too (`LampSidebar.openFromMenu`), and in Lamp's window
 when the app has no window to put it beside. In a window with a title bar the wand is a title bar accessory. A
 window whose content runs under a title bar with nothing in it (a game, `.hiddenTitleBar`) has no bar for it, and an
 accessory would give it one: there the wand floats at the top right over the content, level with the traffic
@@ -550,7 +630,9 @@ process of its own whose view the app hosts (`EXHostViewController`) but can't d
 the chat's content, never the app: the extension shows what Lamp sends and passes on what the person does
 (`SidebarWire`, one JSON value a line, in Sources/LampSidebarKit), so all the chat does stays in Lamp
 (`SidebarServer`: the lines as Lamp's window shows them without Agent Details, gathered and spaced as `Transcript`
-does, the draft, attachments, the open question card). Both draw the chat with the same pieces, in
+does, the draft, attachments, the open question card). Without Agent Details a finished turn's steps are one line above
+its answer, "Worked for 2 min 3 s" from the turn's summary, which opens to show them (`ChatItem.items(gather:)`,
+`ChatLook.Worked`); a turn still going shows its steps as they come. Both draw the chat with the same pieces, in
 Sources/LampSidebarKit (`Composer`, the message box; `ChatLook`, the bubbles, statuses, progress line, Stop and Send),
 so a change to how Lamp's chat looks is made there and reaches both; the sidebar program is part of `BuildStamp`, so
 apps installed with an earlier one are built again when next opened. It reaches Lamp on this Mac's own address at `Edition.sidebarPort` (macOS keeps other apps, Lamp
@@ -560,26 +642,63 @@ running a sidebar) and checking that it runs the very extension Lamp signed for 
 signed is kept in Lamp's own folder (`Sidebar.remember`), and the extension is signed with the hardened runtime so
 nothing can be loaded into it. The extension must start as Apple's own do, through `_NSExtensionMain` (the linker's
 entry point), or it crashes before its code runs. Whatever the app's process can do, its generated code can, so the
-app has no way to speak to the agent that builds it: it only shows the chat and says where its window is. The draft
+app has no way to speak to the agent that builds it: it only shows the chat, says where its window is, and closes or
+moves the panel when the chat asks (`LampSidebarHost`, the one thing the chat asks of it). The draft
 is shared with Lamp's window (`Store.updateDraft`). A sidebar left open opens again with the app's first window when
-the app reopens (`LampSidebar.restore`, without growing the window again: its frame already had the chat). An app
+the app reopens (`LampSidebar.restore`). An app
 installed without the extension (by an earlier Lamp) shows its chat in Lamp's window instead. A change still reopens
 the app; the rule (`Agent.Rules.macGenerated`) asks the agent to keep what the person was looking at in
 `@SceneStorage`, so it comes back as they left it. To make that look like the window changing in place: as the app
 quits it leaves a picture of its front window and where it was in its runtime folder (`LampMagic.leaveCover`); while
 the app's turn is going, Lamp shows that picture where the window was (`MagicPanel.showCover`, a borderless window
-marked "Updating…"), the new copy opens its first window in the same place (`putBack`), and the picture fades out
-once the new copy reports its window (or goes when the turn ends without it). The chat's two buttons sit in
-the strip above it where the title bar is, as the column's own (`LampSidebar.embed`), drawn by the app since they do
-only what the app could do anyway: close the chat, and open it in Lamp's window. They can't be title bar accessories:
-with the chat a full-height inspector, the window's split view lies over the title bar there and takes the clicks.
-The chat sits below the strip, on a solid background that runs up behind them. A window with a toolbar lays the toolbar over the strip too, and the chat is
-drawn by another process, which AppKit's focus doesn't follow (what had the keyboard, a list say, keeps it through a
-click in the chat), so `LampSidebar.watchClicks` does both as each click arrives: a click on one of the strip's
-buttons presses it, and once a click in the chat has landed the keyboard goes to the chat. The + by the message box offers
-Point at Something in the App beside Add Files (`ChatLook.MessageBar`'s `point`, `PlusMenu`), in the sidebar and in
-Lamp's window while the app is open on this Mac (`MagicPanel.point`; from Lamp's window, Lamp comes back in front
-when it's done). It lets the person point at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), outlines the smallest named
+marked "Updating…", with the chat's blank paper where a chat beside it was: `cover-chat-frame.txt`, `MagicPanel.chatCover`), the new
+copy opens its first window in the same place (`putBack`), and the picture fades out once the new copy reports its window
+(or goes when the turn ends without it).
+
+Where the chat goes (`LampSidebar.show`): always a panel of its own beside the window, never inside it (a column there
+took more room from the app than it gave the chat). It's a borderless `NSPanel` attached as the window's child
+(`LampSidebar.Beside`), so macOS moves, stacks, hides and takes it to Stage Manager's strip and other Spaces with the
+window, holding the chat on a card of the chat's own paper (`LampSidebar.card`, `LampSidebar.Paper`, and `chatGround` in
+the chat), opaque: glass let what's behind the window show through, which drew the eye from the chat, and drew a bright
+line round its edge. It goes on the side with room, the right first, at its kept width or
+the room there is down to its narrowest. Opened where neither side has room, the window makes some (`makeRoom`): it moves
+over on its screen when that's enough, else it's made narrower, never below its own smallest width, to leave the chat its
+narrowest on the right, and gets the width back when the chat closes (`narrowedBy`, each window its own; a change that reopens the app hands it
+to the window put back in its place, `handOn`; given back after full screen when the chat was closed there). Only where neither can be done (full
+screen, a window that can't be that narrow) does the chat go over the window's right edge, below its title bar, still its
+own panel (`Chat.over`). A move or resize the person makes never moves or narrows their window: the chat changes side, or
+goes over the edge when neither side has room, and back beside when there's room again (`replace`); going in and out of
+full screen takes the panel down and puts it back where it now goes. Dragged by the chat's bar, the panel comes away from
+the window (`Beside.detached`): no longer its child, it goes where it's put, floats over the app's windows while the app is
+in front, and stays there through the window's moves and the chat closing and opening again, until the app quits (or the
+window goes full screen), when it goes back beside the window. The press lands in the chat's process, so the chat asks the
+app to move it (`startMove`) and the app follows the pointer until the button is let go. The chats' process can't
+tell which of an app's chat connections is its own, so it asks over each with one request id, and the app picks the
+chat once per request (`LampSidebar.isAsked`: the one under the pointer, else the one with the keyboard). Beside the window the chat is
+dragged wider or narrower by an edge of its own (`Edges`, the panel's outer side, or the side facing into the window when
+it's over it); moved away, by any edge or corner. The edges are a rim inside the card around the chat (`Beside.rim`), not
+room around it: the glass glows a little past its edge, and a margin showed that glow cut off square by the panel. The width stays between
+`LampSidebar.narrowest` and `widest` and is kept for the app (`LampSidebar.width`). The edges sit beside the
+chat, never over it: the chat is drawn by another process, which takes every click on its part of the window. The panel
+is told outright to take mouse events (`ignoresMouseEvents` off): its glass is drawn by the window server, so its own
+pixels are clear, and a clear window lets clicks on clear pixels through. The panel takes the keyboard for the message box
+without becoming the main window. The chat's bar is one row drawn by the extension (`ChatBar`): a red close button like a
+window's, which asks the app to close the chat (`closeChat`), "Customize" and the app's name, then the buttons: Wish Info,
+Share (the file is made by Lamp and handed over whole, `SidebarState.sharing`, since the extension can't read it; sent
+once, so the extension keeps it as it's read, `Link.sharing`), Agent Details and Delete, then Undo Last Change and Versions.
+Where the title and every button don't fit, Undo stays and a button for the rest takes their place, which pressed stays
+lit and puts the rest, Versions beside Undo, in the title's place. The room between the buttons moves the chat. ⌘` goes
+through the app's windows with each open chat right after its window (`LampSidebar.watchCycling`), since macOS leaves
+panels out of its own cycle. Versions and Wish Info show as panels in place of the chat (`VersionsPanel`, a page of versions at a time with the rest a click away; `InfoPanel`; the info rows are
+`AppInfoView.sections`, the same list Lamp's window draws). An app's chat is in one place at a time: when it opens beside
+the app, its window in Lamp closes, unless Lamp is in front with that window (`MagicPanel.chatOpenedInApp`). Lamp's window
+keeps the chat where there's no app window to put it beside: a wish not yet made or being found, a menu bar app, a widget,
+a background app, an iPhone app, an app built by a Lamp from before the sidebar, and setup cards' keys, sign-ins and
+Image Playground. An app opened for its chat that never connects one (it couldn't start) has its chat shown in Lamp's
+window (`MagicPanel.showChatIfAppNeverComes`). The chat is drawn by another process, which AppKit's focus doesn't follow
+(what had the keyboard, a list say, keeps it through a click in the chat), so once a click in the chat has landed the
+keyboard goes to it (`LampSidebar.watchClicks`). Point at the Screen is an item of the + by the message box, beside
+Attach a File…, in both chats (`ChatLook.MessageBar`'s `point`, `PlusMenu`) while the app is open on this Mac (`MagicPanel.point`; from Lamp's window, Lamp comes back in front when it's done). It lets the person point at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), outlines the smallest named
 thing under the pointer from its own accessibility tree (`LampDriver.elements`), a click where nothing is named (a game's
 ball, a drawing) takes the area around it, and a drag draws a box of the person's own; it then leaves a cropped
 picture in its runtime folder and says what it is (an area is named by where it is, "Top left area"); Lamp attaches that picture to the message, named after the
@@ -617,7 +736,10 @@ each type of the app's spare room the open app's values already have: every clas
 `@Published` when the header says `ObservableObject`), every view one `@State` box (`__lampState_<View>`, a
 `LampStateBox`), and every other struct one place holding any number of properties by name (`__lampSpare_<Struct>`, not optional,
 so its own `==` and hash run: they take a property never set as its starting value; saved data leaves it out
-through two overloads of the keyed coding containers, which the compiler's Codable code takes over the general ones).
+through two overloads of the keyed coding containers, which the compiler's Codable code takes over the general ones). A struct's moved properties drop out of the initializer Swift makes for it, which the new code may call with them,
+so `LiveSlots.memberwiseInitializers` makes that one again in an extension in the struct's file, from the labels and types
+the compiler lists for it (`SwiftSource.Declarations.memberwise`), one for each moved property, so a call passing any
+of them is matched by the first it passes and one passing none only by Swift's own.
 Left out is what a spare would break: SwiftData and Core Data models, `Sendable` classes, `Equatable` views, the App
 and its scenes, property wrappers, App Intents, and structs in a file that lays memory out by hand (vertex data). When
 the only difference in layout is new stored properties in such types, `LiveSlots.fit` rewrites each one-line
@@ -701,7 +823,19 @@ builder decides from the wish (`Agent.Rules.browserCompanion`) and tries the sid
 parts out of line),
 and hands it the page beside it, so every engine tries it the same way; it's the one thing the builder uses in a new app, since it isn't the person's Chrome.
 Each Chrome tab has its own sidebar and the app keeps what one tab prepared by its tab (`call.tab`), so what one
-page prepared never shows on another; keep that when changing either side.
+page prepared never shows on another; keep that when changing either side. The builder may also give an app a
+right-click item (`menu` in browser.json) for what its sidebar does with a page, whatever that is (save it, explain,
+summarise or translate it, answer something about it): it opens that app's sidebar, and shows only on pages a fit
+names by address, the one thing Chrome can check before its menu opens.
+**The one exception to "once per click in it"**: choosing an app's right-click item counts as the person's click in
+that app's page. The sidebar tells that page once (`lamp.onMenu`) and lets it read once without a click in it, only
+within 15 seconds of the choice, only with the proof the page gave in that sidebar, and only of the page the item was
+chosen on (the extension checks the tab's address before reading). A choice the page gets too late (a slow-starting
+app) doesn't run, and the sidebar says so and that choosing the item again runs it. Nothing else stands in for a click: not the
+toolbar icon, not opening the sidebar, not the page asking on its own. From the item a page may also go straight
+through a step it would otherwise stop at for a look first (a save's check, say), since choosing the item already
+said what to do; it then shows what it did where it can be changed or undone. Widening this needs the same say-so as
+making it.
 
 A build asks the app to quit before it replaces it, and the app's answer decides (`AppQuit`). An app may ask
 about unsaved work first: Lamp sends the quit request itself and reads the reply macOS carries back, which is
@@ -1097,7 +1231,7 @@ card), check:
 
 Lamp Dev has a gallery (Window → Gallery, ⌥⇧⌘G; `Gallery.swift`): each of the chat's cards in every state it
 can be in, drawn from made-up values at the chat's width and the wand panel's, light and dark. A card is drawn by
-a view that takes plain values (`AskCardView`, `ResultCardView`), and the view that reads `Store` only finds those
+a view that takes plain values (`AskCardView`), and the view that reads `Store` only finds those
 values and passes them in, so the gallery shows exactly what people see. Keep it that way: a new card, a new
 state of one (a layout, a shape saved by an earlier Lamp, a button that shows only sometimes) or a fix to how one
 lays out gets its entry in `Gallery.entries` in the same change, and is looked at there before the PR. A card

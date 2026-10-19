@@ -1,26 +1,24 @@
 {
   "fill" : {
-    "linear-gradient" : [
-      "srgb:0.55294,0.89020,0.56863,1.00000",
-      "srgb:0.15686,0.65490,0.27059,1.00000"
-    ]
+    "automatic-gradient" : "srgb:0.15686,0.65490,0.27059,1.00000"
   },
   "groups" : [
     {
       "layers" : [
         {
-          "glass" : true,
+          "glass" : false,
           "image-name" : "foreground.png",
           "name" : "foreground"
         }
       ],
       "shadow" : {
-        "kind" : "neutral",
+        "kind" : "none",
         "opacity" : 0.5
       },
+      "specular" : false,
       "translucency" : {
         "enabled" : false,
-        "value" : 0.40000000000000002
+        "value" : 0.5
       }
     }
   ],

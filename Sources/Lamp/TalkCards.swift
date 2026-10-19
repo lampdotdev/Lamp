@@ -42,12 +42,4 @@ struct AskCard: View {
     }
 }
 
-/// What a request made, in one sentence, a new app's as much as a change's (`ResultCardView`).
-struct ResultCard: View {
-    let line: LogLine
-
-    var body: some View {
-        if let result = line.result { ResultCardView(result: result) }
-    }
-}
 

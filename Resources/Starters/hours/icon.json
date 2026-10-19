@@ -1,1 +1,6 @@
-{"subject": "a classic brass hourglass", "symbol": "hourglass", "background": "graphite", "tint": "#FFFFFF"}
+{
+  "subject": "a white hourglass with golden sand",
+  "symbol": "hourglass",
+  "background": "indigo",
+  "tint": "#FFFFFF"
+}

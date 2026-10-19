@@ -8,6 +8,7 @@
   "permissions": [
     "activeTab",
     "alarms",
+    "contextMenus",
     "declarativeContent",
     "nativeMessaging",
     "scripting",

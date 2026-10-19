@@ -77,8 +77,107 @@ final class SandboxTests: XCTestCase {
         XCTAssertTrue(started.output.contains("not permitted"), started.output)
         let injected = try run("DYLD_INSERT_LIBRARIES=/tmp/nothing.dylib \(Sandbox.quoted(program.path))", in: project)
         XCTAssertTrue(injected.output.contains("not permitted"), injected.output)
+        // Nor a program in Lamp's phone builds, where Xcode leaves what it makes from the app.
+        let builds = Devices.buildsFolder.appendingPathComponent("sandbox-exec-test-\(UUID().uuidString)")
+        try fm.createDirectory(at: builds, withIntermediateDirectories: true)
+        defer {
+            try? fm.removeItem(at: builds)
+            if (try? fm.contentsOfDirectory(atPath: Devices.buildsFolder.path))?.isEmpty == true { try? fm.removeItem(at: Devices.buildsFolder) }
+        }
+        let built = builds.appendingPathComponent("hello")
+        try fm.copyItem(at: program, to: built)
+        let fromBuilds = try run(Sandbox.quoted(built.path), in: project)
+        XCTAssertNotEqual(fromBuilds.status, 0, fromBuilds.output)
+        XCTAssertTrue(fromBuilds.output.contains("not permitted"), fromBuilds.output)
         // An ordinary program still starts.
         let plain = try run("/bin/echo fine", in: project)
         XCTAssertEqual(plain.output.trimmingCharacters(in: .whitespacesAndNewlines), "fine")
+    }
+    /// A command can swap the app's folder for a link to another folder: it may unlink and create at the
+    /// folder's own path. Every later command, and Lamp's own checks and writes for the agent, must still
+    /// open only the folder where the app really lives, never wherever that link leads (here the folder
+    /// holding the app, standing in for Lamp's own).
+    @MainActor func testTheAppsFolderSwappedForALinkOpensNothingElse() throws {
+        let (project, root) = try project()
+        let dir = Sandbox.quoted(project.dir.path)
+        let swap = try run("cd / && rm -r \(dir) && ln -s \(Sandbox.quoted(root.path)) \(dir)", in: project)
+        XCTAssertEqual(swap.status, 0, swap.output)
+        XCTAssertNotNil(try? FileManager.default.destinationOfSymbolicLink(atPath: project.dir.path))
+
+        let through = try run("cd / && cat \(dir)/outside.txt; echo planted > \(dir)/planted", in: project)
+        XCTAssertFalse(through.output.contains("secret"), through.output)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("planted").path))
+
+        XCTAssertNotEqual(Privacy.verdict(tool: "read", path: "outside.txt", project: project), .allow)
+        XCTAssertNotEqual(Privacy.verdict(tool: "write", path: "planted", project: project), .allow)
+        XCTAssertNotEqual(Store.deleteFile("outside.txt", in: project).0, 200)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("outside.txt").path))
+        XCTAssertNil(Previews.destination(for: "shot.jpg", under: ".lamp/runtime/previews", in: project))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".lamp").path))
+    }
+
+    /// Homebrew's folders are on the path of what Lamp runs as itself, so a command must not be able to put a
+    /// program there. Tried only where this user can't write anyway, so nothing lands there even without the
+    /// rule: macOS checks the sandbox first ("Operation not permitted") and ownership after ("Permission denied").
+    func testHomebrewFoldersAreClosedForWriting() throws {
+        let (project, _) = try project()
+        let fm = FileManager.default
+        let folders = ["/opt/homebrew/bin", "/opt/homebrew", "/usr/local/bin", "/usr/local"].filter { folder in
+            var isFolder: ObjCBool = false
+            return fm.fileExists(atPath: folder, isDirectory: &isFolder) && isFolder.boolValue && !fm.isWritableFile(atPath: folder)
+        }
+        guard !folders.isEmpty else { throw XCTSkip("No Homebrew folder here that this user can't already write to") }
+        for folder in folders {
+            let planted = "\(folder)/codesign-\(UUID().uuidString)"
+            let write = try run("printf fake > \(Sandbox.quoted(planted))", in: project)
+            XCTAssertNotEqual(write.status, 0, write.output)
+            XCTAssertTrue(write.output.contains("Operation not permitted"), "\(folder): \(write.output)")
+            XCTAssertFalse(fm.fileExists(atPath: planted))
+            // Reading what's there stays open.
+            let read = try run("ls \(Sandbox.quoted(folder)) > /dev/null", in: project)
+            XCTAssertEqual(read.status, 0, read.output)
+        }
+    }
+
+    /// An Xcode the person dragged to /Applications is theirs to write, and Lamp runs its xcodebuild, simctl and
+    /// devicectl as itself (`DeveloperTools.path`), so a command must not be able to change them. Here a pretend
+    /// Xcode the user owns, given as Lamp's developer folder, stands in for it, and /Applications is tried where
+    /// this user can't write anyway (Utilities), so nothing lands there even without the rule: macOS checks the
+    /// sandbox first ("Operation not permitted") and ownership after ("Permission denied").
+    func testApplicationsAndTheDeveloperFolderAreClosedForWriting() throws {
+        let (project, _) = try project()
+        let fm = FileManager.default
+        let xcode = URL(fileURLWithPath: "/tmp/lamp-sandbox-test-\(UUID().uuidString)/Xcode.app")
+        let tools = xcode.appendingPathComponent("Contents/Developer/usr/bin")
+        try fm.createDirectory(at: tools, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: xcode.deletingLastPathComponent()) }
+        let xcodebuild = tools.appendingPathComponent("xcodebuild")
+        try "#!/bin/sh\necho real\n".write(to: xcodebuild, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: xcodebuild.path)
+        let before = ProcessInfo.processInfo.environment["DEVELOPER_DIR"]
+        setenv("DEVELOPER_DIR", xcode.appendingPathComponent("Contents/Developer").path, 1)
+        defer { if let before { setenv("DEVELOPER_DIR", before, 1) } else { unsetenv("DEVELOPER_DIR") } }
+
+        let swap = try run("printf '#!/bin/sh\\necho planted\\n' > \(Sandbox.quoted(xcodebuild.path))", in: project)
+        XCTAssertTrue(swap.output.contains("Operation not permitted"), swap.output)
+        XCTAssertEqual(try String(contentsOf: xcodebuild, encoding: .utf8), "#!/bin/sh\necho real\n")
+        let beside = try run("mkdir \(Sandbox.quoted(xcode.appendingPathComponent("Contents/Planted").path))", in: project)
+        XCTAssertTrue(beside.output.contains("Operation not permitted"), beside.output)
+        // Running it, as a build does, stays open.
+        let ran = try run(Sandbox.quoted(xcodebuild.path), in: project)
+        XCTAssertEqual(ran.output.trimmingCharacters(in: .whitespacesAndNewlines), "real", ran.output)
+        // The rest of the temporary folder, and the app's own, stay writable.
+        let tmp = try run("echo ok > \(Sandbox.quoted(xcode.deletingLastPathComponent().appendingPathComponent("beside").path)) && echo ok > Sources/More.swift", in: project)
+        XCTAssertEqual(tmp.status, 0, tmp.output)
+
+        // Utilities is the system's, on every Mac. Not an app, nor a folder security software guards: those
+        // answer "not permitted" on their own, with or without the rule.
+        guard let folder = ["/Applications", "/Applications/Utilities"].first(where: { !fm.isWritableFile(atPath: $0) }) else {
+            throw XCTSkip("Nothing in /Applications that this user can't already write to")
+        }
+        let planted = "\(folder)/lamp-\(UUID().uuidString)"
+        let write = try run("mkdir \(Sandbox.quoted(planted))", in: project)
+        XCTAssertTrue(write.output.contains("Operation not permitted"), "\(folder): \(write.output)")
+        XCTAssertFalse(fm.fileExists(atPath: planted))
     }
 }

@@ -21,16 +21,6 @@ final class TalkTests: XCTestCase {
         XCTAssertEqual(first.switched, [0])
     }
 
-    /// A result card as an agent really wrote one, for a wish to plan a family's dinners: its summary was shown as
-    /// a bold paragraph. It goes back to the agent to say shorter; the same card with short words is shown.
-    func testALongCardIsTurnedBack() {
-        let sent: [String: Any] = ["summary": "A week of dinner nights to fill in, a set of family favorites to choose from, and a grocery list that builds itself from the plan."]
-        guard case .failure = Talk.result(from: sent) else { return XCTFail("a 27-word summary was shown") }
-        guard case .success = Talk.result(from: ["summary": "A week of dinners and a grocery list."]) else {
-            return XCTFail("a short card was turned back")
-        }
-    }
-
     /// A card answered by clicking folds to a line that reads on its own: two questions both answered "Both"
     /// must still say what each "Both" was for.
     func testAFoldedCardSaysWhatWasAsked() {
@@ -40,5 +30,17 @@ final class TalkTests: XCTestCase {
                                        Talk.Question(question: "What else should it do?", options: options)],
                            answers: ["Both", "Both"])
         XCTAssertEqual(ask.folded, "Where should dinner ideas come from? Both\nWhat else should it do? Both")
+    }
+
+    /// A clicked answer is shown by its question card, not again, and still ends the request before the agent's
+    /// reply to it; a guess clicked on a result card saved by an earlier Lamp shows as its message, the card not.
+    func testCardMessagesInTheChat() {
+        var answer = LogLine(kind: .user, text: "answer"); answer.fromCard = true
+        var guess = LogLine(kind: .user, text: "guess"); guess.fromCard = true
+        let lines = [LogLine(kind: .user, text: "wish"), LogLine(kind: .ask, text: "q"), answer,
+                     LogLine(kind: .agent, text: "reply"), LogLine(kind: .summary, text: "s"),
+                     LogLine(kind: .result, text: "card"), guess, LogLine(kind: .agent, text: "changed"), LogLine(kind: .summary, text: "s")]
+        // Each turn's summary stays too, for how long it worked; the chat doesn't draw it as a line.
+        XCTAssertEqual(LogLine.visible(lines, details: false).map(\.text), ["wish", "q", "reply", "s", "guess", "changed", "s"])
     }
 }

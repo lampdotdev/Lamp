@@ -440,11 +440,6 @@ struct ProjectView: View {
             if follow.atEnd { DispatchQueue.main.async { proxy.scrollTo("bottom", anchor: .bottom) } }
         }
         .onChange(of: lines.count) { followEnd(proxy, lines, pin: pin) }
-        // A result card comes into view whole. It can take the place of the line before it, so the
-        // count may not change; and it's tall, so the end is looked for after it has been laid out.
-        .onChange(of: Talk.current(in: lines)?.id) {
-            if follow.atEnd { DispatchQueue.main.async { followEnd(proxy, lines, pin: pin) } }
-        }
         .onChange(of: written(lines)) { followEnd(proxy, lines, pin: pin) }
         .onChange(of: queued.count) { followEnd(proxy, lines, pin: pin) }
         .onChange(of: store.progress[project.id]?.plan.count) { followEnd(proxy, lines, pin: pin) }
@@ -522,14 +517,20 @@ struct ProjectView: View {
         if store.notResponding[project.id] != nil {
             ChatLook.UnresponsiveNotice(text: ErrorMessages.notResponding(project.name)) { store.forceQuit(project) }.padding(.top, 12)
         }
-        ForEach(queued) { message in
-            ChatLook.QueuedRow(text: message.text, waitingForSetup: !store.setup.ready, onRemove: { store.unqueue(message, from: project) }) {
+        let places = ChatLook.QueuedPlace.places(sending: queued.map(\.sendNow))
+        let canSendNow = store.canSendNow(in: project)
+        ForEach(Array(queued.enumerated()), id: \.element.id) { index, message in
+            let place = places[index]
+            ChatLook.QueuedRow(text: message.text, waitingForSetup: !store.setup.ready, sending: message.sendNow, place: place,
+                               onRemove: { store.unqueue(message, from: project) },
+                               sendNow: !message.sendNow && place.last && canSendNow ? { store.sendNow(in: project, latest: message.id) } : nil) {
                 if let pointed = message.pointed {
                     ChatLook.PointedPill(title: pointed.title, detail: pointed.detail)
                 }
                 ForEach(message.attachments, id: \.self) { AttachmentChip(url: $0, siblings: message.attachments) }
             }
-                .padding(.top, lines.isEmpty ? 0 : 32)
+                // A group's messages sit close together; the group stands apart from the chat above it.
+                .padding(.top, lines.isEmpty && index == 0 ? 0 : place.first ? 32 : 8)
         }
     }
 
@@ -558,17 +559,11 @@ struct ProjectView: View {
         } above: {
             if let pointed { pointedPill(pointed).padding(.top, 4) }
             if !attachments.isEmpty { pendingAttachments }
-        } beside: {
-            if hasMicrophone {
-                Button(action: toggleDictation) {
-                    Image(systemName: dictation.isListening ? "mic.fill" : "mic")
-                        .foregroundStyle(dictation.isListening ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-                        .symbolEffect(.pulse, isActive: dictation.isListening)
-                }
-                .buttonStyle(ChatLook.Round(prominent: false))
-                .disabled(submissionPending)
-                .help(dictation.isListening ? "Stop dictation" : "Dictate a change")
-                .accessibilityLabel(dictation.isListening ? "Stop dictation" : "Dictate a change")
+        } inside: {
+            // Once something's typed the person has chosen the keyboard; while it listens, it's how dictation stops.
+            if hasMicrophone, dictation.isListening || shownDraft.wrappedValue.isEmpty {
+                ChatLook.MicButton(listening: dictation.isListening, action: toggleDictation)
+                    .disabled(submissionPending)
             }
         }
         // Lined up with the chat above it (see `chat`).
@@ -853,7 +848,7 @@ struct ProjectView: View {
         gap
         ToolbarItemGroup {
             Toggle(isOn: $showDetails) {
-                Label("Agent Details", systemImage: "wrench.and.screwdriver")
+                Label("Agent Details", systemImage: "chevron.left.forwardslash.chevron.right")
             }
             .help("Agent details")
             // Versions and Wish Info share the side panel: showing one hides the other.
@@ -880,7 +875,7 @@ struct ProjectView: View {
     }
 
     private var titleIcon: some View {
-        Button { iconPreview = Icons.largePreview(project) } label: {
+        Button { Task { iconPreview = await Icons.largePreview(project) } } label: {
             AppIcon(project: project, size: 30)
         }
         .buttonStyle(.plain)
@@ -888,10 +883,7 @@ struct ProjectView: View {
         .quickLookPreview($iconPreview)
     }
 
-    private var usageSummary: String {
-        guard let usage = store.usage[project.id], usage.calls > 0 else { return "" }
-        return String(format: "AI: %d call%@ · $%.2f", usage.calls, usage.calls == 1 ? "" : "s", usage.cost)
-    }
+    private var usageSummary: String { store.usageSummary(project) ?? "" }
 
     /// Dictated words are appended to whatever was already typed.
     private func toggleDictation() {
@@ -959,6 +951,10 @@ struct ProjectView: View {
             store.updateDraft(kept, for: current)
         }
         store.endSubmission(token)
+        // The box takes what's left now, in the same event as the send. Left to the chat hearing of the change
+        // (`draftUpdates`), the sent words stay in it until the chat next draws, and a Return pressed meanwhile
+        // finds them there, with nothing on its way any more, and sends them again.
+        loadDraft()
     }
 
     private func attach(_ files: [URL]) {
@@ -1029,8 +1025,6 @@ struct AppInfoView: View {
     @ObservedObject private var local = LocalModels.shared
     @ObservedObject private var images = ImageModels.shared
 
-    private var usage: AppUsage { store.usage[project.id] ?? AppUsage() }
-    private var requests: Int { (store.logs[project.id] ?? []).filter { $0.kind == .user }.count }
     private var lastBuilt: Date? {
         try? project.installedURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
     }
@@ -1048,77 +1042,28 @@ struct AppInfoView: View {
                 }
                 .frame(maxWidth: .infinity)
             }
-            Section("Usage") {
-                InfoRow("Total cost", value: dollars(usage.totalCost))
-                InfoRow("Changes requested", value: "\(requests)")
-                InfoRow("Building the app") {
-                    Text(runs(usage.agentRuns ?? 0, "agent run") + " · " + dollars(usage.agentCost ?? 0)).foregroundStyle(.secondary)
-                }
-                InfoRow("AI inside the app") {
-                    Text(runs(usage.calls, "call") + " · " + dollars(usage.cost)).foregroundStyle(.secondary)
-                }
-            }
-            // What answers this app, read-only: models are chosen in Settings. Nothing that answers is Not Ready.
-            Section {
-                let _ = (settingsRevision, models)
-                ForEach(Capability.allCases.filter { $0 != .browser }) { capability in
-                    answerRow(capability.title, AppAI.resolve(capability, for: project))
-                }
-                if project.platform.hasIOS {
-                    // Away from the Mac a phone answers only through the OpenRouter key: without one, one row says so.
-                    if Provider.hasKey {
-                        ForEach(Capability.allCases.filter { $0 != .browser }) { capability in
-                            answerRow("\(capability.title) away", AppAI.resolve(capability, for: project, in: .phoneAway))
+            let _ = settingsRevision
+            ForEach(Self.sections(for: project, models: models, store: store)) { section in
+                Section {
+                    ForEach(section.rows, id: \.label) { row in
+                        if let value = row.value {
+                            InfoRow(row.label) { Text(value).foregroundStyle(.secondary).textSelection(.enabled) }
+                        } else {
+                            InfoRow(row.label) { NotReadyBadge() }
                         }
-                    } else {
-                        InfoRow("Away from this Mac") { NotReadyBadge() }
                     }
-                }
-            } header: {
-                Text("AI inside this app")
-            } footer: {
-                HStack {
-                    Button("Configure Providers…") { settingsTab = "providers"; openSettings() }
-                    // Choices an earlier Lamp let this app make for itself: the one thing left to change here.
-                    if models != AppModels() {
-                        Button("Use Settings' Choices") { models = AppModels(); models.save(project) }
+                } header: {
+                    if let title = section.title { Text(title) }
+                } footer: {
+                    if !section.buttons.isEmpty {
+                        HStack {
+                            ForEach(section.buttons, id: \.action) { button in
+                                Button(button.title) { perform(button.action) }
+                            }
+                        }
+                        .controlSize(.small)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                }
-                .controlSize(.small)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            Section {
-                let _ = settingsRevision
-                InfoRow("Agent", value: Builder.engine.title)
-                if Builder.engine == .claude || Builder.engine == .codex {
-                    let model = Builder.engineModel(Builder.engine)
-                    let names = Builder.engine == .claude ? Builder.claudeModels : Builder.codexModels
-                    InfoRow("Building with", value: model.isEmpty ? "\(Builder.engine.title)'s default"
-                                   : names.first { $0.id == model }?.label ?? model)
-                }
-                if Builder.engine == .pi {
-                    InfoRow("Provider", value: providerName)
-                    if !Builder.piModel.isEmpty { InfoRow("Building with", value: buildModel) }
-                }
-            } header: {
-                Text("Building")
-            } footer: {
-                Button("Building Settings…") { settingsTab = "building"; openSettings() }
-                    .controlSize(.small)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            Section("App") {
-                if let stamp = store.stamps[project.id] {
-                    InfoRow("Built with") {
-                        Text(stamp.summary).foregroundStyle(.secondary)
-                    }
-                }
-                InfoRow("Bundle ID") { Text(project.bundleID).foregroundStyle(.secondary).textSelection(.enabled) }
-                Button("Show App in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
-                }
-                Button("Show Source Code in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([project.dir])
                 }
             }
         }
@@ -1132,6 +1077,76 @@ struct AppInfoView: View {
         .onChange(of: project.id) { models = AppModels.load(project) }
     }
 
+    private func perform(_ action: String) {
+        if action == Self.useSettingsChoices { models = AppModels() }
+        Self.perform(action, for: project) { tab in settingsTab = tab; openSettings() }
+    }
+
+    static let useSettingsChoices = "settingsChoices"
+
+    /// A button of the panel's, here or in the chat beside the app: Settings opened at its tab, the app or its code
+    /// shown in Finder, or this app's own model choices undone.
+    @MainActor static func perform(_ action: String, for project: LampProject, openSettings: (String) -> Void) {
+        switch action {
+        case "providers", "building": openSettings(action)
+        case useSettingsChoices: AppModels().save(project)
+        case "showApp": NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
+        case "showSource": NSWorkspace.shared.activateFileViewerSelecting([project.dir])
+        default: break
+        }
+    }
+
+    /// What the panel says, as plain rows (a nil value is Not Ready) and the buttons under them: drawn here and in
+    /// the chat beside the app (`SidebarServer`) from this one list, so the two never say different things.
+    @MainActor static func sections(for project: LampProject, models: AppModels, store: Store) -> [SidebarInfoSection] {
+        let usage = store.usage[project.id] ?? AppUsage()
+        let requests = (store.logs[project.id] ?? []).filter { $0.kind == .user }.count
+        var sections = [SidebarInfoSection(title: "Usage", rows: [
+            SidebarInfoRow(label: "Total cost", value: dollars(usage.totalCost)),
+            SidebarInfoRow(label: "Changes requested", value: "\(requests)"),
+            SidebarInfoRow(label: "Building the app", value: runs(usage.agentRuns ?? 0, "agent run") + " · " + dollars(usage.agentCost ?? 0)),
+            SidebarInfoRow(label: "AI inside the app", value: runs(usage.calls, "call") + " · " + dollars(usage.cost)),
+        ])]
+        // What answers this app, read-only: models are chosen in Settings. Nothing that answers is Not Ready.
+        func answer(_ title: String, _ resolution: Resolution) -> SidebarInfoRow {
+            SidebarInfoRow(label: title, value: resolution.tier == .none ? nil : short(resolution.answer ?? ""))
+        }
+        var ai = Capability.allCases.filter { $0 != .browser }.map { answer($0.title, AppAI.resolve($0, for: project)) }
+        if project.platform.hasIOS {
+            // Away from the Mac a phone answers only through the OpenRouter key: without one, one row says so.
+            if Provider.hasKey {
+                ai += Capability.allCases.filter { $0 != .browser }.map { answer("\($0.title) away", AppAI.resolve($0, for: project, in: .phoneAway)) }
+            } else {
+                ai.append(SidebarInfoRow(label: "Away from this Mac", value: nil))
+            }
+        }
+        var aiButtons = [SidebarInfoButton(title: "Configure Providers…", action: "providers")]
+        // Choices an earlier Lamp let this app make for itself: the one thing left to change here.
+        if models != AppModels() { aiButtons.append(SidebarInfoButton(title: "Use Settings' Choices", action: useSettingsChoices)) }
+        sections.append(SidebarInfoSection(title: "AI inside this app", rows: ai, buttons: aiButtons))
+        var building = [SidebarInfoRow(label: "Agent", value: Builder.engine.title)]
+        if Builder.engine == .claude || Builder.engine == .codex {
+            let model = Builder.engineModel(Builder.engine)
+            let names = Builder.engine == .claude ? Builder.claudeModels : Builder.codexModels
+            building.append(SidebarInfoRow(label: "Building with", value: model.isEmpty ? "\(Builder.engine.title)'s default"
+                                           : names.first { $0.id == model }?.label ?? model))
+        }
+        if Builder.engine == .pi {
+            building.append(SidebarInfoRow(label: "Provider", value: providerName))
+            if !Builder.piModel.isEmpty { building.append(SidebarInfoRow(label: "Building with", value: buildModel)) }
+        }
+        sections.append(SidebarInfoSection(title: "Building", rows: building,
+                                           buttons: [SidebarInfoButton(title: "Building Settings…", action: "building")]))
+        var app: [SidebarInfoRow] = []
+        if let stamp = store.stamps[project.id] { app.append(SidebarInfoRow(label: "Built with", value: stamp.summary)) }
+        app.append(SidebarInfoRow(label: "Bundle ID", value: project.bundleID))
+        sections.append(SidebarInfoSection(title: "App", rows: app, buttons: [
+            SidebarInfoButton(title: "Show App in Finder", action: "showApp"),
+            SidebarInfoButton(title: "Show Source Code in Finder", action: "showSource"),
+        ]))
+        return sections
+    }
+
     /// A model's name without the description Settings shows: "Fast & cheap (Claude Haiku)" → "Claude Haiku",
     /// "Nano Banana 2 (Gemini 3.1 Flash Image)" → "Nano Banana 2". The panel is narrow.
     static func short(_ label: String) -> String {
@@ -1140,16 +1155,7 @@ struct AppInfoView: View {
         return inside.hasPrefix("Claude") ? inside : String(label[..<open]).trimmed
     }
 
-    /// What answers one capability, named short (the panel is narrow), or Not Ready.
-    @ViewBuilder private func answerRow(_ title: String, _ resolution: Resolution) -> some View {
-        if resolution.tier == .none {
-            InfoRow(title) { NotReadyBadge() }
-        } else {
-            InfoRow(title, value: Self.short(resolution.answer ?? ""))
-        }
-    }
-
-    private var providerName: String {
+    private static var providerName: String {
         switch Builder.piProvider {
         case Builder.localProvider: "Native Mac AI"
         case let id where id.hasPrefix("ext-"): LocalModels.externalName(id)
@@ -1158,13 +1164,13 @@ struct AppInfoView: View {
         }
     }
 
-    private var buildModel: String {
+    private static var buildModel: String {
         let id = Builder.piModel
         return Builder.piProvider == "openrouter" ? Provider.models.first { $0.id == id }?.label ?? id : id
     }
 
-    private func dollars(_ amount: Double) -> String { String(format: "$%.2f", amount) }
-    private func runs(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
+    private static func dollars(_ amount: Double) -> String { String(format: "$%.2f", amount) }
+    private static func runs(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
 }
 
 /// While Apple's tools install, above everything: what's happening, and that requests wait for it.
@@ -1697,5 +1703,13 @@ private struct TryOnChoices: View {
         store.refreshDevices()
         store.refreshSimulators()
         Task { olderPhones = await PhoneTools.olderPhones() }
+    }
+}
+
+extension Store {
+    /// What the app's AI has cost, under its name in the toolbar ("AI: 3 calls · $0.02"); nil before it's used any.
+    func usageSummary(_ project: LampProject) -> String? {
+        guard let usage = usage[project.id], usage.calls > 0 else { return nil }
+        return String(format: "AI: %d call%@ · $%.2f", usage.calls, usage.calls == 1 ? "" : "s", usage.cost)
     }
 }

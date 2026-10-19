@@ -4,8 +4,8 @@ import CryptoKit
 
 /// The person's own iPhone or iPad: plugged in or on the same Wi‑Fi and paired with this Mac, found and
 /// driven with Xcode's devicectl. An app goes on it signed with the person's Apple account, which Xcode
-/// holds (Xcode → Settings → Accounts), through a small Xcode project Lamp writes beside the package
-/// (Template.deviceProject): Xcode's own automatic signing registers the phone and makes the certificate
+/// holds (Xcode → Settings → Accounts), through a small Xcode project Lamp writes in its own folder, beside a copy
+/// of the app's files (`stage`, `buildsFolder`): Xcode's own automatic signing registers the phone and makes the certificate
 /// and profile, so Lamp never handles the account itself. The phone can't be photographed from here, so
 /// the agent keeps looking at the simulator; the phone is for the person to try the app on.
 enum Devices {
@@ -113,7 +113,7 @@ enum Devices {
     static func list() async -> [Device] {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-devices-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: file) }
-        let result = await Subprocess.run("/usr/bin/xcrun", ["devicectl", "list", "devices", "--timeout", "5", "--json-output", file.path],
+        let result = await Subprocess.run(DeveloperTools.path("devicectl"), ["list", "devices", "--timeout", "5", "--json-output", file.path],
                                           mergeErrors: false, timeout: 30)
         guard result.ok, let data = try? Data(contentsOf: file),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -136,7 +136,7 @@ enum Devices {
     /// Pairs a plugged-in phone with this Mac for development: the phone shows "Trust This Computer?" and
     /// asks for its passcode, and this waits for the answer. What Xcode's Devices window does on its own.
     static func pair(_ udid: String) async throws {
-        let result = await Subprocess.run("/usr/bin/xcrun", ["devicectl", "manage", "pair", "--device", udid, "--timeout", "120"],
+        let result = await Subprocess.run(DeveloperTools.path("devicectl"), ["manage", "pair", "--device", udid, "--timeout", "120"],
                                           mergeErrors: true, timeout: 150)
         guard result.ok else {
             let output = result.output.lowercased()
@@ -150,25 +150,123 @@ enum Devices {
         }
     }
 
-    /// Builds the app for the phone with Xcode, signed for the team, and gives back the bundle. Automatic
-    /// signing may register the phone and make a certificate and profile, which is slow the first time.
-    static func build(_ project: LampProject, team: String, udid: String, started: (@MainActor (Process) -> Void)? = nil,
+    /// Lamp's own folder for what's signed for the team, which the sandbox the agent's commands run in closes: the
+    /// project of Lamp's own that Xcode signs to find what the app is signed with (`TeamSigning`), and the copy of the
+    /// app that's signed and put on the phone. A command left running in the background could change anything in the
+    /// app's folder between Lamp writing it and the signature; nothing here.
+    static let buildsFolder = Edition.supportFolder.appendingPathComponent("Phone Builds")
+
+    static func buildFolder(for project: LampProject) -> URL { buildsFolder.appendingPathComponent(project.id) }
+
+    /// Where an app's signing for the team is done (`TeamSigning`, `signedCopy`): beside its build folder, not in it,
+    /// since the build opens that one to Xcode in the app's sandbox. No app's folder name starts with a dot.
+    static func signingFolder(for project: LampProject) -> URL { buildsFolder.appendingPathComponent(".signing").appendingPathComponent(project.id) }
+
+    /// Thrown when the app's files hold a link: Xcode copies what a link leads to into the app, and the app can
+    /// send anything it carries anywhere once it's on the phone, so a link could carry any file Lamp can read.
+    struct LinkedFiles: LocalizedError {
+        var errorDescription: String? {
+            "Some of this app's files are shortcuts to other files, so Lamp won't put it on your phone. Ask Lamp to put the files themselves in their place."
+        }
+    }
+
+    /// What Xcode builds the phone app from, put together in `folder`: Lamp's project for it, and beside it in
+    /// `app/` a copy of the app's own files (its code, Assets, widget, share extension and watch app), which the
+    /// project reads instead of the app's folder. The copy is made by a command under the app's own sandbox, so
+    /// it reads only the app's real folder, even one swapped for a link while it copies, and keeps links as
+    /// links. Then no link may be left but Lamp's own one to the widget's shared code: what a link leads to stays
+    /// the agent's to change after any look at it. Gives back the copy. `started` gets the copy's process, so
+    /// Stop can end it like the build.
+    @discardableResult
+    static func stage(_ project: LampProject, team: String, in folder: URL? = nil,
+                      started: (@MainActor (Process) -> Void)? = nil) async throws -> URL {
+        let fm = FileManager.default
+        // The app's folder swapped for a link: the copy below couldn't read through it, and an empty app isn't one.
+        if (try? fm.destinationOfSymbolicLink(atPath: project.dir.path)) != nil { throw LinkedFiles() }
+        let dir = folder ?? buildFolder(for: project)
+        let files = dir.appendingPathComponent("app")
+        try? fm.removeItem(at: files)
+        try fm.createDirectory(at: files, withIntermediateDirectories: true)
+        try Template.writeDeviceProject(for: project, team: team, in: dir, reading: files)
+        let names = ["Sources", Sharing.Assets.folder, Template.widgetFolder, Template.shareFolder, Template.watchFolder]
+        let copy = "cd \"$LAMP_FROM\" && for name in \(names.map(Sandbox.quoted).joined(separator: " ")); do "
+            + "if [ -e \"$name\" ] || [ -L \"$name\" ]; then /bin/cp -Rp \"$name\" \"$LAMP_TO/\" || exit 1; fi; done"
+        guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [files.path]) else {
+            throw Failure(message: "Lamp couldn't copy the app's files to build it.")
+        }
+        var output: [String] = []
+        let status = await Shell.run(confined, cwd: files, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": files.path],
+                                     started: started) { output.append($0) }
+        guard status == 0 else { throw Failure(message: "Lamp couldn't copy the app's files to build it.\n\n" + output.suffix(4).joined(separator: "\n")) }
+        do { try checkUnlinked(dir) } catch { try? fm.removeItem(at: files); throw error }
+        return files
+    }
+
+    /// Throws `LinkedFiles` when anything Xcode reads in `folder` is a link (the project, the icon Lamp copied in,
+    /// the copy of the app's files), but Lamp's own one to the widget's shared code. What Xcode makes isn't read.
+    static func checkUnlinked(_ folder: URL) throws {
+        let fm = FileManager.default
+        let base = folder.standardizedFileURL.path
+        let ownLink = "app/Sources/" + Template.sharedWidgetLink
+        guard let walk = fm.enumerator(at: folder, includingPropertiesForKeys: nil) else { return }
+        for case let file as URL in walk {
+            let relative = String(file.standardizedFileURL.path.dropFirst(base.count + 1))
+            if relative == "DerivedData" { walk.skipDescendants(); continue }
+            guard let target = try? fm.destinationOfSymbolicLink(atPath: file.path) else { continue }
+            guard relative == ownLink, target == "../\(Template.widgetFolder)/\(Template.sharedWidgetFolder)" else { throw LinkedFiles() }
+        }
+    }
+
+    /// Builds the app for the phone with Xcode from what `stage` put in Lamp's folder (its project, and the copy of the
+    /// app's files), in the app's sandbox with only that folder opened and with signing off, and gives back the bundle,
+    /// unsigned: what Xcode does with the agent's code happens as the agent's commands would, and nothing it makes
+    /// is signed until Lamp has copied it (`signedCopy`). `destination` names the phone's SDK (a simulator's is the
+    /// tests'); the build is for any phone.
+    static func build(_ project: LampProject, team: String, destination: String, started: (@MainActor (Process) -> Void)? = nil,
                       onLine: @escaping @MainActor (String) -> Void) async throws -> URL {
-        let dir = project.dir.appendingPathComponent(".lamp/device")
-        let app = dir.appendingPathComponent("DerivedData/Build/Products/Release-iphoneos/\(project.exe).app")
-        let status = await Shell.run("""
-            xcodebuild -project "$LAMP_PROJECT" -scheme "$LAMP_SCHEME" -configuration Release -destination "id=$LAMP_UDID" \\
-              -derivedDataPath "$LAMP_DERIVED" -allowProvisioningUpdates -allowProvisioningDeviceRegistration \\
-              DEVELOPMENT_TEAM="$LAMP_TEAM" build 2>&1
-            """, cwd: dir, env: ["LAMP_PROJECT": dir.appendingPathComponent("\(project.exe).xcodeproj").path, "LAMP_SCHEME": project.exe,
-                                 "LAMP_UDID": udid, "LAMP_DERIVED": dir.appendingPathComponent("DerivedData").path, "LAMP_TEAM": team],
+        let dir = buildFolder(for: project)
+        let simulator = destination.contains("Simulator")
+        let app = dir.appendingPathComponent("DerivedData/Build/Products/Release-\(simulator ? "iphonesimulator" : "iphoneos")/\(project.exe).app")
+        let command = """
+            "$LAMP_XCODEBUILD" -project "$LAMP_PROJECT" -scheme "$LAMP_SCHEME" -configuration Release -destination "$LAMP_DESTINATION" \\
+              -derivedDataPath "$LAMP_DERIVED" CODE_SIGNING_ALLOWED=NO DEVELOPMENT_TEAM="$LAMP_TEAM" build 2>&1
+            """
+        guard let confined = Sandbox.wrapEngine(command, for: project, opening: [dir.path]) else {
+            throw Failure(message: "Xcode couldn't build the app for the phone.")
+        }
+        let status = await Shell.run(confined, cwd: dir, env: ["LAMP_XCODEBUILD": DeveloperTools.path("xcodebuild"),
+                                 "LAMP_PROJECT": dir.appendingPathComponent("\(project.exe).xcodeproj").path, "LAMP_SCHEME": project.exe,
+                                 "LAMP_DESTINATION": simulator ? "generic/platform=iOS Simulator" : "generic/platform=iOS",
+                                 "LAMP_DERIVED": dir.appendingPathComponent("DerivedData").path, "LAMP_TEAM": team],
             started: started, onLine: onLine)
         guard status == 0, FileManager.default.fileExists(atPath: app.path) else { throw Failure(message: "Xcode couldn't build the app for the phone.") }
         return app
     }
 
+    /// The build, signed for the team: copied into Lamp's own folder without following a link, then signed there
+    /// with what Xcode signed Lamp's own project with for this phone (`TeamSigning`). Gives back the signed copy, which
+    /// the caller removes once it's on the phone.
+    static func signedCopy(of build: URL, for project: LampProject, team: String, destination: String,
+                           started: (@MainActor (Process) -> Void)? = nil,
+                           onLine: @escaping @MainActor (String) -> Void) async throws -> URL {
+        // Xcode's signing of Lamp's own project comes first: it makes the team's certificate when this Mac has none yet.
+        let (plan, planDir) = try await TeamSigning.plan(for: project, team: team, place: .iphone, destination: destination,
+                                                         started: started, onLine: onLine)
+        guard let identity = await signingIdentity(for: team) else {
+            throw Failure(message: "This Mac has no certificate for your Apple team yet. Open Xcode → Settings → Accounts, choose the team and click Manage Certificates, then try again.")
+        }
+        let folder = signingFolder(for: project).appendingPathComponent("Install")
+        try? FileManager.default.removeItem(at: folder)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let copy = folder.appendingPathComponent("\(project.exe).app")
+        try AppFolder.copy(build, in: buildFolder(for: project), to: copy, in: folder)
+        try Store.checkContained(copy)
+        try await TeamSigning.sign(copy, with: plan, in: planDir, identity: identity)
+        return copy
+    }
+
     static func install(_ app: URL, on udid: String) async throws {
-        let result = await Subprocess.run("/usr/bin/xcrun", ["devicectl", "device", "install", "app", "--device", udid, app.path],
+        let result = await Subprocess.run(DeveloperTools.path("devicectl"), ["device", "install", "app", "--device", udid, app.path],
                                           mergeErrors: true, timeout: 300)
         guard result.ok else {
             throw PhoneFailure(stage: .install, output: result.output + "\n" + result.errors)
@@ -186,8 +284,8 @@ enum Devices {
     static func launch(_ bundleID: String, on udid: String, log: URL, started: (Process) -> Void,
                        cancelled: () -> Bool) async throws -> Process {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        process.arguments = ["devicectl", "device", "process", "launch", "--device", udid, "--terminate-existing", "--console", bundleID]
+        process.executableURL = URL(fileURLWithPath: DeveloperTools.path("devicectl"))
+        process.arguments = ["device", "process", "launch", "--device", udid, "--terminate-existing", "--console", bundleID]
         if !FileManager.default.fileExists(atPath: log.path) { FileManager.default.createFile(atPath: log.path, contents: nil) }
         let handle = try FileHandle(forWritingTo: log)
         let offset = handle.seekToEndOfFile()

@@ -36,6 +36,21 @@ for everything else.
   for that tab only and grants `activeTab`. With it the worker asks whether each
   declared selector is on the page (yes or no, nothing else) to choose the app.
   The extension has no host permissions at all.
+- **A right-click item**, when the builder gives an app one (`"menu": "Explain
+  in Plain Words"` in `browser.json`, or whatever the app's sidebar does with a
+  page: save it, summarise or translate it, answer something about it): Chrome
+  lists it under Lamp in the page's
+  right-click menu, and choosing it opens the tab's sidebar on that app with
+  `activeTab`, as the icon does. Choosing it is the person's click for that
+  app's page: the sidebar tells the proved page once (`lamp.onMenu`) and lets
+  it read once without a click in it, within 15 seconds and only on the
+  address the item was chosen on, so the page does what the item says at once.
+  A choice that reaches the page later than that doesn't run, and the sidebar
+  says so and that choosing the item again runs it.
+  Chrome decides where an item shows from the address alone before the menu
+  opens, so it shows only on pages a fit names by site (and path) without a
+  selector, and Lamp refuses a menu for an app with no such fit. An app that
+  fits only by selector is reached through the icon.
 - **The page** is served by the app (`LampBrowser.startPage` in LampSupport.swift)
   on this Mac's own address, at a name under `.localhost` (each app its own
   origin, so one app's page can't read another's storage) and a port worked out

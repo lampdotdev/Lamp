@@ -1,1 +1,6 @@
-{"subject": "a cute round pet's face", "symbol": "pawprint.fill", "background": "pink", "tint": "#FFFFFF"}
+{
+  "subject": "a round white cat's head with pink-lined ears, two dark eyes and a small pink nose",
+  "symbol": "pawprint.fill",
+  "background": "pink",
+  "tint": "#FFFFFF"
+}

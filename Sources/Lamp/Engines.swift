@@ -241,15 +241,21 @@ enum ToolLocator {
 struct AgentRun {
     let command: String
     let env: [String: String]
+    /// For an engine that reads its request from its input and keeps reading while it works (Claude Code): the
+    /// request as the first line written there. Nil for one given it on the command line.
+    var opening: String? = nil
 }
 
 extension Agent {
     /// Said at the end of a request while the app has no description Lamp can use, so an app gets one from
-    /// the request that first builds it, and an app made before descriptions existed from its next request.
+    /// the request that first builds it, and an app made before descriptions existed from its next request;
+    /// and while its description is too long for the desk, so it's shortened rather than cut off there.
     static func undescribed(_ project: LampProject) -> String {
-        AppDescription.description(of: project) == nil
-            ? "\n\n---\nThis app has no description yet (from Lamp, not part of the request above): once your work is done, write it in \(AppDescription.file), one short sentence saying what the app is."
-            : ""
+        guard let words = AppDescription.description(of: project) else {
+            return "\n\n---\nThis app has no description yet (from Lamp, not part of the request above): once your work is done, write it in \(AppDescription.file), one short sentence saying what the app is."
+        }
+        guard words.count > AppDescription.limit else { return "" }
+        return "\n\n---\nThis app's description in \(AppDescription.file) is \(words.count) characters (from Lamp, not part of the request above): once your work is done, shorten it to \(AppDescription.limit) at most, still one sentence saying what the app is."
     }
 
     /// The user's own pi config (logins, subscriptions, settings).
@@ -286,6 +292,7 @@ extension Agent {
             env["LAMP_ART_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/art"
             env["LAMP_SKILL_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/skill"
             env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve"
+            env["LAMP_STEER_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/steer"
             env["LAMP_TOKEN"] = token
             return AgentRun(command: command(fileCount: files.count),
                             env: env.merging(environment(prompt: prompt, files: files, project: project, session: session ?? "",
@@ -321,10 +328,10 @@ extension Agent {
                 let fallback = String(decoding: try! JSONSerialization.data(withJSONObject: ["hookSpecificOutput": refusal]), as: UTF8.self)
                     .replacingOccurrences(of: "'", with: "'\\''")
                 return ["type": "command", "timeout": 3600,
-                        "command": "curl -sf --max-time 3540 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
+                        "command": "/usr/bin/curl -sf --max-time 3540 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
             }
             var permissionMode = "acceptEdits"
-            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__offer_setup,mcp__lamp__make_app_for,mcp__lamp__connectors,mcp__lamp__ask,mcp__lamp__show_result,mcp__lamp__write_wish,mcp__lamp__read_skill"
+            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__offer_setup,mcp__lamp__make_app_for,mcp__lamp__connectors,mcp__lamp__ask,mcp__lamp__write_wish,mcp__lamp__read_skill"
             if Memory.isOn { allowed += ",mcp__lamp__read_notes,mcp__lamp__save_notes" }
             // look_at_app and use_app come from Lamp's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
             // it the only server. The config is a file that reads the token from the environment, so the
@@ -367,8 +374,11 @@ extension Agent {
             env["LAMP_CLAUDE_ALLOWED"] = allowed
             env["LAMP_TOOL"] = EngineInstall.path(for: .claude) ?? "claude"
             env.merge(EngineInstall.environment(for: .claude)) { $1 }
+            // The request goes in on Claude Code's input, which stays open while it works: a message the person
+            // sends meanwhile is written there too, and Claude Code hands it to the model after the tools it is
+            // running (Store.steer), in the same turn. Lamp closes the input once Claude Code has answered.
             var command = """
-            "$LAMP_TOOL" -p "$LAMP_PROMPT" --output-format stream-json --verbose --include-partial-messages \\
+            "$LAMP_TOOL" -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --replay-user-messages \\
               --restricted --strict-mcp-config --mcp-config "$LAMP_CLAUDE_MCP" --disable-slash-commands \\
               --tools 'Read,Edit,Write,Glob,Grep,Bash,WebFetch,WebSearch' \\
               --permission-mode "$LAMP_CLAUDE_MODE" --allowedTools "$LAMP_CLAUDE_ALLOWED" \\
@@ -381,7 +391,7 @@ extension Agent {
                 env["LAMP_MODEL"] = model
                 command += " --model \"$LAMP_MODEL\""
             }
-            return AgentRun(command: command, env: env)
+            return AgentRun(command: command, env: env, opening: claudeMessage(prompt))
         case .codex:
             // Isolated from the user's own Codex setup, whether this is their copy (with their sign-in) or Lamp's
             // (EngineInstall): --ignore-user-config --ignore-rules keep out any model, MCP servers, features and
@@ -497,6 +507,12 @@ extension Agent {
         return name
     }
 
+    /// A message from the person as Claude Code reads it on its input (`--input-format stream-json`).
+    static func claudeMessage(_ text: String) -> String {
+        let message: [String: Any] = ["type": "user", "message": ["role": "user", "content": text]]
+        return String(decoding: (try? JSONSerialization.data(withJSONObject: message)) ?? Data(), as: UTF8.self)
+    }
+
     /// Claude Code calls Lamp's MCP tools `mcp__lamp__look_at_app`; Lamp knows them by their plain names.
     private static func plainName(_ tool: String) -> String { tool.replacingOccurrences(of: "mcp__lamp__", with: "") }
 
@@ -541,6 +557,8 @@ extension Agent {
             default: break
             }
         case "user":
+            // A message Lamp wrote to its input, said back as Claude Code hands it to the model.
+            if obj["isReplay"] as? Bool == true { return [.received] }
             // A tool result: the tool has finished and the model is thinking about what's next.
             let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
             if content.contains(where: { $0["type"] as? String == "tool_result" }) { return [.step("")] }
@@ -548,7 +566,7 @@ extension Agent {
             var events: [AgentEvent] = []
             if let cost = obj["total_cost_usd"] as? Double, cost > 0 { events.append(.cost(cost)) }
             if obj["is_error"] as? Bool == true { events.append(.failed(obj["result"] as? String ?? "Claude Code failed.")) }
-            return events
+            return events + [.finished]
         default: break
         }
         return []

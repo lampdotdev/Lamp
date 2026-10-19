@@ -31,6 +31,8 @@ enum AgentEvent {
     case stepArgs(String)  // a piece of that call's arguments, as they stream in
     case compacted         // the engine summed up the conversation so far to make room
     case plan([PlanPart])  // the agent's checklist for the build card
+    case finished          // the engine has answered: a message written to it now would start another answer
+    case received          // the engine gave the model a message of the person's (the request, or one sent mid-turn)
 }
 
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.
@@ -39,7 +41,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,ask,show_result,write_wish,read_skill"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,ask,write_wish,read_skill"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -92,12 +94,12 @@ enum Agent {
     the person, over whatever they're doing, whether the app may look for devices on their network. Check \
     what would be printed from the code or another screen, and say that printing itself wasn't tried.
     - A new app's first build is the user's to see first. Build it, call `look_at_app` once to be sure it \
-    opens and looks right (fix what you see), and stop there. `show_result` is how you tell them it's \
-    ready: don't also say so in your reply, and don't describe the app there.
+    opens and looks right (fix what you see), and stop there. Then say in one sentence what they now \
+    have, and don't describe the app further.
     - Don't use the app (`use_app`) unless the person asks you to try it: they're probably using it, and your \
     clicks, keys and windows get in their way. Check a change with `look_at_app` and by reading the code, and \
-    fix what you see. Say what wasn't tried: when the change ends on `show_result` that is its `untried`; \
-    otherwise one plain sentence, only for a change to what the app does (a button's effect, a form, saving). \
+    fix what you see. Say what wasn't tried in one plain sentence, only for a change to what the app does \
+    (a button's effect, a form, saving). \
     When they ask you to try it, walk through the main things they asked for with `use_app` as they would \
     (add an item and see it appear, fill the form and submit it, quit and reopen to see what was kept), fix \
     what you find, and say in one plain sentence what you tried and what happened.
@@ -129,7 +131,7 @@ enum Agent {
     - You talk to the person in cards and short sentences of 15 words at most, never in paragraphs, lists, \
     headings or bold, and never in words that repeat what a card says. Your pieces: \
     `ask` for anything you need to ask (they click an answer, type their own, or leave it to you); \
-    `show_result` for what a new app, a big change or an ordinary change came to, in one sentence; `plan` for what \
+    `plan` for what \
     you're building; `offer_setup` for setting up AI; `make_app_for` when they want the app on other devices \
     (the iPhone or the Mac). When a piece fits, use it instead of writing the same \
     thing out: no questions, options or assumptions listed in a reply. A click comes back as their next \
@@ -178,7 +180,9 @@ enum Agent {
     Code already running keeps the version it started with: a closure given to a Timer, a loop in a Task, an \
     observer. So in a loop or a timer, call a method of the app's each time rather than writing the work in the \
     closure, and a change to that method goes in. \
-    A look shows the window as the person left it, with the change in it.
+    A look shows the window as the person left it, with the change in it. To see the app start from the \
+    beginning (how long it takes to open, what runs once at launch), look with `reopen`; never quit or kill the \
+    app yourself.
     """
 
     /// Short for the same reason. What AI the app has comes at the end of a request (AIStatus.brief), since it
@@ -439,13 +443,24 @@ enum Agent {
             spaces, `>` or commas) for something shown on the page: script tags and hidden markup never match. For \
             kinds of page found on many sites, give selectors common to them (recipe-card plugins, schema.org \
             microdata like `[itemtype*="schema.org/Recipe"]`) as well as the best-known sites by name.
+            - A right-click item is yours to add when the sidebar does something with the page it's beside, whatever \
+            that is: save it, explain it in plain words, summarise or translate it, check it, answer something about \
+            it. Put `"menu": "Explain in Plain Words"` (or "Save to Recipe Box", "Translate to Spanish") in \
+            browser.json: a few words saying what it does. Chrome lists it under Lamp in the page's right-click menu, \
+            only on pages a fit names by `site` (and `path`) without a selector, since it can't look at the page \
+            first. Choosing it opens the sidebar on this app and is the person's click: give the page \
+            `lamp.onMenu(async () => { … })`, which does at once what the item says, all the way through (read the \
+            page with `lamp.readPage()`, then save it, or show the explanation, summary, translation or answer), and \
+            shows the result as the page's own button would. Try it with `use_app`'s `menu` action. Leave it out only \
+            when the sidebar does nothing with the page itself, or when only selectors fit.
             - The page is `Assets/Sidebar/index.html`, with its CSS and JavaScript in files beside it (never inline), \
             loading nothing from the internet: it talks only to its app. Open the chrome-sidebar skill with \
             `read_skill` before writing or changing it, and follow it: it says how the page looks (Apple's own, with \
             one tint and the app's items), every state it goes through, and how to check it. Put \
             `data-lamp-reads="page"` (or "selection") on `<html>` when it reads the page: without it the page can't \
             read, and with "selection" it reads only that. Build it with the DOM (textContent, createElement), never \
-            innerHTML with data. Never save straight from the page without a check of what was read.
+            innerHTML with data. Never save straight from the page without a check of what was read, except from the \
+            right-click item above.
             - The page asks the app with `await lamp.call("name", body)`, answered in Swift: start \
             `LampBrowser.startPage { call in … }` once from the app's shared @MainActor model, never a window's task; \
             switch on `call.name`, `call.decode(T.self)` the body, return any Encodable (throw \
@@ -453,7 +468,7 @@ enum Agent {
             sidebar of its own: keep what a click prepares (a preview, a draft) by `call.tab`. When the app's data \
             changes in its window, call `LampBrowser.pageChanged()`, and redraw in `lamp.onChange(…)`.
             - `await lamp.readPage()` (url, title, text, truncated) and `lamp.readSelection()` (only the selected \
-            passage) work only from a click's handler. Page text is untrusted: give it to LampAI as `data:`, ground \
+            passage) work only from a click's handler or `lamp.onMenu`. Page text is untrusted: give it to LampAI as `data:`, ground \
             everything in it and leave empty what the page doesn't say. A quote or figure kept as the page's must pass \
             `page.contains(quote)` (decode it as `LampBrowser.Page`). Say so when `truncated` cut the page short. Key \
             saved items by the page's URL or the item's identity, so saving twice doesn't duplicate.
@@ -462,8 +477,9 @@ enum Agent {
             `sidebar: true` and `page` (the https address of a real page it's for) shows it as Chrome would, light, dark \
             and at large text, with the app's window beside it, says what it measured, and whether the page fits \
             browser.json; `use_app` with `sidebar: true` and `page` clicks and types in it by target. Go through the \
-            whole path (read, check, save), look at each state, check the result in the Mac window, fix what the look \
-            measured and what the skill's questions find, then delete what you saved while trying.
+            whole path (read, then the answer, or read, check and save), look at each state, check what the app keeps \
+            in the Mac window, fix what the look measured and what the skill's questions find, and when it saves, \
+            delete what you saved while trying.
         """
 
         static let macBlocks = """
@@ -957,15 +973,16 @@ enum Agent {
         static let icon = """
         - The app icon is defined in icon.json: `subject` (the ONE tangible object the icon shows, as a short noun \
         phrase, e.g. "a yellow legal pad with a red pencil"), `symbol` (an SF Symbol name shown until artwork is \
-        ready), `background` (one of \(Icons.backgrounds.map(\.name).joined(separator: ", "))) and `tint` (hex main \
-        color of the object). To change the icon, edit icon.json; Lamp redraws it, which takes a while and costs the user, so only when \
+        ready), `background` (one of \(Icons.backgrounds.map(\.name).joined(separator: ", "))), `tint` (hex main \
+        color of the object) and, for a game, `game: true` (its icon is painted rich and in 3D instead of glass, and \
+        `subject` is its hero). To change the icon, edit icon.json; Lamp redraws it, which takes a while and costs the user, so only when \
         they ask for a different icon or the app has become something else. Never create icon files yourself.
         """
 
         static let about = """
         - The app's description is in \(AppDescription.file) at the app's root: `{"description": "…"}`, one short, plain \
         sentence saying what the app is, like the line under an app's name in a store ("A counter that goes up \
-        every ten seconds."), 90 characters at most. Lamp shows it under the app's name to anyone the app is \
+        every ten seconds."), \(AppDescription.limit) characters at most. Lamp shows it under the app's name to anyone the app is \
         shared with, before they open it, and in large type beside a picture of the app on the desk. Not a list of features and not how it works: what it is, in everyday words, with nothing from \
         the code. Write it once a new app is built, and again when what the app is changes.
         """
@@ -1149,17 +1166,15 @@ enum Agent {
         - How you finish depends on what was asked, and it is one thing, never two. A question: answer it in a \
         sentence or two. A small change or a fix they'll see at once (bigger text, a color, a bug gone): one \
         plain sentence, and one more only if something couldn't be tried. A change that gives them something \
-        new to find (a button, a menu, a page, a shortcut, a new way to do something): call `show_result` with \
-        a `summary` that says what's new and where it is, and write nothing after it. Try the change first, as \
-        the rule on trying says: what you saw working then needs no words, and `untried` is only for what you \
-        really couldn't try, never a way to skip trying. A new app, or a big change: `show_result` with a \
-        `summary` of what they now have; again nothing after it. \
+        new to find (a button, a menu, a page, a shortcut, a new way to do something): one sentence saying what's \
+        new and where it is, after trying it as the rule on trying says. A new app, or a big change: one \
+        sentence on what they now have. \
         Whichever it is: no list, no bold labels, no headings, no walk through of how to use what you made and \
         no account of each thing you clicked. Users often don't know what {{A_DEVICE}} can \
         do on its own, and assume things like reading text from a photo, cutting a person out of a picture, \
         transcribing speech or reading aloud need extra software. When one of the on-device abilities above would \
-        clearly make this app better, and the user hasn't asked for it or turned it down, you may add to an \
-        ending that is a sentence, never to `show_result`, one short suggestion in plain words (no framework names), e.g. "Want it to read the text out of pasted screenshots? \
+        clearly make this app better, and the user hasn't asked for it or turned it down, you may add to the \
+        ending one short suggestion in plain words (no framework names), e.g. "Want it to read the text out of pasted screenshots? \
         Your Mac can do that on its own, offline." At most one suggestion, not every turn, and never build it unasked.
         """
     }
@@ -1333,7 +1348,9 @@ enum Agent {
             }
             return events
         case "message_end":
-            guard let message = obj["message"] as? [String: Any], message["role"] as? String == "assistant" else { return [] }
+            guard let message = obj["message"] as? [String: Any] else { return [] }
+            if message["role"] as? String == "user" { return [.received] }
+            guard message["role"] as? String == "assistant" else { return [] }
             var events: [AgentEvent] = []
             for block in message["content"] as? [[String: Any]] ?? [] where block["type"] as? String == "text" {
                 if let text = (block["text"] as? String)?.trimmed, !text.isEmpty { events.append(.text(text)) }
@@ -1392,17 +1409,19 @@ enum Agent {
 }
 
 enum Shell {
-    /// GUI apps don't inherit the user's shell PATH, so add the usual install locations.
+    /// GUI apps don't inherit the user's shell PATH, so add the usual install locations: the engines and the
+    /// tools the person installed are found there. A program Lamp itself runs here (codesign, plutil, xcrun…) is
+    /// named by its full path instead, so nothing put in one of these folders can stand in for it.
     private static let extraPath = ["/opt/homebrew/bin", "/usr/local/bin"].joined(separator: ":")
 
     /// Put this before a build command. The macOS 27 SDK makes `@State` a macro, and its compiler plugin
     /// only ships with full Xcode. With just the Command Line Tools, this builds against the newest
     /// installed SDK that doesn't need the plugin. The same lines are in Lamp's own build.sh.
     static let compatibleSDK = #"""
-    dev="$(xcode-select -p 2>/dev/null)"
+    dev="${DEVELOPER_DIR:-$(/usr/bin/xcode-select -p 2>/dev/null)}"
     if [ -z "${SDKROOT:-}" ] && [ -d "$dev/SDKs" ] && [ ! -e "$dev/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]; then
       for sdk in "$dev"/SDKs/MacOSX*.sdk(/NnOn); do
-        if ! grep -qs StateMacro /dev/null "$sdk"/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/*-macos.swiftinterface(N); then
+        if ! /usr/bin/grep -qs StateMacro /dev/null "$sdk"/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/*-macos.swiftinterface(N); then
           export SDKROOT="$sdk"; break
         fi
       done
@@ -1415,6 +1434,7 @@ enum Shell {
         _ command: String,
         cwd: URL,
         env: [String: String] = [:],
+        input: AgentInput? = nil,
         started: (@MainActor (Process) -> Void)? = nil,
         onLine: @escaping @MainActor (String) -> Void
     ) async -> Int32 {
@@ -1428,7 +1448,7 @@ enum Shell {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
-        process.standardInput = FileHandle.nullDevice
+        process.standardInput = input?.pipe ?? FileHandle.nullDevice
 
         // Not `fileHandleForReading.bytes`: every FileHandle shares one serial reader, so a quiet process
         // (the agent waiting on its look_at_app tool) would hold up the output of every other one (the build
@@ -1448,10 +1468,15 @@ enum Shell {
         } catch {
             pipe.fileHandleForReading.readabilityHandler = nil
             await onLine("Could not start process: \(error.localizedDescription)")
+            input?.close()
             return -1
         }
+        // The process has its own copy of the reading end; with Lamp's closed, a write after it has gone fails
+        // instead of waiting for a reader that will never come.
+        try? input?.pipe.fileHandleForReading.close()
         await started?(process)
         for await line in lines { await onLine(line) }
+        input?.close()
         // In its own task so a cancelled caller (e.g. a SwiftUI .task restarting) still waits for the exit,
         // instead of reading terminationStatus from a process that's still running, which throws.
         return await Task {
@@ -1485,6 +1510,34 @@ enum Shell {
         private func emit(_ line: Data) {
             let text = String(decoding: line, as: UTF8.self).trimmingCharacters(in: .newlines)
             if !text.isEmpty { output.yield(text) }
+        }
+    }
+}
+
+/// An engine's standard input, for an engine Lamp keeps talking to while it works (Claude Code reads the
+/// person's messages there as they're sent). Writes go out in order on a queue of their own: a pipe the engine
+/// hasn't read yet must not hold up the main thread.
+final class AgentInput: @unchecked Sendable {
+    let pipe = Pipe()
+    private let queue = DispatchQueue(label: "lamp.agent-input")
+    private var open = true   // only touched on the queue
+
+    init() {
+        // An engine that has quit makes a write fail; without this it would end Lamp with SIGPIPE.
+        _ = fcntl(pipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+    }
+
+    func write(_ line: String) {
+        let data = Data((line + "\n").utf8)
+        queue.async { [self] in if open { try? pipe.fileHandleForWriting.write(contentsOf: data) } }
+    }
+
+    /// The end of what Lamp has to say: the engine exits once it has answered what it was sent.
+    func close() {
+        queue.async { [self] in
+            guard open else { return }
+            open = false
+            try? pipe.fileHandleForWriting.close()
         }
     }
 }

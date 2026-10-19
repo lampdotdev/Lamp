@@ -6,6 +6,9 @@ import Foundation
 /// an app with no description.
 enum AppDescription {
     static let file = "about.json"
+    /// The most a line holds and still fits the four lines the desk gives it beside the app's picture, in its
+    /// one size (`WishDesk.stage`). The agent is told it (`Agent.Rules.about`) and asked to shorten a longer line.
+    static let limit = 90
 
     static func description(of project: LampProject) -> String? {
         description(at: project.dir.appendingPathComponent(file))

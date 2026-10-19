@@ -31,7 +31,9 @@ enum Privacy {
     /// Whether one of the agent's file tools may touch `path` (as the agent gave it, relative to the app's folder).
     static func verdict(tool: String, path raw: String, project: LampProject) -> Verdict {
         let path = resolved(raw, in: project.dir)
-        let home = resolved(project.dir.path, in: project.dir)
+        // The folder above is worked out like any path; the app's folder itself is taken by its name, since
+        // the agent may have swapped it for a link that leads into Lamp's own.
+        let home = resolved(project.dir.deletingLastPathComponent().path, in: project.dir) + "/" + project.dir.lastPathComponent
         if path == home || path.hasPrefix(home + "/") {
             let inside = String(path.dropFirst(home.count))
             if inside.hasPrefix("/.lamp/runtime/") {

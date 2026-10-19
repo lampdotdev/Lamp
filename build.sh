@@ -57,7 +57,7 @@ fi
 # The macOS 27 SDK makes @State a macro, and its compiler plugin only ships with full Xcode.
 # With just the Command Line Tools, build against the newest installed SDK that doesn't need it.
 # (Lamp does the same for the apps it builds: Shell.compatibleSDK in Sources/Lamp/Agent.swift.)
-dev="$(xcode-select -p 2>/dev/null)"
+dev="${DEVELOPER_DIR:-$(xcode-select -p 2>/dev/null)}"
 if [ -z "${SDKROOT:-}" ] && [ -d "$dev/SDKs" ] && [ ! -e "$dev/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]; then
   for sdk in "$dev"/SDKs/MacOSX*.sdk(/NnOn); do
     if ! grep -qs StateMacro /dev/null "$sdk"/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/*-macos.swiftinterface(N); then
@@ -113,6 +113,41 @@ if [ "$FLAVOR" = dev ]; then
   cp -R experiments/browser-connector/extension "$APP/Contents/Resources/BrowserCompanion/"
   cp experiments/browser-connector/extension-id.txt "$APP/Contents/Resources/BrowserCompanion/"
 fi
+# Quick Look for shared .lampapp files: the app's icon as their thumbnail, and its picture when Space is pressed.
+# macOS shows Quick Look only from sandboxed extensions in an app it knows, so they live in Lamp's PlugIns.
+for EXT in LampThumbnail:thumbnail LampPreview:preview; do
+  EXE="${EXT%%:*}"; KIND="${EXT##*:}"
+  APPEX="$APP/Contents/PlugIns/$EXE.appex"
+  mkdir -p "$APPEX/Contents/MacOS"
+  cp "$(dirname "$BIN")/$EXE" "$APPEX/Contents/MacOS/$EXE"
+  if [ "$KIND" = preview ]; then
+    PRINCIPAL=PreviewProvider; EXTRA='<key>QLIsDataBasedPreview</key><true/><key>QLSupportsSearchableItems</key><false/>'
+  else
+    PRINCIPAL=ThumbnailProvider; EXTRA='<key>QLThumbnailMinimumDimension</key><integer>0</integer>'
+  fi
+  cat > "$APPEX/Contents/Info.plist" <<APPEXPLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleExecutable</key><string>$EXE</string>
+  <key>CFBundleIdentifier</key><string>$BUNDLE_ID.$KIND</string>
+  <key>CFBundleName</key><string>$EXE</string>
+  <key>CFBundleDisplayName</key><string>$NAME</string>
+  <key>CFBundlePackageType</key><string>XPC!</string>
+  <key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
+  <key>CFBundleVersion</key><string>$APP_BUILD</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>NSExtension</key><dict>
+    <key>NSExtensionPointIdentifier</key><string>com.apple.quicklook.$KIND</string>
+    <key>NSExtensionPrincipalClass</key><string>$PRINCIPAL</string>
+    <key>NSExtensionAttributes</key><dict>
+      <key>QLSupportedContentTypes</key><array><string>dev.lamp.lampapp</string></array>
+      $EXTRA
+    </dict>
+  </dict>
+</dict></plist>
+APPEXPLIST
+done
 # The chat Lamp puts inside each Mac app's window (LampSidebar), copied into every app when it's installed.
 cp "$(dirname "$BIN")/LampSidebar" "$APP/Contents/Resources/LampSidebar"
 cp Resources/THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
@@ -221,6 +256,8 @@ sign "$SPARKLE/Autoupdate"
 sign "$SPARKLE/Updater.app"
 sign "$APP/Contents/Frameworks/Sparkle.framework"
 if [ "$FLAVOR" = dev ]; then sign "$APP/Contents/Helpers/BrowserNativeHost"; fi
+sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/LampThumbnail.appex"
+sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/LampPreview.appex"
 sign "${APP_ENTITLEMENTS[@]}" "$APP"
 [ "$SIGN_ID" = "-" ] && echo "Signed ad-hoc (macOS may ask for Keychain access after each rebuild)"
 echo "Built $APP"
