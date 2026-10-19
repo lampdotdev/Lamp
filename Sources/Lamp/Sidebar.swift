@@ -750,6 +750,10 @@ final class SidebarServer {
         case .forceQuit:
             guard store.notResponding[project.id] != nil else { return }
             store.forceQuit(project)
+        case .showLamp:
+            // Asked for from another app's window, so Lamp has to take the front for itself.
+            NSApp.activate(ignoringOtherApps: true)
+            store.showDesk()
         case .undo:
             Task { await store.undo(project) }
         case .delete:

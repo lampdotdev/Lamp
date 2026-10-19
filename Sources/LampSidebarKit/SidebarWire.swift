@@ -384,6 +384,8 @@ public enum SidebarCommand: Codable, Equatable {
     case approve(UUID, allow: Bool, allowAll: Bool)
     case forceQuit
     // The toolbar's, as in Lamp's window.
+    /// Lamp's icon at the start of the bar: Lamp in front, on its desk.
+    case showLamp
     /// Undo Last Change: back to the version before this one.
     case undo
     /// Delete the wish, which the sidebar has already confirmed.
