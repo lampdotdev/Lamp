@@ -161,7 +161,9 @@ extension LogLine {
         // What a card shows isn't said again as a message: decided from the whole chat, since which card a clicked
         // message came from decides it, and left out only at the end, since a clicked answer still ends the
         // request before it for what's chosen below.
-        let hidden = Talk.cardMessages(in: lines)
+        // A request Lamp sent itself to fix a crash isn't the person's to see as theirs: the line before it says
+        // what Lamp is doing.
+        let hidden = Talk.cardMessages(in: lines).union(lines.filter { $0.byLamp == true }.map(\.id))
         if details { return lines.filter { !hidden.contains($0.id) } }
         // After the agent's questions its card is the answer: whatever it says on the way out ("Waiting for
         // your answers.") would sit under the card saying the same.
@@ -215,10 +217,10 @@ enum ChatItem: Identifiable {
     /// comes after the one before it up to its own: requests don't mark them, since a clicked answer to a card is left
     /// out of the chat and Lamp starts runs of its own (a build to fix). What comes after the last summary is a run
     /// still going, whose steps show as they come. Lamp's note that it reopened the app stays out, since it explains
-    /// the window going away. A summary times its run and is otherwise left out; with Agent Details it's a line of
-    /// its own and nothing is gathered. A run that ended on a question still waiting for its answer isn't gathered
-    /// until it's answered: the card is clickable before the run's summary arrives, and nothing above it may change
-    /// height while it waits.
+    /// the window going away, and so does its note that it's fixing a crash nobody asked about. A summary times its
+    /// run and is otherwise left out; with Agent Details it's a line of its own and nothing is gathered. A run that
+    /// ended on a question still waiting for its answer isn't gathered until it's answered: the card is clickable
+    /// before the run's summary arrives, and nothing above it may change height while it waits.
     static func items(_ lines: [LogLine], gather: Bool) -> [ChatItem] {
         guard gather else { return items(lines) }
         let waiting = Talk.open(in: lines)?.id
@@ -238,8 +240,8 @@ enum ChatItem: Identifiable {
         // A run that asked has its card for an answer: what it said before the card goes with the steps.
         let answer = run.contains { $0.kind == .ask } ? nil : run.last { $0.kind == .agent }?.id
         let isStep = { (line: LogLine) in
-            (line.kind == .status && line.text != ChatLook.reloaded) || line.kind == .tool || line.kind == .progress
-                || (line.kind == .agent && line.id != answer)
+            (line.kind == .status && line.text != ChatLook.reloaded && line.text != ChatLook.fixingCrash)
+                || line.kind == .tool || line.kind == .progress || (line.kind == .agent && line.id != answer)
         }
         let steps = items(run.filter(isStep)).flatMap { item -> [LogLine] in
             switch item {

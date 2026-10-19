@@ -56,6 +56,10 @@ public enum ChatLook {
     /// is otherwise left unexplained, since why is only in Agent Details.
     public static let reloaded = "Lamp reloaded the app to apply this change"
 
+    /// The line above a fix Lamp started on its own after the app crashed: the request it sent isn't shown, so this
+    /// says why the agent is at work with nobody having asked.
+    public static let fixingCrash = "The app crashed, so Lamp is fixing it"
+
     /// One status line: a check, or a small spinner for a step still going.
     public struct StatusLine: View {
         let text: String

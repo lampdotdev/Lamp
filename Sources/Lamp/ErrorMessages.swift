@@ -13,6 +13,7 @@ enum ErrorMessages {
     static let authenticationFailedSuffix = " key or sign-in didn't work. Check it in Lamp → Settings (⌘,)."
     static let quotaExceededSuffix = " account is out of credit or quota. Top it up, or pick another provider in Settings."
     static let crashAfterLaunchSuffix = " crashes when it opens. Ask me to fix the crash, or press Undo."
+    static let crashedSuffix = " crashed again. Ask me to fix it, or press Undo."
     static let quitsAfterLaunchSuffix = " still quits right after opening. Try describing the change differently, or press Undo."
 
     /// A turn's change that was made but couldn't be saved as a version.
@@ -30,4 +31,5 @@ enum ErrorMessages {
     static func quotaExceeded(_ provider: String) -> String { "Your " + provider + quotaExceededSuffix }
     static func crashAfterLaunch(_ app: String) -> String { app + crashAfterLaunchSuffix }
     static func quitsAfterLaunch(_ app: String) -> String { app + quitsAfterLaunchSuffix }
+    static func crashed(_ app: String) -> String { app + crashedSuffix }
 }
