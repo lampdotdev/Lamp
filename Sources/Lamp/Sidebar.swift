@@ -382,8 +382,15 @@ final class SidebarServer {
         let start = LogLine.recentStart(in: lines, atLeast: reach)
         let latestRequest = lines.last { $0.kind == .user }?.id
         let shown = Array(lines[start...])
-        let items = ChatItem.items(progressShown ? Transcript.withoutStepInProgress(shown) : shown)
+        let items = ChatItem.items(progressShown ? Transcript.withoutStepInProgress(shown) : shown, gather: !details)
         var out: [SidebarLine] = []
+        func tools(_ run: [LogLine], gap: Double, running: Bool) -> SidebarLine {
+            let calls = run.map { ToolCall($0.text) }
+            var line = SidebarLine(id: run[0].id, kind: .tools, text: ToolGroup.summary(calls), gap: gap, running: running)
+            line.symbol = ToolGroup.icon(calls)
+            line.calls = calls.map { SidebarToolCall(symbol: $0.icon, verb: $0.verb, argument: $0.argument) }
+            return line
+        }
         for (index, item) in items.enumerated() {
             let isLast = index == items.count - 1
             let gap = Double(ChatItem.gap(after: index > 0 ? items[index - 1] : nil, before: item, isFinalAnswer: finalAnswers.contains(item.id)))
@@ -395,11 +402,16 @@ final class SidebarServer {
                 }
             case .tools(let run):
                 // Only with Agent Details on: the steps, summed up, each one under it.
-                let calls = run.map { ToolCall($0.text) }
-                var line = SidebarLine(id: run[0].id, kind: .tools, text: ToolGroup.summary(calls), gap: gap,
-                                       running: isLast && busy && !progressShown)
-                line.symbol = ToolGroup.icon(calls)
-                line.calls = calls.map { SidebarToolCall(symbol: $0.icon, verb: $0.verb, argument: $0.argument) }
+                out.append(tools(run, gap: gap, running: isLast && busy && !progressShown))
+            case .work(let id, let title, let steps):
+                var line = SidebarLine(id: id, kind: .work, text: title, gap: gap)
+                line.steps = ChatItem.items(steps).flatMap { step -> [SidebarLine] in
+                    switch step {
+                    case .tools(let run): [tools(run, gap: 4, running: false)]
+                    case .statuses(let run): run.map { SidebarLine(id: $0.id, kind: .status, text: $0.text, gap: 4) }
+                    default: []
+                    }
+                }
                 out.append(line)
             case .line(let line):
                 switch line.kind {

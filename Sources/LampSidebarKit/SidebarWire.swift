@@ -99,7 +99,7 @@ public struct SidebarState: Codable, Equatable {
 }
 
 public struct SidebarLine: Codable, Equatable, Identifiable {
-    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary, note, offer, action, tools }
+    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary, note, offer, action, tools, work }
     public var id: UUID
     public var kind: Kind
     public var text: String
@@ -145,6 +145,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var pointed: SidebarPointed?
     /// The agent's steps, shown with Agent Details on (`tools`): what `text` sums up, one by one.
     public var calls: [SidebarToolCall]?
+    /// A finished turn's steps (`work`, its line "Worked for 2 min 3 s" is `text`): status lines and runs of tool calls.
+    public var steps: [SidebarLine]?
 
     public init(id: UUID, kind: Kind, text: String, gap: Double = 0, running: Bool = false, attachments: [SidebarAttachment]? = nil,
                 growing: Bool = false, questions: [SidebarQuestion]? = nil) {

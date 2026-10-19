@@ -346,6 +346,10 @@ private struct LineView: View {
             }
         case .summary:
             ChatLook.SummaryLine(line.text)
+        case .work:
+            ChatLook.Worked(line.text) {
+                ForEach(line.steps ?? []) { step in LineView(line: step, busy: busy) }
+            }
         case .error:
             ChatLook.ErrorNote(line.text)
         case .offer:

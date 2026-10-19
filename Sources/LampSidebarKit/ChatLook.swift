@@ -85,7 +85,48 @@ public enum ChatLook {
     /// Steps line up with the words in the agent's bubbles.
     public static let stepIndent: CGFloat = tailRoom + 4
 
-    /// A command the agent ran without asking ("Ran: git clone …"). The chat says that it happened; the command
+    /// A finished turn's steps under one line, "Worked for 2 min 3 s", opened with a click to show each of them.
+    /// The steps draw themselves, set in as the agent's steps are.
+    public struct Worked<Steps: View>: View {
+        let title: String
+        let steps: Steps
+        @State private var expanded = false
+
+        public init(_ title: String, @ViewBuilder steps: () -> Steps) {
+            self.title = title
+            self.steps = steps()
+        }
+
+        public var body: some View {
+            VStack(alignment: .leading, spacing: 4) {
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(title)
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(expanded ? 90 : 0))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .font(ChatLook.stepFont)
+                .foregroundStyle(.secondary)
+                .padding(.leading, ChatLook.stepIndent)
+                .help(expanded ? "Hide the steps" : "Show the steps")
+                .accessibilityHint(expanded ? "Hides the steps" : "Shows the steps")
+                if expanded {
+                    VStack(alignment: .leading, spacing: 4) { steps }
+                        .padding(.leading, 10)
+                        .transition(.opacity)
+                }
+            }
+        }
+    }
+
+    /// A command the agent ran ("Ran: git clone …"). The chat says that it happened; the command
     /// itself is a click away, for anyone who wants to see it.
     public struct RanCommand: View {
         let command: String

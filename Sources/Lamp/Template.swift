@@ -4420,8 +4420,13 @@ enum Template {
             if let floating = wand as? FloatingWand {
                 floating.active = open
             } else {
-                wand.contentTintColor = open ? .controlAccentColor : nil
-                if #available(macOS 26, *) { wand.bezelColor = open ? NSColor.controlAccentColor.withAlphaComponent(0.2) : nil }
+                // A toggle that's on, as a toolbar's are drawn lit, and the symbol in the accent colour itself: a tint
+                // alone doesn't show on a glass button, nor in a window that isn't in front.
+                wand.setButtonType(.pushOnPushOff)
+                wand.state = open ? .on : .off
+                let symbol = NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: "Customize This App")!
+                    .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))!
+                wand.image = open ? symbol.withSymbolConfiguration(.init(paletteColors: [.controlAccentColor])) : symbol
             }
         }
 

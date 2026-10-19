@@ -181,23 +181,29 @@ extension LogLine {
             }
         }
         if let latest { answers.insert(latest) }
-        // A result card saved by an earlier Lamp isn't shown: the agent's last message says what it did.
+        // A result card saved by an earlier Lamp isn't shown: the agent's last message says what it did. A turn's summary
+        // stays, for how long it worked (`ChatItem.items`), and isn't drawn as a line of its own.
         return lines.filter {
-            !hidden.contains($0.id) && ($0.kind == .agent ? answers.contains($0.id) : !$0.isDetail && $0.kind != .result)
+            !hidden.contains($0.id)
+                && ($0.kind == .agent ? answers.contains($0.id) : $0.kind == .summary || !$0.isDetail && $0.kind != .result)
         }
     }
 }
 
-/// What the transcript shows: chat lines, with runs of tool calls and of status updates gathered up.
+/// What the transcript shows: chat lines, with runs of tool calls and of status updates gathered up, and a finished
+/// turn's steps folded into one line saying how long it worked.
 enum ChatItem: Identifiable {
     case line(LogLine)
     case tools([LogLine])
     case statuses([LogLine])
+    /// A finished turn's steps, under one line: "Worked for 2 min 3 s", opened to see them. `id` is the turn's summary.
+    case work(id: UUID, title: String, steps: [LogLine])
 
     var id: UUID {
         switch self {
         case .line(let line): line.id
         case .tools(let lines), .statuses(let lines): lines[0].id
+        case .work(let id, _, _): id
         }
     }
 
@@ -205,7 +211,59 @@ enum ChatItem: Identifiable {
         switch self {
         case .line(let line): line.kind
         case .tools: .tool
-        case .statuses: .status
+        case .statuses, .work: .status
+        }
+    }
+
+    /// With `gather` (the chat without Agent Details), each finished turn's steps (what the agent ran, the app built
+    /// and opened) go into one line above its answer, as ChatGPT and Codex show the work behind an answer: the answer
+    /// is what's read, and the steps are a click away. A turn still going shows its steps as they come. Lamp's note
+    /// that it reopened the app stays out, since it explains the window going away. A turn's summary times it and
+    /// is otherwise left out; with Agent Details it's a line of its own and nothing is gathered.
+    static func items(_ lines: [LogLine], gather: Bool) -> [ChatItem] {
+        guard gather else { return items(lines) }
+        var result: [ChatItem] = []
+        var start = 0
+        while start < lines.count {
+            var end = start + 1
+            while end < lines.count, lines[end].kind != .user { end += 1 }
+            let turn = lines[start..<end]
+            start = end
+            let rest = turn.filter { $0.kind != .summary }
+            guard let summary = turn.first(where: { $0.kind == .summary }) else {
+                result += items(Array(rest))
+                continue
+            }
+            let isStep = { (line: LogLine) in (line.kind == .status && line.text != ChatLook.reloaded) || line.kind == .tool }
+            let steps = items(rest.filter(isStep)).flatMap { item -> [LogLine] in
+                switch item {
+                case .statuses(let lines), .tools(let lines): lines
+                case .line(let line): [line]
+                case .work(_, _, let steps): steps
+                }
+            }
+            let others = rest.filter { !isStep($0) }
+            guard !steps.isEmpty else {
+                result += items(others)
+                continue
+            }
+            // Above the answer, the turn's last message; at the turn's end when it has none.
+            let place = others.lastIndex { $0.kind == .agent } ?? others.count
+            result += items(Array(others[..<place]))
+            result.append(.work(id: summary.id, title: workedFor(summary.text), steps: steps))
+            result += items(Array(others[place...]))
+        }
+        return result
+    }
+
+    /// "Worked for 2 min 3 s", from a turn's summary ("Worked for 2m 3s · $0.12").
+    static func workedFor(_ summary: String) -> String {
+        guard let match = summary.firstMatch(of: #/Worked for (?:(\d+)m )?(\d+)s/#) else { return "Worked" }
+        let minutes = match.1.flatMap { Int($0) } ?? 0, seconds = Int(match.2) ?? 0
+        switch (minutes, seconds) {
+        case (0, _): return "Worked for \(seconds) s"
+        case (_, 0): return "Worked for \(minutes) min"
+        default: return "Worked for \(minutes) min \(seconds) s"
         }
     }
 
@@ -262,6 +320,8 @@ struct Transcript: View {
     var pinned: UUID?
     /// Read so the chat follows the choice of what draws icons: it decides whether a "Draw Icon…" line shows.
     @AppStorage("iconModel") private var iconChoice = ""
+    /// With Agent Details on every step is its own line; without, a finished turn's steps are gathered up.
+    @AppStorage("showDetails") private var details = false
 
     var body: some View {
         let _ = iconChoice
@@ -271,7 +331,7 @@ struct Transcript: View {
         let openAsk = Talk.open(in: lines)?.id
         // Answers clicked on a card are shown by the card, folded where it was: not again as a message.
         let shown = lines
-        let items = ChatItem.items(progressShown ? Self.withoutStepInProgress(shown) : shown)
+        let items = ChatItem.items(progressShown ? Self.withoutStepInProgress(shown) : shown, gather: !details)
         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
             let isLast = index == items.count - 1
             let gap = ChatItem.gap(after: index > 0 ? items[index - 1] : nil, before: item,
@@ -285,6 +345,16 @@ struct Transcript: View {
                                              retryPhone: retryPhone, isLatestRequest: line.id == latestRequest).equatable()
                 case .tools(let lines): ToolGroup(lines: lines, running: isLast && busy && !progressShown).equatable()
                 case .statuses(let lines): StatusGroup(lines: lines, running: isLast && busy && !progressShown)
+                case .work(_, let title, let steps):
+                    ChatLook.Worked(title) {
+                        ForEach(ChatItem.items(steps)) { step in
+                            switch step {
+                            case .tools(let lines): ToolGroup(lines: lines, running: false).equatable()
+                            case .statuses(let lines): StatusGroup(lines: lines, running: false)
+                            default: EmptyView()
+                            }
+                        }
+                    }
                 }
             }
             .padding(.top, gap)
