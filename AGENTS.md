@@ -789,7 +789,8 @@ away or moved), since a table made after it would be laid out from the app's lis
 something from Objective-C its copy no longer has (`removedMethods`), which it would go on answering with old code. The
 build then waits to be installed until the app closes (`LiveReload.awaitInstall`, which unlike a held build doesn't
 keep the agent off the app). Anything else needs the app reopened, with why in the chat's
-details (`LiveReload.Verdict`), so the rules can be tuned by what happens. For a request's change, while the app is open, Lamp doesn't reopen it under the person: the build is held (`Store.awaitReload`, `Runtime.awaitReload`), the app shows a Reload button beside the wand in its title bar (`LampMagic.ReloadButton`, tinted glass in the accent colour whose tint brightens and settles again, shown with a `reloadReady` notification) and the chat a line with one too (`.reload`, under the agent's answer), and a click on either reopens it where it was (`Store.reloadWaiting`; the app asks with `reloadNow`, which puts in only a change Lamp holds). The agent is told the change waits for the person (`reloadNote`) and doesn't look or use the app again in that request. Closing the app installs it too. Open App, Undo and a look with `reopen` still reopen it; when the person keeps the app open at its question (unsaved work), the build waits for Reload the same way. A live build reads the app's own files
+details (`LiveReload.Verdict`; what `LampLive` refused, and a change that didn't compile or load, say so there too,
+through `LiveReload.send`'s answer), so the rules can be tuned by what happens. For a request's change, while the app is open, Lamp doesn't reopen it under the person: the build is held (`Store.awaitReload`, `Runtime.awaitReload`), the app shows a Reload button beside the wand in its title bar (`LampMagic.ReloadButton`, tinted glass in the accent colour whose tint brightens and settles again, shown with a `reloadReady` notification) and the chat a line with one too (`.reload`, under the agent's answer), and a click on either reopens it where it was (`Store.reloadWaiting`; the app asks with `reloadNow`, which puts in only a change Lamp holds). The agent is told the change waits for the person (`reloadNote`) and doesn't look or use the app again in that request. Closing the app installs it too. Open App, Undo and a look with `reopen` still reopen it; when the person keeps the app open at its question (unsaved work), the build waits for Reload the same way. A live build reads the app's own files
 from its Assets folder rather than its bundle (`LampAssets`), so a new picture goes in live too; the package, the
 app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which tells the
 agent what goes in without reopening.
@@ -823,8 +824,8 @@ spare: its values keep their size (`LiveSlots.casesAdded`). Only while nothing t
 in a plain collection: Swift uses the numbers after the last case for `nil` in an optional of it and for other enums'
 cases that carry it, which a new case would take over. That's looked for in every stored field, static and global of
 the new code and in the types the spares keep (`LiveReload.enumsHeld`), before the change goes in; an app that keeps
-values of any type reopens instead, since one could hide there: `Any`, `AnyObject` (a value is boxed for it) or
-`AnyHashable`, `any P` for a protocol the app doesn't declare (the standard wrappers conform to those on their own,
+values of any type reopens instead, since one could hide there: `Any`, `AnyObject` (a value is boxed for it),
+`AnyHashable`, a `NavigationPath` or one of Foundation's collections, `any P` for a protocol the app doesn't declare (the standard wrappers conform to those on their own,
 so `any Collection` may hold `[Mood?]`), or `any P` for one of the app's own when the enum conforms to P, directly,
 in an extension or through a protocol that inherits P, or an extension of a system type does and could wrap it
 (`LiveReload.existential`); a model keeping `any Shape` is no reason to reopen for a Mood that is no Shape. When an enum
@@ -832,10 +833,10 @@ grew, every file of the app's is compiled again, so no code of the open app's me
 it, or printing it, reads past what its metadata describes); code already running keeps the version it started with,
 so the sources the open app runs, and those of every change that went in since it opened (`.lamp/live/old-code.txt`,
 `LiveReload.recordOldCode`: what an earlier change's code started may still be running), are read for a switch over the
-enum, or an interpolation of it, in an escaping closure that outlives a draw (one made outside a view's body, or one a
-body hands to anything but SwiftUI: a Timer's, a dispatch queue's, the app's own; a Button's action is made again at
-the next draw), an async closure or an async function (`LiveReload.enumsMetByOldCode`), and the app reopens when there
-is one. The enum's metadata stays the change's own rather
+enum, or an interpolation of it, in an escaping closure that outlives a draw (one made outside a view's body or a
+member returning a view, or one a body hands to anything but SwiftUI, a Timer's, a dispatch queue's, the app's own, or
+sets into a property or gives as a property's value; a Button's action is made again at the next draw), an async
+closure or an async function (`LiveReload.enumsMetByOldCode`), and the app reopens when there is one. The enum's metadata stays the change's own rather
 than the app's (`LiveReload.compile(keep:)`, renamed `$lampown` so `LampLive` binds every later change to it), since
 the app's doesn't know the new cases. Which property is in which spare
 (`.lamp/live/slots.json`) is put back into each fresh copy (they come back as additions, and `LiveSlots.fit` puts

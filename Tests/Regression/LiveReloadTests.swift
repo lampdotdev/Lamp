@@ -227,6 +227,8 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertEqual(LiveReload.existential(in: "any CustomDebugStringConvertible", holding: "Mood", conformances: conformances), "any CustomDebugStringConvertible")
         XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
         XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")
+        XCTAssertEqual(LiveReload.existential(in: "State<NavigationPath>", holding: "Mood", conformances: conformances), "NavigationPath")
+        XCTAssertEqual(LiveReload.existential(in: "NSMutableArray", holding: "Mood", conformances: conformances), "NSMutableArray")
         XCTAssertEqual(LiveReload.existential(in: "Set<AnyHashable>", holding: "Mood", conformances: conformances), "AnyHashable")
         // An enum that grew is met by code the open app is still running: a timer's closure or an async function
         // switching over it, or printing it; never what a view's body (as the live copy names it) makes again at the
@@ -236,6 +238,8 @@ final class LiveReloadTests: XCTestCase {
             enum Mood { case a, b }
             @Observable final class Model {
                 var mood = Mood.a
+                var handler: () -> Void = {}
+                var onTick: (Mood) -> Void = { m in switch m { case .a: break; case .b: break } }
                 func start() { Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [self] _ in switch mood { case .a: break; case .b: break } } }
                 func tick() async { print("\\(mood)") }
                 func now() -> String { switch mood { case .a: "a"; case .b: "b" } }
@@ -250,26 +254,32 @@ final class LiveReloadTests: XCTestCase {
                 var body: AnyView { AnyView(__lampBody) }
                 @ViewBuilder var __lampBody: some View {
                     Text("w").onAppear { Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in switch model.mood { case .a: break; case .b: break } } }
+                    Text("x").onAppear { model.handler = { switch model.mood { case .a: break; case .b: break } } }
+                    row()
                 }
+                func row() -> some View { Button("r") { switch model.mood { case .a: break; case .b: break } } }
+                func slow() async -> some View { await Task.yield(); switch model.mood { case .a: return Text("a"); case .b: return Text("b") } }
             }
             """.write(to: sources.appendingPathComponent("Moods.swift"), atomically: true, encoding: .utf8)
         let dumped = await LiveReload.dump(of: sources, in: project, module: project.exe, macOS: "14.0")
         let dump = try XCTUnwrap(dumped)
         XCTAssertEqual(LiveReload.oldCode(meeting: ["Mood"], inDump: dump),
-                       "start() switches over Mood in code that may still be running (a timer, a task, an observer), which doesn't know the new cases")
+                       "Model switches over Mood in code that may still be running (a timer, a task, an observer), which doesn't know the new cases")
         XCTAssertNil(LiveReload.oldCode(meeting: ["Other"], inDump: dump))
         // A closure a body hands to Foundation (a Timer's, in onAppear) is kept by it, unlike a Button's action.
+        // A closure set into a property or given as a property's value is kept too, inside a body or not; what a
+        // view helper returning `some View` hands SwiftUI (a Button's action) is made again at the next draw.
         let uses = LiveReload.oldCodeUses(inDump: dump)
-        XCTAssertEqual(uses.filter { $0.hasPrefix("Mood\t") }.count, 3, "\(uses)")   // start()'s timer, tick()'s print, W's timer
+        XCTAssertEqual(uses.filter { $0.hasPrefix("Mood\t") }.sorted(), ["Mood\tModel\tswitches over", "Mood\tW\tswitches over", "Mood\tslow()\tswitches over", "Mood\tstart()\tswitches over", "Mood\ttick()\tprints"])
         let onlyTick = dump.components(separatedBy: "\n").filter { !$0.contains("Timer") }.joined(separator: "\n")
-        XCTAssertEqual(LiveReload.oldCode(meeting: ["Mood"], inDump: onlyTick), "tick() prints Mood in code that may still be running (a timer, a task, an observer), which doesn't know the new cases")
+        XCTAssertTrue(LiveReload.oldCodeUses(inDump: onlyTick).contains("Mood\ttick()\tprints"))
         // The record outlives a change: the timer's switch, recorded from the installed sources, still counts once a
         // later change has taken it out of the sources that run.
         XCTAssertFalse(LiveReload.hasOldCodeRecord(project))
         LiveReload.recordOldCode(LiveReload.oldCodeUses(inDump: dump), for: project)
         XCTAssertTrue(LiveReload.hasOldCodeRecord(project))
         LiveReload.recordOldCode(LiveReload.oldCodeUses(inDump: onlyTick), for: project)
-        XCTAssertEqual(LiveReload.oldCode(meeting: ["Mood"], uses: LiveReload.oldCodeRecorded(project) + LiveReload.oldCodeUses(inDump: onlyTick))?.hasPrefix("start() switches over Mood"), true)
+        XCTAssertTrue(LiveReload.oldCodeRecorded(project).contains("Mood\tstart()\tswitches over"))
         let (library, problem) = await LiveReload.compile(project, changed: ["Shapes.swift"])
         XCTAssertNil(problem)
         let symbols = try run("/usr/bin/nm", ["-m", XCTUnwrap(library).path])

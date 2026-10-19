@@ -4646,11 +4646,14 @@ final class Store: ObservableObject {
                                                           keep: grown.map { LiveObject.mangledType($0, module: project.exe, kind: "O") })
         }
         guard let layout = check.layout, library != nil || changed.isEmpty else {
-            print("Live reload of \(project.name) didn't compile:\n\(problem ?? "")")
+            log(project, .detail, "\(project.name) has to reopen for this change: the change didn't compile on its own.\n\(problem ?? "")")
             return false
         }
         // Files only taken away leave nothing to load: the open app already has what's left.
-        if let library { guard await LiveReload.send(library, to: project, token: Template.token(for: project)) else { return false } }
+        if let library, let why = await LiveReload.send(library, to: project, token: Template.token(for: project)) {
+            log(project, .detail, "\(project.name) has to reopen for this change: \(why).")
+            return false
+        }
         // What a generation's code may leave running (a timer, a task) outlives the next change's replacing its
         // sources: the installed generation's uses are recorded before the first change replaces them, each
         // change's as it goes in.

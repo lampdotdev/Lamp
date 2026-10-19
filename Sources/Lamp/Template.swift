@@ -4013,7 +4013,7 @@ enum Template {
                 try? result.write(to: LampRuntime.folder.appendingPathComponent("reloaded.txt"), atomically: true, encoding: .utf8)
             }
             guard dlopen(path, RTLD_NOW) != nil else {
-                print("Lamp couldn't load the change: \(String(cString: dlerror()))")
+                result = "failed: the change couldn't be loaded (\(String(cString: dlerror()).prefix(200)))"
                 return
             }
             // The loader names the image by its real path, which may differ from the one asked for by a link.
