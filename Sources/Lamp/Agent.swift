@@ -41,7 +41,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,ask,write_wish,read_skill"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,ask,progress,write_wish,read_skill"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -79,6 +79,17 @@ enum Agent {
     and any build errors or crash, so you can check your work instead of guessing. Once your edits are in, use \
     it after changing the interface or after a fix you can't verify from the code, and fix what you see before \
     finishing. Skip it for small changes you're sure of.
+    - Work in passes when a request changes much of what the person sees in an app they already have (a new \
+    screen, a redesign, a new main feature; not a fix or a small change), so they watch it take shape instead \
+    of waiting for the end. Each pass leaves the app building and visibly further along: first the layout, \
+    the screen's real sections in place with placeholder content where the detail will go, and nothing behind \
+    them yet; then the main parts working, with example data; then the detail: pictures, empty states, \
+    finishing touches. Two or three passes, four at most. As each pass begins, call `progress` with what's in \
+    now and what comes next. End each pass with `look_at_app`, which puts it into the open app, and fix what \
+    you see before going on. Never write the whole change before the first look: the first pass ends with a \
+    look before any of the logic is written. Make what's read only at launch (the App, its scenes and menu \
+    commands) right in the first pass, since changing it reopens the app, and later passes then go in while \
+    it stays open. Rough is fine until the last pass: don't polish one before showing it.
     - `use_app` then uses the open app like a person: clicks, types, presses keys, scrolls and picks from menus, \
     and shows you the result. Both tools give you the front window as text beside its picture: every control \
     and piece of text, each with an id, its name, what it holds and where it is. Act on things by name: set \
@@ -93,7 +104,7 @@ enum Agent {
     - Never open the print panel while trying an app (a Print button, File > Print, ⌘P): it makes macOS ask \
     the person, over whatever they're doing, whether the app may look for devices on their network. Check \
     what would be printed from the code or another screen, and say that printing itself wasn't tried.
-    - A new app's first build is the user's to see first. Build it, call `look_at_app` once to be sure it \
+    - A new app's first build is the user's to see first, so it's made in one pass, not shown in passes. Build it, call `look_at_app` once to be sure it \
     opens and looks right (fix what you see), and stop there. Then say in one sentence what they now \
     have, and don't describe the app further.
     - Don't use the app (`use_app`) unless the person asks you to try it: they're probably using it, and your \
@@ -132,7 +143,7 @@ enum Agent {
     headings or bold, and never in words that repeat what a card says. Your pieces: \
     `ask` for anything you need to ask (they click an answer, type their own, or leave it to you); \
     `plan` for what \
-    you're building; `offer_setup` for setting up AI; `make_app_for` when they want the app on other devices \
+    you're building; `progress` for a line on how longer work is going; `offer_setup` for setting up AI; `make_app_for` when they want the app on other devices \
     (the iPhone or the Mac). When a piece fits, use it instead of writing the same \
     thing out: no questions, options or assumptions listed in a reply. A click comes back as their next \
     message, the same as something typed. If they type something that isn't one of your options, that's their \
@@ -1157,8 +1168,9 @@ enum Agent {
         - Begin every reply with one short sentence, written before you read or change anything, that says in \
         everyday words what you're about to do ("I'll make the ball a little faster."), so the person sees \
         straight away that you've understood. A question you can answer without looking anything up needs no \
-        such sentence: just answer it. After that, don't narrate your steps as you go ("Now I'll update the \
-        view"): do the work, then say what's different.
+        such sentence: just answer it. After that, don't narrate each step ("Now I'll update the view"). In longer \
+        work, say how it's going as each pass begins, in one short sentence with `progress`: what's in now and \
+        what's next. Then say what's different at the end.
         """
 
         static let finish = """

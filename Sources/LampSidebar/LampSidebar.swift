@@ -355,7 +355,10 @@ private struct LineView: View {
         case .agent:
             ChatLook.AgentText(line.text, keep: !line.growing)
         case .status:
-            if let command = ChatLook.ranCommand(in: line.text) {
+            if line.symbol == ChatLook.progressSymbol {
+                // The agent's line on how the work went, among a finished turn's steps.
+                ChatLook.ProgressLine(line.text)
+            } else if let command = ChatLook.ranCommand(in: line.text) {
                 ChatLook.RanCommand(command)
             } else {
                 ChatLook.StatusLine(line.text, running: line.running)

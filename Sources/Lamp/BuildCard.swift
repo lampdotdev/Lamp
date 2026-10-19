@@ -130,7 +130,8 @@ struct TurnProgress {
         return !steps.isEmpty && finishing
     }
 
-    /// What the agent's tool call amounts to for someone who never sees the code: no file names, no tools.
+    /// What the agent's tool call amounts to for someone who never sees the code: no file names, no tools. Empty
+    /// for a call that leaves what's being done as it was.
     static func activity(for call: ToolCall) -> String {
         if call.name.hasSuffix("_version") || call.name.hasSuffix("_versions") { return "Looking at earlier versions" }
         switch call.action {
@@ -151,6 +152,8 @@ struct TurnProgress {
         case .kind: return "Making it for other devices"
         case .connectors: return "Looking up a connector"
         case .ask: return "Asking you"
+        // What it's doing goes on being what it was: the line it wrote says the rest.
+        case .progress: return ""
         case .result: return "Wrapping up"
         case .wish: return "Writing your wish"
         case .delegate, .other: return "Working on your app"

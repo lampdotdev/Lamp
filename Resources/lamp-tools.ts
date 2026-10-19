@@ -22,7 +22,8 @@
  *   adapt the code.
  * - `connectors`: lists the services an app can connect to with the person's own account, and open data that
  *   needs none, or says how to build on one.
- * - `ask`, `write_wish`: `ask` puts questions in the chat as a card the person answers by clicking, and
+ * - `ask`, `progress`, `write_wish`: `ask` puts questions in the chat as a card the person answers by clicking,
+ *   `progress` puts a short line on how the work is going in the chat, and
  *   `write_wish` writes a found wish into the message box. Lamp draws the card and turns a click into the
  *   person's next message, so nothing waits for an answer here.
  * - `web_fetch`: reads a web page (or any URL) as text. Reading needs no approval.
@@ -608,7 +609,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(offerSetup);
 	pi.registerTool(makeAppFor);
 	pi.registerTool(connectors);
-	for (const name of ["ask", "write_wish"]) pi.registerTool(talkTool(name));
+	for (const name of ["ask", "progress", "write_wish"]) pi.registerTool(talkTool(name));
 	for (const name of ["read_notes", "save_notes"]) pi.registerTool(notesTool(name));
 	pi.registerTool(readSkill);
 }

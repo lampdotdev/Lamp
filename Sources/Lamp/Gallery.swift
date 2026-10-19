@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = askEntries + buildEntries + pointedEntries
+    static let entries: [Entry] = askEntries + buildEntries + progressEntries + pointedEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -95,6 +95,20 @@ enum Gallery {
             })
         }
     }
+
+    // MARK: Progress
+
+    /// The agent's lines on how the work is going: messages while its turn goes on, grey among its steps once it's
+    /// over (as "Worked for…" shows them opened).
+    private static let progressEntries: [Entry] = [
+        Entry(group: "Progress", name: "Among a finished turn's steps") {
+            AnyView(VStack(alignment: .leading, spacing: 4) {
+                ChatLook.ProgressLine("The week's columns are in. Now the tasks in them.")
+                ChatLook.StatusLine("Ran: swift build", running: false)
+                ChatLook.ProgressLine("Tasks show up. Now dragging them between days, and a few finishing touches.")
+            })
+        },
+    ]
 
     // MARK: Pointed at
 

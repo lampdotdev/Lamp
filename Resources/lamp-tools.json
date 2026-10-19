@@ -473,6 +473,24 @@
     }
   },
   {
+    "name": "progress",
+    "label": "Progress",
+    "description": "Tells the person in one short line how the work is going, while they wait: what's now in the app and what's next, e.g. “The layout's in. Now the timer itself.” Shown in the chat at once and folded away when you finish, so it never repeats your last message. Call it as each pass of a longer piece of work begins and before a step that takes a while (painting pictures, a big build). Never for each file, and never for the end: that's your last message.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "One or two short sentences, 12 words at most, in everyday words: what they can see now or what you're doing next. No file, type or tool names."
+        }
+      }
+    }
+  },
+  {
     "name": "write_wish",
     "label": "Write wish",
     "description": "Writes the wish you found together into the person's message box, in their own words, for them to change and send: the end of helping them find something to wish for. Only then, never for a wish they told you themselves. After it, end your reply with one short sentence at most.",

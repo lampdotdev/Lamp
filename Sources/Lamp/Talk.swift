@@ -26,7 +26,7 @@ enum Talk {
     /// long sentence in it is a paragraph again, set in bold. Too long goes back to the agent to say shorter, so
     /// every engine is held to the same; the tools' descriptions give the same numbers.
     enum Words {
-        static let question = 10, option = 4, wish = 40
+        static let question = 10, option = 4, wish = 40, progress = 12
     }
 
     static func words(in text: String) -> Int { text.split(whereSeparator: \.isWhitespace).count }
@@ -74,6 +74,16 @@ enum Talk {
         }
         // One question has nothing to lay out together.
         return .success(Ask(layout: layout ?? .steps, questions: questions))
+    }
+
+    /// The agent's `progress` line, checked: its words, or nil when it says what the turn's last line said
+    /// already (a line repeated would only look stuck).
+    static func progress(from arguments: [String: Any], after lines: [LogLine]) -> Swift.Result<String?, Trouble> {
+        let text = (arguments["text"] as? String)?.trimmed ?? ""
+        guard !text.isEmpty else { return .failure(.message("Give the line in `text`.")) }
+        if let trouble = tooLong(text, Words.progress, as: "a progress line") { return .failure(trouble) }
+        let turn = lines.lastIndex { $0.kind == .user }.map { lines[($0 + 1)...] } ?? lines[...]
+        return .success(turn.last { $0.kind == .progress }?.text == text ? nil : text)
     }
 
     static func hasSymbol(_ name: String) -> Bool {
@@ -161,6 +171,9 @@ enum Talk {
         }
         return hidden
     }
+
+    static let told = "The person sees that line in the chat. Carry on with the work."
+    static let saidAlready = "That's what the last line said, so it wasn't shown again. Carry on with the work."
 
     static let asked = "The person now sees your questions as a card and answers by clicking or typing. Your turn ends here: change nothing and call nothing more. Their answer is the next message: one line for each question, in the order you asked, each question followed by its answer, or their own words."
     static let alreadyAsked = "The person already sees the questions you asked and hasn't answered yet, so these weren't shown. End your reply now with no more words; their answer is the next message."
