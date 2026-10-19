@@ -254,7 +254,7 @@ send. Until that message, nothing is named, scaffolded, built or saved (`startQu
 becomes may be an iPhone app, which a scaffold already written as a Mac app would rule out. The message that
 isn't an answer to a card names it like any first request and ends `finding`.
 
-A new person's desk isn't empty: Lamp comes with eleven wishes (`Starters`, from `Resources/Starters`), working
+A new person's desk isn't empty: Lamp comes with twelve wishes (`Starters`, from `Resources/Starters`), working
 apps to use as they are and to change into their own, which shows what Lamp does better than a question about
 what to make. So the welcome is the hello and setup, and ends on the desk (a wish from the site is still made
 once setup is done). They're copied once, on the first launch, each saved as its first version ("From Lamp"),
@@ -298,10 +298,11 @@ panel open.
 Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp). Into a new `Resources/Starters/<folder>`:
 
 1. Copy its `Sources` without `LampSupport.swift` (and `LampScene.swift`), `Widget/` without `LampWidgetSupport.swift`,
-   `capabilities.json` when it has one, `icon.json` and `about.json`. Never `build.sh`, `Package.swift`, `.lamp/`,
+   `Share/` without `LampShareSupport.swift`, `Assets/`, `capabilities.json` when it has one, `icon.json` and `about.json`. Never `build.sh`, `Package.swift`, `.lamp/`,
    `Attachments/` or anything else Lamp writes.
 2. Read the code for what only works for its maker or only for now: a date written in (a deadline, a year) goes
-   relative to the first launch and is saved then, so the app means something whenever Lamp was installed; a key,
+   relative to the first launch and is saved then, so the app means something whenever Lamp was installed; a global
+   shortcut mustn't take one the system or common apps use (⌘⇧G is Go to Folder everywhere); a key,
    an account or the maker's own files and names have no place in it. Content is example content the person can
    change or clear.
 3. Write `APP.md` for the agent that changes it, in the shape the other starters' have (`Kind:`, what it does,
