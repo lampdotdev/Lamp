@@ -46,7 +46,6 @@ enum PrebuiltStarters {
     static func runFromCommandLine() -> Never {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("lamp-prebuild-\(UUID().uuidString)")
-        defer { try? fm.removeItem(at: root) }
         var failed = false
         for starter in Starters.bundled {
             do {
@@ -58,6 +57,8 @@ enum PrebuiltStarters {
                 failed = true
             }
         }
+        // exit doesn't unwind: the projects and their build folders go first.
+        try? fm.removeItem(at: root)
         exit(failed ? 1 : 0)
     }
 
@@ -147,19 +148,30 @@ enum PrebuiltStarters {
         return true
     }
 
-    /// Whether the app's code is still the starter's, file for file: what the prebuilt app was built from.
+    /// Whether the app's code is still the starter's, file for file, with nothing added: what the prebuilt app was
+    /// built from. Lamp's own files there (LampSupport.swift and the like) are written afresh and left out.
     private static func unchanged(_ starter: Starters.Starter, in project: LampProject) -> Bool {
         let fm = FileManager.default
-        for folder in ["Sources", Template.widgetFolder, Template.shareFolder] {
-            let theirs = starter.folder.appendingPathComponent(folder)
-            guard fm.fileExists(atPath: theirs.path) else { continue }
-            for file in (try? fm.subpathsOfDirectory(atPath: theirs.path)) ?? [] where file.hasSuffix(".swift") {
-                guard let shipped = fm.contents(atPath: theirs.appendingPathComponent(file).path),
-                      AppFile.read(project.dir.appendingPathComponent(folder).appendingPathComponent(file), in: project) == shipped
-                else { return false }
+        let owned: Set<String> = ["Sources/LampSupport.swift", Template.sceneSupportPath,
+                                  "\(Template.widgetFolder)/\(Template.widgetSupportFile)", "\(Template.shareFolder)/\(Template.shareSupportFile)",
+                                  "\(Template.watchFolder)/\(Template.watchSupportFile)",
+                                  "\(Template.watchFolder)/Complications/\(Template.watchSupportFile)"]
+        func swiftFiles(in root: URL) -> Set<String> {
+            var found: Set<String> = []
+            for folder in ["Sources", Template.widgetFolder, Template.shareFolder, Template.watchFolder] {
+                let dir = root.appendingPathComponent(folder)
+                for file in (try? fm.subpathsOfDirectory(atPath: dir.path)) ?? [] where file.hasSuffix(".swift") {
+                    found.insert("\(folder)/\(file)")
+                }
             }
+            return found.subtracting(owned)
         }
-        return true
+        let shipped = swiftFiles(in: starter.folder)
+        guard swiftFiles(in: project.dir) == shipped else { return false }
+        return shipped.allSatisfy { file in
+            guard let theirs = fm.contents(atPath: starter.folder.appendingPathComponent(file).path) else { return false }
+            return AppFile.read(project.dir.appendingPathComponent(file), in: project) == theirs
+        }
     }
 
     private static func setIdentifier(_ id: String, in bundle: URL) {
