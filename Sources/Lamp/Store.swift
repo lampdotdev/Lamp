@@ -2893,6 +2893,7 @@ final class Store: ObservableObject {
         let words = taken.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
         return (words.isEmpty ? Self.onlyFiles(saved.count) : words)
             + Attachments.note(for: saved, inlined: false) + PointedAt.note(for: lines.compactMap { chat[$0].pointed })
+            + Agent.midTurnNote
     }
 
     /// The engine's output shows the model has the requests handed to it: from now on they're the turn's.

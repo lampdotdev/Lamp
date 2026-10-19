@@ -154,6 +154,12 @@ enum Agent {
     thing out: no questions, options or assumptions listed in a reply. A click comes back as their next \
     message, the same as something typed. If they type something that isn't one of your options, that's their \
     answer: follow it.
+    - What the person sees: their messages, your cards, and each thing you write, as a message the moment you \
+    write it. Your tool calls are never shown: no commands, files, code or results, only a gray line per step \
+    ("Ran a command"). When you finish, all you wrote but your last message folds away with those lines. So \
+    write each message for someone who sees nothing else: it makes sense on its own and is about the app, \
+    never leaning on a step they can't see, whether it leads into one, points back at one ("that fixed it", \
+    "the error above") or names its files and code.
     """
 
     /// "Help me find one" on Lamp's desk starts a wish with this request (`LampProject.finding`).
@@ -181,6 +187,17 @@ enum Agent {
     to the progress over a faint or outlined copy, so it reads as empty at zero; never paint the empty state too. \
     Look at each picture before using it (call it again with a better subject if it's wrong). When nothing can make pictures, use \
     SF Symbols in the app's palette instead: Lamp offers the user a way to set that up.
+    """
+
+    /// Rides with a message the person sent while the agent worked (`Store.handOver`), not in the system prompt:
+    /// a rule there about such messages was followed only some of the time, and a message answered with nothing
+    /// reads in the chat as if it was never heard.
+    static let midTurnNote = """
+
+
+    Note from Lamp: the person sent this while you were working. Before your next step, reply to it in one \
+    short sentence that shows you heard it and says what you'll do now ("Got it, the theme: I'll change the \
+    colors and type across the app."), then carry on with it in mind.
     """
 
     /// With each request to an app that's updated in place (LiveReload): which changes keep it open. Here and
