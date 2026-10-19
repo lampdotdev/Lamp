@@ -31,7 +31,7 @@ enum Gallery {
     /// or sized unlike the rest shows against its neighbours.
     private static let chatEntries: [Entry] = [
         chat("A finished chat", finishedChat, undo: true),
-        // The first request, its steps so far, and the progress line under them.
+        // The first request and what the agent said; its steps so far are in the line under them, which opens to them.
         chat("A turn going", Array(finishedChat.prefix(6)), activity: "Thinking"),
         chat("A clicked answer", [LogLine(kind: .user, text: "make a habit tracker"),
                                   LogLine(kind: .ask, text: "", ask: Talk.Ask(layout: .steps, questions: [kind, when], answers: ["Habits", "Morning"])),
@@ -64,11 +64,22 @@ enum Gallery {
         LogLine(kind: .summary, text: "Worked for 1m 11s · $0.12"),
     ]
 
-    private static func chat(_ name: String, _ lines: [LogLine], undo: Bool = false, activity: String? = nil) -> Entry {
-        Entry(group: "Chat", name: name) {
+    private static func chat(_ name: String, _ lines: [LogLine], group: String = "Chat", undo: Bool = false,
+                             activity: String? = nil) -> Entry {
+        Entry(group: group, name: name) {
             AnyView(VStack(alignment: .leading, spacing: 0) {
                 Transcript(lines: lines, dir: URL(fileURLWithPath: "/nonexistent"), busy: activity != nil, progressShown: activity != nil)
-                if let activity { ChatLook.ActivityLine(activity, started: .now.addingTimeInterval(-7)).padding(.top, 12) }
+                // The line the chat has under a turn going on, as Lamp's window draws it (`ProjectView`).
+                if let activity {
+                    let progress = { () -> TurnProgress in
+                        var progress = TurnProgress(newApp: false)
+                        progress.activity = activity
+                        progress.started = .now.addingTimeInterval(-7)
+                        progress.activitySince = progress.started
+                        return progress
+                    }()
+                    ActivityRow(progress: progress, lines: lines).padding(.top, 12)
+                }
                 if undo { ChatLook.UndoChange {}.padding(.top, 12) }
             })
         }
@@ -218,16 +229,20 @@ enum Gallery {
 
     // MARK: Progress
 
-    /// The agent's lines on how the work is going: messages while its turn goes on, grey among its steps once it's
-    /// over (as "Worked for…" shows them opened).
+    /// The agent's lines on how the work is going: messages while its turn goes on, and still messages once it's
+    /// over, with only its steps gathered into "Worked for…" under its answer.
     private static let progressEntries: [Entry] = [
-        Entry(group: "Progress", name: "Among a finished turn's steps") {
-            AnyView(VStack(alignment: .leading, spacing: 4) {
-                ChatLook.ProgressLine("The week's columns are in. Now the tasks in them.")
-                ChatLook.StatusLine("Ran: swift build", running: false)
-                ChatLook.ProgressLine("Tasks show up. Now dragging them between days, and a few finishing touches.")
-            })
-        },
+        chat("After a finished turn", [
+            LogLine(kind: .user, text: "add a week view"),
+            LogLine(kind: .progress, text: "The week's columns are in. Now the tasks in them."),
+            LogLine(kind: .tool, text: "Edit Sources/WeekView.swift"),
+            LogLine(kind: .status, text: "Ran: swift build", said: "Checking it builds"),
+            LogLine(kind: .progress, text: "Tasks show up. Now dragging them between days, and a few finishing touches."),
+            LogLine(kind: .tool, text: "Edit Sources/WeekView.swift"),
+            LogLine(kind: .status, text: "Today is ready"),
+            LogLine(kind: .agent, text: "The week view is in: a column for each day, and tasks you can drag between them."),
+            LogLine(kind: .summary, text: "Worked for 2m 40s · $0.21"),
+        ], group: "Progress"),
     ]
 
     // MARK: Pointed at

@@ -472,7 +472,7 @@ struct LogRow: View, Equatable {
             // Shown through StatusGroup and ToolGroup.
             EmptyView()
         case .progress:
-            // A message like any other while the turn goes on; gathered with its steps once it's over.
+            // A message like any other, while the turn goes on and once it's over.
             ChatLook.AgentText(line.text)
         case .summary:
             ChatLook.SummaryLine(line.text)
