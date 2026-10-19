@@ -1,4 +1,7 @@
 Kind: collection, drawn as a real bookcase (wooden shelves in code, books standing as spines or facing out).
+Look: a wooden bookcase (`Wood`, `Plank`) with books as spines or covers (`BookViews.swift`) and a red reading
+ribbon. The wood suits most collections; what stands on it (spines, sleeves, boxes), the ribbon and the words
+(`ItemKind.swift`) follow what's collected.
 
 # Shelves
 

@@ -1,4 +1,9 @@
 Kind: collection
+Look: all hot sauce, so a shelf of something else gets a look of its own. The pink wall with crayon grain and
+scattered chilies (`ShelfView`, `Assets/chili.png`), the warm reds and navy lines (`Zine` in `Theme.swift`), the
+drawing style every label is redrawn in (`Illustrator.style`, which names hot sauce; bump `version`), the painted
+placeholder bottles (`Assets/`), heat as peppers and the cap's heat band, the flavour families, "What's cooking
+tonight?", the cheeky tags and the hot sauce bottle icon.
 
 # Hot Shelf
 

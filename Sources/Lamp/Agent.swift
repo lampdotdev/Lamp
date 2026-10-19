@@ -821,8 +821,9 @@ enum Agent {
             or ask for something unconventional (full-screen, no chrome, an art piece), build exactly that and don't \
             add standard UI they didn't ask for. Everything they didn't say follows the app's kind, below. Before \
             writing a new app, pick the kind closest to what it's for, even when unsure, and put it in APP.md's first \
-            line (`Kind: companion`). Keep it on later requests so the app keeps its look; change it only when the \
-            user asks for a different feel or the app becomes something else. Never ask them which kind, and never \
+            line (`Kind: companion`). Keep it on later requests so the app keeps its structure and voice; change it \
+            only when the user asks for a different feel or the app becomes another kind of app (a change in what it's \
+            about is the theme rule below). Never ask them which kind, and never \
             name kinds to them. A style they gave wins over the kind's look but keeps its structure: a "cozy" water \
             tracker is a companion app, made cozy. Every kind feels like Apple made it, following the \
             \(mac ? "macOS" : "iOS") Human Interface Guidelines.\(mac ? shapes : "")
@@ -861,9 +862,31 @@ enum Agent {
             settings and scores are standard SwiftUI. 2D games as the 2D rule says\(threeD ? ", 3D ones with the scene-3d skill" : ""), \
             SwiftUI animation for the simplest. Sprites, characters and backgrounds are art from `make_art`, all in one style, with \
             sound\(mac ? "" : " and haptics"). Scores are kept on the device.
-
+            \(theme)
             """
         }
+
+        /// The kind is an app's structure; its theme is the part of its look made of what it's about. When a request
+        /// changes what an app is about, whoever made it (Lamp, a starter, a shared copy), the theme follows without
+        /// being asked: someone who turns a hot sauce shelf into a wine cellar expects a wine cellar, not a pink wall
+        /// of chilies holding wine. design/app-archetypes/README.md has the reasoning and more examples.
+        static let theme = """
+        - The theme follows the subject. Much of a look is often made of what the app is about: a hot sauce shelf's \
+        pink wall, chilies and pepper ratings; a campfire songbook's taped cards, embers and lantern art; an Italian \
+        coach's Neapolitan terracotta. When a request changes what an app is about (hot sauce to wine, campfire \
+        guitar to jazz piano, a wedding in Naples to a trip to Kyoto, a pet to a cactus), whoever made the app, change \
+        that look with it in the same request, unasked: palette, backgrounds and motifs, the style its pictures are \
+        drawn in and the pictures themselves, lettering, the symbols it rates or counts with, its words and their \
+        tone, its example content, and the icon (edit icon.json first: new pictures take its colors). Make it as \
+        particular to the new subject as the old look was to the old one, never plainer: a wine cellar, not a \
+        generic shelf. Keep the kind and its structure, whatever still fits (a wooden shelf holds records as well \
+        as books), and whatever the person chose or styled themselves. An app whose look owes nothing to its subject \
+        (system colors and SF Symbols) changes only its words and symbols, and a change within the same subject (a \
+        wishlist of sauces, a new screen) keeps the look. Replace only example content, never the person's own \
+        items, and keep saved data readable (keep raw values, map old ones to new). It changes much of what they \
+        see, so work in passes.
+
+        """
 
         static let game2D = """
         - 2D games: SpriteKit, in a SpriteView, one SKScene subclass for each screen with `scaleMode = .resizeFill`. \
@@ -994,7 +1017,7 @@ enum Agent {
         ready), `background` (one of \(Icons.backgrounds.map(\.name).joined(separator: ", "))), `tint` (hex main \
         color of the object) and, for a game, `game: true` (its icon is painted rich and in 3D instead of glass, and \
         `subject` is its hero). To change the icon, edit icon.json; Lamp redraws it, which takes a while and costs the user, so only when \
-        they ask for a different icon or the app has become something else. Never create icon files yourself.
+        they ask for a different icon or the app is now about something else. Never create icon files yourself.
         """
 
         static let about = """
@@ -1153,7 +1176,9 @@ enum Agent {
         """
 
         static let appMd = """
-        - Keep APP.md current: what the app does and how the code is organized.
+        - Keep APP.md current: what the app does and how the code is organized, and, when its look comes from what \
+        it's about, a `Look:` line saying what that look is made of and where (palette, motifs, picture style, rating \
+        symbols), so a later change of subject knows what to change with it.
         """
 
         static let audience = """

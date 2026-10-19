@@ -1,4 +1,7 @@
 Kind: dashboard
+Look: Naples and a family wedding. The terracotta tint and washes (`Color.terracotta`), the warm, slightly funny
+tone, Marco's mother as the one the AI plays, the toast, and the champagne glasses icon. Another place or occasion
+gets colours and words of its own.
 
 # Wedding Words
 
