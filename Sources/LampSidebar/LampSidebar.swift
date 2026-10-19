@@ -195,6 +195,24 @@ struct SidebarView: View {
     }
 }
 
+/// Whether the end of the chat is in view: within a line of it counts. Before macOS 15 there's no telling, and
+/// the chat is held at its end as it was (`OpensAtEnd`).
+private struct TracksEnd: ViewModifier {
+    @Binding var atEnd: Bool
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content.onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentSize.height + geometry.contentInsets.bottom - geometry.visibleRect.maxY < 24
+            } action: { _, now in
+                atEnd = now
+            }
+        } else {
+            content
+        }
+    }
+}
+
 /// Where the top of the chat lies in its scroll view, while there's more of it to load.
 private struct EarlierTop: PreferenceKey {
     static let defaultValue: CGFloat = -.infinity
@@ -209,6 +227,9 @@ private struct Chat: View {
     @State private var askedEarlierAt: UUID?
     /// Off until the chat has opened at its end, so the top of the chat seen while laying out asks for nothing.
     @State private var settled = false
+    /// The end of the chat is in view, or the person hasn't scrolled away from it: while it is, the chat stays
+    /// at its end as it and its panel change size.
+    @State private var atEnd = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -267,6 +288,12 @@ private struct Chat: View {
                     .frame(maxWidth: .infinity)
                 }
                 .coordinateSpace(name: "chat")
+                // A reopened app (a reload to apply a change) brings its chat back in a new panel. The one scroll
+                // to the end a moment after it appears (below) misses on a busy Mac, and the chat then stays at its
+                // top. So the chat starts at its end and stays there as it and its panel change size, unless the
+                // person has scrolled up to read.
+                .modifier(OpensAtEnd(holdsEnd: atEnd))
+                .modifier(TracksEnd(atEnd: $atEnd))
                 .onPreferenceChange(EarlierTop.self) { top in
                     guard settled, top > -200, state.hasEarlier == true, askedEarlierAt != state.lines.first?.id else { return }
                     askedEarlierAt = state.lines.first?.id
