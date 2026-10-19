@@ -647,16 +647,16 @@ the app; the rule (`Agent.Rules.macGenerated`) asks the agent to keep what the p
 `@SceneStorage`, so it comes back as they left it. To make that look like the window changing in place: as the app
 quits it leaves a picture of its front window and where it was in its runtime folder (`LampMagic.leaveCover`); while
 the app's turn is going, Lamp shows that picture where the window was (`MagicPanel.showCover`, a borderless window
-marked "Updating…", with plain glass where a chat beside it was: `cover-chat-frame.txt`, `MagicPanel.chatCover`), the new
+marked "Updating…", with the chat's blank paper where a chat beside it was: `cover-chat-frame.txt`, `MagicPanel.chatCover`), the new
 copy opens its first window in the same place (`putBack`), and the picture fades out once the new copy reports its window
 (or goes when the turn ends without it).
 
 Where the chat goes (`LampSidebar.show`): always a panel of its own beside the window, never inside it (a column there
 took more room from the app than it gave the chat). It's a borderless `NSPanel` attached as the window's child
 (`LampSidebar.Beside`), so macOS moves, stacks, hides and takes it to Stage Manager's strip and other Spaces with the
-window, holding the chat on a card of Liquid Glass (`NSGlassEffectView`, `LampSidebar.card`) with what's behind the window
-showing through; the chat draws no paper of its own there (`chatGround`). Before macOS 26, which has no Liquid Glass, the
-card is the chat's own paper (`LampSidebar.Paper`). It goes on the side with room, the right first, at its kept width or
+window, holding the chat on a card of the chat's own paper (`LampSidebar.card`, `LampSidebar.Paper`, and `chatGround` in
+the chat), opaque: glass let what's behind the window show through, which drew the eye from the chat, and drew a bright
+line round its edge. It goes on the side with room, the right first, at its kept width or
 the room there is down to its narrowest. Opened where neither side has room, the window makes some (`makeRoom`): it moves
 over on its screen when that's enough, else it's made narrower, never below its own smallest width, to leave the chat its
 narrowest on the right, and gets the width back when the chat closes (`narrowedBy`, each window its own; a change that reopens the app hands it

@@ -2,12 +2,10 @@ import SwiftUI
 import AppKit
 import LampSidebarKit
 
-/// What the chat sits on: the chat's paper before macOS 26, and nothing from then on, where the app lays the chat
-/// on a pane of Liquid Glass (`LampSidebar` in LampSupport.swift) and the glass is what shows.
+/// What the chat sits on: the chat's paper, opaque, as the app's card under it is (`LampSidebar.Paper` in
+/// LampSupport.swift).
 extension View {
-    @ViewBuilder func chatGround() -> some View {
-        if #available(macOS 26, *) { self } else { background(ChatLook.paper) }
-    }
+    func chatGround() -> some View { background(ChatLook.paper) }
 }
 
 /// The bar at the top of the chat, one row: the red button that closes the chat, what the chat is for, and its
@@ -49,7 +47,9 @@ struct ChatBar: View {
                         ToolGroup {
                             undo(toolbar)
                             if more { versions(state, toolbar) }
-                            ToolButton("ellipsis", more ? "Fewer Buttons" : "More Buttons", on: more) {
+                            // Its own symbol says it's on (filled), so it has no lit circle behind it.
+                            ToolButton(more ? "ellipsis.rectangle.fill" : "ellipsis.rectangle", more ? "Fewer Buttons" : "More Buttons",
+                                       on: more, plain: true) {
                                 withAnimation(.snappy(duration: 0.2)) { more.toggle() }
                             }
                             .help(more ? "Show the title again" : "Wish info, sharing, agent details, delete and versions")
@@ -202,12 +202,15 @@ private struct ToolSymbol: View {
     let symbol: String
     let name: String
     var on = false
+    /// Nothing behind the symbol when it's on: the symbol shows it.
+    var plain = false
     @Environment(\.isEnabled) private var isEnabled
 
-    init(_ symbol: String, _ name: String, on: Bool = false) {
+    init(_ symbol: String, _ name: String, on: Bool = false, plain: Bool = false) {
         self.symbol = symbol
         self.name = name
         self.on = on
+        self.plain = plain
     }
 
     var body: some View {
@@ -218,9 +221,9 @@ private struct ToolSymbol: View {
             .frame(width: side, height: side)
             .background {
                 if #available(macOS 26, *) {
-                    if on { Circle().fill(Color.accentColor.opacity(0.15)).padding(2) }
+                    if on && !plain { Circle().fill(Color.accentColor.opacity(0.15)).padding(2) }
                 } else {
-                    Circle().fill(on ? AnyShapeStyle(Color.accentColor.opacity(0.15)) : AnyShapeStyle(Color(nsColor: .textBackgroundColor)))
+                    Circle().fill(on && !plain ? AnyShapeStyle(Color.accentColor.opacity(0.15)) : AnyShapeStyle(Color(nsColor: .textBackgroundColor)))
                         .overlay(Circle().strokeBorder(Color(nsColor: .separatorColor)))
                 }
             }
@@ -233,17 +236,19 @@ private struct ToolButton: View {
     let symbol: String
     let name: String
     var on = false
+    var plain = false
     let action: () -> Void
 
-    init(_ symbol: String, _ name: String, on: Bool = false, action: @escaping () -> Void) {
+    init(_ symbol: String, _ name: String, on: Bool = false, plain: Bool = false, action: @escaping () -> Void) {
         self.symbol = symbol
         self.name = name
         self.on = on
+        self.plain = plain
         self.action = action
     }
 
     var body: some View {
-        Button(action: action) { ToolSymbol(symbol, name, on: on) }
+        Button(action: action) { ToolSymbol(symbol, name, on: on, plain: plain) }
             .buttonStyle(.plain)
             .accessibilityAddTraits(on ? .isSelected : [])
     }

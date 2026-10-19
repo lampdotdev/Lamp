@@ -5056,29 +5056,20 @@ enum Template {
             chats.values.first { $0.panel === panel }?.window
         }
 
-        /// The chat on a card in its panel: on Liquid Glass (`NSGlassEffectView`) from macOS 26, on the chat's own paper
-        /// before (`Paper`). The chat draws its own bar, close button included, and asks the app to close or move the
+        /// The chat on a card in its panel, on the chat's own paper (`Paper`): opaque, since what's behind the window
+        /// showing through glass drew the eye from the chat, and glass drew a bright line round its edge. The chat draws its own bar, close button included, and asks the app to close or move the
         /// panel (`LampSidebarHost`): what changes the wish (undo, versions, sharing…) is in the chat, which only Lamp
         /// speaks to.
         @MainActor private static func card(for host: EXHostViewController, in window: NSWindow) -> (card: NSView, pane: NSView) {
             let outer = Passing()
             let pane = Passing()
-            if #available(macOS 26, *) {
-                let glass = Glass()
-                glass.cornerRadius = 20
-                glass.frame = outer.bounds
-                glass.autoresizingMask = [.width, .height]
-                glass.contentView = pane
-                outer.addSubview(glass)
-            } else {
-                let paper = Paper()
-                paper.frame = outer.bounds
-                paper.autoresizingMask = [.width, .height]
-                pane.frame = paper.bounds
-                pane.autoresizingMask = [.width, .height]
-                paper.addSubview(pane)
-                outer.addSubview(paper)
-            }
+            let paper = Paper()
+            paper.frame = outer.bounds
+            paper.autoresizingMask = [.width, .height]
+            pane.frame = paper.bounds
+            pane.autoresizingMask = [.width, .height]
+            paper.addSubview(pane)
+            outer.addSubview(paper)
             host.view.translatesAutoresizingMaskIntoConstraints = false
             host.view.identifier = chatIdentifier
             pane.addSubview(host.view)
@@ -5162,12 +5153,12 @@ enum Template {
         }
 
         /// The chat's paper, as the chat draws it (`ChatLook.paper`): a warm off-white, a warm near-black in the dark.
-        /// The card's ground before macOS 26, which has no Liquid Glass to put it on.
         private final class Paper: NSView {
             override init(frame: NSRect) {
                 super.init(frame: frame)
                 wantsLayer = true
                 layer?.cornerRadius = 20
+                layer?.cornerCurve = .continuous
                 layer?.masksToBounds = true
             }
             required init?(coder: NSCoder) { fatalError() }
@@ -5177,16 +5168,6 @@ enum Template {
                 let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
                 layer?.backgroundColor = dark ? CGColor(srgbRed: 0x1F / 255, green: 0x1E / 255, blue: 0x1C / 255, alpha: 1)
                                               : CGColor(srgbRed: 0xF7 / 255, green: 0xF5 / 255, blue: 0xF1 / 255, alpha: 1)
-            }
-        }
-
-        /// The glass and what's laid out on it take no clicks of their own: the window moves by its bar, as by its
-        /// title bar.
-        @available(macOS 26, *)
-        private final class Glass: NSGlassEffectView {
-            override func hitTest(_ point: NSPoint) -> NSView? {
-                let hit = super.hitTest(point)
-                return hit === self ? nil : hit
             }
         }
 
