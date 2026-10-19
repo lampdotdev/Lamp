@@ -27,7 +27,7 @@ struct TurnProgress {
     var unopened = false
     /// What's happening right now, in the user's words rather than the code's: "Working on the interface",
     /// "Building…". It's the one place a turn in progress says what it's doing.
-    var activity = "Getting started"
+    var activity: String
     /// The file being written or edited right now, if that's what the agent is doing. Never shown: it
     /// tells which part of the plan is being worked on.
     var currentFile: String?
@@ -42,6 +42,13 @@ struct TurnProgress {
     /// Lamp's own guess at the app's parts, made with its name: shown, unticked, while the agent thinks
     /// (which can take minutes) and replaced by the agent's plan when it gives one.
     var sketch: [String] = []
+
+    /// Until the model first answers, only a new app is getting started: a follow-up in a chat that's been
+    /// going a while is being thought about.
+    init(newApp: Bool) {
+        self.newApp = newApp
+        activity = newApp ? "Getting started" : "Thinking"
+    }
 
     /// A part's mark on the build card. A part being worked on gets a spinner instead.
     static let symbols: [PartState: String] = [
