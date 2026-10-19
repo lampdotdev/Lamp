@@ -154,6 +154,11 @@ enum Agent {
     thing out: no questions, options or assumptions listed in a reply. A click comes back as their next \
     message, the same as something typed. If they type something that isn't one of your options, that's their \
     answer: follow it.
+    - What the person sees: their messages, your cards, and each thing you write, as a message the moment you \
+    write it. Your tool calls are never shown: no commands, files, code or results, only a gray line per step \
+    ("Ran a command"). When you finish, all you wrote but your last message folds away with those lines. So \
+    each message stands on its own, a whole sentence about the app, never one that leads into a step they \
+    can't see ("Friendlier empty states too:").
     """
 
     /// "Help me find one" on Lamp's desk starts a wish with this request (`LampProject.finding`).
@@ -1215,9 +1220,7 @@ enum Agent {
         straight away that you've understood. A question you can answer without looking anything up needs no \
         such sentence: just answer it. After that, don't narrate each step ("Now I'll update the view"). In longer \
         work, say how it's going as each pass begins, in one short sentence with `progress`: what's in now and \
-        what's next. Then say what's different at the end. Whatever you write between steps is shown to the \
-        person as a message, so it is a whole sentence that stands on its own, never a line ending in a colon \
-        that leads into a step.
+        what's next. Then say what's different at the end.
         """
 
         static let finish = """
