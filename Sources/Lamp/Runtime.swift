@@ -304,7 +304,10 @@ enum Runtime {
         .appendingPathComponent("Library/Logs/DiagnosticReports")
 
     /// The newest crash of the current build, summarized: what killed the app and the calls that led there.
-    static func crash(of project: LampProject) -> String? {
+    static func crash(of project: LampProject) -> String? { newestCrash(of: project)?.summary }
+
+    /// The newest crash of the current build with when it happened, which tells one crash from the next.
+    static func newestCrash(of project: LampProject) -> (date: Date, summary: String)? {
         guard let built = (try? builtURL(project).resourceValues(forKeys: [.contentModificationDateKey]))?
             .contentModificationDate else { return nil }
         let files = (try? FileManager.default.contentsOfDirectory(at: reports, includingPropertiesForKeys: nil)) ?? []
@@ -312,7 +315,7 @@ enum Runtime {
             .filter { $0.pathExtension == "ips" && $0.lastPathComponent.hasPrefix(project.exe + "-") }
             .compactMap { report($0, bundleID: project.bundleID) }
             .filter { $0.date > built }
-            .max { $0.date < $1.date }?.summary
+            .max { $0.date < $1.date }
     }
 
     /// Whether the app crashed since `date`: macOS wrote a report for it. Not a quit, which leaves none.

@@ -43,6 +43,30 @@ final class WorkedForTests: XCTestCase {
                                "statuses:Building…"])
     }
 
+    /// A fix Lamp starts on its own after a crash sends a request the chat doesn't show, so the line saying why the
+    /// agent is at work stays in sight, above the fold, instead of going into its steps with nothing asked above it.
+    func testACrashFixLampStartedSaysSo() {
+        var request = LogLine(kind: .user, text: "Fix the crash.")
+        request.byLamp = true
+        let lines = [LogLine(kind: .agent, text: "You now have a counter."), LogLine(kind: .summary, text: "Worked for 1m 16s · $0.08"),
+                     LogLine(kind: .status, text: "Crash Counter is ready"), LogLine(kind: .status, text: ChatLook.fixingCrash),
+                     request, LogLine(kind: .tool, text: "edit ContentView.swift"),
+                     LogLine(kind: .agent, text: "Crash Now no longer crashes the app."),
+                     LogLine(kind: .summary, text: "Worked for 15s · $0.08"), LogLine(kind: .status, text: "Building…"),
+                     LogLine(kind: .status, text: "Crash Counter is ready")]
+        let shape = ChatItem.items(LogLine.visible(lines, details: false), gather: true).map { item -> String in
+            switch item {
+            case .line(let line): line.text
+            case .statuses(let run): "statuses:" + run.map(\.text).joined(separator: ",")
+            case .tools: "tools"
+            case .work(_, let title, let steps): "\(title):" + steps.map(\.text).joined(separator: ",")
+            }
+        }
+        XCTAssertEqual(shape, ["You now have a counter.", "statuses:\(ChatLook.fixingCrash)",
+                               "Worked for 15 s:Crash Counter is ready",
+                               "Crash Now no longer crashes the app.", "statuses:Crash Counter is ready"])
+    }
+
     func testHowLongItWorked() {
         XCTAssertEqual(ChatItem.workedFor("Worked for 8s · $0.01"), "Worked for 8 s")
         XCTAssertEqual(ChatItem.workedFor("Worked for 3m 0s · $0.01"), "Worked for 3 min")
