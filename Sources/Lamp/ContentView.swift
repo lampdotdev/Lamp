@@ -514,7 +514,7 @@ struct ProjectView: View {
         if let change = undoChange {
             ChatLook.UndoChange { Task { await store.undo(project, change: change) } }.padding(.top, 12)
         }
-        if store.earlierVersionOpen.contains(project.id) {
+        if store.offersNewVersion(project) {
             ChatLook.NewVersionNotice(text: ErrorMessages.earlierVersion(project.name)) { Task { await store.openNewVersion(project) } }.padding(.top, 12)
         }
         if store.notResponding[project.id] != nil {

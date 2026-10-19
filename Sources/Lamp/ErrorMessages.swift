@@ -23,6 +23,8 @@ enum ErrorMessages {
     static func waitingToClose(_ app: String) -> String { "Waiting for " + app + " to close…" }
     /// Beside Open New Version, for an app that stayed open when a build asked it to quit: the build waits for it.
     static func earlierVersion(_ app: String) -> String { app + " is still the earlier version." }
+    /// After it, where the chat has no Open New Version to offer.
+    static let closeForNewVersion = "Close it to get the new one."
     /// Beside Force Quit, for an app that was asked to quit and doesn't answer: what the click costs.
     static func notResponding(_ app: String) -> String { app + " isn't responding. Forcing it to quit loses anything unsaved in it." }
     static func notDeleted(_ app: String) -> String { app + " stayed open, so it wasn't deleted." }

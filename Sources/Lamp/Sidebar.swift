@@ -243,7 +243,7 @@ final class SidebarServer {
             SidebarApproval(id: $0.id, title: $0.title, command: $0.command, explanation: $0.explanation?.look)
         }
         state.notResponding = store.notResponding[project.id] != nil ? ErrorMessages.notResponding(project.name) : nil
-        state.earlierVersion = store.earlierVersionOpen.contains(project.id) ? ErrorMessages.earlierVersion(project.name) : nil
+        state.earlierVersion = store.offersNewVersion(project) ? ErrorMessages.earlierVersion(project.name) : nil
         state.replacing = draft.replacing != nil
         state.hasEarlier = LogLine.recentStart(in: LogLine.visible(log, details: details), atLeast: reach[project.id] ?? LogLine.recentCount) > 0
         state.suggestion = suggestion(for: project, log: log, busy: busy)
@@ -756,7 +756,7 @@ final class SidebarServer {
             NSApp.activate(ignoringOtherApps: true)
             store.showDesk()
         case .openNewVersion:
-            guard store.earlierVersionOpen.contains(project.id) else { return }
+            guard store.offersNewVersion(project) else { return }
             Task { await store.openNewVersion(project) }
         case .undo:
             Task { await store.undo(project) }
@@ -871,6 +871,9 @@ final class SidebarServer {
             }
         }
 
+        /// The line an earlier sidebar is sent in place of the notice: one id, so it stays put while it's shown.
+        private static let earlierVersionLine = UUID(uuidString: "5C1E0A3B-6E2F-4D7A-9B1C-0E5F3A2D4C6B")!
+
         @MainActor private func read() {
             var chunk = [UInt8](repeating: 0, count: 65536)
             let count = Darwin.read(fd, &chunk, chunk.count)
@@ -912,6 +915,11 @@ final class SidebarServer {
             if version < 3 { state.lines.removeAll { $0.kind == .note } }
             if version < 4 { state.lines.removeAll { $0.kind == .offer || $0.kind == .action } }
             if version < 6 { state.lines.removeAll { $0.kind == .tools } }
+            // A sidebar from before Open New Version can't show its notice: it's told in a line, as it was then. Such a
+            // sidebar is the one an app kept open still runs, since its new one is in the build waiting for it to close.
+            if version < 8, let earlier = state.earlierVersion {
+                state.lines.append(SidebarLine(id: Self.earlierVersionLine, kind: .status, text: earlier + " " + ErrorMessages.closeForNewVersion, gap: 12))
+            }
             // What was pointed at, as the file it was before it had a pill of its own.
             if version < 5 {
                 func asFile(_ pointed: SidebarPointed?) -> [SidebarAttachment] {

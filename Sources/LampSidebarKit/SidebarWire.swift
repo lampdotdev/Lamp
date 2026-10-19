@@ -6,7 +6,7 @@ import Foundation
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
     /// What this side reads and writes; see `SidebarCommand.hello`.
-    public static let version = 7
+    public static let version = 8
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -340,7 +340,7 @@ public enum SidebarCommand: Codable, Equatable {
     /// The first thing a sidebar says: which shape of `SidebarState` it reads. One that says nothing is from
     /// before the summary line, which it can't read; one before 3, from before the notes receipt; one before 4, from before offers;
     /// one before 5, from before what was pointed at had a pill of its own; one before 6, from before the agent's
-    /// steps (`SidebarLine.Kind.tools`) could be shown.
+    /// steps (`SidebarLine.Kind.tools`) could be shown; one before 8, from before Open New Version (`SidebarState.earlierVersion`).
     case hello(Int)
     /// The message box's words, and how many of the box's messages Lamp had taken when it last said
     /// (`SidebarState.sends`): a Return pressed again before the sidebar hears that they were sent is for words Lamp

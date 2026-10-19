@@ -5505,6 +5505,10 @@ final class Store: ObservableObject {
     /// Apps Open New Version was pressed for, until the new version is in.
     private var reopening: Set<String> = []
 
+    /// Whether the chat offers Open New Version now. Not while an app for both points at iOS: what waits is the Mac
+    /// copy's build, and like `installHeldIcons` it goes in only once Try On is back on this Mac.
+    func offersNewVersion(_ project: LampProject) -> Bool { earlierVersionOpen.contains(project.id) && !project.onIOS }
+
     private func refreshEarlierVersions() {
         let now = Set(projects.filter { openOnMac.contains($0.id) && !reopening.contains($0.id) && Runtime.holdsBuild($0) }.map(\.id))
         if now != earlierVersionOpen { earlierVersionOpen = now }
@@ -5514,7 +5518,7 @@ final class Store: ObservableObject {
     /// with unsaved work asks them first, and keeping it open is still their answer), and the build that waited for
     /// it goes in and opens. While a turn has the app, that happens when the turn gives it back.
     func openNewVersion(_ project: LampProject) async {
-        guard reopening.insert(project.id).inserted else { return }
+        guard !project.onIOS, reopening.insert(project.id).inserted else { return }
         refreshEarlierVersions()
         defer {
             refreshOpenApps()
