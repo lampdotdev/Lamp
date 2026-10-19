@@ -3210,9 +3210,9 @@ final class Store: ObservableObject {
         }
         // The setting is read again: it may have changed while the rating was worked out.
         if ratingDecides, CommandApproval.current == .risky, CommandRisk.runsOnRating(given, flagged: flagged) {
-            log(project, .status, "Ran: \(command)")
+            log(project, .status, "Ran: \(command)", said: said)
             log(project, .detail, "Ran without asking (\(given?.risk ?? "") risk): \(given?.summary ?? "")")
-            note("Running a command", for: project)   // as after an Allow, so "Checking a command" doesn't stay
+            note(said ?? "Running a command", for: project)   // as after an Allow, so "Checking a command" doesn't stay
             return true
         }
         NSApp.requestUserAttention(.informationalRequest)
