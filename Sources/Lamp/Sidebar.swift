@@ -382,8 +382,15 @@ final class SidebarServer {
         let start = LogLine.recentStart(in: lines, atLeast: reach)
         let latestRequest = lines.last { $0.kind == .user }?.id
         let shown = Array(lines[start...])
-        let items = ChatItem.items(progressShown ? Transcript.withoutStepInProgress(shown) : shown)
+        let items = ChatItem.items(progressShown ? Transcript.withoutStepInProgress(shown) : shown, gather: !details)
         var out: [SidebarLine] = []
+        func tools(_ run: [LogLine], gap: Double, running: Bool) -> SidebarLine {
+            let calls = run.map { ToolCall($0.text) }
+            var line = SidebarLine(id: run[0].id, kind: .tools, text: ToolGroup.summary(calls), gap: gap, running: running)
+            line.symbol = ToolGroup.icon(calls)
+            line.calls = calls.map { SidebarToolCall(symbol: $0.icon, verb: $0.verb, argument: $0.argument) }
+            return line
+        }
         for (index, item) in items.enumerated() {
             let isLast = index == items.count - 1
             let gap = Double(ChatItem.gap(after: index > 0 ? items[index - 1] : nil, before: item, isFinalAnswer: finalAnswers.contains(item.id)))
@@ -395,11 +402,16 @@ final class SidebarServer {
                 }
             case .tools(let run):
                 // Only with Agent Details on: the steps, summed up, each one under it.
-                let calls = run.map { ToolCall($0.text) }
-                var line = SidebarLine(id: run[0].id, kind: .tools, text: ToolGroup.summary(calls), gap: gap,
-                                       running: isLast && busy && !progressShown)
-                line.symbol = ToolGroup.icon(calls)
-                line.calls = calls.map { SidebarToolCall(symbol: $0.icon, verb: $0.verb, argument: $0.argument) }
+                out.append(tools(run, gap: gap, running: isLast && busy && !progressShown))
+            case .work(let id, let title, let steps):
+                var line = SidebarLine(id: id, kind: .work, text: title, gap: gap)
+                line.steps = ChatItem.items(steps).flatMap { step -> [SidebarLine] in
+                    switch step {
+                    case .tools(let run): [tools(run, gap: 4, running: false)]
+                    case .statuses(let run): run.map { SidebarLine(id: $0.id, kind: .status, text: $0.text, gap: 4) }
+                    default: []
+                    }
+                }
                 out.append(line)
             case .line(let line):
                 switch line.kind {
@@ -876,6 +888,16 @@ final class SidebarServer {
             guard !outbox.isHolding else { waiting = true; return }
             guard let server, let project = Store.shared.projects.first(where: { $0.id == projectID }) else { return }
             var state = server.state(for: project)
+            // A sidebar from before a turn's steps were folded can't read the fold, and would drop the whole chat: it
+            // gets the steps as lines, as it showed them.
+            if version < 7 {
+                state.lines = state.lines.flatMap { line -> [SidebarLine] in
+                    guard line.kind == .work else { return [line] }
+                    var steps = line.steps ?? []
+                    if !steps.isEmpty { steps[0].gap = line.gap }
+                    return steps
+                }
+            }
             // A sidebar from before the summary line can't read one, and would drop the whole chat.
             if version < 2 { state.lines.removeAll { $0.kind == .summary } }
             // Nor one from before the notes receipt a receipt.

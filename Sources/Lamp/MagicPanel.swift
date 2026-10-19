@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Combine
+import LampSidebarKit
 
 /// What goes with an app's chat inside its own window (`Sidebar`), on Lamp's side: the 🪄 the app shows, starting
 /// Lamp when it isn't open, pointing at part of the app for a message, and the picture standing in the app's
@@ -347,12 +348,11 @@ final class MagicPanel {
         DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: timeout)
     }
 
-    /// The chat had its own panel beside the window (`LampSidebar.panelFrame`): plain glass stands where it was, so
+    /// The chat had its own panel beside the window (`LampSidebar.panelFrame`): its blank paper stands where it was, so
     /// the chat doesn't vanish from beside the app while it's away. The chat itself is the extension's to draw, so
     /// nothing of it is pictured.
     private static func chatCover(in folder: URL) -> NSWindow? {
-        guard #available(macOS 26, *),
-              let text = try? String(contentsOf: folder.appendingPathComponent("cover-chat-frame.txt"), encoding: .utf8) else { return nil }
+        guard let text = try? String(contentsOf: folder.appendingPathComponent("cover-chat-frame.txt"), encoding: .utf8) else { return nil }
         let frame = NSRectFromString(text)
         guard frame.width > 0, frame.height > 0 else { return nil }
         let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -426,13 +426,12 @@ private struct CoverView: View {
     }
 }
 
-/// Glass where the app's chat was beside it, while the app reopens for a change.
-@available(macOS 26, *)
+/// The chat's paper where the app's chat was beside it, while the app reopens for a change.
 private struct ChatCoverView: View {
     var body: some View {
-        Color.clear
+        RoundedRectangle(cornerRadius: 20, style: .continuous)
+            .fill(ChatLook.paper)
             .overlay { ProgressView().controlSize(.small) }
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 

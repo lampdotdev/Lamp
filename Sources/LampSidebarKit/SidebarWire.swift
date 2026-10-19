@@ -6,7 +6,7 @@ import Foundation
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
     /// What this side reads and writes; see `SidebarCommand.hello`.
-    public static let version = 6
+    public static let version = 7
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -99,7 +99,7 @@ public struct SidebarState: Codable, Equatable {
 }
 
 public struct SidebarLine: Codable, Equatable, Identifiable {
-    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary, note, offer, action, tools }
+    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary, note, offer, action, tools, work }
     public var id: UUID
     public var kind: Kind
     public var text: String
@@ -145,6 +145,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var pointed: SidebarPointed?
     /// The agent's steps, shown with Agent Details on (`tools`): what `text` sums up, one by one.
     public var calls: [SidebarToolCall]?
+    /// A finished turn's steps (`work`, its line "Worked for 2 min 3 s" is `text`): status lines and runs of tool calls.
+    public var steps: [SidebarLine]?
 
     public init(id: UUID, kind: Kind, text: String, gap: Double = 0, running: Bool = false, attachments: [SidebarAttachment]? = nil,
                 growing: Bool = false, questions: [SidebarQuestion]? = nil) {
@@ -471,6 +473,19 @@ public final class SidebarOutbox {
 /// can say to it, and nothing that reaches Lamp. LampSupport.swift declares the same.
 @objc(LampSidebarPlacement) public protocol SidebarPlacement {
     func place(x: Double, y: Double)
+}
+
+/// What the sidebar asks of the app hosting it, over the same connection: the two things about its own panel that only
+/// the app can do, since the panel is the app's window. The chat's bar is drawn here, with its close button and the
+/// room to drag the chat by, and the app closes or moves the panel when asked. Nothing about the wish goes this way.
+/// LampSupport.swift declares the same.
+@objc(LampSidebarHost) public protocol SidebarHost {
+    /// Close the chat, as the wand does when it's open. `request` is the same on every connection a request is sent
+    /// over, so the app chooses its chat once for all of them.
+    func closeChat(request: String)
+    /// The person pressed on the bar and started dragging: the app moves the panel with the pointer until the button
+    /// is let go.
+    func startMove(request: String)
 }
 
 /// Something the person needs to know before a thing can work, as an alert: its title, what to do, and the

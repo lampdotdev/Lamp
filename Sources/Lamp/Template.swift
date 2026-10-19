@@ -4346,11 +4346,16 @@ enum Template {
                 wantsLayer = true
             }
 
+            /// The chat is open: the disc takes the accent colour.
+            var active = false { didSet { needsDisplay = true } }
+
             override var wantsUpdateLayer: Bool { true }
             override func updateLayer() {
                 guard let layer else { return }
                 layer.cornerRadius = bounds.height / 2
-                layer.backgroundColor = NSColor.black.withAlphaComponent(isHighlighted ? 0.62 : 0.45).cgColor
+                layer.backgroundColor = active
+                    ? NSColor.controlAccentColor.withAlphaComponent(isHighlighted ? 0.8 : 1).cgColor
+                    : NSColor.black.withAlphaComponent(isHighlighted ? 0.62 : 0.45).cgColor
                 layer.borderWidth = 1
                 layer.borderColor = NSColor.white.withAlphaComponent(0.25).cgColor
             }
@@ -4405,10 +4410,24 @@ enum Template {
             showWand(in: window)
         }
 
-        /// The wand only while the chat is closed: open, the chat has its own close button, and two controls for one
-        /// chat (the wand left over beside its panel) said less than one.
+        /// The wand is always where people know to find it, lit while the chat is open, and a click on it then closes
+        /// the chat, as the chat's own close button does.
         @MainActor private static func showWand(in window: NSWindow) {
-            wand(in: window)?.isHidden = LampSidebar.isOpen(in: window)
+            guard let wand = wand(in: window) else { return }
+            let open = LampSidebar.isOpen(in: window)
+            wand.isHidden = false
+            wand.toolTip = open ? "Close the chat" : "Customize this app with Lamp"
+            if let floating = wand as? FloatingWand {
+                floating.active = open
+            } else {
+                // A toggle that's on, as a toolbar's are drawn lit, and the symbol in the accent colour itself: a tint
+                // alone doesn't show on a glass button, nor in a window that isn't in front.
+                wand.setButtonType(.pushOnPushOff)
+                wand.state = open ? .on : .off
+                let symbol = NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: "Customize This App")!
+                    .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))!
+                wand.image = open ? symbol.withSymbolConfiguration(.init(paletteColors: [.controlAccentColor])) : symbol
+            }
         }
 
         /// Where the window is, in screen coordinates, for the picture Lamp shows in its place while a change
@@ -4429,12 +4448,6 @@ enum Template {
                 guard let window = sender.window ?? NSApp.keyWindow ?? NSApp.mainWindow, isAppWindow(window) else { return }
                 LampSidebar.toggle(window)
             }
-            @objc func close(_ sender: NSButton) {
-                // Beside the window, the button is in the chat's own panel: it closes the chat of the window the panel
-                // belongs to.
-                guard let window = sender.window?.parent ?? sender.window else { return }
-                LampSidebar.close(window)
-            }
         }
     }
 
@@ -4444,6 +4457,13 @@ enum Template {
     /// The one thing the app says to its chat: where it is on screen (the extension declares the same).
     @objc(LampSidebarPlacement) protocol LampSidebarPlacement {
         func place(x: Double, y: Double)
+    }
+
+    /// What the chat asks of the app about its own panel, which only the app can do: close it, or move it with the
+    /// pointer, since the chat draws its bar (the extension declares the same). Nothing about the app goes this way.
+    @objc(LampSidebarHost) protocol LampSidebarHost {
+        func closeChat(request: String)
+        func startMove(request: String)
     }
 
     enum LampSidebar {
@@ -4473,10 +4493,8 @@ enum Template {
         @MainActor final class Chat {
             let host: EXHostViewController
             let card: NSView
-            /// What the bar and the chat are laid out in.
+            /// What the chat is laid out in.
             var pane: NSView = NSView()
-            /// The bar's close button, whose symbol says what the chat is where it is (`closeSymbol`).
-            weak var close: NSButton?
             weak var window: NSWindow?
             var panel: Beside?
             var side: Side = .right
@@ -4497,7 +4515,11 @@ enum Template {
                 self.window = window
             }
 
-            var inPanel: Bool { panel?.isVisible == true && panel?.parent != nil }
+            /// Moved away from the window by the person (`Beside.startMove`): it stays where they put it, whatever the
+            /// window does, until the app quits.
+            var detached: Bool { panel?.detached == true }
+
+            var inPanel: Bool { panel?.isVisible == true && (panel?.parent != nil || detached) }
         }
 
         enum Side { case right, left }
@@ -4628,10 +4650,10 @@ enum Template {
                 let chat = Chat(host: host, card: made.card, window: window)
                 chat.narrowedBy = owed.removeValue(forKey: ObjectIdentifier(window)) ?? 0
                 chat.pane = made.pane
-                chat.close = made.close
                 chats[ObjectIdentifier(window)] = chat
                 follow(window, chat)
                 watchClicks()
+                watchCycling()
                 show(chat)
             }
         }
@@ -4674,7 +4696,8 @@ enum Template {
             guard let window = chat.window else { return }
             chat.wanted = true
             chat.card.alphaValue = 0
-            makeRoom(for: chat)
+            // Moved away from the window, it opens again where it was left.
+            if !chat.detached { makeRoom(for: chat) }
             putInPanel(chat)
             LampMagic.refit(window)
             fadeIn(chat.card)
@@ -4758,11 +4781,12 @@ enum Template {
                 let titlebar = max(frame.height - window.contentLayoutRect.height, 0)
                 let right = min(frame.maxX, screen?.maxX ?? frame.maxX) - gap
                 return NSRect(x: right - shown, y: frame.minY + gap, width: shown, height: max(frame.height - titlebar - 2 * gap, 200))
+                    .insetBy(dx: -Beside.shade, dy: -Beside.shade)
             }
             var shown = width
             if let screen { shown = max(narrowest, min(width, room(on: chat.side, of: frame, in: screen))) }
             let x = chat.side == .right ? frame.maxX + gap : frame.minX - gap - shown
-            return NSRect(x: x, y: frame.minY, width: shown, height: frame.height)
+            return NSRect(x: x, y: frame.minY, width: shown, height: frame.height).insetBy(dx: -Beside.shade, dy: -Beside.shade)
         }
 
         /// Into its panel, which is put where the chat now goes.
@@ -4772,28 +4796,21 @@ enum Template {
             chat.panel = panel
             // Its outer edge widens it: over the window that's the one facing into it.
             panel.side = chat.over ? .left : chat.side
-            closeSymbol(chat)
             if chat.host.parent !== panel.holder, let ground = panel.holder.view as? PanelGround {
                 panel.holder.addChild(chat.host)
-                // In its panel the card leaves the edge that widens it clear (`PanelGround.layout`).
+                // In its panel the card leaves the edges that resize it clear (`PanelGround.layout`).
                 chat.card.translatesAutoresizingMaskIntoConstraints = true
-                ground.card = chat.card
                 ground.addSubview(chat.card)
-                ground.addSubview(ground.edge)
+                ground.addSubview(ground.edges)
+                ground.card = chat.card
             }
             panel.holder.view.needsLayout = true
-            panel.setFrame(panelFrame(for: chat), display: true)
-            if panel.parent == nil { window.addChildWindow(panel, ordered: .above) }
+            if !panel.detached {
+                panel.setFrame(panelFrame(for: chat), display: true)
+                if panel.parent == nil { window.addChildWindow(panel, ordered: .above) }
+            }
             panel.orderFront(nil)
             Placing.shared.place(chat.host)
-        }
-
-        /// Beside the window the chat is a sidebar, and its close button is the sidebar's symbol, on the side it's on;
-        /// over the window it isn't one, and the button is a plain close mark.
-        @MainActor private static func closeSymbol(_ chat: Chat) {
-            let symbol = chat.over ? "xmark" : chat.side == .left ? "sidebar.leading" : "sidebar.trailing"
-            chat.close?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Close Chat")?
-                .withSymbolConfiguration(.init(pointSize: chat.over ? 12 : 14, weight: .semibold))
         }
 
         @MainActor private static func hidePanel(_ chat: Chat) {
@@ -4814,7 +4831,7 @@ enum Template {
                 })
             }
             on(NSWindow.didResizeNotification) { chat in
-                guard let window = chat.window else { return }
+                guard let window = chat.window, !chat.detached else { return }
                 if chat.inPanel, let panel = chat.panel { panel.setFrame(panelFrame(for: chat), display: true) }
                 // A size set all at once (zoom, a tile, a size the app sets) may leave room beside it, or take it away.
                 if !window.inLiveResize { replace(chat) }
@@ -4822,7 +4839,11 @@ enum Template {
             on(NSWindow.didEndLiveResizeNotification) { replace($0) }
             on(NSWindow.didMoveNotification) { replace($0) }
             on(NSWindow.didChangeScreenNotification) { replace($0) }
-            on(NSWindow.willEnterFullScreenNotification) { chat in if chat.wanted { hidePanel(chat) } }
+            on(NSWindow.willEnterFullScreenNotification) { chat in
+                // A chat moved away goes back beside the window, which is now the whole screen.
+                chat.panel?.detached = false
+                if chat.wanted { hidePanel(chat) }
+            }
             on(NSWindow.didEnterFullScreenNotification) { chat in
                 guard chat.wanted else { return }
                 makeRoom(for: chat)
@@ -4838,7 +4859,8 @@ enum Template {
             }
             on(NSWindow.didMiniaturizeNotification) { chat in if chat.inPanel { chat.panel?.orderOut(nil) } }
             on(NSWindow.didDeminiaturizeNotification) { chat in
-                guard let window = chat.window, let panel = chat.panel, panel.parent === window else { return }
+                guard let window = chat.window, let panel = chat.panel, chat.wanted,
+                      panel.parent === window || chat.detached else { return }
                 panel.orderFront(nil)
             }
             on(NSWindow.willCloseNotification) { chat in
@@ -4851,7 +4873,7 @@ enum Template {
         /// The chat where it now fits, if it's open and that isn't where it is. The window isn't moved or narrowed
         /// here, while the person is placing it: with no room beside it, the chat goes over its edge.
         @MainActor private static func replace(_ chat: Chat) {
-            guard let window = chat.window, chat.inPanel, !window.inLiveResize else { return }
+            guard let window = chat.window, chat.inPanel, !chat.detached, !window.inLiveResize else { return }
             if let side = side(for: window, preferring: chat.side) {
                 if !chat.over, side == chat.side {
                     // Same side: only its width may change, back towards the kept width when there's more room now.
@@ -4909,22 +4931,36 @@ enum Template {
         /// The chat beside the window: a borderless panel of the app's, attached to the window as its child so macOS
         /// moves, stacks and hides it with the window, holding the card on its glass. It takes the keyboard for the
         /// message box without becoming the main window, so the app's window stays the active one, as with any
-        /// inspector panel.
+        /// inspector panel. Dragged by the chat's bar it comes away from the window (`detached`) and goes where it's put,
+        /// resized by any edge, floating over the app's windows while the app is in front.
         @MainActor final class Beside: NSPanel {
             let holder = NSViewController()
             /// Which side of the window it's on: its outer edge, away from the window, is the one that widens it.
             var side: Side = .right
+            /// Moved away from the window: no longer its child, and resized by every edge.
+            var detached = false {
+                didSet {
+                    guard detached != oldValue else { return }
+                    level = detached && NSApp.isActive ? .floating : .normal
+                    holder.view.needsLayout = true
+                    holder.view.window?.invalidateCursorRects(for: (holder.view as? PanelGround)?.edges ?? holder.view)
+                }
+            }
+            /// The rim inside the card, around the chat, where the pointer resizes it: the room around the card is its
+            /// shadow, which clicks go through.
+            static let rim: CGFloat = 6
+            /// The room around the card for its own shadow. The window's shadow drew a hard grey line round the card, as
+            /// macOS outlines every window; this one is soft, and gone within the room, so clicks there reach what's
+            /// behind (the app's own edge, beside it).
+            static let shade: CGFloat = 14
 
             init() {
                 super.init(contentRect: NSRect(x: 0, y: 0, width: LampSidebar.width, height: 400), styleMask: [.borderless],
                            backing: .buffered, defer: false)
                 isOpaque = false
                 backgroundColor = .clear
-                hasShadow = true
-                // Its glass is drawn by the window server, so the panel's own pixels are clear almost everywhere, and a
-                // clear window lets clicks on clear pixels through to whatever is behind it. Said outright, the whole
-                // panel takes them: blank glass in the chat, and the edge that widens it.
-                ignoresMouseEvents = false
+                // The card draws its own shadow (`Card`), and the clear room around it lets clicks through.
+                hasShadow = false
                 isMovable = false
                 hidesOnDeactivate = false
                 isReleasedWhenClosed = false
@@ -4932,115 +4968,181 @@ enum Template {
                 ground.panel = self
                 holder.view = ground
                 contentViewController = holder
-                ground.edge.began = { [weak self] in self?.dragStart = self?.frame }
-                ground.edge.moved = { [weak self] change in
+                ground.edges.began = { [weak self] in self?.dragStart = self?.frame }
+                ground.edges.moved = { [weak self] zone, change in
                     guard let self, let start = self.dragStart else { return }
-                    self.widen(from: start, by: change)
+                    self.resize(zone, from: start, by: change)
                 }
-                // A new width moves the chat on the screen without moving the window (on the left it moves its origin),
-                // and the window's own moves are all the chat is otherwise told of: say where it is now, for the
-                // input method's candidates and the emoji picker.
-                resized = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: self, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated {
-                        guard let self, let parent = self.parent else { return }
-                        self.contentView?.layoutSubtreeIfNeeded()
-                        LampSidebar.Placing.shared.place(in: parent)
-                    }
+                // A new size or place moves the chat on the screen, which the window's own moves are all the chat is
+                // otherwise told of: say where it is now, for the input method's candidates and the emoji picker.
+                for name in [NSWindow.didResizeNotification, NSWindow.didMoveNotification] {
+                    observers.append(NotificationCenter.default.addObserver(forName: name, object: self, queue: .main) { [weak self] _ in
+                        MainActor.assumeIsolated {
+                            guard let self else { return }
+                            self.contentView?.layoutSubtreeIfNeeded()
+                            if let parent = self.parent ?? LampSidebar.window(of: self) { LampSidebar.Placing.shared.place(in: parent) }
+                        }
+                    })
+                }
+                // Moved away, it floats over the app's windows while the app is in front, as an inspector does, and
+                // keeps its place among other apps' windows when it isn't.
+                for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
+                    observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                        MainActor.assumeIsolated {
+                            guard let self, self.detached else { return }
+                            self.level = NSApp.isActive ? .floating : .normal
+                        }
+                    })
                 }
             }
 
-            private var resized: (any NSObjectProtocol)?
-
+            private var observers: [any NSObjectProtocol] = []
             private var dragStart: NSRect?
+            private var moving: Timer?
 
-            /// Wider or narrower by its outer edge, between the chat's narrowest and widest and never past the screen's
-            /// edge; the width is kept for next time.
-            func widen(from start: NSRect, by change: CGFloat) {
-                var target = start.width + (side == .right ? change : -change)
-                if let screen = (parent?.screen ?? screen ?? NSScreen.main)?.visibleFrame {
-                    let room = side == .right ? screen.maxX - start.minX : start.maxX - screen.minX
-                    target = min(target, room)
+            /// The person pressed on the chat's bar and is dragging (`LampSidebarHost.startMove`): the press went to the
+            /// chat's own process, so the panel follows the pointer from here until the button is let go. The first
+            /// move takes it away from the window.
+            func startMove() {
+                guard moving == nil, NSEvent.pressedMouseButtons & 1 != 0 else { return }
+                let pointer = NSEvent.mouseLocation
+                if !detached { detach() }
+                let origin = frame.origin
+                let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] timer in
+                    MainActor.assumeIsolated {
+                        guard let self, NSEvent.pressedMouseButtons & 1 != 0 else {
+                            timer.invalidate()
+                            self?.moving = nil
+                            return
+                        }
+                        let now = NSEvent.mouseLocation
+                        self.setFrameOrigin(NSPoint(x: (origin.x + now.x - pointer.x).rounded(), y: (origin.y + now.y - pointer.y).rounded()))
+                    }
                 }
-                target = min(max(target, LampSidebar.narrowest), LampSidebar.widest)
+                moving = timer
+                RunLoop.main.add(timer, forMode: .common)
+            }
+
+            /// Away from the window, resized by any edge from here on.
+            private func detach() {
+                parent?.removeChildWindow(self)
+                detached = true
+            }
+
+            /// Bigger or smaller by an edge. Beside the window only its outer edge widens it, between the chat's
+            /// narrowest and widest and never past the screen's edge; away from it, any edge or corner, and the
+            /// height too. The width is kept for next time.
+            func resize(_ zone: Edges.Zone, from start: NSRect, by change: NSSize) {
                 var frame = start
-                frame.size.width = target
-                if side == .left { frame.origin.x = start.maxX - target }
+                if zone.contains(.left) { frame.size.width = start.width - change.width }
+                if zone.contains(.right) { frame.size.width = start.width + change.width }
+                if zone.contains(.bottom) { frame.size.height = start.height - change.height }
+                if zone.contains(.top) { frame.size.height = start.height + change.height }
+                let shadows = 2 * Self.shade
+                frame.size.width = min(max(frame.width, LampSidebar.narrowest + shadows), LampSidebar.widest + shadows)
+                if !detached, let screen = (parent?.screen ?? screen ?? NSScreen.main)?.visibleFrame {
+                    frame.size.width = min(frame.width, (side == .right ? screen.maxX - start.minX : start.maxX - screen.minX) + Self.shade)
+                }
+                frame.size.height = max(frame.height, 300 + shadows)
+                if zone.contains(.left) { frame.origin.x = start.maxX - frame.width }
+                if zone.contains(.bottom) { frame.origin.y = start.maxY - frame.height }
                 setFrame(frame, display: true)
-                LampSidebar.width = target
+                LampSidebar.width = frame.width - shadows
             }
 
             override var canBecomeKey: Bool { true }
             override var canBecomeMain: Bool { false }
         }
 
-        /// The chat with the bar above it, on a card in its panel: on Liquid Glass (`NSGlassEffectView`) from macOS 26,
-        /// on the chat's own paper before (`Paper`). The bar has a round
-        /// button closing the chat at the left and what the chat is for beside it; it does only what the app could
-        /// do anyway (close its own chat). What changes the wish (undo, versions, sharing…) is in the chat under it,
-        /// which only Lamp speaks to.
-        @MainActor private static func card(for host: EXHostViewController, in window: NSWindow) -> (card: NSView, pane: NSView, close: NSButton) {
-            let outer = Passing()
+        /// The chat a request from the chats' process is for (`Answering`), chosen when the request first arrives and
+        /// kept for its other copies: the one under the pointer, else the one with the keyboard.
+        @MainActor private static var answered: [(request: String, chat: ObjectIdentifier?)] = []
+
+        @MainActor static func isAsked(_ chat: Chat, for request: String) -> Bool {
+            if let earlier = answered.first(where: { $0.request == request }) { return earlier.chat == ObjectIdentifier(chat) }
+            let target = chosen().map(ObjectIdentifier.init)
+            answered.append((request, target))
+            if answered.count > 20 { answered.removeFirst() }
+            return target == ObjectIdentifier(chat)
+        }
+
+        @MainActor private static func chosen() -> Chat? {
+            let open = chats.values.filter { $0.inPanel }
+            let pointer = NSEvent.mouseLocation
+            // Front to back, as the windows are stacked: of two chats moved over each other, the click was on the one
+            // in front.
+            let stacked = NSApp.orderedWindows.compactMap { window in open.first { $0.panel === window } }
+            return stacked.first { $0.panel?.frame.insetBy(dx: Beside.shade, dy: Beside.shade).contains(pointer) == true }
+                ?? open.first { $0.panel?.isKeyWindow == true }
+                ?? (open.count == 1 ? open.first : nil)
+        }
+
+        /// The window a panel's chat belongs to, attached or not.
+        @MainActor static func window(of panel: Beside) -> NSWindow? {
+            chats.values.first { $0.panel === panel }?.window
+        }
+
+        /// The chat on a card in its panel, on the chat's own paper (`Paper`): opaque, since what's behind the window
+        /// showing through glass drew the eye from the chat, and glass drew a bright line round its edge. The chat draws its own bar, close button included, and asks the app to close or move the
+        /// panel (`LampSidebarHost`): what changes the wish (undo, versions, sharing…) is in the chat, which only Lamp
+        /// speaks to.
+        @MainActor private static func card(for host: EXHostViewController, in window: NSWindow) -> (card: NSView, pane: NSView) {
+            let outer = Card()
             let pane = Passing()
-            if #available(macOS 26, *) {
-                let glass = Glass()
-                glass.cornerRadius = 20
-                glass.frame = outer.bounds
-                glass.autoresizingMask = [.width, .height]
-                glass.contentView = pane
-                outer.addSubview(glass)
-            } else {
-                let paper = Paper()
-                paper.frame = outer.bounds
-                paper.autoresizingMask = [.width, .height]
-                pane.frame = paper.bounds
-                pane.autoresizingMask = [.width, .height]
-                paper.addSubview(pane)
-                outer.addSubview(paper)
-            }
+            let paper = Paper()
+            paper.frame = outer.bounds
+            paper.autoresizingMask = [.width, .height]
+            pane.frame = paper.bounds
+            pane.autoresizingMask = [.width, .height]
+            paper.addSubview(pane)
+            outer.addSubview(paper)
             host.view.translatesAutoresizingMaskIntoConstraints = false
             host.view.identifier = chatIdentifier
             pane.addSubview(host.view)
-            let size = RoundButton.side
-            let close = RoundButton("sidebar.trailing", "Close Chat", "Close the chat", #selector(LampMagic.Opener.close(_:)))
-            let title = Caption(labelWithString: "Customize \(appName)")
-            title.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
-            title.textColor = .labelColor
-            title.alignment = .center
-            title.lineBreakMode = .byTruncatingTail
-            title.maximumNumberOfLines = 1
-            title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            title.translatesAutoresizingMaskIntoConstraints = false
-            pane.addSubview(title)
-            let strip = NSLayoutGuide()
-            pane.addLayoutGuide(strip)
-            // The card stands on its own beside the window, so its bar needs only the button's height.
-            var constraints = [
-                strip.topAnchor.constraint(equalTo: pane.topAnchor),
-                strip.heightAnchor.constraint(equalToConstant: size + 16),
-                host.view.topAnchor.constraint(equalTo: strip.bottomAnchor),
-                host.view.bottomAnchor.constraint(equalTo: pane.bottomAnchor),
-                host.view.leadingAnchor.constraint(equalTo: pane.leadingAnchor),
-                host.view.trailingAnchor.constraint(equalTo: pane.trailingAnchor),
-            ]
-            close.translatesAutoresizingMaskIntoConstraints = false
-            pane.addSubview(close)
-            constraints += [close.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
-                            close.widthAnchor.constraint(equalToConstant: size), close.heightAnchor.constraint(equalToConstant: size),
-                            // The same 12 points from the edge as the message box's row.
-                            close.leadingAnchor.constraint(equalTo: pane.leadingAnchor, constant: 12),
-                            title.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
-                            title.leadingAnchor.constraint(greaterThanOrEqualTo: close.trailingAnchor, constant: 10),
-                            title.trailingAnchor.constraint(lessThanOrEqualTo: pane.trailingAnchor, constant: -(12 + size + 10))]
-            // Centred while there's room, else as much as fits beside the button.
-            let centred = title.centerXAnchor.constraint(equalTo: pane.centerXAnchor)
-            centred.priority = .defaultHigh
-            constraints.append(centred)
-            NSLayoutConstraint.activate(constraints)
-            return (outer, pane, close)
+            // A rim of the card's own around the chat: the chat's process takes every click on its part of the window,
+            // so the edges that resize the panel lie in this rim (`Edges`).
+            let rim = Beside.rim
+            NSLayoutConstraint.activate([
+                host.view.topAnchor.constraint(equalTo: pane.topAnchor, constant: rim),
+                host.view.bottomAnchor.constraint(equalTo: pane.bottomAnchor, constant: -rim),
+                host.view.leadingAnchor.constraint(equalTo: pane.leadingAnchor, constant: rim),
+                host.view.trailingAnchor.constraint(equalTo: pane.trailingAnchor, constant: -rim),
+            ])
+            return (outer, pane)
         }
 
         private static let chatIdentifier = NSUserInterfaceItemIdentifier("lampSidebarChat")
         nonisolated(unsafe) private static var clicks: Any?
+        nonisolated(unsafe) private static var cycling: Any?
+
+        /// ⌘` goes through the app's windows with each open chat right after its window, so the keyboard alone moves
+        /// between an app and its chat; ⇧⌘` goes back. macOS leaves panels out of its own cycle.
+        @MainActor private static func watchCycling() {
+            guard cycling == nil else { return }
+            cycling = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                MainActor.assumeIsolated {
+                    let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+                    guard event.keyCode == 50, modifiers == .command || modifiers == [.command, .shift] else { return event }
+                    var stops: [NSWindow] = []
+                    // In the order the windows were made, which stays put as they come forward, so each press moves on.
+                    for window in NSApp.windows where LampMagic.isAppWindow(window) && window.isVisible && !window.isMiniaturized {
+                        stops.append(window)
+                        if let chat = chat(in: window), chat.inPanel, let panel = chat.panel { stops.append(panel) }
+                    }
+                    // With nothing but one window, macOS's own cycle has nothing to do either.
+                    guard stops.count > 1 else { return event }
+                    let current = stops.firstIndex { $0 === NSApp.keyWindow } ?? 0
+                    let next = stops[(current + (modifiers.contains(.shift) ? stops.count - 1 : 1)) % stops.count]
+                    next.makeKeyAndOrderFront(nil)
+                    // In the chat the keyboard goes to the chat's own view, as a click there gives it (`watchClicks`).
+                    if let panel = next as? Beside, let view = chats.values.first(where: { $0.panel === panel })?.host.view {
+                        let target = sequence(first: view, next: { $0.subviews.first }).first { $0.acceptsFirstResponder } ?? view
+                        panel.makeFirstResponder(target)
+                    }
+                    return nil
+                }
+            }
+        }
 
         /// The chat is drawn by another process, which AppKit's focus doesn't follow, so what had the keyboard before
         /// keeps it through a click in the chat: once the click has landed, the keyboard goes to the chat.
@@ -5073,16 +5175,16 @@ enum Template {
         /// it (`LampMagic.leaveCover`); nothing when it's closed.
         @MainActor static func panelFrame(of window: NSWindow) -> NSRect? {
             guard let chat = chat(in: window), chat.inPanel, let panel = chat.panel else { return nil }
-            return panel.frame
+            return panel.frame.insetBy(dx: Beside.shade, dy: Beside.shade)
         }
 
         /// The chat's paper, as the chat draws it (`ChatLook.paper`): a warm off-white, a warm near-black in the dark.
-        /// The card's ground before macOS 26, which has no Liquid Glass to put it on.
         private final class Paper: NSView {
             override init(frame: NSRect) {
                 super.init(frame: frame)
                 wantsLayer = true
                 layer?.cornerRadius = 20
+                layer?.cornerCurve = .continuous
                 layer?.masksToBounds = true
             }
             required init?(coder: NSCoder) { fatalError() }
@@ -5095,37 +5197,49 @@ enum Template {
             }
         }
 
-        /// The glass and what's laid out on it take no clicks of their own: the window moves by its bar, as by its
-        /// title bar.
-        @available(macOS 26, *)
-        private final class Glass: NSGlassEffectView {
+        private class Passing: NSView {
             override func hitTest(_ point: NSPoint) -> NSView? {
                 let hit = super.hitTest(point)
                 return hit === self ? nil : hit
             }
         }
 
-        private final class Passing: NSView {
-            override func hitTest(_ point: NSPoint) -> NSView? {
-                let hit = super.hitTest(point)
-                return hit === self ? nil : hit
+        /// The card, with a soft shadow of its own round it.
+        private final class Card: Passing {
+            override init(frame: NSRect) {
+                super.init(frame: frame)
+                wantsLayer = true
+                layer?.masksToBounds = false
+                layer?.shadowColor = NSColor.black.cgColor
+                layer?.shadowOpacity = 0.14
+                layer?.shadowRadius = 7
+                layer?.shadowOffset = CGSize(width: 0, height: -2)
+            }
+            required init?(coder: NSCoder) { fatalError() }
+
+            override func layout() {
+                super.layout()
+                layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: 20, cornerHeight: 20, transform: nil)
             }
         }
 
-        /// The panel's ground, which keeps the edge that widens it along the side away from the window.
+        /// The panel's ground: the card, and over its rim the edges that resize it. Beside the window that's the side
+        /// away from the window; moved away from it, every side.
         @MainActor final class PanelGround: NSView {
             weak var panel: Beside?
             weak var card: NSView?
-            let edge = WidenEdge()
+            let edges = Edges()
 
-            /// The card beside the strip that widens it, never under it: the chat is drawn by another process, which
-            /// takes every click on its part of the window, so a strip laid over the chat would never be dragged.
+            /// The edges over the card's rim, never over the chat: the chat is drawn by another process, which takes
+            /// every click on its part of the window, so an edge laid over the chat would never be dragged.
             override func layout() {
                 super.layout()
-                let side: CGFloat = 8
-                let onLeft = panel?.side == .left
-                edge.frame = NSRect(x: onLeft ? 0 : bounds.width - side, y: 0, width: side, height: bounds.height)
-                card?.frame = NSRect(x: onLeft ? side : 0, y: 0, width: bounds.width - side, height: bounds.height)
+                let card = bounds.insetBy(dx: Beside.shade, dy: Beside.shade)
+                self.card?.frame = card
+                edges.frame = card
+                edges.card = edges.bounds.insetBy(dx: Beside.rim, dy: Beside.rim)
+                edges.allowed = panel?.detached == true ? [.left, .right, .top, .bottom] : panel?.side == .left ? .left : .right
+                window?.invalidateCursorRects(for: edges)
             }
 
             override func hitTest(_ point: NSPoint) -> NSView? {
@@ -5134,76 +5248,102 @@ enum Template {
             }
         }
 
-        /// The strip along the panel's outer edge: the pointer turns into the resize arrows over it, and a drag makes the
-        /// chat wider or narrower, as a window's own edge does.
-        @MainActor final class WidenEdge: NSView {
-            /// A drag began, and how far it has gone sideways since, in points.
-            var began: (() -> Void)?
-            var moved: ((CGFloat) -> Void)?
-            private var start: CGFloat?
+        /// The room around the card where the pointer turns into the resize arrows and a drag makes the chat bigger or
+        /// smaller, as a window's own edges do; near a corner, both ways.
+        @MainActor final class Edges: NSView {
+            struct Zone: OptionSet {
+                let rawValue: Int
+                static let left = Zone(rawValue: 1), right = Zone(rawValue: 2), top = Zone(rawValue: 4), bottom = Zone(rawValue: 8)
+            }
 
-            override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeLeftRight) }
+            /// The edges that resize it now, and where the chat is inside the rim, in this view.
+            var allowed: Zone = .right
+            var card: NSRect = .zero
+            /// A drag began, and how far it has gone since, in points.
+            var began: (() -> Void)?
+            var moved: ((Zone, NSSize) -> Void)?
+            private var start: NSPoint?
+            private var dragging: Zone = []
+            /// How far along an edge from a corner counts as the corner.
+            private let corner: CGFloat = 16
+
+            func zone(at point: NSPoint) -> Zone {
+                guard bounds.contains(point), !card.contains(point) else { return [] }
+                var zone: Zone = []
+                if point.x < card.minX { zone.insert(.left) }
+                if point.x > card.maxX { zone.insert(.right) }
+                if point.y < card.minY { zone.insert(.bottom) }
+                if point.y > card.maxY { zone.insert(.top) }
+                if zone == .left || zone == .right {
+                    if point.y < bounds.minY + corner { zone.insert(.bottom) } else if point.y > bounds.maxY - corner { zone.insert(.top) }
+                } else if zone == .top || zone == .bottom {
+                    if point.x < bounds.minX + corner { zone.insert(.left) } else if point.x > bounds.maxX - corner { zone.insert(.right) }
+                }
+                return zone.intersection(allowed)
+            }
+
+            override func hitTest(_ point: NSPoint) -> NSView? {
+                guard let superview else { return nil }
+                return zone(at: convert(point, from: superview)).isEmpty ? nil : self
+            }
+
+            override func resetCursorRects() {
+                let c = corner
+                let areas: [(NSRect, Zone)] = [
+                    (NSRect(x: 0, y: c, width: card.minX, height: bounds.height - 2 * c), .left),
+                    (NSRect(x: card.maxX, y: c, width: bounds.maxX - card.maxX, height: bounds.height - 2 * c), .right),
+                    (NSRect(x: c, y: card.maxY, width: bounds.width - 2 * c, height: bounds.maxY - card.maxY), .top),
+                    (NSRect(x: c, y: 0, width: bounds.width - 2 * c, height: card.minY), .bottom),
+                    (NSRect(x: 0, y: 0, width: c, height: c), [.left, .bottom]),
+                    (NSRect(x: bounds.maxX - c, y: 0, width: c, height: c), [.right, .bottom]),
+                    (NSRect(x: 0, y: bounds.maxY - c, width: c, height: c), [.left, .top]),
+                    (NSRect(x: bounds.maxX - c, y: bounds.maxY - c, width: c, height: c), [.right, .top]),
+                ]
+                for (area, zone) in areas {
+                    let usable = zone.intersection(allowed)
+                    guard !usable.isEmpty, let cursor = Self.cursor(usable) else { continue }
+                    let rect = outsideCard(area)
+                    if !rect.isEmpty { addCursorRect(rect, cursor: cursor) }
+                }
+            }
+
+            /// The part of a corner square that's in the rim, not over the chat.
+            private func outsideCard(_ rect: NSRect) -> NSRect {
+                guard rect.intersects(card) else { return rect }
+                if rect.minX < card.minX { return NSRect(x: rect.minX, y: rect.minY, width: card.minX - rect.minX, height: rect.height) }
+                if rect.maxX > card.maxX { return NSRect(x: card.maxX, y: rect.minY, width: rect.maxX - card.maxX, height: rect.height) }
+                return .zero
+            }
+
+            private static func cursor(_ zone: Zone) -> NSCursor? {
+                let sideways = zone.contains(.left) || zone.contains(.right)
+                let upright = zone.contains(.top) || zone.contains(.bottom)
+                if sideways && upright {
+                    if #available(macOS 15, *) {
+                        let position: NSCursor.FrameResizePosition = zone.contains(.top)
+                            ? (zone.contains(.left) ? .topLeft : .topRight) : (zone.contains(.left) ? .bottomLeft : .bottomRight)
+                        return .frameResize(position: position, directions: .all)
+                    }
+                    return .crosshair
+                }
+                return sideways ? .resizeLeftRight : upright ? .resizeUpDown : nil
+            }
+
             override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
             override func mouseDown(with event: NSEvent) {
-                start = NSEvent.mouseLocation.x
+                dragging = zone(at: convert(event.locationInWindow, from: nil))
+                start = NSEvent.mouseLocation
                 began?()
             }
             override func mouseDragged(with event: NSEvent) {
-                guard let start else { return }
-                moved?(NSEvent.mouseLocation.x - start)
+                guard let start, !dragging.isEmpty else { return }
+                let now = NSEvent.mouseLocation
+                moved?(dragging, NSSize(width: now.x - start.x, height: now.y - start.y))
             }
-            override func mouseUp(with event: NSEvent) { start = nil }
-        }
-
-        /// The bar's title, which takes no clicks: the window moves by it as by its title bar.
-        private final class Caption: NSTextField {
-            override func hitTest(_ point: NSPoint) -> NSView? { nil }
-        }
-
-        /// A round button as the message box's row draws its own (`ChatLook.Round`): as tall as a one-line box, a
-        /// text background ringed by a separator, its symbol in the secondary colour. On the glass pane, a glass
-        /// button, as the chat's own buttons are there.
-        private final class RoundButton: NSButton {
-            static let side = (NSLayoutManager().defaultLineHeight(for: .systemFont(ofSize: NSFont.systemFontSize)) + 20).rounded()
-
-            convenience init(_ symbol: String, _ name: String, _ tip: String, _ action: Selector) {
-                let image = NSImage(systemSymbolName: symbol, accessibilityDescription: name)!
-                    .withSymbolConfiguration(.init(pointSize: 14, weight: .semibold))!
-                self.init(image: image, target: LampMagic.Opener.shared, action: action)
-                toolTip = tip
-                imagePosition = .imageOnly
-                contentTintColor = .secondaryLabelColor
-                if #available(macOS 26, *) {
-                    bezelStyle = .glass
-                    borderShape = .circle
-                    return
-                }
-                isBordered = false
-                wantsLayer = true
+            override func mouseUp(with event: NSEvent) {
+                start = nil
+                dragging = []
             }
-
-            override var wantsUpdateLayer: Bool {
-                if #available(macOS 26, *) { return super.wantsUpdateLayer }
-                return true
-            }
-            override func updateLayer() {
-                if #available(macOS 26, *) { return super.updateLayer() }
-                guard let layer else { return }
-                layer.cornerRadius = bounds.height / 2
-                layer.borderWidth = 1
-                effectiveAppearance.performAsCurrentDrawingAppearance {
-                    layer.backgroundColor = NSColor.textBackgroundColor.cgColor
-                    layer.borderColor = NSColor.separatorColor.cgColor
-                }
-                layer.opacity = isHighlighted ? 0.7 : 1
-            }
-            override func layout() {
-                super.layout()
-                needsDisplay = true
-            }
-            override var isHighlighted: Bool { didSet { needsDisplay = true } }
-            // One click works in a window in the back too, as it does on the traffic lights beside it.
-            override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
         }
 
         /// The app's name as the person knows it, for what the chat says about it.
@@ -5242,6 +5382,8 @@ enum Template {
                 MainActor.assumeIsolated {
                     guard let connection = try? controller.makeXPCConnection() else { return }
                     connection.remoteObjectInterface = NSXPCInterface(with: LampSidebarPlacement.self)
+                    connection.exportedInterface = NSXPCInterface(with: LampSidebarHost.self)
+                    connection.exportedObject = Answering(controller)
                     connection.resume()
                     connections[ObjectIdentifier(controller)] = connection
                     place(controller)
@@ -5257,7 +5399,7 @@ enum Template {
             /// says it again (`LampMagic`).
             func place(_ controller: EXHostViewController) {
                 guard let connection = connections[ObjectIdentifier(controller)], let window = controller.view.window,
-                      window.isKeyWindow || window.parent?.isKeyWindow == true else { return }
+                      window.isKeyWindow || window.parent?.isKeyWindow == true || (window as? Beside)?.detached == true else { return }
                 let origin = window.convertToScreen(controller.view.convert(controller.view.bounds, to: nil)).origin
                 (connection.remoteObjectProxy as? LampSidebarPlacement)?.place(x: origin.x, y: origin.y)
             }
@@ -5266,6 +5408,29 @@ enum Template {
             func place(in window: NSWindow) {
                 if let chat = LampSidebar.chats[ObjectIdentifier(window)] { place(chat.host) }
             }
+        }
+
+        /// What the chat asks of its panel (`LampSidebarHost`). The chat's process asks over every chat's connection,
+        /// not knowing which is its own, so each connection acts only for the chat the request was meant for: the one the
+        /// pointer is on, where the click or drag was; with none (a press from VoiceOver), the one with the keyboard.
+        /// That's chosen once for each request, by the first connection it arrives on (`isAsked`): chosen again,
+        /// a chat the first one closed would no longer be a choice, and another could be taken for it.
+        final class Answering: NSObject, LampSidebarHost {
+            private weak var controller: EXHostViewController?
+            init(_ controller: EXHostViewController) { self.controller = controller }
+
+            private func chat(_ request: String, _ act: @escaping @MainActor (Chat) -> Void) {
+                DispatchQueue.main.async { [weak controller] in
+                    MainActor.assumeIsolated {
+                        guard let controller, let chat = LampSidebar.chats.values.first(where: { $0.host === controller }),
+                              LampSidebar.isAsked(chat, for: request) else { return }
+                        act(chat)
+                    }
+                }
+            }
+
+            func closeChat(request: String) { chat(request) { chat in if let window = chat.window { LampSidebar.close(window) } } }
+            func startMove(request: String) { chat(request) { chat in chat.panel?.startMove() } }
         }
 
         /// Lamp listens for the chat: told directly when it's running (so this Lamp answers, not another copy),

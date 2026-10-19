@@ -17,10 +17,12 @@ struct SidebarExtension: AppExtension {
             PrimitiveAppExtensionScene(id: "chat") {
                 SidebarView().environmentObject(Link.shared)
             } onConnection: { connection in
-                // The app only says where the sidebar is on screen.
+                // The app only says where the sidebar is on screen; the sidebar asks it to close or move its panel.
                 connection.exportedInterface = NSXPCInterface(with: SidebarPlacement.self)
                 connection.exportedObject = Placement()
+                connection.remoteObjectInterface = NSXPCInterface(with: SidebarHost.self)
                 connection.resume()
+                DispatchQueue.main.async { MainActor.assumeIsolated { Host.add(connection) } }
                 return true
             })
     }
@@ -36,6 +38,32 @@ private final class Placement: NSObject, SidebarPlacement {
     }
 }
 
+/// The app hosting the chat, for what only it can do with the chat's panel (`SidebarHost`). An app with a chat beside
+/// each of several windows has one connection for each, and nothing here says which connection is which chat's: each
+/// is asked, and the app acts on the chat the pointer is on (`LampSidebar.Answering`), where the click was.
+@MainActor
+enum Host {
+    private static var connections: [NSXPCConnection] = []
+
+    static func add(_ connection: NSXPCConnection) {
+        connections.append(connection)
+        connection.invalidationHandler = { [weak connection] in
+            DispatchQueue.main.async { MainActor.assumeIsolated { connections.removeAll { $0 === connection || $0 == nil } } }
+        }
+    }
+
+    private static var apps: [SidebarHost] { connections.compactMap { $0.remoteObjectProxy as? SidebarHost } }
+
+    static func closeChat() {
+        let request = UUID().uuidString
+        apps.forEach { $0.closeChat(request: request) }
+    }
+    static func startMove() {
+        let request = UUID().uuidString
+        apps.forEach { $0.startMove(request: request) }
+    }
+}
+
 /// The line to Lamp: a connection on this Mac's own address, at the port Lamp wrote into this extension's
 /// Info.plist. Tried again until Lamp is there.
 @MainActor
@@ -43,7 +71,7 @@ final class Link: ObservableObject {
     static let shared = Link()
 
     @Published var state: SidebarState?
-    /// The wish's file after Share…, until the share menu has taken it (`ChatToolbar`).
+    /// The wish's file after Share…, until the share menu has taken it (`ChatBar`).
     @Published var sharing: SidebarSharing?
     @Published var connected = false
     /// Lamp hasn't answered for a while: it isn't open.
@@ -142,6 +170,7 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            ChatBar(state: link.connected ? link.state : nil)
             if let state = link.state, link.connected {
                 Chat(state: state)
             } else {
@@ -183,7 +212,6 @@ private struct Chat: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let toolbar = state.toolbar { ChatToolbar(state: state, toolbar: toolbar) }
             switch state.panel {
             case .versions: VersionsPanel(state: state)
             case .info: InfoPanel(state: state)
@@ -334,6 +362,10 @@ private struct LineView: View {
             }
         case .summary:
             ChatLook.SummaryLine(line.text)
+        case .work:
+            ChatLook.Worked(line.text) {
+                ForEach(line.steps ?? []) { step in LineView(line: step, busy: busy) }
+            }
         case .error:
             ChatLook.ErrorNote(line.text)
         case .offer:
@@ -491,7 +523,8 @@ private struct ComposerRow: View {
 
     var body: some View {
         ChatLook.MessageBar(busy: state.busy, canSend: canSend, attachHelp: "Attach files. You can also paste images and files here.",
-                            attach: chooseFiles, send: submit, stop: { link.send(.stop) }, focus: { focus += 1 }) {
+                            attach: chooseFiles, point: { link.send(.point) }, send: submit, stop: { link.send(.stop) },
+                            focus: { focus += 1 }) {
             Composer(text: $text, height: $height, placeholder: ChatLook.placeholder(busy: state.busy, empty: state.empty),
                      // No suggestion while a request from the chat is in the box, as in Lamp's window.
                      suggestion: state.replacing == true ? nil : state.suggestion,
@@ -518,19 +551,13 @@ private struct ComposerRow: View {
                 }
                 .padding(.top, 2)
             }
-        } beside: {
+        } inside: {
             // Dictation runs in Lamp, which has the microphone, and writes into the box as Lamp's window does.
-            if state.canDictate == true {
+            // Once something's typed the person has chosen the keyboard; while it listens, it's how dictation stops.
+            if state.canDictate == true, state.listening == true || text.isEmpty {
                 let listening = state.listening ?? false
-                Button { link.send(.dictate(!listening)) } label: {
-                    Image(systemName: listening ? "mic.fill" : "mic")
-                        .foregroundStyle(listening ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-                        .symbolEffect(.pulse, isActive: listening)
-                }
-                .buttonStyle(ChatLook.Round(prominent: false))
-                .disabled(state.submitting == true)
-                .help(listening ? "Stop dictation" : "Dictate a change")
-                .accessibilityLabel(listening ? "Stop dictation" : "Dictate a change")
+                ChatLook.MicButton(listening: listening) { link.send(.dictate(!listening)) }
+                    .disabled(state.submitting == true)
             }
         }
         // Lined up with the chat above it, as in Lamp's window.

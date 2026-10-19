@@ -110,15 +110,12 @@ extension ChatLook {
                         .buttonStyle(.plain)
                         .help("Remove from the queue")
                         .accessibilityLabel("Remove from the queue")
-                    Text(text)
-                        .lineSpacing(2)
-                        .padding(.horizontal, 12).padding(.vertical, 8)
-                        .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
-                        .foregroundStyle(.secondary)
+                    UserBubble(text, waiting: true)
                 }
                 // The width limit goes around the button too, so it stays next to the bubble.
-                .frame(maxWidth: 480 + 22, alignment: .trailing)
-                if place.last { caption }
+                .frame(maxWidth: 480 + 22 + ChatLook.tailRoom, alignment: .trailing)
+                .padding(.leading, 40)
+                if place.last { caption.padding(.trailing, ChatLook.tailRoom) }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
@@ -247,6 +244,7 @@ extension ChatLook {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointingHand()
                 .foregroundStyle(.secondary)
                 if showCommand {
                     // A short command takes only the room it needs; a long one scrolls rather than pushing the chat

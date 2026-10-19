@@ -181,23 +181,29 @@ extension LogLine {
             }
         }
         if let latest { answers.insert(latest) }
-        // A result card saved by an earlier Lamp isn't shown: the agent's last message says what it did.
+        // A result card saved by an earlier Lamp isn't shown: the agent's last message says what it did. A turn's summary
+        // stays, for how long it worked (`ChatItem.items`), and isn't drawn as a line of its own.
         return lines.filter {
-            !hidden.contains($0.id) && ($0.kind == .agent ? answers.contains($0.id) : !$0.isDetail && $0.kind != .result)
+            !hidden.contains($0.id)
+                && ($0.kind == .agent ? answers.contains($0.id) : $0.kind == .summary || !$0.isDetail && $0.kind != .result)
         }
     }
 }
 
-/// What the transcript shows: chat lines, with runs of tool calls and of status updates gathered up.
+/// What the transcript shows: chat lines, with runs of tool calls and of status updates gathered up, and a finished
+/// turn's steps folded into one line saying how long it worked.
 enum ChatItem: Identifiable {
     case line(LogLine)
     case tools([LogLine])
     case statuses([LogLine])
+    /// A finished turn's steps, under one line: "Worked for 2 min 3 s", opened to see them. `id` is the turn's summary.
+    case work(id: UUID, title: String, steps: [LogLine])
 
     var id: UUID {
         switch self {
         case .line(let line): line.id
         case .tools(let lines), .statuses(let lines): lines[0].id
+        case .work(let id, _, _): id
         }
     }
 
@@ -205,7 +211,56 @@ enum ChatItem: Identifiable {
         switch self {
         case .line(let line): line.kind
         case .tools: .tool
-        case .statuses: .status
+        case .statuses, .work: .status
+        }
+    }
+
+    /// With `gather` (the chat without Agent Details), each finished run's steps (what the agent ran, the app built
+    /// and opened) go into one line above its answer, as ChatGPT and Codex show the work behind an answer: the answer
+    /// is what's read, and the steps are a click away. Every finished run ends with its summary, so a run is what
+    /// comes after the one before it up to its own: requests don't mark them, since a clicked answer to a card is left
+    /// out of the chat and Lamp starts runs of its own (a build to fix). What comes after the last summary is a run
+    /// still going, whose steps show as they come. Lamp's note that it reopened the app stays out, since it explains
+    /// the window going away. A summary times its run and is otherwise left out; with Agent Details it's a line of
+    /// its own and nothing is gathered.
+    static func items(_ lines: [LogLine], gather: Bool) -> [ChatItem] {
+        guard gather else { return items(lines) }
+        var result: [ChatItem] = []
+        var run: [LogLine] = []
+        for line in lines {
+            guard line.kind == .summary else { run.append(line); continue }
+            result += folded(run, summary: line)
+            run = []
+        }
+        return result + items(run)
+    }
+
+    /// A finished run's lines, its steps under one line above its last message.
+    private static func folded(_ run: [LogLine], summary: LogLine) -> [ChatItem] {
+        let isStep = { (line: LogLine) in (line.kind == .status && line.text != ChatLook.reloaded) || line.kind == .tool }
+        let steps = items(run.filter(isStep)).flatMap { item -> [LogLine] in
+            switch item {
+            case .statuses(let lines), .tools(let lines): lines
+            case .line(let line): [line]
+            case .work(_, _, let steps): steps
+            }
+        }
+        let others = run.filter { !isStep($0) }
+        guard !steps.isEmpty else { return items(others) }
+        // Above the answer, the run's last message; at the run's end when it has none.
+        let place = others.lastIndex { $0.kind == .agent } ?? others.count
+        return items(Array(others[..<place])) + [.work(id: summary.id, title: workedFor(summary.text), steps: steps)]
+            + items(Array(others[place...]))
+    }
+
+    /// "Worked for 2 min 3 s", from a turn's summary ("Worked for 2m 3s · $0.12").
+    static func workedFor(_ summary: String) -> String {
+        guard let match = summary.firstMatch(of: #/Worked for (?:(\d+)m )?(\d+)s/#) else { return "Worked" }
+        let minutes = match.1.flatMap { Int($0) } ?? 0, seconds = Int(match.2) ?? 0
+        switch (minutes, seconds) {
+        case (0, _): return "Worked for \(seconds) s"
+        case (_, 0): return "Worked for \(minutes) min"
+        default: return "Worked for \(minutes) min \(seconds) s"
         }
     }
 
@@ -226,17 +281,21 @@ enum ChatItem: Identifiable {
         return items
     }
 
-    /// Space above an item: tight within a run of work, roomy between turns.
+    /// Space above an item: bubbles from one side close together, as Messages keeps them, the steps tucked
+    /// under them, and more room between turns.
     static func gap(after previous: ChatItem?, before item: ChatItem, isFinalAnswer: Bool) -> CGFloat {
         guard let previous else { return 0 }
         switch (previous.kind, item.kind) {
-        case (_, .user): return 32
-        case (.user, _): return 16
-        case (_, .summary): return 14
+        case (.summary, .user): return 16
+        case (_, .user): return 24
+        case (.user, _): return 12
+        case (_, .summary): return 16
         case (.tool, .detail), (.detail, .detail): return 4
-        case (_, .agent): return isFinalAnswer ? 20 : (previous.kind == .agent ? 10 : 14)
-        case (_, .tool): return 10
-        default: return 12
+        case (.agent, .agent): return 4
+        case (_, .agent): return isFinalAnswer ? 12 : 8
+        case (.agent, .tool), (.agent, .status): return 6
+        case (_, .tool): return 6
+        default: return 10
         }
     }
 }
@@ -258,6 +317,8 @@ struct Transcript: View {
     var pinned: UUID?
     /// Read so the chat follows the choice of what draws icons: it decides whether a "Draw Icon…" line shows.
     @AppStorage("iconModel") private var iconChoice = ""
+    /// With Agent Details on every step is its own line; without, a finished turn's steps are gathered up.
+    @AppStorage("showDetails") private var details = false
 
     var body: some View {
         let _ = iconChoice
@@ -267,7 +328,7 @@ struct Transcript: View {
         let openAsk = Talk.open(in: lines)?.id
         // Answers clicked on a card are shown by the card, folded where it was: not again as a message.
         let shown = lines
-        let items = ChatItem.items(progressShown ? Self.withoutStepInProgress(shown) : shown)
+        let items = ChatItem.items(progressShown ? Self.withoutStepInProgress(shown) : shown, gather: !details)
         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
             let isLast = index == items.count - 1
             let gap = ChatItem.gap(after: index > 0 ? items[index - 1] : nil, before: item,
@@ -281,6 +342,16 @@ struct Transcript: View {
                                              retryPhone: retryPhone, isLatestRequest: line.id == latestRequest).equatable()
                 case .tools(let lines): ToolGroup(lines: lines, running: isLast && busy && !progressShown).equatable()
                 case .statuses(let lines): StatusGroup(lines: lines, running: isLast && busy && !progressShown)
+                case .work(_, let title, let steps):
+                    ChatLook.Worked(title) {
+                        ForEach(ChatItem.items(steps)) { step in
+                            switch step {
+                            case .tools(let lines): ToolGroup(lines: lines, running: false).equatable()
+                            case .statuses(let lines): StatusGroup(lines: lines, running: false)
+                            default: EmptyView()
+                            }
+                        }
+                    }
                 }
             }
             .padding(.top, gap)
@@ -406,6 +477,7 @@ struct LogRow: View, Equatable {
                 if expandedDetail || fullDetailHeight > shownDetailHeight + 1 {
                     Button(expandedDetail ? "Show Less" : "Show Full Output") { expandedDetail.toggle() }
                         .buttonStyle(.link)
+                        .pointingHand()
                         .font(.caption)
                 }
             }
@@ -441,7 +513,7 @@ struct ToolGroup: View, Equatable {
     var body: some View {
         let calls = lines.map { ToolCall($0.text) }
         if calls.count == 1 {
-            ToolRow(call: calls[0], help: lines[0].text, running: running)
+            ToolRow(call: calls[0], help: lines[0].text, running: running).padding(.leading, ChatLook.stepIndent)
         } else {
             VStack(alignment: .leading, spacing: 4) {
                 Button {
@@ -455,7 +527,7 @@ struct ToolGroup: View, Equatable {
                         Text(Self.summary(calls))
                         if running && !expanded, let last = calls.last, !last.argument.isEmpty {
                             Text(last.argument)
-                                .font(.system(.callout, design: .monospaced))
+                                .font(.system(.subheadline, design: .monospaced))
                                 .foregroundStyle(.tertiary)
                                 .lineLimit(1).truncationMode(.middle)
                         }
@@ -464,11 +536,12 @@ struct ToolGroup: View, Equatable {
                             .foregroundStyle(.tertiary)
                             .rotationEffect(.degrees(expanded ? 90 : 0))
                     }
-                    .font(.callout)
+                    .font(ChatLook.stepFont)
                     .foregroundStyle(.secondary)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointingHand()
                 if expanded {
                     ForEach(Array(zip(calls, lines)), id: \.1.id) { call, line in
                         ToolRow(call: call, help: line.text, running: running && line.id == lines.last?.id)
@@ -476,6 +549,7 @@ struct ToolGroup: View, Equatable {
                     .padding(.leading, 10)
                 }
             }
+            .padding(.leading, ChatLook.stepIndent)
         }
     }
 
@@ -516,12 +590,12 @@ struct ToolRow: View {
             Text(call.verb).foregroundStyle(.secondary)
             if !call.argument.isEmpty {
                 Text(call.argument)
-                    .font(.system(.callout, design: .monospaced))
+                    .font(.system(.subheadline, design: .monospaced))
                     .foregroundStyle(.tertiary)
                     .lineLimit(1).truncationMode(.middle)
             }
         }
-        .font(.callout)
+        .font(ChatLook.stepFont)
         .help(help)
     }
 }

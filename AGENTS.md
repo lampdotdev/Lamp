@@ -598,8 +598,8 @@ heading in its binary (`Store.screenTextMarker`): such an app is told to be rebu
 A Mac app can be changed while it's in use (apps show the wand while the file `MagicPanel.flag`, which Lamp writes
 at launch, is beside their folders, checked each time a window comes forward): `LampMagic` in LampSupport.swift puts a
 wand at the top right of each of its windows, which opens the app's chat beside that window
-(`LampSidebar`; where it goes is below) and is hidden while the chat is open, whose own close button closes it, so one
-chat has one control (`LampMagic.showWand`); the app menu's Customize with Lamp… (⇧⌘E) opens it too (`LampSidebar.openFromMenu`), and in Lamp's window
+(`LampSidebar`; where it goes is below) and stays where it is while the chat is open, lit, closing the chat when
+clicked again, so people always find it in the same place (`LampMagic.showWand`); the app menu's Customize with Lamp… (⇧⌘E) opens it too (`LampSidebar.openFromMenu`), and in Lamp's window
 when the app has no window to put it beside. In a window with a title bar the wand is a title bar accessory. A
 window whose content runs under a title bar with nothing in it (a game, `.hiddenTitleBar`) has no bar for it, and an
 accessory would give it one: there the wand floats at the top right over the content, level with the traffic
@@ -626,7 +626,9 @@ process of its own whose view the app hosts (`EXHostViewController`) but can't d
 the chat's content, never the app: the extension shows what Lamp sends and passes on what the person does
 (`SidebarWire`, one JSON value a line, in Sources/LampSidebarKit), so all the chat does stays in Lamp
 (`SidebarServer`: the lines as Lamp's window shows them without Agent Details, gathered and spaced as `Transcript`
-does, the draft, attachments, the open question card). Both draw the chat with the same pieces, in
+does, the draft, attachments, the open question card). Without Agent Details a finished turn's steps are one line above
+its answer, "Worked for 2 min 3 s" from the turn's summary, which opens to show them (`ChatItem.items(gather:)`,
+`ChatLook.Worked`); a turn still going shows its steps as they come. Both draw the chat with the same pieces, in
 Sources/LampSidebarKit (`Composer`, the message box; `ChatLook`, the bubbles, statuses, progress line, Stop and Send),
 so a change to how Lamp's chat looks is made there and reaches both; the sidebar program is part of `BuildStamp`, so
 apps installed with an earlier one are built again when next opened. It reaches Lamp on this Mac's own address at `Edition.sidebarPort` (macOS keeps other apps, Lamp
@@ -636,7 +638,8 @@ running a sidebar) and checking that it runs the very extension Lamp signed for 
 signed is kept in Lamp's own folder (`Sidebar.remember`), and the extension is signed with the hardened runtime so
 nothing can be loaded into it. The extension must start as Apple's own do, through `_NSExtensionMain` (the linker's
 entry point), or it crashes before its code runs. Whatever the app's process can do, its generated code can, so the
-app has no way to speak to the agent that builds it: it only shows the chat and says where its window is. The draft
+app has no way to speak to the agent that builds it: it only shows the chat, says where its window is, and closes or
+moves the panel when the chat asks (`LampSidebarHost`, the one thing the chat asks of it). The draft
 is shared with Lamp's window (`Store.updateDraft`). A sidebar left open opens again with the app's first window when
 the app reopens (`LampSidebar.restore`). An app
 installed without the extension (by an earlier Lamp) shows its chat in Lamp's window instead. A change still reopens
@@ -644,16 +647,16 @@ the app; the rule (`Agent.Rules.macGenerated`) asks the agent to keep what the p
 `@SceneStorage`, so it comes back as they left it. To make that look like the window changing in place: as the app
 quits it leaves a picture of its front window and where it was in its runtime folder (`LampMagic.leaveCover`); while
 the app's turn is going, Lamp shows that picture where the window was (`MagicPanel.showCover`, a borderless window
-marked "Updating…", with plain glass where a chat beside it was: `cover-chat-frame.txt`, `MagicPanel.chatCover`), the new
+marked "Updating…", with the chat's blank paper where a chat beside it was: `cover-chat-frame.txt`, `MagicPanel.chatCover`), the new
 copy opens its first window in the same place (`putBack`), and the picture fades out once the new copy reports its window
 (or goes when the turn ends without it).
 
 Where the chat goes (`LampSidebar.show`): always a panel of its own beside the window, never inside it (a column there
 took more room from the app than it gave the chat). It's a borderless `NSPanel` attached as the window's child
 (`LampSidebar.Beside`), so macOS moves, stacks, hides and takes it to Stage Manager's strip and other Spaces with the
-window, holding the chat on a card of Liquid Glass (`NSGlassEffectView`, `LampSidebar.card`) with what's behind the window
-showing through; the chat draws no paper of its own there (`chatGround`). Before macOS 26, which has no Liquid Glass, the
-card is the chat's own paper (`LampSidebar.Paper`). It goes on the side with room, the right first, at its kept width or
+window, holding the chat on a card of the chat's own paper (`LampSidebar.card`, `LampSidebar.Paper`, and `chatGround` in
+the chat), opaque: glass let what's behind the window show through, which drew the eye from the chat, and drew a bright
+line round its edge. It goes on the side with room, the right first, at its kept width or
 the room there is down to its narrowest. Opened where neither side has room, the window makes some (`makeRoom`): it moves
 over on its screen when that's enough, else it's made narrower, never below its own smallest width, to leave the chat its
 narrowest on the right, and gets the width back when the chat closes (`narrowedBy`, each window its own; a change that reopens the app hands it
@@ -661,19 +664,28 @@ to the window put back in its place, `handOn`; given back after full screen when
 screen, a window that can't be that narrow) does the chat go over the window's right edge, below its title bar, still its
 own panel (`Chat.over`). A move or resize the person makes never moves or narrows their window: the chat changes side, or
 goes over the edge when neither side has room, and back beside when there's room again (`replace`); going in and out of
-full screen takes the panel down and puts it back where it now goes. The chat is dragged wider or narrower by an edge of
-its own (`WidenEdge`, the panel's outer side, or the side facing into the window when it's over it), between
-`LampSidebar.narrowest` and `widest`, and the width is kept for the app (`LampSidebar.width`). The edge sits beside the
+full screen takes the panel down and puts it back where it now goes. Dragged by the chat's bar, the panel comes away from
+the window (`Beside.detached`): no longer its child, it goes where it's put, floats over the app's windows while the app is
+in front, and stays there through the window's moves and the chat closing and opening again, until the app quits (or the
+window goes full screen), when it goes back beside the window. The press lands in the chat's process, so the chat asks the
+app to move it (`startMove`) and the app follows the pointer until the button is let go. The chats' process can't
+tell which of an app's chat connections is its own, so it asks over each with one request id, and the app picks the
+chat once per request (`LampSidebar.isAsked`: the one under the pointer, else the one with the keyboard). Beside the window the chat is
+dragged wider or narrower by an edge of its own (`Edges`, the panel's outer side, or the side facing into the window when
+it's over it); moved away, by any edge or corner. The edges are a rim inside the card around the chat (`Beside.rim`), not
+room around it: the glass glows a little past its edge, and a margin showed that glow cut off square by the panel. The width stays between
+`LampSidebar.narrowest` and `widest` and is kept for the app (`LampSidebar.width`). The edges sit beside the
 chat, never over it: the chat is drawn by another process, which takes every click on its part of the window. The panel
 is told outright to take mouse events (`ignoresMouseEvents` off): its glass is drawn by the window server, so its own
 pixels are clear, and a clear window lets clicks on clear pixels through. The panel takes the keyboard for the message box
-without becoming the main window. The chat's close button sits in the bar at the top of the card, drawn by the app since
-it does only what the app could do anyway: beside the window it's the sidebar symbol on the chat's side, over the window,
-where the chat isn't a sidebar, a plain close mark (`closeSymbol`). What Lamp's window has in
-its toolbar is the chat's own, drawn by the extension above the chat (`ChatToolbar`), three a side: Undo Last Change, More and
-Delete, then Point at Something, Agent Details and Versions. More holds what's used least, Share (the file is made by
-Lamp and handed over whole, `SidebarState.sharing`, since the extension can't read it; sent once, so the extension keeps
-it as it's read, `Link.sharing`) and Wish Info. Versions and Wish Info show as panels in place of the chat (`VersionsPanel`, a page of versions at a time with the rest a click away; `InfoPanel`; the info rows are
+without becoming the main window. The chat's bar is one row drawn by the extension (`ChatBar`): a red close button like a
+window's, which asks the app to close the chat (`closeChat`), "Customize" and the app's name, then the buttons: Wish Info,
+Share (the file is made by Lamp and handed over whole, `SidebarState.sharing`, since the extension can't read it; sent
+once, so the extension keeps it as it's read, `Link.sharing`), Agent Details and Delete, then Undo Last Change and Versions.
+Where the title and every button don't fit, Undo stays and a button for the rest takes their place, which pressed stays
+lit and puts the rest, Versions beside Undo, in the title's place. The room between the buttons moves the chat. ⌘` goes
+through the app's windows with each open chat right after its window (`LampSidebar.watchCycling`), since macOS leaves
+panels out of its own cycle. Versions and Wish Info show as panels in place of the chat (`VersionsPanel`, a page of versions at a time with the rest a click away; `InfoPanel`; the info rows are
 `AppInfoView.sections`, the same list Lamp's window draws). An app's chat is in one place at a time: when it opens beside
 the app, its window in Lamp closes, unless Lamp is in front with that window (`MagicPanel.chatOpenedInApp`). Lamp's window
 keeps the chat where there's no app window to put it beside: a wish not yet made or being found, a menu bar app, a widget,
@@ -681,10 +693,8 @@ a background app, an iPhone app, an app built by a Lamp from before the sidebar,
 Image Playground. An app opened for its chat that never connects one (it couldn't start) has its chat shown in Lamp's
 window (`MagicPanel.showChatIfAppNeverComes`). The chat is drawn by another process, which AppKit's focus doesn't follow
 (what had the keyboard, a list say, keeps it through a click in the chat), so once a click in the chat has landed the
-keyboard goes to it (`LampSidebar.watchClicks`). Point at Something in the App is a
-button with the chat's tools at its top in the sidebar (`ChatToolbar`), where the + by the message box keeps only Add
-Files, and in Lamp's window an item of that + beside Add Files (`ChatLook.MessageBar`'s `point`, `PlusMenu`) while the
-app is open on this Mac (`MagicPanel.point`; from Lamp's window, Lamp comes back in front when it's done). It lets the person point at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), outlines the smallest named
+keyboard goes to it (`LampSidebar.watchClicks`). Point at the Screen is an item of the + by the message box, beside
+Attach a File…, in both chats (`ChatLook.MessageBar`'s `point`, `PlusMenu`) while the app is open on this Mac (`MagicPanel.point`; from Lamp's window, Lamp comes back in front when it's done). It lets the person point at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), outlines the smallest named
 thing under the pointer from its own accessibility tree (`LampDriver.elements`), a click where nothing is named (a game's
 ball, a drawing) takes the area around it, and a drag draws a box of the person's own; it then leaves a cropped
 picture in its runtime folder and says what it is (an area is named by where it is, "Top left area"); Lamp attaches that picture to the message, named after the

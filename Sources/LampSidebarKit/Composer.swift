@@ -175,7 +175,7 @@ public struct Composer: NSViewRepresentable {
 
 final class ComposerTextView: NSTextView {
     var placeholder = ""
-    var suggestion: String?
+    var suggestion: String? { didSet { if suggestion != oldValue { updateHintTip() } } }
     var onDismissSuggestion: (() -> Void)?
     var onEscape: (() -> Void)?
     var onSubmit: (() -> Void)?
@@ -222,8 +222,23 @@ final class ComposerTextView: NSTextView {
     override func setFrameSize(_ newSize: NSSize) {
         let widthChanged = abs(newSize.width - frame.width) > 0.5
         super.setFrameSize(newSize)
-        if widthChanged { onWidthChange?() }
+        if widthChanged {
+            onWidthChange?()
+            updateHintTip()
+        }
     }
+
+    override func didChangeText() {
+        super.didChangeText()
+        updateHintTip()
+    }
+
+    /// The key cap says what it's for when pointed at: shrunk to the key alone, it doesn't say so itself.
+    private func updateHintTip() {
+        removeAllToolTips()
+        if showsSuggestion { addToolTip(hintRect, owner: Self.hintTip as NSString, userData: nil) }
+    }
+    private static let hintTip = "Click here or press Tab to accept the suggestion"
 
     override func mouseDown(with event: NSEvent) {
         if showsSuggestion, hintRect.contains(convert(event.locationInWindow, from: nil)) {
@@ -298,6 +313,7 @@ final class ComposerTextView: NSTextView {
     }
 
     private static let hint = "⇥ to accept"
+    private static let shortHint = "⇥"
     private static let hintAttributes: [NSAttributedString.Key: Any] = [
         .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize - 1, weight: .medium),
         .foregroundColor: NSColor.tertiaryLabelColor,
@@ -307,9 +323,20 @@ final class ComposerTextView: NSTextView {
         layoutManager?.defaultLineHeight(for: font ?? .systemFont(ofSize: NSFont.systemFontSize)) ?? 17
     }
 
-    /// The "⇥ to accept" key cap at the right end of the first line.
+    /// "⇥ to accept", or just "⇥" where the suggestion wouldn't fit beside the longer one: a suggestion cut short
+    /// can't be read, and one that can't be read won't be accepted.
+    private var hint: String {
+        guard let suggestion else { return Self.hint }
+        let padding = textContainer?.lineFragmentPadding ?? 5
+        let room = bounds.width - 2 * (textContainerInset.width + padding)
+        let words = (suggestion as NSString).size(withAttributes: [.font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)]).width
+        let cap = (Self.hint as NSString).size(withAttributes: Self.hintAttributes).width + 10 + 8
+        return words + cap <= room ? Self.hint : Self.shortHint
+    }
+
+    /// The key cap at the right end of the first line.
     private var hintRect: NSRect {
-        let size = (Self.hint as NSString).size(withAttributes: Self.hintAttributes)
+        let size = (hint as NSString).size(withAttributes: Self.hintAttributes)
         let width = ceil(size.width) + 10, height = ceil(size.height) + 2
         return NSRect(x: bounds.maxX - width - 2, y: textContainerInset.height + (lineHeight - height) / 2,
                       width: width, height: height)
@@ -327,7 +354,7 @@ final class ComposerTextView: NSTextView {
             // Only an outline: a filled key cap drew the eye away from the suggestion itself.
             NSColor.quaternaryLabelColor.setStroke()
             path.stroke()
-            (Self.hint as NSString).draw(at: NSPoint(x: pill.minX + 5, y: pill.minY + 1), withAttributes: Self.hintAttributes)
+            (hint as NSString).draw(at: NSPoint(x: pill.minX + 5, y: pill.minY + 1), withAttributes: Self.hintAttributes)
             right = pill.minX - 8
         }
         let style = NSMutableParagraphStyle()
