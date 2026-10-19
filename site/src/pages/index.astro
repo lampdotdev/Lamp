@@ -1,8 +1,7 @@
 ---
-import { Image, getImage } from "astro:assets";
+import { Image } from "astro:assets";
 import type { ImageMetadata } from "astro";
 import Base from "../layouts/Base.astro";
-import Carousel from "../components/Carousel.astro";
 import DownloadButton from "../components/DownloadButton.astro";
 import QuickLook from "../components/QuickLook.astro";
 import FirstIdea from "../components/FirstIdea.astro";
@@ -16,76 +15,21 @@ import UsesYourMac from "../components/visuals/UsesYourMac.astro";
 import BeautifulByDefault from "../components/visuals/BeautifulByDefault.astro";
 import WorksWithYourMac from "../components/visuals/WorksWithYourMac.astro";
 import ChangeItAnyTime from "../components/visuals/ChangeItAnyTime.astro";
+import SignupsWidget from "../components/visuals/SignupsWidget.astro";
 import AppleSilicon from "../components/visuals/AppleSilicon.astro";
 import ShareWithAnyone from "../components/visuals/ShareWithAnyone.astro";
 import icon from "../assets/AppIcon.png";
-// The welcome's porcelain lamp, rendered for the hero card in Blender (see RELEASING.md).
-import heroLamp from "../assets/hero-lamp-reflection.png";
 import anthropic from "../assets/logos/anthropic.png";
 import openai from "../assets/logos/openai.png";
 import openrouter from "../assets/logos/openrouter.png";
 import ollama from "../assets/logos/ollama.png";
 import lmstudio from "../assets/logos/lmstudio.png";
 
-// Lamp's window just after building an app, and windows of apps it built, all taken from Lamp Dev with
-// made-up data (see RELEASING.md). The iPhone and iPad apps are the simulator's screens in a drawn frame.
-import lampWindow from "../assets/lamp.png";
-import readingQueue from "../assets/apps/reading-queue.png";
-import neonBricks from "../assets/apps/neon-bricks.png";
+// A window of an app Lamp built, taken from Lamp Dev with made-up data (see RELEASING.md), beside the chat that
+// changes it.
 import habitStreaks from "../assets/apps/habit-streaks.png";
-import paletteStudio from "../assets/apps/palette-studio.png";
-import trailLog from "../assets/apps/trail-log.png";
-import tripTab from "../assets/apps/trip-tab.png";
-import mealPlanner from "../assets/apps/meal-planner.png";
 
-const lampWindowLarge = await getImage({ src: lampWindow, width: lampWindow.width, format: "webp" });
-
-const apps = [
-  {
-    image: readingQueue,
-    name: "Reading Queue",
-    request: "I'm building an icon system and running design reviews, and my reading pile is out of control. I drop in PDFs and links, and it ranks them by what matters for that work, with one line on each and why it's worth my time.",
-    alt: "Reading Queue: articles ranked against what you're working on, with why each one matters",
-  },
-  {
-    image: trailLog,
-    name: "Trail Log",
-    request: "Trail Log: every Lake District hike I do this year, with the route on a map, the distance, the climb, how long it took and my notes from the day, and this year's totals at the top, for bragging.",
-    alt: "Trail Log on two iPhones: this year's hikes with their totals, and Helvellyn's route on a map with its distance, climb and notes",
-  },
-  {
-    image: neonBricks,
-    name: "Neon Bricks",
-    request: "The brick breaker I played as a kid, but glowing neon, the way I always pictured it: a paddle on the mouse or arrow keys, a few levels, power-ups and my own high score table.",
-    alt: "Neon Bricks: a glowing brick breaker game mid-play",
-  },
-  {
-    image: mealPlanner,
-    name: "Meal Planner",
-    request: "Meal Planner for the four of us: the week side by side, breakfast, lunch and dinner cards I can drag between days, and a shopping list built from the week's meals, by aisle, to tick off at the shop.",
-    alt: "Meal Planner on an iPad: a week of family meals and the shopping list for it",
-  },
-  {
-    image: habitStreaks,
-    name: "Habit Streaks",
-    request: "The five habits I keep promising myself (a morning walk, 20 pages, meditating, water, no phone after 10pm), with streaks, the last three months as a heat map and a chart of each week.",
-    alt: "Habit Streaks: daily habits with streaks, a three-month heat map and a weekly chart",
-  },
-  {
-    image: tripTab,
-    name: "Trip Tab",
-    request: "Trip Tab: our Lisbon weekend, four of us. I add who paid for what and who it was for, and it shows everyone's balance and the fewest payments to settle up, so nobody has to do the maths.",
-    alt: "Trip Tab on two iPhones: four friends' balances after a weekend in Lisbon, and the three payments that settle up",
-  },
-  {
-    image: paletteStudio,
-    name: "Palette Studio",
-    request: "I design for fun and keep losing my colour ideas. I describe a mood or drop in a photo from a trip, and it makes a five-colour palette with names, hex codes and a contrast check for text.",
-    alt: "Palette Studio: a five-colour palette called Lisbon Afternoon with names, hex codes and contrast scores",
-  },
-];
-
-// Icons Lamp made for apps it built, in one row under "Real apps. Really yours.", all the same size. The row is centred
+// Icons Lamp made for apps it built, in one row under "No localhost shenanigans.", all the same size. The row is centred
 // on the tile and wider than it, so it runs off both edges; at the tile's full width (1104px) the 136px icons
 // and 24px gaps put each edge through the middle of an icon. The order mixes the colours, as several are
 // purple. A name missing from src/assets/icons/ is skipped.
@@ -164,8 +108,8 @@ const points: Point[] = [
     visual: ShareWithAnyone,
   },
   {
-    title: "Change your mind. No regrets.",
-    text: "Ask for a change whenever you like. Lamp saves a version each time, so you can try anything and go back.",
+    title: "Try anything. Go back any time.",
+    text: "Lamp saves a version with every change, so nothing you try is a mistake.",
     tile: "bento:col-span-4 bg-linear-to-b from-mint-from to-mint-to",
     visual: ChangeItAnyTime,
     centre: true,
@@ -184,11 +128,32 @@ const providers = [
   { logo: lmstudio, name: "LM Studio" },
 ];
 
-// On the page the last sentence gets a line of its own; elsewhere (search results, link previews) it's one run.
-// The list stays on one line.
-const pitch = "Made by you, for nobody else. Tools,\u00a0apps,\u00a0games.";
+// The hero's line under the heading, and with "Little things made just for you." the page's description for search
+// results and link previews.
+const pitch = "Something for your work, one for your hikes, even one to help you learn Italian in time for your sister's\u00a0wedding.";
 const noCode = "For Mac and iOS, no coding needed, with AI you already have.";
-const description = `${pitch} ${noCode}`;
+const description = `Little things made just for you. ${pitch} ${noCode}`;
+
+// Things people know with the one part only their owner would want: a reader knows what a dashboard is, and the
+// part after "but" is what no company would ship. They go from the everyday to the wildly particular, so the reader
+// is with them by the time they get strange, and each lives somewhere different (a widget, something that just
+// runs, the iPad, a game), since what Lamp makes isn't only windows; the pictures say where without a word. They're
+// the ideas page's for now, and the widget's is drawn, until each has one of its own.
+const thumbs = import.meta.glob<ImageMetadata>("../assets/ideas/thumbs/*.jpg", { eager: true, import: "default" });
+const buts = [
+  { visual: SignupsWidget, known: "Your analytics dashboard,", but: "but only today's sign-ups against last week's, on your desktop." },
+  { picture: "school-dates", known: "A family calendar,", but: "but it fills itself with every date buried in the school's emails." },
+  { picture: "presenting", known: "Do Not Disturb,", but: "but it also hides your desktop and personal tabs when you share your screen." },
+  { picture: "inbox-invaders", known: "Space Invaders,", but: "but the aliens are the emails you haven't answered." },
+  { picture: "grandma-s-cards", known: "A recipe app,", but: "but it's Grandma's handwritten cards, her notes and all." },
+  { picture: "whose-turn", known: "A chore chart,", but: "but fair over the month, on the old iPad in the kitchen." },
+  { picture: "tooth-fairy-ledger", known: "A budget,", but: "but for the tooth fairy, so the twins never compare notes." },
+  { picture: "has-biscuit-eaten", known: "A pet app,", but: "but just two big buttons by the bowl, so Biscuit stops getting two dinners." },
+  { picture: "bedtime-stories", known: "A storybook,", but: "but a new one every night, starring your daughter Maya and her giraffe Kevin." },
+  { picture: "our-street-the-board-game", known: "Monopoly,", but: "but it's your town, with Auntie Jo's house as Mayfair." },
+  { picture: "campaign-notes", known: "Your D&D campaign notes,", but: "but they know which secrets the party hasn't found yet, and open each session with a dramatic recap." },
+  { picture: "frank-the-snake", known: "Snake,", but: "but the snake is your dachshund, eating the socks he really steals." },
+].map((item) => ({ ...item, image: item.picture ? thumbs[`../assets/ideas/thumbs/${item.picture}.jpg`] : undefined }));
 ---
 
 <Base title="Lamp: turn your wishes into selfish software" description={description} image="/og.jpg">
@@ -199,14 +164,17 @@ const description = `${pitch} ${noCode}`;
   <main>
     <!-- The hero sits in a card of its own across the window, like the tiles below, to set it apart from what
          follows. -->
-    <div class="px-2 pt-[calc(var(--menu-height)+1.5rem)] sm:px-3">
+    <div class="px-2 pt-2 sm:px-3 sm:pt-3">
     <!--
       Opens like Apple's product pages: the card starts as tall as the window with the icon large in its middle,
-      then the card shrinks to its own height as the icon settles and the words come up under it, the button
-      appears, and the porcelain lamp (the welcome's, rendered for this card) slides up from the bottom edge. Once, on load, and not at all for people who've asked for less
-      motion (global.css).
+      then the card shrinks to its own height as the icon settles and the words come up under it, and the button
+      appears. Once, on load, and not at all for people who've asked for less motion (global.css). The card stops
+      short of the window's bottom, so the next heading shows under it and it's plain there's more.
     -->
-    <section class="hero-card hero-sky relative flex flex-col items-center overflow-hidden rounded-[28px] px-6 pt-14 text-center sm:pt-16">
+    <!-- Opened at a section (the menu bar's AI or Features from another page), the hero is already in place: while
+         the card shrinks, everything under it moves up, and the section the browser went to would slide away. -->
+    <script is:inline>if (location.hash) document.documentElement.classList.add("no-intro");</script>
+    <section class="hero-card hero-sky relative flex flex-col items-center overflow-hidden rounded-[28px] px-6 pt-26 pb-14 text-center sm:pt-28 sm:pb-16">
       <div class="hero-icon">
         <Image
           src={icon}
@@ -226,7 +194,7 @@ const description = `${pitch} ${noCode}`;
         <h1 class="mt-5 font-display text-5xl leading-[1.05] font-bold tracking-tight text-balance sm:text-6xl xl:text-7xl">
           Lamp makes software<br class="hidden md:inline" /> crafted just for&nbsp;you.
         </h1>
-        <p class="mt-5 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">{together(pitch)}<br />{together(noCode)}</p>
+        <p class="mt-5 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">{together(pitch)} {together(noCode)}</p>
       </div>
       <div class="hero-button relative z-10 mt-9">
         <DownloadButton place="hero">
@@ -239,53 +207,81 @@ const description = `${pitch} ${noCode}`;
           </a>
         </DownloadButton>
       </div>
-      <!-- As wide as the card allows, but no taller than leaves the whole card in the window, with a little space
-           under it: the menu bar and the words above take about 676px, and the render is 2.98 times as wide as it
-           is tall. -->
-      <Image
-        src={heroLamp}
-        alt=""
-        widths={[800, 1200, 1600, 2400]}
-        sizes="100vw"
-        loading="eager"
-        class="hero-lamp pointer-events-none mt-6 h-auto max-w-none select-none sm:mt-4"
-        style="width: min(100%, calc((100svh - 676px) * 2.98))"
-      />
     </section>
 
     </div>
 
+    <!--
+      The page goes from the familiar to the new: things people know with something only they'd want, getting
+      stranger as they go, then that they change as they're used, then their own (the first-idea section).
+    -->
     <section>
-      <div class="mx-auto max-w-6xl px-4 pt-20 sm:px-6 sm:pt-24">
-        <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">For work. For play. For&nbsp;you.</h2>
+      <div class="mx-auto max-w-6xl px-4 pt-16 pb-14 sm:px-6">
+        <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Real apps. Uniquely&nbsp;yours.</h2>
         <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
-          {together("Something for the task that bugs you, or a game for when you're done.")}<br />{together("Each of these started as a single wish:")}
+          {together("Lots of little things, each doing things exactly your way.")}
         </p>
-        <Carousel slides={apps} />
+        <ul class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {
+            buts.map((item) => (
+              <li class="overflow-hidden rounded-[22px] bg-panel">
+                {item.image ? (
+                  <Image
+                    src={item.image}
+                    alt=""
+                    widths={[400, 720]}
+                    sizes="(min-width: 1024px) 360px, (min-width: 640px) 50vw, 100vw"
+                    loading="lazy"
+                    class="aspect-[3/2] w-full object-cover"
+                  />
+                ) : item.visual && <item.visual />}
+                <div class="px-6 pt-4 pb-6">
+                  <p class="text-lg leading-snug font-semibold">
+                    <span class="text-muted">{item.known}</span> {together(item.but)}
+                  </p>
+                </div>
+              </li>
+            ))
+          }
+        </ul>
       </div>
     </section>
-
-    <FirstIdea />
 
     <section class="bg-panel">
       <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Feels like a genie, not&nbsp;like&nbsp;work.</h2>
+      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Change it while you're using&nbsp;it.</h2>
       <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
-        {together("Download it. Make a wish. No account, minimal setup.")}<br />{together("Then just chat to make it perfectly yours.")}
+        {together("Lamp apps are like documents.")}<br />{together("Change them in real time, try things out right on the spot.")}
       </p>
-      <Image
-        src={lampWindow}
-        alt="Lamp having just built a Reading Queue app: the request, the plan and a picture of the finished app"
-        widths={[640, 1024, 1600, 2048]}
-        sizes="(min-width: 1152px) 1104px, 100vw"
-        loading="lazy"
-        data-quicklook={lampWindowLarge.src}
-        class="mx-auto mt-10 h-auto w-full"
-      />
+      <!--
+        A stand-in until there's a real picture from Lamp: an app's window with the chat that opens beside it, a
+        change already made and the next one under way. Beside the window from sm, against its edge: the picture
+        has room for the window's shadow around it, so the window runs from 4% to 79% of its height and ends at 81%
+        of its width. Under the window on a phone.
+      -->
+      <div aria-hidden="true" class="relative mx-auto mt-10 max-w-5xl sm:ml-[3%] sm:w-[80%]">
+        <Image
+          src={habitStreaks}
+          alt=""
+          widths={[640, 1024, 1600]}
+          sizes="(min-width: 1024px) 780px, 100vw"
+          loading="lazy"
+          class="h-auto w-full"
+        />
+        <div class="mx-4 -mt-4 flex flex-col gap-3 rounded-[22px] bg-white/70 p-4 text-left text-[15px] leading-snug shadow-[0_20px_50px_-12px_rgba(0,0,0,0.25)] ring-1 ring-black/10 backdrop-blur-xl sm:absolute sm:top-[4%] sm:bottom-[21%] sm:left-[82%] sm:mx-0 sm:mt-0 sm:w-[30%] sm:justify-end">
+          <p class="ml-8 self-end rounded-2xl bg-[#cf620c] px-3.5 py-2 text-white">Make no phone after 10pm count double on weekends.</p>
+          <p class="mr-6 text-ink">Weekends now count double.</p>
+          <p class="ml-8 self-end rounded-2xl bg-[#cf620c] px-3.5 py-2 text-white">And put today's streak in the menu bar.</p>
+          <p class="flex items-center gap-2 text-muted"><span class="size-2 animate-pulse rounded-full bg-[#cf620c]"></span>Changing it…</p>
+          <div class="mt-2 rounded-full bg-white px-4 py-2.5 text-muted ring-1 ring-black/10">Ask for a change</div>
+        </div>
+      </div>
       </div>
     </section>
 
-    <section class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
+    <FirstIdea heading="So what's yours?" lead="Not sure yet? Answer a couple of questions." class="px-2 pt-16 sm:px-3 sm:pt-20" />
+
+    <section id="ai" class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
       <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Made with AI&nbsp;inside.</h2>
       <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
         {together("AI doesn't just make your software.")}<br />{together("It can be part of what it does.")}
@@ -293,13 +289,13 @@ const description = `${pitch} ${noCode}`;
       <div class="mt-10"><Bento points={smarts} /></div>
     </section>
 
-    <section class="bg-panel">
+    <section id="features" class="bg-panel">
       <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
       <Bento points={points}>
           <div class="overflow-hidden rounded-[28px] bg-page pt-12 text-center bento:col-span-10 sm:pt-16">
-            <h3 class="px-8 font-display text-3xl font-bold tracking-tight sm:text-5xl">Real apps. Really&nbsp;yours.</h3>
+            <h3 class="px-8 font-display text-3xl font-bold tracking-tight sm:text-5xl"><span class="sm:inline-block">No localhost shenanigans.</span> <span class="sm:inline-block">No subscription. Just&nbsp;there.</span></h3>
             <p class="mx-auto mt-4 max-w-[50rem] px-8 text-xl leading-[1.4] text-muted">
-              {together("In your Applications folder, your menu bar, your Dock and on your Home Screen.")}<br />{together("No browser tab, no subscription, no chat to come back to.")}
+              {together("In your Applications folder, your menu bar, your Dock and on your Home Screen.")}
             </p>
             <div aria-hidden="true" class="mt-8 pb-10 sm:mt-10 sm:pb-12">
               <div class="relative left-1/2 flex w-max -translate-x-1/2 gap-4 sm:gap-6">
