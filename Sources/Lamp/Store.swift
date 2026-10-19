@@ -424,8 +424,6 @@ final class Store: ObservableObject {
         /// The person kept the app open when this turn's build asked it to quit: it isn't asked a second time
         /// in the turn, and the agent isn't shown the copy on screen as its work.
         var keptOpen = false
-        /// The chat has said this turn closed the open app and opened it again (`ChatLook.reloaded`).
-        var saidReloaded = false
         /// The turn's last install put the change into the open app without reopening it: its end says the app
         /// is updated, not ready, whether that install was the agent's look or the turn's own.
         var updatedInPlace = false
@@ -449,12 +447,22 @@ final class Store: ObservableObject {
         var midTurn: [UUID] = []
         /// Requests handed to the engine that its output hasn't yet shown reaching the model (`received`).
         var handed: [UUID] = []
-        /// The engine running now, when it takes messages while it works (pi, Claude Code); nil otherwise.
+        /// The engine running now, which takes messages while it works; nil between runs.
         var steering: Engine?
         /// Claude Code's input, from its start until it has answered.
         var input: AgentInput?
         /// The engine is running a tool: a message written to it now reaches the model with the tool's result.
         var toolRunning = false
+        /// Codex's model has been heard from in this run, so it has the run's request and an interrupt now is one
+        /// Codex ends cleanly (`steer`). Its `turn.started` comes before the request is saved.
+        var codexStarted = false
+        /// Calls into Lamp being answered for this turn (an MCP tool, an approval): one may be under way before
+        /// the engine's output says so.
+        var answering = 0
+        /// What Codex is in the middle of (commands, tool calls, edits, searches), by its ids.
+        var codexActing: Set<String> = []
+        /// The messages Codex's run was interrupted to pass on: they start its next run, in the same conversation.
+        var codexCut: String?
         var claudeSession: String?          // Claude Code's conversation, as its own output says (Privacy.isOwnOutput)
         var writing: (line: UUID, unshown: String)?   // the message the agent is writing right now
         var showingWritten = false
@@ -2048,12 +2056,12 @@ final class Store: ObservableObject {
     }
 
     /// Whether the waiting messages can be sent to the agent in the turn that's running (Send Now). They go as one
-    /// group, so every one of them must be able to: the engine takes messages while it works (not Codex), and each is
-    /// a plain request. An answer to a card or a request sent again changes what the turn is for, and so does anything
-    /// while a wish is being found or once the agent has asked its questions; then they all wait for the next turn.
+    /// group, so every one of them must be able to: each is a plain request. An answer to a card or a request sent
+    /// again changes what the turn is for, and so does anything while a wish is being found or once the agent has
+    /// asked its questions; then they all wait for the next turn.
     func canSendNow(in project: LampProject) -> Bool {
         let waiting = waitingToSend(in: project)
-        guard !waiting.isEmpty, let turn = turns[project.id], Builder.engine != .codex, !turn.asked, !turn.stopped,
+        guard !waiting.isEmpty, let turn = turns[project.id], !turn.asked, !turn.stopped,
               current(project)?.finding == false else { return false }
         return waiting.allSatisfy { $0.card == nil && $0.replaces == nil && $0.tookBack.isEmpty }
     }
@@ -2611,25 +2619,26 @@ final class Store: ObservableObject {
             try? FileManager.default.removeItem(at: sessionFile)
             session = nil
         }
-        let run = Agent.run(prompt: prompt, files: files, project: project, offered: offers(in: project),
+        var run = Agent.run(prompt: prompt, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
-        let input = run.opening.map { opening in
-            let input = AgentInput()
-            input.write(opening)
-            return input
-        }
-        turn.input = input
-        // Codex's `exec` reads nothing once it has started, so with Codex a message waits for the next turn.
-        turn.steering = engine == .codex ? nil : engine
-        let status = await Shell.run(run.command, cwd: project.dir, env: run.env, input: input,
-                                     started: { turn.agent = $0 }) { [weak self] line in
-            guard let self else { return }
+        // Held strongly: it lives only while the engine runs. (A weak capture here, in a closure kept in a
+        // variable rather than passed straight to `Shell.run`, came back nil and dropped every line.)
+        let onLine: @MainActor (String) -> Void = { [self] line in
             for event in Agent.parseLine(line) {
                 // A tool is running from the call until the model is heard from again.
                 switch event {
                 case .tool: turn.toolRunning = true
                 case .text, .textPiece, .step, .finished: turn.toolRunning = false
                 default: break
+                }
+                // The model has been heard from, so Codex has saved the request (the run's own, or messages passed on).
+                if engine == .codex, !turn.codexStarted {
+                    switch event {
+                    case .acting, .text:
+                        turn.codexStarted = true
+                        received(project)
+                    default: break
+                    }
                 }
                 // Not the engine saying it passed a message of the person's on: that isn't the model answering.
                 if case .raw = event {} else if case .failed = event {} else if case .received = event {} else { answered = true }
@@ -2657,6 +2666,8 @@ final class Store: ObservableObject {
                     } else {
                         log(project, .agent, text)
                     }
+                    // Between Codex's steps: a message waiting to be passed on can go now.
+                    if engine == .codex { steer(project) }
                 case .step(let tool):
                     if !tool.isEmpty { endOnQuestions(turn, before: tool) }
                     // The model has finished writing the file it was streaming. One that writes every file in a
@@ -2707,6 +2718,8 @@ final class Store: ObservableObject {
                     steer(project)
                 case .cost(let amount): cost += amount
                 case .failed(let text):
+                    // Codex saying the turn Lamp interrupted didn't finish: it goes on in the next run.
+                    if turn.codexCut != nil { break }
                     if engine == .pi, Agent.isRequestTooLarge(text), failure.map(Agent.isRequestTooLarge) != true {
                         log(project, .status, Agent.droppingPictures)
                     }
@@ -2714,6 +2727,8 @@ final class Store: ObservableObject {
                 case .raw(let text): log(project, .detail, text)
                 case .received:
                     received(project)
+                case .acting(let id, let started):
+                    if started { turn.codexActing.insert(id) } else { turn.codexActing.remove(id); steer(project) }
                 case .finished:
                     // Claude Code has answered. A message sent from now on is the next request.
                     turn.input?.close()
@@ -2729,7 +2744,35 @@ final class Store: ObservableObject {
                 }
             }
         }
+        var status: Int32
+        while true {
+            let input = run.opening.map { opening in
+                let input = AgentInput()
+                input.write(opening)
+                return input
+            }
+            turn.input = input
+            turn.steering = engine
+            status = await Shell.run(run.command, cwd: project.dir, env: run.env, input: input,
+                                     started: { turn.agent = $0 }, onLine: onLine)
+            // Codex was interrupted to be given the person's messages (`steer`): it goes on in the same
+            // conversation with them, unless the turn was stopped or ended meanwhile, or Lamp stopped the model.
+            guard let message = turn.codexCut else { break }
+            turn.codexCut = nil
+            turn.agent = nil
+            turn.codexStarted = false
+            turn.codexActing = []
+            // Codex exits with an error on a turn it was asked to end; that's not this turn's failure.
+            if failure?.hasPrefix("The model ") != true { (status, failure) = (0, nil) }
+            // Not when the engine was changed in Settings meanwhile: this conversation is Codex's.
+            guard !turn.stopped, !turn.endedOnQuestions, failure == nil, Builder.engine == engine,
+                  let id = Self.savedSession(sessionFile), exists(project) else { break }
+            run = Agent.run(prompt: Agent.carryOn(message), files: [], project: current(project) ?? project,
+                            offered: offers(in: project), session: id, token: turn.agentToken)
+        }
         turn.agent = nil
+        turn.codexStarted = false
+        turn.codexActing = []
         turn.input = nil
         turn.steering = nil
         turn.toolRunning = false
@@ -2835,10 +2878,34 @@ final class Store: ObservableObject {
 
     /// Claude Code takes the person's messages on its input: written while a tool runs, a message is there when
     /// the tool's result is, and the model reads both before it goes on.
+    ///
+    /// Codex's `exec` reads nothing once it has started, so its run is interrupted and the next one resumes the
+    /// conversation with the messages (`runAgent`). The interrupt is Codex's own (SIGINT, as Ctrl-C would be):
+    /// it ends the turn, records that in the conversation and exits, so the next run has everything the model
+    /// did up to then. It comes only between the things Codex does, never during a command, an edit, a tool call
+    /// or a search, nor while Lamp answers a call from it (a tool, an approval), so nothing is left half done;
+    /// what the model was thinking or writing then is lost, and it answers again in the next run.
     private func steer(_ project: LampProject) {
-        guard let turn = turns[project.id], turn.steering == .claude, turn.toolRunning, let input = turn.input,
-              let message = handOver(project) else { return }
-        input.write(Agent.claudeMessage(message))
+        guard let turn = turns[project.id] else { return }
+        switch turn.steering {
+        case .claude:
+            guard turn.toolRunning, let input = turn.input, let message = handOver(project) else { return }
+            input.write(Agent.claudeMessage(message))
+        case .codex:
+            guard turn.codexStarted, turn.codexActing.isEmpty, turn.answering == 0, turn.codexCut == nil, !turn.approving,
+                  approvals[project.id] == nil, let process = turn.agent,
+                  let codex = Subprocess.descendant(of: process, named: "codex"),
+                  let message = handOver(project) else { return }
+            turn.codexCut = message
+            kill(codex, SIGINT)
+            note("Reading your message", for: project)
+            // Codex ends a turn within a moment. One that hasn't gone after a while is ended as Stop would end it.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
+                if turn.agent === process { Subprocess.terminateTree(process) }
+            }
+        default:
+            return
+        }
     }
 
     /// Asking ends the turn. The tool says so, and an agent that goes on to another step anyway (it has been
@@ -4547,9 +4614,6 @@ final class Store: ObservableObject {
             awaitReload(project, owner: owner)
             return nil
         }
-        // A request's change that closes the open app and opens it again says so in the chat, once in the turn:
-        // otherwise the window just goes away and comes back. Not for Open App or Undo, which ask for that.
-        let reloading = owner?.request != nil && owner?.saidReloaded == false && isRunning(project)
         // Asked once in a turn: a second build in it leaves the app the person kept open alone.
         let asked = owner?.keptOpen == true && isRunning(project)
         guard !asked, await quit(project, for: owner, only: .mac) else {
@@ -4609,10 +4673,6 @@ final class Store: ObservableObject {
                 log(project, .detail, crash!)
             } else {
                 noteOpened(true, for: project)
-                if reloading, let owner {
-                    owner.saidReloaded = true
-                    log(project, .status, ChatLook.reloaded)
-                }
                 if inFront { log(project, .status, "\(project.name) is ready") }
             }
         } catch {
@@ -5925,6 +5985,15 @@ final class Store: ObservableObject {
 
     /// The routes the agent uses mid-turn: build and try the app, approvals, versions, and the MCP tools.
     private func agentRequest(_ request: Gateway.Request, route: String, for project: LampProject) async -> (Int, [String: Any]) {
+        // Codex is cut to pass a message on only while Lamp isn't answering it (`steer`).
+        let turn = route == "/mcp" || route == "/agent/approve" ? turns[project.id] : nil
+        turn?.answering += 1
+        defer {
+            if let turn {
+                turn.answering -= 1
+                if turns[project.id] === turn, turn.steering == .codex { steer(project) }
+            }
+        }
         if route == "/mcp" { return await mcp(request.body, for: project, fileTools: request.path.contains("files=1")) }
         if request.path == "/agent/look" {
             let arguments = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]

@@ -186,9 +186,17 @@ A capability given to one engine must be given to all of them that can take it, 
   `LogLine.midTurn`) once the engine's output shows the model has it (pi's user `message_end`, Claude Code's
   `--replay-user-messages` echo); nothing more is handed over until then, and one the run ends without goes back to
   the front of the line. Send Now isn't offered while the group holds an answer to a card or a request sent again, while a
-  wish is being found, or after the agent has asked. The one exception among the engines is Codex, which has no Send Now:
-  `codex exec` reads nothing once started, and `codex app-server`, which can steer, can't keep the person's own
-  Codex settings out of Lamp's runs.
+  wish is being found, or after the agent has asked. Codex is steered by a workaround: `codex exec` reads nothing once
+  started, and `codex app-server`, which can steer, can't keep the person's own Codex settings out of Lamp's runs. So
+  Lamp interrupts the run and resumes its conversation with the messages (`exec resume`, `Agent.carryOn`, the loop in
+  `Store.runAgent`). The interrupt is Codex's own (SIGINT to the `codex` process, as Ctrl-C), which ends the turn,
+  records it and exits, never SIGTERM, which loses what wasn't saved; it is sent only between the things Codex does
+  (`AgentEvent.acting` from its `item.started`/`item.completed`), never during a command, an edit, a tool call or a
+  search, nor while Lamp is answering a call from it (`Turn.answering`: an MCP tool, an approval, which can begin
+  before Codex's output says so), and only once its model has been heard from in that run (`turn.started` comes
+  before Codex has saved the request). A run that hasn't gone 20 seconds after the interrupt is ended as Stop would
+  end it. What the model was thinking or writing at that moment is lost; a message is the turn's once the resumed
+  run's model is heard from.
 - **What Lamp shows the user** (`BuildCard.activity`, `ToolCall`): tool names must be recognised in every
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items.
@@ -749,12 +757,17 @@ is worked out before anything is pointed at the new code, so a change refused le
 since calls to it are direct too, and the library would otherwise keep a second copy of the value. The mangled type
 names and the records of conformances the change adds, which the library's data still holds, are pointed at the app's
 descriptors as it loads (`LampLive.redirectDescriptors`, writing through the library's text, which a Mac app without
-the hardened runtime may). What `LampLive` can't make right it refuses, and the app reopens: a class's method table
-that changed shape, or a method of a generic class that can be overridden (its tables are made as the app runs, one
-for each type it's used at, where nothing finds them). The
+the hardened runtime may). A class Swift makes as the app runs (a generic class at each type it's used at, a class under
+a generic superclass) gets its method table from the app's description of it, which holds the app's code: so the live
+copy starts the app through an entry of Lamp's (`__LampEntry`, added by the copy step before the App's own), which
+first points the runtime's call that fills such tables in (`swift_initClassMetadata2`, through the same symbol pointer
+as any call) at `LampLive.classMade`, which records every class made and points its table at the newest code, and a
+change points every table made so far the same way. What `LampLive` can't make right it refuses, and the app reopens: a
+class's method table that changed shape, or a class whose methods the change lists in another order than the app (one
+added, taken away or moved), since a table made after it would be laid out from the app's list. The
 build then waits to be installed until the app closes (`LiveReload.awaitInstall`, which unlike a held build doesn't
 keep the agent off the app). Anything else needs the app reopened, with why in the chat's
-details (`LiveReload.Verdict`), so the rules can be tuned by what happens. For a request's change, while the app is open, Lamp doesn't reopen it under the person: the build is held (`Store.awaitReload`, `Runtime.awaitReload`), the app shows a Reload button beside the wand in its title bar (`LampMagic.ReloadButton`, an accent capsule with a glow that comes and goes, shown with a `reloadReady` notification) and the chat a line with one too (`.reload`, under the agent's answer), and a click on either reopens it where it was (`Store.reloadWaiting`; the app asks with `reloadNow`, which puts in only a change Lamp holds). The agent is told the change waits for the person (`reloadNote`) and doesn't look or use the app again in that request. Closing the app installs it too. Open App, Undo and a look with `reopen` still reopen it.  A live build reads the app's own files
+details (`LiveReload.Verdict`), so the rules can be tuned by what happens. For a request's change, while the app is open, Lamp doesn't reopen it under the person: the build is held (`Store.awaitReload`, `Runtime.awaitReload`), the app shows a Reload button beside the wand in its title bar (`LampMagic.ReloadButton`, an accent capsule with a glow that comes and goes, shown with a `reloadReady` notification) and the chat a line with one too (`.reload`, under the agent's answer), and a click on either reopens it where it was (`Store.reloadWaiting`; the app asks with `reloadNow`, which puts in only a change Lamp holds). The agent is told the change waits for the person (`reloadNote`) and doesn't look or use the app again in that request. Closing the app installs it too. Open App, Undo and a look with `reopen` still reopen it. A live build reads the app's own files
 from its Assets folder rather than its bundle (`LampAssets`), so a new picture goes in live too; the package, the
 app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which tells the
 agent what goes in without reopening.

@@ -33,6 +33,9 @@ enum AgentEvent {
     case plan([PlanPart])  // the agent's checklist for the build card
     case finished          // the engine has answered: a message written to it now would start another answer
     case received          // the engine gave the model a message of the person's (the request, or one sent mid-turn)
+    /// Codex began (true) or finished (false) something it does on its own (a command, a tool call, an edit, a
+    /// search), by its id: a Codex run is cut to pass a message on only between them (`Store.steer`).
+    case acting(String, Bool)
 }
 
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.
@@ -189,8 +192,9 @@ enum Agent {
     This app is updated in place while it's open, keeping what's on screen, when a change only edits or adds code. \
     New stored properties go in too, in a class, a struct or (as @State) a view, when each has a starting value \
     (or is an optional) and no didSet or willSet; so do new cases at the end of an enum whose cases carry nothing, \
-    and new values for constants. Changing or removing a stored property, a case anywhere else, or what's read only \
-    at launch (the App, its scenes and menu commands) needs it reopened, which waits for the person to press Reload. \
+    and new values for constants that hold no object. Changing or removing a stored property, a case anywhere \
+    else, or what's read only at launch (the App, its scenes and menu commands) needs it reopened, which waits \
+    for the person to press Reload. \
     Code already running keeps the version it started with: a closure given to a Timer, a loop in a Task, an \
     observer. So in a loop or a timer, call a method of the app's each time rather than writing the work in the \
     closure, and a change to that method goes in. \

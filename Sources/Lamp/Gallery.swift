@@ -19,10 +19,59 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = askEntries + buildEntries + progressEntries + pointedEntries
+    static let entries: [Entry] = chatEntries + askEntries + buildEntries + progressEntries + pointedEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
+    }
+
+    // MARK: Chat
+
+    /// Whole chats, drawn by the chat's own `Transcript`: every kind of line one after another, so a line set in
+    /// or sized unlike the rest shows against its neighbours.
+    private static let chatEntries: [Entry] = [
+        chat("A finished chat", finishedChat, undo: true),
+        // The first request, its steps so far, and the progress line under them.
+        chat("A turn going", Array(finishedChat.prefix(6)), activity: "Thinking"),
+        chat("A clicked answer", [LogLine(kind: .user, text: "make a habit tracker"),
+                                  LogLine(kind: .ask, text: "", ask: Talk.Ask(layout: .steps, questions: [kind, when], answers: ["Habits", "Morning"])),
+                                  LogLine(kind: .agent, text: "I'll make a habit tracker that reminds you each morning.")],
+             activity: "Working on the interface"),
+    ]
+
+    private static let finishedChat: [LogLine] = [
+        LogLine(kind: .user, text: "make the design more modern"),
+        LogLine(kind: .agent, text: "I'll give Today and Week a cleaner look."),
+        LogLine(kind: .tool, text: "Read Sources/TodayView.swift"),
+        LogLine(kind: .tool, text: "Edit Sources/TodayView.swift"),
+        LogLine(kind: .tool, text: "Edit Sources/WeekView.swift"),
+        LogLine(kind: .status, text: "Ran: swift build"),
+        LogLine(kind: .status, text: "Building…"),
+        LogLine(kind: .noted, text: "", noted: NoteReceipt(about: "you", before: Memory.Notes(),
+            after: Memory.Notes(summary: "Likes a clean look", text: "- Prefers a clean, modern look (system font, borderless white cards, soft shadows)"))),
+        LogLine(kind: .status, text: "Today is ready"),
+        LogLine(kind: .agent, text: "Today and Week now have a cleaner, modern look: a soft gray background, borderless white cards and the system font in bold.\n\nIf you'd rather go back, the old look is saved as \"Paper planner look\"."),
+        LogLine(kind: .summary, text: "Worked for 3m 14s · $0.31"),
+        LogLine(kind: .user, text: "add some color"),
+        LogLine(kind: .agent, text: "I'll add color to the cards and the week."),
+        LogLine(kind: .tool, text: "Edit Sources/Theme.swift"),
+        LogLine(kind: .status, text: "Building…"),
+        LogLine(kind: .noted, text: "", noted: NoteReceipt(about: "you", before: Memory.Notes(summary: "x", text: "- Prefers a clean look"),
+            after: Memory.Notes(summary: "x", text: "- Prefers a clean look\n- Likes color: a cheerful palette with colored accents, not plain gray"), undone: true)),
+        LogLine(kind: .error, text: "The widget didn't build, so it still has the old colors."),
+        LogLine(kind: .status, text: "Today is ready"),
+        LogLine(kind: .agent, text: "The app is more colorful now. Each card's heading has a colored icon, and each of the three priorities has its own color."),
+        LogLine(kind: .summary, text: "Worked for 1m 11s · $0.12"),
+    ]
+
+    private static func chat(_ name: String, _ lines: [LogLine], undo: Bool = false, activity: String? = nil) -> Entry {
+        Entry(group: "Chat", name: name) {
+            AnyView(VStack(alignment: .leading, spacing: 0) {
+                Transcript(lines: lines, dir: URL(fileURLWithPath: "/nonexistent"), busy: activity != nil, progressShown: activity != nil)
+                if let activity { ChatLook.ActivityLine(activity, started: .now.addingTimeInterval(-7)).padding(.top, 12) }
+                if undo { ChatLook.UndoChange {}.padding(.top, 12) }
+            })
+        }
     }
 
     // MARK: Ask
