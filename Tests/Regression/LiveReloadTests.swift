@@ -143,6 +143,38 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertFalse(LiveReload.isGroup(String("\tselection: Mood?".prefix { $0 != "\t" })))
         XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: layout!.filter { !$0.contains("grow(_:)") }))
         XCTAssertFalse(LiveReload.declarationsChanged(before: layout!, after: layout!))
+        // An enum that grew is met by code the open app is still running: a timer's closure or an async function
+        // switching over it, or printing it; never what a view's body (as the live copy names it) makes again at the
+        // next draw.
+        try """
+            import SwiftUI
+            enum Mood { case a, b }
+            @Observable final class Model {
+                var mood = Mood.a
+                func start() { Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [self] _ in switch mood { case .a: break; case .b: break } } }
+                func tick() async { print("\\(mood)") }
+                func now() -> String { switch mood { case .a: "a"; case .b: "b" } }
+            }
+            struct V: View {
+                @State var model = Model()
+                var body: AnyView { AnyView(__lampBody) }
+                @ViewBuilder var __lampBody: some View { Button("x") { switch model.mood { case .a: break; case .b: break } } }
+            }
+            """.write(to: sources.appendingPathComponent("Moods.swift"), atomically: true, encoding: .utf8)
+        let dumped = await LiveReload.dump(of: sources, in: project, module: project.exe, macOS: "14.0")
+        let dump = try XCTUnwrap(dumped)
+        XCTAssertEqual(LiveReload.oldCode(meeting: ["Mood"], inDump: dump),
+                       "start() switches over Mood in code that may still be running (a timer, a task, an observer), which doesn't know the new cases")
+        XCTAssertNil(LiveReload.oldCode(meeting: ["Other"], inDump: dump))
+        let onlyTick = dump.components(separatedBy: "\n").filter { !$0.contains("Timer") }.joined(separator: "\n")
+        XCTAssertEqual(LiveReload.oldCode(meeting: ["Mood"], inDump: onlyTick), "tick() prints Mood in code that may still be running (a timer, a task, an observer), which doesn't know the new cases")
+        // The record outlives a change: the timer's switch, recorded from the installed sources, still counts once a
+        // later change has taken it out of the sources that run.
+        XCTAssertFalse(LiveReload.hasOldCodeRecord(project))
+        LiveReload.recordOldCode(LiveReload.oldCodeUses(inDump: dump), for: project)
+        XCTAssertTrue(LiveReload.hasOldCodeRecord(project))
+        LiveReload.recordOldCode(LiveReload.oldCodeUses(inDump: onlyTick), for: project)
+        XCTAssertEqual(LiveReload.oldCode(meeting: ["Mood"], uses: LiveReload.oldCodeRecorded(project) + LiveReload.oldCodeUses(inDump: onlyTick))?.hasPrefix("start() switches over Mood"), true)
         let (library, problem) = await LiveReload.compile(project, changed: ["Shapes.swift"])
         XCTAssertNil(problem)
         let symbols = try run("/usr/bin/nm", ["-m", XCTUnwrap(library).path])

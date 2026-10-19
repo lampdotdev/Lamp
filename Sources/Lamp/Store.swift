@@ -4516,7 +4516,7 @@ final class Store: ObservableObject {
         // already in spares, the live copy is rewritten before anything is compiled (`LiveSlots.fit`).
         let spared = !LiveSlots.mapping(project).isEmpty || LiveSlots.hasConstants(project)
         async let early: (url: URL?, problem: String?) = spared ? (nil, nil) : await LiveReload.compile(project, changed: changed)
-        let (before, after, declarations) = await LiveReload.layouts(project)
+        let (before, after, declarations, oldCode) = await LiveReload.layouts(project)
         var check = LiveReload.layoutProblem(before: before, after: after)
         let constants = before.flatMap { before in after.map { LiveSlots.changedConstants(project, before: before, after: $0) } } ?? []
         var (library, problem) = await early
@@ -4556,7 +4556,9 @@ final class Store: ObservableObject {
         // Then every file of the app's is compiled again, so no code of the open app's meets a case it never knew
         // (a switch, or printing it), and the enum's own metadata is the change's, which knows the new cases.
         if let before, let layout = check.layout, case let grown = LiveReload.grownEnums(before: before, after: layout), !grown.isEmpty {
-            if let why = await LiveReload.enumsHeld(project, grown: grown) {
+            var why = await LiveReload.enumsHeld(project, grown: grown)
+            if why == nil { why = await LiveReload.enumsMetByOldCode(project, grown: grown) }
+            if let why {
                 log(project, .detail, "\(project.name) has to reopen for this change: \(why).")
                 return false
             }
@@ -4570,8 +4572,15 @@ final class Store: ObservableObject {
         }
         // Files only taken away leave nothing to load: the open app already has what's left.
         if let library { guard await LiveReload.send(library, to: project, token: Template.token(for: project)) else { return false } }
+        // What a generation's code may leave running (a timer, a task) outlives the next change's replacing its
+        // sources: the installed generation's uses are recorded before the first change replaces them, each
+        // change's as it goes in.
+        if !LiveReload.hasOldCodeRecord(project), let installed = await LiveReload.oldCodeUsesOfRunning(project) {
+            LiveReload.recordOldCode(installed, for: project)
+        }
         LiveReload.markRunning(project)
         LiveReload.keepLayout(layout, for: project)
+        LiveReload.recordOldCode(oldCode, for: project)
         watchAfterReload(project, app: app)
         LiveReload.awaitInstall(project)
         _ = heldInstalls.mayInstall(project.id, running: true)
