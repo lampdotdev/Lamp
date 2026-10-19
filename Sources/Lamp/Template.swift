@@ -3867,6 +3867,9 @@ enum Template {
         /// and state.
         private static func isCode(_ name: String) -> Bool {
             guard name.hasPrefix("_$s") else { return false }
+            // An async function is called through a small record of its own (its code and how much room it needs),
+            // which is what calls and method tables hold.
+            if name.hasSuffix("Tu") { return isCode(String(name.dropLast(2))) }
             // A type's own (static) functions and properties are named as an instance's, with a Z after.
             let name = name.hasSuffix("Z") ? String(name.dropLast()) : name
             for kept in ["Mn", "Mf", "MV", "Ma", "Mm", "MF", "Mc", "Ml", "MXX", "Ms", "Wp", "WP", "Wl", "WL", "lau", "vau", "Wz", "Qo", "QO", "So", "WV", "Wvd", "MQ"]
