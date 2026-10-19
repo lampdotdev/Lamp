@@ -611,7 +611,8 @@ final class Store: ObservableObject {
         }
         // During the welcome, Apple's installer waits for the step that explains it.
         if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone { requestBuildTools() }
-        if !setup.hasBuildTools { pollSetup() } else { prepareStarters() }
+        if !setup.hasBuildTools { pollSetup() }
+        prepareStarters()   // the prebuilt ones need no build tools
         if setup.ready && !wasReady { await becameReady() }
     }
 
@@ -3834,15 +3835,20 @@ final class Store: ObservableObject {
     /// Builds the starters nobody has opened yet, one at a time, as soon as Apple's tools are there, so each
     /// opens at once when used. One that's being waited for goes first.
     func prepareStarters() {
-        guard setup.hasBuildTools, !preparingStarters else { return }
+        guard canPrepare(), !preparingStarters else { return }
         preparingStarters = true
         Task {
             defer { preparingStarters = false }
             await startersInstall?.value
-            await saveStartersFirstVersions()
-            while let next = nextStarterToPrepare() {
+            // Their first versions need git, one of Apple's tools; a prebuilt starter made ready before them gets
+            // its first version when they arrive.
+            if setup.hasBuildTools { await saveStartersFirstVersions() }
+            // Each once: one that couldn't be made ready without the tools waits for them, not for this loop.
+            var tried: Set<String> = []
+            while let next = nextStarterToPrepare(excluding: tried) {
+                tried.insert(next.id)
                 // Again for each: one put back on the desk meanwhile gets its first version before its build.
-                await saveStartersFirstVersions()
+                if setup.hasBuildTools { await saveStartersFirstVersions() }
                 await prepare(next)
             }
         }
@@ -3866,8 +3872,16 @@ final class Store: ObservableObject {
             && !FileManager.default.fileExists(atPath: project.installedURL.path)
     }
 
-    private func nextStarterToPrepare() -> LampProject? {
-        let waiting = projects.filter(needsPreparing)
+    /// Whether some starter can be made ready now: any, once Apple's build tools are there, and before then the
+    /// ones Lamp came with already built (`PrebuiltStarters`).
+    func canPrepare(_ project: LampProject? = nil) -> Bool {
+        if setup.hasBuildTools { return true }
+        if let project { return PrebuiltStarters.has(project) }
+        return projects.contains { needsPreparing($0) && PrebuiltStarters.has($0) }
+    }
+
+    private func nextStarterToPrepare(excluding tried: Set<String> = []) -> LampProject? {
+        let waiting = projects.filter { needsPreparing($0) && canPrepare($0) && !tried.contains($0.id) }
         return waiting.first { openWhenReady.contains($0.id) } ?? waiting.first
     }
 
@@ -3878,7 +3892,12 @@ final class Store: ObservableObject {
         preparing.insert(project.id)
         let before = Set((logs[project.id] ?? []).map(\.id))
         var made = false
-        if await build(project) == nil {
+        // The copy Lamp came with when it's what this build would make, so the starter is ready at once.
+        var ready = PrebuiltStarters.install(into: project)
+        // Without Apple's tools there's no build: a starter whose prebuilt copy couldn't be used waits for them.
+        let canBuild = setup.hasBuildTools
+        if !ready, canBuild { ready = await build(project) == nil }
+        if ready {
             await prepareIcon(project)
             do {
                 try await deploy(project)
@@ -3895,7 +3914,7 @@ final class Store: ObservableObject {
             logs[project.id] = lines.filter { before.contains($0.id) || $0.kind == .ask }
             saveChat(project)
         }
-        if !made { unpreparedStarters.insert(project.id) }
+        if !made, canBuild { unpreparedStarters.insert(project.id) }
         preparing.remove(project.id)
         finish(project)
         guard openWhenReady.remove(project.id) != nil, let current = current(project) else { return }
@@ -5118,6 +5137,10 @@ final class Store: ObservableObject {
         // writes beside the copy rather than takes from the build folder, where anything could have changed them.
         let widget = Template.widgetURL(in: app, of: project)
         let hasWidget = fm.fileExists(atPath: widget.path)
+        if hasWidget, project.platform == .mac {
+            Self.setInstallValues(for: project, in: widget.appendingPathComponent("Contents/Info.plist"), root: Self.installDir,
+                                  values: Template.widgetInstallValues(for: project))
+        }
         let entitlements = signing.appendingPathComponent("widget-entitlements.plist")
         if hasWidget { try Template.widgetEntitlementsPlist.write(to: entitlements, atomically: true, encoding: .utf8) }
         // A share extension the same way. It hands what it's given to the app through a folder they share,
@@ -6480,10 +6503,11 @@ final class Store: ObservableObject {
     /// before it's signed: LampSupport reads it there at launch rather than having it compiled in. `root` is the
     /// folder the bundle is in, read and written without following links out of it: the simulator's bundle is in
     /// the app's build folder, which the agent's commands can write.
-    nonisolated static func setInstallValues(for project: LampProject, in plistURL: URL, root: URL) {
+    nonisolated static func setInstallValues(for project: LampProject, in plistURL: URL, root: URL,
+                                             values: [String: String]? = nil) {
         guard let data = AppFile.read(plistURL, inFolder: root),
               var plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return }
-        plist["LampInstall"] = Template.installValues(for: project)
+        plist["LampInstall"] = values ?? Template.installValues(for: project)
         if let out = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) {
             try? AppFolder.write(out, to: plistURL, in: root)
         }
