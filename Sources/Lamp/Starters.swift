@@ -8,6 +8,7 @@ import LampSidebarKit
 /// and starter.md, which is Lamp's: the wish's name and what the sidebar offers to change first. They're copied once, on the first launch, and from then on
 /// they're the person's like any other wish; a later Lamp with other starters gives those only to new people.
 /// `scripts/check-starters.sh` type-checks them against this checkout's LampSupport.swift.
+/// A release ships each one built as well (`PrebuiltStarters`), so it's ready before Apple's build tools are.
 enum Starters {
     static let installedKey = "startersInstalled"
 

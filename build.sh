@@ -258,6 +258,21 @@ sign "$APP/Contents/Frameworks/Sparkle.framework"
 if [ "$FLAVOR" = dev ]; then sign "$APP/Contents/Helpers/BrowserNativeHost"; fi
 sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/LampThumbnail.appex"
 sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/LampPreview.appex"
+# A release ships the starters already built (PrebuiltStarters.swift): Lamp builds each one as a person's Mac would,
+# with this checkout's LampSupport, once Lamp's own parts are signed and before Lamp is: the stamp
+# on what Lamp builds (BuildStamp) covers the signed chat sidebar. Each built app is signed like the rest of Lamp and
+# zipped beside its starter's files, so the system never takes it for an app of its own.
+if [[ "${PREBUILD_STARTERS:-}" == 1 ]]; then
+  echo "Building the starters Lamp ships…"
+  PREBUILD_STARTERS=1 "$APP/Contents/MacOS/$NAME" --prebuild-starters
+  for prebuilt in "$APP"/Contents/Resources/Starters/*/Prebuilt; do
+    for built in "$prebuilt"/*.app; do
+      for extension in "$built"/Contents/PlugIns/*.appex(N); do sign "$extension"; done
+      sign "$built"
+    done
+    (cd "$(dirname "$prebuilt")" && ditto -c -k --norsrc --keepParent Prebuilt Prebuilt.zip && rm -rf Prebuilt)
+  done
+fi
 sign "${APP_ENTITLEMENTS[@]}" "$APP"
 [ "$SIGN_ID" = "-" ] && echo "Signed ad-hoc (macOS may ask for Keychain access after each rebuild)"
 echo "Built $APP"

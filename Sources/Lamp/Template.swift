@@ -223,6 +223,11 @@ enum Template {
         ]
     }
 
+    /// What a Mac widget is told (`LampWidget.value`): only what it uses.
+    static func widgetInstallValues(for project: LampProject) -> [String: String] {
+        installValues(for: project).filter { ["slug", "scheme", "widgetPort", "widgetToken"].contains($0.key) }
+    }
+
     /// The same, as lines of an Info.plist.
     static func installPlistLines(for project: LampProject) -> String {
         func escaped(_ text: String) -> String {
@@ -2230,7 +2235,7 @@ enum Template {
     /// The widget's wand (`.lampWand()`): a link the app takes as Customize with Lamp….
     struct LampWidgetWand: View {
         var body: some View {
-            Link(destination: URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!) {
+            Link(destination: URL(string: "\(LampWidget.value("scheme"))://edit?app=\(LampWidget.value("slug"))") ?? URL(fileURLWithPath: "/")) {
                 LampGlyph.Mark(size: 11)
                     .foregroundStyle(.secondary)
                     .frame(width: 22, height: 22)
@@ -2250,8 +2255,13 @@ enum Template {
     /// `read` gives what the app shared last: asked of the app when it's open, and otherwise the last answer,
     /// which the widget keeps. Nil until the app has shared something under that name.
     enum LampWidget {
-        private static let firstPort: UInt16 = {{WIDGET_PORT}}
-        private static let token = "{{WIDGET_TOKEN}}"
+        /// What Lamp told the widget when it installed the app, in the widget's own Info.plist, as LampSupport's
+        /// `LampInstall` is for the app: none of it is compiled in.
+        static func value(_ key: String) -> String {
+            (Bundle.main.object(forInfoDictionaryKey: "LampInstall") as? [String: String])?[key] ?? ""
+        }
+        private static let firstPort = UInt16(clamping: Int(value("widgetPort")) ?? 0)
+        private static let token = value("widgetToken")
 
         /// One thing a widget's button asks the app to do, as both sides write it down.
         private struct Action: Codable {
@@ -2600,10 +2610,6 @@ enum Template {
         guard hasWidget(project) else { return }
         // An iPhone widget reads the folder it shares with its app; a Mac widget asks the app (WidgetSharing).
         let contents = project.platform.hasIOS ? lampWidgetSupportIOSSwift : lampWidgetSupportSwift
-            .replacingOccurrences(of: "{{WIDGET_PORT}}", with: String(widgetPort(for: project)))
-            .replacingOccurrences(of: "{{WIDGET_TOKEN}}", with: widgetToken(for: project))
-            .replacingOccurrences(of: "{{SCHEME}}", with: Edition.urlScheme)
-            .replacingOccurrences(of: "{{SLUG}}", with: project.id)
         try put(contents, at: project.dir.appendingPathComponent(widgetFolder).appendingPathComponent(widgetSupportFile), for: project)
     }
 
