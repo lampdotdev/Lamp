@@ -4600,17 +4600,30 @@ enum Template {
                     Int(symtab.pointee.nsyms), base, dysymtab)
         }
 
+        /// The symbols an image defines, with their addresses: every one with `local`, else the exported ones. An
+        /// image is read once and kept (`scanned`): the app's is asked for at launch and with every change, several
+        /// times each, and each earlier change's with every later one, and none of them changes or goes away.
+        nonisolated(unsafe) private static var scanned: [UnsafeRawPointer: (all: [(String, UnsafeRawPointer)], exported: [(String, UnsafeRawPointer)])] = [:]
         nonisolated private static func definedSymbols(_ header: UnsafePointer<mach_header>, slide: Int, local: Bool = false) -> [(String, UnsafeRawPointer)] {
+            let key = UnsafeRawPointer(header)
+            lock.lock()
+            let known = scanned[key]
+            lock.unlock()
+            if let known { return local ? known.all : known.exported }
             guard let tables = tables(header, slide: slide) else { return [] }
-            var out: [(String, UnsafeRawPointer)] = []
+            var all: [(String, UnsafeRawPointer)] = [], exported: [(String, UnsafeRawPointer)] = []
             for index in 0..<tables.count {
                 let symbol = tables.symbols[index]
-                guard local || symbol.n_type & UInt8(N_EXT) != 0, symbol.n_type & UInt8(N_STAB) == 0,
-                      symbol.n_type & UInt8(N_TYPE) == UInt8(N_SECT), symbol.n_value != 0,
+                guard symbol.n_type & UInt8(N_STAB) == 0, symbol.n_type & UInt8(N_TYPE) == UInt8(N_SECT), symbol.n_value != 0,
                       let address = UnsafeRawPointer(bitPattern: Int(symbol.n_value) + slide) else { continue }
-                out.append((String(cString: tables.strings.advanced(by: Int(symbol.n_un.n_strx))), address))
+                let entry = (String(cString: tables.strings.advanced(by: Int(symbol.n_un.n_strx))), address)
+                all.append(entry)
+                if symbol.n_type & UInt8(N_EXT) != 0 { exported.append(entry) }
             }
-            return out
+            lock.lock()
+            scanned[key] = (all, exported)
+            lock.unlock()
+            return local ? all : exported
         }
 
         /// Where a class's fields are is worked out as the app runs when it can't be known when it's compiled (a
