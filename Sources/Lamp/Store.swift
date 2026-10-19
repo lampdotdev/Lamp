@@ -2584,8 +2584,9 @@ final class Store: ObservableObject {
         }
         var run = Agent.run(prompt: prompt, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
-        let onLine: @MainActor (String) -> Void = { [weak self] line in
-            guard let self else { return }
+        // Held strongly: it lives only while the engine runs. (A weak capture here, in a closure kept in a
+        // variable rather than passed straight to `Shell.run`, came back nil and dropped every line.)
+        let onLine: @MainActor (String) -> Void = { [self] line in
             for event in Agent.parseLine(line) {
                 // A tool is running from the call until the model is heard from again.
                 switch event {
