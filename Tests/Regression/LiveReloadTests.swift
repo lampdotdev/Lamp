@@ -158,7 +158,7 @@ final class LiveReloadTests: XCTestCase {
             struct Round: Shape { var r: Int; var name = ""; func area() -> Int { r } }
             struct Styled: Drawn { func mark() -> some Shape { Square(side: 1, name: "s") }; func n() -> some Numeric { 1 }; func t() -> some Equatable { "a" }; func p() -> some Equatable { n() }; func l() -> some Equatable { func local() -> some Equatable { 0 }; return String() } }
             struct Outer { enum Mood: Shape { case a, b; func area() -> Int { 0 }; var name: String { get { "" } set {} } } }
-            final class Tagged: NSObject { @objc(oldName) func a() {}; @objc func b() {}; override var description: String { "t" } }
+            final class Tagged: NSObject { @objc(oldName) func a() {}; @objc func b() {}; override var description: String { "t" }; @objc(oldStatic) static var value = 1 }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
         let layout = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
         let shape = layout?.filter { $0.hasPrefix("protocol Shape") } ?? []
@@ -218,7 +218,7 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertEqual(layout!.filter { $0.hasPrefix(LiveReload.opaqueGroup + "\tStyled.p(): (Styled) -> () -> some Equatable\t~") }.count, 1)
         XCTAssertTrue(declared.contains("Styled.mark(): (Styled) -> () -> some Shape"), "\(declared)")
         // What a member answers to from Objective-C is declared: a selector renamed or taken away compiles every file.
-        for entry in ["Tagged.a(): (Tagged) -> () -> () @objc(oldName)", "Tagged.b(): (Tagged) -> () -> () @objc", "Tagged.description: String @objc(description)"] {
+        for entry in ["Tagged.a(): (Tagged) -> () -> () @objc(oldName)", "Tagged.b(): (Tagged) -> () -> () @objc", "Tagged.description: String @objc(description)", "Tagged.value: Int @objc(oldStatic)"] {
             XCTAssertTrue(declared.contains(entry), "\(declared.filter { $0.hasPrefix("Tagged") })")
         }
         // The same sources read from another folder (the copy the app runs) give the same digest: a declaration
@@ -256,6 +256,9 @@ final class LiveReloadTests: XCTestCase {
         let renamedSelector = try await layoutWith([("var id: String { name } }", "}"), ("@objc(oldName)", "@objc(newName)")])
         XCTAssertNil(LiveReload.layoutProblem(before: layout, after: renamedSelector).problem)
         XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: renamedSelector))
+        let renamedStatic = try await layoutWith([("@objc(newName)", "@objc(oldName)"), ("@objc(oldStatic)", "@objc(newStatic)")])
+        XCTAssertNil(LiveReload.layoutProblem(before: layout, after: renamedStatic).problem)
+        XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: renamedStatic))
         XCTAssertEqual(LiveReload.existential(in: "any CustomDebugStringConvertible", holding: "Mood", conformances: conformances), "any CustomDebugStringConvertible")
         XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
         XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")

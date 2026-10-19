@@ -806,11 +806,11 @@ enum LiveReload {
                 if let owner = owner ?? (global ? "" : nil), rest.contains("readImpl=stored"), held || !rest.contains(" static") {
                     let entry = owner + "\t" + name + ": " + type
                     if seen.insert(entry).inserted { out.append(entry) }
-                    // A stored property's `@objc` is its accessors' from Objective-C, declared without listing it.
-                    declared(name + ": " + type, listed: false)
                 } else if !rest.contains("readImpl=stored") {
                     declared(name + ": " + type)
                 }
+                // A stored property's `@objc` (a static's too) is its accessors' from Objective-C: declared, not listed.
+                if rest.contains("readImpl=stored") { declared(name + ": " + type, listed: false) }
             } else if let m = memberDecl.firstMatch(in: line, range: range) {
                 declared(String(line[Range(m.range(at: 3), in: line)!]) + ": " + String(line[Range(m.range(at: 4), in: line)!]))
                 scopes.append((indent, nil))
