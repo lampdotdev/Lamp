@@ -108,8 +108,8 @@ extension ChatLook {
                 HStack(spacing: 6) {
                     Button(action: onRemove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                         .buttonStyle(.plain)
-                        .help("Remove from the queue")
-                        .accessibilityLabel("Remove from the queue")
+                        .help("Unsend")
+                        .accessibilityLabel("Unsend")
                     UserBubble(text, waiting: true)
                 }
                 // The width limit goes around the button too, so it stays next to the bubble.
@@ -127,9 +127,13 @@ extension ChatLook {
                     Label(several ? "Sending \(place.count) now" : "Sending now", systemImage: "arrow.up.circle")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
-                    Label(waitingForSetup ? "Starts when Apple's app-building tools finish installing"
-                              : several ? "\(place.count) queued" : "Queued",
-                          systemImage: "clock").font(.caption).foregroundStyle(.secondary)
+                    if waitingForSetup {
+                        Label("Starts when Apple's app-building tools finish installing", systemImage: "clock")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        // Worded like a text the other side hasn't read yet, with no icon, as Messages shows it.
+                        Text(several ? "\(place.count) unread" : "Unread").font(.caption).foregroundStyle(.secondary)
+                    }
                     if let sendNow {
                         Button(several ? "Send All Now" : "Send Now", action: sendNow)
                             .buttonStyle(.link).font(.caption)
