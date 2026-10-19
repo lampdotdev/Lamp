@@ -248,6 +248,33 @@ struct LogLine: Identifiable, Codable, Equatable {
         if ToolCall(text).isKnown { return LogLine(id: id, kind: .tool, text: text) }
         return self
     }
+
+    /// Reads an app's chat file a line at a time, so a line this Lamp can't read (a kind written by a newer Lamp,
+    /// or a Lamp Dev built from another branch, sharing the same folder) costs that line and not the whole chat.
+    /// The next save writes the chat without what was skipped, so the file as it was is kept beside it first, under
+    /// a name nothing else uses (`chat.json.unreadable`, then `-2`…). Nil when there is no file.
+    static func readChat(_ file: URL) -> [LogLine]? {
+        guard let data = try? Data(contentsOf: file) else { return nil }
+        let read = try? JSONDecoder().decode([Readable].self, from: data)
+        let lines = read?.compactMap(\.line) ?? []
+        if read == nil || lines.count < read!.count { keepAside(data, of: file) }
+        return lines.map(\.upgraded)
+    }
+
+    private struct Readable: Decodable {
+        let line: LogLine?
+        init(from decoder: Decoder) throws { line = try? LogLine(from: decoder) }
+    }
+
+    private static func keepAside(_ data: Data, of file: URL) {
+        for n in 1...100 {
+            let copy = file.deletingLastPathComponent()
+                .appendingPathComponent(file.lastPathComponent + ".unreadable" + (n == 1 ? "" : "-\(n)"))
+            // Without overwriting, which also refuses a link left where the copy goes.
+            if (try? data.write(to: copy, options: .withoutOverwriting)) != nil { return }
+            if (try? Data(contentsOf: copy)) == data { return }
+        }
+    }
 }
 
 /// A message typed while the app was busy. It waits in the chat until the current work finishes.
@@ -695,9 +722,8 @@ final class Store: ObservableObject {
         for project in projects { stamps[project.id] = BuildStamp.read(project.installedURL) }
         for project in projects where logs[project.id] == nil {
             let lamp = project.dir.appendingPathComponent(".lamp")
-            if let data = try? Data(contentsOf: lamp.appendingPathComponent("chat.json")),
-               let saved = try? JSONDecoder().decode([LogLine].self, from: data) {
-                logs[project.id] = saved.map(\.upgraded)
+            if let saved = LogLine.readChat(lamp.appendingPathComponent("chat.json")) {
+                logs[project.id] = saved
             }
             if let data = try? Data(contentsOf: lamp.appendingPathComponent("usage.json")),
                let saved = try? JSONDecoder().decode(AppUsage.self, from: data) {

@@ -16,8 +16,8 @@ final class AskCardTests: XCTestCase {
         }
     }
 
-    /// A chat kept while a card's options were plain words has to open: one line that can't be read
-    /// loses the whole chat.
+    /// A chat kept while a card's options were plain words has to open: a line that can't be read
+    /// is skipped (`ChatFileTests`), so a card that stopped reading would vanish from the chat.
     func testAChatSavedInTheFirstShapeStillOpens() throws {
         let saved = Data(#"""
         [{"id":"6F3C1D0E-5B0A-4C55-9E57-0B8C6C1F5A01","kind":"user","text":"A tracker"},
