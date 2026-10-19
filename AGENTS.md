@@ -716,7 +716,24 @@ text) (`LiveReload.reloadable`, comparing with the sources the
 open app runs, kept in `.lamp/live/running`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
 linked into a library, which the app loads when asked with a request signed with its token, only from its
 own `.lamp/live` (`LampLive` in LampSupport, under `#if LAMP_LIVE`). It points the app's own calls at the new
-functions by rewriting the symbol pointers they go through; types, metadata and stored globals are left alone. The
+functions by rewriting the symbol pointers they go through, and the method tables of the app's classes (their
+deinit included) at the changed methods; types, metadata and stored globals are left alone. A library compiled from
+a changed file defines that file's types over again, and its code refers to its own copies directly, which no symbol
+pointer reaches: a value would then carry one copy's identity or the other's, so `as? Point` fails across the change,
+a conformance added in it isn't found, and SwiftUI, seeing a new type for a view's body, remakes the whole subtree
+and loses every state in it. So between compiling and linking, `LiveObject` rewrites each object: every type's
+metadata, descriptor and protocol descriptor it defines is renamed (`$lampcopy`), and the code's references become
+loads through the global offset table of a weak undefined symbol with the original name, which `LampLive` binds to the
+app's copy, or to the library's own for a type the app doesn't have (a new one, kept for the changes after it). A
+conformance's descriptor and witness table are treated the same, since the runtime tells generic types apart by them
+too (`[AnyHashable: …]` keys), which is why a protocol's requirements are part of the layout a change is held to
+(`LiveReload.members`): the app's witness tables must fit. So is a private stored global's or static's addressor,
+since calls to it are direct too, and the library would otherwise keep a second copy of the value. The mangled type
+names and the records of conformances the change adds, which the library's data still holds, are pointed at the app's
+descriptors as it loads (`LampLive.redirectDescriptors`, writing through the library's text, which a Mac app without
+the hardened runtime may). What `LampLive` can't make right it refuses, and the app reopens: a class's method table
+that changed shape, or a method of a generic class that can be overridden (its tables are made as the app runs, one
+for each type it's used at, where nothing finds them). The
 build then waits to be installed until the app closes (`LiveReload.awaitInstall`, which unlike a held build doesn't
 keep the agent off the app). Anything else is installed the usual way, by reopening the app, with why in the chat's
 details (`LiveReload.Verdict`), so the rules can be tuned by what happens. The person sees only that it happened: one
@@ -755,7 +772,10 @@ spare: its values keep their size (`LiveSlots.casesAdded`). Only while nothing t
 in a plain collection: Swift uses the numbers after the last case for `nil` in an optional of it and for other enums'
 cases that carry it, which a new case would take over. That's looked for in every stored field, static and global of
 the new code and in the types the spares keep (`LiveReload.enumsHeld`), before the change goes in; an app that keeps
-values of any type (`Any`, `AnyObject`, `AnyHashable`, `any P`) reopens instead, since one could hide there. Which property is in which spare
+values of any type (`Any`, `AnyObject`, `AnyHashable`, `any P`) reopens instead, since one could hide there. When an enum
+grew, every file of the app's is compiled again, so no code of the open app's meets a case it never knew (a switch over
+it, or printing it, reads past what its metadata describes), and the enum's metadata stays the change's own rather
+than the app's (`LiveReload.compile(keep:)`), since the app's doesn't know the new cases. Which property is in which spare
 (`.lamp/live/slots.json`) is put back into each fresh copy (they come back as additions, and `LiveSlots.fit` puts
 them in the same places) until the app is installed again: the
 whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs

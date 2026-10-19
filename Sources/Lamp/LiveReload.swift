@@ -313,6 +313,10 @@ enum LiveReload {
     /// `held` adds what the app keeps beyond its types' own fields: static properties, and globals (under "").
     static func members(inDump dump: String, rawValues: Bool = false, held: Bool = false) -> [String] {
         let typeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|actor)_decl\b[^"]*"([^"]+)""#)
+        // A protocol's requirements lay out its witness tables, which a change keeps using the app's: listed as what
+        // the protocol holds, so one that gained or lost a requirement reopens the app like a type that changed.
+        let protocolDecl = try! NSRegularExpression(pattern: #"^(\s*)\(protocol(_decl)?\b[^"]*"([^"]+)""#)
+        let requirement = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|var_decl|subscript_decl|constructor_decl|associated_type_decl)\b[^"]*"([^"]+)" interface_type="([^"]*)""#)
         let scopeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|accessor_decl|constructor_decl|destructor_decl|closure_expr|subscript_decl|top_level_code_decl)\b"#)
         // A declaration's position (decl_context=…, range=[…]) comes before its name; neither holds a quote.
         let varDecl = try! NSRegularExpression(pattern: #"^(\s*)\(var_decl\b[^"]*"([^"]+)" interface_type="([^"]*)"(.*)$"#)
@@ -337,7 +341,15 @@ enum LiveReload {
             // What a member line belongs to is the nearest scope around it: a type's member when that's the type,
             // nothing when it's a function, an accessor or a closure (a local).
             let owner = scopes.last?.type
-            if let m = typeDecl.firstMatch(in: line, range: range) {
+            if let m = protocolDecl.firstMatch(in: line, range: range) {
+                let type = "protocol " + String(line[Range(m.range(at: 3), in: line)!])
+                scopes.append((indent, type))
+                if seen.insert(type + "\t").inserted { out.append(type + "\t") }
+            } else if let owner, owner.hasPrefix("protocol "), let m = requirement.firstMatch(in: line, range: range) {
+                let entry = owner + "\t" + String(line[Range(m.range(at: 3), in: line)!]) + ": " + String(line[Range(m.range(at: 4), in: line)!])
+                if seen.insert(entry).inserted { out.append(entry) }
+                scopes.append((indent, nil))
+            } else if let m = typeDecl.firstMatch(in: line, range: range) {
                 let name = String(line[Range(m.range(at: 3), in: line)!])
                 let outer = scopes.compactMap(\.type).last
                 let type = outer.map { $0 + "." + name } ?? name
@@ -374,7 +386,9 @@ enum LiveReload {
         swiftFiles(in: sources(project)).keys.filter { !["LampSupport.swift", Template.sceneSupportFile].contains(($0 as NSString).lastPathComponent) }.sorted()
     }
 
-    static func compile(_ project: LampProject, changed: [String]) async -> (url: URL?, problem: String?) {
+    /// `keep` names the types whose metadata the library brings as its own rather than taking the app's
+    /// (`LiveObject`): the enums that gained cases, by their mangled names.
+    static func compile(_ project: LampProject, changed: [String], keep: [String] = []) async -> (url: URL?, problem: String?) {
         guard !changed.isEmpty else { return (nil, nil) }
         let live = folder(project)
         let work = live.appendingPathComponent("hot")
@@ -384,13 +398,24 @@ enum LiveReload {
         // One object for each changed file, in the order they're named; only they are compiled.
         let objects = changed.indices.map { work.appendingPathComponent("\($0).o").path }
         let macOS = Template.macMinimum(project)
-        let script = "set -e\n" + frontend("-c", in: sources(project), primaries: changed, module: project.exe, macOS: macOS)
-            + " " + objects.map { "-o " + quoted($0) }.joined(separator: " ") + " 2>&1\n" + """
+        var output: [String] = []
+        let compiled = await Sandbox.run("set -e\n" + frontend("-c", in: sources(project), primaries: changed, module: project.exe, macOS: macOS)
+            + " " + objects.map { "-o " + quoted($0) }.joined(separator: " ") + " 2>&1", for: project) { output.append($0) }
+        guard compiled == 0 else { return (nil, output.suffix(30).joined(separator: "\n")) }
+        // The types the objects define over again are made the app's before they're linked.
+        var matched = Set<String>()
+        for object in objects {
+            if let problem = LiveObject.rewrite(object, kept: keep, matched: &matched) { return (nil, "the change couldn't be made the app's: \(problem)") }
+        }
+        guard matched.count == Set(keep).count else { return (nil, "an enum that gained cases wasn't found in the change") }
+        // A type's name is referred to weakly, so a type the app doesn't have (a new one) loads all the same, and
+        // the library's own copy stands in for it (`LampLive`); mismatched references are made weak too.
+        let script = "set -e\n" + Shell.compatibleSDK + #"SDK="${SDKROOT:-$(xcrun --sdk macosx --show-sdk-path)}""# + "\n" + """
             xcrun swiftc -emit-library \(objects.map(quoted).joined(separator: " ")) -o \(quoted(library.path)) \\
-              -target arm64-apple-macosx\(macOS) -sdk "$SDK" -Xlinker -undefined -Xlinker dynamic_lookup -Xlinker -interposable 2>&1
+              -target arm64-apple-macosx\(macOS) -sdk "$SDK" -Xlinker -undefined -Xlinker dynamic_lookup -Xlinker -interposable \\
+              -Xlinker -weak_reference_mismatches -Xlinker weak 2>&1
             codesign --force -s - \(quoted(library.path)) 2>&1
             """
-        var output: [String] = []
         let status = await Sandbox.run(script, for: project) { output.append($0) }
         guard status == 0 else { return (nil, output.suffix(30).joined(separator: "\n")) }
         return (library, nil)

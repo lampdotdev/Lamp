@@ -3836,8 +3836,17 @@ enum Template {
         /// The accessors of each stored global and static, and each class's metadata, by name, from the image that
         /// first had it.
         private var kept: [String: UnsafeRawPointer] = [:]
-        /// What the app itself defines, by name.
+        /// What the app itself defines, by name, its private names included.
         private var original: [String: UnsafeRawPointer] = [:]
+
+        /// The suffix Lamp renames a library's own copy of a type's metadata or descriptor with (`LiveObject`): its
+        /// code asks for the one under the original name, which is bound here to the app's.
+        private static let copySuffix = "$lampcopy"
+
+        /// The library's copies of types, by the names they were defined under.
+        private static func copies(in symbols: [(String, UnsafeRawPointer)]) -> [(String, UnsafeRawPointer)] {
+            symbols.filter { $0.0.hasSuffix(copySuffix) }.map { (String($0.0.dropLast(copySuffix.count)), $0.1) }
+        }
 
         private func keep(_ symbols: [(String, UnsafeRawPointer)]) {
             let stored = Self.stored(in: symbols)
@@ -3859,9 +3868,10 @@ enum Template {
             for metadata in classes {
                 let size = Int(metadata.load(fromByteOffset: 56, as: UInt32.self))
                 let point = Int(metadata.load(fromByteOffset: 60, as: UInt32.self))
-                guard size < 1 << 20, point <= size, size - point > 72 else { continue }
+                guard size < 1 << 20, point <= size, size - point > 72, point >= 16 else { continue }
                 let words = UnsafeMutablePointer<UnsafeRawPointer?>(mutating: metadata.assumingMemoryBound(to: UnsafeRawPointer?.self))
-                for index in 9..<((size - point) / 8) {
+                // Two words before the metadata is the class's deinit, which the runtime calls when an object goes.
+                for index in [-2] + Array(9..<((size - point) / 8)) {
                     guard let code = words[index], let new = moved[code] else { continue }
                     let start = UInt(bitPattern: words.advanced(by: index)) & ~UInt(page - 1)
                     mprotect(UnsafeMutableRawPointer(bitPattern: start), page, PROT_READ | PROT_WRITE)
@@ -3872,8 +3882,9 @@ enum Template {
             return count
         }
 
-        /// Why a class the change has (`defined`) can't take its changed methods into the table of the copy that's
-        /// kept, if it can't: the two tables differ in size, or a slot holds a different method in each.
+        /// Why a class the change has (`defined`, its copies under their original names) can't take its changed
+        /// methods into the table of the copy that's kept, if it can't: the two tables differ in size, or a slot
+        /// holds a different method in each.
         private static func reshapedMethods(_ defined: [(String, UnsafeRawPointer)], against kept: [String: UnsafeRawPointer]) -> String? {
             var names: [UnsafeRawPointer: String] = [:]
             // The app's and the libraries' names, since an earlier change's method may be in a table now.
@@ -3927,18 +3938,25 @@ enum Template {
                 print("Lamp couldn't load the change: \(String(cString: dlerror()))")
                 return
             }
-            guard let image = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == path }),
+            // The loader names the image by its real path, which may differ from the one asked for by a link.
+            let real = realpath(path, nil).map { String(cString: $0) } ?? path
+            guard let image = (0..<_dyld_image_count()).first(where: { [path, real].contains(String(cString: _dyld_get_image_name($0))) }),
                   let header = _dyld_get_image_header(image) else { return }
-            Self.takeFieldOffsets(header, slide: _dyld_get_image_vmaddr_slide(image))
-            let defined = Self.definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image))
+            let slide = _dyld_get_image_vmaddr_slide(image)
+            Self.takeFieldOffsets(header, slide: slide)
+            let defined = Self.definedSymbols(header, slide: slide)
+            let copies = Self.copies(in: Self.definedSymbols(header, slide: slide, local: true))
             if original.isEmpty, let app = _dyld_get_image_header(0) {
-                let symbols = Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0))
-                original = Dictionary(symbols, uniquingKeysWith: { first, _ in first })
-                keep(symbols)
+                original = Dictionary(Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0), local: true), uniquingKeysWith: { first, _ in first })
+                keep(Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0)))
             }
+            // The types the change defines over again are the app's, or an earlier change's that first brought
+            // one, and only a new type's is the library's own: so there's one of each type however many changes
+            // have gone in, and a value made before a change is still of its type after it.
+            for (name, address) in copies where kept[name] == nil { kept[name] = original[name] ?? address }
             // A kept class's method table is the app's, so the new code's has to have the same shape: a method added,
             // taken away or moved would put a call in another method's place. Such a change reopens the app.
-            if let why = Self.reshapedMethods(defined, against: kept) {
+            if let why = Self.reshapedMethods(defined + copies, against: kept) {
                 result = "failed: \(why)"
                 return
             }
@@ -3948,27 +3966,130 @@ enum Template {
                 if let before = latest[name] ?? original[name] { moved[before] = address }
                 latest[name] = address
             }
+            // A generic class has a method table in each of the types it's used at, made as the app runs, which
+            // nothing here can find: a change to one of its overridable methods reopens the app.
+            if let why = Self.genericClassMethod(changed: Set(defined.map(\.0)), copies: copies) {
+                result = "failed: \(why)"
+                return
+            }
             // Stored globals and statics, and classes, stay where they were first made: the new code's own copies
             // would be a second set, made afresh. So its calls to them go to the app's, or to the earlier change's
             // that first added one, and only one that's new keeps its own.
             keep(defined)
             let bindings = latest.merging(kept) { new, _ in new }
-            images.append(path)
+            images.append(String(cString: _dyld_get_image_name(image)))
             var rebound = Self.rebind(image: 0, to: latest)
             for earlier in images {
                 guard let index = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == earlier }) else { continue }
                 rebound += Self.rebind(image: index, to: bindings)
             }
             rebound += Self.redirectMethods(of: kept.filter { $0.key.hasSuffix("CN") }.map(\.value), moved)
+            guard let descriptors = Self.redirectDescriptors(header, slide: slide, copies: copies, kept: kept) else {
+                result = "failed: the change's types couldn't all be made the app's"
+                return
+            }
+            rebound += descriptors
             generation += 1
             result = "ok \(rebound)"
         }
 
-        /// Functions, getters and setters, by their Swift names: never a type's metadata, descriptors, witness
-        /// tables or the accessors of stored globals, whose new copies would be a second set of the app's types
-        /// and state.
+        /// The library's own copies of the app's types are what its data still names: the mangled type names its
+        /// code resolves at run time (a view's body, `[Mood]`, `any Shape`) and its conformance records refer to the
+        /// copies' descriptors by relative pointers, which no symbol reaches. Pointed at the kept descriptors here,
+        /// so an existential of the app's protocol, a conformance the change adds, and every generic type made from
+        /// a mangled name are the app's. The sections sit in the library's text, which is written through for it.
+        /// Nil when a reference can't be pointed over (the app's descriptor is out of a relative pointer's reach,
+        /// or the page can't be opened): the change is then refused rather than left naming two of a type.
+        private static func redirectDescriptors(_ header: UnsafePointer<mach_header>, slide: Int,
+                                                copies: [(String, UnsafeRawPointer)], kept: [String: UnsafeRawPointer]) -> Int? {
+            var replacements: [UnsafeRawPointer: UnsafeRawPointer] = [:]
+            for (name, address) in copies where name.hasSuffix("Mn") || name.hasSuffix("Mp") {
+                if let theirs = kept[name], theirs != address { replacements[address] = theirs }
+            }
+            guard !replacements.isEmpty else { return 0 }
+            let header64 = UnsafeRawPointer(header).assumingMemoryBound(to: mach_header_64.self)
+            var count = 0, failed = false
+            // A relative pointer to a descriptor, made to point at the kept one when it points at a copy; one through
+            // a slot (`indirect`, or the low bit set where the pointer may say so itself, `flagged`) has the slot's
+            // pointer changed instead.
+            func redirect(_ field: UnsafeRawPointer, indirect: Bool = false, flagged: Bool = false) {
+                let value = field.loadUnaligned(as: Int32.self)
+                if indirect || (flagged && value & 1 != 0) {
+                    let slot = field.advanced(by: Int(value & ~1))
+                    guard let pointer = slot.loadUnaligned(as: UnsafeRawPointer?.self), let theirs = replacements[pointer] else { return }
+                    if write(theirs, to: slot, executable: false) { count += 1 } else { failed = true }
+                } else {
+                    guard let theirs = replacements[field.advanced(by: Int(value))] else { return }
+                    let distance = Int(bitPattern: theirs) - Int(bitPattern: field)
+                    guard let relative = Int32(exactly: distance), write(relative, to: field, executable: true) else { return failed = true }
+                    count += 1
+                }
+            }
+            var size: UInt = 0
+            if let names = getsectiondata(header64, "__TEXT", "__swift5_typeref", &size) {
+                // Mangled names, each ended by a zero byte. A control byte in one is a symbolic reference: up to 0x17
+                // it carries a relative pointer, 0x01 to a descriptor and 0x02 to a slot holding one; above, an
+                // absolute pointer, passed over.
+                var at = 0
+                while at < Int(size) {
+                    let byte = names[at]
+                    if byte == 0 || byte >= 0x20 { at += 1; continue }
+                    if byte >= 0x18 { at += 9; continue }
+                    if byte == 1 || byte == 2 { redirect(UnsafeRawPointer(names.advanced(by: at + 1)), indirect: byte == 2) }
+                    at += 5
+                }
+            }
+            // A conformance the app has already is found through its own record; the library's copy is left naming
+            // the copies, which nothing asks about. One the change adds is made to name the kept descriptors.
+            let known = Set(copies.filter { $0.0.hasSuffix("Mc") && kept[$0.0] != $0.1 }.map(\.1))
+            if let records = getsectiondata(header64, "__TEXT", "__swift5_proto", &size) {
+                for index in 0..<(Int(size) / 4) {
+                    let entry = UnsafeRawPointer(records.advanced(by: index * 4))
+                    let descriptor = entry.advanced(by: Int(entry.loadUnaligned(as: Int32.self)))
+                    guard !known.contains(descriptor) else { continue }
+                    redirect(descriptor, flagged: true)
+                    // The type it's for: a descriptor, directly (0) or through a slot (1); the others name a class.
+                    switch (descriptor.loadUnaligned(fromByteOffset: 12, as: UInt32.self) >> 3) & 0x7 {
+                    case 0: redirect(descriptor.advanced(by: 4))
+                    case 1: redirect(descriptor.advanced(by: 4), indirect: true)
+                    default: break
+                    }
+                }
+            }
+            return failed ? nil : count
+        }
+
+        /// Stores a value in memory that may be read-only, opening its page for the moment: the library's text is
+        /// given back as it was, executable. False when the page can't be opened.
+        private static func write<T>(_ value: T, to pointer: UnsafeRawPointer, executable: Bool) -> Bool {
+            let page = Int(vm_page_size)
+            let start = UnsafeMutableRawPointer(bitPattern: UInt(bitPattern: pointer) & ~UInt(page - 1))
+            let length = Int(UInt(bitPattern: pointer) + UInt(MemoryLayout<T>.size) - 1 - (UInt(bitPattern: pointer) & ~UInt(page - 1))) / page * page + page
+            guard mprotect(start, length, PROT_READ | PROT_WRITE) == 0 else { return false }
+            UnsafeMutableRawPointer(mutating: pointer).storeBytes(of: value, as: T.self)
+            if executable { mprotect(start, length, PROT_READ | PROT_EXEC) }
+            return true
+        }
+
+        /// Why the change can't go in for a generic class's methods, if it can't: one of the overridable methods
+        /// (those with a method descriptor, `Tq`) of a class whose descriptor says it's generic is among the changed
+        /// functions.
+        private static func genericClassMethod(changed: Set<String>, copies: [(String, UnsafeRawPointer)]) -> String? {
+            for (name, descriptor) in copies where name.hasSuffix("CMn") && descriptor.load(as: UInt32.self) & 0x80 != 0 {
+                let prefix = String(name.dropLast(2))
+                if changed.contains(where: { $0.hasPrefix(prefix) && isCode($0) && changed.contains($0 + "Tq") }) {
+                    return "a method of the generic class \(prefix) changed"
+                }
+            }
+            return nil
+        }
+
+        /// Functions, getters, setters and deinits, by their Swift names: never a type's metadata, descriptors,
+        /// witness tables or the accessors of stored globals, whose new copies would be a second set of the app's
+        /// types and state.
         private static func isCode(_ name: String) -> Bool {
             guard name.hasPrefix("_$s") else { return false }
+            if name.hasSuffix("fD") { return true }
             // An async function is called through a small record of its own (its code and how much room it needs),
             // which is what calls and method tables hold.
             if name.hasSuffix("Tu") { return isCode(String(name.dropLast(2))) }
