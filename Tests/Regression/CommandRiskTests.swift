@@ -203,6 +203,17 @@ final class CommandRiskTests: XCTestCase {
         XCTAssertEqual(answered, .some("low"))
     }
 
+    /// A reply that doesn't say low, medium or high is never taken for a colour that runs: medium runs now, so
+    /// a missing or unknown risk keeps the card.
+    func testARatingWithoutAValidRiskAsks() async {
+        for reply in [#"{"summary": "Builds the app.", "why": "w"}"#, #"{"summary": "Builds the app.", "risk": "none"}"#,
+                      #"{"summary": "Builds the app.", "risk": 1}"#, #"{"summary": "Builds the app.", "risk": "Medium"}"#] {
+            let rating = await CommandRisk.rating(command: "swift build", request: "", building: "an app") { _, _ in reply }
+            XCTAssertEqual(rating?.summary, "Builds the app.")
+            XCTAssertEqual(CommandRisk.runsOnRating(rating, flagged: nil), reply.contains("Medium"), reply)
+        }
+    }
+
     // MARK: The reason on the card
 
     /// The text model can call a flagged command low or medium risk; the card doesn't, since those are the

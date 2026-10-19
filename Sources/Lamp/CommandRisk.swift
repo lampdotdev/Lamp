@@ -268,8 +268,9 @@ enum CommandRisk {
         guard let text = try? await complete(prompt, system),
               let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
               let summary = (json["summary"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty else { return nil }
-        let risk = (json["risk"] as? String)?.lowercased() ?? "medium"
-        return Store.CommandExplanation(summary: summary, risk: ["low", "medium", "high"].contains(risk) ? risk : "medium",
+        // A reply that names no level of its own is high: low and medium run without asking (`runsOnRating`).
+        let risk = (json["risk"] as? String)?.lowercased() ?? "high"
+        return Store.CommandExplanation(summary: summary, risk: ["low", "medium", "high"].contains(risk) ? risk : "high",
                                         why: (json["why"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
     }
 
