@@ -485,6 +485,12 @@ final class SidebarServer {
                     card.status = project.platform.hasIOS ? WidgetCard.phoneStatus(project.name) : WidgetCard.status(project.name, placed: placed)
                     card.done = placed
                     out.append(card)
+                case .reload:
+                    var card = SidebarLine(id: line.id, kind: .action, text: ReloadLine.text(project.name), gap: gap)
+                    card.symbol = "arrow.clockwise"
+                    card.button = "Reload"
+                    card.prominent = true
+                    out.append(card)
                 case .drawIcon:
                     var card = SidebarLine(id: line.id, kind: .action, text: DrawIconLine.text(project.name), gap: gap)
                     card.symbol = "paintbrush.pointed"
@@ -730,6 +736,8 @@ final class SidebarServer {
             store.attach(urls, to: project)
         case .offer(let id):
             guard let line = store.logs[project.id]?.first(where: { $0.id == id }) else { return }
+            // Reload is done where the person is, beside the app: nothing to show in Lamp's window.
+            if line.kind == .reload { return store.reloadWaiting(project.id) }
             // In Lamp's window: where the card's keys, downloads and sign-ins are, and what Image Playground
             // opens over, which Lamp may have put away for the sidebar.
             NSApp.activate(ignoringOtherApps: true)

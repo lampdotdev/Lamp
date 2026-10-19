@@ -193,7 +193,8 @@ enum Agent {
     New stored properties go in too, in a class, a struct or (as @State) a view, when each has a starting value \
     (or is an optional) and no didSet or willSet; so do new cases at the end of an enum whose cases carry nothing, \
     and new values for constants that hold no object. Changing or removing a stored property, a case anywhere \
-    else, or what's read only at launch (the App, its scenes and menu commands) reopens it. \
+    else, or what's read only at launch (the App, its scenes and menu commands) needs it reopened, which waits \
+    for the person to press Reload. \
     Code already running keeps the version it started with: a closure given to a Timer, a loop in a Task, an \
     observer. So in a loop or a timer, call a method of the app's each time rather than writing the work in the \
     closure, and a change to that method goes in. \

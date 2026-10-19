@@ -407,7 +407,7 @@ private struct LineView: View {
             }
         case .action:
             ChatLook.ActionLine(symbol: line.symbol ?? "sparkles", text: line.text, button: line.button ?? "",
-                                disabled: line.disabled ?? false) { link.send(.offer(line.id)) }
+                                disabled: line.disabled ?? false, prominent: line.prominent ?? false) { link.send(.offer(line.id)) }
         case .note:
             ChatLook.NoteLine(title: line.text, added: line.added ?? [], removed: line.removed ?? [], undone: line.undone ?? false,
                               problem: line.problem, undo: { link.send(.undoNote(line.id)) })

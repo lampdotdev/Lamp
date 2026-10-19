@@ -250,12 +250,14 @@ enum ChatItem: Identifiable {
             case .work(_, _, let steps): steps
             }
         }
-        let others = run.filter { !isStep($0) }
-        guard !steps.isEmpty else { return items(others) }
+        // Reload, for a change waiting on it, under the answer that says so: the last thing in the run.
+        let reloads = run.filter { $0.kind == .reload }
+        let others = run.filter { !isStep($0) && $0.kind != .reload }
+        guard !steps.isEmpty else { return items(others) + items(reloads) }
         // Above the answer, the run's last message or its card; at the run's end when it has neither.
         let place = others.lastIndex { $0.kind == .agent || $0.kind == .ask } ?? others.count
         return items(Array(others[..<place])) + [.work(id: summary.id, title: workedFor(summary.text), steps: steps)]
-            + items(Array(others[place...]))
+            + items(Array(others[place...])) + items(reloads)
     }
 
     /// "Worked for 2 min 3 s", from a turn's summary ("Worked for 2m 3s · $0.12").
@@ -371,7 +373,7 @@ struct Transcript: View {
     /// Without the offers to draw an icon that have nothing left to offer: the icon was drawn or designed
     /// again, or icons are no longer drawn by hand. A line that stayed would say what's no longer so.
     @MainActor static func withoutSpentOffers(_ lines: [LogLine], dir: URL) -> [LogLine] {
-        guard lines.contains(where: { $0.kind == .drawIcon || $0.kind == .widget || $0.kind == .iphoneSetup }) else { return lines }
+        guard lines.contains(where: { $0.kind == .drawIcon || $0.kind == .widget || $0.kind == .iphoneSetup || $0.kind == .reload }) else { return lines }
         let project = Store.shared.projects.first { $0.dir == dir }
         return lines.filter { line in
             switch line.kind {
@@ -380,6 +382,8 @@ struct Transcript: View {
             case .widget: project.map { WidgetCard.isShown(for: $0) } ?? false
             // The offer to set up iPhone apps, while the app is still only a Mac app.
             case .iphoneSetup: project?.platform == .mac
+            // Reload, while the change it's for still waits: the last such line only, under the latest change.
+            case .reload: project.map(Runtime.waitsForReload) ?? false && line.id == lines.last(where: { $0.kind == .reload })?.id
             default: true
             }
         }
@@ -500,6 +504,12 @@ struct LogRow: View, Equatable {
             if let project = Store.shared.projects.first(where: { $0.dir == dir }) { DrawIconLine(project: project) }
         case .widget:
             WidgetCardView(dir: dir)
+        case .reload:
+            if let project = Store.shared.projects.first(where: { $0.dir == dir }) {
+                ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.text(project.name), button: "Reload", prominent: true) {
+                    Store.shared.reloadWaiting(project.id)
+                }
+            }
         case .iphoneSetup:
             if let project = Store.shared.projects.first(where: { $0.dir == dir }) {
                 IPhoneSetupLine(project: project, wanted: Platform(rawValue: line.text) ?? .iphone)
@@ -631,3 +641,9 @@ struct StatusGroup: View {
     }
 }
 
+
+/// The line under a change that waits for the app to be reopened (`Store.awaitReload`): its button does what the
+/// one in the app's title bar does.
+enum ReloadLine {
+    static func text(_ name: String) -> String { "Reload \(name) to see this change." }
+}

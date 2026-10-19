@@ -171,7 +171,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// build one yet, and offers the setup (`IPhoneSetupLine`); its text is the kind that was wanted.
     /// `progress` is the agent's line on how the work is going (`Talk`'s `progress`), folded with the turn's
     /// steps once it ends.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress }
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -547,6 +547,41 @@ final class Store: ObservableObject {
     }
 
     /// Gives the app back, without starting anything queued (see `finish`).
+    /// A request's change the open app can't take as it runs: built and held (`Runtime.awaitReload`), with a Reload
+    /// button in the app's title bar and a line in the chat that has one too. Closing the app installs it as well.
+    private func awaitReload(_ project: LampProject, owner: Turn?) {
+        let already = Runtime.waitsForReload(project)
+        Runtime.awaitReload(project)
+        _ = heldInstalls.mayInstall(project.id, running: true)
+        Self.tellReload(project, on: true)
+        let lines = logs[project.id] ?? []
+        if !already || !lines.contains(where: { $0.kind == .reload }) { log(project, .reload, "") }
+        refreshOpenApps()
+    }
+
+    /// Shows or takes away the app's Reload button (`LampMagic.setReload`).
+    static func tellReload(_ project: LampProject, on: Bool) {
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(Edition.notificationPrefix + "reloadReady." + project.id), object: nil,
+            userInfo: ["on": on ? "1" : "0"], deliverImmediately: true)
+    }
+
+    /// The person pressed Reload, in the app or the chat: the waiting change goes in, by closing the app the usual way
+    /// and opening it again where it was. Pressed while a turn has the app, it's done when the turn ends.
+    func reloadWaiting(_ id: String) {
+        guard let project = projects.first(where: { $0.id == id }), Runtime.waitsForReload(project) else { return }
+        // Taken now, before anything queued can start: otherwise kept until the turn that has the app ends.
+        guard begin(project) != nil else { reloadWhenFree.insert(id); return }
+        // The Mac copy's change, wherever Try On points now (an app for both may have moved it to a phone since).
+        var mac = project
+        mac.chosen = .mac
+        Task {
+            _ = await install(mac, inFront: true, fresh: true, reload: true)
+            finish(project)
+        }
+    }
+    private var reloadWhenFree: Set<String> = []
+
     private func release(_ project: LampProject) {
         if let turn = turns.removeValue(forKey: project.id) { agentTokens[turn.agentToken] = nil }
         busy.remove(project.id)
@@ -1009,6 +1044,8 @@ final class Store: ObservableObject {
                 .queryItems?.first(where: { $0.name == "app" })?.value else { return }
         // An app's sidebar, started while Lamp wasn't open: Lamp listens for it, and its own window stays put.
         if url.host == "sidebar" { return MagicPanel.shared.opening(slug) }
+        // The app's Reload button, pressed while Lamp wasn't running (`LampMagic.Opener.reload`).
+        if url.host == "reload" { return reloadWaiting(slug) }
         showChat(slug)
     }
 
@@ -2231,6 +2268,7 @@ final class Store: ObservableObject {
             Task {
                 await applyIconArt(project, spec: spec)
                 release(project)
+                if reloadWhenFree.remove(project.id) != nil { reloadWaiting(project.id) }
                 fixHeldCrash(project)
                 offerHeldDrawing(project)
                 startQueued(project)
@@ -2239,6 +2277,7 @@ final class Store: ObservableObject {
             return
         }
         release(project)
+        if reloadWhenFree.remove(project.id) != nil { reloadWaiting(project.id) }
         fixHeldCrash(project)
         offerHeldDrawing(project)
         startQueued(project)
@@ -3250,7 +3289,9 @@ final class Store: ObservableObject {
         }
         if project.onIOS { return await useOnSimulator(project, actions: actions, json: json) }
         // Not in the copy the person kept open: what it holds is theirs, and it isn't the agent's change.
-        if Runtime.holdsBuild(project), isRunning(project) { return (409, ["error": Self.keptOpenNote]) }
+        if Runtime.holdsBuild(project), isRunning(project) {
+            return (409, ["error": Runtime.waitsForReload(project) ? Self.reloadNote : Self.keptOpenNote])
+        }
         guard let app = macCopies(of: project).first else {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
@@ -4467,7 +4508,7 @@ final class Store: ObservableObject {
         // The open app already runs these sources (a change that went in before its build): nothing to do.
         case .unchanged: return true
         case .reopen(let why):
-            log(project, .detail, "Reopening \(project.name) for this change: \(why).")
+            log(project, .detail, "\(project.name) has to reopen for this change: \(why).")
             return false
         }
         note("Updating \(project.name) in place…", for: project)
@@ -4496,13 +4537,13 @@ final class Store: ObservableObject {
                 log(project, .detail, "Gave \(plan.constants.joined(separator: ", ")) \(plan.constants.count == 1 ? "its" : "their") new value without reopening \(project.name).")
             }
         } else if !constants.isEmpty, check.problem == nil {
-            log(project, .detail, "Reopening \(project.name) for this change: a constant's new value can't be given in place.")
+            log(project, .detail, "\(project.name) has to reopen for this change: a constant's new value can't be given in place.")
             return false
         } else if spared, check.problem == nil {
             (library, problem) = await LiveReload.compile(project, changed: changed)
         }
         if let why = check.problem {
-            log(project, .detail, "Reopening \(project.name) for this change: \(why).")
+            log(project, .detail, "\(project.name) has to reopen for this change: \(why).")
             return false
         }
         // An enum that only gained cases goes in when nothing holds it where a new case would change what's there.
@@ -4510,7 +4551,7 @@ final class Store: ObservableObject {
         // (a switch, or printing it), and the enum's own metadata is the change's, which knows the new cases.
         if let before, let layout = check.layout, case let grown = LiveReload.grownEnums(before: before, after: layout), !grown.isEmpty {
             if let why = await LiveReload.enumsHeld(project, grown: grown) {
-                log(project, .detail, "Reopening \(project.name) for this change: \(why).")
+                log(project, .detail, "\(project.name) has to reopen for this change: \(why).")
                 return false
             }
             changed = LiveReload.appFiles(project)
@@ -4573,7 +4614,7 @@ final class Store: ObservableObject {
     /// Installs and opens the app. Returns what's known about the failure if it died straight away.
     /// `inFront` is false for the agent's looks, which shouldn't pull the app in front of the user mid-turn.
     /// `fresh` closes an open Mac app and opens it again even when the change could go into it as it runs.
-    private func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false) async -> String? {
+    private func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false, reload: Bool = false) async -> String? {
         guard exists(project) else { return nil }
         // The turn this install belongs to, taken before the icon wait: a Stop during it can end the turn
         // and start the next one's, which must not inherit this launch.
@@ -4610,11 +4651,20 @@ final class Store: ObservableObject {
             log(project, .error, problem)
             return problem
         }
+        // A request's change the open app can't take as it runs doesn't close it under the person: it waits for
+        // them to press Reload, in the app's title bar or the chat (`awaitReload`). Open App, Undo and Reload itself
+        // ask for the reopen, and an app that's closed just gets the build.
+        if !reload, owner?.request != nil, isRunning(project), !Template.isWidgetOnly(project) {
+            awaitReload(project, owner: owner)
+            return nil
+        }
         // Asked once in a turn: a second build in it leaves the app the person kept open alone.
         let asked = owner?.keptOpen == true && isRunning(project)
         guard !asked, await quit(project, for: owner, only: .mac) else {
             // The person kept the app open, with whatever it holds. It isn't replaced under them (HeldInstalls
             // says what that breaks, too): the build waits, and goes in when the app closes.
+            // Kept open after Reload was pressed: the button is back for when they're ready.
+            if reload { awaitReload(project, owner: owner); return nil }
             Runtime.holdBuild(project)
             _ = heldInstalls.mayInstall(project.id, running: true)
             if !asked { log(project, .status, ErrorMessages.stayedOpen(project.name)) }
@@ -6415,6 +6465,14 @@ final class Store: ObservableObject {
         return (result.0, answer)
     }
 
+    /// What a look says while a change waits for the person to press Reload (`awaitReload`).
+    private static let reloadNote = """
+        The app built, but this change can't go into it while it runs: it has to be reopened, and that's the \
+        person's to do. The app and the chat show them a Reload button, and Lamp doesn't reopen it for them. What's \
+        on screen isn't your change yet, so don't look or use the app again in this request. Finish, and tell them \
+        in a sentence to press Reload to see it.
+        """
+
     /// What a look says when the person kept the earlier build open (`Turn.keptOpen`).
     private static let keptOpenNote = """
         The app built, but the person has the version from before open and chose to keep it open (it may hold \
@@ -6494,6 +6552,7 @@ final class Store: ObservableObject {
         // The copy on screen is an earlier build the person kept open: not shown as the agent's work, and not
         // asked to quit again at every look.
         if turn.keptOpen, isRunning(project) { return (200, ["text": Self.keptOpenNote]) }
+        if Runtime.waitsForReload(project), isRunning(project), !reopen { return (200, ["text": Self.reloadNote]) }
         var since = Date()
         // A copy kept open in an earlier request is older than the build too: it's asked to quit, once.
         if !reopen, !changed, !Runtime.holdsBuild(project), macCopies(of: project).first != nil {
@@ -6509,8 +6568,10 @@ final class Store: ObservableObject {
         if screenshots.isEmpty {
             let launched = Date()
             since = launched
-            let crash = await install(project, inFront: false, fresh: reopen)
+            // A look with `reopen` asks for the fresh launch itself, so it doesn't wait for Reload.
+            let crash = await install(project, inFront: false, fresh: reopen, reload: reopen)
             if turn.keptOpen { return (200, ["text": Self.keptOpenNote]) }
+            if Runtime.waitsForReload(project), isRunning(project) { return (200, ["text": Self.reloadNote]) }
             turn.look.installed = true
             turn.look.crash = crash
             if let crash {

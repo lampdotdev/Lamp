@@ -4625,6 +4625,14 @@ enum Template {
                 ) { _ in
                     MainActor.assumeIsolated { Picker.start() }
                 }
+                // A change that can't go into the app as it runs waits for the person: Lamp asks for a Reload button
+                // in the title bar, and takes it away once the change is in (`Store.awaitReload`).
+                DistributedNotificationCenter.default().addObserver(
+                    forName: Notification.Name(LampInstall.note + "reloadReady." + LampInstall.slug), object: nil, queue: .main
+                ) { note in
+                    let on = (note.userInfo?["on"] as? String) == "1"
+                    MainActor.assumeIsolated { setReload(on ? .ready : .none) }
+                }
                 for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification,
                              NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
                              NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
@@ -4905,6 +4913,7 @@ enum Template {
             while let index = window.titlebarAccessoryViewControllers.firstIndex(where: { $0.view.identifier == identifier }) {
                 window.removeTitlebarAccessoryViewController(at: index)
             }
+            floating(in: window)?.superview?.subviews.filter { $0 is ReloadButton }.forEach { $0.removeFromSuperview() }
             floating(in: window)?.removeFromSuperview()
         }
 
@@ -4931,6 +4940,7 @@ enum Template {
             let holder = NSView()
             holder.identifier = identifier
             holder.addSubview(button(LampGlyph.image(pointSize: 14, weight: .medium), "Customize This App", "Customize this app with Lamp", #selector(Opener.open(_:))))
+            holder.addSubview(ReloadButton.make(floating: false))
             let accessory = NSTitlebarAccessoryViewController()
             accessory.view = holder
             accessory.layoutAttribute = .trailing
@@ -4943,11 +4953,100 @@ enum Template {
         /// The button as tall as the toolbar's buttons when there's a toolbar, smaller in a plain title bar, in
         /// the middle of the title bar's height, at the right of the app's own content.
         @MainActor private static func fit(_ holder: NSView, in window: NSWindow) {
-            guard let button = holder.subviews.first else { return }
+            guard let button = holder.subviews.first(where: { !($0 is ReloadButton) }) else { return }
             let titlebar = max(window.frame.height - window.contentLayoutRect.height, 28)
             let side = buttonSide(titlebar)
-            holder.frame.size = NSSize(width: side + 14, height: titlebar)
-            button.frame = NSRect(x: 4, y: ((titlebar - side) / 2).rounded(), width: side, height: side)
+            // A holder made by an app built before the button, kept across a live change, gets it now.
+            let reload = holder.subviews.compactMap { $0 as? ReloadButton }.first ?? {
+                let made = ReloadButton.make(floating: false)
+                holder.addSubview(made)
+                return made
+            }()
+            var x: CGFloat = 4
+            reload.show(reloadState, height: side)
+            if !reload.isHidden {
+                reload.frame.origin = NSPoint(x: x, y: ((titlebar - reload.frame.height) / 2).rounded())
+                x += reload.frame.width + 8
+            }
+            holder.frame.size = NSSize(width: x + side + 10, height: titlebar)
+            button.frame = NSRect(x: x, y: ((titlebar - side) / 2).rounded(), width: side, height: side)
+        }
+
+        /// Whether a change waits for the person to reload the app (`Store.awaitReload`), and whether they have.
+        enum ReloadState { case none, ready, reloading }
+        @MainActor static var reloadState = ReloadState.none
+
+        /// Shows or takes away the Reload button in every window.
+        @MainActor static func setReload(_ state: ReloadState) {
+            reloadState = state
+            for window in NSApp.windows where isAppWindow(window) && isOn { attach(to: window) }
+        }
+
+        /// The button that reloads the app for a change waiting on it: a capsule in the accent colour beside the wand,
+        /// with a soft glow that comes and goes, so it's seen without being in the way. A glass button in the title
+        /// bar draws no capsule of its own until it's pointed at, so this one draws its own, the same over a full-bleed
+        /// window's content. A click asks Lamp to put the change in, by reopening the app as it was.
+        @MainActor final class ReloadButton: NSButton {
+            static func make(floating: Bool) -> ReloadButton {
+                let button = ReloadButton(title: "Reload", image: NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil) ?? NSImage(),
+                                          target: Opener.shared, action: #selector(Opener.reload(_:)))
+                button.identifier = NSUserInterfaceItemIdentifier("lampReload")
+                button.imagePosition = .imageLeading
+                button.imageHugsTitle = true
+                button.isBordered = false
+                button.contentTintColor = .white
+                button.wantsLayer = true
+                button.toolTip = "Reload the app to see the latest change"
+                button.setAccessibilityLabel("Reload to see the latest change")
+                button.isHidden = true
+                return button
+            }
+
+            /// Shown while a change waits, and says so while the app reopens.
+            func show(_ state: ReloadState, height: CGFloat) {
+                isHidden = state == .none
+                isEnabled = state == .ready
+                let words = state == .reloading ? "Reloading…" : "Reload"
+                attributedTitle = NSAttributedString(string: words, attributes: [
+                    .foregroundColor: NSColor.white, .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)])
+                guard !isHidden else { return glow(false) }
+                sizeToFit()
+                frame.size = NSSize(width: frame.width + 22, height: min(height, 24))
+                glow(state == .ready)
+                needsDisplay = true
+            }
+
+            private func glow(_ on: Bool) {
+                guard let layer else { return }
+                if on, layer.animation(forKey: "lampGlow") == nil {
+                    layer.shadowColor = NSColor.controlAccentColor.cgColor
+                    layer.shadowOffset = .zero
+                    layer.shadowRadius = 7
+                    let pulse = CABasicAnimation(keyPath: "shadowOpacity")
+                    pulse.fromValue = 0
+                    pulse.toValue = 0.9
+                    pulse.duration = 1.1
+                    pulse.autoreverses = true
+                    pulse.repeatCount = .infinity
+                    pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    layer.add(pulse, forKey: "lampGlow")
+                } else if !on {
+                    layer.removeAnimation(forKey: "lampGlow")
+                    layer.shadowOpacity = 0
+                }
+            }
+
+            override var wantsUpdateLayer: Bool { true }
+            override func updateLayer() {
+                guard let layer else { return }
+                layer.masksToBounds = false
+                layer.cornerRadius = bounds.height / 2
+                layer.backgroundColor = NSColor.controlAccentColor
+                    .withAlphaComponent(!isEnabled ? 0.6 : isHighlighted ? 0.8 : 1).cgColor
+            }
+            override var isHighlighted: Bool { didSet { needsDisplay = true } }
+            // One click works in a window in the back too, as it does on the wand beside it.
+            override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
         }
 
         /// A window whose content runs under a title bar with nothing drawn in it (a game, a full-bleed app) has no
@@ -4980,6 +5079,14 @@ enum Template {
             let right = bar.bounds.width - inset
             wand.autoresizingMask = [.minXMargin]
             wand.frame = NSRect(x: (right - side).rounded(), y: (zoom.frame.midY - side / 2).rounded(), width: side, height: side)
+            let reload = bar.subviews.compactMap { $0 as? ReloadButton }.first ?? {
+                let made = ReloadButton.make(floating: true)
+                bar.addSubview(made)
+                return made
+            }()
+            reload.show(reloadState, height: side)
+            reload.autoresizingMask = [.minXMargin]
+            reload.frame.origin = NSPoint(x: (wand.frame.minX - 8 - reload.frame.width).rounded(), y: (wand.frame.midY - reload.frame.height / 2).rounded())
             showWand(in: window)
         }
 
@@ -5095,6 +5202,27 @@ enum Template {
             @objc func open(_ sender: NSButton) {
                 guard let window = sender.window ?? NSApp.keyWindow ?? NSApp.mainWindow, isAppWindow(window) else { return }
                 LampSidebar.toggle(window)
+            }
+            /// Asks Lamp to put in the change that's waiting: it closes the app the usual way and opens it again
+            /// where it was. Only a change Lamp holds for this app goes in, whoever asks.
+            @objc func reload(_ sender: NSButton) {
+                guard reloadState == .ready else { return }
+                setReload(.reloading)
+                if NSRunningApplication.runningApplications(withBundleIdentifier: LampInstall.host).isEmpty {
+                    // Lamp was quit: the link opens it, and it reloads the app once it's running.
+                    let configuration = NSWorkspace.OpenConfiguration()
+                    configuration.activates = false
+                    NSWorkspace.shared.open(LampInstall.link("reload"), configuration: configuration)
+                } else {
+                    DistributedNotificationCenter.default().postNotificationName(
+                        Notification.Name(LampInstall.note + "reloadNow"), object: nil,
+                        userInfo: ["app": LampInstall.slug], deliverImmediately: true)
+                }
+                // The app is closed for the change within moments. Still open later, the request didn't arrive (or
+                // the change went in another way): the button is there to press again.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+                    MainActor.assumeIsolated { if reloadState == .reloading { setReload(.ready) } }
+                }
             }
         }
     }
