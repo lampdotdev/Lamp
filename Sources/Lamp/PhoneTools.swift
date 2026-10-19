@@ -201,7 +201,7 @@ enum PhoneTools {
         guard env["DEVELOPER_DIR"]?.isEmpty ?? true else { return nil }
         let current = selected()
         guard current.isEmpty || !isXcode(current) else { return nil }
-        let root = realpath(applications, nil).map { defer { free($0) }; return String(cString: $0) } ?? applications
+        let root = realpath(applications, nil).map { pointer in defer { free(pointer) }; return String(cString: pointer) } ?? applications
         let apps = ((try? FileManager.default.contentsOfDirectory(atPath: applications)) ?? []).filter { $0.hasSuffix(".app") }
         // Xcode.app first, as the one Apple's App Store puts there, then any other (Xcode-beta.app) by name.
         let ordered = apps.filter { $0 == "Xcode.app" } + apps.filter { $0 != "Xcode.app" }.sorted()
@@ -222,7 +222,7 @@ enum PhoneTools {
     private static func staysInside(_ bundle: String) -> Bool {
         let developer = bundle + "/Contents/Developer"
         func resolved(_ path: String) -> String? {
-            realpath(path, nil).map { defer { free($0) }; return String(cString: $0) }
+            realpath(path, nil).map { pointer in defer { free(pointer) }; return String(cString: pointer) }
         }
         guard resolved(developer) == developer else { return false }
         for tool in ["xcodebuild", "simctl", "devicectl", "xcdevice", "git"] {
