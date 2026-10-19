@@ -4048,8 +4048,9 @@ enum Template {
             // Each changed function's code before this change, for the class method tables that still hold it.
             var moved: [UnsafeRawPointer: UnsafeRawPointer] = [:], code: [(String, UnsafeRawPointer)] = []
             // A protocol witness (the thunk a witness table holds, which calls whichever method answers the
-            // requirement) is private to its file, so it's among every symbol, not the exported ones.
-            for (name, address) in defined + everything.filter({ $0.0.hasSuffix("TW") })
+            // requirement, or for an async one the record of the thunk) is private to its file, so it's among
+            // every symbol, not the exported ones.
+            for (name, address) in defined + everything.filter({ $0.0.hasSuffix("TW") || $0.0.hasSuffix("TWTu") })
             where Self.isCode(name) && !Self.accesses(name, oneOf: Self.stored(in: defined)) {
                 if let before = latest[name] ?? original[name] { moved[before] = address }
                 latest[name] = address
