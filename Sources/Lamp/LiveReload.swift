@@ -116,6 +116,11 @@ enum LiveReload {
             // what the open app had by the layout check (`SwiftSource.launchEntries`), wherever it's written.
             changed.append(path)
         }
+        // A file taken away while another arrives is most often one renamed: what was private to it (a type, a
+        // static, a global) is named after its file, so the new code would make all of it again, starting over.
+        if let went = gone.first, let came = built.keys.filter({ open[$0] == nil }).sorted().first {
+            return .reopen("\(went) was renamed or replaced by \(came), whose private state would start over")
+        }
         // A file taken away can change what an unchanged caller means: a method it declared may have stood in for
         // a protocol's default or another overload, which the caller now gets. So every file of the app's is
         // compiled again, the App's too (what else is in its file may call it, and the App itself, which ran once
@@ -137,9 +142,34 @@ enum LiveReload {
         return layoutProblem(before: before, after: after)
     }
 
+    /// The layout's lines that aren't a type's members, by the control character their group begins with: what's
+    /// read at launch (`SwiftSource.launchEntries`), constants' values (`constantEntries`), typealiases (`aliasGroup`)
+    /// and what's declared (`declarationGroup`). Each is compared its own way, never as a type's fields.
+    static func isGroup(_ type: String) -> Bool { (type.first?.asciiValue ?? 32) < 32 }
+    static let aliasGroup = "\u{3}alias", declarationGroup = "\u{5}declared"
+
+    /// Whether the new code declares other functions, initializers, subscripts, computed properties or
+    /// conformances than the open app's: an unchanged caller may then mean another one (a new overload, a method
+    /// where a protocol's default stood in, an extension's method over a system one), so every file is compiled again.
+    static func declarationsChanged(before: [String], after: [String]) -> Bool {
+        Set(before.filter { $0.hasPrefix(declarationGroup + "\t") }) != Set(after.filter { $0.hasPrefix(declarationGroup + "\t") })
+    }
+
     static func layoutProblem(before: [String]?, after: [String]?) -> (problem: String?, layout: [String]?) {
         guard let now = after else { return ("the new code doesn't type-check as a whole", nil) }
         guard let before else { return ("the compiler couldn't say what the open app's types hold", nil) }
+        // A typealias is printed as itself wherever it's used, so a type keeping `var amount: Money` reads the same
+        // when Money changes from Int to Double, while its size changes under the open app's values: an alias the
+        // open app has must still name what it did. One added or taken away changes nothing of what exists.
+        func aliases(_ entries: [String]) -> [String: String] {
+            Dictionary(entries.filter { $0.hasPrefix(aliasGroup + "\t") }.compactMap { entry -> (String, String)? in
+                guard let equals = entry.range(of: " = ") else { return nil }
+                return (String(entry[entry.index(after: entry.firstIndex(of: "\t")!)..<equals.lowerBound]), String(entry[equals.upperBound...]))
+            }, uniquingKeysWith: { first, _ in first })
+        }
+        for (name, was) in aliases(before).sorted(by: { $0.key < $1.key }) {
+            if let is_ = aliases(now)[name], is_ != was { return ("the typealias \(name) changed from \(was) to \(is_)", nil) }
+        }
         // Type by type, each "Owner<tab>member": a type the open app has must hold just what it did, in order;
         // a new type (a new view with its own state) is the library's to lay out. A type taken away keeps its
         // objects and their code in the open app, and the new code doesn't touch them: whatever held one either
@@ -148,7 +178,7 @@ enum LiveReload {
             Dictionary(grouping: entries, by: { String($0.prefix { $0 != "\t" }) })
         }
         let old = byType(before), new = byType(now)
-        for (type, members) in old.sorted(by: { $0.key < $1.key }) where type != "\u{2}constant" {
+        for (type, members) in old.sorted(by: { $0.key < $1.key }) where !isGroup(type) || type == "\u{1}launch" {
             guard let current = new[type] else { continue }
             if type == "\u{1}launch", current != members {
                 let what = (current.first { !members.contains($0) } ?? members.first { !current.contains($0) } ?? "")
@@ -174,7 +204,7 @@ enum LiveReload {
         }
         let old = byType(before), new = byType(after)
         return old.keys.sorted().filter { type in
-            guard !type.hasPrefix("\u{1}"), !type.hasPrefix("\u{2}"), let current = new[type], current != old[type] else { return false }
+            guard !isGroup(type), let current = new[type], current != old[type] else { return false }
             return LiveSlots.casesAdded(type, old[type]!, current)
         }
     }
@@ -190,7 +220,7 @@ enum LiveReload {
                                                 macOS: Template.macMinimum(project)) + " 2>/dev/null", for: project, cwd: sources(project)) { output.append($0) }
         guard status == 0 else { return "the compiler couldn't say what holds the enums that grew" }
         let held = members(inDump: output.joined(separator: "\n"), held: true).compactMap { entry -> (String, String)? in
-            guard let colon = entry.range(of: ": ") else { return nil }
+            guard !isGroup(entry), let colon = entry.range(of: ": ") else { return nil }
             return (String(entry.prefix { $0 != "\t" }), String(entry[colon.upperBound...]))
         } + LiveSlots.mapping(project).flatMap { type, properties in properties.map { (type, $0.value.type) } }
         // A value of the enum could hide in what holds anything at all, where its type can't be seen.
@@ -324,6 +354,12 @@ enum LiveReload {
         // A declaration's position (decl_context=…, range=[…]) comes before its name; neither holds a quote.
         let varDecl = try! NSRegularExpression(pattern: #"^(\s*)\(var_decl\b[^"]*"([^"]+)" interface_type="([^"]*)"(.*)$"#)
         let caseDecl = try! NSRegularExpression(pattern: #"^(\s*)\(enum_element_decl\b[^"]*"([^"]+)" interface_type="([^"]*)""#)
+        // A typealias, with what it names; an extension, which puts its members under its type; what a type or an
+        // extension conforms to; and a function, initializer or subscript, by its name and type (`declarationGroup`).
+        let aliasDecl = try! NSRegularExpression(pattern: #"^(\s*)\(typealias\b[^"]*"([^"]+)" interface_type="[^"]*".*? type="([^"]*)""#)
+        let extensionDecl = try! NSRegularExpression(pattern: #"^(\s*)\(extension_decl\b[^"]*"([^"]+)""#)
+        let inherits = try! NSRegularExpression(pattern: #" inherits="([^"]*)""#)
+        let memberDecl = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|constructor_decl|subscript_decl)\b[^"]*"([^"]+)" interface_type="([^"]*)""#)
         // A case's raw value is the node right under it: a string's in quotes, a number's bare.
         let rawValue = try! NSRegularExpression(pattern: #"^\s*\(raw_value_expr=\w+\b.*? value=("(?:[^"\\]|\\.)*"|[^ )]+)"#)
         var scopes: [(indent: Int, type: String?)] = [], out: [String] = [], seen = Set<String>()
@@ -344,6 +380,19 @@ enum LiveReload {
             // What a member line belongs to is the nearest scope around it: a type's member when that's the type,
             // nothing when it's a function, an accessor or a closure (a local).
             let owner = scopes.last?.type
+            // Something declared at the top or in a type, never a function's local, under `declarationGroup`.
+            func declared(_ what: String) {
+                // What the compiler declares by itself (a memberwise initializer, a conformance's synthesized
+                // methods) follows from what's written, which is listed already.
+                guard !line.contains(" implicit") else { return }
+                let place: String
+                if let owner, !owner.hasPrefix("\u{4}") { place = owner + "." } else if scopes.isEmpty { place = "" } else { return }
+                let entry = declarationGroup + "\t" + place + what
+                if seen.insert(entry).inserted { out.append(entry) }
+            }
+            func conformances(_ type: String) {
+                if let m = inherits.firstMatch(in: line, range: range) { declared(type + " inherits " + String(line[Range(m.range(at: 1), in: line)!])) }
+            }
             if let m = protocolDecl.firstMatch(in: line, range: range) {
                 let type = "protocol " + String(line[Range(m.range(at: 3), in: line)!])
                 scopes.append((indent, type))
@@ -360,17 +409,35 @@ enum LiveReload {
                 let name = String(line[Range(m.range(at: 3), in: line)!])
                 let outer = scopes.compactMap(\.type).last
                 let type = outer.map { $0 + "." + name } ?? name
+                conformances(type)
                 scopes.append((indent, type))
                 // Every type is listed, members or not: an empty one the open app has is still its, and a first
                 // field added to it changes what it holds.
                 if seen.insert(type + "\t").inserted { out.append(type + "\t") }
+            } else if let m = extensionDecl.firstMatch(in: line, range: range) {
+                let type = String(line[Range(m.range(at: 2), in: line)!])
+                conformances(type)
+                scopes.append((indent, type))
+            } else if let m = aliasDecl.firstMatch(in: line, range: range) {
+                let name = String(line[Range(m.range(at: 2), in: line)!]), type = String(line[Range(m.range(at: 3), in: line)!])
+                if let owner, !owner.hasPrefix("\u{4}") {
+                    if seen.insert(aliasGroup + "\t" + owner + "." + name + " = " + type).inserted { out.append(aliasGroup + "\t" + owner + "." + name + " = " + type) }
+                } else if scopes.isEmpty, seen.insert(aliasGroup + "\t" + name + " = " + type).inserted {
+                    out.append(aliasGroup + "\t" + name + " = " + type)
+                }
             } else if let m = varDecl.firstMatch(in: line, range: range) {
                 let rest = String(line[Range(m.range(at: 4), in: line)!])
                 let global = held && scopes.isEmpty
+                let name = String(line[Range(m.range(at: 2), in: line)!]), type = String(line[Range(m.range(at: 3), in: line)!])
                 if let owner = owner ?? (global ? "" : nil), rest.contains("readImpl=stored"), held || !rest.contains(" static") {
-                    let entry = owner + "\t" + String(line[Range(m.range(at: 2), in: line)!]) + ": " + String(line[Range(m.range(at: 3), in: line)!])
+                    let entry = owner + "\t" + name + ": " + type
                     if seen.insert(entry).inserted { out.append(entry) }
+                } else if !rest.contains("readImpl=stored") {
+                    declared(name + ": " + type)
                 }
+            } else if let m = memberDecl.firstMatch(in: line, range: range) {
+                declared(String(line[Range(m.range(at: 3), in: line)!]) + ": " + String(line[Range(m.range(at: 4), in: line)!]))
+                scopes.append((indent, nil))
             } else if let m = caseDecl.firstMatch(in: line, range: range), let owner {
                 let entry = owner + "\tcase " + String(line[Range(m.range(at: 2), in: line)!]) + ": " + String(line[Range(m.range(at: 3), in: line)!])
                 if seen.insert(entry).inserted {
@@ -579,7 +646,7 @@ enum LiveSlots {
         }
         var planned: [(type: String, name: String, slot: Slot, published: Bool, isNew: Bool)] = []
         var moved = Set<String>()
-        for (type, members) in old.sorted(by: { $0.key < $1.key }) where !type.hasPrefix("\u{1}") && !type.hasPrefix("\u{2}") {
+        for (type, members) in old.sorted(by: { $0.key < $1.key }) where !LiveReload.isGroup(type) {
             guard let current = new[type] else { continue }
             guard current != members, !casesAdded(type, members, current) else { continue }
             // Only additions, with what was there still there, in order.
