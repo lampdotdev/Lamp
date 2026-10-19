@@ -777,8 +777,10 @@ as any call) at `LampLive.classMade`, which records every class made and points 
 change points every table made so far the same way. A witness table (what a call through a protocol goes through) holds a
 thunk for each requirement, which calls whichever method answers it, so one compiled when the protocol's own default
 answered goes on calling it after the change answers it in the type: the app's tables, and those the runtime makes
-from them for a generic type (recorded through `swift_getWitnessTable` the same way, `tableMade`), are pointed at the
-new thunks. A default argument is made by a function of its own, which every caller calls, so it's rebound like any
+(recorded through `swift_getWitnessTable` the same way, `tableMade`; a conformance with no table of its own in the
+image, to a system protocol that may change between releases, has its table asked for and recorded at launch and when
+a change brings one, `recordTables`, since the first to ask may be a cast rather than a hooked request), are pointed
+at the new thunks. A default argument is made by a function of its own, which every caller calls, so it's rebound like any
 function. What a class answers to from Objective-C (an override of a system class's method, a selector's target) is in
 its method list, not its table, so a kept class takes its copy's methods (`takeMethods`, read off the copy's class data,
 since the runtime has never seen the copy). What `LampLive` can't make right it refuses, and the app reopens: a class's

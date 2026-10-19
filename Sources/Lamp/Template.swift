@@ -4103,6 +4103,9 @@ enum Template {
             // from them for a generic type (`tablesMade`).
             Self.lock.lock()
             Self.conformances = Self.allConformances
+            Self.lock.unlock()
+            Self.recordTables(of: all.filter { $0.name.hasSuffix("Mc") && kept[$0.name] == $0.address }.map(\.address))
+            Self.lock.lock()
             let tables = Self.tablesMade
             Self.lock.unlock()
             rebound += Self.redirectWitnesses(of: kept.filter { $0.key.hasSuffix("WP") }.map(\.value) + tables, Self.newest)
@@ -4288,6 +4291,36 @@ enum Template {
             lock.unlock()
             _ = rebind(image: image, to: ["_swift_initClassMetadata2": unsafeBitCast(classMade, to: UnsafeRawPointer.self),
                                           "_swift_getWitnessTable": unsafeBitCast(tableMade, to: UnsafeRawPointer.self)])
+            if image == 0, let header = _dyld_get_image_header(0) {
+                recordTables(of: definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(0), local: true).filter { $0.0.hasSuffix("Mc") }.map(\.1))
+            }
+        }
+
+        /// A witness table the runtime makes for a conformance that has none of its own in the image (one to a
+        /// protocol of the system's that may change between releases: Comparable, Hashable, Codable) is made the
+        /// first time something asks, which may be a cast (`as? any Comparable`) rather than a request through the
+        /// hook. So at launch, and for the conformances a change brings, the table of each such conformance of a
+        /// type that isn't generic is asked for here and recorded as `tableMade` records the rest; a generic type's
+        /// are made at each type it's used at, which only a request names.
+        nonisolated private static func recordTables(of conformances: [UnsafeRawPointer]) {
+            guard let get = getWitnessTable else { return }
+            typealias Call = @convention(thin) (UnsafeRawPointer, UnsafeRawPointer?, UnsafeRawPointer?) -> UnsafeRawPointer?
+            for conformance in conformances {
+                // The type: its descriptor, directly (0) or through a slot (1); a class named another way is passed over.
+                let kind = (conformance.loadUnaligned(fromByteOffset: 12, as: UInt32.self) >> 3) & 0x7
+                guard kind == 0 || kind == 1 else { continue }
+                var descriptor = conformance.advanced(by: 4 + Int(conformance.loadUnaligned(fromByteOffset: 4, as: Int32.self)))
+                if kind == 1 { guard let direct = descriptor.load(as: UnsafeRawPointer?.self) else { continue }; descriptor = direct }
+                guard descriptor.load(as: UInt32.self) & 0x80 == 0 else { continue }
+                // The type's metadata, from the accessor its descriptor names.
+                let toAccessor = descriptor.loadUnaligned(fromByteOffset: 12, as: Int32.self)
+                guard toAccessor != 0,
+                      let metadata = unsafeBitCast(descriptor.advanced(by: 12 + Int(toAccessor)), to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0),
+                      let table = unsafeBitCast(get, to: Call.self)(conformance, metadata, nil) else { continue }
+                lock.lock()
+                if tablesSeen.insert(table).inserted { tablesMade.append(table) }
+                lock.unlock()
+            }
         }
         /// The runtime's own `swift_initClassMetadata2` and `swift_getWitnessTable`, found by name.
         nonisolated(unsafe) private static let initClassMetadata: UnsafeRawPointer? = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "swift_initClassMetadata2").map { UnsafeRawPointer($0) }
