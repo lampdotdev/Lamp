@@ -131,6 +131,10 @@ final class LiveReloadTests: XCTestCase {
             struct Tile: Flat { var n: Int; var square: Square }
             enum Parcel<T>: Lidded { case value(T), none }
             enum Coin: Flat { case heads, tails(Int) }
+            final class Item: Identifiable { var name = "" }
+            protocol Drawn { associatedtype Mark; func mark() -> Mark }
+            struct Round: Shape { var r: Int; var name = ""; func area() -> Int { r } }
+            struct Styled: Drawn { func mark() -> some Shape { Square(side: 1, name: "s") } }
             struct Outer { enum Mood: Shape { case a, b; func area() -> Int { 0 }; var name: String { get { "" } set {} } } }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
         let layout = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
@@ -142,7 +146,8 @@ final class LiveReloadTests: XCTestCase {
         // (functions, computed properties, conformances) is listed apart from what the types hold.
         XCTAssertEqual(layout?.filter { $0.hasPrefix("Square\t") }, ["Square\t", "Square\tside: Side", "Square\tname: String"])
         XCTAssertEqual(layout?.filter { $0.hasPrefix(LiveReload.aliasGroup) },
-                       [LiveReload.aliasGroup + "\tSide = Int", LiveReload.aliasGroup + "\tShapes.swift:Secret = Int", LiveReload.aliasGroup + "\tSquare.Key = String"])
+                       [LiveReload.aliasGroup + "\tSide = Int", LiveReload.aliasGroup + "\tShapes.swift:Secret = Int", LiveReload.aliasGroup + "\tSquare.Key = String",
+                        LiveReload.aliasGroup + "\tItem.ID = ObjectIdentifier"])
         let declared = layout?.filter { $0.hasPrefix(LiveReload.declarationGroup) }.map { String($0.dropFirst(LiveReload.declarationGroup.count + 1)) } ?? []
         XCTAssertEqual(Array(declared.prefix(5)), ["Square inherits Shape", "Square.area(): (Square) -> () -> Int", "Square inherits Hashable",
                                                    "Square.key: Square.Key", "Square.grow(_:): (Square) -> (Int) -> Square"], "\(declared)")
@@ -152,7 +157,7 @@ final class LiveReloadTests: XCTestCase {
         let withoutAliases = LiveReload.layoutProblem(before: layout, after: layout!.filter { !$0.hasPrefix(LiveReload.aliasGroup) })
         XCTAssertNil(withoutAliases.problem)
         // An alias taken away is kept with the open app's layout, like a type, so one brought back is held to it.
-        XCTAssertEqual(withoutAliases.layout?.filter { $0.hasPrefix(LiveReload.aliasGroup) }.count, 3)
+        XCTAssertEqual(withoutAliases.layout?.filter { $0.hasPrefix(LiveReload.aliasGroup) }.count, 4)
         XCTAssertEqual(LiveReload.layoutProblem(before: withoutAliases.layout, after: retargeted).problem, "the typealias Side changed from Int to Double")
         // A global holding the enum still counts in the grown-enum check (its owner is empty, not a group).
         XCTAssertFalse(LiveReload.isGroup(String("\tselection: Mood?".prefix { $0 != "\t" })))
@@ -179,6 +184,24 @@ final class LiveReloadTests: XCTestCase {
         let noJar = LiveReload.conformances(inLayout: layout!.filter { !$0.hasPrefix("Jar") && !$0.contains("Jar inherits") })
         XCTAssertEqual(LiveReload.existential(in: "any Lidded", holding: "Mood", conformances: noJar), "any Lidded")
         XCTAssertEqual(noJar.fields["Coin"], ["(Coin.Type) -> Coin", "(Coin.Type) -> (Int) -> Coin"])
+        // An associated type the compiler inferred is a typealias of the type's, held like one written out; a
+        // member returning `some …` is held by what it builds from, so a literal may change but not the type.
+        XCTAssertTrue(layout!.contains(LiveReload.aliasGroup + "\tItem.ID = ObjectIdentifier"), "\(layout!.filter { $0.contains("Item") })")
+        XCTAssertEqual(layout!.filter { $0.hasPrefix(LiveReload.opaqueGroup + "\tStyled.mark") }.count, 1)
+        func layoutWith(_ edits: [(String, String)]) async throws -> [String] {
+            var text = try String(contentsOf: sources.appendingPathComponent("Shapes.swift"), encoding: .utf8)
+            for (from, to) in edits { text = text.replacingOccurrences(of: from, with: to) }
+            try text.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
+            let changed = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
+            return try XCTUnwrap(changed)
+        }
+        let sameType = try await layoutWith([("Square(side: 1, name: \"s\")", "Square(side: 2, name: \"t\")")])
+        XCTAssertNil(LiveReload.layoutProblem(before: layout, after: sameType).problem)
+        let otherType = try await layoutWith([("Square(side: 2, name: \"t\")", "Round(r: 1)")])
+        XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: otherType).problem, "Styled.mark() returns another kind of value now (some …), which what the open app made can't take")
+        let otherID = try await layoutWith([("Round(r: 1)", "Square(side: 1, name: \"s\")"),
+                                            ("final class Item: Identifiable { var name = \"\" }", "final class Item: Identifiable { var name = \"\"; var id: String { name } }")])
+        XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: otherID).problem, "the typealias Item.ID changed from ObjectIdentifier to String")
         XCTAssertEqual(LiveReload.existential(in: "any CustomDebugStringConvertible", holding: "Mood", conformances: conformances), "any CustomDebugStringConvertible")
         XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
         XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")

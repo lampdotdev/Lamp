@@ -739,7 +739,12 @@ device project, with its debug library off so the code is in the one binary). Af
 holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties and cases,
 from `-dump-ast` of just the changed files, compared for the open app's sources and the new ones; no reading of the
 text; a typealias is printed as itself wherever it's used, so each is listed with what it names and one the open app
-has that now names something else reopens, `LiveReload.aliasGroup`) (`LiveReload.reloadable`, comparing with the sources the
+has that now names something else reopens, `LiveReload.aliasGroup`; an associated type the compiler inferred, such
+as Identifiable's `ID` or a Sequence's `Iterator`, is a typealias it declares itself and is listed the same; a member
+returning `some …`, a modifier's `body(content:)` or a style's `makeBody`, whose type is what it builds, is listed by a
+digest of the calls and types its body names, `LiveReload.opaqueGroup`, so a literal may change but a member that
+builds from other calls reopens: the open app's witness tables and callers were laid out for the type it had, and the
+compiler prints both as `some View`; a view's own body, wrapped by the live copy, and a private member are left out) (`LiveReload.reloadable`, comparing with the sources the
 open app runs, kept in `.lamp/live/running`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
 linked into a library. Every file is compiled when what's declared changed (a function, an initializer, a computed
 property, a conformance: `LiveReload.declarationGroup`, `declarationsChanged`), since an unchanged caller may then mean
