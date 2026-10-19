@@ -129,10 +129,10 @@ final class LiveReloadTests: XCTestCase {
         let text = try String(contentsOf: template, encoding: .utf8)
         let start = try XCTUnwrap(text.range(of: "    @MainActor @Observable final class LampLive {"))
         let end = try XCTUnwrap(text.range(of: "\n    }\n", range: start.upperBound..<text.endIndex))
-        return "import Foundation\nimport CryptoKit\nimport MachO\nimport Observation\n" + text[start.lowerBound..<end.upperBound]
-            .replacingOccurrences(of: "{{APPS}}/{{SLUG}}/.lamp/live/", with: folder.path + "/live/")
-            .replacingOccurrences(of: "{{TOKEN}}", with: "x")
-            .replacingOccurrences(of: "{{NOTE}}", with: "t")
+        // What an installed app reads from its Info.plist, given here.
+        let install = "enum LampInstall { static let token = \"x\", note = \"t\" }\n"
+        return "import Foundation\nimport CryptoKit\nimport MachO\nimport Observation\n" + install + text[start.lowerBound..<end.upperBound]
+            .replacingOccurrences(of: "LampInstall.app + \"/.lamp/live/\"", with: "\"\(folder.path)/live/\"")
             .replacingOccurrences(of: "LampRuntime.folder.appendingPathComponent(\"reloaded.txt\")", with: "URL(fileURLWithPath: \"\(folder.path)/reloaded.txt\")")
             .replacingOccurrences(of: "private func load(", with: "func load(")
     }
