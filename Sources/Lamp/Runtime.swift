@@ -36,7 +36,19 @@ enum Runtime {
     static func holdBuild(_ project: LampProject) {
         try? AppFolder.write(Data(), to: heldURL(project), in: project.dir)
     }
-    static func releaseBuild(_ project: LampProject) { AppFolder.remove(heldURL(project), in: project.dir) }
+    static func releaseBuild(_ project: LampProject) {
+        AppFolder.remove(heldURL(project), in: project.dir)
+        AppFolder.remove(reloadURL(project), in: project.dir)
+    }
+
+    /// A held build that waits for the person to press Reload (`Store.awaitReload`): a request's change that the
+    /// open app can't take as it runs, which Lamp doesn't reopen the app for by itself.
+    private static func reloadURL(_ project: LampProject) -> URL { macFolder(project).appendingPathComponent("reload-waiting") }
+    static func awaitReload(_ project: LampProject) {
+        holdBuild(project)
+        try? AppFolder.write(Data(), to: reloadURL(project), in: project.dir)
+    }
+    static func waitsForReload(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: reloadURL(project).path) }
     static func holdsBuild(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: heldURL(project).path) }
 
     /// What the app is built from, as one hash: the contents of Sources, its widget's folder, Package.swift and the icon design,

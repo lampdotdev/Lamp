@@ -51,13 +51,17 @@ extension ChatLook {
         let text: String
         let button: String
         let disabled: Bool
+        /// The one thing to do next (Reload, for a change waiting on it): the button in the accent colour.
+        let prominent: Bool
         let action: () -> Void
 
-        public init(symbol: String, text: String, button: String, disabled: Bool = false, action: @escaping () -> Void) {
+        public init(symbol: String, text: String, button: String, disabled: Bool = false, prominent: Bool = false,
+                    action: @escaping () -> Void) {
             self.symbol = symbol
             self.text = text
             self.button = button
             self.disabled = disabled
+            self.prominent = prominent
             self.action = action
         }
 
@@ -65,9 +69,16 @@ extension ChatLook {
             HStack(spacing: 8) {
                 Image(systemName: symbol).foregroundStyle(.secondary)
                 Text(text).foregroundStyle(.secondary)
-                Button(button, action: action)
-                    .controlSize(.small)
-                    .disabled(disabled)
+                if prominent {
+                    Button(button, action: action)
+                        .controlSize(.small)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(disabled)
+                } else {
+                    Button(button, action: action)
+                        .controlSize(.small)
+                        .disabled(disabled)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

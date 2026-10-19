@@ -103,7 +103,7 @@ struct BugReportView: View {
             switch line.kind {
             case .user: .request
             case .agent, .ask, .progress: .reply
-            case .status, .noted, .drawIcon, .widget, .result, .iphoneSetup: .status
+            case .status, .noted, .drawIcon, .widget, .result, .iphoneSetup, .reload: .status
             case .error: .error
             case .detail: .detail
             case .tool: .tool

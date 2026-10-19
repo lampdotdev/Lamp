@@ -141,6 +141,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var done: Bool?
     public var button: String?
     public var disabled: Bool?
+    /// An action line's button is the one thing to do next (Reload): drawn in the accent colour.
+    public var prominent: Bool?
     /// A request's buttons: going back to how the app was around it, and taking it back to change it.
     public var canGoBack: Bool?
     public var canSendAgain: Bool?

@@ -25,6 +25,12 @@ final class MagicPanel {
             guard let app = note.userInfo?["app"] as? String else { return }
             MainActor.assumeIsolated { shared.opening(app) }
         }
+        // The app's Reload button (`LampMagic.ReloadButton`): only a change Lamp holds for that app goes in.
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name(Edition.notificationPrefix + "reloadNow"), object: nil, queue: .main) { note in
+            guard let app = note.userInfo?["app"] as? String else { return }
+            MainActor.assumeIsolated { Store.shared.reloadWaiting(app) }
+        }
         DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name(Edition.notificationPrefix + "magicOpen"), object: nil, queue: .main) { note in
             guard let app = note.userInfo?["app"] as? String else { return }
