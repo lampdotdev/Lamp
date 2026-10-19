@@ -1353,14 +1353,7 @@ enum Agent {
             let name = obj["toolName"] as? String ?? "tool"
             let args = obj["args"] as? [String: Any] ?? [:]
             var events: [AgentEvent] = [.tool(describe(name, args), call: callKey(name, args))]
-            if name == "plan", let parts = args["parts"] as? [[String: Any]] {
-                events.append(.plan(parts.enumerated().compactMap { index, part in
-                    (part["title"] as? String).map {
-                        PlanPart(id: index, title: $0, done: part["done"] as? Bool ?? false,
-                                 files: (part["files"] as? [String] ?? []).map { ($0 as NSString).lastPathComponent })
-                    }
-                }))
-            }
+            if name == "plan", args["parts"] != nil { events.append(.plan(PlanPart.parts(from: args))) }
             return events
         case "message_end":
             guard let message = obj["message"] as? [String: Any] else { return [] }

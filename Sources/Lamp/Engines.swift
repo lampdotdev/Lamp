@@ -258,6 +258,14 @@ extension Agent {
         return "\n\n---\nThis app's description in \(AppDescription.file) is \(words.count) characters (from Lamp, not part of the request above): once your work is done, shorten it to \(AppDescription.limit) at most, still one sentence saying what the app is."
     }
 
+    /// Said with each request while the app's code is still Lamp's placeholder. The rule on `plan` is for a new
+    /// app, and left to tell one from the placeholder code on its own, not every model does: some build the whole
+    /// app with no checklist at all.
+    static func newApp(_ project: LampProject) -> String {
+        guard !project.finding, Template.isScaffold(project) else { return "" }
+        return "\n\n---\nThis is a new app (from Lamp, not part of the request above): its code is still Lamp's placeholder. Unless you ask first, call `plan` before writing any code."
+    }
+
     /// The user's own pi config (logins, subscriptions, settings).
     static let userConfigDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".pi/agent").path
 
@@ -272,6 +280,7 @@ extension Agent {
             + AIStatus.brief(for: project, engine: Builder.engine, session: session, offered: offered)
             + Skills.brief(for: project, engine: Builder.engine, session: session)
             + Agent.undescribed(project)
+            + Agent.newApp(project)
             + (LiveReload.eligible(project) ? Agent.liveNote : "")
         var env: [String: String] = ["LAMP_PROMPT": prompt, "LAMP_SYSTEM": systemPrompt(for: project), "LAMP_DIR": project.dir.path,
                                      "PATH": ToolLocator.userPath]

@@ -2619,12 +2619,25 @@ final class Store: ObservableObject {
                     }
                 case .step(let tool):
                     if !tool.isEmpty { endOnQuestions(turn, before: tool) }
+                    // The model has finished writing the file it was streaming. One that writes every file in a
+                    // single reply has them all carried out only once the reply ends, so without this the
+                    // checklist would sit still and then tick at once.
+                    let streamed = TurnProgress.call(tool: streamingTool, partialArguments: streamingArguments)
+                    if let file = TurnProgress.file(changedBy: streamed) { progress[project.id]?.wrote(file) }
+                    // Likewise the plan, which a model may send in the same reply as every file: shown once it's
+                    // written rather than once the reply ends, so the list is there to tick as the files come.
+                    if streamingTool == "plan",
+                       let arguments = try? JSONSerialization.jsonObject(with: Data(streamingArguments.utf8)) as? [String: Any],
+                       arguments["parts"] != nil {
+                        progress[project.id]?.plan = PlanPart.parts(from: arguments)
+                        progress[project.id]?.tickWrittenParts()
+                    }
                     streamingTool = tool
                     streamingArguments = ""
                     note(TurnProgress.activity(tool: tool, partialArguments: ""), for: project)
                 case .stepArgs(let piece):
                     // The file name is among the first arguments; the rest is the file itself.
-                    guard streamingArguments.count < 600 else { break }
+                    guard streamingArguments.count < 600 || streamingTool == "plan" else { break }
                     streamingArguments += piece
                     let call = TurnProgress.call(tool: streamingTool, partialArguments: streamingArguments)
                     note(TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
@@ -3298,13 +3311,7 @@ final class Store: ObservableObject {
                 (status, answer) = await use(project, request: actions)
             case "plan":
                 // pi's plan reaches the build card through its event stream (Agent.parseLine); here it's set directly.
-                let parts = (arguments["parts"] as? [[String: Any]] ?? []).enumerated().compactMap { index, part in
-                    (part["title"] as? String).map {
-                        PlanPart(id: index, title: $0, done: part["done"] as? Bool ?? false,
-                                 files: (part["files"] as? [String] ?? []).map { ($0 as NSString).lastPathComponent })
-                    }
-                }
-                progress[project.id]?.plan = parts
+                progress[project.id]?.plan = PlanPart.parts(from: arguments)
                 progress[project.id]?.tickWrittenParts()
                 (status, answer) = (200, ["text": "The user can see the plan."])
             case "delete_file":

@@ -9,6 +9,16 @@ struct PlanPart: Identifiable, Equatable {
     /// The files the agent said it would write for this part. Lamp ticks the part when they're written,
     /// so progress doesn't depend on the agent stopping to report it.
     var files: [String] = []
+
+    /// The parts in a `plan` call's arguments, whichever engine made it.
+    static func parts(from arguments: [String: Any]) -> [PlanPart] {
+        (arguments["parts"] as? [[String: Any]] ?? []).enumerated().compactMap { index, part in
+            (part["title"] as? String).map {
+                PlanPart(id: index, title: $0, done: part["done"] as? Bool ?? false,
+                         files: (part["files"] as? [String] ?? []).map { ($0 as NSString).lastPathComponent })
+            }
+        }
+    }
 }
 
 /// What Lamp knows about the turn in progress, for showing the user something better than a spinner.
@@ -74,17 +84,25 @@ struct TurnProgress {
         // Being written now, even if that completes it: the tick shows once the agent moves on.
         if working, let currentFile, part.files.contains(currentFile) { return .active }
         if part.done { return .done }
-        if part.files.contains(where: files.contains) { return .started }
+        if part.files.contains(where: files.contains) {
+            // Lamp is building what the agent wrote: the last part it worked on is as done as this pass makes
+            // it, even with a listed file left unwritten, and mustn't sit unticked above Lamp's own last row.
+            return finishing ? .done : .started
+        }
         // A plan with no files listed: the first part still open is the one in progress.
         if working, plan.allSatisfy(\.files.isEmpty), part.id == plan.first(where: { !$0.done })?.id { return .active }
         return .open
     }
 
-    /// Ticks every part whose files have all been written.
+    /// Ticks every part whose files have all been written, and every part the agent has started and then left
+    /// for a later one's files: the agent writes the parts in the list's order, and a file it listed often goes
+    /// into another one instead, which would leave its part unticked under ticked ones, as if skipped.
     mutating func tickWrittenParts() {
         let written = Set(files)
+        let latest = files.last.flatMap { file in plan.firstIndex { $0.files.contains(file) } } ?? -1
         for index in plan.indices where !plan[index].done && !plan[index].files.isEmpty {
-            plan[index].done = written.isSuperset(of: plan[index].files)
+            let started = plan[index].files.contains(where: written.contains)
+            plan[index].done = written.isSuperset(of: plan[index].files) || (started && latest > index)
         }
     }
 
