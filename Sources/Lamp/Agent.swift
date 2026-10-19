@@ -36,8 +36,8 @@ enum AgentEvent {
     /// Codex began (true) or finished (false) something it does on its own (a command, a tool call, an edit, a
     /// search), by its id: a Codex run is cut to pass a message on only between them (`Store.steer`).
     case acting(String, Bool)
-    /// What the agent says it's doing, in its own words: Claude Code's description of a command, a Codex reasoning
-    /// summary's heading. Empty for a command that came without one, which leaves it unnamed.
+    /// What the agent says it's doing, in its own words: Claude Code's or pi's description of a command, a Codex
+    /// reasoning summary's heading. Empty for a command that came without one, which leaves it unnamed.
     case naming(String)
 }
 
@@ -1404,6 +1404,8 @@ enum Agent {
             let name = obj["toolName"] as? String ?? "tool"
             let args = obj["args"] as? [String: Any] ?? [:]
             var events: [AgentEvent] = [.tool(describe(name, args), call: callKey(name, args))]
+            // Lamp's extension gives pi's bash a description, which the model fills in as Claude Code's does.
+            if name == "bash" { events.insert(.naming((args["description"] as? String)?.trimmed ?? ""), at: 0) }
             if name == "plan", args["parts"] != nil { events.append(.plan(PlanPart.parts(from: args))) }
             return events
         case "message_end":

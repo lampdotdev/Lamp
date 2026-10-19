@@ -215,7 +215,9 @@ A capability given to one engine must be given to all of them that can take it, 
   call (its parser, and its approval hook, which carries the same input; `Agent.claudeNote` asks for plain words),
   and for Codex the heading of the reasoning summary before it (`model_reasoning_summary`). The name is the activity
   while the command runs and the step's row in the chat (`LogLine.said`, `ChatLook.RanCommand`; consecutive commands
-  under one name are one row, `ChatItem.items`); a command with no name stays "Ran a command". pi's commands have none.
+  under one name are one row, `ChatItem.items`); a command with no name stays "Ran a command". pi's bash takes only the
+  command, so Lamp's extension replaces it, as pi's extension docs allow, with pi's own bash and an optional
+  `description` (`bashWithDescription` in `lamp-tools.ts`), sent with the approval and read by pi's parser.
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
   Where an app's text AI goes is an `AppAI.TextRoute` (an OpenRouter model, the Claude Code or Codex sign-in,
   pi with its key provider, or a model on this Mac), listed by `AppAI.textRoutes` for the pickers in

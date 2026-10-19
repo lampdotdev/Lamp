@@ -6199,7 +6199,7 @@ final class Store: ObservableObject {
                 let (allowed, reason) = await fileAccess(tool: tool, path: path, for: project)
                 return (200, reason.map { ["allow": allowed, "reason": $0] } ?? ["allow": allowed])
             }
-            // pi's extension sends {"command"}; Claude Code's hook sends {"tool_input": {"command"}}.
+            // pi's extension sends {"command", "description"}; Claude Code's hook sends {"tool_input": {"command", "description"}}.
             let input = body["tool_input"] as? [String: Any] ?? [:]
             let tool = body["tool_name"] as? String ?? "Bash"
             if request.path.contains("format=claude-file") {
@@ -6253,9 +6253,9 @@ final class Store: ObservableObject {
                                                                      "permissionDecision": "deny",
                                                                      "permissionDecisionReason": "The user denied this command in Lamp."]])
             }
-            // Claude Code's hook carries the command's own description, so each command keeps its own words
-            // whichever of the hook and the engine's output reaches Lamp first.
-            let said = engine == .claude ? (input["description"] as? String)?.trimmed.nilIfEmpty : nil
+            // Claude Code's hook and pi's extension carry the command's own description, so each command keeps its
+            // own words whichever of the approval and the engine's output reaches Lamp first.
+            let said = (input["description"] as? String ?? body["description"] as? String)?.trimmed.nilIfEmpty
             let allowed = await approveCommand(command, for: project, escalated: escalated, shell: shell, sandboxed: sandboxed, said: said)
             let reason = allowed ? "Approved in Lamp." : "The user denied this command in Lamp."
             // An allowed command goes back confined: the hooks run what Lamp hands them.
