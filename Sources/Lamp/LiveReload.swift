@@ -231,9 +231,10 @@ enum LiveReload {
         // A type taken away is still in the open app, with its objects and statics, until it reopens: its layout
         // is kept, so one brought back under the same name is held to what it was. So is an alias taken away, each
         // on its own, since a type kept that way still reads by it.
-        let remaining = aliases(now)
-        let kept = now + before.filter { let group = String($0.prefix { $0 != "\t" }); return group != aliasGroup && new[group] == nil }
+        let remaining = aliases(now), remainingOpaque = opaque(now)
+        let kept = now + before.filter { let group = String($0.prefix { $0 != "\t" }); return ![aliasGroup, opaqueGroup].contains(group) && new[group] == nil }
             + before.filter { $0.hasPrefix(aliasGroup + "\t") && aliases([$0]).keys.allSatisfy { remaining[$0] == nil } }
+            + before.filter { $0.hasPrefix(opaqueGroup + "\t") && opaque([$0]).keys.allSatisfy { remainingOpaque[$0] == nil } }
         return (nil, kept)
     }
 
@@ -604,8 +605,9 @@ enum LiveReload {
         // a typealias it declares itself; one naming an opaque type (`some View`) is held by its member instead.
         let inferredAlias = try! NSRegularExpression(pattern: #"^(\s*)\(typealias\b[^"]*? implicit "([^"]+)" interface_type="[^"]*" access=\w+ type="([^"]*)""#)
         // A member returning `some …`: what it builds from (the calls and types in its body) is its type.
-        let opaqueMember = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|var_decl)\b(?! implicit)[^"]*"([^"]+)" interface_type="[^"]*some [^"]*" access=(\w+)"#)
+        let opaqueMember = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|var_decl)\b(?! implicit)[^"]*"([^"]+)" interface_type="([^"]*some [^"]*)" access=(\w+)"#)
         let attribute = try! NSRegularExpression(pattern: #" (?:decl|type)="([^"]*)""#)
+        let place = try! NSRegularExpression(pattern: #"@[^\s"\]]*:\d+:\d+"#)
         // A literal's value, or an argument left to its default, changes no type: left out of the digest.
         let valueOnly = try! NSRegularExpression(pattern: #"^\s*\((?:\w+_literal_expr|default_argument_expr)\b"#)
         let extensionDecl = try! NSRegularExpression(pattern: #"^(\s*)\(extension_decl\b[^"]*"([^"]+)""#)
@@ -632,7 +634,12 @@ enum LiveReload {
             if let open = opaque {
                 if indent > open.indent {
                     if valueOnly.firstMatch(in: line, range: range) == nil {
-                        for m in attribute.matches(in: line, range: range) { opaque?.names.append(String(line[Range(m.range(at: 1), in: line)!])) }
+                        for m in attribute.matches(in: line, range: range) {
+                            // A declaration of the app's is named with where it is, which differs between the copy
+                            // the app runs and the new one, and moves with any edit above it.
+                            let value = String(line[Range(m.range(at: 1), in: line)!])
+                            opaque?.names.append(place.stringByReplacingMatches(in: value, range: NSRange(value.startIndex..., in: value), withTemplate: ""))
+                        }
                     }
                     continue
                 }
@@ -693,12 +700,16 @@ enum LiveReload {
                 if !type.contains("some "), seen.insert(aliasGroup + "\t" + owner + "." + name + " = " + type).inserted {
                     out.append(aliasGroup + "\t" + owner + "." + name + " = " + type)
                 }
-            } else if let m = opaqueMember.firstMatch(in: line, range: range), !["private", "fileprivate"].contains(String(line[Range(m.range(at: 4), in: line)!])),
+            } else if let m = opaqueMember.firstMatch(in: line, range: range), !["private", "fileprivate"].contains(String(line[Range(m.range(at: 5), in: line)!])),
                       case let name = String(line[Range(m.range(at: 3), in: line)!]), name != "__lampBody", !name.hasPrefix("$") {
                 // A view's body is wrapped by the live copy (`__lampBody`, read only by `body` beside it), so its type
-                // may change; a private member's callers are all in its file, compiled with it.
-                if let owner, !owner.hasPrefix("\u{4}") { opaque = (indent, owner + "." + name, []) }
-                else if scopes.isEmpty { opaque = (indent, name, []) }
+                // may change; a private member's callers are all in its file, compiled with it. Keyed with its
+                // signature, since overloads share a name; and declared like any member, so one added recompiles
+                // every caller.
+                let signature = name + ": " + String(line[Range(m.range(at: 4), in: line)!])
+                declared(signature)
+                if let owner, !owner.hasPrefix("\u{4}") { opaque = (indent, owner + "." + signature, []) }
+                else if scopes.isEmpty { opaque = (indent, signature, []) }
                 scopes.append((indent, nil))
             } else if let m = aliasDecl.firstMatch(in: line, range: range) {
                 var name = String(line[Range(m.range(at: 3), in: line)!])

@@ -187,7 +187,15 @@ final class LiveReloadTests: XCTestCase {
         // An associated type the compiler inferred is a typealias of the type's, held like one written out; a
         // member returning `some …` is held by what it builds from, so a literal may change but not the type.
         XCTAssertTrue(layout!.contains(LiveReload.aliasGroup + "\tItem.ID = ObjectIdentifier"), "\(layout!.filter { $0.contains("Item") })")
-        XCTAssertEqual(layout!.filter { $0.hasPrefix(LiveReload.opaqueGroup + "\tStyled.mark") }.count, 1)
+        XCTAssertEqual(layout!.filter { $0.hasPrefix(LiveReload.opaqueGroup + "\tStyled.mark(): (Styled) -> () -> some Shape: ") }.count, 1)
+        XCTAssertTrue(declared.contains("Styled.mark(): (Styled) -> () -> some Shape"), "\(declared)")
+        // The same sources read from another folder (the copy the app runs) give the same digest: a declaration
+        // is named with where it is, which isn't part of what it builds.
+        let elsewhere = sources.deletingLastPathComponent().appendingPathComponent("running")
+        try? fm.removeItem(at: elsewhere)
+        try fm.copyItem(at: sources, to: elsewhere)
+        let same = await LiveReload.layout(of: elsewhere, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
+        XCTAssertEqual(same?.filter { $0.hasPrefix(LiveReload.opaqueGroup) }, layout!.filter { $0.hasPrefix(LiveReload.opaqueGroup) })
         func layoutWith(_ edits: [(String, String)]) async throws -> [String] {
             var text = try String(contentsOf: sources.appendingPathComponent("Shapes.swift"), encoding: .utf8)
             for (from, to) in edits { text = text.replacingOccurrences(of: from, with: to) }
@@ -198,7 +206,12 @@ final class LiveReloadTests: XCTestCase {
         let sameType = try await layoutWith([("Square(side: 1, name: \"s\")", "Square(side: 2, name: \"t\")")])
         XCTAssertNil(LiveReload.layoutProblem(before: layout, after: sameType).problem)
         let otherType = try await layoutWith([("Square(side: 2, name: \"t\")", "Round(r: 1)")])
-        XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: otherType).problem, "Styled.mark() returns another kind of value now (some …), which what the open app made can't take")
+        XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: otherType).problem, "Styled.mark(): (Styled) -> () -> some Shape returns another kind of value now (some …), which what the open app made can't take")
+        // One taken away is kept with the layout on its own, so one brought back is held to what it built.
+        let without = try await layoutWith([("struct Styled: Drawn { func mark() -> some Shape { Round(r: 1) } }", "")])
+        let retained = LiveReload.layoutProblem(before: layout, after: without)
+        XCTAssertNil(retained.problem)
+        XCTAssertEqual(LiveReload.layoutProblem(before: retained.layout, after: otherType).problem?.hasPrefix("Styled.mark()"), true)
         let otherID = try await layoutWith([("Round(r: 1)", "Square(side: 1, name: \"s\")"),
                                             ("final class Item: Identifiable { var name = \"\" }", "final class Item: Identifiable { var name = \"\"; var id: String { name } }")])
         XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: otherID).problem, "the typealias Item.ID changed from ObjectIdentifier to String")
