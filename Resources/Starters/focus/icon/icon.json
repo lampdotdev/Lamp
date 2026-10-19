@@ -1,1 +1,6 @@
-{"subject": "a kitchen timer", "symbol": "timer", "background": "red", "tint": "#FFFFFF"}
+{
+  "subject": "a round red tomato kitchen timer with a green leafy stem",
+  "symbol": "timer",
+  "background": "white",
+  "tint": "#FF453A"
+}

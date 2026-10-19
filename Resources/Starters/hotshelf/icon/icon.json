@@ -1,6 +1,6 @@
 {
-  "background" : "graphite",
-  "subject" : "a glass hot sauce bottle with a red-orange sauce fill, a label, and a black cap with a thin yellow-to-red heat band",
-  "symbol" : "flame.fill",
-  "tint" : "#E8452C"
+  "subject": "a hot sauce bottle with a red body, a cream label and a black cap",
+  "symbol": "flame.fill",
+  "background": "graphite",
+  "tint": "#E8452C"
 }

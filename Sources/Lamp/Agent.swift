@@ -973,8 +973,9 @@ enum Agent {
         static let icon = """
         - The app icon is defined in icon.json: `subject` (the ONE tangible object the icon shows, as a short noun \
         phrase, e.g. "a yellow legal pad with a red pencil"), `symbol` (an SF Symbol name shown until artwork is \
-        ready), `background` (one of \(Icons.backgrounds.map(\.name).joined(separator: ", "))) and `tint` (hex main \
-        color of the object). To change the icon, edit icon.json; Lamp redraws it, which takes a while and costs the user, so only when \
+        ready), `background` (one of \(Icons.backgrounds.map(\.name).joined(separator: ", "))), `tint` (hex main \
+        color of the object) and, for a game, `game: true` (its icon is painted rich and in 3D instead of glass, and \
+        `subject` is its hero). To change the icon, edit icon.json; Lamp redraws it, which takes a while and costs the user, so only when \
         they ask for a different icon or the app has become something else. Never create icon files yourself.
         """
 

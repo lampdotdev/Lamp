@@ -35,7 +35,7 @@ struct SetupCard: View {
                 }
                 Spacer(minLength: 8)
                 // Answered by drawing icons by hand, the card is where this app's is drawn, while it's plain.
-                if byHand, let project, let spec = Icons.load(project), Icons.cachedArt(project, spec: spec) == nil {
+                if byHand, let project, let spec = Icons.load(project), Icons.artwork(project, spec: spec) == nil {
                     Button("Draw Icon…") { Store.shared.iconFromPlayground(project) }
                         .controlSize(.small)
                 }
