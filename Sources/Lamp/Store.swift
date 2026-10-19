@@ -2167,6 +2167,7 @@ final class Store: ObservableObject {
             Task {
                 await applyIconArt(project, spec: spec)
                 release(project)
+                fixHeldCrash(project)
                 offerHeldDrawing(project)
                 startQueued(project)
                 installHeldIcons(for: [project.id])
@@ -2174,6 +2175,7 @@ final class Store: ObservableObject {
             return
         }
         release(project)
+        fixHeldCrash(project)
         offerHeldDrawing(project)
         startQueued(project)
         refreshUndoOffer(project)
@@ -2848,6 +2850,7 @@ final class Store: ObservableObject {
         usage[project.id] = nil
         queued[project.id] = nil
         icons[project.id] = nil
+        crashesAfterRelease[project.id] = nil
         release(project)
         unread.remove(project.id)
         tokens = tokens.filter { $0.value != project.id }
@@ -4382,11 +4385,12 @@ final class Store: ObservableObject {
             for _ in 0..<16 {
                 try? await Task.sleep(for: .milliseconds(500))
                 guard app.isTerminated else { continue }
-                // macOS writes the report a moment after the process is gone.
+                // macOS writes the report after the process is gone, sometimes ten seconds or more later, and the
+                // crash is this watch's alone to answer (`appEnded` leaves it), so it waits as long as that does.
                 var crashed = false
-                for _ in 0..<10 where !crashed {
+                for _ in 0..<60 where !crashed {
                     crashed = Runtime.crashed(project, since: since)
-                    if !crashed { try? await Task.sleep(for: .milliseconds(300)) }
+                    if !crashed { try? await Task.sleep(for: .milliseconds(500)) }
                 }
                 guard crashed, let self, let current = self.current(project) else { return }
                 self.log(current, .detail, "\(current.name) stopped right after a change went in without reopening it. Opening it again with the full build.")
@@ -4843,9 +4847,20 @@ final class Store: ObservableObject {
     /// on one device can't both go ahead, and checked before every action the driver takes.
     private var simulatorLeases: [String: String] = [:]
 
-    /// For Open App and Undo, where no agent is running to fix a crash.
+    /// For Open App, Undo, a restore and a rebuild, where no agent is running to fix a crash. Each of them holds the
+    /// app while it installs, so the fix waits for it to let go (`fixHeldCrash`, from `finish`).
     private func installReportingCrash(_ project: LampProject) async {
         guard let crash = await install(project) else { return }
+        crashesAfterRelease[project.id] = crash
+    }
+
+    /// Crashes on opening seen while something held the app, to be fixed once it's free.
+    private var crashesAfterRelease: [String: String] = [:]
+
+    /// Called as the hold ends, before anything waiting starts: with a request already in line the agent hears of
+    /// the crash with that, and the chat only says it crashed.
+    private func fixHeldCrash(_ project: LampProject) {
+        guard let crash = crashesAfterRelease.removeValue(forKey: project.id) else { return }
         if !fixCrash(project, detail: crash) { log(project, .error, ErrorMessages.crashAfterLaunch(project.name)) }
     }
 
