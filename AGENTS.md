@@ -832,7 +832,12 @@ compiler prints both as `some View`; a view's own body, wrapped by the live copy
 and keyed with its file throughout the layout and the declarations (`Row@A.swift`, each part of a nested one; `LiveReload.bare`
 gives the name back where the code names it, as a field's type or a use in old code does, and `readable` says "Row in
 A.swift"), since two files may each declare a private type of one name and the two are two types with their own fields;
-every such entry beyond a type's own fields is one of `LiveReload.Group`, which makes and reads them) (`LiveReload.reloadable`, comparing with the sources the
+every such entry beyond a type's own fields is one of `LiveReload.Group`, which makes and reads them; the printout is
+read in one pass, `SwiftSource.walk`, which keeps the scopes and keys every type the one way (nested under its outer
+type, a private one with its file, a local one with its function) for every reader of it: the layout (`LiveReload.Members`),
+where each property is declared (`SwiftSource.DeclarationsReader`), what's read at launch (`LaunchReader`) and what
+old code does (`LiveReload.OldCode`), all taking the same lines in one walk in `LiveReload.analysis`, so a type can't
+be keyed two ways by two readers) (`LiveReload.reloadable`, comparing with the sources the
 open app runs, kept in `.lamp/live/running`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
 linked into a library. Every file is compiled when what's declared changed (a function, an initializer, a computed
 property, a conformance, a member's `@objc` and its selector, a stored property's observers, which turn every write
