@@ -191,8 +191,9 @@ extension LogLine {
     /// "Working on the interface", `TurnProgress.activity`), never the call itself with its files. Calls in a row
     /// that said the same are one step, and a call that says nothing of its own (a progress line) is no step. A
     /// command is no step here either: its own row ("Ran: …", by the name the agent gave it) already is, and commands
-    /// under one name are gathered there. Without this a turn that only read and edited files had nothing under its
-    /// open line.
+    /// under one name are gathered there; the file work after it is named after it too (`Store`, the agent's latest
+    /// words), so it's part of that row, not the same words again under it. Without this a turn that only read and
+    /// edited files had nothing under its open line.
     private static func said(_ lines: [LogLine]) -> [LogLine] {
         var out: [LogLine] = []
         for line in lines {
@@ -202,7 +203,7 @@ extension LogLine {
             // The agent's own words for the step when it gave some, else what the live line said.
             let words = line.said ?? TurnProgress.activity(for: call)
             guard !words.isEmpty else { continue }
-            if let last = out.last, last.kind == .status, last.text == words, last.said == nil { continue }
+            if let last = out.last, last.kind == .status, (last.said ?? last.text) == words { continue }
             out.append(LogLine(id: line.id, kind: .status, text: words))
         }
         return out
