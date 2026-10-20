@@ -375,8 +375,6 @@ final class MagicPanel {
 
     private func revealApp(_ id: String) {
         guard let state = following[id], let cover = state.cover else { return }
-        // The cover glowed in the old copy's place; the new copy, with the change, shows the light crossing it.
-        if let project = Store.shared.projects.first(where: { $0.id == id }) { AppTransition.land(project, always: true) }
         let chatCover = state.chatCover
         state.cover = nil
         state.chatCover = nil

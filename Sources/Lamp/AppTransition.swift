@@ -59,6 +59,29 @@ enum AppTransition {
         send(.land, to: project)
     }
 
+    /// The app glowed and was reopened with the change: the new copy shows the light crossing it once its first
+    /// window is on screen, whether or not Lamp's cover stood in for it (there's none for a window in full screen
+    /// or in the Dock). The window server is asked rather than the app, which doesn't say for every window.
+    static func landWhenShown(_ project: LampProject, app: NSRunningApplication) {
+        let pid = app.processIdentifier
+        Task { @MainActor in
+            for _ in 0..<60 {
+                guard !app.isTerminated else { return }
+                let windows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+                if windows.contains(where: { ($0[kCGWindowOwnerPID as String] as? pid_t) == pid && ($0[kCGWindowLayer as String] as? Int) == 0
+                    && ($0[kCGWindowIsOnscreen as String] as? Bool) == true }) {
+                    // A moment for the window to settle, and for Lamp's cover over it to start fading.
+                    try? await Task.sleep(for: .milliseconds(600))
+                    guard !app.isTerminated, let current = Store.shared.projects.first(where: { $0.id == project.id }) else { return }
+                    return land(current, always: true)
+                }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+    }
+
+    static func isGlowing(_ id: String) -> Bool { glowing[id] != nil }
+
     /// The build failed, was stopped, or its change waits for the person: the glow fades with nothing crossing.
     static func end(_ project: LampProject) {
         guard stop(project) else { return }

@@ -706,7 +706,7 @@ copy opens its first window in the same place (`putBack`), and the picture fades
 While Lamp builds a change for a Mac app that's open, the app's windows glow softly at their edges, blurred and
 going round blue, purple and orange, and a band of light crosses them as the change goes in (`AppTransition`, drawn by
 `LampTransition` in LampSupport.swift; Lamp's cover carries the same glow, `TransitionGlow`). It starts in `Store.build`,
-lands in `reloadInPlace` (or, after a reopen, as the cover goes), and fades after `install` otherwise (held for Reload,
+lands in `reloadInPlace` (or, after a reopen, once the new copy's window is on screen, `landWhenShown`), and fades after `install` otherwise (held for Reload,
 kept open, failed); Lamp renews it while the turn goes on and the app lets it go after 90 seconds unrenewed. The app
 draws it in clear child windows that let clicks through and are left out of its pictures (`windowsOnScreen`), so the
 builder never sees it; requests are signed with the app's token, with their time and an id, and taken once. An app

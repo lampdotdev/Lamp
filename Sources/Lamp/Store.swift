@@ -4727,7 +4727,7 @@ final class Store: ObservableObject {
     private func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false, reload: Bool = false) async -> String? {
         let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload)
         // Whatever didn't put the change into the open app (it waits for Reload, was kept open, reopened, failed)
-        // lets the glow go; a reopened copy gets the light as its window comes back (`MagicPanel.revealApp`).
+        // lets the glow go; a reopened copy gets the light once its window is up (`AppTransition.landWhenShown`).
         AppTransition.end(project)
         return crash
     }
@@ -4795,6 +4795,8 @@ final class Store: ObservableObject {
             return nil
         }
         guard exists(project) else { return nil }   // deleted while its old copy was quitting
+        // The old copy glowed while this was built: the new one, with the change, shows it going in.
+        let glowed = AppTransition.isGlowing(project.id)
         owner?.didNotOpen = false
         owner?.updatedInPlace = false
         do {
@@ -4842,6 +4844,7 @@ final class Store: ObservableObject {
             } else {
                 noteOpened(true, for: project)
                 if inFront { log(project, .status, "\(project.name) is ready") }
+                if glowed { AppTransition.landWhenShown(project, app: app) }
             }
         } catch {
             log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
