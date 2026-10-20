@@ -1,10 +1,5 @@
-VERDICT 1: REOPEN (the change didn't compile on its own.
-an enum that gained cases wasn't found in the change)
+VERDICT 1: RELOAD
 == run
 before: a b
-RELOAD 1: REOPEN the change didn't compile on its own.
-an enum that gained cases wasn't found in the change
-after1 (want a b c): a b
-before: a b c
-RELOAD 1: in the restart
+RELOAD 1 (whole): ok
 after1 (want a b c): a b c

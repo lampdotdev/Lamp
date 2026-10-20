@@ -38,7 +38,8 @@ enum LiveReload {
     }
 
     static func markRunning(_ project: LampProject, from: URL? = nil) {
-        if from != nil { forgetLibraries(project) }
+        // Installed: the next copy opened runs this, whichever process it is.
+        if from != nil { forgetLibraries(project); AppFolder.remove(processURL(project), in: project.dir) }
         try? AppFolder.copy(from ?? sources(project), to: running(project), in: project.dir)
         try? AppFolder.write(inputs(project), to: runningInputs(project), in: project.dir)
         // What it now runs was most often read already, as the live copy a change was tried with (`Analyses`): its
@@ -74,7 +75,21 @@ enum LiveReload {
     static func forget(_ project: LampProject) {
         AppFolder.remove(running(project), in: project.dir)
         AppFolder.remove(oldCodeURL(project), in: project.dir)
+        AppFolder.remove(processURL(project), in: project.dir)
         LiveSlots.clear(project)
+    }
+
+    /// The open copy the changes since the install went into, by its process and when it started. What it runs
+    /// (`running`) is true of that process only: one opened since (by the Dock, at login, while Lamp was closed)
+    /// runs what was installed, which a change put into it would be judged against wrongly.
+    private static func processURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-process.txt") }
+    static func noteProcess(_ project: LampProject, pid: Int32, launched: Date?) {
+        try? AppFolder.write("\(pid) \(launched?.timeIntervalSince1970 ?? 0)", to: processURL(project), in: project.dir)
+    }
+    /// Whether the open copy is the one the changes went into; true when none has gone in since the install.
+    static func tookChanges(_ project: LampProject, pid: Int32, launched: Date?) -> Bool {
+        guard let known = AppFile.text(processURL(project), in: project) else { return true }
+        return known == "\(pid) \(launched?.timeIntervalSince1970 ?? 0)"
     }
 
     /// Where the open app's code may still be running old versions of itself, from every change that went in since
@@ -158,7 +173,7 @@ enum LiveReload {
                 return .reopen("Lamp's own building blocks changed")
             }
             // What's read only at launch (the App, its scenes, its menu commands, an application delegate) is held to
-            // what the open app had by the layout check (`SwiftSource.launchEntries`), wherever it's written.
+            // what the open app had by the layout check (`SwiftSource.LaunchReader`), wherever it's written.
             changed.append(path)
         }
         // A file taken away while another arrives is most often one renamed: what was private to it (a type, a
@@ -183,7 +198,7 @@ enum LiveReload {
     /// (then the usual build runs and the agent sees its errors). The open app's layout is kept from the last
     /// time, so only the new code is type-checked, alongside the changed files' compile.
     /// The layout's lines that aren't a type's members, by the control character their group begins with: what's
-    /// read at launch (`SwiftSource.launchEntries`), constants' values (`constantEntries`), typealiases (`aliasGroup`)
+    /// read at launch (`SwiftSource.LaunchReader`), constants' values (`constantEntries`), typealiases (`aliasGroup`)
     /// and what's declared (`declarationGroup`). Each is compared its own way, never as a type's fields.
     static func isGroup(_ type: String) -> Bool { (type.first?.asciiValue ?? 32) < 32 }
 
@@ -196,7 +211,7 @@ enum LiveReload {
     static func bared(_ entries: [String]) -> [String] { entries.map(bare) }
 
     /// The kinds of entry in a layout besides a type's own fields and cases, each under a control character so none
-    /// reads as a type's name: what's read at launch (`SwiftSource.launchEntries`); a constant's value
+    /// reads as a type's name: what's read at launch (`SwiftSource.LaunchReader`); a constant's value
     /// (`constantEntries`); a typealias and what it names; what's declared (functions, initializers, computed
     /// properties, conformances, a member's `@objc`); what a `some`-returning member builds; where a private type is
     /// declared (its mangled name carries its file, so one moved is another type at run time); and a class's
@@ -247,7 +262,7 @@ enum LiveReload {
     static let aliasGroup = Group.alias.rawValue, declarationGroup = Group.declared.rawValue, opaqueGroup = Group.opaque.rawValue
     static let placeGroup = Group.place.rawValue, initsGroup = Group.inits.rawValue, shapeGroup = Group.shape.rawValue
 
-    /// The SwiftData model classes in a layout, each with the file that declares it (`SwiftSource.launchEntries`):
+    /// The SwiftData model classes in a layout, each with the file that declares it (`SwiftSource.LaunchReader`):
     /// a change that compiles that file, whatever it changed, makes the model's key paths over again.
     static func modelFiles(inLayout layout: [String]) -> [(name: String, file: String)] {
         Group.launch.parts(in: layout).compactMap { parts in
@@ -277,6 +292,24 @@ enum LiveReload {
         }
         for (name, was) in aliases(before).sorted(by: { $0.key < $1.key }) {
             if let is_ = aliases(now)[name], is_ != was { return ("the typealias \(name) changed from \(was) to \(is_)", nil) }
+        }
+        // A name that's a typealias on one side and a type on the other: what holds it prints the name either way, so
+        // its layout reads the same while its size isn't. A private alias is keyed `File.swift:Name`, a type `Name@File.swift`.
+        func typeNames(_ entries: [String]) -> Set<String> {
+            Set(entries.compactMap { entry in
+                guard !isGroup(entry), !entry.hasPrefix("protocol "), entry.hasSuffix("\t") else { return nil }
+                return bare(String(entry.dropLast()))
+            })
+        }
+        func aliasNames(_ entries: [String]) -> [String: String] {
+            Dictionary(aliases(entries).map { (String($0.key.split(separator: ":").last ?? Substring($0.key)), $0.value) }, uniquingKeysWith: { first, _ in first })
+        }
+        let typesBefore = typeNames(before), typesNow = typeNames(now)
+        for (name, was) in aliasNames(before).sorted(by: { $0.key < $1.key }) where typesNow.contains(name) && !typesBefore.contains(name) {
+            return ("\(name) is a type of its own now, where the open app's is a typealias for \(was)", nil)
+        }
+        for (name, is_) in aliasNames(now).sorted(by: { $0.key < $1.key }) where typesBefore.contains(name) && !typesNow.contains(name) {
+            return ("\(name) is a typealias for \(is_) now, where the open app's is a type of its own", nil)
         }
         // A type's shape: a struct become a class (or back) lays its values out as objects, an enum made `@objc` or
         // `indirect` changes how its values are kept, a class under another superclass puts its fields and methods
@@ -936,7 +969,7 @@ enum LiveReload {
         return status == 0 ? String(decoding: output, as: UTF8.self) : nil
     }
 
-    /// A live copy's layout as `layout` gives it, with what's read only at launch (`SwiftSource.launchEntries`)
+    /// A live copy's layout as `layout` gives it, with what's read only at launch (`SwiftSource.LaunchReader`)
     /// and where each property is declared, all from the one printout.
     /// And where its code may go on running after the next change (`oldCodeUses`), to record once it's in.
     /// Kept by what it was made from (`Analyses`), so the same code is never printed and read twice.
@@ -1090,7 +1123,7 @@ enum LiveReload {
         private var objcPending: (indent: Int, entry: String)?
         // The enum just read, whose `indirect` would be the next node under it, and the stored property just read,
         // whose `weak` or `unowned` would be: each by its indent and its entry's place in `out`.
-        private var shapePending: (indent: Int, index: Int)?, ownershipPending: (indent: Int, index: Int)?
+        private var shapePending: (indent: Int, index: Int)?, ownershipPending: (indent: Int, index: Int)?, casePending: (indent: Int, index: Int)?
         // The `some`-returning member being read, what its body names so far, the type it builds once found, the
         // indent of a conversion to the opaque type whose child names that type, and of a declaration inside it.
         private var opaque: (indent: Int, key: String, names: [String], builds: String?, converting: Int?, inner: Int?)?
@@ -1098,6 +1131,10 @@ enum LiveReload {
         // them overriding (`override=`, the compiler's own inherited ones included) or a `super` call means a superclass.
         // One for each class still open, since a nested class's initializers come before the outer class's own.
         private var superPending: [(indent: Int, key: String, index: Int, name: String)] = []
+        // A stored `some` property's type is what its initializer makes, which the compiler prints in the binding
+        // before the property (`processed_init=underlying_to_opaque_expr`), not under it: the conversion's indent,
+        // then the type its child names.
+        private var bindingConverts: Int?, bindingBuilds: String?
 
         private func add(_ entry: String) { if seen.insert(entry).inserted { out.append(entry) } }
         private func closeOpaque() {
@@ -1156,6 +1193,14 @@ enum LiveReload {
                 }
                 closeOpaque()
             }
+            if opens("pattern_binding_decl") { bindingConverts = nil; bindingBuilds = nil }
+            if let at = bindingConverts, indent > at, bindingBuilds == nil, let m = typeOf.firstMatch(in: line.text, range: line.range) {
+                let type = String(line.text[Range(m.range(at: 1), in: line.text)!])
+                bindingConverts = nil
+                if !type.contains("some ") { bindingBuilds = place.stringByReplacingMatches(in: type, range: NSRange(type.startIndex..., in: type), withTemplate: "") }
+            } else if line.text.contains("(processed_init=underlying_to_opaque_expr") {
+                bindingConverts = indent
+            }
             if let pending = objcPending {
                 if indent == pending.indent + 2, opens("objc_attr"), let m = objcAttr.firstMatch(in: line.text, range: line.range) {
                     let selector = m.range(at: 2).location == NSNotFound ? "" : "(" + String(line.text[Range(m.range(at: 2), in: line.text)!]) + ")"
@@ -1168,6 +1213,14 @@ enum LiveReload {
             if let pending = shapePending {
                 if indent == pending.indent + 2, opens("indirect_attr") { out[pending.index] += " indirect"; shapePending = nil; return }
                 if indent <= pending.indent { shapePending = nil }
+            }
+            if let pending = casePending {
+                if indent == pending.indent + 2, opens("indirect_attr") {
+                    if !out[pending.index].hasSuffix(" indirect") { out[pending.index] += " indirect" }
+                    casePending = nil
+                    return
+                }
+                if indent <= pending.indent { casePending = nil }
             }
             if let pending = ownershipPending {
                 if indent == pending.indent + 2, opens("reference_ownership_attr"), let m = ownershipAttr.firstMatch(in: line.text, range: line.range) {
@@ -1253,7 +1306,8 @@ enum LiveReload {
             } else if opens("typealias"), let m = inferredAlias.firstMatch(in: line.text, range: line.range), let owner {
                 let name = String(line.text[Range(m.range(at: 2), in: line.text)!]), type = String(line.text[Range(m.range(at: 3), in: line.text)!])
                 if !type.contains("some ") { add(aliasGroup + "\t" + owner + "." + name + " = " + type) }
-            } else if opens("func_decl", "var_decl"), let m = opaqueMember.firstMatch(in: line.text, range: line.range), !["private", "fileprivate"].contains(String(line.text[Range(m.range(at: 5), in: line.text)!])),
+            } else if opens("func_decl", "var_decl"), let m = opaqueMember.firstMatch(in: line.text, range: line.range),
+                      line.has("readImpl=stored") || !["private", "fileprivate"].contains(String(line.text[Range(m.range(at: 5), in: line.text)!])),
                       case let name = String(line.text[Range(m.range(at: 3), in: line.text)!]), name != "__lampBody", !name.hasPrefix("$") {
                 // A view's body is wrapped by the live copy (`__lampBody`, read only by `body` beside it), so its type
                 // may change; a private member's callers are all in its file, compiled with it. Keyed with its
@@ -1261,8 +1315,9 @@ enum LiveReload {
                 // every caller.
                 let signature = name + ": " + String(line.text[Range(m.range(at: 4), in: line.text)!])
                 declared(signature)
-                if let owner { opaque = (indent, owner + "." + signature, [], nil, nil, nil) }
-                else if line.isTopLevel { opaque = (indent, signature, [], nil, nil, nil) }
+                let builds = line.has("readImpl=stored") ? bindingBuilds : nil
+                if let owner { opaque = (indent, owner + "." + signature, [], builds, nil, nil) }
+                else if line.isTopLevel { opaque = (indent, signature, [], builds, nil, nil) }
             } else if opens("typealias"), let m = aliasDecl.firstMatch(in: line.text, range: line.range) {
                 var name = String(line.text[Range(m.range(at: 3), in: line.text)!])
                 let type = String(line.text[Range(m.range(at: 5), in: line.text)!]), access = String(line.text[Range(m.range(at: 4), in: line.text)!])
@@ -1303,6 +1358,8 @@ enum LiveReload {
                     out.append(entry)
                     lastCase = out.count - 1
                 }
+                // `indirect` on the case alone keeps its payload in a box: its own node, right under the case.
+                if let index = out.firstIndex(of: entry) ?? out.firstIndex(of: entry + " indirect") { casePending = (indent, index) }
             }
         }
 
@@ -1479,7 +1536,10 @@ enum LiveReload {
             if let plan, let problem, let given = plan.slots.flatMap({ type, slots in slots.filter { $0.value.holder == .view && problem.contains("extra argument '\($0.key)'") }.map { "\(type).\($0.key)" } }).sorted().first {
                 return .reopen(why: "\(given) is @State the view's initializer is given, and a property kept in a spare can't take a value that way")
             }
-            return .reopen(why: "the change didn't compile on its own.\n\(problem ?? "")")
+            // A compiler error is the compiler's words; anything else (the change's types couldn't be made the app's)
+            // is a reason already.
+            guard let problem, problem.contains("error:") else { return .reopen(why: problem ?? "the change didn't compile on its own") }
+            return .reopen(why: "the change didn't compile on its own.\n\(problem)")
         }
         // A SwiftData model's file compiled into the change for any reason (every file is, when what's declared
         // changed) makes the model's key paths over again, which the open app's container doesn't know.
@@ -1567,8 +1627,11 @@ enum LiveReload {
         for _ in 0..<120 {
             try? await Task.sleep(for: .milliseconds(100))
             if let text = try? String(contentsOf: answer, encoding: .utf8) {
+                // An answer naming another library is an earlier request's, come late: not this one's.
+                let lines = text.components(separatedBy: "\n")
+                if lines.count > 1, lines[1] != library.path { continue }
                 if text.hasPrefix("ok") { return nil }
-                let why = text.hasPrefix("failed: ") ? String(text.dropFirst(8)) : "the app couldn't take it"
+                let why = lines[0].hasPrefix("failed: ") ? String(lines[0].dropFirst(8)) : "the app couldn't take it"
                 return why.trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
@@ -1918,7 +1981,8 @@ enum LiveSlots {
                 if variable.attributes.contains(where: { $0.name == "ObservationIgnored" }) { return .refused("\(type).\(name) is @ObservationIgnored, and a property kept in a spare is observed") }
                 // A @Published property's `$name` publisher has no spare to come from.
                 if holder == .object, variable.attributes.contains(where: { $0.name == "Published" }),
-                   SwiftSource.Text(path: variable.position.file).map({ SwiftText.mentions(identifier: "$" + name, in: String(decoding: $0.bytes, as: UTF8.self)) }) == true {
+                   LiveReload.swiftFiles(in: LiveReload.sources(project)).values.contains(where: { url in
+                       SwiftSource.Text(path: url.path).map { SwiftText.mentions(identifier: "$" + name, in: String(decoding: $0.bytes, as: UTF8.self)) } == true }) {
                     return .refused("\(type).\(name)'s publisher ($\(name)) is used, and a property kept in a spare has none")
                 }
                 let optional = kind.hasSuffix("?") || kind.hasPrefix("Optional<")
@@ -1982,13 +2046,25 @@ enum LiveSlots {
         }
         let initializers = memberwiseInitializers(for: planned.filter { $0.slot.holder == .value }.map { ($0.type, $0.name) },
                                                   declarations: declarations)
+        // Where each view's moved state's `$name` is its own, by file: the view's declaration and its extensions (a
+        // private view's only in its file), since another view may have state of the same name. There the state's
+        // binding becomes its box's.
+        var stateRanges: [String: [(start: SwiftSource.Position, last: SwiftSource.Position, name: String)]] = [:]
+        for item in planned where item.slot.holder == .view {
+            if let declared = declarations.types[item.type] { stateRanges[declared.start.file, default: []].append((declared.start, declared.last, item.name)) }
+            let plain = LiveReload.bare(item.type), simple = String(plain.split(separator: ".").last ?? "")
+            let ownFile = item.type.contains("@") ? declarations.types[item.type]?.start.file : nil
+            for (extended, ranges) in declarations.extensions where extended == plain || extended == simple {
+                for range in ranges where ownFile == nil || range.start.file == ownFile {
+                    stateRanges[range.start.file, default: []].append((range.start, range.last, item.name))
+                }
+            }
+        }
+        for file in stateRanges.keys where byFile[file] == nil { byFile[file] = [] }
         var written: [(path: String, text: String)] = []
         for (file, edits) in byFile {
             guard let original = SwiftSource.Text(path: file) else { return .refused(nil) }
             var bytes = original.bytes
-            // Each view's moved state, with the view: its `$name` was its state's binding and is now the box's, within
-            // the view's own declaration, since another view in the file may have state of the same name.
-            var views: [(type: String, name: String)] = []
             // Each rewrite's place in the original and how much longer it made the text, to find a view's declaration
             // in the text as rewritten.
             var shifts: [(at: Int, by: Int)] = []
@@ -2001,10 +2077,9 @@ enum LiveSlots {
                 guard let (range, text) = made else { return .refused(nil) }
                 bytes.replaceSubrange(range, with: Array(text.utf8))
                 shifts.append((range.lowerBound, text.utf8.count - range.count))
-                for item in edit.items where item.slot.holder == .view { views.append((item.type, item.name)) }
             }
-            for (type, name) in views {
-                guard let declared = declarations.types[type], let from = original.offset(declared.start), let to = original.offset(declared.last) else { return .refused(nil) }
+            for (start, end, name) in stateRanges[file] ?? [] {
+                guard let from = original.offset(start), let to = original.offset(end) else { return .refused(nil) }
                 func shifted(_ offset: Int) -> Int { offset + shifts.filter { $0.at < offset }.map(\.by).reduce(0, +) }
                 let (first, last) = (shifted(from), min(shifted(to + 1), bytes.count))
                 let inside = SwiftText.replacing(identifier: "$" + name, with: "__lampBinding_" + name, in: String(decoding: bytes[first..<last], as: UTF8.self))

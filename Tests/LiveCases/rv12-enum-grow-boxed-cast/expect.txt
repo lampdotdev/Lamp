@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: sad ["sad"] sad
+RELOAD 1 (whole): ok
+after1 (want sad [sad] sad, as before): sad ["sad"] sad

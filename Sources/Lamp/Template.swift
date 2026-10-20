@@ -4029,7 +4029,7 @@ enum Template {
             loaded.insert(path)
             var result = "failed"
             defer {
-                try? result.write(to: LampRuntime.folder.appendingPathComponent("reloaded.txt"), atomically: true, encoding: .utf8)
+                try? (result + "\n" + path).write(to: LampRuntime.folder.appendingPathComponent("reloaded.txt"), atomically: true, encoding: .utf8)
             }
             // Lamp waits only so long for the answer and then treats the change as not in: one that reaches the app
             // after that (the app busy, the notification late) must stay out, or the app would run code Lamp doesn't
@@ -4068,8 +4068,13 @@ enum Template {
             // The types the change defines over again are the app's, or an earlier change's that first brought
             // one, and only a new type's is the library's own: so there's one of each type however many changes
             // have gone in, and a value made before a change is still of its type after it. One the change brings
-            // as its own (an enum that gained cases) is the library's from now on.
-            for copy in all where kept[copy.name] == nil || copy.own { kept[copy.name] = copy.own ? copy.address : original[copy.name] ?? copy.address }
+            // as its own (an enum that gained cases) has the library's descriptor and conformances from now on, but its
+            // metadata stays the app's, made to describe the new cases below: one identity, so a value boxed before the
+            // change (in `Any`, an `AnyHashable`, SwiftUI's tags) still casts to it.
+            func isMetadata(_ name: String) -> Bool { name.hasSuffix("ON") || name.hasSuffix("OMf") }
+            for copy in all where kept[copy.name] == nil || copy.own {
+                kept[copy.name] = copy.own && !(isMetadata(copy.name) && original[copy.name] != nil) ? copy.address : original[copy.name] ?? copy.address
+            }
             // A kept class's method table is the app's, so the new code's has to have the same shape: a method added,
             // taken away or moved would put a call in another method's place. Such a change reopens the app.
             if let why = Self.reshapedMethods(defined + copies, against: kept) { return refuse(why) }
@@ -4158,19 +4163,23 @@ enum Template {
                 let target = keptClass[category.class_] ?? category.class_
                 rebound += Self.attach(category, to: target, accessor: Self.accessor(of: target, original: original, defined: defined))
             }
-            // An enum that gained cases keeps its old metadata in the app, which the app's field records, old code
-            // and the runtime's own asks (printing, Codable, hashing, a cast) still reach: its description is pointed
-            // at the change's, which knows the new cases.
+            // An enum that gained cases keeps the app's metadata, which every value of it made before carries and the
+            // change's code is bound to: it's pointed at the change's description, which knows the new cases, and at the
+            // change's value witness table (the word before it), which knows how many there are, so a tag past the old
+            // last case is read as the case it is.
             for copy in all where copy.own && copy.name.hasSuffix("ON") {
-                if let old = original[copy.name], old != copy.address,
-                   case let description = copy.address.load(fromByteOffset: 8, as: UnsafeRawPointer.self),
-                   DescriptorWrite(field: old.advanced(by: 8), pointer: description).apply() { rebound += 1 }
+                guard let old = original[copy.name], old != copy.address else { continue }
+                let description = copy.address.load(fromByteOffset: 8, as: UnsafeRawPointer.self)
+                let witnesses = copy.address.load(fromByteOffset: -8, as: UnsafeRawPointer.self)
+                if DescriptorWrite(field: old.advanced(by: 8), pointer: description).apply() { rebound += 1 }
+                if DescriptorWrite(field: old.advanced(by: -8), pointer: witnesses).apply() { rebound += 1 }
             }
             // A struct's property taken out of the code leaves its value in the spare, which would go on counting in
             // `==` and `hash`: the names retired are set aside.
             LampSpare.retired.formUnion(retired)
             Self.watch(image: image)
             generation += 1
+            // With the library it answers, so an answer to an earlier request is never read as this one's.
             result = "ok \(rebound)"
         }
 
@@ -4686,18 +4695,6 @@ enum Template {
             for kept in ["Mn", "Mf", "MV", "Ma", "Mm", "MF", "Mc", "Ml", "MXX", "Ms", "Wp", "WP", "Wl", "WL", "lau", "vau", "Wz", "Qo", "QO", "So", "WV", "Wvd", "MQ"]
             where name.hasSuffix(kept) { return false }
             return name.hasSuffix("F") || name.hasSuffix("g") || name.hasSuffix("s") || name.hasSuffix("M") || name.hasSuffix("fC") || name.hasSuffix("fc")
-        }
-
-        /// The properties kept in storage among these symbols: those with an addressor, by the name before it.
-        private static func stored(in symbols: [(String, UnsafeRawPointer)]) -> Set<String> {
-            Set(symbols.map(\.0).filter { $0.hasSuffix("vau") }.map { String($0.dropLast(3)) })
-        }
-
-        /// Whether this is the getter, setter or modify of a property kept in storage (one with an addressor).
-        private static func accesses(_ name: String, oneOf stored: Set<String>) -> Bool {
-            let name = name.hasSuffix("Z") ? String(name.dropLast()) : name
-            guard ["vg", "vs", "vM"].contains(where: { name.hasSuffix($0) }) else { return false }
-            return stored.contains(String(name.dropLast(2)))
         }
 
         nonisolated private static func commands(_ header: UnsafePointer<mach_header>) -> [UnsafeRawPointer] {
@@ -15914,7 +15911,7 @@ enum Template {
     my @skip;
     sub spans {
         my $s = shift; my @found;
-        while ($s =~ /((#+)"""(?:\\\2[\s\S]|\\(?!\2)|[^\\])*?"""\2|"""(?:\\[\s\S]|[^\\])*?"""|(#+)"(?:\\\3[^\n]|\\(?!\3)|[^"\\\n]|"(?!\3))*?"\3|"(?:[^"\\\n]|\\.)*"|(?<blk>\/\*(?:(?&blk)|(?!\*\/)[\s\S])*\*\/)|\/\/[^\n]*)/g) { push @found, [$-[0], $+[0]] }
+        while ($s =~ /((#+)"""(?:\\\2[\s\S]|\\(?!\2)|[^\\])*?"""\2|"""(?:\\[\s\S]|[^\\])*?"""|(#+)"(?:\\\3[^\n]|\\(?!\3)|[^"\\\n]|"(?!\3))*?"\3|"(?:[^"\\\n]|\\.)*"|(?<blk>\/\*(?:(?&blk)|(?!\*\/)[\s\S])*+(?:\*\/|\z))|\/\/[^\n]*)/g) { push @found, [$-[0], $+[0]] }
         return @found;
     }
     sub inside { my $p = shift; for my $span (@skip) { return 1 if $p >= $span->[0] && $p < $span->[1] } 0 }

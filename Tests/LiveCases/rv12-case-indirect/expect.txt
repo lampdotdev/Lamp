@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Node changed what it holds (Node.case pair(_:_:): (Node.Type) -> (Int, Int) -> Node indirect))
+== run
+before: pair 3 4 n
+RELOAD 1: REOPEN Node changed what it holds (Node.case pair(_:_:): (Node.Type) -> (Int, Int) -> Node indirect)
+after1 (want pair 3 4; or a reopen): pair 3 4 n
+before: pair 3 4 n
+RELOAD 1: in the restart
+after1 (want pair 3 4; or a reopen): pair 3 4 n

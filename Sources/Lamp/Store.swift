@@ -4857,6 +4857,15 @@ final class Store: ObservableObject {
         }
         guard LiveReload.eligible(project), let app = macCopies(of: project).first,
               Self.binary(of: project, contains: "reloaded.txt") else { return false }
+        // The open copy isn't the one earlier changes went into (opened again since, outside Lamp): what Lamp knows
+        // it runs isn't true of it, so the change reopens it, and the whole build is what it runs then.
+        guard LiveReload.tookChanges(project, pid: app.processIdentifier, launched: app.launchDate) else {
+            LiveReload.forget(project)
+            let why = "the open copy was opened again since the last change went into it"
+            turns[project.id]?.reloadWhy = why
+            if saysWhy { log(project, .detail, "\(project.name) has to reopen for this change: \(why).") }
+            return false
+        }
         var changed: [String]
         switch await LiveReload.verdict(project) {
         case .reload(let files): changed = files
@@ -4877,6 +4886,7 @@ final class Store: ObservableObject {
             return false
         case .went(let said):
             for line in said { log(project, .detail, line + " without reopening \(project.name).") }
+            LiveReload.noteProcess(project, pid: app.processIdentifier, launched: app.launchDate)
         }
         AppTransition.land(project)
         watchAfterReload(project, app: app)

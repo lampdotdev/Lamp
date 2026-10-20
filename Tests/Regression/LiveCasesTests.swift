@@ -154,7 +154,9 @@ final class LiveCasesTests: XCTestCase {
                     try? fm.copyItem(at: library, to: staged)
                     try? fm.moveItem(at: staged, to: live.appendingPathComponent("hot\(number).dylib"))
                     for _ in 0..<1200 {
-                        if let text = try? String(contentsOf: answer, encoding: .utf8) {
+                        if let read = try? String(contentsOf: answer, encoding: .utf8) {
+                            // Its first line; the second names the library it answers.
+                            let text = read.components(separatedBy: "\n")[0]
                             if text.hasPrefix("ok") { return nil }
                             return text.hasPrefix("failed: ") ? String(text.dropFirst(8)).trimmingCharacters(in: .whitespacesAndNewlines) : "the app couldn't take it"
                         }
@@ -279,7 +281,7 @@ final class LiveCasesTests: XCTestCase {
             let signature = HMAC<SHA256>.authenticationCode(for: Data(("reload\\n\\(path)" + (whole ? "\\nwhole" : "") + (retired.isEmpty ? "" : "\\nretired " + retired.joined(separator: ","))).utf8), using: key).map { String(format: "%02x", $0) }.joined()
             LampLive.shared.load(path, signature: signature, whole: whole, retired: retired)
             // "ok" or why not; not how many pointers were rebound, which is the toolchain's count, not the case's.
-            let answer = ((try? String(contentsOf: URL(fileURLWithPath: folder + "/.lamp/runtime/reloaded.txt"), encoding: .utf8)) ?? "no answer").trimmingCharacters(in: .whitespacesAndNewlines)
+            let answer = ((try? String(contentsOf: URL(fileURLWithPath: folder + "/.lamp/runtime/reloaded.txt"), encoding: .utf8)) ?? "no answer").components(separatedBy: "\\n")[0]
             print("RELOAD \\(n)" + (whole ? " (whole)" : "") + ": " + (answer.hasPrefix("ok") ? "ok" : answer))
         }
         """

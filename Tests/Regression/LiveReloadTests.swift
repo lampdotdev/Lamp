@@ -79,7 +79,7 @@ final class LiveReloadTests: XCTestCase {
                 let key = SymmetricKey(data: Data("x".utf8))
                 let signature = HMAC<SHA256>.authenticationCode(for: Data("reload\\n\\(path)".utf8), using: key).map { String(format: "%02x", $0) }.joined()
                 MainActor.assumeIsolated { LampLive.shared.load(path, signature: signature) }
-                print((try? String(contentsOf: URL(fileURLWithPath: folder + "/reloaded.txt"), encoding: .utf8)) ?? "no answer")
+                print((try? String(contentsOf: URL(fileURLWithPath: folder + "/reloaded.txt"), encoding: .utf8))?.components(separatedBy: "\\n")[0] ?? "no answer")
                 print(describe(items[0]), Ids.take(), counter.step(), keys[AnyHashable(Point(x: 1))] ?? "nil", keyed()[AnyHashable(Point(x: 1))] ?? "nil",
                       box.show(), Box(2).show(), lab.m(), boxed(Q(v: 1)), answers())
                 _ = Counter()
@@ -406,9 +406,12 @@ final class LiveReloadTests: XCTestCase {
         let constant = LiveReload.Group.constant.entry("Tones\tlimit: abc"), other = LiveReload.Group.constant.entry("Tones\tother: def")
         XCTAssertEqual(LiveReload.layoutProblem(before: [constant, other], after: [other]).layout?.contains(constant), true)
         XCTAssertEqual(LiveReload.layoutProblem(before: [constant, other], after: [LiveReload.Group.constant.entry("Tones\tlimit: xyz"), other]).layout?.contains(constant), false)
-        // Each group keeps its own history: an alias named Mood says nothing of the shape the enum Mood had.
+        // A type replaced by a typealias of its name, or the reverse, is a change: what holds it prints the name either way.
         let moodShape = LiveReload.Group.shape.entry("Mood", "enum"), moodAlias = LiveReload.Group.alias.entry("Mood = Int")
-        XCTAssertEqual(LiveReload.layoutProblem(before: ["Mood\t", "Mood\tcase a: (Mood.Type) -> Mood", moodShape], after: [moodAlias]).layout?.contains(moodShape), true)
+        XCTAssertEqual(LiveReload.layoutProblem(before: ["Mood\t", "Mood\tcase a: (Mood.Type) -> Mood", moodShape], after: [moodAlias]).problem,
+                       "Mood is a typealias for Int now, where the open app's is a type of its own")
+        XCTAssertEqual(LiveReload.layoutProblem(before: [moodAlias, "Wallet\t", "Wallet\tamount: Mood"], after: ["Mood\t", "Mood\tcents: Int", "Wallet\t", "Wallet\tamount: Mood"]).problem,
+                       "Mood is a type of its own now, where the open app's is a typealias for Int")
         // Nested plain collections of a grown enum keep its unused numbers unused; an optional or a tuple of it doesn't.
         XCTAssertNil(LiveReload.enumsHeld(grown: ["Mood"], held: ["Mood\t", "Mood\tcase a: (Mood.Type) -> Mood", "\tnested: [[Mood]]", "\tbyName: [String : [Mood]]", "\tbyMood: [Mood : [Int]]", "\tall: Array<Mood>"], spares: [:]))
         XCTAssertEqual(LiveReload.enumsHeld(grown: ["Mood"], held: ["Mood\t", "\tmaybe: [Mood?]"], spares: [:]), "a global holds Mood as [Mood?], which a new case would change")
