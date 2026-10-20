@@ -313,8 +313,8 @@ under its name says what its own turn is doing now (`BuildingGlow`, `DeskStatusL
 besides the name a tile shows. It says only Lamp's own words, as the chat's live line words them (the thinking phrases,
 "Working on the interface", "Building…"), never a command the agent named or what only a coder would follow ("Running
 a command" reads as plain work, `TurnProgress.deskWords`), and "Getting it ready…" when no turn is going (a starter
-built out of sight); a sheen crosses it so a long step still moves. It is the tile's width and one line high, so words
-that change cross-fade in place and nothing resizes, and it goes when its own build ends, as the glow settles. Where the
+built out of sight); a sheen crosses it so a long step still moves. It is the tile's width with room for two lines, held
+whatever the words take, so every phrase reads whole, words that change cross-fade in place and nothing resizes, and it goes when its own build ends, as the glow settles. Where the
 person asked for less motion both stay still and the words still change. VoiceOver hears what the status
 line says with the wish's name (a think plainly, as "Coming true…" or "Changing…"), and where it lives after (`WishPlace`, read
 from its files). While the pointer is on a wish, its picture and what it is take the place where a new wish is made

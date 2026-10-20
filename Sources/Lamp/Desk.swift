@@ -820,10 +820,11 @@ struct DeskIcon: View {
     }
 }
 
-/// One line under a wish's name while it's built, saying what its own turn is doing now in Lamp's words
+/// A status under a wish's name while it's built, saying what its own turn is doing now in Lamp's words
 /// (`TurnProgress.deskActivity`, worded as the chat's line is, `Activity.words`), or that it's getting ready when no
-/// turn is going. A sheen crosses it so a long step never looks frozen, and words that change cross-fade in place:
-/// the line is the tile's width and one line high, so nothing resizes while they change. Where the person asked for
+/// turn is going. A sheen crosses it so a long step never looks frozen, and words that change cross-fade in place.
+/// Most of Lamp's phrases are wider than a tile, so it has room for two lines, held whatever the words take, so the
+/// row never resizes while they change and every phrase reads whole (`DeskStatusTests`). Where the person asked for
 /// less motion it stays still, and the words still change.
 struct DeskStatusLine: View {
     let activity: String?
@@ -831,6 +832,9 @@ struct DeskStatusLine: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     static let placeholder = "Getting it ready…"
+    /// The width the words have: a desk tile's (`DeskRows`) less its padding.
+    static let width: CGFloat = 104
+    static let lines = 2
     private static let sheen = 2.2
 
     var body: some View {
@@ -843,13 +847,14 @@ struct DeskStatusLine: View {
             ZStack {
                 Text(words)
                     .font(.caption)
-                    .lineLimit(1)
+                    .lineLimit(Self.lines, reservesSpace: true)
+                    .multilineTextAlignment(.center)
                     .truncationMode(.tail)
                     .foregroundStyle(style(at: timeline.date))
                     .id(words)
                     .transition(.opacity)
             }
-            .frame(maxWidth: .infinity)
+            .frame(width: Self.width, alignment: .top)
             .animation(.easeInOut(duration: 0.35), value: words)
         }
         .accessibilityHidden(true)
