@@ -36,31 +36,31 @@ final class CodexCommandsTests: XCTestCase {
         XCTAssertEqual(call, shown)
     }
 
-    /// The person never reads a refused command: not as a step, not folded under "Worked for…". Only Agent Details
-    /// keeps it, where every engine's commands are, and the step Codex showed as it started is gone there too.
-    func testARefusedCommandIsLeftOutOfThePersonsChat() throws {
+    /// A refused command is a step that says it didn't run, in the agent's words or as a step outside the app, and
+    /// never the command, folded under "Worked for…" or not. Agent Details keeps the command, and the step Codex
+    /// showed as it started is gone there too, since nothing ran.
+    func testARefusedCommandIsAStepThatSaysItDidntRun() throws {
         guard case .tool(let shown, _, _)? = Agent.parseCodex(Self.started).first(where: { if case .tool = $0 { true } else { false } }),
               case .ran(let command, let refused, let call)? = Agent.parseCodex(Self.declined).first(where: { if case .ran = $0 { true } else { false } }),
               refused else { return XCTFail("not parsed") }
-        let before = [LogLine(kind: .user, text: "Clean up the old build folder next to this project."),
-                      LogLine(kind: .agent, text: "I'll remove the old build folder."),
-                      LogLine(kind: .tool, text: shown)]
-        let lines = LogLine.refusing(command, call: call, in: before) + [
-            LogLine(kind: .agent, text: "I didn't delete the old build folder: it's outside this app."),
-            LogLine(kind: .summary, text: "Worked for 13s · $0.00")]
-        let read = LogLine.visible(lines, details: false)
-        XCTAssertFalse(read.contains { $0.text.contains("old-build") }, read.map(\.text).joined(separator: "\n"))
-        let folded = ChatItem.items(read, gather: true).flatMap { item -> [LogLine] in
-            switch item {
-            case .line(let line): [line]
-            case .tools(let lines), .statuses(let lines): lines
-            case .work(_, _, let steps): steps
+        for (said, step) in [("Removing the old build folder", "Not run: Removing the old build folder"),
+                             (nil, "Not run: " + LogLine.refusedStep)] as [(String?, String)] {
+            let before = [LogLine(kind: .user, text: "Clean up the old build folder next to this project."),
+                          LogLine(kind: .agent, text: "I'll remove the old build folder."),
+                          LogLine(kind: .tool, text: shown)]
+            let lines = LogLine.refusing(command, call: call, named: said, in: before) + [
+                LogLine(kind: .agent, text: "I didn't delete the old build folder: it's outside this app."),
+                LogLine(kind: .summary, text: "Worked for 13s · $0.00")]
+            let read = LogLine.visible(lines, details: false)
+            XCTAssertFalse(read.contains { $0.text.contains("old-build") }, read.map(\.text).joined(separator: "\n"))
+            let steps = ChatItem.items(read, gather: true).flatMap { item -> [String] in
+                if case .work(_, _, let steps) = item { return steps.map(\.text) } else { return [] }
             }
+            XCTAssertEqual(steps, [step])
+            let details = LogLine.visible(lines, details: true).map(\.text)
+            XCTAssertTrue(details.contains("Refused: rm -rf -- ../old-build"), details.joined(separator: "\n"))
+            XCTAssertFalse(details.contains(shown))
         }
-        XCTAssertFalse(folded.contains { $0.text.contains("old-build") })
-        let details = LogLine.visible(lines, details: true).map(\.text)
-        XCTAssertTrue(details.contains("Not run: rm -rf -- ../old-build"), details.joined(separator: "\n"))
-        XCTAssertFalse(details.contains(shown))
     }
 
     /// A command that ran is a step the person reads in the agent's words (or as housekeeping when it gave none), with

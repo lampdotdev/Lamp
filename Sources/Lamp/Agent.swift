@@ -41,7 +41,7 @@ enum AgentEvent {
     /// reasoning summary's heading. Empty for a command that came without one, which leaves it unnamed.
     case naming(String)
     /// A shell command Codex finished, or that was refused before it ran (`refused`), as the agent wrote it. `call` is
-    /// the step its start was shown as.
+    /// the step its start was shown as. The step the person reads is named by `naming`, never by this.
     case ran(String, refused: Bool, call: String)
 }
 

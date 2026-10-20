@@ -2926,9 +2926,9 @@ final class Store: ObservableObject {
                 case .acting(let id, let started):
                     if started { turn.codexActing.insert(id) } else { turn.codexActing.remove(id); steer(project) }
                 case .ran(let command, let refused, let call):
-                    // Codex's commands are never the person's to read: one that ran is a step in the agent's words, and
-                    // one that was refused is no step at all. The commands stay in Agent Details.
-                    logs[project.id] = refused ? LogLine.refusing(command, call: call, in: logs[project.id] ?? [])
+                    // Each Codex command is a step in the agent's own words, as every engine's is, and one its reviewer
+                    // refused says it didn't run; the command itself is only in Agent Details.
+                    logs[project.id] = refused ? LogLine.refusing(command, call: call, named: turn.naming, in: logs[project.id] ?? [])
                         : LogLine.ran(named: turn.naming, in: logs[project.id] ?? [])
                     saveChat(project)
                 case .finished:
@@ -7704,11 +7704,16 @@ extension LogLine {
         return lines + [LogLine(kind: .status, text: words)]
     }
 
-    /// The chat once a command was refused before it ran: the step Codex showed as it started (`call`) goes, since
-    /// nothing ran, and the command stays only for Agent Details. The person reads the agent's own words for it.
-    static func refusing(_ command: String, call: String, in lines: [LogLine]) -> [LogLine] {
+    /// The chat once a command was refused before it ran: a step that says so in the agent's words, or as a step
+    /// outside the app when it gave none (Lamp's rules refuse only those), and the agent's own sentence after it. The
+    /// step Codex showed as it started (`call`) goes, since nothing ran; the command stays only for Agent Details.
+    static func refusing(_ command: String, call: String, named said: String?, in lines: [LogLine]) -> [LogLine] {
         var lines = lines
         if let index = lines.lastIndex(where: { $0.kind == .tool && $0.text == call }) { lines.remove(at: index) }
-        return lines + [LogLine(kind: .detail, text: "Not run: " + command)]
+        return lines + [LogLine(kind: .status, text: "Not run: " + (said ?? refusedStep)),
+                        LogLine(kind: .detail, text: "Refused: " + command)]
     }
+
+    /// A refused command the agent gave no words of its own.
+    static let refusedStep = "a step outside this app"
 }
