@@ -916,7 +916,11 @@ tells the agent which way its change went (`ChangeOutcome`): into the open app, 
 reason and, where there's a known shape that would have gone in, that shape (`LiveReload.advice`), or reopened or
 opened. The turn's end tallies them in a detail line (`Store.outcomeTally`), which is how often changes go in live,
 and says how long the person waited to see the turn's first change and the longest wait between changes after it
-(`Store.paceTally`, from `Turn.shown`), which is what the rules for showing work early are judged by.
+(`Store.paceTally`, from `Turn.shown`), which is what the rules for showing work early are judged by. While
+the agent works, Lamp also puts each change it saves into the open app by itself (`Store.autoApply`: the sources read
+every two seconds, a state tried once it holds still, through the quick path a look takes), so the person sees each
+piece as it's written; what can't go in live is left for the turn's end, which holds it for Reload once with the rest.
+A build of Lamp's waits for a change going in and keeps the loop off while it runs (`Turn.building`, `Turn.applying`).
 
 New stored properties go in live too (`LiveSlots`, in LiveReload.swift). The copy step (`Template.livePerl`) gives
 each type of the app's spare room the open app's values already have: every class a few places,
