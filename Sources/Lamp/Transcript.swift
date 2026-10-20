@@ -280,13 +280,14 @@ enum ChatItem: Identifiable {
     }
 
     /// Whether `step` is the one the turn is still on: nothing came after it but Lamp's own stages of it, and the line
-    /// says its words, or it's a look and Lamp is still looking (the line then says the look's stages: "Building…",
-    /// "Opening…"). Any other words are the next thing already, which the engines report before it's logged (a call
-    /// being written, a command's name from Codex's reasoning), so the step before it is done.
+    /// says its words, or Lamp is still looking at the app for the agent (the line then says the look's stages:
+    /// "Building…", "Opening…", and the last step is the look, in whatever words it was given). Any other words are
+    /// the next thing already, which the engines report before it's logged (a call being written, a command's name
+    /// from Codex's reasoning), so the step before it is done.
     private static func isGoing(_ step: LogLine, in lines: ArraySlice<LogLine>, doing: String?, looking: Bool) -> Bool {
         guard let doing, doing != Activity.thinking, let index = lines.lastIndex(where: { $0.id == step.id }),
               lines[(index + 1)...].allSatisfy({ $0.kind == .status && $0.text.hasSuffix("…") }) else { return false }
-        return doing == (step.said ?? step.text) || looking && step.text == TurnProgress.activity(for: ToolCall("look_at_app"))
+        return doing == (step.said ?? step.text) || looking
     }
 
     /// A finished run's lines, its steps under one line at its end: the same place the live line had while it went

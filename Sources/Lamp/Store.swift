@@ -3825,6 +3825,8 @@ final class Store: ObservableObject {
             case .success(nil): return (200, ["text": Talk.saidAlready])
             case .success(let text?):
                 logs[project.id, default: []].append(LogLine(kind: .progress, text: text))
+                // A new phase: the file work after it isn't what the last command or heading was for.
+                turns[project.id]?.naming = nil
                 saveChat(project)
                 return (200, ["text": Talk.told])
             }
