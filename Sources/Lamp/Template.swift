@@ -5279,12 +5279,19 @@ enum Template {
                 return button
             }
 
-            /// Shown while a change waits, and says so while the app reopens.
+            /// Shown while a change waits, and says so while the app reopens. As tall as the wand beside it, with its
+            /// words and symbol at the size of the toolbar's own, so the title bar reads as one row of buttons.
             func show(_ state: ReloadState, height: CGFloat) {
                 isHidden = state == .none
                 isEnabled = state == .ready
                 title = state == .reloading ? "Reloading…" : "Reload"
+                let tall = height > 30
+                controlSize = tall ? .large : .regular
+                font = .systemFont(ofSize: tall ? 15 : NSFont.systemFontSize(for: .regular), weight: .medium)
+                image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)?
+                    .withSymbolConfiguration(.init(pointSize: tall ? 14 : 12, weight: .medium))
                 sizeToFit()
+                frame.size.height = height
                 breathe(state == .ready)
             }
 

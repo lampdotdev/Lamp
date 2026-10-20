@@ -494,6 +494,8 @@ final class Store: ObservableObject {
         var outcomes: [ChangeOutcome] = []
         /// Why the latest change couldn't go into the open app (LiveReload's reason, in words), for the agent's look.
         var reloadWhy: String?
+        /// A live change took in the one that was waiting for Reload: the agent is told, since it was told to wait.
+        var endedReloadWait = false
         /// Nil for a simulator/Mac turn; false until the chosen phone acknowledges opening the app.
         var phoneReady: Bool?
         var allowAll = false                // "Allow all for this turn"
@@ -4837,6 +4839,16 @@ final class Store: ObservableObject {
         }
         AppTransition.land(project)
         watchAfterReload(project, app: app)
+        // The live library was made from the same sources as a build waiting for Reload, so that change is in too:
+        // nothing is held from the app any more (the app's Reload button and the chat's line go, and `use_app` is
+        // allowed again), and the agent hears it, since `reloadNote` told it to wait. Here, not at the install: a
+        // look's change goes in before its build (`reloadBeforeBuilding`), and the look would otherwise still find
+        // the wait and say to press Reload. The build still goes in when the app closes (`awaitInstall`).
+        if Runtime.waitsForReload(project) || Runtime.holdsBuild(project) {
+            Runtime.releaseBuild(project)
+            Self.tellReload(project, on: false)
+            turns[project.id]?.endedReloadWait = true
+        }
         LiveReload.awaitInstall(project)
         _ = heldInstalls.mayInstall(project.id, running: true)
         noteOpened(true, for: project)
@@ -7205,7 +7217,12 @@ final class Store: ObservableObject {
             if reopen { note = "The app was closed and opened again, so it started fresh." }
             // Which way the change reached the app: the person sees a live change at once, as they left the window.
             switch turn.outcomes.last {
-            case .live?: note = "The change went into the open app without reopening it: the person is seeing it now, with the window as they left it."
+            case .live?:
+                note = "The change went into the open app without reopening it: the person is seeing it now, with the window as they left it."
+                if turn.endedReloadWait {
+                    note += " The change that was waiting for Reload went in with it, so nothing waits for Reload now; don't tell the person to press it."
+                    turn.endedReloadWait = false
+                }
             case .opened?: note = "The app wasn't open, so it was opened" + (changed ? " with the change." : ".")
             case .reopened?: note = "The app was closed and opened again with the change" + (turn.reloadWhy.map { ": \($0)." } ?? ".")
             default: break

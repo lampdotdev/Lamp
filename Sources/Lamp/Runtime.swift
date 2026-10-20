@@ -49,6 +49,7 @@ enum Runtime {
         try? AppFolder.write(Data(), to: reloadURL(project), in: project.dir)
     }
     static func waitsForReload(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: reloadURL(project).path) }
+
     static func holdsBuild(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: heldURL(project).path) }
 
     /// What the app is built from, as one hash: the contents of Sources, its widget's folder, Package.swift and the icon design,
