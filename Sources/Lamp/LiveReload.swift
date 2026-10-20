@@ -1241,24 +1241,32 @@ enum LiveSlots {
     /// place rather than that value. Called once a change is in.
     static func retire(_ project: LampProject, keeping layout: [String]) {
         var map = whole(project)
-        let gone = retiring(project, keeping: layout, in: map)
+        let gone = gone(in: map, keeping: layout)
         guard !gone.isEmpty else { return }
-        for (type, properties) in map {
-            for name in properties.keys where gone.contains(name) && properties[name]?.retired != true { map[type]?[name]?.retired = true }
-        }
+        for (type, name, _) in gone { map[type]?[name]?.retired = true }
         save(map, for: project)
     }
-    /// The names about to be retired by `retire`, for the app to set aside before the change goes in.
-    static func retiring(_ project: LampProject, keeping layout: [String], in mapping: [String: [String: Slot]]? = nil) -> [String] {
-        var names: [String] = []
-        for (type, properties) in mapping ?? whole(project) {
+    /// The places about to be retired by `retire`, each as the key its struct's or view's spare keeps the value
+    /// under (`spareKey`), for the app to set aside before the change goes in.
+    static func retiring(_ project: LampProject, keeping layout: [String]) -> [String] {
+        gone(in: whole(project), keeping: layout).map { spareKey(type: $0.type, name: $0.name, generation: $0.slot.generation) }.sorted()
+    }
+    /// The properties in spares that the new code no longer declares, by type and name.
+    private static func gone(in mapping: [String: [String: Slot]], keeping layout: [String]) -> [(type: String, name: String, slot: Slot)] {
+        var out: [(type: String, name: String, slot: Slot)] = []
+        for (type, properties) in mapping {
             for (name, slot) in properties where !name.hasPrefix(retiredKey) && slot.retired != true {
                 // As a field, or as a wrapper's storage (`_name`, `__name`).
                 let still = ["", "_", "__"].contains { prefix in layout.contains { $0.hasPrefix(type + "\t" + prefix + name + ": ") } }
-                if !still { names.append(name) }
+                if !still { out.append((type, name, slot)) }
             }
         }
-        return names.sorted()
+        return out
+    }
+    /// The key a struct's or view's spare keeps a property's value under: its type and name, so two types' `score`
+    /// are two values and retiring one leaves the other, numbered when the name has been brought back.
+    static func spareKey(type: String, name: String, generation: Int?) -> String {
+        type + "." + name + (generation.map { "#\($0)" } ?? "")
     }
 
     /// Writes down what `fit` planned, once the change is in: the spares' places and the constants remade so far.
@@ -1614,6 +1622,14 @@ enum LiveSlots {
                 queue.append(made)
             }
         }
+        // And the cases of every enum those texts name (`Mood.allCases.count`): the value is made again each time
+        // the enum grows, not only the first.
+        for (type, entries) in layout {
+            let cases = entries.filter { $0.contains("\tcase ") }
+            guard !cases.isEmpty, case let short = String(type.split(separator: ".").last ?? ""),
+                  sources.values.contains(where: { SwiftText.mentions(short, in: $0) }) else { continue }
+            sources["\u{0}" + type] = cases.sorted().joined(separator: "\n")
+        }
         // Named by its key, the file of a private one included: two files' `private let spacing` are two values.
         let name = key.replacingOccurrences(of: "\t", with: ".") + "#" + SwiftSource.digest(sources.keys.sorted().map { $0 + "=" + sources[$0]! }.joined(separator: "\n"))
         let quoted = name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
@@ -1758,8 +1774,7 @@ enum LiveSlots {
     private static func computed(_ variable: SwiftSource.Variable, item: (type: String, name: String, slot: Slot, published: Bool, isNew: Bool),
                                  keyword: String, declarations: SwiftSource.Declarations, cases: [String: Set<String>]) -> [String]? {
         let name = variable.name, declared = variable.type, type = item.type
-        // The name a struct's or view's place keeps the value under: numbered when the name has been brought back.
-        let key = item.slot.generation.map { "\(name)#\($0)" } ?? name
+        let key = spareKey(type: type, name: name, generation: item.slot.generation)
         let isLet = keyword == "let"
         let optional = declared.hasSuffix("?") || declared.hasPrefix("Optional<")
         guard let initial = initialText(of: variable, in: declarations) ?? (optional ? "nil" : nil) else { return nil }

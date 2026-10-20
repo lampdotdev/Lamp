@@ -899,8 +899,8 @@ optional of it, a comparison, a hash, a cast). A property an explicit `CodingKey
 them in the same places) until the app is installed again; a property taken out of the code has its place retired
 once the change is in (`LiveSlots.retire`), since the place still holds its value, and its name is sent with the change
 for the app to set aside (`LampSpare.retired`: what it left neither reads nor counts in `==` or `hash`), and a name
-brought back gets a place of its own (a class's under a new index, a struct's or view's under the name numbered by
-`Slot.generation`); what `fit` planned (the places, the constants remade) is written down only once the change is in
+brought back gets a place of its own (a class's under a new index, a struct's or view's under its key, the type and
+name numbered by `Slot.generation`, `LiveSlots.spareKey`); what `fit` planned (the places, the constants remade) is written down only once the change is in
 (`LiveSlots.commit`), so a change refused leaves no record of places it never took: the
 whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs
 once it's installed (`LiveReload.markRunning(from:)`). A spare never reaches saved data: `LampSpare` encodes as
