@@ -382,15 +382,15 @@ enum LiveReload {
 
     /// The same, from an analysis's held members (the layout with statics and globals) and what the spares keep.
     static func enumsHeld(grown: [String], held layout: [String], spares: [String: [String: LiveSlots.Slot]]) -> String? {
-        // By bare names, as fields and code name the types.
-        let entries = bared(layout), grown = grown.map(bare)
+        // Types by the layout's keys (a private one with its file), the enums by their bare names, as fields name them.
+        let entries = layout, grown = grown.map(bare)
         let held = entries.compactMap { entry -> (String, String)? in
             guard !isGroup(String(entry.prefix { $0 != "\t" })), let colon = entry.range(of: ": ") else { return nil }
             return (String(entry.prefix { $0 != "\t" }), String(entry[colon.upperBound...]))
         }
         // What the spares keep (properties added while the app was open), by type, name and kind: a spare holds its
         // value as any value, under the metadata the app's code had when it was set.
-        let inSpares = spares.flatMap { type, properties in properties.map { (bare(type), $0.key, $0.value.type) } }.sorted { ($0.0, $0.1) < ($1.0, $1.1) }
+        let inSpares = spares.flatMap { type, properties in properties.map { (type, $0.key, $0.value.type) } }.sorted { ($0.0, $0.1) < ($1.0, $1.1) }
         // A value of the enum could hide in what holds anything at all, where its type can't be seen: a value of
         // any type, or of any type conforming to a protocol the enum conforms to.
         for type in grown {
@@ -400,9 +400,9 @@ enum LiveReload {
                 }
             }
         }
-        // The classes, by their qualified names as the layout keys types, so a nested class of one name doesn't
-        // stand for a struct of the same name at the top; and each generic type's parameters (`generic<Element>` in
-        // its shape), which are no alias of anything however they're named.
+        // The classes, by their keys as the layout has them, so a nested class of one name doesn't stand for a
+        // struct of the same name at the top, nor one file's private class for another's struct; and each generic
+        // type's parameters (`generic<Element>` in its shape), which are no alias of anything however they're named.
         var classes = Set<String>(), generics: [String: Set<String>] = [:]
         for parts in Group.shape.parts(in: entries) where parts.count == 2 {
             if parts[1].hasPrefix("class") || parts[1].hasPrefix("actor") { classes.insert(parts[0]) }
@@ -437,16 +437,22 @@ enum LiveReload {
             }
             return kind
         }
-        let fields = Dictionary(conformed.fields.map { type, kinds in (type, kinds.map { expanded($0, in: type) }) }, uniquingKeysWith: +)
+        // The layout's own keys only: the bare copies merge twins, which are judged each on its own.
+        let own = Set(entries.compactMap { entry -> String? in
+            guard !isGroup(entry), let tab = entry.firstIndex(of: "\t") else { return nil }
+            return String(entry[..<tab])
+        })
+        let fields = Dictionary(conformed.fields.filter { own.contains($0.key) }.map { type, kinds in (type, kinds.map { expanded($0, in: type) }) }, uniquingKeysWith: +)
         let holders = held.map { ($0.0, expanded($0.1, in: $0.0)) }
+        // What's found is named bare, as a field's type names it; what carries it is judged by its own key.
         func carriers(of enumName: String) -> [String] {
             var found = Set([enumName]), grew = true
             while grew {
                 grew = false
-                for (type, kinds) in fields where !found.contains(type) && !classes.contains(type) && !spared.contains(type) {
+                for (type, kinds) in fields where !found.contains(bare(type)) && !classes.contains(type) && !spared.contains(type) {
                     for kind in kinds {
                         let names = word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).map { String(kind[Range($0.range, in: kind)!]) }
-                        if names.contains(where: { found.contains($0) || found.contains(last($0)) }) { found.insert(type); grew = true; break }
+                        if names.contains(where: { found.contains($0) || found.contains(last($0)) }) { found.insert(bare(type)); grew = true; break }
                     }
                 }
             }
@@ -626,10 +632,18 @@ enum LiveReload {
     /// own, which keeps its layout (old code reading the field is caught as a use of the enum itself), and a view's
     /// value lives in SwiftUI's own graph: neither is a carrier.
     static func holders(of types: [String], inLayout entries: [String]) -> [String] {
-        let conformed = conformances(inLayout: bared(entries)), types = types.map(bare)
+        let conformed = conformances(inLayout: entries), types = types.map(bare)
+        // Judged by its own key, so a private class in one file doesn't speak for a struct of its name in another.
         func carrier(_ owner: String) -> Bool {
-            !["class", "actor"].contains(conformed.kinds[owner] ?? "") && conformed.of[owner]?.contains("View") != true
+            let kinds = conformed.kinds[owner] ?? []
+            if !kinds.isEmpty, kinds.isSubset(of: ["class", "actor"]) { return false }
+            return conformed.of[owner]?.contains("View") != true
         }
+        // The layout's own keys only: the bare copies merge twins, which are judged each on its own.
+        let own = Set(entries.compactMap { entry -> String? in
+            guard !isGroup(entry), let tab = entry.firstIndex(of: "\t") else { return nil }
+            return String(entry[..<tab])
+        })
         let word = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
         func last(_ name: String) -> String { String(name.split(separator: ".").last ?? "") }
         // A field's type may be a typealias of one: followed to what it names.
@@ -641,13 +655,14 @@ enum LiveReload {
         var found = Set(types), grew = true
         while grew {
             grew = false
-            for (owner, kinds) in conformed.fields where !found.contains(owner) && carrier(owner) {
+            // What's found is named bare, as a field's type names it.
+            for (owner, kinds) in conformed.fields where own.contains(owner) && !found.contains(bare(owner)) && carrier(owner) {
                 for kind in kinds {
                     let names = word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).flatMap { m -> [String] in
                         let name = String(kind[Range(m.range, in: kind)!]), target = resolved(name)
                         return [name] + word.matches(in: target, range: NSRange(target.startIndex..., in: target)).map { String(target[Range($0.range, in: target)!]) }
                     }
-                    if names.contains(where: { found.contains($0) || found.contains(last($0)) }) { found.insert(owner); grew = true; break }
+                    if names.contains(where: { found.contains($0) || found.contains(last($0)) }) { found.insert(bare(owner)); grew = true; break }
                 }
             }
         }
@@ -665,29 +680,37 @@ enum LiveReload {
         var fields: [String: [String]] = [:]
         /// Each typealias and what it names, by its name and its qualified name.
         var aliases: [String: String] = [:]
-        /// What each type is (struct, class, enum, actor), from the layout's shapes; unknown in one an earlier Lamp kept.
-        var kinds: [String: String] = [:]
+        /// What each type is (struct, class, enum, actor), from the layout's shapes; unknown in one an earlier Lamp
+        /// kept, and more than one under a bare name two files' private types share.
+        var kinds: [String: Set<String>] = [:]
     }
+    /// Keyed as the layout keys types (a private one with its file), and again by the bare name the code uses, where
+    /// two files' private types of one name merge: a lookup by a field's type or a use in old code finds them both.
     static func conformances(inLayout entries: [String]) -> Conformances {
         var out = Conformances()
+        func keys(_ type: String) -> Set<String> { [type, bare(type)] }
         for entry in entries {
-            if let parts = Group.shape.parts(of: entry), parts.count == 2 { out.kinds[parts[0]] = parts[1].split(separator: " ").first.map(String.init); continue }
+            if let parts = Group.shape.parts(of: entry), parts.count == 2, let kind = parts[1].split(separator: " ").first.map(String.init) {
+                for key in keys(parts[0]) { out.kinds[key, default: []].insert(kind) }
+                continue
+            }
             if entry.hasPrefix("protocol "), entry.hasSuffix("\t") { out.protocols.insert(String(entry.dropFirst("protocol ".count).dropLast())); continue }
             if let alias = Group.alias.parts(of: entry)?.first, let equals = alias.range(of: " = ") {
                 let name = String(alias[..<equals.lowerBound]), names = String(alias[equals.upperBound...])
-                out.aliases[name] = names
-                out.aliases[String(name.split(separator: ".").last ?? "").split(separator: ":").last.map(String.init) ?? name] = names
+                for key in keys(name) {
+                    out.aliases[key] = names
+                    out.aliases[String(key.split(separator: ".").last ?? "").split(separator: ":").last.map(String.init) ?? key] = names
+                }
                 continue
             }
-            if entry.hasSuffix("\t"), !isGroup(entry) { out.types.insert(String(entry.dropLast())); continue }
+            if entry.hasSuffix("\t"), !isGroup(entry) { out.types.formUnion(keys(String(entry.dropLast()))); continue }
             if !isGroup(entry), !entry.hasPrefix("protocol "), let tab = entry.firstIndex(of: "\t"), let colon = entry.range(of: ": ") {
-                out.fields[String(entry[..<tab]), default: []].append(String(entry[colon.upperBound...]))
+                for key in keys(String(entry[..<tab])) { out.fields[key, default: []].append(String(entry[colon.upperBound...])) }
                 continue
             }
             guard let declared = Group.declared.parts(of: entry)?.first, let at = declared.range(of: " inherits ") else { continue }
-            let type = String(declared[..<at.lowerBound])
-            for name in declared[at.upperBound...].split(separator: ",") {
-                out.of[type, default: []].insert(name.trimmingCharacters(in: .whitespaces))
+            for key in keys(String(declared[..<at.lowerBound])) {
+                for name in declared[at.upperBound...].split(separator: ",") { out.of[key, default: []].insert(name.trimmingCharacters(in: .whitespaces)) }
             }
         }
         return out

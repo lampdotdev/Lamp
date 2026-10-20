@@ -353,6 +353,12 @@ final class LiveReloadTests: XCTestCase {
         // bare where the code names it, and known by its file for a move.
         XCTAssertEqual(layout!.filter { $0.hasPrefix("Hidden") }, ["Hidden@Shapes.swift\t", "Hidden@Shapes.swift\tv: Int"])
         XCTAssertEqual(LiveReload.bare("Outer@A.swift.Hidden@A.swift"), "Outer.Hidden")
+        // Two files' private types of one name are judged each by its own key: a class in one doesn't speak for a
+        // struct in the other, which still carries the enum.
+        let twins = ["Twin@A.swift\t", "Twin@A.swift\tmood: Outer.Mood", LiveReload.shapeGroup + "\tTwin@A.swift\tstruct",
+                     "Twin@B.swift\t", LiveReload.shapeGroup + "\tTwin@B.swift\tclass", "Keep\t", "Keep\tkept: Twin?", LiveReload.shapeGroup + "\tKeep\tclass"]
+        XCTAssertEqual(LiveReload.holders(of: ["Outer.Mood"], inLayout: twins), ["Twin"])
+        XCTAssertEqual(LiveReload.enumsHeld(grown: ["Outer.Mood"], held: twins, spares: [:]), "Keep holds Twin, which carries Outer.Mood, as Twin?, which a new case would change")
         XCTAssertEqual(LiveReload.readable("Hidden@Shapes.swift changed what it holds"), "Hidden in Shapes.swift changed what it holds")
         XCTAssertTrue(LiveObject.isKept("_$s6Lively6Hidden33_0123456789ABCDEF0123456789ABCDEFLLVMn", as: LiveObject.mangledType("Hidden", module: "Lively", kind: "V")))
         XCTAssertTrue(LiveObject.isKept("_$s6Lively5Outer4MoodOMn", as: LiveObject.mangledType("Outer.Mood", module: "Lively", kind: "O", kinds: ["Outer": "V"])) == false)
