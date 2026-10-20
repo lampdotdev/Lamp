@@ -486,6 +486,10 @@ final class Store: ObservableObject {
         var judgments: [String: CommandRisk.Judgment] = [:]
         var approving = false               // between the queue check and the approval card
         var look = Look()                   // what the agent's look_at_app has done
+        /// The watch on the turn's last launch: a look goes on once the app shows, so a death in its first seconds can
+        /// come after the look's answer, and is told with the next look or use_app (`lateCrash`) or at the turn's end.
+        var launches: [Runtime.LaunchWatch] = []
+        var launch: Runtime.LaunchWatch? { launches.last }
         /// A new app's scaffold being built and opened as the turn starts (`showEarly`): a look and the turn's own
         /// build wait for it, since a turn has one build at a time.
         var early: Task<Void, Never>?
@@ -667,6 +671,10 @@ final class Store: ObservableObject {
     private var heldDrawingOffers: Set<String> = []  // "Draw Icon…" wanted during a turn, to offer after it
     private var artApplied: [String: IconSpec] = [:] // the spec whose artwork the rendered icon includes
     private var iconDesigns: [String: Task<Void, Never>] = [:]   // icons designed from the first message
+    /// Icons being prepared while the app goes on (after a change went into the open app): a copy waits for its icon.
+    private var iconPreparations: [String: Task<Void, Never>] = [:]
+    /// The last icon render asked for, by app: each waits for the one before, so two never write the same files.
+    private var iconRenders: [String: Task<Void, Never>] = [:]
     private var tokens: [String: String] = [:]   // app token → project id, for the app's own routes (/ai…)
     /// The agent's token for the turn in progress → project id. Minted per turn and gone with it, so the agent's
     /// routes (/agent/…, /mcp) can't be reached with the app's token, which the app itself holds, nor after the
@@ -2552,8 +2560,16 @@ final class Store: ObservableObject {
         var crash: String?
         if changed {
             crash = await install(project)
-        } else if let look = turns[project.id]?.look, look.installed {
-            crash = look.crash
+        } else if let turn = turns[project.id], turn.look.installed {
+            // The look went on once the app showed: a death in its first seconds is known by now, or in a moment. One the
+            // agent was never told of is a crash on launch even when a later launch came through: it may come again.
+            // A launch Lamp itself closed and replaced isn't waited for: only a crash report would make its going a
+            // death, and the wait for one that never comes would hold up the turn for nothing.
+            for watch in turn.launches where !watch.told {
+                if await watch.wentAway(), !watch.retired { _ = await watch.verdict() }
+            }
+            let untold = lateCrash(of: turn)
+            crash = turn.look.crash ?? untold
             if crash == nil {
                 if let app = macCopies(of: project).first {
                     // The look opened it behind the user's windows. Now it's theirs: it shows itself, as when it's
@@ -3425,6 +3441,32 @@ final class Store: ObservableObject {
     /// The agent's `use_app` tool: hands its clicks, typing and keys to the open app, which performs them on its
     /// own front window (LampDriver in LampSupport), then reports what happened with a fresh picture.
     private func use(_ project: LampProject, request body: Data) async -> (Int, [String: Any]) {
+        withLateCrash(await useNow(project, request: body), of: project)
+    }
+
+    /// A death in the first seconds of a launch a look went on from (`Runtime.LaunchWatch`), said once, ahead of the
+    /// agent's next look or use_app; the turn's end takes it as a crash on launch too (`turn.look.crash`).
+    private func withLateCrash(_ result: (Int, [String: Any]), of project: LampProject) -> (Int, [String: Any]) {
+        guard let turn = turns[project.id], let crash = lateCrash(of: turn) else { return result }
+        var (status, answer) = result
+        let note = "Note from Lamp: the app quit a few seconds after it was last opened, so it isn't running.\n\n\(crash)"
+        if status == 200 { answer["text"] = note + "\n\n" + (answer["text"] as? String ?? "") }
+        else { answer["error"] = note + "\n\n" + (answer["error"] as? String ?? "") }
+        return (status, answer)
+    }
+
+    /// What's known of the deaths the turn's launches saw and nobody has been told of yet; they're told from here on.
+    /// A look may have opened the app again since one of them (seeing it gone), so each launch is asked, not just
+    /// the last; only the last one's is what the app does now (`turn.look.crash`).
+    private func lateCrash(of turn: Turn) -> String? {
+        let untold = turn.launches.filter { $0.ended && $0.crash != nil && !$0.told }
+        guard !untold.isEmpty else { return nil }
+        for watch in untold { watch.told = true }
+        if let last = turn.launch, untold.contains(where: { $0 === last }) { turn.look.crash = last.crash }
+        return untold.compactMap(\.crash).joined(separator: "\n\n")
+    }
+
+    private func useNow(_ project: LampProject, request body: Data) async -> (Int, [String: Any]) {
         guard turns[project.id]?.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         guard let request = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let actions = request["actions"] as? [[String: Any]], !actions.isEmpty,
@@ -4777,28 +4819,31 @@ final class Store: ObservableObject {
     /// Installs and opens the app. Returns what's known about the failure if it died straight away.
     /// `inFront` is false for the agent's looks, which shouldn't pull the app in front of the user mid-turn.
     /// `fresh` closes an open Mac app and opens it again even when the change could go into it as it runs.
-    private func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false, reload: Bool = false) async -> String? {
-        let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload)
+    /// `early` returns as soon as the app has shown itself rather than once its first seconds have passed: for a look,
+    /// which tells of a death after that with its next answer (`lateCrash`).
+    private func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false, reload: Bool = false,
+                         early: Bool = false) async -> String? {
+        let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early)
         // Whatever didn't put the change into the open app (it waits for Reload, was kept open, reopened, failed)
         // lets the glow go; a reopened copy gets the light once its window is up (`AppTransition.landWhenShown`).
         AppTransition.end(project)
         return crash
     }
 
-    private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool) async -> String? {
+    private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool, early: Bool) async -> String? {
         guard exists(project) else { return nil }
         // The turn this install belongs to, taken before the icon wait: a Stop during it can end the turn
         // and start the next one's, which must not inherit this launch.
         let owner = turns[project.id]
-        await prepareIcon(project)
         if project.onIOS {
+            await prepareIcon(project)
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
             // The person's own phone gets the app when they press Play or a change is finished; the agent's
             // looks (not in front) stay on the simulator, which is the only screen Lamp can see.
             let problem = if inFront, let udid = project.device {
                 await installOnDevice(project, owner: owner, udid: udid)
             } else {
-                await installOnSimulator(project, owner: owner, inFront: inFront)
+                await installOnSimulator(project, owner: owner, inFront: inFront, early: early)
             }
             // As for a Mac app below: the artwork asked for while the icon was designed, before there was
             // an app, is asked for again now there is one (an icon drawn by hand is only offered then).
@@ -4813,11 +4858,14 @@ final class Store: ObservableObject {
         defer { if progress[project.id]?.newApp == true { Task { await MagicPanel.shared.keepChatInSight(project) } } }
         // A change that can go into the open app goes in there, keeping what's on screen; the build waits to be
         // installed until the app closes (LiveReload).
+        // The icon isn't part of such a change, so it doesn't wait for it: it's drawn meanwhile, ready for the next copy.
         if !fresh, await reloadInPlace(project, inFront: inFront) {
             owner?.updatedInPlace = true
             await DataSnapshots.wentIn(project)
+            prepareIconMeanwhile(project)
             return nil
         }
+        await prepareIcon(project)
         // A whole build after an early change may still be writing build/: what's installed is what it makes,
         // and nothing when it failed (build/ is the version before the change).
         await awaitLiveBuild(of: project)
@@ -4837,7 +4885,22 @@ final class Store: ObservableObject {
         }
         // Asked once in a turn: a second build in it leaves the app the person kept open alone.
         let asked = owner?.keptOpen == true && isRunning(project)
-        guard !asked, await quit(project, for: owner, only: .mac) else {
+        // The new copy is put together and signed in Lamp's own folder while the old one is still open, so the app is
+        // closed only for the swap. Nothing of the installed copy is touched until it has closed.
+        var staged: SignedCopy?
+        if !asked {
+            note("Installing \(project.name)…", for: project)
+            do {
+                staged = try await stageSigned(project)
+            } catch {
+                log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
+                owner?.didNotOpen = true
+                noteOpened(false, for: project)
+                return nil
+            }
+        }
+        guard !asked, let copy = staged, await quit(project, for: owner, only: .mac) else {
+            staged?.discard()
             // The person kept the app open, with whatever it holds. It isn't replaced under them (HeldInstalls
             // says what that breaks, too): the build waits, and goes in when the app closes.
             // Kept open after Reload was pressed, or when Undo, a restore or Rebuild & Open asked it to close: the
@@ -4852,7 +4915,7 @@ final class Store: ObservableObject {
             refreshOpenApps()
             return nil
         }
-        guard exists(project) else { return nil }   // deleted while its old copy was quitting
+        guard exists(project) else { copy.discard(); return nil }   // deleted while its old copy was quitting
         // The old copy glowed while this was built, or this is the change it held for Reload (its glow let go when
         // the change was held): the new copy, with the change, shows it going in.
         let glowed = AppTransition.isGlowing(project.id) || reload
@@ -4860,10 +4923,9 @@ final class Store: ObservableObject {
         owner?.updatedInPlace = false
         do {
             WidgetCard.forget(project)
-            note("Installing \(project.name)…", for: project)
             // With the old copy closed, its data is quiet: copied before the new one opens on it.
             await DataSnapshots.take(project)
-            try await deploy(project)
+            try await swapIn(copy, for: project)
             await DataSnapshots.wentIn(project)
             heldInstalls.installed(project.id)
             Runtime.releaseBuild(project)
@@ -4894,12 +4956,16 @@ final class Store: ObservableObject {
         note("Opening \(project.name)…", for: project)
         var crash: String?
         do {
+            let opened = Date()
             let app = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
-            if await Runtime.diedOnLaunch(app) {
-                owner?.diedOnLaunch = true
-                log(project, .status, "\(project.name) quit right after opening. Looking at why…")
-                crash = await Runtime.launchReport(project)
-                log(project, .detail, crash!)
+            let watch = watchLaunch(project, owner: owner, opened: opened, crashOnly: true, alive: { !app.isTerminated }) {
+                await Runtime.launchReport(project)
+            }
+            // A look goes on once the app has pictured its window; anything else waits its first seconds out, since what
+            // it does next (a fix at the turn's end, the chat's "ready") depends on how they went.
+            if early ? await watch.untilShown(project) : await watch.verdict() != nil {
+                watch.told = true
+                crash = watch.crash
             } else {
                 noteOpened(true, for: project)
                 if inFront { log(project, .status, "\(project.name) is ready") }
@@ -4918,7 +4984,7 @@ final class Store: ObservableObject {
 
     /// The iPhone counterpart of `install`: the built app goes into the booted simulator and is launched there,
     /// with what it prints going to the same log the Mac apps use. Returns what's known if it died at once.
-    private func installOnSimulator(_ project: LampProject, owner: Turn, inFront: Bool) async -> String? {
+    private func installOnSimulator(_ project: LampProject, owner: Turn, inFront: Bool, early: Bool) async -> String? {
         guard let udid = Simulator.device(project.family, preferring: project.simulator) else {
             let problem = "No \(project.family.name) simulator with iOS \(Simulator.minimumIOS) or later is installed. Open Xcode once and add one in Settings → Components."
             log(project, .error, problem)
@@ -4933,16 +4999,48 @@ final class Store: ObservableObject {
         let mine = Task<String?, Never> { [self] in
             await previous?.value
             guard turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
-            return await launchOnSimulator(project, owner: owner, udid: udid, inFront: inFront)
+            return await launchOnSimulator(project, owner: owner, udid: udid, inFront: inFront, early: early)
         }
         simulatorWork[udid] = Task { _ = await mine.value }
         return await mine.value
     }
 
+    /// How long a look gives an app it just opened in the simulator to draw its first screen before picturing it.
+    private static let simulatorFirstScreen: Duration = .milliseconds(1500)
+
+    /// Watches a launch's first seconds (`Runtime.LaunchWatch`) as the turn's last launch, and says in the chat when the
+    /// app dies in them, `report` giving what's known of it.
+    /// `crashOnly` is for a Mac app, which leaves a crash report: a going after the opener went on, or while Lamp was
+    /// closing the app, counts only with one, since the person or Lamp may have closed an app that works. Without
+    /// one (the simulator), a going while Lamp closed the app is Lamp's doing.
+    private func watchLaunch(_ project: LampProject, owner: Turn?, opened: Date, crashOnly: Bool = false,
+                             alive: @escaping @MainActor () -> Bool,
+                             report: @escaping @MainActor () async -> String) -> Runtime.LaunchWatch {
+        let watch = Runtime.LaunchWatch(opened: opened, alive: alive) { [weak self] late, retired in
+            if retired, !crashOnly { return nil }
+            if late || retired, crashOnly {
+                // macOS writes the report after the process is gone, sometimes ten seconds or more later.
+                var crashed = false
+                for _ in 0..<40 where !crashed {
+                    crashed = Runtime.crashed(project, since: opened)
+                    if !crashed { try? await Task.sleep(for: .milliseconds(500)) }
+                }
+                guard crashed else { return nil }
+            }
+            owner?.diedOnLaunch = true
+            self?.log(project, .status, "\(project.name) quit right after opening. Looking at why…")
+            let crash = await report()
+            self?.log(project, .detail, crash)
+            return crash
+        }
+        owner?.launches.append(watch)
+        return watch
+    }
+
     /// The launch in progress on each simulator, for the next one to wait for.
     private var simulatorWork: [String: Task<Void, Never>] = [:]
 
-    private func launchOnSimulator(_ project: LampProject, owner: Turn, udid: String, inFront: Bool) async -> String? {
+    private func launchOnSimulator(_ project: LampProject, owner: Turn, udid: String, inFront: Bool, early: Bool) async -> String? {
         // The device is this project's from here: the driver acts only while the lease is held.
         let before = simulatorLeases[udid]
         simulatorLeases[udid] = project.id
@@ -4958,13 +5056,17 @@ final class Store: ObservableObject {
         await finishSimulatorBundle(project)
         do {
             try await Simulator.boot(udid, show: inFront)
+            retireLaunches(of: project)
             await Simulator.terminate(project.bundleID, on: udid)
             try await Simulator.install(project.builtURL, on: udid)
             guard stillOwns() else { return giveBack("The app was deleted or stopped before it opened.") }
             // One Lamp app per simulator: another project's app on this device is closed first, so what the
             // simulator shows is always the app being worked on (and that app's use_app batch, if any, stops).
             for (other, launched) in simulatorApps where other != project.id && launched.udid == udid {
-                if let theirs = projects.first(where: { $0.id == other }) { await Simulator.terminate(theirs.bundleID, on: udid) }
+                if let theirs = projects.first(where: { $0.id == other }) {
+                    retireLaunches(of: theirs)
+                    await Simulator.terminate(theirs.bundleID, on: udid)
+                }
                 simulatorApps[other] = nil
             }
             guard stillOwns() else { return giveBack("The app was deleted or stopped before it opened.") }
@@ -4978,16 +5080,18 @@ final class Store: ObservableObject {
                 return giveBack("The app was deleted or stopped before it opened.")
             }
             simulatorApps[project.id] = (udid, pid)
-            try? await Task.sleep(for: .seconds(3))
-            if !Simulator.isRunning(pid: pid) {
-                simulatorApps[project.id] = nil
-                owner.diedOnLaunch = true
-                log(project, .status, "\(project.name) quit right after opening. Looking at why…")
+            let watch = watchLaunch(project, owner: owner, opened: Date(), alive: { Simulator.isRunning(pid: pid) }) { [weak self] in
+                if self?.simulatorApps[project.id]?.pid == pid { self?.simulatorApps[project.id] = nil }
+                self?.refreshOpenApps()
                 var crash = "The app quit right after launching."
                 if Privacy.sharesLog, let tail = Runtime.logTail(project) { crash += "\n\nLast lines it printed:\n" + tail }
-                log(project, .detail, crash)
-                refreshOpenApps()
                 return crash
+            }
+            // Nothing in the simulator says when the app has drawn its first screen: a look goes on after a moment for
+            // that, and hears of a death after it from the watch; anything else waits the first seconds out.
+            if early ? await watch.settle(Self.simulatorFirstScreen) : await watch.verdict() != nil {
+                watch.told = true
+                return watch.crash
             }
             // The desk's picture of it, as a Mac app takes its own once its window settles.
             Task { _ = await Simulator.screenshot(on: udid, to: Runtime.previewURL(project)) }
@@ -5406,17 +5510,40 @@ final class Store: ObservableObject {
         return signed
     }
 
+    /// A signed copy of the app's build in Lamp's own folder (`stageSigned`), waiting to take the installed copy's
+    /// place (`swapIn`).
+    private struct SignedCopy {
+        let app: URL
+        let signed: Bool
+        /// What the installed copy it replaces was signed as, and what this one is: a change clears the app's permissions.
+        let replaced: String?
+        let requirement: String?
+        /// Deletes a copy that won't go in (the person kept the app open).
+        func discard() { try? FileManager.default.removeItem(at: app) }
+    }
+
     /// Copies the freshly built bundle into the apps folder, puts the icon in, signs it and swaps it in place of
     /// the installed copy. The swap is atomic, so it's safe even while the app is running.
     private func deploy(_ project: LampProject) async throws {
+        try await swapIn(try await stageSigned(project), for: project)
+    }
+
+    /// Everything `deploy` does before the swap: a copy of the build in the apps folder, finished and signed there.
+    /// It touches nothing of the installed copy, so it's done while that copy is still open, before it's asked to quit:
+    /// only the swap waits for the app to close.
+    private func stageSigned(_ project: LampProject) async throws -> SignedCopy {
         let fm = FileManager.default
+        // An icon still being drawn (after a change that went into the open app, New Icon, new artwork) is finished
+        // before it's copied in.
+        await iconPreparations[project.id]?.value
+        await iconRenders[project.id]?.value
         // Everything from here to the swap is done to a copy in the apps folder, which the agent's commands can't
         // write: the build folder is theirs, and a bundle there could be changed between Lamp's look at it and its
         // signature.
         let app = try Self.stage(project, in: Self.installDir)
         AppsLink.ensure()
-        var swapped = false
-        defer { if !swapped { try? fm.removeItem(at: app) } }
+        var finished = false
+        defer { if !finished { try? fm.removeItem(at: app) } }
         // The entitlements it's signed with are written beside it, for the same reason: in the app's folder they
         // could be changed between Lamp writing them and codesign reading them.
         let signing = app.deletingPathExtension().appendingPathExtension("signing")
@@ -5586,12 +5713,10 @@ final class Store: ObservableObject {
             }
         }
 
-        // Read once more from what was signed, last thing before the swap: the copy, its ids and its signatures.
+        // Read once more from what was signed: the copy, its ids and its signatures. Only Lamp writes the copy, so
+        // what's read here is what's swapped in.
         try Self.checkContained(app)
         try Self.checkOwnIDs(in: app, for: project, signed: true)
-
-        // What Lamp signed as the app's sidebar, the one program it will talk to there.
-        Sidebar.remember(project, signed: app)
 
         // What the copy being replaced was signed as, to notice when this build is signed differently. Only a copy
         // of this app, by its id: one of another id at the same place (an app of the same name since deleted, or
@@ -5599,6 +5724,18 @@ final class Store: ObservableObject {
         // Read from the file, not `Bundle`, which keeps what it read of a path for as long as Lamp runs.
         let previousID = NSDictionary(contentsOf: project.installedURL.appendingPathComponent("Contents/Info.plist"))?["CFBundleIdentifier"] as? String
         let replaced = previousID == project.bundleID ? await AppSigning.requirement(of: project.installedURL) : nil
+        let requirement = replaced == nil ? nil : await AppSigning.requirement(of: app)
+        finished = true
+        return SignedCopy(app: app, signed: signed, replaced: replaced, requirement: requirement)
+    }
+
+    /// The rest of `deploy`, once the app is closed: the signed copy takes the installed one's place.
+    private func swapIn(_ copy: SignedCopy, for project: LampProject) async throws {
+        let fm = FileManager.default, app = copy.app
+        var swapped = false
+        defer { if !swapped { copy.discard() } }
+        // What Lamp signed as the app's sidebar, the one program it will talk to there.
+        Sidebar.remember(project, signed: app)
 
         // The app isn't running by now (a build quits it, an icon waits for it to close), but its widget's
         // process may be: ended here, last thing before the swap, so no program outlives the copy it came from.
@@ -5619,19 +5756,25 @@ final class Store: ObservableObject {
         } else {
             LiveReload.forget(project)
         }
-        // Nudge Finder, the Dock and Launchpad to pick up the new icon.
+        // Nudge Finder, the Dock and Launchpad to pick up the new icon. Opening the app doesn't wait for it (macOS
+        // registers an app it's asked to open), unless its permissions are to be cleared, which needs it registered.
         try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: project.installedURL.path)
-        _ = await Shell.run(
-            Self.lsregister + " -f \"$LAMP_APP\"",
-            cwd: project.dir, env: ["LAMP_APP": project.installedURL.path]) { _ in }
+        let register = Task {
+            _ = await Shell.run(
+                Self.lsregister + " -f \"$LAMP_APP\"",
+                cwd: project.dir, env: ["LAMP_APP": project.installedURL.path]) { _ in }
+        }
         // macOS keeps a permission with the signature it was given to. Signed differently, the app has lost
         // what it had, but System Settings still shows the old entries switched on, and they do nothing.
-        if let replaced, let requirement = await AppSigning.requirement(of: project.installedURL), replaced != requirement,
+        if let replaced = copy.replaced, let requirement = copy.requirement, replaced != requirement {
+            await register.value
+        }
+        if let replaced = copy.replaced, let requirement = copy.requirement, replaced != requirement,
            await AppSigning.forgetPermissions(of: project.bundleID) {
             print("\(project.name) is signed differently from the copy it replaced, so its macOS permissions were cleared:\n"
                   + "  was: \(replaced)\n  now: \(requirement)")
             // An app signed ad hoc is signed differently every time: that was said when it was signed.
-            if signed {
+            if copy.signed {
                 log(project, .status, "If you gave \(project.name) a permission in System Settings (such as Full Disk Access or Screen Recording), macOS needs it once more: Lamp signs apps with a new certificate. After that it stays on.")
             }
         }
@@ -5641,6 +5784,22 @@ final class Store: ObservableObject {
 
     /// Makes sure icon.json exists, then renders it (with cached artwork if there is any).
     private func prepareIcon(_ project: LampProject) async {
+        // One prepared while the app went on goes first.
+        await iconPreparations[project.id]?.value
+        await drawIcon(project)
+    }
+
+    /// `prepareIcon` without waiting for it, for a change that went into the open app: whatever puts a copy together
+    /// next waits for it (`stageSigned`).
+    private func prepareIconMeanwhile(_ project: LampProject) {
+        let before = iconPreparations[project.id]
+        iconPreparations[project.id] = Task { [weak self] in
+            await before?.value
+            await self?.drawIcon(project)
+        }
+    }
+
+    private func drawIcon(_ project: LampProject) async {
         await iconDesigns[project.id]?.value
         var spec = Icons.load(project)
         if spec == nil && project.untitled { return }   // keeps its placeholder until the first message
@@ -5654,7 +5813,19 @@ final class Store: ObservableObject {
         await renderIcon(project, spec: spec!)
     }
 
+    /// Every render of an app's icon goes through here, one after another: New Icon, new artwork and an install
+    /// can ask at once, and two at a time would write the same files.
     private func renderIcon(_ project: LampProject, spec: IconSpec) async {
+        let before = iconRenders[project.id]
+        let mine = Task { [weak self] in
+            await before?.value
+            await self?.renderIconNow(project, spec: spec)
+        }
+        iconRenders[project.id] = mine
+        await mine.value
+    }
+
+    private func renderIconNow(_ project: LampProject, spec: IconSpec) async {
         do {
             let art = Icons.artwork(project, spec: spec)
             if art != nil { artApplied[project.id] = spec }
@@ -6003,7 +6174,14 @@ final class Store: ObservableObject {
 
     /// The person's click on Force Quit: ends the copy that isn't responding, and whatever was waiting for
     /// it to close (a build, Lamp's Quit, Delete) goes on.
+    /// Before Lamp itself ends an app: a launch still being watched takes its going for a death only when it's
+    /// surely a crash (`watchLaunch`).
+    private func retireLaunches(of project: LampProject) {
+        for watch in turns[project.id]?.launches ?? [] { watch.retire() }
+    }
+
     func forceQuit(_ project: LampProject) {
+        retireLaunches(of: project)
         guard let pid = notResponding.removeValue(forKey: project.id),
               let app = macCopies(of: project).first(where: { $0.processIdentifier == pid }) else { return }
         app.forceTerminate()
@@ -6015,6 +6193,8 @@ final class Store: ObservableObject {
     /// `only` quits the copy in one place (an app for both can be open on this Mac and in a simulator at once);
     /// without it every copy is quit, as deleting or renaming the app needs.
     private func quit(_ project: LampProject, for owner: Turn? = nil, only place: Destination? = nil) async -> Bool {
+        // Lamp closing it isn't the app dying on launch.
+        retireLaunches(of: project)
         if project.platform.hasIOS, place != .mac {
             if let attached = deviceApps[project.id] {
                 if attached.isRunning { attached.terminate() }
@@ -6051,6 +6231,8 @@ final class Store: ObservableObject {
             })
             if !gone { closed = false }
         }
+        // Kept open: its launch is watched again for what's left of its first seconds.
+        if !closed { for watch in turns[project.id]?.launches ?? [] { watch.resume() } }
         return closed
     }
 
@@ -6711,6 +6893,10 @@ final class Store: ObservableObject {
     /// open, code run once at the start), where otherwise a change goes into the open app. The agent ending the
     /// app's process itself skipped that question, and Lamp rightly asked the person about every such command.
     private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false) async -> (Int, [String: Any]) {
+        withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen), of: project)
+    }
+
+    private func lookNow(at project: LampProject, prop: String?, motion: Bool, reopen: Bool) async -> (Int, [String: Any]) {
         // Only for the agent Lamp is running right now. The app knows the same token and must not
         // be able to rebuild itself.
         guard let turn = turns[project.id], turn.agent != nil else {
@@ -6748,7 +6934,7 @@ final class Store: ObservableObject {
             // Open, and the device still this app's: otherwise it's opened again (which takes the device back).
             let running = simulatorApps[project.id].map { Simulator.isRunning(pid: $0.pid) && simulatorLeases[$0.udid] == project.id } ?? false
             if changed || !running || reopen {
-                let crash = await install(project, inFront: false)
+                let crash = await install(project, inFront: false, early: true)
                 turn.look.installed = true
                 turn.look.crash = crash
                 if let crash { return (200, ["text": "The app \(changed ? "built" : "is built"), but it didn't stay open.\n\n\(crash)"]) }
@@ -6758,7 +6944,6 @@ final class Store: ObservableObject {
                 note = "The app is running your latest code; nothing needed rebuilding."
             }
             say(looking)
-            try? await Task.sleep(for: .seconds(1))
             let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
             if let udid = simulatorApps[project.id]?.udid, await Simulator.screenshot(on: udid, to: picture) { screenshots = [picture] }
             if turn.look.crash == nil { await present(project, in: turn) }
@@ -6804,9 +6989,8 @@ final class Store: ObservableObject {
         }
         if screenshots.isEmpty {
             let launched = Date()
-            since = launched
             // A look with `reopen` asks for the fresh launch itself, so it doesn't wait for Reload.
-            let crash = await install(project, inFront: false, fresh: reopen, reload: reopen)
+            let crash = await install(project, inFront: false, fresh: reopen, reload: reopen, early: true)
             if turn.keptOpen { return (200, ["text": Self.keptOpenNote]) }
             if Runtime.waitsForReload(project), isRunning(project) { return (200, ["text": Self.reloadNote]) }
             turn.look.installed = true
@@ -6823,7 +7007,9 @@ final class Store: ObservableObject {
                 try? await Task.sleep(for: .milliseconds(300))
                 Runtime.requestScreenshots(of: project)
             }
-            screenshots = await Runtime.screenshots(of: project, since: launched)
+            // Since this copy was asked to open, not since the look began: the copy it replaced pictures its window as it quits.
+            since = max(launched, turn.launch?.opened ?? launched)
+            screenshots = await Runtime.screenshots(of: project, since: since)
         }
         var lead = ""
         if let prop, !prop.isEmpty, !screenshots.isEmpty {
