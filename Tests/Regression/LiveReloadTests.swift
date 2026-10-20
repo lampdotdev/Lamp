@@ -142,6 +142,7 @@ final class LiveReloadTests: XCTestCase {
         try fm.copyItem(at: project.dir.appendingPathComponent("Sources"), to: sources)
         try """
             import Foundation
+            import Observation
             typealias Side = Int
             private typealias Secret = Int
             protocol Shape { func area() -> Int; var name: String { get set } }
@@ -166,7 +167,9 @@ final class LiveReloadTests: XCTestCase {
             struct Picky { var mood: Feeling; var n: Int }
             typealias Choice = Picky
             struct Picked { var mood: Outer.Mood; var __lampSpare_Picked = 0 }
-            final class Holder { var byName: [String: Outer.Mood] = [:]; var list: [Outer.Mood] = []; var picked: Picked? = nil }
+            struct Stack<Feeling> { var top: Feeling? }
+            @Observable final class Lab { var dirty = false { didSet {} } }
+            final class Holder { var byName: [String: Outer.Mood] = [:]; var byMood: [Outer.Mood: Int] = [:]; var list: [Outer.Mood] = []; var picked: Picked? = nil; var stack = Stack<Int>(top: nil) }
             private struct Hidden { var v = 1 }
             final class Tagged: NSObject { @objc(oldName) func a() {}; @objc func b() {}; override var description: String { "t" }; @objc(oldStatic) static var value = 1 }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
@@ -285,8 +288,10 @@ final class LiveReloadTests: XCTestCase {
             func noteHelper() -> Int { 1 }
             """.write(to: sources.appendingPathComponent("Notes.swift"), atomically: true, encoding: .utf8)
         // What's read at launch is part of the whole analysis, not of a few files' layout.
-        let notesLayout = await LiveReload.analysis(of: sources, in: project, module: project.exe, macOS: "14.0")?.layout
-        let notes = try XCTUnwrap(notesLayout)
+        let analysed = await LiveReload.analysis(of: sources, in: project, module: project.exe, macOS: "14.0")
+        let notes = try XCTUnwrap(analysed?.layout)
+        // An @Observable property's didSet is moved by the macro to its storage: still an observed property.
+        XCTAssertEqual(analysed?.declarations.variables["Lab\tdirty"]?.special, true)
         XCTAssertTrue(notes.contains { $0.hasPrefix("\u{1}launch\tmodel Note@Notes.swift: ") }, "\(notes.filter { $0.hasPrefix("\u{1}launch") })")
         XCTAssertEqual(LiveReload.modelFiles(inLayout: notes).map { "\($0.name) \($0.file)" }, ["Note Notes.swift"])
         try """
@@ -313,7 +318,7 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(both).filter { $0.hasPrefix(LiveReload.placeGroup) }.count, 2)
         XCTAssertNil(LiveReload.layoutProblem(before: both, after: try XCTUnwrap(oneLeft)).problem)
         // A struct carrying the enum lends its optional the enum's numbers; one with a spare of Lamp's doesn't.
-        _ = try await layoutWith([("var picked: Picked? = nil }", "var picked: Picked? = nil; var pick: Pick? = nil }")])
+        _ = try await layoutWith([("var stack = Stack<Int>(top: nil) }", "var stack = Stack<Int>(top: nil); var pick: Pick? = nil }")])
         let carried = await LiveReload.enumsHeld(project, grown: ["Outer.Mood"])
         XCTAssertEqual(carried, "Holder holds Pick, which carries Outer.Mood, as Pick?, which a new case would change")
         // A carrier through typealiases, held by one: each is written out as what it names, wrappers included.
@@ -323,6 +328,12 @@ final class LiveReloadTests: XCTestCase {
         _ = try await layoutWith([("typealias Choice = Picky", "typealias Choice = Picky?"), ("var choice: Choice? = nil }", "var choice: Choice = nil }")])
         let wrappedAlias = await LiveReload.enumsHeld(project, grown: ["Outer.Mood"])
         XCTAssertEqual(wrappedAlias, "Holder holds Picky, which carries Outer.Mood, as Picky?, which a new case would change")
+        // A class's initializers are in its method table, a final class's too; and finality itself is held.
+        let initAdded = try await layoutWith([("typealias Choice = Picky?", "typealias Choice = Picky"), ("var choice: Choice = nil }", "var choice: Choice? = nil }"),
+                                              ("final class Item: Identifiable { var name = \"\"", "final class Item: Identifiable { var name = \"\"; init(n: String) { name = n }")])
+        XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: initAdded).problem, "an initializer of Item was added, taken away or changed, and a class's initializers are in its method table")
+        let unfinal = try await layoutWith([("; init(n: String) { name = n }", ""), ("; var choice: Choice? = nil }", " }"), ("final class Holder", "class Holder")])
+        XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: unfinal).problem, "Holder is no longer final (something subclasses it), and its methods would go through a table the open app's class doesn't have")
         XCTAssertEqual(LiveReload.existential(in: "any CustomDebugStringConvertible", holding: "Mood", conformances: conformances), "any CustomDebugStringConvertible")
         XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
         XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")

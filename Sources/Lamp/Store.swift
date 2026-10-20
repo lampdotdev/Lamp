@@ -4490,7 +4490,8 @@ final class Store: ObservableObject {
                                          started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
         // The live copy's spare places must never be what keeps an app from building: if they are, it's built
         // without them from now on, and the agent only ever sees errors in its own code.
-        if status != 0, env["LAMP_LIVE"] == "1", LiveSlots.brokeBuild(output.joined(separator: "\n")), LiveSlots.giveUp(project) {
+        if status != 0, env["LAMP_LIVE"] == "1", case let text = output.joined(separator: "\n"),
+           (LiveSlots.brokeBuild(text) && LiveSlots.giveUp(project)) || (LiveSlots.brokeFinal(text) && LiveSlots.giveUpFinal(project)) {
             output = []
             status = await Self.runBuild(command, for: project, env: env,
                                          started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
@@ -4692,6 +4693,9 @@ final class Store: ObservableObject {
         if !LiveReload.hasOldCodeRecord(project), let installed = await LiveReload.oldCodeUsesOfRunning(project) {
             LiveReload.recordOldCode(installed, for: project)
         }
+        // A property taken out of the code leaves its spare place holding its value: retired, so a name brought
+        // back later gets a fresh place.
+        if let after { LiveSlots.retire(project, keeping: after) }
         LiveReload.markRunning(project)
         LiveReload.keepLayout(layout, for: project)
         LiveReload.recordOldCode(oldCode, for: project)

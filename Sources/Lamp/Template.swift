@@ -15529,6 +15529,24 @@ enum Template {
     }
     """#
 
+    /// Makes every class `final` that nothing in the app subclasses (LiveReload): a final class keeps no method
+    /// table, so a method or computed property added to it goes into the open app, where one added to a class
+    /// with a table reshapes it and reopens the app. Given the names used as superclasses, or as the bounds of
+    /// generic parameters and `where` clauses (a subclass may be made of those), as one argument; `open` classes
+    /// and ones already `final` are left as they are. A class it shouldn't have made final (a subclass the scan
+    /// didn't see) fails the build with the compiler's own words, which `LiveSlots.brokeFinal` reads: the copy is
+    /// then made without this step from then on (`no-final`).
+    static let finalPerl = #"""
+    use strict; use warnings;
+    my %subclassed = map { (split /\./)[-1] => 1 } split ' ', shift @ARGV;
+    local $/;
+    for my $file (@ARGV) {
+        open(my $in, '<', $file) or die "$file: $!"; my $s = <$in>; close($in);
+        $s =~ s{^([ \t]*)((?:@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|nonisolated|indirect)\s+)*)(class)\s+(?!(?:func|var|let|subscript|override|class)\b)(\w+)}{ $subclassed{$4} ? "$1$2$3 $4" : "$1$2final $3 $4" }gme;
+        open(my $out, '>', $file) or die "$file: $!"; print $out $s; close($out);
+    }
+    """#
+
     /// The live copy of the sources (LiveReload): each file copied into .lamp/live with its views' bodies wrapped,
     /// so a body's type stays the same from one change to the next (`LampLive`), and only when it differs, so the
     /// build stays incremental; files gone from Sources go from the copy too. Indented for the scripts' `if`.
@@ -15538,6 +15556,11 @@ enum Template {
       cat > "$LIVE/spares.pl" <<'LAMPSPARES'
     \(sparesPerl)
     LAMPSPARES
+      cat > "$LIVE/final.pl" <<'LAMPFINAL'
+    \(finalPerl)
+    LAMPFINAL
+      # The names something may subclass: superclasses, and the bounds of generic parameters and where clauses.
+      SUBCLASSED=$(perl -0ne 'while (/\\bclass\\s+\\w+(?:<[^>]*>)?\\s*:\\s*([\\w.]+)/g) { print "$1 " } while (/<[^<>]*>/g) { my $g = $&; while ($g =~ /:\\s*([\\w.]+)/g) { print "$1 " } } while (/\\bwhere\\b([^{]*)/g) { my $w = $1; while ($w =~ /:\\s*([\\w.]+)/g) { print "$1 " } }' Sources/**/*.swift(N) 2>/dev/null || true)
       for f in Sources/**/*.swift(N); do
         out="$LIVE/$f"
         mkdir -p "${out:h}"
@@ -15547,6 +15570,8 @@ enum Template {
         perl -0pi -e 's/^([ \\t]*(?:(?:\\@\\w+(?:\\([^)]*\\))?|public|internal|fileprivate|private|open|final)\\s+)*)\\@main((?:\\s+(?:\\@\\w+(?:\\([^)]*\\))?|public|internal|fileprivate|private|open|final))*\\s+(?:struct|class|enum|actor)\\s+(\\w+))/$1$2/m and $_ .= "\\n\\@main enum __LampEntry { \\@MainActor static func main() { LampLive.watch(); $3.main() } }\\n"' "$out.new"
         # Spare places for properties added while the app is open (LiveSlots), unless they kept the app from building.
         case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) [[ -e "$LIVE/no-spares" ]] || perl "$LIVE/spares.pl" \(LiveSlots.count) "$out.new" ;; esac
+        # Every class nothing subclasses is final, so methods added to it go in without reopening the app.
+        case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) [[ -e "$LIVE/no-final" ]] || perl "$LIVE/final.pl" "$SUBCLASSED" "$out.new" ;; esac
         if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi
       done
       for f in "$LIVE"/Sources/**/*.swift(N); do [[ -f "${f#$LIVE/}" ]] || rm "$f"; done
