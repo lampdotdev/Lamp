@@ -3567,6 +3567,9 @@ final class Store: ObservableObject {
         guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
         let window = await look(at: project, reopen: reopen)
         guard window.0 == 200, !macCopies(of: project).isEmpty else { return window }
+        // What's open isn't the agent's change (or not the fresh launch it asked for) while it waits for the person:
+        // that's what the agent must hear, not a report of the old copy's sidebar.
+        if let text = window.1["text"] as? String, [Self.askedToReopenNote, Self.reloadNote, Self.keptOpenNote].contains(text) { return window }
         var (status, sidebar) = await BrowserPreview.look(project, page: page)
         // The window beside it, so the sidebar's items are judged against the app's, not on their own.
         if Privacy.sharesPictures, let pictures = window.1["screenshots"] as? [String], let front = pictures.first {
@@ -7027,8 +7030,9 @@ final class Store: ObservableObject {
         await turn.early?.value
         // A fresh launch asked for while the person has the app open waits for them to say so, like a change that
         // needs one: the look puts in what it can as usual, then asks with Reload.
-        let asking = reopen && !project.onIOS && asksBeforeReopening(project, owner: turn)
-        let reopen = reopen && !asking
+        let wantsFresh = reopen
+        var asking = reopen && !project.onIOS && asksBeforeReopening(project, owner: turn)
+        var reopen = reopen && !asking
         turn.look.installed = false
         // Each stage says itself from here; once the look is over the model is reading what it found. Only while this
         // look's turn is the one on screen: after Stop, a look still waiting on the app can end after the next turn began.
@@ -7098,6 +7102,11 @@ final class Store: ObservableObject {
         // The copy on screen is an earlier build the person kept open: not shown as the agent's work, and not
         // asked to quit again at every look.
         if turn.keptOpen, isRunning(project) { return (200, ["text": Self.keptOpenNote]) }
+        // Asked again after the build, which can take a minute: the person may have opened the app meanwhile.
+        if wantsFresh, !asking, asksBeforeReopening(project, owner: turn) {
+            asking = true
+            reopen = false
+        }
         if asking {
             if !Runtime.waitsForReload(project) {
                 _ = await install(project, inFront: false, early: true)
