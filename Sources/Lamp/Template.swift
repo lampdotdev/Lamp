@@ -4510,8 +4510,12 @@ enum Template {
             if let protocols = category.protocols {
                 let number = Int(protocols.load(as: UInt64.self))
                 for index in 0..<min(number, 1 << 10) {
-                    guard let protocol_ = protocols.load(fromByteOffset: 8 + index * 8, as: UnsafeRawPointer?.self) else { continue }
-                    if class_addProtocol(target, unsafeBitCast(protocol_, to: Protocol.self)) { count += 1 }
+                    // The list names the library's own copy of each protocol, which the runtime left unregistered
+                    // when it already had one by that name (its isa unset): asked for by its name, the runtime's is adopted.
+                    guard let protocol_ = protocols.load(fromByteOffset: 8 + index * 8, as: UnsafeRawPointer?.self),
+                          let name = protocol_.load(fromByteOffset: 8, as: UnsafePointer<CChar>?.self),
+                          let known = objc_getProtocol(name) else { continue }
+                    if class_addProtocol(target, known) { count += 1 }
                 }
             }
             return count

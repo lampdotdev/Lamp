@@ -57,7 +57,7 @@ final class LiveReloadTests: XCTestCase {
         }
         func keyed() -> [AnyHashable: String] { [AnyHashable(Point(x: 1)): "ONE"] }
         final class Coord: NSObject { @objc func a() -> String { "A" } }
-        extension Coord { @objc func same() -> String { "SAME" } }
+        extension Coord: NSCacheDelegate { @objc func same() -> String { "SAME" } }
         """
     /// The app: what it holds before the change, and what it sees after.
     private static let main = """
@@ -71,8 +71,10 @@ final class LiveReloadTests: XCTestCase {
                 let counter = Counter()
                 let keys = keyed()
                 let box = Box("s"), lab = Lab(), coord = Coord()
-                // What the class answers to from Objective-C: its own method, its file's extension's, another file's.
-                func answers() -> String { ["a", "same", "other"].map { (coord.perform(NSSelectorFromString($0))?.takeUnretainedValue() as? String) ?? "nil" }.joined(separator: " ") }
+                // What the class answers to from Objective-C: its own method, its file's extension's, another file's;
+                // and whether it has taken on a protocol an extension adopts (the system's, which the change
+                // names by its own copy).
+                func answers() -> String { ["a", "same", "other"].map { (coord.perform(NSSelectorFromString($0))?.takeUnretainedValue() as? String) ?? "nil" }.joined(separator: " ") + " \\(coord is NSCacheDelegate)" }
                 print(describe(items[0]), Ids.take(), counter.step(), keys[AnyHashable(Point(x: 1))] ?? "nil", box.show(), lab.m(), boxed(Q(v: 1)), answers())
                 let key = SymmetricKey(data: Data("x".utf8))
                 let signature = HMAC<SHA256>.authenticationCode(for: Data("reload\\n\\(path)".utf8), using: key).map { String(format: "%02x", $0) }.joined()
@@ -114,7 +116,7 @@ final class LiveReloadTests: XCTestCase {
                                        "-Xlinker", "-weak_reference_mismatches", "-Xlinker", "weak"])
         _ = try run("/usr/bin/codesign", ["--force", "-s", "-", library])
         let output = try run(root.appendingPathComponent("app").path, [root.path]).components(separatedBy: "\n")
-        XCTAssertEqual(output[0], "point 1 101 step 1 one box s m 0 false a same other")
+        XCTAssertEqual(output[0], "point 1 101 step 1 one box s m 0 false a same other false")
         XCTAssertTrue(output[1].hasPrefix("ok "), "the app didn't take the change: \(output[1])")
         // The value made before is a Point still, with the conformance the change gave it; the static went on
         // counting; the object's method and deinit are the new ones; the key made before finds the new dictionary's;
@@ -122,7 +124,7 @@ final class LiveReloadTests: XCTestCase {
         // @Observable class, which the Objective-C runtime only meets when Swift first uses it, takes the change; a
         // Comparable reached only through a cast, whose witness table the runtime made before the change, answers
         // with the `>` the change gave it in place of the protocol's default.
-        XCTAssertEqual(output[2], "NAMED p1 102 STEP 11 one ONE BOX s BOX 2 M 0 true A SAME other")
+        XCTAssertEqual(output[2], "NAMED p1 102 STEP 11 one ONE BOX s BOX 2 M 0 true A SAME other true")
         XCTAssertEqual(output[3], "GONE 0")
     }
 
@@ -158,6 +160,7 @@ final class LiveReloadTests: XCTestCase {
             struct Round: Shape { var r: Int; var name = ""; func area() -> Int { r } }
             struct Styled: Drawn { func mark() -> some Shape { Square(side: 1, name: "s") }; func n() -> some Numeric { 1 }; func t() -> some Equatable { "a" }; func p() -> some Equatable { n() }; func l() -> some Equatable { func local() -> some Equatable { 0 }; return String() } }
             struct Outer { enum Mood: Shape { case a, b; func area() -> Int { 0 }; var name: String { get { "" } set {} } } }
+            final class Holder { var byName: [String: Outer.Mood] = [:]; var list: [Outer.Mood] = [] }
             final class Tagged: NSObject { @objc(oldName) func a() {}; @objc func b() {}; override var description: String { "t" }; @objc(oldStatic) static var value = 1 }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
         let layout = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
@@ -184,6 +187,9 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertEqual(LiveReload.layoutProblem(before: withoutAliases.layout, after: retargeted).problem, "the typealias Side changed from Int to Double")
         // A global holding the enum still counts in the grown-enum check (its owner is empty, not a group).
         XCTAssertFalse(LiveReload.isGroup(String("\tselection: Mood?".prefix { $0 != "\t" })))
+        // A dictionary of the enum is a plain holder, however the compiler spaces its key.
+        let heldMood = await LiveReload.enumsHeld(project, grown: ["Outer.Mood"])
+        XCTAssertNil(heldMood, heldMood ?? "")
         XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: layout!.filter { !$0.contains("grow(_:)") }))
         XCTAssertFalse(LiveReload.declarationsChanged(before: layout!, after: layout!))
         // An existential holds a grown enum when it's Any or AnyObject (a value is boxed for it), a protocol the
