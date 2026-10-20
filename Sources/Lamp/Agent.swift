@@ -1508,15 +1508,7 @@ enum Shell {
         started: (@MainActor (Process) -> Void)? = nil,
         onLine: @escaping @MainActor (String) -> Void
     ) async -> Int32 {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = [login ? "-lc" : "-c", "export PATH=\"\(extraPath):$PATH\"; \(command)"]
-        process.currentDirectoryURL = cwd
-        var environment = ProcessInfo.processInfo.environment
-        // Off the main thread: the first look runs the person's shell, which may take a moment.
-        if !login { environment["PATH"] = await Task.detached { ToolLocator.userPath }.value }
-        environment.merge(env) { $1 }
-        process.environment = environment
+        let process = await shell(command, cwd: cwd, env: env, login: login)
 
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -1556,6 +1548,65 @@ enum Shell {
             for await status in exit { return status }
             return -1
         }.value
+    }
+
+    private static func shell(_ command: String, cwd: URL, env: [String: String], login: Bool) async -> Process {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = [login ? "-lc" : "-c", "export PATH=\"\(extraPath):$PATH\"; \(command)"]
+        process.currentDirectoryURL = cwd
+        var environment = ProcessInfo.processInfo.environment
+        // Off the main thread: the first look runs the person's shell, which may take a moment.
+        if !login { environment["PATH"] = await Task.detached { ToolLocator.userPath }.value }
+        environment.merge(env) { $1 }
+        process.environment = environment
+        return process
+    }
+
+    /// Runs a zsh command and keeps its standard output whole, off the main actor, with its standard error dropped.
+    /// For output read as a whole rather than shown as it comes: the compiler's printout of a big app's code is
+    /// tens of megabytes, which `run` would hand over a line at a time, each through the main actor.
+    static func output(_ command: String, cwd: URL, env: [String: String] = [:], login: Bool = true) async -> (status: Int32, output: Data) {
+        let process = await shell(command, cwd: cwd, env: env, login: login)
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        let collected = Collected()
+        let (done, finished) = AsyncStream<Void>.makeStream()
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                finished.finish()
+            } else {
+                collected.append(data)
+            }
+        }
+        let (exit, exited) = AsyncStream<Int32>.makeStream()
+        process.terminationHandler = {
+            exited.yield($0.terminationStatus)
+            exited.finish()
+        }
+        do {
+            try process.run()
+        } catch {
+            pipe.fileHandleForReading.readabilityHandler = nil
+            return (-1, Data())
+        }
+        for await _ in done {}
+        let status = await Task {
+            for await status in exit { return status }
+            return -1
+        }.value
+        return (status, collected.data)
+    }
+
+    private final class Collected: @unchecked Sendable {
+        private let lock = NSLock()
+        private var buffer = Data()
+        func append(_ data: Data) { lock.withLock { buffer.append(data) } }
+        var data: Data { lock.withLock { buffer } }
     }
 
     /// Splits a pipe's output into lines as it arrives.
