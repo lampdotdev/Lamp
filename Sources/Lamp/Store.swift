@@ -492,6 +492,11 @@ final class Store: ObservableObject {
         /// How each of the turn's changes reached the app, in order: told to the agent with its look and tallied at
         /// the turn's end, so what went in live and what waited can be seen and learned from.
         var outcomes: [ChangeOutcome] = []
+        /// When the request began to be worked on, and when each of its changes reached the screen (went into the open
+        /// app, or the app opened with it; not one waiting for Reload): the pace the person watching sees, tallied at
+        /// the turn's end (`paceTally`) so the rule asking for it (`Agent.liveNote`) can be judged by what happens.
+        var began = Date()
+        var shown: [Date] = []
         /// Why the latest change couldn't go into the open app (LiveReload's reason, in words), for the agent's look.
         var reloadWhy: String?
         /// A live change took in the one that was waiting for Reload: the agent is told, since it was told to wait.
@@ -2541,7 +2546,11 @@ final class Store: ObservableObject {
         var project = started
         guard let owner = turns[project.id] else { return TurnResult(end: .failed, watched: true) }
         // Once, when the turn is over: its own build and install, and any run that fixes a crash, come after the agent's.
-        defer { if let tally = Self.outcomeTally(owner.outcomes, name: project.name) { log(project, .detail, tally) } }
+        owner.began = Date()
+        defer {
+            if let tally = Self.outcomeTally(owner.outcomes, name: project.name) { log(project, .detail, tally) }
+            if let pace = Self.paceTally(began: owner.began, shown: owner.shown, outcomes: owner.outcomes) { log(project, .detail, pace) }
+        }
         var prompt = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
         // Attachments with no words: usually a screenshot or mockup meaning "like this", or a file to use.
         if prompt.isEmpty { prompt = Self.onlyFiles(saved.count) }
@@ -4841,6 +4850,7 @@ final class Store: ObservableObject {
         }
         AppTransition.land(project)
         watchAfterReload(project, app: app)
+        turns[project.id]?.shown.append(Date())
         // The live library was made from the same sources as a build waiting for Reload, so that change is in too:
         // nothing is held from the app any more (the app's Reload button and the chat's line go, and `use_app` is
         // allowed again), and the agent hears it, since `reloadNote` told it to wait. Here, not at the install: a
@@ -5051,6 +5061,7 @@ final class Store: ObservableObject {
             } else {
                 noteOpened(true, for: project)
                 owner?.outcomes.append(wasOpen ? .reopened : .opened)
+                owner?.shown.append(Date())
                 if inFront { log(project, .status, "\(project.name) is ready") }
                 if glowed { AppTransition.landWhenShown(project, app: app) }
             }
@@ -7063,6 +7074,22 @@ final class Store: ObservableObject {
         let parts = [count(.live, "went into the open app"), count(.held, "waited for Reload"),
                      count(.reopened, "reopened \(name)"), count(.opened, "opened \(name)")].compactMap { $0 }
         return "Changes this request: " + parts.joined(separator: ", ") + "."
+    }
+
+    /// How long the person watching waited to see the turn's work, as one line in the details ("First change on
+    /// screen after 1 min 12 s; longest wait between changes 2 min 40 s"): what the rule to show work early and
+    /// often is tuned by. Nothing for a turn that changed nothing.
+    static func paceTally(began: Date, shown: [Date], outcomes: [ChangeOutcome]) -> String? {
+        guard !outcomes.isEmpty else { return nil }
+        guard let first = shown.first else { return "Nothing reached the screen this request." }
+        func spoken(_ interval: TimeInterval) -> String {
+            let total = max(0, Int(interval.rounded()))
+            return total < 60 ? "\(total) s" : total % 60 == 0 ? "\(total / 60) min" : "\(total / 60) min \(total % 60) s"
+        }
+        let times = [began] + shown
+        let longest = zip(times, times.dropFirst()).map { $1.timeIntervalSince($0) }.max() ?? 0
+        let firstPart = "First change on screen after \(spoken(first.timeIntervalSince(began)))"
+        return shown.count < 2 ? firstPart + "." : firstPart + "; longest wait between changes \(spoken(longest))."
     }
 
     /// What a look with `reopen` says when Lamp asked the person instead (`asksBeforeReopening`).

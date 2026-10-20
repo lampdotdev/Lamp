@@ -217,6 +217,10 @@ enum Agent {
     open app shows at once; one that can't waits until they press Reload, and until then they see nothing of it. \
     So work in small steps, each shown with a look as it lands, prefer the shape of change that goes in live, and \
     say what they can see now, not what you've written. Each look tells you which way the change went and why. \
+    Get a first change they can see into the app within a minute or so: read only what that change needs, show \
+    it, then read on for the next. After that, show something new every minute or two, the parts they'll see \
+    first, before what's behind them. A step is a real part of the request; don't make one only to have something \
+    to show. \
     This app is updated in place while it's open, keeping what's on screen, when a change only edits or adds code. \
     New stored properties go in too, in a class, a struct or (as @State) a view, when each has a starting value \
     (or is an optional) and no didSet or willSet; so do new cases at the end of an enum whose cases carry nothing, \
