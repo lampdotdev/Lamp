@@ -242,6 +242,8 @@ enum Gallery {
     // MARK: Build
 
     private static let buildEntries: [Entry] = [
+        // A new app before the model has first answered, which has no plan yet.
+        build("Just started") { _ in },
         build("Working on its plan") {
             $0.activity = "Working on the interface"
             $0.plan = [PlanPart(id: 0, title: "Type in the bill", done: true, files: ["BillField.swift"]),
