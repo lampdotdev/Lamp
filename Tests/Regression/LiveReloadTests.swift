@@ -474,11 +474,12 @@ final class LiveReloadTests: XCTestCase {
         // The memberwise initializers written again beside the spares, from the plain sources, for the structs the
         // live copy gave one: a reference to one as a value (`.map(Item.init)`) then still matches.
         try "struct Item { var name: String; var count = 1 }\nstruct Keyed { let rawValue: Int }\nprivate struct Own { var n: Int }\n".write(to: project.dir.appendingPathComponent("Sources/Items.swift"), atomically: true, encoding: .utf8)
-        try "struct Item { var name: String; var count = 1\n    var __lampSpare_Item = LampSpare(nil); }\nstruct Keyed { let rawValue: Int }\nprivate struct Own { var n: Int\n    var __lampSpare_Own = LampSpare(nil); }\n".write(to: sources.appendingPathComponent("Items.swift"), atomically: true, encoding: .utf8)
+        // The spare goes first in its struct, as the copy step puts it (above).
+        try "struct Item { var __lampSpare_Item = LampSpare(nil); var name: String; var count = 1 }\nstruct Keyed { let rawValue: Int }\nprivate struct Own { var __lampSpare_Own = LampSpare(nil); var n: Int }\n".write(to: sources.appendingPathComponent("Items.swift"), atomically: true, encoding: .utf8)
         let addedMemberwise = await LiveSlots.addMemberwise(project)
         XCTAssertTrue(addedMemberwise)
         XCTAssertEqual(try String(contentsOf: sources.appendingPathComponent(LiveSlots.memberwiseFile), encoding: .utf8),
-                       "extension Item { init(name: String, count: Int) { self.init(name: name, count: count, __lampSpare_Item: LampSpare(nil)) } }\n")
+                       "extension Item { init(name: String, count: Int) { self.init(__lampSpare_Item: LampSpare(nil), name: name, count: count) } }\n")
         let unchangedMemberwise = await LiveSlots.addMemberwise(project)
         XCTAssertFalse(unchangedMemberwise)
         try FileManager.default.removeItem(at: sources.appendingPathComponent(LiveSlots.memberwiseFile))
