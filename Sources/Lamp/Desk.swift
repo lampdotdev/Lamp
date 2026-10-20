@@ -873,23 +873,11 @@ struct DeskBubble: View {
             } ?? Self.placeholder
             let shape = RoundedRectangle(cornerRadius: 11, style: .continuous)
             VStack(spacing: 1) {
-                // Old words fade as new ones come, each laid out whole at its own size, and the bubble holds both
-                // while they cross, so neither is cut as the bubble grows or shrinks to the new words.
-                ZStack {
-                    Text(words)
-                        .font(.caption.weight(.medium))
-                        .lineLimit(2)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .foregroundStyle(text(at: timeline.date))
-                        .id(words)
-                        .transition(.opacity)
-                }
-                .animation(.easeInOut(duration: 0.35), value: words)
-                .padding(.horizontal, 8).padding(.vertical, 5)
-                .background(Color(nsColor: .textBackgroundColor), in: shape)
-                .overlay(shape.strokeBorder(BuildingGlow.light(at: timeline.date, still: reduceMotion), lineWidth: 1.5))
-                .shadow(color: .black.opacity(0.1), radius: 4, y: 1)
+                BubbleWords(words: words, style: text(at: timeline.date))
+                    .padding(.horizontal, 8).padding(.vertical, 5)
+                    .background(Color(nsColor: .textBackgroundColor), in: shape)
+                    .overlay(shape.strokeBorder(BuildingGlow.light(at: timeline.date, still: reduceMotion), lineWidth: 1.5))
+                    .shadow(color: .black.opacity(0.1), radius: 4, y: 1)
                 // The thought's tail, two dots stepping down to the icon.
                 HStack(spacing: 0) {
                     Circle().frame(width: 5, height: 5)
@@ -917,6 +905,30 @@ struct DeskBubble: View {
             .init(color: dim, location: 1),
         ]
         return AnyShapeStyle(LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing))
+    }
+}
+
+/// A bubble's words, crossing to new ones. The bubble is one size whatever it says, room for two short lines, and each
+/// set of words is laid out whole in it, so words fading out never spill past its edge or are cut, however quickly the
+/// next ones come. A bubble that fitted its words had to resize as they changed, and words caught mid-resize were cut.
+private struct BubbleWords: View {
+    let words: String
+    let style: AnyShapeStyle
+
+    static let size = CGSize(width: 86, height: 31)
+
+    var body: some View {
+        ZStack {
+            Text(words)
+                .font(.caption.weight(.medium))
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(style)
+                .id(words)
+                .transition(.opacity)
+        }
+        .frame(width: Self.size.width, height: Self.size.height)
+        .animation(.easeInOut(duration: 0.35), value: words)
     }
 }
 

@@ -316,8 +316,8 @@ only a coder would follow ("Running a command" reads as plain work, `TurnProgres
 when no turn is going (a starter built out of sight); a sheen crosses its words so a long step still moves. It is drawn
 above its tile, never part of the tile's size, within the tile's width, in room the row it's in keeps above every icon
 until the bubble has faded, so bubbles never cover each other, a neighbour's name or the row above, and no icon moves
-while a bubble is showing (`DeskBubble.Room`, `DeskRows`). Words that change cross-fade, each laid out whole, so none
-is cut while the bubble resizes. Each goes when its own build ends, as the glow settles;
+while a bubble is showing (`DeskBubble.Room`, `DeskRows`). A bubble is one size whatever it says, and words that change
+cross-fade inside it, each laid out whole, so none spills or is cut however quickly they change. Each goes when its own build ends, as the glow settles;
 where the person asked for less motion both stay still and the words still change. VoiceOver hears what the bubble
 says with the wish's name (a think plainly, as "Coming true…" or "Changing…"), and where it lives after (`WishPlace`, read
 from its files). While the pointer is on a wish, its picture and what it is take the place where a new wish is made
