@@ -709,6 +709,15 @@ the app's turn is going, Lamp shows that picture where the window was (`MagicPan
 with the turn's activity in its middle, "Updating…" once the turn is over, and the chat's blank paper where a chat beside it was: `cover-chat-frame.txt`, `MagicPanel.chatCover`), the new
 copy opens its first window in the same place (`putBack`), and the picture fades out once the new copy reports its window
 (or goes when the turn ends without it).
+While Lamp builds a change for a Mac app that's open, the app's windows glow softly at their edges, blurred and
+going round blue, purple and orange, and a band of light crosses them as the change goes in (`AppTransition`, drawn by
+`LampTransition` in LampSupport.swift; Lamp's cover carries the same glow, `TransitionGlow`). It starts in `Store.build`,
+lands in `reloadInPlace` (or, after a reopen, once the new copy's window is on screen, `landWhenShown`), and fades after `install` otherwise (held for Reload,
+kept open, failed); Lamp renews it while the turn goes on and the app lets it go after 90 seconds unrenewed. The app
+draws it in clear child windows that let clicks through and are left out of its pictures (`windowsOnScreen`), so the
+builder never sees it; requests are signed with the app's token, with their time and an id, and taken once. An app
+built before it has no `lampTransitionSignature` in its binary and is sent nothing: its next change reopens it with
+the new building blocks. Try it in the gallery's Transition entry on an open app.
 
 Where the chat goes (`LampSidebar.show`): always a panel of its own beside the window, never inside it (a column there
 took more room from the app than it gave the chat). It's a borderless `NSPanel` attached as the window's child

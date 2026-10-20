@@ -441,6 +441,7 @@ struct CoverView<Note: View>: View {
             .overlay(Color.black.opacity(0.12))
             // In the middle: an app's own buttons sit along its bottom and top edges, and a note there hid them.
             .overlay { note().padding(.horizontal, 12) }
+            .overlay { TransitionGlow() }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }

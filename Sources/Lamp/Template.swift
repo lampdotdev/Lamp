@@ -6652,6 +6652,7 @@ enum Template {
             try? fm.removeItem(at: previous)
             try? fm.moveItem(at: log, to: previous)
             LampWidgetPlacement.start
+            LampTransition.start
             guard freopen(log.path, "a", stderr) != nil else { return }
             dup2(fileno(stderr), STDOUT_FILENO)
             setvbuf(stdout, nil, _IOLBF, 0)   // so nothing is lost if the app crashes
@@ -6713,7 +6714,8 @@ enum Template {
             var windows = NSApp.orderedWindows.flatMap(withSheets)
             // Alerts and panels shown on their own.
             windows.insert(contentsOf: NSApp.windows.filter { $0 is NSPanel && !$0.isSheet && !windows.contains($0) }, at: 0)
-            return windows.filter { $0.isVisible && !$0.isMiniaturized && $0.frame.width > 40 && $0.frame.height > 40 }
+            // Not the clear windows a change's effect is drawn in (LampTransition): the pictures are of the app.
+            return windows.filter { $0.isVisible && !$0.isMiniaturized && $0.frame.width > 40 && $0.frame.height > 40 && !($0 is LampTransition.Glass) }
         }
 
         /// Picture pixels per window point: at most 1400 pixels on the long side, a size models see unscaled.
@@ -6858,6 +6860,289 @@ enum Template {
             return timer
         }()
     }
+
+    // LampTransition
+    /// While Lamp builds a change for this app, its windows glow softly at their edges, and when the change goes in
+    /// a band of light crosses them once, so the change looks alive rather than abrupt. Only Lamp starts it: the
+    /// request is signed with the app's token (the "lampTransitionSignature" key marks the builds that understand
+    /// it), and nothing here is reachable from the app's own code. It's drawn in clear windows laid over the app's
+    /// (children, so they move and stack with them) that let every click through, and the pictures Lamp takes for
+    /// its builder are of the app's windows alone, so the effect is never in them.
+    fileprivate enum LampTransition {
+        static let start: Void = {
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name(LampInstall.note + "transition." + LampInstall.slug), object: nil, queue: .main
+            ) { note in
+                let info = note.userInfo
+                let phase = info?["phase"] as? String ?? "", id = info?["id"] as? String ?? ""
+                let at = info?["at"] as? String ?? "", signature = info?["lampTransitionSignature"] as? String ?? ""
+                MainActor.assumeIsolated {
+                    guard gate.admits(phase: phase, id: id, at: at, signature: signature, now: Date()) else { return }
+                    switch phase {
+                    case "begin": begin()
+                    case "land": land()
+                    default: end()
+                    }
+                }
+            }
+            for name in [NSWindow.didResizeNotification, NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
+                NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { note in
+                    MainActor.assumeIsolated {
+                        guard let window = note.object as? NSWindow, let glass = glasses.first(where: { $0.over === window }) else { return }
+                        glass.fit()
+                    }
+                }
+            }
+        }()
+
+        /// Whether a request is Lamp's, and new: signed with the token over its phase, id and time, sent in the
+        /// last few seconds, and not seen before, so a request another process overheard can't be played again.
+        struct Gate {
+            let token: String
+            private var seen: [String] = []
+
+            init(token: String) { self.token = token }
+
+            static func signature(phase: String, id: String, at: String, token: String) -> String {
+                HMAC<SHA256>.authenticationCode(for: Data("transition\n\(id)\n\(phase)\n\(at)".utf8), using: SymmetricKey(data: Data(token.utf8)))
+                    .map { String(format: "%02x", $0) }.joined()
+            }
+
+            mutating func admits(phase: String, id: String, at: String, signature: String, now: Date) -> Bool {
+                guard !token.isEmpty, !id.isEmpty, ["begin", "land", "end"].contains(phase), let sent = Double(at),
+                      abs(now.timeIntervalSince1970 - sent) < 10, !seen.contains(id),
+                      signature == Self.signature(phase: phase, id: id, at: at, token: token) else { return false }
+                seen.append(id)
+                if seen.count > 64 { seen.removeFirst(seen.count - 64) }
+                return true
+            }
+        }
+
+        @MainActor private static var gate = Gate(token: LampInstall.token)
+        @MainActor private static var glasses: [Glass] = []
+        /// An effect never outlives what it's for: a begin Lamp stops renewing (it renews it while a build runs) fades by itself.
+        @MainActor private static var timeout: DispatchWorkItem?
+        private static let patience: TimeInterval = 90
+
+        private static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+
+        /// The app's own windows and its menu bar panel: not dialogs, sheets or the chat beside it, which says what's going on itself.
+        @MainActor private static var windows: [NSWindow] {
+            NSApp.windows.filter { ($0 is Glass) == false && $0.isVisible && !$0.isMiniaturized
+                && (LampMagic.isAppWindow($0) || LampDriver.isBarPanel($0)) && $0.frame.width > 40 && $0.frame.height > 40 }
+        }
+
+        @MainActor static func begin() {
+            renew()
+            glasses.removeAll { $0.over == nil || $0.isLeaving }
+            for window in windows where !glasses.contains(where: { $0.over === window }) {
+                let glass = Glass(over: window)
+                glasses.append(glass)
+                glass.glow(still: reduceMotion)
+            }
+        }
+
+        /// The change went in: a band of light crosses each window once (a soft wash where motion is reduced), then the glow goes.
+        @MainActor static func land() {
+            timeout?.cancel()
+            if glasses.isEmpty {
+                // A copy opened for this change never saw the begin: it shows that it's new all the same.
+                for window in windows { glasses.append(Glass(over: window)) }
+            }
+            for glass in glasses { glass.reveal(still: reduceMotion) }
+            glasses.removeAll()
+        }
+
+        @MainActor static func end() {
+            timeout?.cancel()
+            for glass in glasses { glass.fade() }
+            glasses.removeAll()
+        }
+
+        @MainActor private static func renew() {
+            timeout?.cancel()
+            let work = DispatchWorkItem { MainActor.assumeIsolated { end() } }
+            timeout = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + patience, execute: work)
+        }
+
+        /// A clear window over one of the app's, holding the effect's layers. Core Animation runs them out of the
+        /// app's process, so they keep moving while the app is busy taking the change in.
+        @MainActor final class Glass: NSPanel {
+            weak var over: NSWindow?
+            private(set) var isLeaving = false
+            private let glowLayer = CALayer()
+            private let shine = CAGradientLayer()
+            private let wash = CALayer()
+
+            init(over window: NSWindow) {
+                over = window
+                super.init(contentRect: window.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+                isOpaque = false
+                backgroundColor = .clear
+                hasShadow = false
+                ignoresMouseEvents = true
+                isReleasedWhenClosed = false
+                hidesOnDeactivate = false
+                animationBehavior = .none
+                let view = NSView(frame: NSRect(origin: .zero, size: window.frame.size))
+                view.wantsLayer = true
+                view.autoresizingMask = [.width, .height]
+                contentView = view
+                view.layer?.masksToBounds = true
+                view.layer?.cornerRadius = Self.cornerRadius(of: window)
+                for layer in [wash, shine, glowLayer] {
+                    layer.opacity = 0
+                    view.layer?.addSublayer(layer)
+                }
+                arrange()
+                window.addChildWindow(self, ordered: .above)
+            }
+
+            override var canBecomeKey: Bool { false }
+            override var canBecomeMain: Bool { false }
+
+            /// The colours the glow goes round, the same as Lamp's own copy on its cover (`TransitionGlow`).
+            static let hues: [NSColor] = [.systemBlue, .systemPurple, .systemOrange]
+
+            /// The window's own rounding, so the glow follows its corners; macOS's usual when it doesn't say.
+            private static func cornerRadius(of window: NSWindow) -> CGFloat {
+                guard window.styleMask.contains(.titled), !window.styleMask.contains(.fullScreen) else { return 0 }
+                if window.responds(to: NSSelectorFromString("_cornerRadius")),
+                   let radius = window.value(forKey: "_cornerRadius") as? CGFloat, radius > 0 { return radius }
+                return 12
+            }
+
+            func fit() {
+                guard let over else { return }
+                setFrame(over.frame, display: true)
+                contentView?.layer?.cornerRadius = Self.cornerRadius(of: over)
+                arrange()
+            }
+
+            private func arrange() {
+                guard let bounds = contentView?.bounds else { return }
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                let radius = contentView?.layer?.cornerRadius ?? 12
+                glowLayer.frame = bounds
+                glowLayer.sublayers?.forEach { $0.removeFromSuperlayer() }
+                // Only blur, no line: each band is drawn just outside the window, where the window's own rounding cuts
+                // it off, so all that shows is its shadow coming in from the edge. A wide one, and a nearer one twice over for its colour to carry.
+                for (blur, strength) in [(CGFloat(60), Float(0.9)), (28, 1), (28, 1)] {
+                    let band: CGFloat = 40
+                    let edge = CAShapeLayer()
+                    edge.frame = bounds
+                    edge.path = CGPath(roundedRect: bounds.insetBy(dx: -band / 2, dy: -band / 2), cornerWidth: radius + band / 2,
+                                       cornerHeight: radius + band / 2, transform: nil)
+                    edge.fillColor = nil
+                    edge.strokeColor = NSColor.white.cgColor
+                    edge.lineWidth = band
+                    edge.shadowColor = Self.hues[0].cgColor
+                    edge.shadowOpacity = strength
+                    edge.shadowRadius = blur
+                    edge.shadowOffset = .zero
+                    // The colour goes round blue, purple and orange, slowly, while the glow lasts.
+                    let cycle = CAKeyframeAnimation(keyPath: "shadowColor")
+                    cycle.values = (Self.hues + [Self.hues[0]]).map(\.cgColor)
+                    cycle.duration = 6
+                    cycle.repeatCount = .infinity
+                    cycle.calculationMode = .linear
+                    edge.add(cycle, forKey: "hue")
+                    glowLayer.addSublayer(edge)
+                }
+                wash.frame = bounds
+                wash.backgroundColor = NSColor.white.withAlphaComponent(0.22).cgColor
+                // The band of light is wider than the window is tall, laid at a slant, and starts off its left edge.
+                let side = hypot(bounds.width, bounds.height)
+                shine.bounds = CGRect(x: 0, y: 0, width: max(side * 0.35, 160), height: side * 1.6)
+                shine.position = CGPoint(x: -shine.bounds.width, y: bounds.midY)
+                shine.setAffineTransform(CGAffineTransform(rotationAngle: -.pi / 9))
+                shine.startPoint = CGPoint(x: 0, y: 0.5)
+                shine.endPoint = CGPoint(x: 1, y: 0.5)
+                let light = NSColor.white.blended(withFraction: 0.2, of: .systemPurple) ?? .white
+                shine.colors = [light.withAlphaComponent(0).cgColor, light.withAlphaComponent(0.38).cgColor, light.withAlphaComponent(0).cgColor]
+                shine.locations = [0, 0.5, 1]
+                CATransaction.commit()
+            }
+
+            /// How strongly the glow shows at its brightest: enough to see that something is coming, faint enough that
+            /// the app can go on being used under it.
+            static let strength: Float = 0.3
+
+            /// The glow comes up and breathes, or stays still where motion is reduced.
+            func glow(still: Bool) {
+                orderFront(nil)
+                Self.animate(glowLayer, "opacity", from: 0, to: Self.strength * (still ? 0.8 : 1), duration: 0.45)
+                guard !still else { return }
+                let breathe = CABasicAnimation(keyPath: "opacity")
+                breathe.fromValue = Self.strength
+                breathe.toValue = Self.strength * 0.45
+                breathe.duration = 1.2
+                breathe.autoreverses = true
+                breathe.repeatCount = .infinity
+                breathe.beginTime = CACurrentMediaTime() + 0.45
+                breathe.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                glowLayer.add(breathe, forKey: "breathe")
+            }
+
+            func reveal(still: Bool) {
+                isLeaving = true
+                orderFront(nil)
+                glowLayer.removeAnimation(forKey: "breathe")
+                let glowing = glowLayer.presentation()?.opacity ?? glowLayer.opacity
+                if still {
+                    Self.animate(wash, "opacity", from: 1, to: 0, duration: 0.6)
+                } else {
+                    // A brief brightening that settles as the band passes, covering the moment the new code draws.
+                    let flash = CAKeyframeAnimation(keyPath: "opacity")
+                    flash.values = [0, 1, 0]
+                    flash.keyTimes = [0, 0.2, 1]
+                    flash.duration = 0.7
+                    wash.add(flash, forKey: "flash")
+                    let width = contentView?.bounds.width ?? 0
+                    shine.opacity = 1
+                    let sweep = CABasicAnimation(keyPath: "position.x")
+                    sweep.fromValue = -shine.bounds.width / 2
+                    sweep.toValue = width + shine.bounds.width / 2
+                    sweep.duration = 0.75
+                    sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    sweep.fillMode = .forwards
+                    sweep.isRemovedOnCompletion = false
+                    shine.add(sweep, forKey: "sweep")
+                }
+                Self.animate(glowLayer, "opacity", from: glowing, to: 0, duration: still ? 0.6 : 0.9)
+                close(after: 1.0)
+            }
+
+            func fade() {
+                isLeaving = true
+                glowLayer.removeAnimation(forKey: "breathe")
+                Self.animate(glowLayer, "opacity", from: glowLayer.presentation()?.opacity ?? glowLayer.opacity, to: 0, duration: 0.35)
+                close(after: 0.4)
+            }
+
+            private func close(after seconds: Double) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+                    MainActor.assumeIsolated {
+                        self.over?.removeChildWindow(self)
+                        self.orderOut(nil)
+                    }
+                }
+            }
+
+            private static func animate(_ layer: CALayer, _ key: String, from: Float, to: Float, duration: Double) {
+                let animation = CABasicAnimation(keyPath: key)
+                animation.fromValue = from
+                animation.toValue = to
+                animation.duration = duration
+                animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                layer.setValue(to, forKey: key)
+                layer.add(animation, forKey: key)
+            }
+        }
+    }
+    // end LampTransition
 
     #endif
 

@@ -3995,7 +3995,7 @@ final class Store: ObservableObject {
     }()
 
     /// Whether the installed app's binary contains a string, which says which Lamp features it was built with.
-    private static func binary(of project: LampProject, contains marker: String) -> Bool {
+    static func binary(of project: LampProject, contains marker: String) -> Bool {
         let binary = project.installedURL.appendingPathComponent("Contents/MacOS/\(project.exe)")
         guard let data = try? Data(contentsOf: binary, options: .alwaysMapped) else { return false }
         return data.range(of: Data(marker.utf8)) != nil
@@ -4490,6 +4490,15 @@ final class Store: ObservableObject {
     /// `inPlace` false builds the whole app without first putting the change into the open one: a look that reopens
     /// the app installs the whole build anyway.
     private func build(_ project: LampProject, inPlace: Bool = true) async -> String? {
+        // The open app glows while its change is built, until it goes in (`reloadInPlace`) or the install that
+        // follows settles otherwise; a build that fails lets it go here.
+        let glowing = exists(project) && AppTransition.begin(project)
+        let problem = await buildNow(project, inPlace: inPlace)
+        if glowing, problem != nil { AppTransition.end(project) }
+        return problem
+    }
+
+    private func buildNow(_ project: LampProject, inPlace: Bool) async -> String? {
         guard exists(project) else { return "The app was deleted." }
         log(project, .status, "Building…")
         // Lamp's own files first, and no build without them: the build runs build.sh and Package.swift.
@@ -4677,6 +4686,7 @@ final class Store: ObservableObject {
         case .went(let said):
             for line in said { log(project, .detail, line + " without reopening \(project.name).") }
         }
+        AppTransition.land(project)
         watchAfterReload(project, app: app)
         LiveReload.awaitInstall(project)
         _ = heldInstalls.mayInstall(project.id, running: true)
@@ -4726,6 +4736,14 @@ final class Store: ObservableObject {
     /// `inFront` is false for the agent's looks, which shouldn't pull the app in front of the user mid-turn.
     /// `fresh` closes an open Mac app and opens it again even when the change could go into it as it runs.
     private func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false, reload: Bool = false) async -> String? {
+        let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload)
+        // Whatever didn't put the change into the open app (it waits for Reload, was kept open, reopened, failed)
+        // lets the glow go; a reopened copy gets the light once its window is up (`AppTransition.landWhenShown`).
+        AppTransition.end(project)
+        return crash
+    }
+
+    private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool) async -> String? {
         guard exists(project) else { return nil }
         // The turn this install belongs to, taken before the icon wait: a Stop during it can end the turn
         // and start the next one's, which must not inherit this launch.
@@ -4793,6 +4811,9 @@ final class Store: ObservableObject {
             return nil
         }
         guard exists(project) else { return nil }   // deleted while its old copy was quitting
+        // The old copy glowed while this was built, or this is the change it held for Reload (its glow let go when
+        // the change was held): the new copy, with the change, shows it going in.
+        let glowed = AppTransition.isGlowing(project.id) || reload
         owner?.didNotOpen = false
         owner?.updatedInPlace = false
         do {
@@ -4840,6 +4861,7 @@ final class Store: ObservableObject {
             } else {
                 noteOpened(true, for: project)
                 if inFront { log(project, .status, "\(project.name) is ready") }
+                if glowed { AppTransition.landWhenShown(project, app: app) }
             }
         } catch {
             log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
