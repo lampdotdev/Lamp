@@ -278,7 +278,8 @@ enum LiveReload {
         for type in grown {
             let name = NSRegularExpression.escapedPattern(for: type)
             let mention = try! NSRegularExpression(pattern: #"(?<![\w.])"# + name + #"(?![\w])"#)
-            let plainly = try! NSRegularExpression(pattern: #"^(\[(\w[\w.]*: )?"# + name + #"\]|Set<"# + name + #">|"# + name + #"|\("# + name + #"\.Type\) -> "# + name + #")$"#)
+            // The compiler prints a dictionary's key with a space before the colon (`[String : Mood]`).
+            let plainly = try! NSRegularExpression(pattern: #"^(\[(\w[\w.]*\s*:\s*)?"# + name + #"\]|Set<"# + name + #">|"# + name + #"|\("# + name + #"\.Type\) -> "# + name + #")$"#)
             for (owner, kind) in held {
                 let range = NSRange(kind.startIndex..., in: kind)
                 if mention.firstMatch(in: kind, range: range) != nil, plainly.firstMatch(in: kind, range: range) == nil {
