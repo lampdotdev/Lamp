@@ -865,6 +865,16 @@ enum LiveReload {
     /// code's), gone when the app is installed (worked out again at the next change).
     private static func runningLayout(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-layout.txt") }
 
+    /// Works out what the open app's types hold ahead of a turn's first change, when it isn't kept already: the
+    /// compiler's first read in a session is the slow one (it builds the modules it needs), and done here, while
+    /// the agent is still reading, the first change goes in as quickly as the ones after it.
+    @MainActor static func warm(_ project: LampProject) async {
+        guard AppFile.text(runningLayout(project), in: project) == nil, !swiftFiles(in: running(project)).isEmpty else { return }
+        if let made = await analysis(of: running(project), in: project, module: project.exe, macOS: Template.macMinimum(project)) {
+            keepLayout(made.layout, for: project)
+        }
+    }
+
     static func keepLayout(_ layout: [String], for project: LampProject) {
         try? AppFolder.write(layout.joined(separator: "\n"), to: runningLayout(project), in: project.dir)
     }
@@ -1489,6 +1499,12 @@ enum LiveReload {
         // A property taken out of the code leaves its spare place holding its value: the app sets its name aside,
         // and the place is retired here, so a name brought back later gets a fresh place.
         let retiring = after.map { LiveSlots.retiring(project, keeping: $0) } ?? []
+        // A change put in by itself (`Store.autoApply`) may have been stopped while it compiled: its library isn't
+        // sent, and nothing of this is kept against the next try of the same change.
+        if Task.isCancelled {
+            settled = false
+            return .reopen(why: "the change was stopped before it went in")
+        }
         // Files only taken away leave nothing to load: the open app already has what's left.
         if let library, let why = await (deliver ?? send)(library, project, token, changed == appFiles(project), retiring) {
             settled = false

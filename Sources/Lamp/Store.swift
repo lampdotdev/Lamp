@@ -501,6 +501,16 @@ final class Store: ObservableObject {
         var reloadWhy: String?
         /// A live change took in the one that was waiting for Reload: the agent is told, since it was told to wait.
         var endedReloadWait = false
+        /// The turn's own looks at the agent's saved files (`autoApply`): the loop that watches for a save, the one
+        /// change going in at the moment, which a build waits for, and how many went in since the agent last looked.
+        var autoApply: Task<Void, Never>?
+        var applying: Task<Void, Never>?
+        var applyingSources = ""
+        var autoApplied = 0
+        /// The open app's layout being worked out ahead of the first change (`LiveReload.warm`).
+        var warming: Task<Void, Never>?
+        /// A build of Lamp's is under way (a look's, or the turn's end's): no change of the agent's is put in meanwhile.
+        var building = false
         /// Nil for a simulator/Mac turn; false until the chosen phone acknowledges opening the app.
         var phoneReady: Bool?
         var allowAll = false                // "Allow all for this turn"
@@ -566,6 +576,10 @@ final class Store: ObservableObject {
             var pids: [pid_t] = []
             if let agent { pids += Subprocess.terminateTree(agent) }
             if let build { pids += Subprocess.terminateTree(build) }
+            // A save being put in by itself stops too: before its compile it ends at once, and one already past
+            // it finishes without a word (the app has the change, and nothing is said of it after Stop).
+            autoApply?.cancel()
+            applying?.cancel()
             return pids
         }
     }
@@ -2935,8 +2949,14 @@ final class Store: ObservableObject {
             }
             turn.input = input
             turn.steering = engine
+            turn.autoApply?.cancel()
+            if turn.warming == nil, let current = current(project), isRunning(current) { turn.warming = warmLive(current) }
+            turn.autoApply = autoApply(project, in: turn)
             status = await Shell.run(run.command, cwd: project.dir, env: run.env, input: input,
                                      started: { turn.agent = $0 }, onLine: onLine)
+            turn.autoApply?.cancel()
+            turn.autoApply = nil
+            await turn.applying?.value
             // Codex was interrupted to be given the person's messages (`steer`): it goes on in the same
             // conversation with them, unless the turn was stopped or ended meanwhile, or Lamp stopped the model.
             guard let message = turn.codexCut else { break }
@@ -4627,9 +4647,16 @@ final class Store: ObservableObject {
 
     private func buildNow(_ project: LampProject, inPlace: Bool) async -> String? {
         guard exists(project) else { return "The app was deleted." }
+        // A save of the agent's being put in finishes first: both write the live copy. One that hasn't reached the
+        // compiler yet, for sources the agent has moved on from, gives way to this build, which takes the newer ones.
+        let owner = turns[project.id]
+        owner?.building = true
+        defer { owner?.building = false }
+        if let owner, let applying = owner.applying, owner.applyingSources != Runtime.fingerprint(project) { applying.cancel() }
+        await owner?.applying?.value
+        await owner?.warming?.value
         log(project, .status, "Building…")
         // Lamp's own files first, and no build without them: the build runs build.sh and Package.swift.
-        let owner = turns[project.id]
         do {
             try await writeOwnFiles(project, all: true)
         } catch {
@@ -4727,6 +4754,26 @@ final class Store: ObservableObject {
     /// the app didn't open beside one that has, or the reverse.
     private func noteOpened(_ opened: Bool, for project: LampProject) {
         if progress[project.id]?.finished != nil { progress[project.id]?.unopened = !opened }
+        if opened { warmLive(project) }
+    }
+
+    /// What the open app's types hold, worked out as soon as the app is open (`LiveReload.warm`), so the compiler's
+    /// slow first read of a session is over before the agent's first save rather than in front of it. One at a time
+    /// per app; each goes when it's done, and a later open starts another only when there's something to work out.
+    private var warmings: [String: Task<Void, Never>] = [:]
+    @discardableResult private func warmLive(_ project: LampProject) -> Task<Void, Never>? {
+        guard LiveReload.eligible(project) else { return nil }
+        if let warming = warmings[project.id] { return warming }
+        let warming = Task { [weak self] in
+            let began = Date()
+            await LiveReload.warm(project)
+            guard let self else { return }
+            warmings[project.id] = nil
+            let took = Date().timeIntervalSince(began)
+            if took > 2 { log(project, .detail, "Worked out what the open app holds, ahead of the next change, in \(Int(took.rounded())) s.") }
+        }
+        warmings[project.id] = warming
+        return warming
     }
 
     /// The whole builds running after a change went into the open app, by app: a build waits for the one before.
@@ -4762,6 +4809,65 @@ final class Store: ObservableObject {
         await whole.value
     }
 
+    /// While the agent works on an open Mac app, each change it saves is put into the app by itself a moment after
+    /// the saving pauses, by the quick path a look takes (`reloadBeforeBuilding`): the person watches the app take
+    /// each piece as it's written, rather than when the agent chooses to look, or all at once at the end. Only a
+    /// change that can go in live goes in this way; one that needs a reopen is left alone, for the turn's end to
+    /// build and hold for Reload once, with everything else. The sources are read every two seconds and a state is
+    /// tried once it has held still for a reading, and only once: what didn't go in isn't tried again until it changes.
+    private func autoApply(_ project: LampProject, in turn: Turn) -> Task<Void, Never> {
+        Task { [weak self] in
+            var seen = "", tried = "", seenAt = Date()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard let self, !Task.isCancelled, turns[project.id] === turn, !turn.stopped, turn.agent != nil,
+                      !turn.look.inProgress, !turn.building, !turn.keptOpen, turn.applying == nil,
+                      let current = current(project), LiveReload.eligible(current),
+                      isRunning(current), !Runtime.waitsForReload(current) else { continue }
+                let now = Runtime.fingerprint(current)
+                // Still being written: wait for a reading with nothing new in it.
+                if now != seen { seen = now; seenAt = Date(); continue }
+                guard now != tried, Runtime.sourcesChanged(current) else { continue }
+                tried = now
+                let saved = seenAt
+                turn.applyingSources = now
+                turn.applying = Task { [weak self] in
+                    guard let self else { return }
+                    defer { turn.applying = nil }
+                    let waited = Date()
+                    await turn.warming?.value
+                    let warmWait = Date().timeIntervalSince(waited)
+                    try? await writeOwnFiles(current, all: false)
+                    guard turns[project.id] === turn, !turn.stopped, exists(current) else { return }
+                    let universal = current.platform == .universal
+                    let command = universal ? "./build.sh mac" : "./build.sh"
+                    let env: [String: String] = universal ? ["LAMP_TEAM": Devices.team] : [:]
+                    let glowing = AppTransition.begin(current)
+                    let went = await reloadBeforeBuilding(current, command: command, env: env, fingerprint: now)
+                    // Stopped meanwhile: whatever went in stays in, and the turn that's over says nothing of it.
+                    guard turns[project.id] === turn, !turn.stopped else { reloadedBeforeBuild.remove(current.id); return }
+                    if went {
+                        // What a look's install would note of a change that went in; the look reads it from here.
+                        reloadedBeforeBuild.remove(current.id)
+                        turn.updatedInPlace = true
+                        turn.outcomes.append(.live)
+                        turn.reloadWhy = nil
+                        turn.autoApplied += 1
+                        log(current, .status, "\(current.name) is updated")
+                        log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved"
+                            + (warmWait > 1 ? ", \(Int(warmWait.rounded())) s of them waiting for the warm-up." : "."))
+                    } else {
+                        // Nothing went in, and the whole build of an earlier change may have been ended for this
+                        // one: until the next build nothing is installed from build/.
+                        liveBuildFailed.insert(current.id)
+                        if glowing { AppTransition.end(current) }
+                    }
+                }
+                await turn.applying?.value
+            }
+        }
+    }
+
     /// The quick path: refresh the live copy only (build.sh with LAMP_LIVE_COPY), and when the change can go in,
     /// compile just its files and put them into the open app; then build the whole app in the background, for
     /// its install when it closes. False, having changed nothing in the open app, when any of it can't be done:
@@ -4782,6 +4888,8 @@ final class Store: ObservableObject {
         copy["LAMP_LIVE"] = "1"
         copy["LAMP_LIVE_COPY"] = "1"
         guard await Self.runBuild(command, for: project, env: copy) { _ in } == 0,
+              // A save being put in by itself gives way here to a build of Lamp's for newer sources (`buildNow`).
+              !Task.isCancelled,
               await reloadInPlace(project, inFront: false, saysWhy: false) else { return false }
         reloadedBeforeBuild.insert(project.id)
         await DataSnapshots.wentIn(project)
@@ -7190,6 +7298,9 @@ final class Store: ObservableObject {
         var note = "The app built and is running."
         var screenshots: [URL] = []
         let looking = "Looking at \(project.name)"
+        // What went into the open app as the agent saved, since its last look.
+        let saved = turn.autoApplied
+        turn.autoApplied = 0
         if project.onIOS {
             // The simulator photographs the screen; nothing in the app has to cooperate.
             // Open, and the device still this app's: otherwise it's opened again (which takes the device back).
@@ -7271,7 +7382,8 @@ final class Store: ObservableObject {
             say(looking)
             Runtime.requestScreenshots(of: project)
             screenshots = await Runtime.screenshots(of: project, since: asked, waiting: 2)
-            note = "The app is running your latest code; nothing needed rebuilding."
+            note = saved > 0 ? "What you saved went into the open app by itself as you saved it (\(saved) \(saved == 1 ? "time" : "times")): the person is seeing it now, with the window as they left it."
+                : "The app is running your latest code; nothing needed rebuilding."
             turn.look.installed = !screenshots.isEmpty
             turn.look.crash = nil
         }
@@ -7291,7 +7403,8 @@ final class Store: ObservableObject {
             // Which way the change reached the app: the person sees a live change at once, as they left the window.
             switch turn.outcomes.last {
             case .live?:
-                note = "The change went into the open app without reopening it: the person is seeing it now, with the window as they left it."
+                note = saved > 0 ? "What you saved went into the open app by itself as you saved it (\(saved) \(saved == 1 ? "time" : "times")), without reopening it: the person is seeing it now, with the window as they left it."
+                    : "The change went into the open app without reopening it: the person is seeing it now, with the window as they left it."
                 if turn.endedReloadWait {
                     note += " The change that was waiting for Reload went in with it, so nothing waits for Reload now; don't tell the person to press it."
                     turn.endedReloadWait = false

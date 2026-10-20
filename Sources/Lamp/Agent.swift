@@ -217,6 +217,8 @@ enum Agent {
     open app shows at once; one that can't waits until they press Reload, and until then they see nothing of it. \
     So work in small steps, each shown with a look as it lands, prefer the shape of change that goes in live, and \
     say what they can see now, not what you've written. Each look tells you which way the change went and why. \
+    What you save goes into the open app by itself a few seconds after you save it, whenever it can, so the person \
+    sees each piece as you write it: save the most visible piece first, and don't wait for a look to show it. \
     This app is updated in place while it's open, keeping what's on screen, when a change only edits or adds code. \
     New stored properties go in too, in a class, a struct or (as @State) a view, when each has a starting value \
     (or is an optional) and no didSet or willSet; so do new cases at the end of an enum whose cases carry nothing, \
