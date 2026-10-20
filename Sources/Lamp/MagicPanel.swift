@@ -445,7 +445,7 @@ struct CoverNote: View {
             if let progress, progress.finished == nil {
                 ChatLook.ActivityText(progress.activity, since: progress.activitySince)
                 Text("·").foregroundStyle(.secondary)
-                Elapsed(from: progress.started, to: nil).foregroundStyle(.secondary)
+                Elapsed(from: progress.activitySince, to: nil).foregroundStyle(.secondary)
             } else {
                 Text("Updating…")
             }

@@ -411,7 +411,9 @@ public enum ChatLook {
 
     /// A turn's progress: one line saying what the agent is doing and for how long, which changes in place as it
     /// moves from one thing to the next, and opens to show the steps so far. `since` is when the activity began,
-    /// which a long think or build is counted from (the turn's start when it isn't known). When the turn ends this
+    /// which a long think or build is counted from and the clock shows (the turn's start when it isn't known): a
+    /// clock for the whole turn kept counting beside a step that had only just begun, which read as that step being
+    /// stuck. The whole turn's time is its "Worked for…". When the turn ends this
     /// line's place is taken by its "Worked for…" (`Worked`), which opens to the same steps.
     public struct ActivityLine<Steps: View>: View {
         let activity: String
@@ -444,7 +446,7 @@ public enum ChatLook {
                             .opacity(dim ? 0.5 : 1)
                             .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: dim)
                         Text("·")
-                        Elapsed(from: started, to: nil)
+                        Elapsed(from: since, to: nil)
                         if hasSteps {
                             Image(systemName: "chevron.right")
                                 .font(.caption2.weight(.semibold))

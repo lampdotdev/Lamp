@@ -897,7 +897,7 @@ final class Store: ObservableObject {
             let line = LogLine(kind: .agent, text: String(piece.drop(while: \.isWhitespace)))
             logs[project.id, default: []].append(line)
             turn.writing = (line.id, "")
-            note("Replying", for: project)
+            noteAgent("Replying", for: project)
             return
         }
         turn.writing?.unshown += piece
@@ -926,6 +926,14 @@ final class Store: ObservableObject {
         guard let current = progress[project.id], current.activity != activity || current.currentFile != file else { return }
         progress[project.id]?.activity = activity
         progress[project.id]?.currentFile = file
+    }
+
+    /// The same, from what the agent's own output says it's doing. While Lamp looks at the app for it, the look's
+    /// stages are what's going on ("Building…", "Opening…"): the engine reports the call a moment after the look has
+    /// begun, and its one fixed word for it would stay over every stage of a look that can take minutes.
+    private func noteAgent(_ activity: String, file: String? = nil, for project: LampProject) {
+        guard turns[project.id]?.look.inProgress != true else { return }
+        note(activity, file: file, for: project)
     }
 
     /// The installed app was built by an older Lamp and hasn't been rebuilt since.
@@ -2766,13 +2774,13 @@ final class Store: ObservableObject {
                     }
                     streamingTool = tool
                     streamingArguments = ""
-                    note(TurnProgress.activity(tool: tool, partialArguments: ""), for: project)
+                    noteAgent(TurnProgress.activity(tool: tool, partialArguments: ""), for: project)
                 case .stepArgs(let piece):
                     // The file name is among the first arguments; the rest is the file itself.
                     guard streamingArguments.count < 600 || streamingTool == "plan" else { break }
                     streamingArguments += piece
                     let call = TurnProgress.call(tool: streamingTool, partialArguments: streamingArguments)
-                    note(TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
+                    noteAgent(TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
                 case .plan(let parts):
                     progress[project.id]?.plan = parts
                     progress[project.id]?.tickWrittenParts()
@@ -2782,14 +2790,14 @@ final class Store: ObservableObject {
                     Skills.compacted(project)
                 case .naming(let words):
                     turn.naming = words.nilIfEmpty
-                    if let words = turn.naming { note(words, for: project) }
+                    if let words = turn.naming { noteAgent(words, for: project) }
                 case .tool(let text, let fullCall):
                     log(project, .tool, text)
                     let call = ToolCall(text)
                     endOnQuestions(turn, before: call.name)
                     // A command the agent named is shown by that name rather than as "Running a command".
                     let named = call.action == .run ? turn.naming : nil
-                    note(named ?? TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
+                    noteAgent(named ?? TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
                     if let file = TurnProgress.file(changedBy: call) { progress[project.id]?.wrote(file) }
                     toolCalls += 1
                     // Compared in full: six different searches of one file all read "grep cache.json".
@@ -4487,6 +4495,8 @@ final class Store: ObservableObject {
         // The open app takes the change first, when it can (LiveReload): a few seconds, where the whole build
         // takes several more. That build goes on afterwards, for the app to be installed from when it closes.
         if inPlace, await reloadBeforeBuilding(project, command: command, env: env, fingerprint: fingerprint) { return nil }
+        // Said again: a change that couldn't go into the open app left the line on putting it in, through the whole build.
+        note("Building…", for: project)
         await awaitLiveBuild(of: project)
         liveBuildFailed.remove(project.id)
         if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1" }   // a change can go into the open app (LiveReload)
@@ -4560,7 +4570,7 @@ final class Store: ObservableObject {
         copy["LAMP_LIVE"] = "1"
         copy["LAMP_LIVE_COPY"] = "1"
         guard await Self.runBuild(command, for: project, env: copy) { _ in } == 0,
-              await reloadInPlace(project, inFront: false) else { return false }
+              await reloadInPlace(project, inFront: false, saysWhy: false) else { return false }
         reloadedBeforeBuild.insert(project.id)
         await DataSnapshots.wentIn(project)
         // Nothing to install until the whole build is done: the copy in build/ is the one before this change. Only
@@ -4598,8 +4608,10 @@ final class Store: ObservableObject {
 
     /// Puts the change just built into the open Mac app, when it was built live and the change can go in that
     /// way (`LiveReload.reloadable`). True when it went in: the app is updated where it is, and the build is held,
-    /// to be installed when the app closes. False sends the change the usual way, by reopening the app.
-    private func reloadInPlace(_ project: LampProject, inFront: Bool) async -> Bool {
+    /// to be installed when the app closes. False sends the change the usual way, by reopening the app. `saysWhy`
+    /// false keeps why it couldn't go in out of the chat: the try before the build is followed by the install's,
+    /// which asks again and says it, so the chat said it twice.
+    private func reloadInPlace(_ project: LampProject, inFront: Bool, saysWhy: Bool = true) async -> Bool {
         // The change went in before the build (`reloadBeforeBuilding`): only the word that it did is left to say.
         // Closed since, the app is installed the usual way, from the whole build once it's done.
         if reloadedBeforeBuild.remove(project.id) != nil {
@@ -4621,7 +4633,7 @@ final class Store: ObservableObject {
         // The open app already runs these sources (a change that went in before its build): nothing to do.
         case .unchanged: return true
         case .reopen(let why):
-            log(project, .detail, "\(project.name) has to reopen for this change: \(why).")
+            if saysWhy { log(project, .detail, "\(project.name) has to reopen for this change: \(why).") }
             return false
         }
         // The open app's data as its old code left it, before the new code can touch it.
@@ -4629,7 +4641,7 @@ final class Store: ObservableObject {
         note("Updating \(project.name) in place…", for: project)
         switch await LiveReload.put(project, changed: changed, token: Template.token(for: project)) {
         case .reopen(let why):
-            log(project, .detail, "\(project.name) has to reopen for this change: \(why).")
+            if saysWhy { log(project, .detail, "\(project.name) has to reopen for this change: \(why).") }
             return false
         case .went(let said):
             for line in said { log(project, .detail, line + " without reopening \(project.name).") }
@@ -4749,6 +4761,7 @@ final class Store: ObservableObject {
         owner?.updatedInPlace = false
         do {
             WidgetCard.forget(project)
+            note("Installing \(project.name)…", for: project)
             // With the old copy closed, its data is quiet: copied before the new one opens on it.
             await DataSnapshots.take(project)
             try await deploy(project)
@@ -6575,7 +6588,12 @@ final class Store: ObservableObject {
         guard !turn.look.inProgress else { return (200, ["text": "Lamp is already looking at the app. Wait for that result."]) }
         turn.look.inProgress = true
         turn.look.installed = false
-        defer { turn.look.inProgress = false }
+        // Each stage says itself from here; once the look is over the model is reading what it found.
+        self.note(TurnProgress.activity(for: ToolCall("look_at_app")), for: project)
+        defer {
+            turn.look.inProgress = false
+            self.note(Activity.thinking, for: project)
+        }
 
         try? await writeOwnFiles(project, all: false)
         let changed = Runtime.sourcesChanged(project)
@@ -6587,6 +6605,7 @@ final class Store: ObservableObject {
         }
         var note = "The app built and is running."
         var screenshots: [URL] = []
+        let looking = "Looking at \(project.name)"
         if project.onIOS {
             // The simulator photographs the screen; nothing in the app has to cooperate.
             // Open, and the device still this app's: otherwise it's opened again (which takes the device back).
@@ -6601,6 +6620,7 @@ final class Store: ObservableObject {
             } else {
                 note = "The app is running your latest code; nothing needed rebuilding."
             }
+            self.note(looking, for: project)
             try? await Task.sleep(for: .seconds(1))
             let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
             if let udid = simulatorApps[project.id]?.udid, await Simulator.screenshot(on: udid, to: picture) { screenshots = [picture] }
@@ -6637,6 +6657,7 @@ final class Store: ObservableObject {
             // Nothing to rebuild and the app is open: ask it for fresh pictures instead of relaunching it.
             let asked = Date()
             since = asked
+            self.note(looking, for: project)
             Runtime.requestScreenshots(of: project)
             screenshots = await Runtime.screenshots(of: project, since: asked, waiting: 2)
             note = "The app is running your latest code; nothing needed rebuilding."
@@ -6657,12 +6678,14 @@ final class Store: ObservableObject {
             }
             if !changed { note = "The app is running your latest code; it was reopened without rebuilding." }
             if reopen { note = "The app was closed and opened again, so it started fresh." }
+            self.note(looking, for: project)
             screenshots = await Runtime.screenshots(of: project, since: launched)
         }
         var lead = ""
         if let prop, !prop.isEmpty, !screenshots.isEmpty {
             // One prop on its own: the app shows it from four sides over its scene, pictures it, and goes back.
             let asked = Date()
+            self.note("Looking at it from all sides", for: project)
             Runtime.requestProp(prop, of: project)
             switch await Runtime.propAnswer(of: project) {
             case "shown"?:
@@ -6676,6 +6699,7 @@ final class Store: ObservableObject {
             }
         }
         if motion, !screenshots.isEmpty {
+            self.note("Watching it move", for: project)
             if Privacy.sharesPictures, let watched = await Runtime.motion(of: project) {
                 lead += watched.text + " "
                 if !watched.pictures.isEmpty { screenshots = watched.pictures }

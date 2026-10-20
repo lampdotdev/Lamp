@@ -144,7 +144,7 @@ struct TurnProgress {
 
     /// The app is being built and opened: past what the agent's plan or steps describe.
     var finishing: Bool {
-        finished == nil && ["Building", "Fixing a problem", "Opening"].contains { activity.hasPrefix($0) }
+        finished == nil && ["Building", "Fixing a problem", "Installing", "Opening"].contains { activity.hasPrefix($0) }
     }
 
     /// The checklist gets a last row of Lamp's own once there's nothing left on it to work on.
