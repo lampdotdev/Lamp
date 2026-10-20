@@ -1,0 +1,5 @@
+VERDICT 1: REOPEN (Search changed what it holds (Search._query: Published<String>); Search.query's publisher ($query) is used, and a property kept in a spare has none)
+== run
+before: r=0
+RELOAD 1: REOPEN Search changed what it holds (Search._query: Published<String>); Search.query's publisher ($query) is used, and a property kept in a spare has none
+after1 (want in place, "q=" then watched): r=0

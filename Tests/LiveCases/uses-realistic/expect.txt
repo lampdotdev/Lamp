@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: tab=home title=Home cases=2 ticks=7 items=1
+RELOAD 1 (whole): ok
+after (want about in cases, ticks growing): tab=home title=Home cases=3 ticks=15 items=1

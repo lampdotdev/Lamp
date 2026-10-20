@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD (Added Game.w)
+VERDICT 2: REOPEN (Game keeps w, added while the app was open, in a place that holds it as any value, which the grown Mood no longer reads from)
+== run
+before: level=1
+RELOAD 1: ok
+after1 (want w=sad): level=1 w=Optional(Case.Mood.sad) whole=Optional(Case.Wrapper(mood: Case.Mood.sad))
+RELOAD 2: REOPEN Game keeps w, added while the app was open, in a place that holds it as any value, which the grown Mood no longer reads from
+after2: level=1 w=Optional(Case.Mood.sad) whole=Optional(Case.Wrapper(mood: Case.Mood.sad))

@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD (Gave Config.double, Config.label, Config.speed their new value)
+VERDICT 2: REOPEN (an initializer of Engine was added, taken away or changed, and a class's initializers are in its method table)
+== run
+before: 2.0 / 4.0 / small / 1.0 / e
+RELOAD 1 (whole): ok
+after1 (want 3.0 / 6.0 / big): 3.0 / 6.0 / big / 1.0 / e
+RELOAD 2: REOPEN an initializer of Engine was added, taken away or changed, and a class's initializers are in its method table
+after2 (reopen expected: Settings holds an object): 3.0 / 6.0 / big / 1.0 / e

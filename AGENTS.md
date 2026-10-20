@@ -995,6 +995,17 @@ app's state: one of the app's own classes, and anything that isn't a plain value
 (`holdsObject`), so a Lamp building block such as `LampAPI.own(…)` or a system class too. A tuple's labels and Lamp's
 own spare places in a struct name no type of their own, so they don't count.
 
+**The live cases** (`Tests/LiveCases`, run by `LiveCasesTests`) are the record of which side each kind of change
+lands on: every case found by a review round, as an app's sources, one `afterN/` folder per change and `expect.txt`
+with the verdicts Lamp gave and what the app printed. The test runs each through Lamp's own pipeline (`verdict`,
+`put`, with the library handed to a process built from the case instead of an open app, `LiveReload.deliver`), so
+it tries the code as Lamp runs it, not a copy. Each case costs a build and a few compiles, so they run only when
+asked (`LAMP_LIVE_CASES=1 swift test --filter LiveCasesTests`, or `LAMP_LIVE_CASES=name,name` for some), and
+`LAMP_LIVE_CASES_RECORD=1` writes the expectations instead of checking them: after a change to anything above,
+run them all, read every difference as a change of behaviour (the first line of each print says what's wanted),
+and record only what's meant. A new kind of change gets a case: its sources, its edits, and a print of what the
+app should see, with what's wanted in the print's words.
+
 Code already running keeps the version it started with (a closure given to a Timer, a loop in a Task, an observer):
 calls go to new code, but a closure already handed out is the old one. `Agent.liveNote` asks for loops and timers
 to call a method of the app's each time, so a change to that method goes in.

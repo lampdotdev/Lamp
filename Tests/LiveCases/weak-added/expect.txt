@@ -1,0 +1,6 @@
+VERDICT 1: REOPEN (Owner changed what it holds (Owner.weak helper: Helper?))
+== run
+before: h
+RELOAD 1: REOPEN Owner changed what it holds (Owner.weak helper: Helper?)
+after1 read (want reopen; a reload reads a strong slot as weak): h
+after1 write: other keep still h

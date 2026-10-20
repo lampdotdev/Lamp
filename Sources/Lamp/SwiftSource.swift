@@ -136,6 +136,9 @@ enum SwiftSource {
         let assigned = try! NSRegularExpression(pattern: #"^(\s*)\(member_ref_expr\b.*? decl="[^"]*?\.(\w+)@"#)
         var out = Declarations()
         var scopes: [(indent: Int, type: String?)] = []
+        // The functions, accessors and closures open at this line, by name, as `LiveReload.members` keys a type
+        // declared inside one (`Shelf.pick().Answer`).
+        var functions: [(indent: Int, name: String)] = []
         // The initializer being read, and an assignment in it whose target is the next node.
         var initializer: (indent: Int, owner: String)?, assignment: Int?
         // The binding being read, at its indent, and what's inside it.
@@ -161,10 +164,12 @@ enum SwiftSource {
                 continue
             }
             while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
+            while let last = functions.last, last.indent >= indent { functions.removeLast() }
             let owner = scopes.last?.type
             if opens("struct_decl", "class_decl", "enum_decl", "actor_decl", "extension_decl"), let m = typeDecl.firstMatch(in: line, range: range) {
                 var name = String(line[Range(m.range(at: 3), in: line)!])
                 let outer = scopes.compactMap(\.type).last
+                if let local = functions.last, local.indent > (scopes.last { $0.type != nil }?.indent ?? -1) { name = local.name + "." + name }
                 let kind = line[Range(m.range(at: 2), in: line)!]
                 let isPrivate = kind != "extension" && (has(line, " access=private") || has(line, " access=fileprivate"))
                 // A private type is keyed with its file, as the layout keys it (`LiveReload.bare`).
@@ -194,6 +199,7 @@ enum SwiftSource {
                     out.memberwise[owner, default: []].append(made)
                 }
                 scopes.append((indent, nil))
+                functions.append((indent, scopeName(line)))
                 continue
             }
             if let open = binding {
@@ -257,6 +263,15 @@ enum SwiftSource {
         }
         for key in observed { out.variables[key]?.special = true }
         return out
+    }
+
+    /// What a function, accessor or closure is called where a type declared inside it is keyed by it: its quoted
+    /// name (`pick(_:another:)`, `init()`), else the node's kind (`closure_expr`, `accessor_decl`).
+    static func scopeName(_ line: String) -> String {
+        if let open = line.firstIndex(of: "\""), let close = line[line.index(after: open)...].firstIndex(of: "\"") {
+            return String(line[line.index(after: open)..<close])
+        }
+        return String(line.drop { $0 == " " }.dropFirst().prefix { $0 != " " && $0 != ")" })
     }
 
     /// An implicit initializer's labels and parameter types, from its line in the dump: `"init(a:c:)"` and

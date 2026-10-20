@@ -1,0 +1,7 @@
+VERDICT 1: REOPEN (the change didn't compile on its own.
+an enum that gained cases wasn't found in the change)
+== run
+before: a b
+RELOAD 1: REOPEN the change didn't compile on its own.
+an enum that gained cases wasn't found in the change
+after1 (want a b c): a b

@@ -1,0 +1,5 @@
+VERDICT 1: REOPEN (Model changed what it holds (Model._dirty: Bool); Model.dirty has observers, is lazy, or is a weak or unowned reference, which a property kept in a spare can't be)
+== run
+before: 0
+RELOAD 1: REOPEN Model changed what it holds (Model._dirty: Bool); Model.dirty has observers, is lazy, or is a weak or unowned reference, which a property kept in a spare can't be
+after (want saved=1000 dirty=true): 0 

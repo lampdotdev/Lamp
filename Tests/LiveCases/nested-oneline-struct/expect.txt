@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Pair.Sub.c)
+== run
+before: 0 0
+RELOAD 1: ok
+after1 (want "0 0 7"): 0 0 7

@@ -1,0 +1,5 @@
+VERDICT 1: REOPEN (Chore changed what it holds (Chore.priority: Int); Chore.priority is set in Chore's own initializer, where a property kept in a spare can't be set)
+== run
+before: a/false
+RELOAD 1: REOPEN Chore changed what it holds (Chore.priority: Int); Chore.priority is set in Chore's own initializer, where a property kept in a spare can't be set
+after1: a/false

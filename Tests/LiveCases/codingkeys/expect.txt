@@ -1,0 +1,5 @@
+VERDICT 1: REOPEN (Item changed what it holds (Item.note: String); Item.note is named in its CodingKeys, so Codable needs it stored)
+== run
+before: id=1 title=a {"id":1,"title":"a"}
+RELOAD 1: REOPEN Item changed what it holds (Item.note: String); Item.note is named in its CodingKeys, so Codable needs it stored
+after: id=1 title=b {"id":1,"title":"b"}

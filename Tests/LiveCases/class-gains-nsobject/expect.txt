@@ -1,0 +1,5 @@
+VERDICT 1: REOPEN (Thing is a class under NSObject now, where the open app's is a class)
+== run
+before: a=1 b=x
+RELOAD 1: REOPEN Thing is a class under NSObject now, where the open app's is a class
+after1 (want reopen; a reload reads fields at NSObject's offsets): a=2 b=x

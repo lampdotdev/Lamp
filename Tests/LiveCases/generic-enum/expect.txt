@@ -1,0 +1,5 @@
+VERDICT 1: REOPEN (Box is generic, and the open app laid its values out for each type it's used at from the cases it had)
+== run
+before: box=a list=[Case.Box<Swift.String>.a] mirror=["nil", "nil", "nil", "nil", "a", "[Case.Box<Swift.String>.a]"]
+RELOAD 1: REOPEN Box is generic, and the open app laid its values out for each type it's used at from the cases it had
+after (want c, no crash): box=b list=[Case.Box<Swift.String>.b] mirror=["nil", "nil", "nil", "nil", "b", "[Case.Box<Swift.String>.b]"]

@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD (Added Item.mood)
+VERDICT 2: REOPEN (Item keeps mood, added while the app was open, in a place that holds it as any value, which the grown Mood no longer reads from)
+== run
+before: 1
+RELOAD 1 (whole): ok
+after1 (want "1 none" then "1 c"): 1 none 1 c
+RELOAD 2: REOPEN Item keeps mood, added while the app was open, in a place that holds it as any value, which the grown Mood no longer reads from
+after2 (reopen expected: the spare holds Mood): 1 c

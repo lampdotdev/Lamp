@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Foo is no longer final (something subclasses it), and its methods would go through a table the open app's class doesn't have)
+VERDICT 2: REOPEN (Foo is final now, and its methods would go through a table the open app's class doesn't have)
+== run
+before: 1
+RELOAD 1: REOPEN Foo is no longer final (something subclasses it), and its methods would go through a table the open app's class doesn't have
+after1: 1
+RELOAD 2: REOPEN Foo is final now, and its methods would go through a table the open app's class doesn't have
+after2: 1

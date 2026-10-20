@@ -1,0 +1,11 @@
+VERDICT 1: RELOAD
+VERDICT 2: RELOAD
+VERDICT 3: REOPEN (Model changed what it holds (Model._dirty: Bool); Model.dirty has observers, is lazy, or is a weak or unowned reference, which a property kept in a spare can't be)
+== run
+before: 1 items: a 1
+RELOAD 1: ok
+after1: 2 ITEMS: a+B 11
+RELOAD 2 (whole): ok
+after2: 3 ITEMS: a+B+C last=C 21
+RELOAD 3: REOPEN Model changed what it holds (Model._dirty: Bool); Model.dirty has observers, is lazy, or is a weak or unowned reference, which a property kept in a spare can't be
+after3: 4 ITEMS: a+B+C+D last=D 31

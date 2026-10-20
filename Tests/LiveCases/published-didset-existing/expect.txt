@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Model.b)
+== run
+before: a=1 log=[1]
+RELOAD 1 (whole): ok
+after (want log [1, 2] and b=7): a=2 b=7 log=[1, 2]

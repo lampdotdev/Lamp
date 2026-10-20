@@ -1,0 +1,5 @@
+VERDICT 1: REOPEN (Mood is a @objc enum now, where the open app's is an enum)
+== run
+before: mood=sad list=[Case.Mood.happy, Case.Mood.sad, Case.Mood.sad] pair=(Case.Mood.sad, 7)
+RELOAD 1: REOPEN Mood is a @objc enum now, where the open app's is an enum
+after1 (want reopen; a reload reads 1-byte values as 8-byte ones): mood=sad list=[Case.Mood.happy, Case.Mood.sad, Case.Mood.sad] pair=(Case.Mood.sad, 7)

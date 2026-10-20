@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD
+VERDICT 2: REOPEN (the new code doesn't type-check as a whole)
+== run
+before: true
+RELOAD 1: ok
+after1 (formatting only; want true): true
+RELOAD 2: REOPEN the new code doesn't type-check as a whole
+after2 (moved; reopen expected): true

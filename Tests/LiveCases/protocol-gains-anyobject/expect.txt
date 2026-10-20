@@ -1,0 +1,6 @@
+VERDICT 1: REOPEN (the protocol Shape's requirements changed in kind (<Self where Self : Copyable, Self : Escapable> to <Self where Self : AnyObject, Self : Copyable, Self : Escapable>), and the open app's witness tables were laid out for what they were)
+== run
+before: 6.0
+RELOAD 1: REOPEN the protocol Shape's requirements changed in kind (<Self where Self : Copyable, Self : Escapable> to <Self where Self : AnyObject, Self : Copyable, Self : Escapable>), and the open app's witness tables were laid out for what they were
+after1 (want reopen; a reload reads 40-byte existentials as 16-byte ones): 6.0
+after1 added: 9.0

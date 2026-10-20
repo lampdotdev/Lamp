@@ -1,0 +1,5 @@
+VERDICT 1: REOPEN (ContentView.header: some View returns a VStack<TupleView<(Text, Text)>> now, where the open app's returned a Text)
+== run
+before: v0
+RELOAD 1: REOPEN ContentView.header: some View returns a VStack<TupleView<(Text, Text)>> now, where the open app's returned a Text
+after1 (want v1, in place): v0

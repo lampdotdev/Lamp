@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Card.hovered)
+== run
+before: card
+RELOAD 1 (whole): ok
+after: card2

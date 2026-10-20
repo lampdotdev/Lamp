@@ -1,0 +1,5 @@
+VERDICT 1: REOPEN (Model changed what it holds (Model.cache: Int); Model.cache is @ObservationIgnored, and a property kept in a spare is observed)
+== run
+before: n only
+RELOAD 1: REOPEN Model changed what it holds (Model.cache: Int); Model.cache is @ObservationIgnored, and a property kept in a spare is observed
+after1 (want "ignored: fired=false"): n only

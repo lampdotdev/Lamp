@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD
+VERDICT 2: RELOAD
+== run
+before: 1
+RELOAD 1: ok
+after1 (the app read it already: 1 is right; the new 5 can't apply): 1
+RELOAD 2: ok
+after2 (never read before: should it be 9?): 2

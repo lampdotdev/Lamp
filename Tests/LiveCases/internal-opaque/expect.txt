@@ -1,0 +1,5 @@
+VERDICT 1: REOPEN (Screen.card(): (Screen) -> () -> some View returns a HStack<Text> now, where the open app's returned a VStack<Text>)
+== run
+before: VStack<Text> VStack<Text>
+RELOAD 1: REOPEN Screen.card(): (Screen) -> () -> some View returns a HStack<Text> now, where the open app's returned a VStack<Text>
+after: VStack<Text> VStack<Text> VStack<Text>

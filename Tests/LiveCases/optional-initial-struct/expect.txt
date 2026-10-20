@@ -1,0 +1,7 @@
+VERDICT 1: RELOAD (Added Item.limit)
+== run
+before: 1
+RELOAD 1: ok
+after1 (want "1 10"): 1 10
+after1 equal (want true): true
+after1 set nil (want "1 nil"): 1 nil

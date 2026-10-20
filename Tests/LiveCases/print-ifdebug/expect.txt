@@ -1,0 +1,7 @@
+VERDICT 1: RELOAD
+== run
+debug: Wrapper(__lampSpare_Wrapper: Case.LampSpare(value: nil), mood: Case.Mood.happy)
+before: direct=happy
+RELOAD 1 (whole): ok
+debug: Wrapper(__lampSpare_Wrapper: Case.LampSpare(value: nil), mood: Case.Mood.angry)
+after: direct=angry

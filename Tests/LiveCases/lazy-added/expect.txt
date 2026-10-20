@@ -1,0 +1,5 @@
+VERDICT 1: REOPEN (Model changed what it holds (Model.cache (lazy): Int?); Model.cache is lazy, which a property kept in a spare can't be)
+== run
+before: 1
+RELOAD 1: REOPEN Model changed what it holds (Model.$__lazy_storage_$_cache: Int?); Model.cache is lazy, which a property kept in a spare can't be
+after1 (reopen expected, with a reason naming lazy): 1

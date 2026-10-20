@@ -1078,6 +1078,9 @@ enum LiveReload {
         // A case's raw value is the node right under it: a string's in quotes, a number's bare.
         let rawValue = try! NSRegularExpression(pattern: #"^\s*\(raw_value_expr=\w+\b.*? value=("(?:[^"\\]|\\.)*"|[^ )]+)"#)
         var scopes: [(indent: Int, type: String?)] = [], out: [String] = [], seen = Set<String>()
+        // The functions, accessors and closures open at this line, by name: a type declared inside one is keyed with
+        // it (`Shelf.pick().Answer`), since two functions may each declare a local type of one name.
+        var functions: [(indent: Int, name: String)] = []
         var lastCase: Int?, classTypes = Set<String>()
         // The indents of extension scopes: an initializer declared in one is a convenience initializer, in no table.
         // And of generic types' scopes: a type declared inside one is laid out for each type it's used at too.
@@ -1166,6 +1169,7 @@ enum LiveReload {
             }
             lastCase = nil
             while let last = scopes.last, last.indent >= indent { extensions.remove(last.indent); genericScopes.remove(last.indent); scopes.removeLast() }
+            while let last = functions.last, last.indent >= indent { functions.removeLast() }
             // What a member line belongs to is the nearest scope around it: a type's member when that's the type,
             // nothing when it's a function, an accessor or a closure (a local).
             let owner = scopes.last?.type
@@ -1204,6 +1208,7 @@ enum LiveReload {
             } else if opens("struct_decl", "class_decl", "enum_decl", "actor_decl"), let m = typeDecl.firstMatch(in: line, range: range) {
                 var name = String(line[Range(m.range(at: 3), in: line)!])
                 let outer = scopes.compactMap(\.type).last
+                if let local = functions.last, local.indent > (scopes.last { $0.type != nil }?.indent ?? -1) { name = local.name + "." + name }
                 let access = String(line[Range(m.range(at: 4), in: line)!])
                 let file = declFile.firstMatch(in: line, range: range).map { (String(line[Range($0.range(at: 1), in: line)!]) as NSString).lastPathComponent }
                 // A private type is keyed with its file: another file may declare one of the same name, and the two
@@ -1265,6 +1270,7 @@ enum LiveReload {
                 if let owner, !owner.hasPrefix("\u{4}") { opaque = (indent, owner + "." + signature, [], nil, nil, nil) }
                 else if scopes.isEmpty { opaque = (indent, signature, [], nil, nil, nil) }
                 scopes.append((indent, nil))
+                functions.append((indent, name))
             } else if opens("typealias"), let m = aliasDecl.firstMatch(in: line, range: range) {
                 var name = String(line[Range(m.range(at: 3), in: line)!])
                 let type = String(line[Range(m.range(at: 5), in: line)!]), access = String(line[Range(m.range(at: 4), in: line)!])
@@ -1302,6 +1308,7 @@ enum LiveReload {
                     if seen.insert(entry).inserted { out.append(entry) }
                 }
                 scopes.append((indent, nil))
+                functions.append((indent, String(line[Range(m.range(at: 3), in: line)!])))
             } else if opens("enum_element_decl"), let m = caseDecl.firstMatch(in: line, range: range), let owner {
                 let entry = owner + "\tcase " + String(line[Range(m.range(at: 2), in: line)!]) + ": " + String(line[Range(m.range(at: 3), in: line)!])
                 if seen.insert(entry).inserted {
@@ -1311,6 +1318,7 @@ enum LiveReload {
             } else if opens("func_decl", "accessor_decl", "constructor_decl", "destructor_decl", "closure_expr", "subscript_decl", "top_level_code_decl"),
                       scopeDecl.firstMatch(in: line, range: range) != nil {
                 scopes.append((indent, nil))
+                functions.append((indent, SwiftSource.scopeName(line)))
             }
         }
         closeOpaque()
@@ -1398,6 +1406,11 @@ enum LiveReload {
                       extra: [inputs(project), Template.macMinimum(project)] + changed)
     }
 
+    /// How a library reaches the open app: `send`, unless the tests put one in their place, which hands the library
+    /// to a process of their own (LiveCasesTests). The library, the project, its token, whether every file was
+    /// compiled into it, and the spare places retired; nil when the app took it, else why not.
+    @MainActor static var deliver: ((URL, LampProject, String, Bool, [String]) async -> String?)?
+
     /// `put`'s work. `settled` is set false when the change was refused by the open app itself rather than by
     /// what it was judged on, which a later try might not repeat.
     @MainActor private static func attempt(_ project: LampProject, changed files: [String], token: String, settled: inout Bool) async -> Outcome {
@@ -1477,7 +1490,7 @@ enum LiveReload {
         // and the place is retired here, so a name brought back later gets a fresh place.
         let retiring = after.map { LiveSlots.retiring(project, keeping: $0) } ?? []
         // Files only taken away leave nothing to load: the open app already has what's left.
-        if let library, let why = await send(library, to: project, token: token, whole: changed == appFiles(project), retired: retiring) {
+        if let library, let why = await (deliver ?? send)(library, project, token, changed == appFiles(project), retiring) {
             settled = false
             return .reopen(why: why)
         }

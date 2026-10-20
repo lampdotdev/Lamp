@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Item.eps)
+== run
+before: 1
+RELOAD 1: ok
+after1 (want "1 0.001"): 1 0.001

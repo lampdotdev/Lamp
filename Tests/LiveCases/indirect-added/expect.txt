@@ -1,0 +1,5 @@
+VERDICT 1: REOPEN (Tree is an indirect enum now, where the open app's is an enum)
+== run
+before: node 1,2 ["leaf 3", "node 4,5"]
+RELOAD 1: REOPEN Tree is an indirect enum now, where the open app's is an enum
+after1 (want reopen; a reload reads inline payloads as boxes): node 1,2 ["leaf 3", "node 4,5"]

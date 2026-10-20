@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD
+VERDICT 2: RELOAD
+== run
+before: f=2
+RELOAD 1 (whole): ok
+after1 (want leaf method): f=2 leaf=20
+RELOAD 2 (whole): failed: the methods of Case.Sub changed
+after2: f=2 leaf=20

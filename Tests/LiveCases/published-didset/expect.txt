@@ -1,0 +1,5 @@
+VERDICT 1: REOPEN (VM changed what it holds (VM._dirty: Published<Bool>); VM.dirty has observers, is lazy, or is a weak or unowned reference, which a property kept in a spare can't be)
+== run
+before: 0
+RELOAD 1: REOPEN VM changed what it holds (VM._dirty: Published<Bool>); VM.dirty has observers, is lazy, or is a weak or unowned reference, which a property kept in a spare can't be
+after (want saved=1000): 0 

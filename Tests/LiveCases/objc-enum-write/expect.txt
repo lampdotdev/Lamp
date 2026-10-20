@@ -1,0 +1,5 @@
+VERDICT 1: REOPEN (Mood is a @objc enum now, where the open app's is an enum)
+== run
+before: mood=1 flag=true n=200 moods=[1, 0, 1] size=3
+RELOAD 1: REOPEN Mood is a @objc enum now, where the open app's is an enum
+after1 (want reopen; a reload's 8-byte write clobbers flag and n): mood=0 flag=true n=200 moods=[1, 1, 1] size=3
