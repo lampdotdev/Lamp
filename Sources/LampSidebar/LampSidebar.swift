@@ -139,6 +139,8 @@ final class Link: ObservableObject {
     }
 
     private func drop() {
+        // Versions are counted afresh by each Lamp that connects: words kept against one could be taken for another's.
+        typed = nil
         outbox?.close()
         outbox = nil
         source?.cancel()
