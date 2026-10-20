@@ -1202,15 +1202,44 @@ enum LiveSlots {
     }
 
     /// Swift text with its comments and string literals blanked, so a word in a note or a help text isn't read as
-    /// code: multi-line and raw strings, plain strings with their escapes, block comments (nested) and line comments.
+    /// code. One scan in source order, since a quote in a comment or a comment mark in a string is nothing: line
+    /// comments, block comments (nested), and strings plain, multi-line and raw (whose escape is a backslash and
+    /// their own number of hashes).
     static func code(_ text: String) -> String {
-        var out = text
-        for pattern in [#"(#+)"""[\s\S]*?"""\1"#, #""""(?:\\[\s\S]|[^\\])*?""""#, #"(#+)"(?:[^"\n]|"(?!\1))*?"\1"#, #""(?:[^"\\\n]|\\.)*""#, #"//[^\n]*"#] {
-            out = out.replacingOccurrences(of: pattern, with: " ", options: .regularExpression)
+        let bytes = Array(text.utf8)
+        var out = [UInt8](repeating: UInt8(ascii: " "), count: bytes.count), i = 0
+        func at(_ what: String, _ position: Int) -> Bool {
+            let w = Array(what.utf8)
+            return position + w.count <= bytes.count && bytes[position..<position + w.count].elementsEqual(w)
         }
-        // Block comments nest: the innermost go first, until none is left.
-        while let range = out.range(of: #"/\*(?:(?!/\*|\*/)[\s\S])*\*/"#, options: .regularExpression) { out.replaceSubrange(range, with: " ") }
-        return out
+        while i < bytes.count {
+            if at("//", i) { while i < bytes.count, bytes[i] != UInt8(ascii: "\n") { i += 1 }; continue }
+            if at("/*", i) {
+                var depth = 0
+                repeat {
+                    if at("/*", i) { depth += 1; i += 2 } else if at("*/", i) { depth -= 1; i += 2 } else { i += 1 }
+                } while depth > 0 && i < bytes.count
+                continue
+            }
+            var hashes = 0
+            while i + hashes < bytes.count, bytes[i + hashes] == UInt8(ascii: "#") { hashes += 1 }
+            if i + hashes < bytes.count, bytes[i + hashes] == UInt8(ascii: "\"") {
+                let triple = at("\"\"\"", i + hashes)
+                let close = String(repeating: "\"", count: triple ? 3 : 1) + String(repeating: "#", count: hashes)
+                var k = i + hashes + (triple ? 3 : 1)
+                while k < bytes.count {
+                    if bytes[k] == UInt8(ascii: "\\"), hashes == 0 || at(String(repeating: "#", count: hashes), k + 1) { k += 2 + hashes; continue }
+                    if !triple, bytes[k] == UInt8(ascii: "\n") { break }
+                    if at(close, k) { k += close.utf8.count; break }
+                    k += 1
+                }
+                i = k
+                continue
+            }
+            out[i] = bytes[i]
+            i += 1
+        }
+        return String(decoding: out, as: UTF8.self)
     }
 
     /// Live copies of the app have no classes made final from now on (`no-final`). True the first time.
