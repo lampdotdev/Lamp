@@ -23,6 +23,7 @@ struct WishDesk: View {
     @State private var staged: Staged?
     /// The wishes Lamp came with that aren't on the desk, offered at its end (`MoreFromLamp`).
     @State private var missingStarters: [Starters.Starter] = []
+    @ObservedObject private var arrangement = DeskArrangement.shared
     private static let stageHeight: CGFloat = 160
 
     private struct Staged: Equatable {
@@ -35,7 +36,8 @@ struct WishDesk: View {
     private static let glide = Animation.spring(response: 0.45, dampingFraction: 0.86)
 
     /// A wish not yet told is thrown away as the desk comes back (`discardIfUnused`): the rest are on the desk.
-    private var wishes: [LampProject] { store.projects }
+    /// They're in the order the person dragged them into (`DeskArrangement`).
+    private var wishes: [LampProject] { arrangement.arranged(store.projects) }
 
     var body: some View {
         ZStack {
@@ -77,14 +79,17 @@ struct WishDesk: View {
                     .frame(maxWidth: .infinity, minHeight: area.size.height, alignment: .leading)
                     .animation(Self.glide, value: wishes.map(\.id))
                     // Read from the files, so once for each change to the desk rather than at every redraw.
-                    .task(id: wishes.map(\.id)) { missingStarters = Starters.missing(from: wishes) }
+                    // By the wishes there are rather than their order, so dragging one about reads nothing.
+                    .task(id: store.projects.map(\.id)) { missingStarters = Starters.missing(from: store.projects) }
                 }
                 .scrollContentBackground(.hidden)
             }
         }
         .navigationTitle("Lamp")
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
+                // While a wish is dragged, somewhere to drop it to delete it without leaving the window.
+                if arrangement.dragging != nil { DeskTrash() }
                 SettingsLink { Label("Settings", systemImage: "gearshape") }
                     .help("Settings (⌘,)")
             }
@@ -97,6 +102,13 @@ struct WishDesk: View {
             if ideas.isEmpty { ideas = Ideas.starters(made: store.projects.filter { !$0.untitled }.map(\.name)) }
             if wishes.isEmpty { showingIdeas = true }
             barFocused = true
+        }
+        // A wish being dragged isn't being looked at.
+        .onChange(of: arrangement.dragging) {
+            if arrangement.dragging != nil {
+                pointedAt = nil
+                staged = nil
+            }
         }
         .onChange(of: store.deskFocusRequest) {
             pointedAt = nil
@@ -695,10 +707,15 @@ struct DeskIcon: View {
     let project: LampProject
     /// The pointer came onto it or left it: the desk shows what it looks like (`WishStage`).
     var onHover: (Bool) -> Void = { _ in }
+    @ObservedObject private var arrangement = DeskArrangement.shared
     @State private var hovered = false
     @State private var place: WishPlace?
 
     private var busy: Bool { store.busy.contains(project.id) }
+    /// Lit under the pointer, but not while a wish is dragged over it: the pointer is the drag's then.
+    private var lit: Bool { hovered && arrangement.dragging == nil }
+    /// This one is being dragged: its place shows faintly where it would land.
+    private var lifted: Bool { arrangement.dragging == project.id }
 
     /// What's going on with it, for VoiceOver: on screen the spinner and the dot say it.
     private var status: String? {
@@ -729,8 +746,8 @@ struct DeskIcon: View {
                             .offset(x: -2, y: 2)
                     }
                 }
-                .scaleEffect(hovered ? 1.06 : 1)
-                .offset(y: hovered ? -2 : 0)
+                .scaleEffect(lit ? 1.06 : 1)
+                .offset(y: lit ? -2 : 0)
             Text(project.title)
                 .font(.callout.weight(.medium))
                 .lineLimit(2)
@@ -739,7 +756,8 @@ struct DeskIcon: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8).padding(.horizontal, 4)
-        .background(Color.primary.opacity(hovered ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Color.primary.opacity(lit ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .opacity(lifted ? 0.3 : 1)
         .contentShape(Rectangle())
         .onTapGesture { store.open(fromDesk: project) }
         .accessibilityElement(children: .combine)
@@ -753,7 +771,7 @@ struct DeskIcon: View {
             hovered = inside
             onHover(inside)
         }
-        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hovered)
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: lit)
         .background(ShareAnchor(origin: .app(project.id)))
         .background(WishDrag(project: project))
         .contextMenu {
@@ -773,9 +791,154 @@ struct DeskIcon: View {
     }
 }
 
-/// A wish dragged off the desk. Dropped on the Trash it's deleted, as Delete… does once asked (the Trash gives it
-/// back); in the Dock or the Applications folder it's the app itself; anywhere else it's the wish's shared file,
-/// as Share… makes it. A wish being changed stays where it is. Behind the icon and never in its way, so a click,
+/// The order of the wishes on the desk, which the person sets by dragging them about, and the drag under way. Until
+/// the first such drag they're in name order, as Lamp lists them; after it, a wish made since goes at the end. Kept by
+/// the wish's instance, which a rename doesn't change, so a wish keeps its place when the agent names it.
+@MainActor
+final class DeskArrangement: ObservableObject {
+    static let shared = DeskArrangement()
+    private static let savedKey = "deskOrder"
+
+    /// The wish being dragged, by id.
+    @Published private(set) var dragging: String?
+    /// The order while it's dragged, by id: where it would land if let go now.
+    @Published private(set) var moving: [String]?
+    /// Whether it's over the toolbar's trash.
+    @Published private(set) var overTrash = false
+    @Published private var saved: [String] = UserDefaults.standard.stringArray(forKey: DeskArrangement.savedKey) ?? []
+
+    /// The order the drag began with, which it goes back to while the drag is off the window.
+    private var start: [String] = []
+    /// The wish the dragged one last took the place of. It slides under the pointer as it makes room, which mustn't
+    /// count as being dragged over again: the two would swap back and forth.
+    private var passed: String?
+    /// Each icon's view on the desk, which knows where the icon is.
+    private var icons: [String: Weak] = [:]
+    /// The toolbar's trash, while it's shown.
+    weak var trash: NSView?
+
+    private struct Weak { weak var view: NSView? }
+
+    private static func key(_ project: LampProject) -> String { project.instance.isEmpty ? project.id : project.instance }
+
+    func arranged(_ projects: [LampProject]) -> [LampProject] {
+        if let moving {
+            let rank = Dictionary(moving.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+            return order(projects) { rank[$0.id] }
+        }
+        let rank = Dictionary(saved.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        return order(projects) { rank[Self.key($0)] }
+    }
+
+    /// Ranked ones first, by rank; the rest after them, as they came.
+    private func order(_ projects: [LampProject], by rank: (LampProject) -> Int?) -> [LampProject] {
+        projects.enumerated()
+            .sorted { a, b in
+                let x = rank(a.element) ?? .max, y = rank(b.element) ?? .max
+                return x != y ? x < y : a.offset < b.offset
+            }
+            .map(\.element)
+    }
+
+    func register(_ view: NSView, for id: String) {
+        icons = icons.filter { $0.value.view != nil && $0.value.view !== view }
+        icons[id] = Weak(view: view)
+    }
+
+    func begin(_ id: String, among order: [String]) {
+        start = order
+        passed = nil
+        moving = order
+        overTrash = false
+        dragging = id
+    }
+
+    /// Follows the drag: over another wish's icon, the dragged one takes that place and the rest make room. Says
+    /// whether the pointer is over the desk's window.
+    @discardableResult
+    func moved(to point: NSPoint, in window: NSWindow?) -> Bool {
+        guard let dragging, let window, var order = moving else { return false }
+        overTrash = trash.flatMap(Self.screenFrame)?.insetBy(dx: -8, dy: -8).contains(point) ?? false
+        guard window.frame.contains(point) else {
+            // Off the window, to be shared or put in the Trash: the desk is as it was.
+            if order != start { moving = start }
+            return false
+        }
+        guard !overTrash else { return true }
+        let local = window.convertPoint(fromScreen: point)
+        let under = icons.first(where: { _, icon in
+            guard let view = icon.view, view.window === window else { return false }
+            return view.convert(view.bounds, to: nil).contains(local)
+        })?.key
+        guard under != passed else { return true }
+        passed = nil
+        guard let target = under, target != dragging,
+              let from = order.firstIndex(of: dragging), let to = order.firstIndex(of: target) else { return true }
+        passed = target
+        order.remove(at: from)
+        order.insert(dragging, at: to)
+        moving = order
+        return true
+    }
+
+    /// The drag is over. Let go on the desk, the new order is kept; anywhere else, it's as it was. Says whether it
+    /// was let go on the toolbar's trash, to be deleted.
+    func end(at point: NSPoint, in window: NSWindow?, takenElsewhere: Bool, projects: [LampProject]) -> Bool {
+        let trashed = !takenElsewhere && (trash.flatMap(Self.screenFrame)?.insetBy(dx: -8, dy: -8).contains(point) ?? false)
+        if !takenElsewhere, !trashed, let window, window.frame.contains(point), let moving, moving != start {
+            let byID = Dictionary(projects.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            // Every wish there is, so one made later goes after them all.
+            saved = arranged(projects).compactMap { byID[$0.id].map(Self.key) }
+            UserDefaults.standard.set(saved, forKey: Self.savedKey)
+        }
+        moving = nil
+        dragging = nil
+        overTrash = false
+        start = []
+        return trashed
+    }
+
+    private static func screenFrame(of view: NSView) -> CGRect? {
+        guard let window = view.window else { return nil }
+        return window.convertToScreen(view.convert(view.bounds, to: nil))
+    }
+}
+
+/// The trash in the toolbar while a wish is dragged: let go over it, the wish is deleted, as on the Dock's Trash.
+struct DeskTrash: View {
+    @ObservedObject private var arrangement = DeskArrangement.shared
+
+    var body: some View {
+        Image(systemName: arrangement.overTrash ? "trash.fill" : "trash")
+            .font(.system(size: 15, weight: .medium))
+            .foregroundStyle(arrangement.overTrash ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
+            .scaleEffect(arrangement.overTrash ? 1.2 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: arrangement.overTrash)
+            .frame(width: 28, height: 28)
+            .background(Marker())
+            .accessibilityLabel("Trash")
+            .help("Drop a wish here to delete it")
+    }
+
+    /// Tells the arrangement where the trash is, so a drag can be matched against it.
+    private struct Marker: NSViewRepresentable {
+        func makeNSView(context: Context) -> Place { Place() }
+        func updateNSView(_ view: Place, context: Context) {}
+
+        final class Place: NSView {
+            override func hitTest(_ point: NSPoint) -> NSView? { nil }
+            override func viewDidMoveToWindow() {
+                super.viewDidMoveToWindow()
+                if window != nil { DeskArrangement.shared.trash = self }
+            }
+        }
+    }
+}
+
+/// A wish dragged about the desk takes the place it's dropped on (`DeskArrangement`), and dropped on the trash the
+/// window's toolbar shows meanwhile, it's deleted. Dragged off the desk and dropped on the Trash it's deleted too, as
+/// Delete… does once asked (the Trash gives it back); in the Dock or the Applications folder it's the app itself;
+/// anywhere else it's the wish's shared file, as Share… makes it. A wish being changed stays where it is. Behind the icon and never in its way, so a click,
 /// a double click and the menu stay SwiftUI's: the drag is started from the window's own mouse events.
 struct WishDrag: NSViewRepresentable {
     @EnvironmentObject private var store: Store
@@ -786,7 +949,9 @@ struct WishDrag: NSViewRepresentable {
 
     final class Source: NSView, NSDraggingSource, NSFilePromiseProviderDelegate {
         private let store: Store
-        var project: LampProject
+        var project: LampProject {
+            didSet { if project.id != oldValue.id { DeskArrangement.shared.register(self, for: project.id) } }
+        }
         private var monitor: Any?
         private var pressed: NSEvent?
         /// What one drag hands over, made once whichever way the other app asks for it.
@@ -808,6 +973,7 @@ struct WishDrag: NSViewRepresentable {
             if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = nil
             guard window != nil else { return }
+            DeskArrangement.shared.register(self, for: project.id)
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
                 self?.handle(event) ?? event
             }
@@ -857,6 +1023,7 @@ struct WishDrag: NSViewRepresentable {
             item.setDraggingFrame(CGRect(origin: CGPoint(x: point.x - size.width / 2, y: point.y - size.height / 2), size: size),
                                   contents: store.iconImage(for: project))
             session = beginDraggingSession(with: [item], event: event, source: self)
+            DeskArrangement.shared.begin(project.id, among: DeskArrangement.shared.arranged(store.projects).map(\.id))
         }
 
         static let wishType = NSPasteboard.PasteboardType("dev.lamp.wish")
@@ -868,6 +1035,9 @@ struct WishDrag: NSViewRepresentable {
         }
 
         func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
+            let inWindow = DeskArrangement.shared.moved(to: screenPoint, in: window)
+            // Let go in the window, it stays where it was dropped rather than flying back to where it began.
+            session.animatesToStartingPositionsOnCancelOrFail = !inWindow
             guard let payload, payload.app != nil else { return }
             let overDock = Payload.dockIsUnder(screenPoint)
             guard overDock != payload.overDock else { return }
@@ -895,7 +1065,8 @@ struct WishDrag: NSViewRepresentable {
 
         func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
             payload = nil
-            guard operation == .delete, let wish = store.projects.first(where: { $0.id == project.id }) else { return }
+            let trashed = DeskArrangement.shared.end(at: screenPoint, in: window, takenElsewhere: operation != [], projects: store.projects)
+            guard operation == .delete || trashed, let wish = store.projects.first(where: { $0.id == project.id }) else { return }
             Task { await store.delete(wish) }
         }
 
