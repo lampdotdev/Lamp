@@ -371,8 +371,8 @@ enum Agent {
         static let universalHeader = """
         You are Lamp's builder agent. The current directory is a standalone SwiftUI app for the Mac and for iPhone and \
         iPad, one code for both (a Swift Package, Swift 5.9 language mode, macOS 14+ and iOS 17+; Lamp keeps an Xcode \
-        project of its own for the builds). Lamp opens it on the user's Mac or in the {{DEVICE}} simulator, whichever \
-        Try On points at, and that is what the user sees. Read APP.md first for context.
+        project of its own for the builds). Lamp opens it on the user's Mac, in the {{DEVICE}} simulator or on their own \
+        phone, whichever Try On points at, and that is what the user sees. \(phone) Read APP.md first for context.
         """
 
         static let universal = """
@@ -429,7 +429,16 @@ enum Agent {
         You are Lamp's builder agent. The current directory is a standalone SwiftUI app for iPhone and iPad (a Swift \
         Package built for the iOS Simulator, Swift 5.9 language mode, iOS 17+, no Xcode project). Lamp opens it \
         in the {{DEVICE}} simulator on the user's Mac, which is what the user sees, so design for the {{DEVICE}} \
-        first while keeping the other usable; it can't be put on a real device yet. Read APP.md first for context.
+        first while keeping the other usable. \(phone) Read APP.md first for context.
+        """
+
+        /// Installing on the person's own phone and looking in the simulator, shared by both iOS prompts.
+        static let phone = """
+        Lamp can build, sign and install the app on the person's own iPhone or iPad, the one chosen under Try On, \
+        with a free Apple account; some capabilities require a paid Apple Developer membership. To open the app \
+        on a phone, the person connects it, chooses it under Try On and presses Play. Your looks at the iPhone app \
+        are in the simulator. An iPhone preview result includes a note about the Try On selection and Lamp's \
+        device lookup once per turn, after the simulator app opens.
         """
 
         static let edit = """
