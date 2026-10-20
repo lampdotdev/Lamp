@@ -551,6 +551,16 @@ struct MoreFromLamp: View {
     @State private var rowsHeight = MoreFromLamp.tallest
     /// The most the list's rows take before they scroll: room for about six, on the shortest screens a Mac has.
     private static let tallest: CGFloat = 440
+    /// The height of the window the desk is in, taken as the list opens, so the popover never stands taller than it.
+    @State private var windowHeight: CGFloat?
+    /// What the popover takes beyond its rows: the title, the line under it and the padding around them.
+    private static let chrome: CGFloat = 110
+    /// The most the rows take: what a short screen has room for, and no more than leaves the popover inside the
+    /// desk's window, with a margin above and below.
+    private var rowsLimit: CGFloat {
+        guard let windowHeight else { return Self.tallest }
+        return max(120, min(Self.tallest, windowHeight - Self.chrome - 48))
+    }
     /// The Mac's own appearance, which the popover's material is drawn in.
     private static var macScheme: ColorScheme {
         NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
@@ -561,7 +571,7 @@ struct MoreFromLamp: View {
             tile
                 .scaleEffect(hovered ? 1.06 : 1)
                 .offset(y: hovered ? -2 : 0)
-            Text("More from Lamp")
+            Text("Starter wishes")
                 .font(.callout.weight(.medium))
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
@@ -570,21 +580,27 @@ struct MoreFromLamp: View {
         .padding(.vertical, 8).padding(.horizontal, 4)
         .background(Color.primary.opacity(hovered ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(Rectangle())
-        .onTapGesture { listing = true }
+        .onTapGesture { show() }
         .onHover { hovered = $0 }
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hovered)
         .accessibilityElement(children: .ignore)
         .accessibilityAddTraits(.isButton)
-        .accessibilityLabel("More from Lamp")
+        .accessibilityLabel("Starter wishes")
         .accessibilityValue("\(starters.count) to add")
-        .accessibilityAction { listing = true }
+        .accessibilityAction { show() }
         .focusable(interactions: .activate)
-        .onKeyPress(.return) { listing = true; return .handled }
-        .help("Wishes that came with Lamp and aren't on your desk")
+        .onKeyPress(.return) { show(); return .handled }
+        .help("Starter kit wishes, for you to try and make your own")
         // The desk is drawn light whatever the Mac's appearance, but the popover's glass is the system's, dark on a
         // dark Mac: its words and buttons take the Mac's appearance, not the desk's.
         .popover(isPresented: $listing, arrowEdge: .trailing) { list.environment(\.colorScheme, Self.macScheme) }
         .onChange(of: starters.isEmpty) { if starters.isEmpty { listing = false } }
+    }
+
+    private func show() {
+        windowHeight = NSApp.keyWindow?.contentLayoutRect.height ?? NSApp.mainWindow?.contentLayoutRect.height
+        rowsHeight = rowsLimit
+        listing = true
     }
 
     /// Up to four of their icons, two by two, in a dashed outline the size of a wish's icon.
@@ -622,8 +638,8 @@ struct MoreFromLamp: View {
 
     private var list: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("More from Lamp").font(.headline)
-            Text("Wishes that came with Lamp and aren't on your desk.")
+            Text("Starter kit wishes").font(.headline)
+            Text("For you to try and make your own")
                 .font(.subheadline).foregroundStyle(.secondary)
                 .padding(.top, 2)
             ScrollView {
@@ -649,7 +665,7 @@ struct MoreFromLamp: View {
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowsHeight = $0 }
             }
             // As tall as its rows, up to what a short screen has room for; past that the rows scroll.
-            .frame(height: min(rowsHeight, Self.tallest))
+            .frame(height: min(rowsHeight, rowsLimit))
             .scrollBounceBehavior(.basedOnSize)
             .padding(.top, 14)
         }
