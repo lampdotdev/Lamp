@@ -505,7 +505,10 @@ final class Store: ObservableObject {
         /// change going in at the moment, which a build waits for, and how many went in since the agent last looked.
         var autoApply: Task<Void, Never>?
         var applying: Task<Void, Never>?
+        var applyingSources = ""
         var autoApplied = 0
+        /// The open app's layout being worked out ahead of the first change (`LiveReload.warm`).
+        var warming: Task<Void, Never>?
         /// A build of Lamp's is under way (a look's, or the turn's end's): no change of the agent's is put in meanwhile.
         var building = false
         /// Nil for a simulator/Mac turn; false until the chosen phone acknowledges opening the app.
@@ -2956,6 +2959,7 @@ final class Store: ObservableObject {
             turn.input = input
             turn.steering = engine
             turn.autoApply?.cancel()
+            if turn.warming == nil, let current = current(project), isRunning(current) { turn.warming = warmLive(current) }
             turn.autoApply = autoApply(project, in: turn)
             status = await Shell.run(run.command, cwd: project.dir, env: run.env, input: input,
                                      started: { turn.agent = $0 }, onLine: onLine)
@@ -4652,11 +4656,14 @@ final class Store: ObservableObject {
 
     private func buildNow(_ project: LampProject, inPlace: Bool) async -> String? {
         guard exists(project) else { return "The app was deleted." }
-        // A save of the agent's being put in finishes first: both write the live copy.
+        // A save of the agent's being put in finishes first: both write the live copy. One that hasn't reached the
+        // compiler yet, for sources the agent has moved on from, gives way to this build, which takes the newer ones.
         let owner = turns[project.id]
         owner?.building = true
         defer { owner?.building = false }
+        if let owner, let applying = owner.applying, owner.applyingSources != Runtime.fingerprint(project) { applying.cancel() }
         await owner?.applying?.value
+        await owner?.warming?.value
         log(project, .status, "Building…")
         // Lamp's own files first, and no build without them: the build runs build.sh and Package.swift.
         do {
@@ -4741,6 +4748,26 @@ final class Store: ObservableObject {
     /// the app didn't open beside one that has, or the reverse.
     private func noteOpened(_ opened: Bool, for project: LampProject) {
         if progress[project.id]?.finished != nil { progress[project.id]?.unopened = !opened }
+        if opened { warmLive(project) }
+    }
+
+    /// What the open app's types hold, worked out as soon as the app is open (`LiveReload.warm`), so the compiler's
+    /// slow first read of a session is over before the agent's first save rather than in front of it. One at a time
+    /// per app; each goes when it's done, and a later open starts another only when there's something to work out.
+    private var warmings: [String: Task<Void, Never>] = [:]
+    @discardableResult private func warmLive(_ project: LampProject) -> Task<Void, Never>? {
+        guard project.platform == .mac, LiveReload.eligible(project) else { return nil }
+        if let warming = warmings[project.id] { return warming }
+        let warming = Task { [weak self] in
+            let began = Date()
+            await LiveReload.warm(project)
+            guard let self else { return }
+            warmings[project.id] = nil
+            let took = Date().timeIntervalSince(began)
+            if took > 2 { log(project, .detail, "Worked out what the open app holds, ahead of the next change, in \(Int(took.rounded())) s.") }
+        }
+        warmings[project.id] = warming
+        return warming
     }
 
     /// The whole builds running after a change went into the open app, by app: a build waits for the one before.
@@ -4784,7 +4811,7 @@ final class Store: ObservableObject {
     /// tried once it has held still for a reading, and only once: what didn't go in isn't tried again until it changes.
     private func autoApply(_ project: LampProject, in turn: Turn) -> Task<Void, Never> {
         Task { [weak self] in
-            var seen = "", tried = ""
+            var seen = "", tried = "", seenAt = Date()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 guard let self, !Task.isCancelled, turns[project.id] === turn, !turn.stopped, turn.agent != nil,
@@ -4793,12 +4820,17 @@ final class Store: ObservableObject {
                       isRunning(current), !Runtime.waitsForReload(current) else { continue }
                 let now = Runtime.fingerprint(current)
                 // Still being written: wait for a reading with nothing new in it.
-                if now != seen { seen = now; continue }
+                if now != seen { seen = now; seenAt = Date(); continue }
                 guard now != tried, Runtime.sourcesChanged(current) else { continue }
                 tried = now
+                let saved = seenAt
+                turn.applyingSources = now
                 turn.applying = Task { [weak self] in
                     guard let self else { return }
                     defer { turn.applying = nil }
+                    let waited = Date()
+                    await turn.warming?.value
+                    let warmWait = Date().timeIntervalSince(waited)
                     try? await writeOwnFiles(current, all: false)
                     guard turns[project.id] === turn, !turn.stopped, exists(current) else { return }
                     let universal = current.platform == .universal
@@ -4813,6 +4845,8 @@ final class Store: ObservableObject {
                         turn.reloadWhy = nil
                         turn.autoApplied += 1
                         log(current, .status, "\(current.name) is updated")
+                        log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved"
+                            + (warmWait > 1 ? ", \(Int(warmWait.rounded())) s of them waiting for the warm-up." : "."))
                     } else {
                         // Nothing went in, and the whole build of an earlier change may have been ended for this
                         // one: until the next build nothing is installed from build/.
@@ -4845,6 +4879,8 @@ final class Store: ObservableObject {
         copy["LAMP_LIVE"] = "1"
         copy["LAMP_LIVE_COPY"] = "1"
         guard await Self.runBuild(command, for: project, env: copy) { _ in } == 0,
+              // A save being put in by itself gives way here to a build of Lamp's for newer sources (`buildNow`).
+              !Task.isCancelled,
               await reloadInPlace(project, inFront: false, saysWhy: false) else { return false }
         reloadedBeforeBuild.insert(project.id)
         await DataSnapshots.wentIn(project)

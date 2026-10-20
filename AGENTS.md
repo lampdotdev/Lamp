@@ -920,7 +920,10 @@ and says how long the person waited to see the turn's first change and the longe
 the agent works, Lamp also puts each change it saves into the open app by itself (`Store.autoApply`: the sources read
 every two seconds, a state tried once it holds still, through the quick path a look takes), so the person sees each
 piece as it's written; what can't go in live is left for the turn's end, which holds it for Reload once with the rest.
-A build of Lamp's waits for a change going in and keeps the loop off while it runs (`Turn.building`, `Turn.applying`).
+A build of Lamp's waits for a change going in and keeps the loop off while it runs (`Turn.building`, `Turn.applying`);
+one for sources the agent has moved on from gives way, before its compile, to the build that takes the newer ones. The
+open app's layout is worked out as soon as the app is open (`LiveReload.warm`, `Store.warmLive`), so the compiler's slow first
+read of a session is over before the agent's first save rather than in front of it.
 
 New stored properties go in live too (`LiveSlots`, in LiveReload.swift). The copy step (`Template.livePerl`) gives
 each type of the app's spare room the open app's values already have: every class a few places,
