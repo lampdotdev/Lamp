@@ -925,7 +925,7 @@ property by the starting value it was taken in with); a `@Published` property in
 in an extension) reopens it too. `@State` is read in both forms the compiler has given it: `_name: State<T>`, and
 `__name: LazyState<T>` where it is a macro. Cases added at the end of an enum whose cases carry nothing need no
 spare: its values keep their size (`LiveSlots.casesAdded`). Only while nothing the app keeps holds it but as itself or
-in a plain collection: Swift uses the numbers after the last case for `nil` in an optional of it and for other enums'
+in a plain collection (an array, set or dictionary through any depth): Swift uses the numbers after the last case for `nil` in an optional of it and for other enums'
 cases that carry it, which a new case would take over. That's looked for in every stored field, static and global of
 the new code (`LiveReload.enumsHeld`), before the change goes in; a property added while the app was open keeps its
 value in a spare as any value, under the metadata the app's code had, which the grown enum's own no longer reads

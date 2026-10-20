@@ -62,7 +62,8 @@ enum LiveReload {
         let fm = FileManager.default
         let files = ["Package.swift", Template.Capabilities.file, "icon.json"]
             + [Template.widgetFolder, Template.shareFolder].flatMap { folder in
-                ((try? fm.subpathsOfDirectory(atPath: project.dir.appendingPathComponent(folder).path)) ?? []).sorted().map { "\(folder)/\($0)" }
+                ((try? fm.subpathsOfDirectory(atPath: project.dir.appendingPathComponent(folder).path)) ?? []).sorted()
+                    .filter { !$0.hasPrefix(".") && !$0.contains("/.") }.map { "\(folder)/\($0)" }
             }
         return files.map { name in
             let data = fm.contents(atPath: project.dir.appendingPathComponent(name).path) ?? Data()
@@ -138,22 +139,22 @@ enum LiveReload {
         // in the open app, which the new code no longer calls; what it declared that something still holds shows
         // as that holder changing (`layoutProblem`). But not the App, which runs once at launch, nor Lamp's own.
         let gone = Set(open.keys).subtracting(built.keys).sorted()
-        for path in gone where ["LampSupport.swift", Template.sceneSupportFile].contains((path as NSString).lastPathComponent) {
+        for path in gone where ownFiles.contains((path as NSString).lastPathComponent) {
             return .reopen("Lamp's own building blocks changed")
         }
-        if (try? String(contentsOf: runningInputs(project), encoding: .utf8)) != inputs(project) {
+        if AppFile.text(runningInputs(project), in: project) != inputs(project) {
             return .reopen("the package, the app's settings, its icon, or its widget or Share item changed")
         }
         var changed: [String] = []
         for (path, url) in built.sorted(by: { $0.key < $1.key }) {
-            guard let new = try? String(contentsOf: url, encoding: .utf8) else { return .reopen("\(path) couldn't be read") }
-            guard let old = open[path].flatMap({ try? String(contentsOf: $0, encoding: .utf8) }) else {
+            guard let new = AppFile.text(url, in: project) else { return .reopen("\(path) couldn't be read") }
+            guard let old = open[path].flatMap({ AppFile.text($0, in: project) }) else {
                 // Added: its types are new to the app, so their layout is whatever it says.
                 changed.append(path)
                 continue
             }
             guard new != old else { continue }
-            if ["LampSupport.swift", Template.sceneSupportFile].contains((path as NSString).lastPathComponent) {
+            if ownFiles.contains((path as NSString).lastPathComponent) {
                 return .reopen("Lamp's own building blocks changed")
             }
             // What's read only at launch (the App, its scenes, its menu commands, an application delegate) is held to
@@ -170,7 +171,7 @@ enum LiveReload {
         // compiled again, the App's too (what else is in its file may call it, and the App itself, which ran once
         // at launch, is never run again), and every call goes to code compiled without it. Not Lamp's own files.
         if !gone.isEmpty {
-            changed = built.keys.sorted().filter { !["LampSupport.swift", Template.sceneSupportFile].contains(($0 as NSString).lastPathComponent) }
+            changed = built.keys.sorted().filter { !ownFiles.contains(($0 as NSString).lastPathComponent) }
         }
         return changed.isEmpty && gone.isEmpty ? .unchanged : .reload(changed)
     }
@@ -181,11 +182,6 @@ enum LiveReload {
     /// hold, and an unchanged caller can stop compiling, which compiling the changed files alone wouldn't show
     /// (then the usual build runs and the agent sees its errors). The open app's layout is kept from the last
     /// time, so only the new code is type-checked, alongside the changed files' compile.
-    @MainActor static func layoutProblem(_ project: LampProject) async -> (problem: String?, layout: [String]?) {
-        let (before, after, _, _) = await layouts(project)
-        return layoutProblem(before: before, after: after)
-    }
-
     /// The layout's lines that aren't a type's members, by the control character their group begins with: what's
     /// read at launch (`SwiftSource.launchEntries`), constants' values (`constantEntries`), typealiases (`aliasGroup`)
     /// and what's declared (`declarationGroup`). Each is compared its own way, never as a type's fields.
@@ -221,7 +217,30 @@ enum LiveReload {
         }
         /// The entries of this group, each as its parts.
         func parts(in entries: [String]) -> [[String]] { entries.compactMap(parts(of:)) }
+        /// What an entry of this group is about, by which one kept from the open app's layout is told to be gone from
+        /// the new one: an alias's name, a constant's, an opaque member's, a private type's with its file, a class's
+        /// for its initializers, a type's for its shape. Nil for what's read at launch and what's declared, which
+        /// are compared whole.
+        func subject(of entry: String) -> String? {
+            guard let parts = parts(of: entry), let first = parts.first else { return nil }
+            switch self {
+            case .alias: return first.components(separatedBy: " = ").first
+            case .constant: return String(parts.joined(separator: "\t").prefix { $0 != ":" })
+            case .inits: return first.hasSuffix(".final") ? String(first.dropLast(6)) : first.range(of: ".init").map { String(first[..<$0.lowerBound]) }
+            case .place: return parts.joined(separator: "\t")
+            case .opaque, .shape: return first
+            case .launch, .declared: return nil
+            }
+        }
     }
+    /// Lamp's own files in an app's sources, never the app's to change nor read for its layout.
+    static let ownFiles: Set<String> = ["LampSupport.swift", Template.sceneSupportFile]
+
+    /// A layout's entries by the type (or group) each belongs to, in order.
+    static func byType(_ entries: [String]) -> [String: [String]] {
+        Dictionary(grouping: entries, by: { String($0.prefix { $0 != "\t" }) })
+    }
+
     static let aliasGroup = Group.alias.rawValue, declarationGroup = Group.declared.rawValue, opaqueGroup = Group.opaque.rawValue
     static let placeGroup = Group.place.rawValue, initsGroup = Group.inits.rawValue, shapeGroup = Group.shape.rawValue
 
@@ -322,9 +341,6 @@ enum LiveReload {
         // a new type (a new view with its own state) is the library's to lay out. A type taken away keeps its
         // objects and their code in the open app, and the new code doesn't touch them: whatever held one either
         // changed what it holds (and is caught here) or was taken away too.
-        func byType(_ entries: [String]) -> [String: [String]] {
-            Dictionary(grouping: entries, by: { String($0.prefix { $0 != "\t" }) })
-        }
         let old = byType(before), new = byType(now)
         for (type, members) in old.sorted(by: { $0.key < $1.key }) where !isGroup(type) || type == Group.launch.rawValue {
             guard let current = new[type] else { continue }
@@ -343,21 +359,23 @@ enum LiveReload {
         // A type taken away is still in the open app, with its objects and statics, until it reopens: its layout
         // is kept, so one brought back under the same name is held to what it was. So is an alias taken away, each
         // on its own, since a type kept that way still reads by it.
-        let remaining = aliases(now), remainingOpaque = opaque(now), remainingPlaces = places(now), remainingShapes = shapes(now), remainingInits = inits(now)
-        let kept = now + before.filter { let group = String($0.prefix { $0 != "\t" }); return ![aliasGroup, opaqueGroup, placeGroup, initsGroup, shapeGroup].contains(group) && new[group] == nil }
-            + before.filter { $0.hasPrefix(shapeGroup + "\t") && shapes([$0]).keys.allSatisfy { remainingShapes[$0] == nil } }
-            + before.filter { $0.hasPrefix(initsGroup + "\t") && inits([$0]).keys.allSatisfy { remainingInits[$0] == nil } }
-            + before.filter { $0.hasPrefix(aliasGroup + "\t") && aliases([$0]).keys.allSatisfy { remaining[$0] == nil } }
-            + before.filter { $0.hasPrefix(opaqueGroup + "\t") && opaque([$0]).keys.allSatisfy { remainingOpaque[$0] == nil } }
-            + before.filter { $0.hasPrefix(placeGroup + "\t") && places([$0]).allSatisfy { remainingPlaces[$0.key]?.isSuperset(of: $0.value) != true } }
+        // Each group's entries by what they're about (`Group.subject`): one kept when the new code has no entry of
+        // that group about that subject (a group of its own: an alias named Mood says nothing of the shape Mood had);
+        // what's read at launch and what's declared are the new code's whole.
+        func keyed(_ entry: String) -> String? {
+            Group(rawValue: String(entry.prefix { $0 != "\t" })).flatMap { group in group.subject(of: entry).map { group.rawValue + "\t" + $0 } }
+        }
+        let subjects = Set(now.compactMap(keyed))
+        let kept = now + before.filter { entry in
+            let group = String(entry.prefix { $0 != "\t" })
+            guard let key = keyed(entry) else { return new[group] == nil }
+            return !subjects.contains(key)
+        }
         return (nil, kept)
     }
 
     /// The enums that only gained cases at the end (`LiveSlots.casesAdded`), which the layout check let through.
     static func grownEnums(before: [String], after: [String]) -> [String] {
-        func byType(_ entries: [String]) -> [String: [String]] {
-            Dictionary(grouping: entries, by: { String($0.prefix { $0 != "\t" }) })
-        }
         let old = byType(before), new = byType(after)
         return old.keys.sorted().filter { type in
             guard !isGroup(type), let current = new[type], current != old[type] else { return false }
@@ -393,9 +411,10 @@ enum LiveReload {
         let inSpares = spares.flatMap { type, properties in properties.map { (type, $0.key, $0.value.type) } }.sorted { ($0.0, $0.1) < ($1.0, $1.1) }
         // A value of the enum could hide in what holds anything at all, where its type can't be seen: a value of
         // any type, or of any type conforming to a protocol the enum conforms to.
+        let conformed = conformances(inLayout: entries)
         for type in grown {
             for (owner, kind) in held + inSpares.map { ($0.0, $0.2) } {
-                if let box = existential(in: kind, holding: type, conformances: conformances(inLayout: entries)) {
+                if let box = existential(in: kind, holding: type, conformances: conformed) {
                     return "\(owner.isEmpty ? "a global" : owner) keeps values of any type (\(box)), which may hold \(type)"
                 }
             }
@@ -414,7 +433,6 @@ enum LiveReload {
             let parts = entry.split(separator: "\t", maxSplits: 1)
             return parts.count == 2 && (parts[1].hasPrefix("__lampSpare_") || parts[1].hasPrefix("__lampState_")) ? String(parts[0]) : nil
         })
-        let conformed = conformances(inLayout: entries)
         let word = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
         func last(_ name: String) -> String { String(name.split(separator: ".").last ?? "") }
         // A kind as a field prints it may name a typealias (`Choice`, for `Picky?`): each is written out as what it
@@ -462,12 +480,31 @@ enum LiveReload {
             for carrier in carriers(of: type) {
                 let name = NSRegularExpression.escapedPattern(for: carrier)
                 let mention = try! NSRegularExpression(pattern: #"(?<![\w.])"# + name + #"(?![\w])"#)
-                // The compiler prints a dictionary's key with a space before the colon (`[String : Mood]`); the enum
-                // may be the key too, before a plain value.
-                let plainly = try! NSRegularExpression(pattern: #"^(\[(\w[\w.]*\s*:\s*)?"# + name + #"\]|\["# + name + #"\s*:\s*[\w.]+\]|Set<"# + name + #">|"# + name + #"|(?:<[^>]*> )?\("# + name + #"(?:<[^>]*>)?\.Type\) -> "# + name + #"(?:<[^>]*>)?)$"#)
+                // A plain form keeps the enum's unused numbers unused: the enum itself, an array, set or dictionary of
+                // it through any depth, a dictionary of it with a key or value that doesn't name it at all, and the
+                // enum's own case constructors (`(Mood.Type) -> Mood`).
+                func plain(_ kind: String) -> Bool {
+                    let kind = kind.trimmingCharacters(in: .whitespaces)
+                    if kind == carrier { return true }
+                    if mention.firstMatch(in: kind, range: NSRange(kind.startIndex..., in: kind)) == nil { return true }
+                    for (open, close) in [("[", "]"), ("Set<", ">"), ("Array<", ">")] where kind.hasPrefix(open) && kind.hasSuffix(close) {
+                        let inside = String(kind.dropFirst(open.count).dropLast(close.count))
+                        // A dictionary: its key and value, split at the colon outside any brackets.
+                        var depth = 0
+                        for (n, ch) in inside.enumerated() {
+                            if "[<(".contains(ch) { depth += 1 } else if "]>)".contains(ch) { depth -= 1 }
+                            if ch == ":", depth == 0, open == "[" {
+                                let at = inside.index(inside.startIndex, offsetBy: n)
+                                return plain(String(inside[..<at])) && plain(String(inside[inside.index(after: at)...]))
+                            }
+                        }
+                        return plain(inside)
+                    }
+                    return kind.range(of: #"^(?:<[^>]*> )?\("# + name + #"(?:<[^>]*>)?\.Type\) -> "# + name + #"(?:<[^>]*>)?$"#, options: .regularExpression) != nil
+                }
                 for (owner, kind) in holders {
                     let range = NSRange(kind.startIndex..., in: kind)
-                    if mention.firstMatch(in: kind, range: range) != nil, plainly.firstMatch(in: kind, range: range) == nil {
+                    if mention.firstMatch(in: kind, range: range) != nil, !plain(kind) {
                         let what = carrier == type ? type : "\(carrier), which carries \(type),"
                         return "\(owner.isEmpty ? "a global" : owner) holds \(what) as \(kind), which a new case would change"
                     }
@@ -857,7 +894,7 @@ enum LiveReload {
         // All of the app's own files, by name: the compiler prints (and checks the bodies of) only the files it's
         // given as primaries, or just the first with none. Lamp's building blocks are read for context only: the
         // app's code can't change what they hold or make them stop compiling, and they're most of the time.
-        let primaries = files ?? swiftFiles(in: folder).keys.filter { ($0 as NSString).lastPathComponent != "LampSupport.swift" }.sorted()
+        let primaries = files ?? swiftFiles(in: folder).keys.filter { !ownFiles.contains(($0 as NSString).lastPathComponent) }.sorted()
         guard !primaries.isEmpty else { return [] }
         let (status, output) = await Sandbox.output(frontend("-dump-ast", in: folder, primaries: primaries, module: module, macOS: macOS, ios: ios),
                                                     for: project, cwd: folder)
@@ -868,7 +905,7 @@ enum LiveReload {
     /// The compiler's printout of a live copy's whole code but Lamp's own, or nil when it doesn't type-check (or
     /// there's none): empty for a copy with no files of the app's.
     static func dump(of folder: URL, in project: LampProject, module: String, macOS: String) async -> String? {
-        let primaries = swiftFiles(in: folder).keys.filter { ($0 as NSString).lastPathComponent != "LampSupport.swift" }.sorted()
+        let primaries = swiftFiles(in: folder).keys.filter { !ownFiles.contains(($0 as NSString).lastPathComponent) }.sorted()
         guard !primaries.isEmpty else { return "" }
         // Tens of megabytes for a big app: kept whole as it comes, off the main actor, never handed over line by line.
         let (status, output) = await Sandbox.output(frontend("-dump-ast", in: folder, primaries: primaries, module: module, macOS: macOS),
@@ -1286,7 +1323,7 @@ enum LiveReload {
     /// and links the changed files' objects into a library for the open app. Nil, with the compiler's words, when it doesn't compile.
     /// Every file of the app's in the live copy, but Lamp's own.
     static func appFiles(_ project: LampProject) -> [String] {
-        swiftFiles(in: sources(project)).keys.filter { !["LampSupport.swift", Template.sceneSupportFile].contains(($0 as NSString).lastPathComponent) }.sorted()
+        swiftFiles(in: sources(project)).keys.filter { !ownFiles.contains(($0 as NSString).lastPathComponent) }.sorted()
     }
 
     /// `keep` names the types whose metadata the library brings as its own rather than taking the app's
@@ -1465,7 +1502,7 @@ enum LiveReload {
         for (pattern, words) in [(#"(?:[\w.]+\.)?_*lampState_(\w+)(?:: [^),]*)?"#, "Lamp's state box for $1"),
                                  (#"(?:[\w.]+\.)?_*lampSpare_(\w+?)(?:_\d+)?(?!\w)(?:: [^),]*)?"#, "Lamp's spare place in $1"),
                                  (#"__lampBinding_(\w+)"#, "\\$$1"), (#"__lampBody"#, "its body"), (#"__LampEntry"#, "Lamp's entry"),
-                                 (#"(\w+)@([\w.-]+\.swift)"#, "$1 in $2")] {
+                                 (#"(\w+)@([\w.-]+\.swift)"#, "$1 in $2"), (#"\$__lazy_storage_\$_(\w+)"#, "$1 (lazy)")] {
             text = text.replacingOccurrences(of: pattern, with: words, options: .regularExpression)
         }
         return text
@@ -1760,10 +1797,7 @@ enum LiveSlots {
 
     static func fitting(_ project: LampProject, before: [String], after: [String], declarations: SwiftSource.Declarations,
                         constants: [String] = []) -> Fit {
-        func byType(_ entries: [String]) -> [String: [String]] {
-            Dictionary(grouping: entries, by: { String($0.prefix { $0 != "\t" }) })
-        }
-        let old = byType(before), new = byType(after)
+        let old = LiveReload.byType(before), new = LiveReload.byType(after)
         var map = whole(project)
         var cases: [String: Set<String>] = [:]
         for entry in after {
@@ -1804,6 +1838,8 @@ enum LiveSlots {
                 let field = extra.dropFirst(type.count + 1)
                 guard !field.hasPrefix("case "), let colon = field.range(of: ": ") else { return .refused(nil) }
                 var name = String(field[..<colon.lowerBound]), kind = String(field[colon.upperBound...])
+                // A lazy property's storage (`$__lazy_storage_$_name`): what a spare can't keep, said as such.
+                if name.hasPrefix("$__lazy_storage_$_") { return .refused("\(type).\(name.dropFirst(18)) is lazy, which a property kept in a spare can't be") }
                 // A wrapper's storage: `_name: Wrapper<T>`, or `__name: LazyState<T>` where @State is a macro.
                 func unwrap(_ wrapper: String, underscores: Int = 1) -> Bool {
                     guard name.hasPrefix(String(repeating: "_", count: underscores)), kind.hasPrefix(wrapper + "<"), kind.hasSuffix(">") else { return false }
@@ -1848,6 +1884,11 @@ enum LiveSlots {
                     if kept.retired != true {
                         // Already in a spare: the same place, as long as it's still the same property.
                         guard kept.type == kind, (kept.holder ?? .object) == holder else { return .refused("\(type).\(name) was put in a spare as a \(kept.type), and is a \(kind) now") }
+                        // A struct's spare compares a value never set by the starting value it was taken in with.
+                        if let taken = kept.initial, let variable = declarations.variables[type + "\t" + name],
+                           case let now = initialText(of: variable, in: declarations) ?? "nil", now != taken {
+                            return .refused("\(type).\(name) starts as \(now) now, where it was put in its spare starting as \(taken), which the values the open app holds compare by")
+                        }
                         planned.append((type, name, kept, published, false))
                         continue
                     }
@@ -1881,7 +1922,7 @@ enum LiveSlots {
         // A constant whose value is made from a changed one is made again too (`half = size / 2`), and so on.
         let constants = withDependents(constants, in: declarations)
         // By bare names, as a constant's text names the enums its value is made from.
-        let byType = Dictionary(grouping: LiveReload.bared(after), by: { String($0.prefix { $0 != "\t" }) })
+        let bareLayout = LiveReload.byType(LiveReload.bared(after))
         for key in constants {
             guard let variable = declarations.constants[key] else { return .refused(nil) }
             byFile[variable.position.file, default: []].append((variable.binding, [], key))
@@ -1902,7 +1943,7 @@ enum LiveSlots {
                 || (declarations.bindings[$0.binding].start.line == declarations.bindings[$1.binding].start.line
                     && declarations.bindings[$0.binding].start.column > declarations.bindings[$1.binding].start.column) }
             for edit in ordered {
-                let made = edit.constant.map { rewriteConstant($0, in: original, declarations: declarations, rewritten: Set(constants), layout: byType) }
+                let made = edit.constant.map { rewriteConstant($0, in: original, declarations: declarations, rewritten: Set(constants), layout: bareLayout) }
                     ?? rewrite(declarations.bindings[edit.binding], items: edit.items, in: original, declarations: declarations, cases: cases)
                 guard let (range, text) = made else { return .refused(nil) }
                 bytes.replaceSubrange(range, with: Array(text.utf8))

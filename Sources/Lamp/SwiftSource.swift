@@ -380,7 +380,15 @@ enum SwiftSource {
             guard isWord(byte) else { return start + 1 }
             var end = start
             let number = byte >= 48 && byte <= 57
-            while end < bytes.count, isWord(bytes[end]) || (number && bytes[end] == UInt8(ascii: ".")) { end += 1 }
+            let hex = number && start + 1 < bytes.count && byte == UInt8(ascii: "0") && bytes[start + 1] | 0x20 == UInt8(ascii: "x")
+            while end < bytes.count {
+                let b = bytes[end]
+                if isWord(b) || (number && b == UInt8(ascii: ".")) { end += 1; continue }
+                // A signed exponent is part of the literal: after `e` in a decimal one, after `p` in a hex one.
+                if number, end > start, b == UInt8(ascii: "+") || b == UInt8(ascii: "-"),
+                   bytes[end - 1] | 0x20 == (hex ? UInt8(ascii: "p") : UInt8(ascii: "e")) { end += 1; continue }
+                break
+            }
             return end
         }
 

@@ -364,6 +364,28 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertTrue(LiveObject.isKept("_$s6Lively5Outer4MoodOMn", as: LiveObject.mangledType("Outer.Mood", module: "Lively", kind: "O", kinds: ["Outer": "V"])) == false)
         XCTAssertTrue(LiveObject.isKept("_$s6Lively5OuterV4MoodOMn", as: LiveObject.mangledType("Outer.Mood", module: "Lively", kind: "O", kinds: ["Outer": "V"])))
         XCTAssertFalse(LiveObject.isKept("_$s6Lively6HiddenVMn", as: LiveObject.mangledType("Hidde", module: "Lively", kind: "V")))
+        // A kept enum's statics and nested types are the app's, not the enum's own.
+        XCTAssertFalse(LiveObject.isKept("_$s6Lively4MoodO5countSivau", as: LiveObject.mangledType("Mood", module: "Lively", kind: "O")))
+        XCTAssertFalse(LiveObject.isKept("_$s6Lively4MoodO4InfoVMn", as: LiveObject.mangledType("Mood", module: "Lively", kind: "O")))
+        XCTAssertTrue(LiveObject.isKept("_$s6Lively4MoodOMn", as: LiveObject.mangledType("Mood", module: "Lively", kind: "O")))
+        // A signed exponent is part of a number's token.
+        let numbers = SwiftSource.Text("let a = 1e-7, b = 0xFFp-1, c = 2.5E+3, d = 7")
+        XCTAssertEqual(numbers.tokenEnd(SwiftSource.Position(file: "", line: 1, column: 9)), 12)
+        XCTAssertEqual(numbers.tokenEnd(SwiftSource.Position(file: "", line: 1, column: 19)), 25)
+        XCTAssertEqual(numbers.tokenEnd(SwiftSource.Position(file: "", line: 1, column: 32)), 37)
+        XCTAssertEqual(numbers.tokenEnd(SwiftSource.Position(file: "", line: 1, column: 44)), 44)
+        // A constant taken away keeps its value's digest with the open app's layout, like a type: brought back with
+        // another value, it's remade rather than read from the app's storage.
+        let constant = LiveReload.Group.constant.entry("Tones\tlimit: abc"), other = LiveReload.Group.constant.entry("Tones\tother: def")
+        XCTAssertEqual(LiveReload.layoutProblem(before: [constant, other], after: [other]).layout?.contains(constant), true)
+        XCTAssertEqual(LiveReload.layoutProblem(before: [constant, other], after: [LiveReload.Group.constant.entry("Tones\tlimit: xyz"), other]).layout?.contains(constant), false)
+        // Each group keeps its own history: an alias named Mood says nothing of the shape the enum Mood had.
+        let moodShape = LiveReload.Group.shape.entry("Mood", "enum"), moodAlias = LiveReload.Group.alias.entry("Mood = Int")
+        XCTAssertEqual(LiveReload.layoutProblem(before: ["Mood\t", "Mood\tcase a: (Mood.Type) -> Mood", moodShape], after: [moodAlias]).layout?.contains(moodShape), true)
+        // Nested plain collections of a grown enum keep its unused numbers unused; an optional or a tuple of it doesn't.
+        XCTAssertNil(LiveReload.enumsHeld(grown: ["Mood"], held: ["Mood\t", "Mood\tcase a: (Mood.Type) -> Mood", "\tnested: [[Mood]]", "\tbyName: [String : [Mood]]", "\tbyMood: [Mood : [Int]]", "\tall: Array<Mood>"], spares: [:]))
+        XCTAssertEqual(LiveReload.enumsHeld(grown: ["Mood"], held: ["Mood\t", "\tmaybe: [Mood?]"], spares: [:]), "a global holds Mood as [Mood?], which a new case would change")
+        XCTAssertEqual(LiveReload.readable("Model changed what it holds (Model.$__lazy_storage_$_cache: Int?)"), "Model changed what it holds (Model.cache (lazy): Int?)")
         // A private type moved to another file is another type to the runtime, whatever its layout.
         XCTAssertTrue(layout!.contains(LiveReload.placeGroup + "\tHidden\tShapes.swift"), "\(layout!.filter { $0.hasPrefix(LiveReload.placeGroup) })")
         _ = try await layoutWith([("private struct Hidden { var v = 1 }\n", "")])
