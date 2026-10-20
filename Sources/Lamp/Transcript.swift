@@ -199,7 +199,8 @@ extension LogLine {
             guard line.kind == .tool else { out.append(line); continue }
             let call = ToolCall(line.text)
             guard call.action != .run else { continue }
-            let words = TurnProgress.activity(for: call)
+            // The agent's own words for the step when it gave some, else what the live line said.
+            let words = line.said ?? TurnProgress.activity(for: call)
             guard !words.isEmpty else { continue }
             if let last = out.last, last.kind == .status, last.text == words, last.said == nil { continue }
             out.append(LogLine(id: line.id, kind: .status, text: words))

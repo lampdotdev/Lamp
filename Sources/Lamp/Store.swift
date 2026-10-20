@@ -2817,6 +2817,8 @@ final class Store: ObservableObject {
                     write(piece, for: project)
                 case .text(let text):
                     // The whole message. It takes the place of what was shown of it while it was written.
+                    // What the agent last said it was doing is over: the steps after this message are the message's.
+                    turn.naming = nil
                     let written = turn.writing?.line
                     turn.writing = nil
                     if let line = written, let index = logs[project.id]?.lastIndex(where: { $0.id == line }) {
@@ -2861,12 +2863,14 @@ final class Store: ObservableObject {
                 case .naming(let words):
                     turn.naming = words.nilIfEmpty
                     if let words = turn.naming { noteAgent(words, for: project) }
-                case .tool(let text, let fullCall):
-                    log(project, .tool, text)
+                case .tool(let text, let fullCall, let said):
                     let call = ToolCall(text)
+                    // The step in the agent's own words: what it gave this call, else what it last said it's doing (a
+                    // command's name, a heading), which names the file work that follows until it says something else.
+                    let fileWork = [.read, .write, .edit, .search, .list, .delete].contains(call.action)
+                    let named = said ?? (call.action == .run || fileWork ? turn.naming : nil)
+                    log(project, .tool, text, said: named)
                     endOnQuestions(turn, before: call.name)
-                    // A command the agent named is shown by that name rather than as "Running a command".
-                    let named = call.action == .run ? turn.naming : nil
                     noteAgent(named ?? TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
                     if let file = TurnProgress.file(changedBy: call) { progress[project.id]?.wrote(file) }
                     toolCalls += 1
