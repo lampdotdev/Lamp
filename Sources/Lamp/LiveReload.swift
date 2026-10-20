@@ -210,14 +210,17 @@ enum LiveReload {
         }
         // A private type's name carries its file: moved to another, it's a new type to the runtime, so a value the
         // open app made is no longer one (`as? Helper` fails) though its layout is the same.
-        func places(_ entries: [String]) -> [String: String] {
-            Dictionary(entries.filter { $0.hasPrefix(placeGroup + "\t") }.compactMap { entry -> (String, String)? in
+        // Two files may each have a private type of one name: each name maps to every file declaring it, and a
+        // move is a file that no longer declares it beside one that newly does.
+        func places(_ entries: [String]) -> [String: Set<String>] {
+            Dictionary(entries.filter { $0.hasPrefix(placeGroup + "\t") }.compactMap { entry -> (String, Set<String>)? in
                 let parts = entry.split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false)
-                return parts.count == 3 ? (String(parts[1]), String(parts[2])) : nil
-            }, uniquingKeysWith: { first, _ in first })
+                return parts.count == 3 ? (String(parts[1]), [String(parts[2])]) : nil
+            }, uniquingKeysWith: { $0.union($1) })
         }
         for (name, was) in places(before).sorted(by: { $0.key < $1.key }) {
-            if let is_ = places(now)[name], is_ != was { return ("\(name) is private and moved from \(was) to \(is_), which makes it another type for the values the open app holds", nil) }
+            guard let is_ = places(now)[name], let from = was.subtracting(is_).sorted().first, let to = is_.subtracting(was).sorted().first else { continue }
+            return ("\(name) is private and moved from \(from) to \(to), which makes it another type for the values the open app holds", nil)
         }
         // What a `some`-returning member builds is its type, which the open app's witness tables and callers were
         // laid out for; one that builds another type under the same name, or from other calls where the type can't
@@ -262,7 +265,7 @@ enum LiveReload {
         let kept = now + before.filter { let group = String($0.prefix { $0 != "\t" }); return ![aliasGroup, opaqueGroup, placeGroup].contains(group) && new[group] == nil }
             + before.filter { $0.hasPrefix(aliasGroup + "\t") && aliases([$0]).keys.allSatisfy { remaining[$0] == nil } }
             + before.filter { $0.hasPrefix(opaqueGroup + "\t") && opaque([$0]).keys.allSatisfy { remainingOpaque[$0] == nil } }
-            + before.filter { $0.hasPrefix(placeGroup + "\t") && places([$0]).keys.allSatisfy { remainingPlaces[$0] == nil } }
+            + before.filter { $0.hasPrefix(placeGroup + "\t") && places([$0]).allSatisfy { remainingPlaces[$0.key]?.isSuperset(of: $0.value) != true } }
         return (nil, kept)
     }
 

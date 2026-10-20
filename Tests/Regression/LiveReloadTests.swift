@@ -296,7 +296,13 @@ final class LiveReloadTests: XCTestCase {
         try "private struct Hidden { var v = 1 }\n".write(to: sources.appendingPathComponent("Hidden.swift"), atomically: true, encoding: .utf8)
         let moved = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift", "Hidden.swift"], module: project.exe, macOS: "14.0")
         XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: try XCTUnwrap(moved)).problem, "Hidden is private and moved from Shapes.swift to Hidden.swift, which makes it another type for the values the open app holds")
+        // Two files each with their own: taking one away moves nothing.
+        _ = try await layoutWith([("typealias Side = Int\n", "typealias Side = Int\nprivate struct Hidden { var v = 1 }\n")])
+        let both = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift", "Hidden.swift"], module: project.exe, macOS: "14.0")
         try FileManager.default.removeItem(at: sources.appendingPathComponent("Hidden.swift"))
+        let oneLeft = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
+        XCTAssertEqual(try XCTUnwrap(both).filter { $0.hasPrefix(LiveReload.placeGroup) }.count, 2)
+        XCTAssertNil(LiveReload.layoutProblem(before: both, after: try XCTUnwrap(oneLeft)).problem)
         XCTAssertEqual(LiveReload.existential(in: "any CustomDebugStringConvertible", holding: "Mood", conformances: conformances), "any CustomDebugStringConvertible")
         XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
         XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")
