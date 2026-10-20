@@ -657,6 +657,8 @@ final class Store: ObservableObject {
     private var artInProgress: Set<String> = []
     /// Designs whose artwork couldn't be drawn, by `Icons.artKey`: their icons show the symbol, not the blueprint.
     private var artFailed: Set<String> = []
+    /// Apps whose blueprint gives way to the symbol once the turn that has them ends (`artworkWontCome`).
+    private var iconFallbackWhenFree: Set<String> = []
     private var pendingIconArt: Set<String> = []     // artwork finished during a turn, to apply after it
     private var heldInstalls = HeldInstalls()        // new icons waiting for their app to close
     private var heldDrawingOffers: Set<String> = []  // "Draw Icon…" wanted during a turn, to offer after it
@@ -764,6 +766,7 @@ final class Store: ObservableObject {
         saveWaiting()
         openWaitingImport()
         await backfillIcons()
+        resumeWaitingIcons()
     }
 
     private func pollSetup() {
@@ -2330,6 +2333,9 @@ final class Store: ObservableObject {
         }
         release(project)
         if reloadWhenFree.remove(project.id) != nil { reloadWaiting(project.id) }
+        if iconFallbackWhenFree.remove(project.id) != nil, let spec = Icons.load(project) {
+            Task { await artworkWontCome(project, spec: spec, failed: false) }
+        }
         fixHeldCrash(project)
         offerHeldDrawing(project)
         startQueued(project)
@@ -5584,8 +5590,13 @@ final class Store: ObservableObject {
         do {
             let art = Icons.artwork(project, spec: spec)
             if art != nil { artApplied[project.id] = spec }
-            icons[project.id] = try await Icons.write(spec, art: art ?? (awaitsArtwork(project, spec: spec) ? .waiting : nil),
-                                                      for: project)
+            let waiting = art == nil && awaitsArtwork(project, spec: spec)
+            icons[project.id] = try await Icons.write(spec, art: art ?? (waiting ? .waiting : nil), for: project)
+            if waiting {
+                FileManager.default.createFile(atPath: Icons.waitingURL(project).path, contents: nil)
+            } else {
+                try? FileManager.default.removeItem(at: Icons.waitingURL(project))
+            }
         } catch {
             log(project, .detail, "Icon render failed: \(error.localizedDescription)")
         }
@@ -5598,15 +5609,39 @@ final class Store: ObservableObject {
             && !artFailed.contains(Icons.artKey(project, spec: spec)) && (GlassIcons.canDraw || AppAI.imageRoute != nil)
     }
 
-    /// Artwork that won't come after all: the icon goes from the blueprint to its symbol, on the app too when nothing
-    /// else has it (otherwise the next install takes it).
-    private func artworkWontCome(_ project: LampProject, spec: IconSpec) async {
-        artFailed.insert(Icons.artKey(project, spec: spec))
+    /// Artwork that won't come after all (`failed`: drawing it didn't work; otherwise the person now draws icons
+    /// themselves): the icon goes from the blueprint to its symbol, in Lamp and on the app. While a turn has the app,
+    /// it's put on the app when the turn ends (`finish`).
+    private func artworkWontCome(_ project: LampProject, spec: IconSpec, failed: Bool = true) async {
+        if failed { artFailed.insert(Icons.artKey(project, spec: spec)) }
         guard exists(project), Icons.load(project) == spec, Icons.artwork(project, spec: spec) == nil else { return }
-        guard begin(project) != nil else { return await renderIcon(project, spec: spec) }
+        guard begin(project) != nil else {
+            await renderIcon(project, spec: spec)
+            iconFallbackWhenFree.insert(project.id)
+            return
+        }
         await renderIcon(project, spec: spec)
         if FileManager.default.fileExists(atPath: project.builtURL.path) { await installIcon(project) }
         finish(project)
+    }
+
+    /// Icons left waiting for artwork when Lamp last quit: drawn now, or put on the app if they came meanwhile, or
+    /// given their symbol when nothing can draw them any more.
+    private func resumeWaitingIcons() {
+        for project in projects where FileManager.default.fileExists(atPath: Icons.waitingURL(project).path) {
+            guard let spec = Icons.load(project) else { continue }
+            if Icons.artwork(project, spec: spec) != nil {
+                Task {
+                    guard begin(project) != nil else { return }
+                    await applyIconArt(project, spec: spec)
+                    finish(project)
+                }
+            } else if awaitsArtwork(project, spec: spec) {
+                upgradeIconArt(project)
+            } else {
+                Task { await artworkWontCome(project, spec: spec, failed: false) }
+            }
+        }
     }
 
     /// The setup offers already in an app's chat.
@@ -5685,8 +5720,11 @@ final class Store: ObservableObject {
                 return await artworkWontCome(project, spec: spec)
             }
             // The person may choose to draw icons themselves during either wait here: from then on nothing
-            // Lamp drew is used, and the drawing is theirs to do.
-            guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
+            // Lamp drew is used, and the drawing is theirs to do; the icon is its symbol until then.
+            guard !AppAI.iconsByHand else {
+                offerDrawing(project, spec: spec)
+                return await artworkWontCome(project, spec: spec, failed: false)
+            }
             do {
                 let log: @MainActor (String) -> Void = { [weak self] in self?.log(project, .detail, $0) }
                 let art: Icons.Artwork
@@ -5696,7 +5734,10 @@ final class Store: ObservableObject {
                 } else {
                     art = .picture(try await Icons.generateBestArt(spec, appName: project.name, log: log))
                 }
-                guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
+                guard !AppAI.iconsByHand else {
+                    offerDrawing(project, spec: spec)
+                    return await artworkWontCome(project, spec: spec, failed: false)
+                }
                 // A picture picked in Image Playground while these were being drawn is the person's choice: it stays.
                 guard Icons.artwork(project, spec: spec) == nil else { return }
                 switch art {

@@ -242,6 +242,8 @@ enum Icons {
     static func carURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/Assets.car") }
     static func documentURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/AppIcon.icon") }
     static func previewURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/icon.png") }
+    /// There while the icon on the app is the blueprint waiting for its artwork, so a relaunch of Lamp picks it up again.
+    static func waitingURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/icon-waiting") }
     /// The icon as iOS takes it: a plain 1024px square, which the device rounds itself.
     static func squareURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/AppIcon-square.png") }
 
@@ -404,7 +406,13 @@ enum Icons {
             prompt += "\n\"\(spec.subject)\" is two objects (\"\(second)\"). Make the subject one object."
         }
         if let best { return best }
-        return fallback(for: project.name)
+        // The color already shown stays, even when nothing better than the stand-in design could be had.
+        var standIn = fallback(for: project.name)
+        if let chosen {
+            standIn.background = chosen
+            if background(named: chosen).isLight { standIn.tint = "#3A3A3C" }
+        }
+        return standIn
     }
 
     /// The words by which a subject puts a second object beside its one, if it does.
