@@ -59,8 +59,11 @@ enum DataSnapshots {
               !fm.fileExists(atPath: backups.path) || !isLink(backups) else { return nil }
         // What the copy covers is the data as last written before it began: a write that lands while it's made may
         // be missing from it, so the copy is dated then (below), and such a write makes the next one.
-        let written = [database, data.appendingPathComponent("data.sqlite-wal")].compactMap(modified).max() ?? now
-        if let newest = changeCopies(in: backups).first.flatMap(modified), newest >= written { return nil }
+        // An empty write-ahead log holds nothing written: opening the database to read, this copy included, can leave one.
+        let log = data.appendingPathComponent("data.sqlite-wal")
+        let written = [database, size(of: log) == 0 ? nil : log].compactMap { $0.flatMap(modified) }.max() ?? now
+        // A date set from a `Date` can come back a fraction of a microsecond early, which isn't a write.
+        if let newest = changeCopies(in: backups).first.flatMap(modified), newest.addingTimeInterval(0.000_01) >= written { return nil }
         guard (try? fm.createDirectory(at: backups, withIntermediateDirectories: true)) != nil, !isLink(backups) else { return nil }
 
         let stamp = name(of: now)
@@ -132,6 +135,10 @@ enum DataSnapshots {
 
     private static func isLink(_ url: URL) -> Bool {
         (try? FileManager.default.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType) == .typeSymbolicLink
+    }
+
+    private static func size(of url: URL) -> Int? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue
     }
 
     private static func modified(_ url: URL) -> Date? {

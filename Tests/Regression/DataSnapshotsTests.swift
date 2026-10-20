@@ -41,7 +41,8 @@ final class DataSnapshotsTests: XCTestCase {
         // Dated when the data it holds was last written, not when the copy finished: a write during the copy is newer.
         let date = { (url: URL) in try! FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as! Date }
         let source = [data.appendingPathComponent("data.sqlite"), data.appendingPathComponent("data.sqlite-wal")]
-            .filter { FileManager.default.fileExists(atPath: $0.path) }.map(date).max()!
+            .filter { ((try? FileManager.default.attributesOfItem(atPath: $0.path)[.size] as? NSNumber)?.intValue ?? 0) > 0 }
+            .map(date).max()!
         XCTAssertEqual(date(copy).timeIntervalSince1970, source.timeIntervalSince1970, accuracy: 0.001)
 
         XCTAssertNil(DataSnapshots.snapshot(data, version: "01234567", now: now), "unchanged since the last copy")
@@ -69,7 +70,7 @@ final class DataSnapshotsTests: XCTestCase {
         let now = Date()
         // 30 copies an hour apart today and yesterday, and one from each of the 20 days before.
         var dates = (0..<30).map { now.addingTimeInterval(-Double($0) * 1800) }
-        dates += (2..<22).map { now.addingTimeInterval(-Double($0) * 86_400) }
+        dates += (2..<22).map { now.addingTimeInterval(-Double($0) * 86_400 - 3600) }
         for date in dates {
             let url = backups.appendingPathComponent("change-\(DataSnapshots.name(of: date))-abc.sqlite")
             FileManager.default.createFile(atPath: url.path, contents: Data())
@@ -80,8 +81,8 @@ final class DataSnapshotsTests: XCTestCase {
 
         DataSnapshots.prune(backups, now: now)
         let left = DataSnapshots.changeCopies(in: backups)
-        // The newest 20, and the newest of each of days 2 to 14 (one more when the half-hourly ones cross midnight).
-        XCTAssertTrue((33...34).contains(left.count), "\(left.count)")
+        // The newest 20, and the newest of each of days 2 to 13 (one more when the half-hourly ones cross midnight).
+        XCTAssertTrue((32...33).contains(left.count), "\(left.count)")
         XCTAssertFalse(left.contains { now.timeIntervalSince(try! FileManager.default.attributesOfItem(atPath: $0.path)[.modificationDate] as! Date) > 14.5 * 86_400 },
                        "older than two weeks goes")
         XCTAssertTrue(FileManager.default.fileExists(atPath: launch.path), "the app's own launch backups are its to prune")
