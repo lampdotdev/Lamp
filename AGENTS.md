@@ -59,8 +59,9 @@ A capability given to one engine must be given to all of them that can take it, 
   ones go in without reopening the app. A new app is built in passes too, the window's layout first. A new Mac app's
   scaffold ("Lamp is making this app.") is built and opened as its first turn starts, with the chat beside it
   (`Store.showEarly`, `Store.present`), so the person watches every pass go in; an iPhone app's simulator comes
-  forward at the agent's first look. Should a pass make it an app with no window, the chat goes back to Lamp's
-  window (`MagicPanel.keepChatInSight`).
+  forward at the agent's first look. When no chat comes back beside the app after a pass reopens it (the reopen
+  failed, it crashed, or the pass made it an app with no window), the chat goes back to Lamp's window
+  (`MagicPanel.keepChatInSight`). The early build is settled before the turn lets go of the app, however it ends.
   Result cards saved by an earlier Lamp still read and aren't shown (`LogLine.visible`). A new app's build card folds
   to its first line (its name, Ready) once the turn is over, with no picture of the app. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither

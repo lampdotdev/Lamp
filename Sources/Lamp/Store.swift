@@ -2274,6 +2274,9 @@ final class Store: ObservableObject {
                 owner.sentFrom = head
             }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
+            // The scaffold's early build is the turn's until it's settled, whichever way the turn ended (a question, a
+            // failure, a Stop): released before it, the next turn's build could run beside it on the same files.
+            await owner.early?.value
             worked = result.end != .failed
         }
     }
@@ -4745,6 +4748,9 @@ final class Store: ObservableObject {
             if problem == nil, Template.hasHomeScreenWidget(project), WidgetCard.isNeeded(after: logs[project.id] ?? []) { log(project, .widget, "") }
             return problem
         }
+        // In a new app's first turn its chat may already be beside it (`present`): whatever this install comes to (the
+        // app open again, a crash, a failed install, a pass that took its window away), the chat is still somewhere.
+        defer { if progress[project.id]?.newApp == true { Task { await MagicPanel.shared.keepChatInSight(project) } } }
         // A change that can go into the open app goes in there, keeping what's on screen; the build waits to be
         // installed until the app closes (LiveReload).
         if !fresh, await reloadInPlace(project, inFront: inFront) {
@@ -4813,7 +4819,6 @@ final class Store: ObservableObject {
             // In place is all there is to it: a card that said it didn't get there says so no longer.
             noteOpened(true, for: project)
             if inFront { log(project, .status, "\(project.name) is ready") }
-            if progress[project.id]?.newApp == true { await MagicPanel.shared.keepChatInSight(project) }
             upgradeIconArt(project)
             refreshOpenApps()
             stamps[project.id] = BuildStamp.read(project.installedURL)
@@ -4835,7 +4840,6 @@ final class Store: ObservableObject {
             } else {
                 noteOpened(true, for: project)
                 if inFront { log(project, .status, "\(project.name) is ready") }
-                if progress[project.id]?.newApp == true { await MagicPanel.shared.keepChatInSight(project) }
             }
         } catch {
             log(project, .error, ErrorMessages.openFailed(error.localizedDescription))

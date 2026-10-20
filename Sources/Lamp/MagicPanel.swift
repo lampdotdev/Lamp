@@ -107,12 +107,21 @@ final class MagicPanel {
         }
     }
 
-    /// A new app's chat moves beside it early in its first turn (`Store.present`), before the agent has decided what
-    /// the app is: a pass can make it a menu bar app or a widget, which has no window for the chat to be beside. When
-    /// it opens again as one, the chat goes back to Lamp's window rather than nowhere.
+    /// A new app's chat moves beside it early in its first turn (`Store.present`), and every pass that reopens the app
+    /// takes it down with the old copy. When no chat comes back beside the app (the reopen failed, the app crashed, or a
+    /// pass made it a menu bar app or a widget, with no window for it), the chat goes back to Lamp's window rather than
+    /// nowhere, with the turn's progress, its errors and Stop. A chat the person closed beside the app keeps its
+    /// connection, so it isn't brought back against their wish.
     func keepChatInSight(_ project: LampProject) async {
-        guard FileManager.default.fileExists(atPath: Self.handedOff(project).path), !(await Self.chatsInApp(project)),
-              !Store.shared.chatWindows.contains(project.id) else { return }
+        guard FileManager.default.fileExists(atPath: Self.handedOff(project).path) else { return }
+        if await Self.chatsInApp(project) {
+            // A copy that opened brings its chat back as its window comes up: give it the time that takes.
+            for _ in 0..<40 {
+                if SidebarServer.shared.isConnected(project.id) || Store.shared.chatWindows.contains(project.id) { return }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+        guard !SidebarServer.shared.isConnected(project.id), !Store.shared.chatWindows.contains(project.id) else { return }
         Store.shared.showChat(project.id)
     }
 
