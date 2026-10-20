@@ -4209,20 +4209,28 @@ final class Store: ObservableObject {
 
     /// A starter's chat begins with what it offers to change first (`Starters.card`), added a moment after the chat
     /// is first shown, beside the app or in Lamp's window, so it arrives there rather than being there already.
-    /// Once: a chat with anything in it is left as it is.
+    /// Once: a chat in which anything has been said is left as it is. Lamp's own lines about building the app (one
+    /// built again for a newer Lamp before its chat was ever opened: "Updating … for this version of Lamp…", "… is
+    /// ready") aren't a conversation, so the card still comes, under them.
     func offerStarterChanges(_ id: String, after delay: Double) {
-        guard (logs[id] ?? []).isEmpty, let project = projects.first(where: { $0.id == id }), Starters.isStarter(project),
+        guard Self.nothingSaid(in: logs[id] ?? []), let project = projects.first(where: { $0.id == id }), Starters.isStarter(project),
               let starter = Starters.starter(of: project), let card = Starters.card(for: starter),
               offeringStarter.insert(id).inserted else { return }
         Task {
             try? await Task.sleep(for: .seconds(delay))
             offeringStarter.remove(id)
-            guard let current = current(project), (logs[id] ?? []).isEmpty else { return }
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { logs[id] = [card] }
+            guard let current = current(project), Self.nothingSaid(in: logs[id] ?? []) else { return }
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { logs[id, default: []].append(card) }
             saveChat(current)
         }
     }
     private var offeringStarter: Set<String> = []
+
+    /// Whether a chat holds nothing but Lamp's own lines about building and opening the app: no request, no word
+    /// from the agent, no card.
+    private static func nothingSaid(in lines: [LogLine]) -> Bool {
+        lines.allSatisfy { [.status, .detail, .error].contains($0.kind) }
+    }
 
     /// Starters being built for the first time, out of sight: their icons spin on the desk.
     @Published private(set) var preparing: Set<String> = []
