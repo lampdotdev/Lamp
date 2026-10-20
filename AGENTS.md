@@ -778,9 +778,9 @@ app has no way to speak to the agent that builds it: it only shows the chat, say
 moves the panel when the chat asks (`LampSidebarHost`, the one thing the chat asks of it). The draft
 is shared with Lamp's window (`Store.updateDraft`). A sidebar left open opens again with the app's first window when
 the app reopens (`LampSidebar.restore`). An app
-installed without the extension (by an earlier Lamp) shows its chat in Lamp's window instead. A change still reopens
-the app; the rule (`Agent.Rules.macGenerated`) asks the agent to keep what the person was looking at in
-`@SceneStorage`, so it comes back as they left it. As the app quits it leaves where its front window was in its
+installed without the extension (by an earlier Lamp) shows its chat in Lamp's window instead. Most changes go into
+the open app (below); for one that reopens it, the rule (`Agent.Rules.macGenerated`) tells the agent so and asks it to
+keep what the person was looking at in `@SceneStorage`, so it comes back as they left it. As the app quits it leaves where its front window was in its
 runtime folder (`LampMagic.leavePlace`), and the new copy opens its first window in the same place (`putBack`). Lamp
 puts no picture of the window in its place meanwhile: a copy that opens no window (a menu bar app) left one standing
 until it timed out.
