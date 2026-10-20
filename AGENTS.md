@@ -843,7 +843,11 @@ linked into a library. Every file is compiled when what's declared changed (a fu
 property, a conformance, a member's `@objc` and its selector, a stored property's observers, which turn every write
 into a call: `LiveReload.declarationGroup`, `declarationsChanged`), since an unchanged caller may then mean
 another one (a new overload, a method where a protocol's default stood in), and a file taken away while another
-arrives (one renamed) reopens the app, since what was private to it is named after its file and would start over. The library is what the app loads when asked with a request signed with its token, only from its
+arrives (one renamed) reopens the app, since what was private to it is named after its file and would start over.
+What's compiled is decided before anything is: the changed files are compiled alongside the layout's check, and that
+library is the one sent unless something widened it (spares rewriting the copy, what's declared changing, an enum
+growing, a constant remade), in which case every file the change needs is compiled once, at the end of `attempt`,
+never once per reason. The library is what the app loads when asked with a request signed with its token, only from its
 own `.lamp/live` (`LampLive` in LampSupport, under `#if LAMP_LIVE`). It points the app's own calls at the new
 functions by rewriting the symbol pointers they go through, and the method tables of the app's classes (their
 deinit included) at the changed methods; types, metadata and stored globals are left alone. A library compiled from
