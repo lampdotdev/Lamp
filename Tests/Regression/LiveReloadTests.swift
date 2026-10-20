@@ -161,6 +161,7 @@ final class LiveReloadTests: XCTestCase {
             struct Styled: Drawn { func mark() -> some Shape { Square(side: 1, name: "s") }; func n() -> some Numeric { 1 }; func t() -> some Equatable { "a" }; func p() -> some Equatable { n() }; func l() -> some Equatable { func local() -> some Equatable { 0 }; return String() } }
             struct Outer { enum Mood: Shape { case a, b; func area() -> Int { 0 }; var name: String { get { "" } set {} } } }
             final class Holder { var byName: [String: Outer.Mood] = [:]; var list: [Outer.Mood] = [] }
+            private struct Hidden { var v = 1 }
             final class Tagged: NSObject { @objc(oldName) func a() {}; @objc func b() {}; override var description: String { "t" }; @objc(oldStatic) static var value = 1 }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
         let layout = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
@@ -289,6 +290,13 @@ final class LiveReloadTests: XCTestCase {
         let notesChangedLayout = await LiveReload.analysis(of: sources, in: project, module: project.exe, macOS: "14.0")?.layout
         let notesChanged = try XCTUnwrap(notesChangedLayout)
         XCTAssertEqual(LiveReload.layoutProblem(before: notes, after: notesChanged).problem, "the file of the SwiftData model Note changed, and its data is found by key paths the open app made")
+        // A private type moved to another file is another type to the runtime, whatever its layout.
+        XCTAssertTrue(layout!.contains(LiveReload.placeGroup + "\tHidden\tShapes.swift"), "\(layout!.filter { $0.hasPrefix(LiveReload.placeGroup) })")
+        _ = try await layoutWith([("private struct Hidden { var v = 1 }\n", "")])
+        try "private struct Hidden { var v = 1 }\n".write(to: sources.appendingPathComponent("Hidden.swift"), atomically: true, encoding: .utf8)
+        let moved = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift", "Hidden.swift"], module: project.exe, macOS: "14.0")
+        XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: try XCTUnwrap(moved)).problem, "Hidden is private and moved from Shapes.swift to Hidden.swift, which makes it another type for the values the open app holds")
+        try FileManager.default.removeItem(at: sources.appendingPathComponent("Hidden.swift"))
         XCTAssertEqual(LiveReload.existential(in: "any CustomDebugStringConvertible", holding: "Mood", conformances: conformances), "any CustomDebugStringConvertible")
         XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
         XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")

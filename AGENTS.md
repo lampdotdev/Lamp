@@ -762,7 +762,8 @@ returning `some …`, a modifier's `body(content:)` or a style's `makeBody`, who
 type as the compiler prints it where the body's value becomes the opaque one, `LiveReload.opaqueGroup`, so `1` may
 become `1.5` only if the member returns a Double now, and `Text("a")` may become `Text("a").bold()`; where that type is
 opaque too (a modifier's `some View`) it's listed by a digest of the calls and types its body names instead: the open app's witness tables and callers were laid out for the type it had, and the
-compiler prints both as `some View`; a view's own body, wrapped by the live copy, and a private member are left out) (`LiveReload.reloadable`, comparing with the sources the
+compiler prints both as `some View`; a view's own body, wrapped by the live copy, and a private member are left out; a private type is listed with its file,
+`LiveReload.placeGroup`, since its mangled name carries it and one moved to another file is another type at run time) (`LiveReload.reloadable`, comparing with the sources the
 open app runs, kept in `.lamp/live/running`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
 linked into a library. Every file is compiled when what's declared changed (a function, an initializer, a computed
 property, a conformance, a member's `@objc` and its selector, a stored property's observers, which turn every write

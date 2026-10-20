@@ -173,6 +173,9 @@ enum LiveReload {
     /// and what's declared (`declarationGroup`). Each is compared its own way, never as a type's fields.
     static func isGroup(_ type: String) -> Bool { (type.first?.asciiValue ?? 32) < 32 }
     static let aliasGroup = "\u{3}alias", declarationGroup = "\u{5}declared", opaqueGroup = "\u{6}opaque"
+    /// Where a private type is declared ("\u{7}place<tab>Name<tab>File.swift"): its mangled name carries its file, so
+    /// one moved to another file is another type to the runtime, whatever its layout.
+    static let placeGroup = "\u{7}place"
 
     /// The SwiftData model classes in a layout, each with the file that declares it (`SwiftSource.launchEntries`):
     /// a change that compiles that file, whatever it changed, makes the model's key paths over again.
@@ -204,6 +207,17 @@ enum LiveReload {
         }
         for (name, was) in aliases(before).sorted(by: { $0.key < $1.key }) {
             if let is_ = aliases(now)[name], is_ != was { return ("the typealias \(name) changed from \(was) to \(is_)", nil) }
+        }
+        // A private type's name carries its file: moved to another, it's a new type to the runtime, so a value the
+        // open app made is no longer one (`as? Helper` fails) though its layout is the same.
+        func places(_ entries: [String]) -> [String: String] {
+            Dictionary(entries.filter { $0.hasPrefix(placeGroup + "\t") }.compactMap { entry -> (String, String)? in
+                let parts = entry.split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false)
+                return parts.count == 3 ? (String(parts[1]), String(parts[2])) : nil
+            }, uniquingKeysWith: { first, _ in first })
+        }
+        for (name, was) in places(before).sorted(by: { $0.key < $1.key }) {
+            if let is_ = places(now)[name], is_ != was { return ("\(name) is private and moved from \(was) to \(is_), which makes it another type for the values the open app holds", nil) }
         }
         // What a `some`-returning member builds is its type, which the open app's witness tables and callers were
         // laid out for; one that builds another type under the same name, or from other calls where the type can't
@@ -244,10 +258,11 @@ enum LiveReload {
         // A type taken away is still in the open app, with its objects and statics, until it reopens: its layout
         // is kept, so one brought back under the same name is held to what it was. So is an alias taken away, each
         // on its own, since a type kept that way still reads by it.
-        let remaining = aliases(now), remainingOpaque = opaque(now)
-        let kept = now + before.filter { let group = String($0.prefix { $0 != "\t" }); return ![aliasGroup, opaqueGroup].contains(group) && new[group] == nil }
+        let remaining = aliases(now), remainingOpaque = opaque(now), remainingPlaces = places(now)
+        let kept = now + before.filter { let group = String($0.prefix { $0 != "\t" }); return ![aliasGroup, opaqueGroup, placeGroup].contains(group) && new[group] == nil }
             + before.filter { $0.hasPrefix(aliasGroup + "\t") && aliases([$0]).keys.allSatisfy { remaining[$0] == nil } }
             + before.filter { $0.hasPrefix(opaqueGroup + "\t") && opaque([$0]).keys.allSatisfy { remainingOpaque[$0] == nil } }
+            + before.filter { $0.hasPrefix(placeGroup + "\t") && places([$0]).keys.allSatisfy { remainingPlaces[$0] == nil } }
         return (nil, kept)
     }
 
@@ -633,7 +648,9 @@ enum LiveReload {
     /// a function's locals (inside a func or closure) never count, nor a static or a computed property.
     /// `held` adds what the app keeps beyond its types' own fields: static properties, and globals (under "").
     static func members(inDump dump: String, rawValues: Bool = false, held: Bool = false) -> [String] {
-        let typeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|actor)_decl\b[^"]*"([^"]+)""#)
+        // Its access comes after its name (and a generic one's parameters, in quotes); its place before, read apart.
+        let typeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|actor)_decl\b[^"]*"([^"]+)".*? access=(\w+)"#)
+        let declFile = try! NSRegularExpression(pattern: #" range=\[([^:\]]*):"#)
         // A protocol's requirements lay out its witness tables, which a change keeps using the app's: listed as what
         // the protocol holds, so one that gained or lost a requirement reopens the app like a type that changed.
         let protocolDecl = try! NSRegularExpression(pattern: #"^(\s*)\(protocol(_decl)?\b[^"]*"([^"]+)""#)
@@ -778,6 +795,11 @@ enum LiveReload {
                 // Every type is listed, members or not: an empty one the open app has is still its, and a first
                 // field added to it changes what it holds.
                 if seen.insert(type + "\t").inserted { out.append(type + "\t") }
+                // A private type is known by its file too (`placeGroup`): moved, it's another type at run time.
+                if ["private", "fileprivate"].contains(String(line[Range(m.range(at: 4), in: line)!])), let f = declFile.firstMatch(in: line, range: range) {
+                    let entry = placeGroup + "\t" + type + "\t" + (String(line[Range(f.range(at: 1), in: line)!]) as NSString).lastPathComponent
+                    if seen.insert(entry).inserted { out.append(entry) }
+                }
             } else if let m = extensionDecl.firstMatch(in: line, range: range) {
                 let type = String(line[Range(m.range(at: 2), in: line)!])
                 conformances(type)
