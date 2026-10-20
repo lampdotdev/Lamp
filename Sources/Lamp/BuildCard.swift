@@ -198,6 +198,11 @@ struct TurnProgress {
         return areas.first { !words.isDisjoint(with: $0.words) }?.activity ?? "Working on your app"
     }
 
+    /// Everything the line says while a call of the agent's runs: what tells a call being written from Lamp's own stages.
+    static let callWords: Set<String> = Set(ToolCall.names.map { activity(for: ToolCall("\($0) x")) }
+        + areas.map(\.activity) + ["APP.md", "icon.json", "MyApp.swift", "x"].map(area(of:))
+        + [activity(for: ToolCall("read screenshot.png")), "Running a command"])
+
     /// In order: "SettingsView" is the settings, not just any part of the interface.
     private static let areas: [(activity: String, words: Set<String>)] = [
         ("Making your app look nice", ["theme", "style", "color", "color", "font", "appearance", "design",

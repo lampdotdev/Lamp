@@ -157,6 +157,13 @@ final class WorkedForTests: XCTestCase {
         // A look's own stages after it ("Building…") are still the look.
         let look = going + LogLine.visible([LogLine(kind: .tool, text: "look_at_app"), LogLine(kind: .status, text: "Building…")], details: false)
         XCTAssertEqual(ChatItem.live(look, doing: "Building…").steps.map(\.text), ["Looking things over", "Working on the interface"])
+        // The next call being written says its words before it's logged: the edit before it is done.
+        XCTAssertEqual(ChatItem.live(going, doing: "Looking things over").steps.map(\.text), ["Looking things over", "Working on the interface"])
+        // Nor is a look still going once the next call is being written after it.
+        XCTAssertEqual(ChatItem.live(look, doing: "Working on the interface").steps.map(\.text),
+                       ["Looking things over", "Working on the interface", "Checking how it looks"])
+        // While it's going, its stages are Lamp's own words, not a call's.
+        XCTAssertEqual(ChatItem.live(look, doing: "Opening Hot Shelf…").steps.map(\.text), ["Looking things over", "Working on the interface"])
         // A named command running is the line's words, and done it's a step by that name.
         let command = going + [LogLine(kind: .status, text: "Ran: swift build", said: "Checking it builds")]
         XCTAssertEqual(ChatItem.live(command, doing: "Checking it builds").steps.map { $0.said ?? $0.text },

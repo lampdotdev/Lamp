@@ -27,6 +27,9 @@ struct ToolCall {
 
     var isKnown: Bool { action != .other }
 
+    /// Every tool name the engines' calls are known by.
+    static var names: Dictionary<String, Action>.Keys { actions.keys }
+
     private static let actions: [String: Action] = [
         "read": .read, "write": .write,
         "edit": .edit, "multiedit": .edit, "patch": .edit, "apply_patch": .edit, "notebookedit": .edit,
@@ -277,11 +280,14 @@ enum ChatItem: Identifiable {
         return (lines.filter { !taken.contains($0.id) }, steps)
     }
 
-    /// Whether `step` is the one the turn is still on: nothing came after it but Lamp's own stages of it (a look's
-    /// "Building…"), and the line isn't saying the model is thinking, which it does once a step is over.
+    /// Whether `step` is the one the turn is still on: nothing came after it but Lamp's own stages of it, and the line
+    /// says its words, or (a look, whose stages are Lamp's: "Building…", "Opening…") says no call's words at all. A
+    /// call's words for another step mean the next call is already being written, which the engines report before it's
+    /// logged, so the step before it is done.
     private static func isGoing(_ step: LogLine, in lines: ArraySlice<LogLine>, doing: String?) -> Bool {
-        guard let doing, doing != Activity.thinking, let index = lines.lastIndex(where: { $0.id == step.id }) else { return false }
-        return lines[(index + 1)...].allSatisfy { $0.kind == .status && $0.text.hasSuffix("…") }
+        guard let doing, doing != Activity.thinking, let index = lines.lastIndex(where: { $0.id == step.id }),
+              lines[(index + 1)...].allSatisfy({ $0.kind == .status && $0.text.hasSuffix("…") }) else { return false }
+        return doing == (step.said ?? step.text) || !TurnProgress.callWords.contains(doing)
     }
 
     /// A finished run's lines, its steps under one line at its end: the same place the live line had while it went
