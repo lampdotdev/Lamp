@@ -1001,7 +1001,9 @@ final class SidebarServer {
                 let onCards = Set(state.lines.compactMap(\.takeBack))
                 state.queued = state.queued?.filter { !onCards.contains($0.id) }
             }
-            if state.draftVersion == sentDraftVersion {
+            // A sidebar from before keeps no words of its own when its box is drawn again (a panel closed), and reads
+            // Lamp's: it gets the draft as it is.
+            if version >= 9, state.draftVersion == sentDraftVersion {
                 state.draft = sentDraft
             } else {
                 sentDraft = state.draft

@@ -76,6 +76,9 @@ final class Link: ObservableObject {
     @Published var connected = false
     /// Lamp hasn't answered for a while: it isn't open.
     @Published var lampAway = false
+    /// The box's words as last typed here, with the draft version they were typed over. Lamp doesn't send back words
+    /// typed here, so a box drawn again (a panel was open in the chat's place) takes them from here, not from Lamp.
+    var typed: (version: Int, text: String)?
 
     private var fd: Int32 = -1
     private var outbox: SidebarOutbox?
@@ -610,6 +613,7 @@ private struct ComposerRow: View {
         .onAppear { take(state) }
         .onChange(of: state.draftVersion) { take(state) }
         .onChange(of: text) {
+            link.typed = (version, text)
             if emptiedToSend { emptiedToSend = false; return }
             link.send(.draft(text))
         }
@@ -625,7 +629,8 @@ private struct ComposerRow: View {
     private func take(_ state: SidebarState) {
         guard state.draftVersion != version else { return }
         version = state.draftVersion
-        if text != state.draft { text = state.draft }
+        let words = link.typed.flatMap { $0.version == state.draftVersion ? $0.text : nil } ?? state.draft
+        if text != words { text = words }
         focus += 1
     }
 
