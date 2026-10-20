@@ -125,19 +125,20 @@ A capability given to one engine must be given to all of them that can take it, 
   Lamp's hook only hands each one back confined, with no decision (`format=claude-confine`), what the classifier asks
   about comes to Lamp's card through `PermissionRequest` with no check or rating of Lamp's, and a command that ran is
   said in the chat from `PostToolUse` and `PostToolUseFailure` (`format=claude-ran`). What the classifier refuses stays
-  refused (the agent is told why, and the chat says "Not run:", `PermissionDenied`, `format=claude-refused`). Codex's
+  refused (the agent is told why, `PermissionDenied`, `format=claude-refused`, and the command's step stays as below). Codex's
   own reviewer (Auto-review: `approval_policy="on-request"`, `approvals_reviewer="auto_review"`) decides its commands the
   same way, with no hook of Lamp's: only a command that needs more than Codex's sandbox gives (below) reaches it, and
   what it refuses stays refused, with nothing coming to Lamp's card. Its policy (`CodexReview`, as `auto_review.policy`)
   is Codex's default copied whole with Lamp's rules after it, since that key replaces the default and `extra_policy`
   didn't reach the reviewer: refresh the copy when Codex's changes. Lamp's rules refuse what `CommandRisk` calls risky
   (outside the app, destructive, uploads, the person's files and secrets). The network is open inside the sandbox, so
-  an upload made from inside it never reaches the reviewer. Each Codex command is a step in the agent's own words, as every
-  engine's is, never its text: the heading of Codex's reasoning summary before it (`AgentEvent.naming`; Codex's output
-  gives a command no description of its own, and a quick step often comes with no summary, so it reads "Did a bit of
-  housekeeping"). One that ran is that step (`AgentEvent.ran`, `LogLine.ran`); one its reviewer refused, reported
-  `declined`, is "Not run:" and that step, or "a step outside this app" (`LogLine.refusing`), with the step Codex showed
-  as it started taken out. The commands stay only in Agent Details; the agent says in its own words what it couldn't do and why,
+  an upload made from inside it never reaches the reviewer. Codex's commands are said in the chat from its own output
+  (`AgentEvent.ran`, under "Only when risky" and Never, where no card of Lamp's says them), as every engine's are: by
+  the heading of Codex's reasoning summary before each (`AgentEvent.naming`; Codex's output gives a command no
+  description of its own, and a quick step often comes with no summary, so it reads "Did a bit of housekeeping"). Codex
+  shows a command as started before its reviewer decides, as Claude Code's streams before its classifier does, so a
+  refused one, whichever engine's, is no line of its own: it stays the step it was, and only opening it says it didn't
+  run (`ChatLook.notRun`, `ChatLook.ranCommand`). The agent says in its own words what it couldn't do and why,
   never the command (`Agent.codexNote`, and the reviewer is asked for a rationale it can pass on). Under Always Lamp's hook asks about every Codex command
   and under Never there's no hook; in both a command needing more than the sandbox is refused (`approval_policy="never"`).
   pi keeps Lamp's own check (`CommandRisk`).
@@ -254,7 +255,8 @@ A capability given to one engine must be given to all of them that can take it, 
   call (its parser, and its approval hook, which carries the same input; `Agent.claudeNote` asks for plain words),
   and for Codex the heading of the reasoning summary before it (`model_reasoning_summary`). The name is the activity
   while the command runs and the step's row in the chat (`LogLine.said`, `ChatLook.RanCommand`; consecutive commands
-  under one name are one row, `ChatItem.items`); a command with no name stays "Did a bit of housekeeping". pi's bash takes only the
+  under one name are one row, `ChatItem.items`); a command with no name stays "Did a bit of housekeeping". A
+  command a reviewer or classifier stopped is the same row, with "(not run)" beside it only once the row is opened. pi's bash takes only the
   command, so Lamp's extension replaces it, as pi's extension docs allow, with pi's own bash and a `description`
   (`bashWithDescription` in `lamp-tools.ts`), sent with the approval and read by pi's parser. It's required: left
   optional, some models (Sonnet) never fill it in. While Lamp itself works in a turn (a look's build, putting a change

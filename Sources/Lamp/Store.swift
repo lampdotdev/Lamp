@@ -530,6 +530,8 @@ final class Store: ObservableObject {
         /// What the agent last said it's doing, in its own words (`AgentEvent.naming`): the name of the commands
         /// that follow, until it says something else.
         var naming: String?
+        /// Whether the chat says each command from the engine's own output (`AgentRun.saysCommands`), for the run going now.
+        var saysCommands = false
         /// The agent put its questions to the person this turn: the turn is over, whatever the agent does next.
         var asked = false
         /// Lamp ended the agent because it went on working past its own questions. Not a stop and not a failure.
@@ -2808,6 +2810,7 @@ final class Store: ObservableObject {
         }
         var run = Agent.run(prompt: prompt, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
+        turn.saysCommands = run.saysCommands
         // Held strongly: it lives only while the engine runs. (A weak capture here, in a closure kept in a
         // variable rather than passed straight to `Shell.run`, came back nil and dropped every line.)
         let onLine: @MainActor (String) -> Void = { [self] line in
@@ -2925,12 +2928,12 @@ final class Store: ObservableObject {
                     received(project)
                 case .acting(let id, let started):
                     if started { turn.codexActing.insert(id) } else { turn.codexActing.remove(id); steer(project) }
-                case .ran(let command, let refused, let call):
-                    // Each Codex command is a step in the agent's own words, as every engine's is, and one its reviewer
-                    // refused says it didn't run; the command itself is only in Agent Details.
-                    logs[project.id] = refused ? LogLine.refusing(command, call: call, named: turn.naming, in: logs[project.id] ?? [])
-                        : LogLine.ran(named: turn.naming, in: logs[project.id] ?? [])
-                    saveChat(project)
+                case .ran(let command, let refused):
+                    // A command Codex ran is said in the chat as a command Lamp let run is, by the name the agent gave
+                    // it; one its reviewer refused is the same step, marked only when it's opened (`ChatLook.ranCommand`).
+                    // A run whose commands each come to Lamp's card says nothing here: the others' don't either.
+                    guard turn.saysCommands else { break }
+                    log(project, .status, (refused ? ChatLook.notRun : "Ran: ") + command, said: turn.naming)
                 case .finished:
                     // Claude Code has answered. A message sent from now on is the next request.
                     turn.input?.close()
@@ -2977,6 +2980,8 @@ final class Store: ObservableObject {
                   let id = Self.savedSession(sessionFile), exists(project) else { break }
             run = Agent.run(prompt: Agent.carryOn(message), files: [], project: current(project) ?? project,
                             offered: offers(in: project), session: id, token: turn.agentToken)
+            // The setting may have changed since the turn began, and with it whether Lamp's hook says each command.
+            turn.saysCommands = run.saysCommands
         }
         turn.agent = nil
         turn.codexStarted = false
@@ -6826,7 +6831,7 @@ final class Store: ObservableObject {
             if request.path.contains("format=claude-refused") {
                 if let known { confinedCommands[wrapped] = nil }
                 let why = (body["reason"] as? String ?? body["message"] as? String)?.trimmed.nilIfEmpty
-                log(project, .status, "Not run: \(command)", said: known?.said)
+                log(project, .status, ChatLook.notRun + command, said: known?.said)
                 if let why { log(project, .detail, "Claude Code's check stopped it: \(why)") }
                 return (200, [:])
             }
@@ -7690,30 +7695,4 @@ struct AppModels: Codable, Equatable {
 
     /// Posted when an app's own choices are saved, with its id: setup cards and notes look again.
     static let changed = Notification.Name("LampAppModelsChanged")
-}
-
-extension LogLine {
-    /// The chat once a Codex command ran: a step named in the agent's words (`AgentEvent.naming`), or as a step with
-    /// none, never the command, which only Agent Details shows (its start, a `.tool` line). Commands in a row under one
-    /// name are one step.
-    static func ran(named said: String?, in lines: [LogLine]) -> [LogLine] {
-        let words = said ?? ChatLook.unnamedStep
-        if let last = lines.last(where: { $0.kind != .tool && $0.kind != .detail }), last.kind == .status, last.text == words {
-            return lines
-        }
-        return lines + [LogLine(kind: .status, text: words)]
-    }
-
-    /// The chat once a command was refused before it ran: a step that says so in the agent's words, or as a step
-    /// outside the app when it gave none (Lamp's rules refuse only those), and the agent's own sentence after it. The
-    /// step Codex showed as it started (`call`) goes, since nothing ran; the command stays only for Agent Details.
-    static func refusing(_ command: String, call: String, named said: String?, in lines: [LogLine]) -> [LogLine] {
-        var lines = lines
-        if let index = lines.lastIndex(where: { $0.kind == .tool && $0.text == call }) { lines.remove(at: index) }
-        return lines + [LogLine(kind: .status, text: "Not run: " + (said ?? refusedStep)),
-                        LogLine(kind: .detail, text: "Refused: " + command)]
-    }
-
-    /// A refused command the agent gave no words of its own.
-    static let refusedStep = "a step outside this app"
 }

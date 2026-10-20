@@ -407,10 +407,17 @@ public enum ChatLook {
     /// A step the agent gave no words of its own.
     public static let unnamedStep = "Did a bit of housekeeping"
 
-    /// The command in a status line that says one was run.
+    /// The command in a status line that says one was run, or that one was stopped before it ran ("Not run: …", by
+    /// a reviewer or a classifier). A stopped command is the same step, by the name the agent gave it, whatever the
+    /// engine: its line was already showing while it was judged, and only opening the step says it didn't run.
     public static func ranCommand(in status: String) -> String? {
-        status.hasPrefix("Ran: ") ? String(status.dropFirst(5)) : nil
+        if status.hasPrefix("Ran: ") { return String(status.dropFirst(5)) }
+        if status.hasPrefix(notRun) { return String(status.dropFirst(notRun.count)) + "  (not run)" }
+        return nil
     }
+
+    /// How a status line says a command was stopped before it ran.
+    public static let notRun = "Not run: "
 
     /// A turn's progress: one line saying what the agent is doing, with no clock beside it, which changes in place
     /// as it moves from one thing to the next. `since` is when the activity began, which a long think or build is

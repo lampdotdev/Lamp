@@ -244,6 +244,9 @@ struct AgentRun {
     /// For an engine that reads its request from its input and keeps reading while it works (Claude Code): the
     /// request as the first line written there. Nil for one given it on the command line.
     var opening: String? = nil
+    /// Whether the chat says each command the engine ran from its own output (`AgentEvent.ran`), for a run whose
+    /// commands come to no card of Lamp's.
+    var saysCommands = false
 }
 
 extension Agent {
@@ -480,7 +483,7 @@ extension Agent {
             let linked = (try? FileManager.default.destinationOfSymbolicLink(atPath: folder)) != nil
             let command = !linked && Sandbox.prepareShims() ? launch
                 : "echo 'Lamp could not set up the sandbox that keeps ChatGPT Codex inside the app.' >&2; exit 1"
-            return AgentRun(command: command, env: env)
+            return AgentRun(command: command, env: env, saysCommands: approval != .always)
         }
     }
 
@@ -687,8 +690,7 @@ extension Agent {
         case ("item.completed", "command_execution"):
             // "declined": Codex's reviewer refused it, and it never ran.
             let command = item["command"] as? String ?? ""
-            return [.step("")] + (command.isEmpty ? [] : [.ran(Self.unwrapped(command), refused: item["status"] as? String == "declined",
-                                                                call: "Run: \(command)")])
+            return [.step("")] + (command.isEmpty ? [] : [.ran(Self.unwrapped(command), refused: item["status"] as? String == "declined")])
         case ("item.completed", "mcp_tool_call"):
             return [.step("")]
         case ("item.started", "mcp_tool_call"):
