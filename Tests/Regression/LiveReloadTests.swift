@@ -297,6 +297,8 @@ final class LiveReloadTests: XCTestCase {
         let notesChangedLayout = await LiveReload.analysis(of: sources, in: project, module: project.exe, macOS: "14.0")?.layout
         let notesChanged = try XCTUnwrap(notesChangedLayout)
         XCTAssertEqual(LiveReload.layoutProblem(before: notes, after: notesChanged).problem, "the file of the SwiftData model Note changed, and its data is found by key paths the open app made")
+        // The model keeps its data as any value, which would hide a grown enum from the checks below.
+        try FileManager.default.removeItem(at: sources.appendingPathComponent("Notes.swift"))
         // A private type moved to another file is another type to the runtime, whatever its layout.
         XCTAssertTrue(layout!.contains(LiveReload.placeGroup + "\tHidden\tShapes.swift"), "\(layout!.filter { $0.hasPrefix(LiveReload.placeGroup) })")
         _ = try await layoutWith([("private struct Hidden { var v = 1 }\n", "")])
@@ -314,10 +316,13 @@ final class LiveReloadTests: XCTestCase {
         _ = try await layoutWith([("var picked: Picked? = nil }", "var picked: Picked? = nil; var pick: Pick? = nil }")])
         let carried = await LiveReload.enumsHeld(project, grown: ["Outer.Mood"])
         XCTAssertEqual(carried, "Holder holds Pick, which carries Outer.Mood, as Pick?, which a new case would change")
-        // A carrier through typealiases, held by one: both are followed.
+        // A carrier through typealiases, held by one: each is written out as what it names, wrappers included.
         _ = try await layoutWith([("var pick: Pick? = nil }", "var choice: Choice? = nil }")])
         let aliased = await LiveReload.enumsHeld(project, grown: ["Outer.Mood"])
-        XCTAssertEqual(aliased, "Holder holds Choice, which carries Outer.Mood, as Choice?, which a new case would change")
+        XCTAssertEqual(aliased, "Holder holds Picky, which carries Outer.Mood, as Picky?, which a new case would change")
+        _ = try await layoutWith([("typealias Choice = Picky", "typealias Choice = Picky?"), ("var choice: Choice? = nil }", "var choice: Choice = nil }")])
+        let wrappedAlias = await LiveReload.enumsHeld(project, grown: ["Outer.Mood"])
+        XCTAssertEqual(wrappedAlias, "Holder holds Picky, which carries Outer.Mood, as Picky?, which a new case would change")
         XCTAssertEqual(LiveReload.existential(in: "any CustomDebugStringConvertible", holding: "Mood", conformances: conformances), "any CustomDebugStringConvertible")
         XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
         XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")

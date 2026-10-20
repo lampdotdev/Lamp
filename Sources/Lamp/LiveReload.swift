@@ -325,33 +325,39 @@ enum LiveReload {
             let parts = entry.split(separator: "\t", maxSplits: 1)
             return parts.count == 2 && (parts[1].hasPrefix("__lampSpare_") || parts[1].hasPrefix("__lampState_")) ? String(parts[0]) : nil
         })
-        let conformed = conformances(inLayout: entries), fields = conformed.fields
+        let conformed = conformances(inLayout: entries)
         let word = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
         func last(_ name: String) -> String { String(name.split(separator: ".").last ?? "") }
-        // A name as a field prints it may be a typealias of the enum or of a carrier: followed to what it names.
-        func resolved(_ name: String) -> String {
-            var name = name, steps = 0
-            while let target = conformed.aliases[name] ?? conformed.aliases[last(name)], steps < 8 { name = target; steps += 1 }
-            return name
+        // A kind as a field prints it may name a typealias (`Choice`, for `Picky?`): each is written out as what it
+        // names, wrappers and all, until none is left, so what holds the enum is judged by the type itself.
+        func expanded(_ kind: String) -> String {
+            var kind = kind
+            for _ in 0..<8 {
+                var changed = false
+                for m in word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).reversed() {
+                    let range = Range(m.range, in: kind)!, name = String(kind[range])
+                    guard let target = conformed.aliases[name] ?? conformed.aliases[last(name)], target != name else { continue }
+                    kind.replaceSubrange(range, with: target)
+                    changed = true
+                }
+                if !changed { break }
+            }
+            return kind
         }
+        let fields = conformed.fields.mapValues { $0.map(expanded) }
+        let holders = held.map { ($0.0, expanded($0.1)) }
         func carriers(of enumName: String) -> [String] {
             var found = Set([enumName]), grew = true
-            func carries(_ name: String) -> Bool {
-                let target = resolved(name)
-                return found.contains(name) || found.contains(last(name)) || found.contains(target) || found.contains(last(target))
-            }
             while grew {
                 grew = false
                 for (type, kinds) in fields where !found.contains(type) && !classes.contains(type) && !spared.contains(type) {
                     for kind in kinds {
                         let names = word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).map { String(kind[Range($0.range, in: kind)!]) }
-                        if names.contains(where: carries) { found.insert(type); grew = true; break }
+                        if names.contains(where: { found.contains($0) || found.contains(last($0)) }) { found.insert(type); grew = true; break }
                     }
                 }
             }
-            // The aliases of the enum and its carriers are looked for by their own names too.
-            let aliases = conformed.aliases.keys.filter { !found.contains($0) && (found.contains(resolved($0)) || found.contains(last(resolved($0)))) }
-            return (found.union(aliases)).sorted()
+            return found.sorted()
         }
         for type in grown {
             for carrier in carriers(of: type) {
@@ -359,7 +365,7 @@ enum LiveReload {
                 let mention = try! NSRegularExpression(pattern: #"(?<![\w.])"# + name + #"(?![\w])"#)
                 // The compiler prints a dictionary's key with a space before the colon (`[String : Mood]`).
                 let plainly = try! NSRegularExpression(pattern: #"^(\[(\w[\w.]*\s*:\s*)?"# + name + #"\]|Set<"# + name + #">|"# + name + #"|\("# + name + #"\.Type\) -> "# + name + #")$"#)
-                for (owner, kind) in held {
+                for (owner, kind) in holders {
                     let range = NSRange(kind.startIndex..., in: kind)
                     if mention.firstMatch(in: kind, range: range) != nil, plainly.firstMatch(in: kind, range: range) == nil {
                         let what = carrier == type ? type : "\(carrier), which carries \(type),"
