@@ -392,7 +392,8 @@ enum SwiftSource {
             guard let r = declarations.hashing[type], let text = files[r.start.file] ?? Text(path: r.start.file) else { return nil }
             files[r.start.file] = text
             guard let start = text.offset(r.start), let end = text.tokenEnd(r.last), start < end else { return nil }
-            return LiveReload.Group.hash.entry(type + ": " + digest(text.slice(start, end)))
+            // With what it calls, as far down as that goes: a hash made with `Config.salt` changes when `salt` does.
+            return LiveReload.Group.hash.entry(type + ": " + digest(text.slice(start, end) + "\n" + calledText(from: r.start, to: r.last, in: declarations, files: &files)))
         }
     }
 

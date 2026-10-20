@@ -1052,8 +1052,8 @@ value again. One that can hold an object isn't (`static let shared = Store()`): 
 like every other.
 
 A stored static or global `var` is made once too, the first time it's read, so a new starting value for one can't
-show without reopening, and whether it seemed to would depend on whether it had been read: its starting value and its type are part of the layout as a digest as well (`LiveReload.Group.stored`), and one that changed reopens the app. So does a
-type's own `hash(into:)` changing (`LiveReload.Group.hash`): the sets and dictionaries the open app keeps put each value
+show without reopening, and whether it seemed to would depend on whether it had been read: its starting value and its type are part of the layout as a digest as well (`LiveReload.Group.stored`), and one that changed reopens the app. So does a type's own `hash(into:)` changing, or
+what it reads (a constant, a helper, as far down as that goes) (`LiveReload.Group.hash`): the sets and dictionaries the open app keeps put each value
 where the old one said, and a lookup by the new one looks elsewhere.
 
 **The live cases** (`Tests/LiveCases`, run by `LiveCasesTests`) are the record of which side each kind of change

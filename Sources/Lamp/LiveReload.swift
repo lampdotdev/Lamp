@@ -362,7 +362,7 @@ enum LiveReload {
         for part in Group.hash.parts(in: now).compactMap(\.first) {
             let type = part.prefix { $0 != ":" }
             if let was = hashes[type], was != part {
-                return ("\(type)'s hash(into:) changed, and the sets and dictionaries the open app keeps were laid out by the old one", nil)
+                return ("\(type)'s hash(into:) or what it reads changed, and the sets and dictionaries the open app keeps were laid out by the old one", nil)
             }
         }
         // A private type's name carries its file: moved to another, it's a new type to the runtime, so a value the
@@ -1552,13 +1552,15 @@ enum LiveReload {
             changed = appFiles(project)
             // Except a SwiftData model's file the change didn't touch, when it names nothing newly declared: compiled
             // again, its data would be found by new key paths (below), and nothing in it can mean another declaration.
-            if let names = addedNames(before: before, after: after) {
+            // Not when a constant was remade: every reader then has to read it through its new code, the model's included.
+            if plan?.constants.isEmpty ?? true, let names = addedNames(before: before, after: after) {
                 let models = Set(modelFiles(inLayout: after).map(\.file)).subtracting(files)
                 changed.removeAll { file in
                     guard models.contains(file) else { return false }
                     guard let text = SwiftSource.Text(path: sources(project).appendingPathComponent(file).path) else { return false }
                     let code = String(decoding: text.bytes, as: UTF8.self)
-                    return !names.contains { SwiftText.mentions(identifier: $0, in: code) }
+                    // A string's interpolations are code too (`"\(shout(title))"`).
+                    return !names.contains { SwiftText.mentions($0, in: code) }
                 }
             }
         }
