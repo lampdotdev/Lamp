@@ -73,6 +73,11 @@ enum SwiftSource {
         let varDecl = try! NSRegularExpression(pattern: #"^(\s*)\(var_decl\b[^"]*"([^"]+)" interface_type="([^"]*)"(.*)$"#)
         let named = try! NSRegularExpression(pattern: #"\(pattern_named\b.*"([^"]+)"\)*\s*$"#)
         let identifier = try! NSRegularExpression(pattern: #"id="(\w+)""#)
+        // An observer's accessor, with the property it's for: under @Observable the macro moves a property's
+        // didSet to its `_name` storage in a buffer of its own, and @Published folds it into the wrapper's setter, so
+        // the property's own line no longer says it has observers.
+        let observer = try! NSRegularExpression(pattern: #"^\s*\(accessor_decl\b.*? (?:didSet|willSet) for="(\w+)""#)
+        var observed = Set<String>()
         var out = Declarations()
         var scopes: [(indent: Int, type: String?)] = []
         // The binding being read, at its indent, and what's inside it.
@@ -96,6 +101,11 @@ enum SwiftSource {
                 scopes.append((indent, full))
                 if line[Range(m.range(at: 2), in: line)!] == "class" { out.classes.insert(full); out.classes.insert(name) }
                 continue
+            }
+            if let owner, let m = observer.firstMatch(in: line, range: range) {
+                var name = String(line[Range(m.range(at: 1), in: line)!])
+                if name.hasPrefix("_") { name.removeFirst() }
+                observed.insert(owner + "\t" + name)
             }
             if scopeDecl.firstMatch(in: line, range: range) != nil {
                 if let owner, line.contains("(constructor_decl"), !line.contains(" implicit "), let made = memberwise(in: line) {
@@ -167,6 +177,7 @@ enum SwiftSource {
                 variable = (indent, key)
             }
         }
+        for key in observed { out.variables[key]?.special = true }
         return out
     }
 

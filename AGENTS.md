@@ -755,7 +755,15 @@ built live (a widget or share extension is built from the same copy, and a chang
 (`Template.liveCopySteps`: the body becomes `AnyView` and reads `LampLive.generation`, so its type never changes and
 every view draws again on a reload with its state kept), and builds that copy unoptimized, testable, with
 `LAMP_LIVE` and `-Xlinker -interposable` (SwiftPM for a Mac app; Xcode for an app for both, from a copy of the
-device project, with its debug library off so the code is in the one binary). After a build, `Store.install` tries
+device project, with its debug library off so the code is in the one binary). The copy also makes every class
+`final` that nothing in Sources subclasses (`Template.finalPerl`, given the names used as superclasses and as the
+bounds of generic parameters and `where` clauses): a final class keeps no method table, so a method or computed
+property added to it goes in, where one added to a class with a table reopens the app; a class made final that
+something subclasses after all fails the build in the compiler's words, which `LiveSlots.brokeFinal` reads, and the
+copy is made without the step from then on (`no-final`). A class's finality and its initializers (which have method
+descriptors, a final class's too) are held with the layout (`LiveReload.initsGroup`), so a subclass added, or an
+initializer added or changed, reopens the app with its reason rather than being refused by the runtime after the
+compile. After a build, `Store.install` tries
 `reloadInPlace` first: when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.launchEntries`, held to what the open app had as part of the layout; a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again) or Lamp's own files, and leaves every type
 holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties and cases,
 from `-dump-ast` of just the changed files, compared for the open app's sources and the new ones; no reading of the
@@ -852,7 +860,9 @@ in an extension) reopens it too. `@State` is read in both forms the compiler has
 spare: its values keep their size (`LiveSlots.casesAdded`). Only while nothing the app keeps holds it but as itself or
 in a plain collection: Swift uses the numbers after the last case for `nil` in an optional of it and for other enums'
 cases that carry it, which a new case would take over. That's looked for in every stored field, static and global of
-the new code and in the types the spares keep (`LiveReload.enumsHeld`), before the change goes in, and a value type
+the new code (`LiveReload.enumsHeld`), before the change goes in; a property added while the app was open keeps its
+value in a spare as any value, under the metadata the app's code had, which the grown enum's own no longer reads
+from, so one holding the enum or a carrier reopens the app; and a value type
 that carries the enum by value (a struct with a field of it, an enum with a payload of it) is held to the same plain
 forms, since its own optional and payload cases borrow the enum's numbers, unless it has a spare of Lamp's, whose
 `Any?` gives Swift more; an app that keeps
@@ -870,9 +880,11 @@ member returning a view, or one a body hands to anything but SwiftUI, a Timer's,
 sets into a property or gives as a property's value; a Button's action is made again at the next draw), an async
 closure or an async function (`LiveReload.enumsMetByOldCode`), and the app reopens when there is one. The enum's metadata stays the change's own rather
 than the app's (`LiveReload.compile(keep:)`, renamed `$lampown` so `LampLive` binds every later change to it), since
-the app's doesn't know the new cases. Which property is in which spare
+the app's doesn't know the new cases. A property an explicit `CodingKeys` names stays a field (Codable needs it stored), so it reopens the app. Which property is in which spare
 (`.lamp/live/slots.json`) is put back into each fresh copy (they come back as additions, and `LiveSlots.fit` puts
-them in the same places) until the app is installed again: the
+them in the same places) until the app is installed again; a property taken out of the code has its place retired
+once the change is in (`LiveSlots.retire`), since the place still holds its value, and a name brought back gets a
+place of its own (a class's under a new index, a struct's or view's under the name numbered by `Slot.generation`): the
 whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs
 once it's installed (`LiveReload.markRunning(from:)`). A spare never reaches saved data: `LampSpare` encodes as
 nothing, and a computed property isn't encoded. If spares ever keep an app from building, it's built again without
