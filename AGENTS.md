@@ -887,7 +887,11 @@ through `LiveReload.send`'s answer), so the rules can be tuned by what happens. 
 nobody is using yet and whose passes the person is watching go in; when the person keeps the app open at its question (unsaved work), the build waits for Reload the same way. A live build reads the app's own files
 from its Assets folder rather than its bundle (`LampAssets`), so a new picture goes in live too; the package, the
 app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which tells the
-agent what goes in without reopening.
+agent what goes in without reopening. The note opens by saying the person is watching the app beside the chat and
+sees a live change at once and a held one not until Reload, so the agent works in small shown steps. Each look then
+tells the agent which way its change went (`ChangeOutcome`): into the open app, waiting for Reload with LiveReload's
+reason and, where there's a known shape that would have gone in, that shape (`LiveReload.advice`), or reopened or
+opened. The turn's end tallies them in a detail line (`Store.outcomeTally`), which is how often changes go in live.
 
 New stored properties go in live too (`LiveSlots`, in LiveReload.swift). The copy step (`Template.livePerl`) gives
 each type of the app's spare room the open app's values already have: every class a few places,
