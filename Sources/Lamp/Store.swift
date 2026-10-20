@@ -5310,6 +5310,8 @@ final class Store: ObservableObject {
         log(project, .status, "Putting \(project.name) on \(name)…")
         defer { try? FileManager.default.removeItem(at: app.deletingLastPathComponent()) }
         do {
+            // What's on the phone is about to change, whether or not the launch after it works.
+            onPhone[project.id] = nil
             try await Devices.install(app, on: udid)
             guard stillOwns() else { return nil }
             deviceApps[project.id]?.terminate()
@@ -7158,10 +7160,13 @@ final class Store: ObservableObject {
                 if reopen { note = "The app was closed and opened again, so it started fresh." }
             } else {
                 note = "The app is running your latest code; nothing needed rebuilding."
-                // What's open is this code, as after a launch: the turn's end puts it in front, or on the phone chosen
-                // under Try On, as it does after a look that opened it. A Mac look that only takes pictures does the same.
-                turn.look.installed = true
-                turn.look.crash = nil
+                // With a phone chosen under Try On, what's open in the simulator is this code, as after a launch: the
+                // turn's end puts it on the phone, as it does after a look that opened it. Without one the simulator is
+                // left as the agent found it, its state kept.
+                if project.device != nil {
+                    turn.look.installed = true
+                    turn.look.crash = nil
+                }
             }
             say(looking)
             let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
