@@ -329,14 +329,15 @@ enum LiveReload {
         let word = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
         func last(_ name: String) -> String { String(name.split(separator: ".").last ?? "") }
         // A kind as a field prints it may name a typealias (`Choice`, for `Picky?`): each is written out as what it
-        // names, wrappers and all, until none is left, so what holds the enum is judged by the type itself.
+        // names, wrappers and all, until none is left, so what holds the enum is judged by the type itself. A name
+        // that is a type's of the app's is that type, not a nested alias of the same short name elsewhere.
         func expanded(_ kind: String) -> String {
             var kind = kind
             for _ in 0..<8 {
                 var changed = false
                 for m in word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).reversed() {
                     let range = Range(m.range, in: kind)!, name = String(kind[range])
-                    guard let target = conformed.aliases[name] ?? conformed.aliases[last(name)], target != name else { continue }
+                    guard !conformed.types.contains(name), let target = conformed.aliases[name], target != name else { continue }
                     kind.replaceSubrange(range, with: target)
                     changed = true
                 }
