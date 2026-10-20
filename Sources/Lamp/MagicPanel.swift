@@ -107,6 +107,15 @@ final class MagicPanel {
         }
     }
 
+    /// A new app's chat moves beside it early in its first turn (`Store.present`), before the agent has decided what
+    /// the app is: a pass can make it a menu bar app or a widget, which has no window for the chat to be beside. When
+    /// it opens again as one, the chat goes back to Lamp's window rather than nowhere.
+    func keepChatInSight(_ project: LampProject) async {
+        guard FileManager.default.fileExists(atPath: Self.handedOff(project).path), !(await Self.chatsInApp(project)),
+              !Store.shared.chatWindows.contains(project.id) else { return }
+        Store.shared.showChat(project.id)
+    }
+
     /// An app's chat is in one place at a time: when it opens beside the app, its window in Lamp closes. Not while
     /// someone is using that window (Lamp in front, with it), which they opened on purpose (a setup card's button,
     /// the Window menu) and may be typing in.

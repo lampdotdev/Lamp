@@ -56,9 +56,11 @@ A capability given to one engine must be given to all of them that can take it, 
   (`lookRules`: the layout with placeholders, then the parts working, then the detail), each begun with a
   `progress` line and ended with `look_at_app`, which puts it into the open app, so the person watches the app
   take shape rather than waiting for the end; what's read only at launch is made right in the first pass, so later
-  ones go in without reopening the app. A new app is built in passes too, the window's layout first: its first look
-  that opens it shows it to the person (`Store.present`: a Mac app comes forward with its chat beside it, an iPhone
-  app's simulator comes forward), so they watch the rest go in.
+  ones go in without reopening the app. A new app is built in passes too, the window's layout first. A new Mac app's
+  scaffold ("Lamp is making this app.") is built and opened as its first turn starts, with the chat beside it
+  (`Store.showEarly`, `Store.present`), so the person watches every pass go in; an iPhone app's simulator comes
+  forward at the agent's first look. Should a pass make it an app with no window, the chat goes back to Lamp's
+  window (`MagicPanel.keepChatInSight`).
   Result cards saved by an earlier Lamp still read and aren't shown (`LogLine.visible`). A new app's build card folds
   to its first line (its name, Ready) once the turn is over, with no picture of the app. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
@@ -668,8 +670,8 @@ again, only just after such a quit (`chatQuitKey`). A Mac widget has it in its t
 Lamp's own widget file, which the widget rule asks for): a link the app takes as Customize with Lamp…
 (`LampWidgetLinks`, which passes every other link to SwiftUI, or for a widget-only app to whatever opens it).
 This is how a new app is changed from its first build on:
-at the agent's first look that opens a new Mac app with windows (`Store.present`; at the end of that turn when there
-was none), its chat window closes and the app opens the chat beside its content, so the rest of the turn's passes go
+as soon as a new Mac app's scaffold is built and opened at the start of its first turn (`Store.showEarly`, then
+`Store.present`; else at the agent's first look, or at the end of that turn), its chat window closes and the app opens the chat beside its content, so the rest of the turn's passes go
 in while the person watches (`MagicPanel.handOff`, once per app, marked by `.lamp/sidebar-handed-off`; the chat window
 closes only once the sidebar has connected, so Lamp neither quits nor leaves the chat nowhere). Lamp asks the app
 with a file in its runtime folder for a copy still starting and a notification for one already running

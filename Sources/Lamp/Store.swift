@@ -483,6 +483,9 @@ final class Store: ObservableObject {
         var allowAll = false                // "Allow all for this turn"
         var approving = false               // between the queue check and the approval card
         var look = Look()                   // what the agent's look_at_app has done
+        /// A new app's scaffold being built and opened as the turn starts (`showEarly`): a look and the turn's own
+        /// build wait for it, since a turn has one build at a time.
+        var early: Task<Void, Never>?
         var pendingName: String?            // a name the agent gave the version this request makes
         /// What the agent last said it's doing, in its own words (`AgentEvent.naming`): the name of the commands
         /// that follow, until it says something else.
@@ -2263,6 +2266,7 @@ final class Store: ObservableObject {
             if !stillFinding {
                 guard let ready = await materialize(project) else { return }
                 project = ready
+                if newApp { showEarly(project, in: owner) }
             }
             // Where the app is as the turn starts, so the request can be changed and sent again from here.
             if let head = await Versions.head(project) {
@@ -2627,6 +2631,7 @@ final class Store: ObservableObject {
     /// Builds the app, sending compiler errors back to the agent up to three times. False when it still doesn't
     /// build, or when the agent asked the person something instead (`Turn.asked`).
     private func buildFixingErrors(_ started: LampProject) async -> Bool {
+        await turns[started.id]?.early?.value
         var project = current(started) ?? started
         var errors = await build(project)
         // The person's Apple account, not the code: build has said so, and the agent has nothing to fix.
@@ -4808,6 +4813,7 @@ final class Store: ObservableObject {
             // In place is all there is to it: a card that said it didn't get there says so no longer.
             noteOpened(true, for: project)
             if inFront { log(project, .status, "\(project.name) is ready") }
+            if progress[project.id]?.newApp == true { await MagicPanel.shared.keepChatInSight(project) }
             upgradeIconArt(project)
             refreshOpenApps()
             stamps[project.id] = BuildStamp.read(project.installedURL)
@@ -4829,6 +4835,7 @@ final class Store: ObservableObject {
             } else {
                 noteOpened(true, for: project)
                 if inFront { log(project, .status, "\(project.name) is ready") }
+                if progress[project.id]?.newApp == true { await MagicPanel.shared.keepChatInSight(project) }
             }
         } catch {
             log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
@@ -6612,6 +6619,7 @@ final class Store: ObservableObject {
         }
         guard !turn.look.inProgress else { return (200, ["text": "Lamp is already looking at the app. Wait for that result."]) }
         turn.look.inProgress = true
+        await turn.early?.value
         turn.look.installed = false
         // Each stage says itself from here; once the look is over the model is reading what it found. Only while this
         // look's turn is the one on screen: after Stop, a look still waiting on the app can end after the next turn began.
@@ -6751,6 +6759,21 @@ final class Store: ObservableObject {
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
         if !screenshots.isEmpty { await present(project, in: turn) }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
+    }
+
+    /// A new Mac app is shown to the person as soon as there's something to show: its scaffold (a window with its
+    /// name, which says Lamp is making it) is built and opened while the agent starts work, and the chat moves beside
+    /// it (`present`), so the passes that follow go in where the person is already looking rather than after the
+    /// agent's first look, minutes in. Quietly: a build that fails (the agent may be writing files as it runs) just
+    /// leaves it to that first look. An iPhone app waits for that look, which opens the simulator.
+    private func showEarly(_ project: LampProject, in turn: Turn) {
+        guard project.platform == .mac, Template.isScaffold(project), !isRunning(project) else { return }
+        turn.early = Task { [weak self] in
+            guard let self, turns[project.id] === turn, !turn.stopped else { return }
+            guard await build(project) == nil, turns[project.id] === turn, !turn.stopped, !turn.asked else { return }
+            guard await install(project, inFront: false) == nil, !turn.didNotOpen else { return }
+            await present(project, in: turn)
+        }
     }
 
     /// A new app is built in passes, and the first look that opens it shows it to the person, so they watch it take

@@ -111,8 +111,8 @@ enum Agent {
     - Never open the print panel while trying an app (a Print button, File > Print, ⌘P): it makes macOS ask \
     the person, over whatever they're doing, whether the app may look for devices on their network. Check \
     what would be printed from the code or another screen, and say that printing itself wasn't tried.
-    - A new app opens in front of the person at its first look, with the chat beside it, so they watch the \
-    rest of its passes go in. Once the last pass looks right, stop there: say in one sentence what they now \
+    - A new app is open in front of the person while you build it (from the start, or from your first look), \
+    with the chat beside it, so they watch each pass go in. Once the last pass looks right, stop there: say in one sentence what they now \
     have, and don't describe the app further.
     - Don't use the app (`use_app`) unless the person asks you to try it: they're probably using it, and your \
     clicks, keys and windows get in their way. Check a change with `look_at_app` and by reading the code, and \
