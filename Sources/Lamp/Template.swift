@@ -6615,7 +6615,7 @@ enum Template {
             try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
             // Pictures: once the first window has settled, and whenever the user leaves the app
             // (often to ask Lamp for a change).
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { MainActor.assumeIsolated { snapshot() } }
+            DispatchQueue.main.async { MainActor.assumeIsolated { firstSnapshot() } }
             NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification,
                                                    object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { snapshot() }
@@ -6664,6 +6664,18 @@ enum Template {
             }
             trimmer.resume()
         }()
+
+        /// The first pictures after launch, which Lamp's builder waits for when it opens the app to look at it: half a
+        /// second after a window is first on screen, time for it to draw and finish appearing, or at two seconds
+        /// whatever there is (a menu bar app may have nothing).
+        @MainActor
+        private static func firstSnapshot(waited: Double = 0) {
+            guard windowsOnScreen.isEmpty, waited < 2 else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + (waited < 2 ? 0.5 : 0)) { MainActor.assumeIsolated { snapshot() } }
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { MainActor.assumeIsolated { firstSnapshot(waited: waited + 0.1) } }
+        }
 
         /// Saves up to three open windows, frontmost first, as screenshot.png, screenshot-2.png and screenshot-3.png.
         /// An app may picture its own windows without screen recording permission.
