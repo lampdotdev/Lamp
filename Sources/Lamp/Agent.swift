@@ -36,6 +36,9 @@ enum AgentEvent {
     /// Codex began (true) or finished (false) something it does on its own (a command, a tool call, an edit, a
     /// search), by its id: a Codex run is cut to pass a message on only between them (`Store.steer`).
     case acting(String, Bool)
+    /// What the agent says it's doing, in its own words: Claude Code's or pi's description of a command, a Codex
+    /// reasoning summary's heading. Empty for a command that came without one, which leaves it unnamed.
+    case naming(String)
 }
 
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.
@@ -156,8 +159,8 @@ enum Agent {
     answer: follow it.
     - What the person sees: their messages, your cards, and each thing you write, as a message the moment you \
     write it. Your tool calls are never shown: no commands, files, code or results, only a gray line per step \
-    ("Ran a command"). When you finish, all you wrote but your last message folds away with those lines. So \
-    write each message for someone who sees nothing else: it makes sense on its own and is about the app, \
+    ("Ran a command", or the description you gave the command). Everything you write stays in the chat as a \
+    message, and your last one is the answer. So write each message for someone who sees nothing else: it makes sense on its own and is about the app, \
     never leaning on a step they can't see, whether it leads into one, points back at one ("that fixed it", \
     "the error above") or names its files and code.
     """
@@ -1401,6 +1404,8 @@ enum Agent {
             let name = obj["toolName"] as? String ?? "tool"
             let args = obj["args"] as? [String: Any] ?? [:]
             var events: [AgentEvent] = [.tool(describe(name, args), call: callKey(name, args))]
+            // Lamp's extension gives pi's bash a description, which the model fills in as Claude Code's does.
+            if name == "bash" { events.insert(.naming((args["description"] as? String)?.trimmed ?? ""), at: 0) }
             if name == "plan", args["parts"] != nil { events.append(.plan(PlanPart.parts(from: args))) }
             return events
         case "message_end":

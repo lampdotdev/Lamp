@@ -500,7 +500,9 @@ struct ProjectView: View {
                     content.offset(y: cardPinned ? max(0, -geometry.frame(in: .scrollView).minY) : 0)
                 }
                 .zIndex(1)
-            transcript(Array(lines[(request + 1)...]), busy: busy, progressShown: busy, pin: pin)
+            // While its questions wait, the steps above them stay as they are: hidden in the card's line and then shown
+            // when the turn's summary arrives would move the answers under the pointer.
+            transcript(Array(lines[(request + 1)...]), busy: busy, progressShown: busy && Talk.open(in: lines) == nil, pin: pin)
         } else {
             // No line of activity under the agent's questions: it would go away when the turn ends a moment
             // later, and the card above it would move.
@@ -509,7 +511,7 @@ struct ProjectView: View {
             let awaited = pinWanted && lines.last { $0.kind == .user }?.id == pinAfter
             let progress = busy && !awaited && Talk.open(in: lines) == nil ? store.progress[project.id] : nil
             transcript(lines, busy: busy, progressShown: progress != nil, pin: pin)
-            if let progress { ActivityRow(progress: progress).padding(.top, 12) }
+            if let progress { ActivityRow(progress: progress, lines: lines).padding(.top, 12) }
         }
         if let change = undoChange {
             ChatLook.UndoChange { Task { await store.undo(project, change: change) } }.padding(.top, 12)

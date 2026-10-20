@@ -44,11 +44,15 @@ A capability given to one engine must be given to all of them that can take it, 
   request came to is the agent's last message, in a sentence or two (`Agent.Rules.finish`), under the line that says
   the app is ready or updated; a card for it said no more than that message did and hid what it said beyond it.
   While longer work goes on, the agent says how it's going with `progress`: a line of 12 words at most, shown at once
-  in both chats as a message like any other, and gathered into "Worked for…" with the turn's steps when it ends
-  (`ChatLook.ProgressLine`; folded, the sidebar gets it as a status line marked with `ChatLook.progressSymbol`, so an
-  older sidebar still reads the chat), so the answer is all that's left to read. Whatever the agent writes as messages
-  on the way is treated the same: each shows as it's said, and all but the last are folded with the steps
-  (`LogLine.visible`, `ChatItem.items`), since models write such updates whether or not they're asked to use the tool. A change to much of what an app already shows is built in passes
+  in both chats as a message like any other, which stays one when the turn ends. A turn's steps are never a list of
+  rows: while it goes on they're inside its one live line (`ChatLook.ActivityLine`, `ChatItem.live`, the sidebar's
+  `SidebarState.workingSteps`), which says what it's doing now, changes in place and opens to the steps so far; when
+  it ends that line's place, under the turn's last message, is taken by "Worked for…" (`ChatItem.items`), which opens
+  to the same steps, so nothing moves. Whatever the agent writes as messages on the way is
+  treated the same, each shown as it's said and kept as it was (`LogLine.visible`), since models write such updates
+  whether or not they're asked to use the tool: what the person has read never turns into a gray line among the
+  steps or goes away. (A Lamp from before this folded them; `ChatLook.ProgressLine` and the status line marked with
+  `ChatLook.progressSymbol` are still drawn for a sidebar talking to one.) A change to much of what an app already shows is built in passes
   (`lookRules`: the layout with placeholders, then the parts working, then the detail), each begun with a
   `progress` line and ended with `look_at_app`, which puts it into the open app, so the person watches the app
   take shape rather than waiting for the end; what's read only at launch is made right in the first pass, so later
@@ -200,7 +204,20 @@ A capability given to one engine must be given to all of them that can take it, 
   run's model is heard from.
 - **What Lamp shows the user** (`BuildCard.activity`, `ToolCall`): tool names must be recognised in every
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
-  Codex reports them as `mcp_tool_call` items.
+  Codex reports them as `mcp_tool_call` items. A turn has one activity (`TurnProgress.activity`, and since when,
+  `activitySince`), and every place that shows it draws it with `ChatLook.ActivityText`: the build card, the line
+  under a change, the chat beside the app (`SidebarState.workingActivitySince`) and the cover while the app reopens
+  (`CoverNote`). How it reads as the wait goes on is `Activity.words`, in one place: while the model thinks, its
+  phrases turn over every 3.5 seconds and grow more reassuring the longer it goes; a build says "Still building…"
+  after 30 seconds and "Taking a little longer…" after 90; anything named ("Working on the interface") stays as it is.
+  The agent's progress lines are messages above the activity and are left as they are. A shell command is named in
+  the engine's own words, never guessed from its text (`AgentEvent.naming`): Claude Code's description of each Bash
+  call (its parser, and its approval hook, which carries the same input; `Agent.claudeNote` asks for plain words),
+  and for Codex the heading of the reasoning summary before it (`model_reasoning_summary`). The name is the activity
+  while the command runs and the step's row in the chat (`LogLine.said`, `ChatLook.RanCommand`; consecutive commands
+  under one name are one row, `ChatItem.items`); a command with no name stays "Ran a command". pi's bash takes only the
+  command, so Lamp's extension replaces it, as pi's extension docs allow, with pi's own bash and an optional
+  `description` (`bashWithDescription` in `lamp-tools.ts`), sent with the approval and read by pi's parser.
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
   Where an app's text AI goes is an `AppAI.TextRoute` (an OpenRouter model, the Claude Code or Codex sign-in,
   pi with its key provider, or a model on this Mac), listed by `AppAI.textRoutes` for the pickers in
@@ -673,7 +690,7 @@ the app; the rule (`Agent.Rules.macGenerated`) asks the agent to keep what the p
 `@SceneStorage`, so it comes back as they left it. To make that look like the window changing in place: as the app
 quits it leaves a picture of its front window and where it was in its runtime folder (`LampMagic.leaveCover`); while
 the app's turn is going, Lamp shows that picture where the window was (`MagicPanel.showCover`, a borderless window
-marked "Updating…", with the chat's blank paper where a chat beside it was: `cover-chat-frame.txt`, `MagicPanel.chatCover`), the new
+with the turn's activity in its middle, "Updating…" once the turn is over, and the chat's blank paper where a chat beside it was: `cover-chat-frame.txt`, `MagicPanel.chatCover`), the new
 copy opens its first window in the same place (`putBack`), and the picture fades out once the new copy reports its window
 (or goes when the turn ends without it).
 

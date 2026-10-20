@@ -32,6 +32,8 @@
  *   the user), and the running app's log and pictures follow the user's privacy settings.
  * - Shell commands (pi's `bash` tool) need the user's approval: before each one runs, this asks Lamp, which
  *   shows the command in the app's chat with Allow / Allow All This Turn / Deny, and blocks it if denied.
+ *   pi's bash is given a description of what the command does, in the model's own words, which Lamp shows
+ *   in place of the command (as Claude Code's own Bash has).
  * - `plan`: the agent's checklist of what it's building, with the files behind each part. Lamp reads the
  *   list from pi's event stream, shows it on the build card, and ticks parts as their files are written,
  *   so the tool itself has nothing to do. * - Messages the person sends while the agent works reach it in the same turn: after each of pi's turns (a
@@ -44,7 +46,7 @@ import { lstat, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "@earendil-works/pi-ai";
-import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createBashTool, defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /**
  * The tools' names, descriptions and schemas come from lamp-tools.json, next to this file in Lamp's bundle
@@ -267,16 +269,40 @@ const webFetch = defineTool({
 	},
 });
 
+/**
+ * pi's own bash, with one more field: what the command does, in a few words of the model's own, which Lamp shows
+ * as the step's name and the turn's activity, as it does Claude Code's description of its commands. pi's bash
+ * takes only the command, so nothing else says it in words a person can follow, and the command's text is never
+ * read for it. An extension may register a tool under a built-in's name to replace it (pi's extension docs); the
+ * rest is pi's bash as it is, which runs the command once the description is set aside.
+ */
+function bashWithDescription() {
+	const bash = createBashTool(process.cwd());
+	return {
+		...bash,
+		parameters: Type.Object({
+			...bash.parameters.properties,
+			description: Type.Optional(Type.String({
+				description: "What this command does, in 5-10 plain words a non-programmer would follow, e.g. \"Building the app\" or \"Checking which files changed\"",
+			})),
+		}),
+		async execute(id: string, params: { command: string; timeout?: number; description?: string }, ...rest: unknown[]) {
+			const { description: _said, ...run } = params;
+			return (bash.execute as (...args: unknown[]) => ReturnType<typeof bash.execute>)(id, run, ...rest);
+		},
+	};
+}
+
 /** Asks Lamp to approve a shell command: a reason when it isn't approved, else the command to run (Lamp hands
  * it back confined to the app's folder, see Sandbox). */
-async function askLamp(command: string, signal?: AbortSignal): Promise<{ reason?: string; command?: string }> {
+async function askLamp(command: string, description: string | undefined, signal?: AbortSignal): Promise<{ reason?: string; command?: string }> {
 	const url = process.env.LAMP_APPROVE_URL;
 	if (!url) return { reason: "Shell commands need approval in Lamp, and Lamp isn't available." };
 	try {
 		const response = await fetch(url, {
 			method: "POST",
 			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
-			body: JSON.stringify({ command }),
+			body: JSON.stringify({ command, description }),
 			// The user may take a while to answer; Lamp itself never times out on their behalf.
 			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(3_600_000)]) : AbortSignal.timeout(3_600_000),
 		});
@@ -589,12 +615,14 @@ export default function (pi: ExtensionAPI) {
 			return reason ? { block: true, reason } : undefined;
 		}
 		if (event.toolName !== "bash") return undefined;
-		const input = event.input as { command?: unknown };
-		const answer = await askLamp(String(input.command ?? ""), ctx.signal);
+		const input = event.input as { command?: unknown; description?: unknown };
+		const said = typeof input.description === "string" ? input.description : undefined;
+		const answer = await askLamp(String(input.command ?? ""), said, ctx.signal);
 		if (answer.reason) return { block: true, reason: answer.reason };
 		if (answer.command) input.command = answer.command;   // the hook may change the input before it runs
 		return undefined;
 	});
+	pi.registerTool(bashWithDescription());
 	keepsPicturesFew(pi);
 	takesMessagesMidTurn(pi);
 	pi.registerTool(webFetch);

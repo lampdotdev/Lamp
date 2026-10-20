@@ -189,6 +189,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     var pointed: PointedAt? = nil     // for a request: what was pointed at in the app, one of its attachments
     var midTurn: Bool? = nil          // for a request: the agent took it while working on the one before (Store.handOver)
     var byLamp: Bool? = nil           // for a request: Lamp sent it, not the person (`Store.fixCrash`); the line before says so
+    var said: String? = nil           // for a command Lamp let run ("Ran: …"): what the agent said it was for (`AgentEvent.naming`)
 
     /// The offer a setup card is about, for this line and for the older key card.
     var setupOffer: SetupOffer? {
@@ -416,6 +417,8 @@ final class Store: ObservableObject {
         /// A file request sets its own title; a command keeps this one.
         static let commandTitle = "Can the agent do this?"
         var title = commandTitle
+        /// What the agent said the command is for, which goes on naming what it's doing once it's allowed.
+        var said: String?
         let answer: CheckedContinuation<Bool, Never>
         var explanation: CommandExplanation?
     }
@@ -477,6 +480,9 @@ final class Store: ObservableObject {
         var approving = false               // between the queue check and the approval card
         var look = Look()                   // what the agent's look_at_app has done
         var pendingName: String?            // a name the agent gave the version this request makes
+        /// What the agent last said it's doing, in its own words (`AgentEvent.naming`): the name of the commands
+        /// that follow, until it says something else.
+        var naming: String?
         /// The agent put its questions to the person this turn: the turn is over, whatever the agent does next.
         var asked = false
         /// Lamp ended the agent because it went on working past its own questions. Not a stop and not a failure.
@@ -812,9 +818,9 @@ final class Store: ObservableObject {
     }
 
     func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil, retryPhone: String? = nil,
-             offer: SetupOffer? = nil, noted: NoteReceipt? = nil) {
+             offer: SetupOffer? = nil, noted: NoteReceipt? = nil, said: String? = nil) {
         logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone,
-                                                    offer: offer, noted: noted))
+                                                    offer: offer, noted: noted, said: said))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
         saveChat(project)
     }
@@ -2770,11 +2776,16 @@ final class Store: ObservableObject {
                     Memory.compacted(project)
                     AIStatus.compacted(project)
                     Skills.compacted(project)
+                case .naming(let words):
+                    turn.naming = words.nilIfEmpty
+                    if let words = turn.naming { note(words, for: project) }
                 case .tool(let text, let fullCall):
                     log(project, .tool, text)
                     let call = ToolCall(text)
                     endOnQuestions(turn, before: call.name)
-                    note(TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
+                    // A command the agent named is shown by that name rather than as "Running a command".
+                    let named = call.action == .run ? turn.naming : nil
+                    note(named ?? TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
                     if let file = TurnProgress.file(changedBy: call) { progress[project.id]?.wrote(file) }
                     toolCalls += 1
                     // Compared in full: six different searches of one file all read "grep cache.json".
@@ -3099,10 +3110,12 @@ final class Store: ObservableObject {
 
     /// Applies Settings → Building → "Ask before running commands" to one command.
     /// `sandboxed`: the command will run confined to the app (Sandbox), so where it looks isn't in question.
-    private func approveCommand(_ command: String, for project: LampProject, escalated: Bool, shell: Bool = true, sandboxed: Bool) async -> Bool {
+    /// `said` is what the agent said the command is for, which names it in the chat (`LogLine.said`).
+    private func approveCommand(_ command: String, for project: LampProject, escalated: Bool, shell: Bool = true, sandboxed: Bool,
+                                said: String? = nil) async -> Bool {
         switch CommandApproval.current {
         case .never:
-            log(project, .status, "Ran: \(command)")
+            log(project, .status, "Ran: \(command)", said: said)
             return true
         case .risky where !escalated:
             let judgment = await commandJudgment(command, for: project)
@@ -3112,20 +3125,22 @@ final class Store: ObservableObject {
             // nearly all of them allowed. A check that couldn't be made at all goes to the in-app model's rating:
             // the sandbox leaves the network open, so it isn't the only guard, but a "low" there runs it.
             if judgment.verdict == .run || (sandboxed && judgment.verdict == .unsure && judgment.judged) {
-                log(project, .status, "Ran: \(command)")
+                log(project, .status, "Ran: \(command)", said: said)
                 return true
             }
             // A risky verdict always has its reason; if one were ever missing, the card still comes up as flagged.
             let flagged = judgment.verdict == .risky ? judgment.reason ?? .reachesBeyond : nil
-            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged)
+            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged,
+                                         said: said)
         case .risky where shell:
             // Claude Code's own classifier asked: it doesn't run on the checks alone, but what they flag keeps
             // its card, so the in-app model's "low" can't run a command they found risky.
             let judgment = await commandJudgment(command, for: project)
             let flagged = judgment.verdict == .risky ? judgment.reason ?? .reachesBeyond : nil
-            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged)
+            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged,
+                                         said: said)
         default:
-            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed)
+            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, said: said)
         }
     }
 
@@ -3168,7 +3183,7 @@ final class Store: ObservableObject {
     /// low runs without the card (`CommandRisk.runsOnRating`).
     func requestApproval(for project: LampProject, command: String, title: String? = nil,
                          explanation given: CommandExplanation? = nil, shell: Bool = true, sandboxed: Bool = false,
-                         flagged: CommandRisk.Reason? = nil) async -> Bool {
+                         flagged: CommandRisk.Reason? = nil, said: String? = nil) async -> Bool {
         guard !command.trimmed.isEmpty else { return false }
         if turns[project.id]?.allowAll == true {
             log(project, .detail, "Ran (allowed for this turn): \(command)")
@@ -3195,9 +3210,9 @@ final class Store: ObservableObject {
         }
         // The setting is read again: it may have changed while the rating was worked out.
         if ratingDecides, CommandApproval.current == .risky, CommandRisk.runsOnRating(given, flagged: flagged) {
-            log(project, .status, "Ran: \(command)")
+            log(project, .status, "Ran: \(command)", said: said)
             log(project, .detail, "Ran without asking (\(given?.risk ?? "") risk): \(given?.summary ?? "")")
-            note("Running a command", for: project)   // as after an Allow, so "Checking a command" doesn't stay
+            note(said ?? "Running a command", for: project)   // as after an Allow, so "Checking a command" doesn't stay
             return true
         }
         NSApp.requestUserAttention(.informationalRequest)
@@ -3208,6 +3223,7 @@ final class Store: ObservableObject {
             var pending = PendingApproval(command: command, answer: continuation,
                                           explanation: given?.raised(for: flagged) ?? (asked ? .unexplained(flagged: flagged) : nil))
             if let title { pending.title = title }
+            pending.said = said
             approvals[project.id] = pending
             // Explain it while the card is up; until this arrives the card says it's working it out.
             if given == nil, !asked { Task {
@@ -3241,7 +3257,7 @@ final class Store: ObservableObject {
         guard let pending = approvals.removeValue(forKey: project.id) else { return }
         if allowAll { turns[project.id]?.allowAll = true }
         log(project, .detail, (allow ? "Allowed: " : "Denied: ") + pending.command)
-        note(allow && pending.title == PendingApproval.commandTitle ? "Running a command" : "Thinking", for: project)
+        note(allow && pending.title == PendingApproval.commandTitle ? pending.said ?? "Running a command" : "Thinking", for: project)
         pending.answer.resume(returning: allow)
     }
 
@@ -6183,7 +6199,7 @@ final class Store: ObservableObject {
                 let (allowed, reason) = await fileAccess(tool: tool, path: path, for: project)
                 return (200, reason.map { ["allow": allowed, "reason": $0] } ?? ["allow": allowed])
             }
-            // pi's extension sends {"command"}; Claude Code's hook sends {"tool_input": {"command"}}.
+            // pi's extension sends {"command", "description"}; Claude Code's hook sends {"tool_input": {"command", "description"}}.
             let input = body["tool_input"] as? [String: Any] ?? [:]
             let tool = body["tool_name"] as? String ?? "Bash"
             if request.path.contains("format=claude-file") {
@@ -6230,12 +6246,17 @@ final class Store: ObservableObject {
             }
             if request.path.contains("format=codex") {
                 // Codex's PreToolUse hook can only block: an empty answer lets the command run.
-                let allowed = await approveCommand(command, for: project, escalated: false, sandboxed: sandboxed)
+                // Codex says what its commands are for in its reasoning, which comes before them (`AgentEvent.naming`).
+                let allowed = await approveCommand(command, for: project, escalated: false, sandboxed: sandboxed,
+                                                   said: turns[project.id]?.naming)
                 return (200, allowed ? [:] : ["hookSpecificOutput": ["hookEventName": "PreToolUse",
                                                                      "permissionDecision": "deny",
                                                                      "permissionDecisionReason": "The user denied this command in Lamp."]])
             }
-            let allowed = await approveCommand(command, for: project, escalated: escalated, shell: shell, sandboxed: sandboxed)
+            // Claude Code's hook and pi's extension carry the command's own description, so each command keeps its
+            // own words whichever of the approval and the engine's output reaches Lamp first.
+            let said = (input["description"] as? String ?? body["description"] as? String)?.trimmed.nilIfEmpty
+            let allowed = await approveCommand(command, for: project, escalated: escalated, shell: shell, sandboxed: sandboxed, said: said)
             let reason = allowed ? "Approved in Lamp." : "The user denied this command in Lamp."
             // An allowed command goes back confined: the hooks run what Lamp hands them.
             if escalated {

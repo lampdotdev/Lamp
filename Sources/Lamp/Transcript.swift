@@ -234,15 +234,29 @@ enum ChatItem: Identifiable {
         return result + items(run)
     }
 
-    /// A finished run's lines, its steps under one line above its last message. What the agent said on the way
-    /// (its progress lines and messages before the last) goes with the steps: the last message is the answer.
+    /// What a turn did, as against what it said: the lines that go into its one line ("Worked for…", and while it
+    /// goes on the live line) rather than being shown in the chat.
+    static func isStep(_ line: LogLine) -> Bool {
+        (line.kind == .status && line.text != ChatLook.fixingCrash) || line.kind == .tool
+    }
+
+    /// While a turn goes on its steps aren't rows of their own: they're inside the one line that says what it's doing
+    /// (`ActivityRow`, the sidebar's `workingSteps`), which opens to show them. `shown` is the chat without them,
+    /// `steps` what that line opens to. The turn still going is what comes after the last summary, from its
+    /// request on: a status left after the summary before it ("Hot Shelf is ready") belongs to that turn's end.
+    static func live(_ lines: [LogLine]) -> (shown: [LogLine], steps: [LogLine]) {
+        let end = lines.lastIndex { $0.kind == .summary }.map { $0 + 1 } ?? lines.startIndex
+        let start = lines[end...].firstIndex { $0.kind == .user } ?? end
+        let steps = Transcript.withoutStepInProgress(lines[start...].filter(isStep))
+        let taken = Set(lines[start...].filter(isStep).map(\.id))
+        return (lines.filter { !taken.contains($0.id) }, steps)
+    }
+
+    /// A finished run's lines, its steps under one line at its end: the same place the live line had while it went
+    /// on, so that line turns into "Worked for…" without anything moving. What the agent said on the way (its
+    /// progress lines and messages) stays where it was, a message like any other: what the person has read
+    /// doesn't change form or go when the turn ends, and only what was done goes into the fold.
     private static func folded(_ run: [LogLine], summary: LogLine) -> [ChatItem] {
-        // A run that asked has its card for an answer: what it said before the card goes with the steps.
-        let answer = run.contains { $0.kind == .ask } ? nil : run.last { $0.kind == .agent }?.id
-        let isStep = { (line: LogLine) in
-            (line.kind == .status && line.text != ChatLook.fixingCrash)
-                || line.kind == .tool || line.kind == .progress || (line.kind == .agent && line.id != answer)
-        }
         let steps = items(run.filter(isStep)).flatMap { item -> [LogLine] in
             switch item {
             case .statuses(let lines), .tools(let lines): lines
@@ -254,10 +268,7 @@ enum ChatItem: Identifiable {
         let reloads = run.filter { $0.kind == .reload }
         let others = run.filter { !isStep($0) && $0.kind != .reload }
         guard !steps.isEmpty else { return items(others) + items(reloads) }
-        // Above the answer, the run's last message or its card; at the run's end when it has neither.
-        let place = others.lastIndex { $0.kind == .agent || $0.kind == .ask } ?? others.count
-        return items(Array(others[..<place])) + [.work(id: summary.id, title: workedFor(summary.text), steps: steps)]
-            + items(Array(others[place...])) + items(reloads)
+        return items(others) + [.work(id: summary.id, title: workedFor(summary.text), steps: steps)] + items(reloads)
     }
 
     /// "Worked for 2 min 3 s", from a turn's summary ("Worked for 2m 3s · $0.12").
@@ -279,8 +290,15 @@ enum ChatItem: Identifiable {
             case (.tool, _): items.append(.tools([line]))
             case (.status, .statuses(let run)?):
                 // A progress step ("Building…") is superseded by whatever status follows it.
-                let kept = run.filter { !$0.text.hasSuffix("…") }
-                items[items.count - 1] = .statuses(kept + [line])
+                var kept = run.filter { !$0.text.hasSuffix("…") }
+                // Commands the agent gave one name to are one step: the name once, their commands under it.
+                if let said = line.said, let last = kept.last, last.said == said,
+                   let command = ChatLook.ranCommand(in: line.text), ChatLook.ranCommand(in: last.text) != nil {
+                    kept[kept.count - 1].text += "\n" + command
+                    items[items.count - 1] = .statuses(kept)
+                } else {
+                    items[items.count - 1] = .statuses(kept + [line])
+                }
             case (.status, _): items.append(.statuses([line]))
             default: items.append(.line(line))
             }
@@ -337,7 +355,9 @@ struct Transcript: View {
         let openAsk = Talk.open(in: lines)?.id
         // Answers clicked on a card are shown by the card, folded where it was: not again as a message.
         let shown = lines
-        let items = ChatItem.items(progressShown ? Self.withoutStepInProgress(shown) : shown, gather: !details)
+        // While the turn goes on, its steps are in the one line that says what it's doing, not rows of their own.
+        let items = ChatItem.items(progressShown ? (details ? Self.withoutStepInProgress(shown) : ChatItem.live(shown).shown) : shown,
+                                   gather: !details)
         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
             let isLast = index == items.count - 1
             let gap = ChatItem.gap(after: index > 0 ? items[index - 1] : nil, before: item,
@@ -352,16 +372,7 @@ struct Transcript: View {
                 case .tools(let lines): ToolGroup(lines: lines, running: isLast && busy && !progressShown).equatable()
                 case .statuses(let lines): StatusGroup(lines: lines, running: isLast && busy && !progressShown)
                 case .work(_, let title, let steps):
-                    ChatLook.Worked(title) {
-                        ForEach(ChatItem.items(steps)) { step in
-                            switch step {
-                            case .tools(let lines): ToolGroup(lines: lines, running: false).equatable()
-                            case .statuses(let lines): StatusGroup(lines: lines, running: false)
-                            case .line(let line) where line.kind == .progress || line.kind == .agent: ChatLook.ProgressLine(line.text)
-                            default: EmptyView()
-                            }
-                        }
-                    }
+                    ChatLook.Worked(title) { StepList(steps: steps) }
                 }
             }
             .padding(.top, gap)
@@ -461,7 +472,7 @@ struct LogRow: View, Equatable {
             // Shown through StatusGroup and ToolGroup.
             EmptyView()
         case .progress:
-            // A message like any other while the turn goes on; gathered with its steps once it's over.
+            // A message like any other, while the turn goes on and once it's over.
             ChatLook.AgentText(line.text)
         case .summary:
             ChatLook.SummaryLine(line.text)
@@ -630,7 +641,7 @@ struct StatusGroup: View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(lines) { line in
                 if line.kind == .status, let command = ChatLook.ranCommand(in: line.text) {
-                    ChatLook.RanCommand(command)
+                    ChatLook.RanCommand(command, said: line.said)
                 } else {
                     ChatLook.StatusLine(line.text, running: running && line.id == lines.last?.id && line.text.hasSuffix("…"))
                 }
@@ -646,4 +657,19 @@ struct StatusGroup: View {
 /// one in the app's title bar does.
 enum ReloadLine {
     static func text(_ name: String) -> String { "Reload \(name) to see this change." }
+}
+
+/// A turn's steps as its one line opens to them: "Worked for…" once it's over, and the live line while it goes on.
+struct StepList: View {
+    let steps: [LogLine]
+
+    var body: some View {
+        ForEach(ChatItem.items(steps)) { step in
+            switch step {
+            case .tools(let lines): ToolGroup(lines: lines, running: false).equatable()
+            case .statuses(let lines): StatusGroup(lines: lines, running: false)
+            default: EmptyView()
+            }
+        }
+    }
 }

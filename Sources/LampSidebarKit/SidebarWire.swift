@@ -43,6 +43,11 @@ public struct SidebarState: Codable, Equatable {
     public var attachments: [SidebarAttachment]
     // Optional, like everything added since the first sidebar: a sidebar talking to a Lamp from before these
     // were sent still reads its chat.
+    /// When `working` began, for how its words change as the wait goes on (`Activity.words`).
+    public var workingActivitySince: Date?
+    /// The steps of the turn still going, which the line saying what it's doing opens to: they aren't lines of
+    /// their own while it goes on.
+    public var workingSteps: [SidebarLine]?
     /// Messages waiting for the current change to finish.
     public var queued: [SidebarQueued]?
     /// The first request is waiting for Apple's tools to install, not for a turn.
@@ -107,6 +112,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var gap: Double
     /// A status step still going, with its spinner.
     public var running: Bool
+    /// For a command the agent ran: what it said the command was for, its name in the chat (`RanCommand`).
+    public var said: String?
     /// A request's pictures and files.
     public var attachments: [SidebarAttachment]?
     /// An agent's message that may still be growing.

@@ -2,9 +2,10 @@ import XCTest
 @testable import Lamp
 import LampSidebarKit
 
-/// A finished turn's steps are gathered into one "Worked for …" line above its answer; a turn still going isn't.
+/// A finished turn's steps are gathered into one "Worked for …" line at its end, where the line saying what it was
+/// doing stood while it went on; a turn still going keeps its steps in that line (`ChatItem.live`).
 final class WorkedForTests: XCTestCase {
-    func testAFinishedTurnsStepsGoAboveItsAnswer() {
+    func testAFinishedTurnsStepsGoUnderItsAnswer() {
         let lines = [LogLine(kind: .user, text: "make it"), LogLine(kind: .status, text: "Ran: ls"),
                      LogLine(kind: .status, text: "Building…"), LogLine(kind: .status, text: ChatLook.fixingCrash),
                      LogLine(kind: .agent, text: "Done."), LogLine(kind: .status, text: "Puzzle is ready"),
@@ -19,8 +20,8 @@ final class WorkedForTests: XCTestCase {
             case .work(_, let title, let steps): "\(title):" + steps.map(\.text).joined(separator: ",")
             }
         }
-        XCTAssertEqual(shape, ["make it", "statuses:\(ChatLook.fixingCrash)", "Worked for 2 min 3 s:Ran: ls,Puzzle is ready",
-                               "Done.", "more", "statuses:Ran: pwd"])
+        XCTAssertEqual(shape, ["make it", "statuses:\(ChatLook.fixingCrash)", "Done.", "Worked for 2 min 3 s:Ran: ls,Puzzle is ready",
+                               "more", "statuses:Ran: pwd"])
     }
 
     /// A card answered by a click leaves no request in the chat, and Lamp starts runs of its own: each run still
@@ -40,8 +41,7 @@ final class WorkedForTests: XCTestCase {
             case .work(_, let title, let steps): "\(title):" + steps.map(\.text).joined(separator: ",")
             }
         }
-        // A run that asked has its card for an answer, so its steps go above the card.
-        XCTAssertEqual(shape, ["make it", "Worked for 5 s:Ran: ls", "which?", "Worked for 9 s:Ran: pwd", "Done.",
+        XCTAssertEqual(shape, ["make it", "which?", "Worked for 5 s:Ran: ls", "Done.", "Worked for 9 s:Ran: pwd",
                                "statuses:Building…"])
     }
 
@@ -65,13 +65,28 @@ final class WorkedForTests: XCTestCase {
             }
         }
         XCTAssertEqual(shape, ["You now have a counter.", "statuses:\(ChatLook.fixingCrash)",
-                               "Worked for 15 s:Crash Counter is ready",
-                               "Crash Now no longer crashes the app.", "statuses:Crash Counter is ready"])
+                               "Crash Now no longer crashes the app.", "Worked for 15 s:Crash Counter is ready",
+                               "statuses:Crash Counter is ready"])
     }
 
     func testHowLongItWorked() {
         XCTAssertEqual(ChatItem.workedFor("Worked for 8s · $0.01"), "Worked for 8 s")
         XCTAssertEqual(ChatItem.workedFor("Worked for 3m 0s · $0.01"), "Worked for 3 min")
         XCTAssertEqual(ChatItem.workedFor("Worked for 1m 5s · $0.01"), "Worked for 1 min 5 s")
+    }
+
+    /// While a turn goes on, its steps aren't rows of their own but what its one live line opens to; what it says stays
+    /// in the chat, and what came after the summary of the turn before stays where it was.
+    func testATurnGoingOnKeepsItsStepsInItsLine() {
+        let lines = [LogLine(kind: .agent, text: "Done before."), LogLine(kind: .summary, text: "Worked for 9s · $0"),
+                     LogLine(kind: .status, text: "Shelf is ready"), LogLine(kind: .user, text: "make it beer"),
+                     LogLine(kind: .agent, text: "I'll look first."), LogLine(kind: .status, text: "Ran: ls", said: "Looking around"),
+                     LogLine(kind: .status, text: "Ran: grep hot", said: "Finding every mention"),
+                     LogLine(kind: .agent, text: "Now the words."), LogLine(kind: .status, text: "Building…")]
+        let live = ChatItem.live(lines)
+        XCTAssertEqual(live.shown.map(\.text), ["Done before.", "Worked for 9s · $0", "Shelf is ready", "make it beer",
+                                                 "I'll look first.", "Now the words."])
+        // The step still going ("Building…") is what the line itself says.
+        XCTAssertEqual(live.steps.map(\.said), ["Looking around", "Finding every mention"])
     }
 }

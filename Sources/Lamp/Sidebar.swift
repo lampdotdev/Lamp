@@ -226,6 +226,8 @@ final class SidebarServer {
                                  working: progress?.activity, workingSince: progress?.started, empty: log.isEmpty, busy: busy,
                                  draft: draft.text, draftVersion: draftVersions[project.id] ?? 0,
                                  attachments: draft.attachments.map { Self.attachment($0) })
+        state.workingActivitySince = progress?.activitySince
+        state.workingSteps = progress == nil ? nil : Self.liveSteps(log, details: details)
         state.pointed = draft.pointed.map { Self.pointed($0, canChooseAgain: store.canPoint(in: project)) }
         let canSendNow = store.canSendNow(in: project)
         let lastWaiting = store.waitingToSend(in: project).last?.id
@@ -388,6 +390,36 @@ final class SidebarServer {
 
     /// The chat as Lamp's window shows it without Agent Details (`Transcript`): the same lines, gathered and
     /// spaced the same way. Cards and notes Lamp's window has and this doesn't yet are left out.
+    static func tools(_ run: [LogLine], gap: Double, running: Bool) -> SidebarLine {
+        let calls = run.map { ToolCall($0.text) }
+        var line = SidebarLine(id: run[0].id, kind: .tools, text: ToolGroup.summary(calls), gap: gap, running: running)
+        line.symbol = ToolGroup.icon(calls)
+        line.calls = calls.map { SidebarToolCall(symbol: $0.icon, verb: $0.verb, argument: $0.argument) }
+        return line
+    }
+
+    /// A turn's steps as its one line opens to them, in "Worked for…" and in the live line, as Lamp's window shows them.
+    static func stepLines(_ steps: [LogLine]) -> [SidebarLine] {
+        ChatItem.items(steps).flatMap { step -> [SidebarLine] in
+            switch step {
+            case .tools(let run): [tools(run, gap: 4, running: false)]
+            case .statuses(let run): run.map { line in
+                var status = SidebarLine(id: line.id, kind: .status, text: line.text, gap: 4)
+                status.said = line.said
+                return status
+            }
+            default: []
+            }
+        }
+    }
+
+    /// The steps of the turn still going, for the line that says what it's doing, as Lamp's window shows them.
+    static func liveSteps(_ log: [LogLine], details: Bool) -> [SidebarLine]? {
+        guard !details else { return nil }
+        let steps = ChatItem.live(LogLine.visible(log, details: false)).steps
+        return steps.isEmpty ? nil : stepLines(steps)
+    }
+
     static func lines(_ log: [LogLine], project: LampProject, busy: Bool, progressShown: Bool,
                       reach: Int = LogLine.recentCount, canSendAgain: Bool = false, details: Bool = false) -> [SidebarLine] {
         let dir = project.dir
@@ -399,15 +431,10 @@ final class SidebarServer {
         let start = LogLine.recentStart(in: lines, atLeast: reach)
         let latestRequest = lines.last { $0.kind == .user }?.id
         let shown = Array(lines[start...])
-        let items = ChatItem.items(progressShown ? Transcript.withoutStepInProgress(shown) : shown, gather: !details)
+        // While the turn goes on, its steps are in the line that says what it's doing (`liveSteps`), not lines of their own.
+        let items = ChatItem.items(progressShown ? (details ? Transcript.withoutStepInProgress(shown) : ChatItem.live(shown).shown) : shown,
+                                   gather: !details)
         var out: [SidebarLine] = []
-        func tools(_ run: [LogLine], gap: Double, running: Bool) -> SidebarLine {
-            let calls = run.map { ToolCall($0.text) }
-            var line = SidebarLine(id: run[0].id, kind: .tools, text: ToolGroup.summary(calls), gap: gap, running: running)
-            line.symbol = ToolGroup.icon(calls)
-            line.calls = calls.map { SidebarToolCall(symbol: $0.icon, verb: $0.verb, argument: $0.argument) }
-            return line
-        }
         for (index, item) in items.enumerated() {
             let isLast = index == items.count - 1
             let gap = Double(ChatItem.gap(after: index > 0 ? items[index - 1] : nil, before: item, isFinalAnswer: finalAnswers.contains(item.id)))
@@ -415,21 +442,16 @@ final class SidebarServer {
             case .statuses(let run):
                 for (position, line) in run.enumerated() {
                     let running = isLast && busy && !progressShown && line.id == run.last?.id && line.text.hasSuffix("…")
-                    out.append(SidebarLine(id: line.id, kind: .status, text: line.text, gap: position == 0 ? gap : 4, running: running))
+                    var status = SidebarLine(id: line.id, kind: .status, text: line.text, gap: position == 0 ? gap : 4, running: running)
+                    status.said = line.said
+                    out.append(status)
                 }
             case .tools(let run):
                 // Only with Agent Details on: the steps, summed up, each one under it.
                 out.append(tools(run, gap: gap, running: isLast && busy && !progressShown))
             case .work(let id, let title, let steps):
                 var line = SidebarLine(id: id, kind: .work, text: title, gap: gap)
-                line.steps = ChatItem.items(steps).flatMap { step -> [SidebarLine] in
-                    switch step {
-                    case .tools(let run): [tools(run, gap: 4, running: false)]
-                    case .statuses(let run): run.map { SidebarLine(id: $0.id, kind: .status, text: $0.text, gap: 4) }
-                    case .line(let line) where line.kind == .progress || line.kind == .agent: [Self.progress(line, gap: 4, folded: true)]
-                    default: []
-                    }
-                }
+                line.steps = Self.stepLines(steps)
                 out.append(line)
             case .line(let line):
                 switch line.kind {

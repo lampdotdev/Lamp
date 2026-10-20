@@ -150,12 +150,17 @@ public enum ChatLook {
         }
     }
 
-    /// A command the agent ran ("Ran: git clone …"). The chat says that it happened; the command
-    /// itself is a click away, for anyone who wants to see it.
+    /// A command the agent ran ("Ran: git clone …"). The chat says that it happened, by what the agent said it was
+    /// for when it said ("Reading how the shelf works"); the command itself is a click away, for anyone who wants
+    /// to see it. Several the agent gave one name to are one row, their commands one under another.
     public struct RanCommand: View {
         let command: String
+        let said: String?
         @State private var expanded = false
-        public init(_ command: String) { self.command = command }
+        public init(_ command: String, said: String? = nil) {
+            self.command = command
+            self.said = said
+        }
 
         public var body: some View {
             VStack(alignment: .leading, spacing: 4) {
@@ -164,7 +169,7 @@ public enum ChatLook {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle").frame(width: 16)
-                        Text("Ran a command")
+                        Text(said ?? "Ran a command")
                         Image(systemName: "chevron.right")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.tertiary)
@@ -194,25 +199,63 @@ public enum ChatLook {
         status.hasPrefix("Ran: ") ? String(status.dropFirst(5)) : nil
     }
 
-    /// A turn's progress: what the agent is doing and for how long.
-    public struct ActivityLine: View {
+    /// A turn's progress: one line saying what the agent is doing and for how long, which changes in place as it
+    /// moves from one thing to the next, and opens to show the steps so far. `since` is when the activity began,
+    /// which a long think or build is counted from (the turn's start when it isn't known). When the turn ends this
+    /// line's place is taken by its "Worked for…" (`Worked`), which opens to the same steps.
+    public struct ActivityLine<Steps: View>: View {
         let activity: String
         let started: Date
-        public init(_ activity: String, started: Date) {
+        let since: Date
+        let hasSteps: Bool
+        let steps: Steps
+        @State private var expanded = false
+        @State private var dim = false
+
+        public init(_ activity: String, started: Date, since: Date? = nil, hasSteps: Bool,
+                    @ViewBuilder steps: () -> Steps) {
             self.activity = activity
             self.started = started
+            self.since = since ?? started
+            self.hasSteps = hasSteps
+            self.steps = steps()
         }
 
         public var body: some View {
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.mini).frame(width: 16)
-                Text(activity).lineLimit(1)
-                Text("·")
-                Elapsed(from: started, to: nil)
+            VStack(alignment: .leading, spacing: 4) {
+                Button {
+                    guard hasSteps else { return }
+                    withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini).frame(width: 16)
+                        // It breathes while the agent works, so the line reads as live rather than stuck.
+                        ActivityText(activity, since: since)
+                            .opacity(dim ? 0.5 : 1)
+                            .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: dim)
+                        Text("·")
+                        Elapsed(from: started, to: nil)
+                        if hasSteps {
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                                .rotationEffect(.degrees(expanded ? 90 : 0))
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointingHand()
+                .font(ChatLook.stepFont)
+                .foregroundStyle(.secondary)
+                .padding(.leading, ChatLook.stepIndent)
+                .help(hasSteps ? (expanded ? "Hide the steps" : "Show the steps") : "")
+                .onAppear { dim = true }
+                if expanded && hasSteps {
+                    VStack(alignment: .leading, spacing: 4) { steps }
+                        .transition(.opacity)
+                }
             }
-            .font(ChatLook.stepFont)
-            .foregroundStyle(.secondary)
-            .padding(.leading, ChatLook.stepIndent)
         }
     }
 
@@ -486,5 +529,12 @@ enum PlusMenu {
         }
         // The target lives as long as the menu is up: popUp returns once it closes.
         withExtendedLifetime(target) { _ = menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil) }
+    }
+}
+
+extension ChatLook.ActivityLine where Steps == EmptyView {
+    /// The line with no steps to open: a turn that has done nothing yet, or a place that doesn't list them.
+    public init(_ activity: String, started: Date, since: Date? = nil) {
+        self.init(activity, started: started, since: since, hasSteps: false) { EmptyView() }
     }
 }

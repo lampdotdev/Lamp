@@ -261,7 +261,11 @@ private struct Chat: View {
                             ChatLook.UndoChange { link.send(.undoChange(change)) }.padding(.top, 12)
                         }
                         if let working = state.working, let since = state.workingSince {
-                            ChatLook.ActivityLine(working, started: since).padding(.top, 12)
+                            ChatLook.ActivityLine(working, started: since, since: state.workingActivitySince,
+                                                  hasSteps: !(state.workingSteps ?? []).isEmpty) {
+                                ForEach(state.workingSteps ?? []) { step in LineView(line: step, busy: false) }
+                            }
+                            .padding(.top, 12)
                         }
                         if let notResponding = state.notResponding {
                             ChatLook.UnresponsiveNotice(text: notResponding) { link.send(.forceQuit) }.padding(.top, 12)
@@ -389,7 +393,7 @@ private struct LineView: View {
                 // The agent's line on how the work went, among a finished turn's steps.
                 ChatLook.ProgressLine(line.text)
             } else if let command = ChatLook.ranCommand(in: line.text) {
-                ChatLook.RanCommand(command)
+                ChatLook.RanCommand(command, said: line.said)
             } else {
                 ChatLook.StatusLine(line.text, running: line.running)
             }

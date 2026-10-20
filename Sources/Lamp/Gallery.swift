@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + askEntries + buildEntries + progressEntries + pointedEntries
+    static let entries: [Entry] = chatEntries + askEntries + buildEntries + activityEntries + progressEntries + pointedEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -31,7 +31,7 @@ enum Gallery {
     /// or sized unlike the rest shows against its neighbours.
     private static let chatEntries: [Entry] = [
         chat("A finished chat", finishedChat, undo: true),
-        // The first request, its steps so far, and the progress line under them.
+        // The first request and what the agent said; its steps so far are in the line under them, which opens to them.
         chat("A turn going", Array(finishedChat.prefix(6)), activity: "Thinking"),
         chat("A clicked answer", [LogLine(kind: .user, text: "make a habit tracker"),
                                   LogLine(kind: .ask, text: "", ask: Talk.Ask(layout: .steps, questions: [kind, when], answers: ["Habits", "Morning"])),
@@ -64,11 +64,22 @@ enum Gallery {
         LogLine(kind: .summary, text: "Worked for 1m 11s · $0.12"),
     ]
 
-    private static func chat(_ name: String, _ lines: [LogLine], undo: Bool = false, activity: String? = nil) -> Entry {
-        Entry(group: "Chat", name: name) {
+    private static func chat(_ name: String, _ lines: [LogLine], group: String = "Chat", undo: Bool = false,
+                             activity: String? = nil) -> Entry {
+        Entry(group: group, name: name) {
             AnyView(VStack(alignment: .leading, spacing: 0) {
                 Transcript(lines: lines, dir: URL(fileURLWithPath: "/nonexistent"), busy: activity != nil, progressShown: activity != nil)
-                if let activity { ChatLook.ActivityLine(activity, started: .now.addingTimeInterval(-7)).padding(.top, 12) }
+                // The line the chat has under a turn going on, as Lamp's window draws it (`ProjectView`).
+                if let activity {
+                    let progress = { () -> TurnProgress in
+                        var progress = TurnProgress(newApp: false)
+                        progress.activity = activity
+                        progress.started = .now.addingTimeInterval(-7)
+                        progress.activitySince = progress.started
+                        return progress
+                    }()
+                    ActivityRow(progress: progress, lines: lines).padding(.top, 12)
+                }
                 if undo { ChatLook.UndoChange {}.padding(.top, 12) }
             })
         }
@@ -149,18 +160,89 @@ enum Gallery {
         }
     }
 
-    // MARK: Progress
+    // MARK: Activity
 
-    /// The agent's lines on how the work is going: messages while its turn goes on, grey among its steps once it's
-    /// over (as "Worked for…" shows them opened).
-    private static let progressEntries: [Entry] = [
-        Entry(group: "Progress", name: "Among a finished turn's steps") {
-            AnyView(VStack(alignment: .leading, spacing: 4) {
-                ChatLook.ProgressLine("The week's columns are in. Now the tasks in them.")
-                ChatLook.StatusLine("Ran: swift build", running: false)
-                ChatLook.ProgressLine("Tasks show up. Now dragging them between days, and a few finishing touches.")
+    /// What a turn says it's doing as the wait goes on (`Activity`): the build card and the line under a change, fed
+    /// the same activity and clock, at moments of a long think and a long build, and under the agent's progress lines.
+    private static let activityEntries: [Entry] = [
+        activity("Thinking, just begun", Activity.thinking, waited: 1),
+        activity("Thinking, 25 seconds", Activity.thinking, waited: 25),
+        activity("Thinking, 70 seconds", Activity.thinking, waited: 70),
+        activity("Thinking, 3 minutes", Activity.thinking, waited: 200),
+        activity("A named step", "Working on the interface", waited: 40),
+        activity("Building, 45 seconds", "Building…", waited: 45),
+        activity("Building, 2 minutes", "Building…", waited: 120),
+        cover("Cover, building", "Building…", waited: 12),
+        cover("Cover, the turn over", nil, waited: 0),
+        // The one line a turn has while it goes on, which opens (click it) to the steps so far: commands the agent
+        // named, a few under one name, and one it didn't. "Worked for…" opens to the same rows once it's over.
+        Entry(group: "Activity", name: "Steps the agent named") {
+            AnyView(ChatLook.ActivityLine("Checking it builds", started: Date().addingTimeInterval(-48),
+                                          since: Date().addingTimeInterval(-6), hasSteps: true) {
+                ChatLook.RanCommand("cat .lamp/starter.md\ncat Sources/App.swift Sources/Model.swift\ncat Sources/ShelfView.swift",
+                                    said: "Reading how the shelf works")
+                ChatLook.RanCommand("./build.sh", said: "Checking it builds")
+                ChatLook.RanCommand("ls Assets")
             })
         },
+        Entry(group: "Activity", name: "Under the agent's progress lines") {
+            let started = Date().addingTimeInterval(-95)
+            return AnyView(VStack(alignment: .leading, spacing: 12) {
+                ChatLook.AgentText("The week's columns are in. Now the tasks in them.")
+                ChatLook.AgentText("Tasks show up. Now dragging them between days.")
+                ChatLook.ActivityLine(Activity.thinking, started: started, since: Date().addingTimeInterval(-25))
+            })
+        },
+    ]
+
+    /// The cover while the app reopens, on a starter's picture of its window.
+    private static func cover(_ name: String, _ activity: String?, waited: TimeInterval) -> Entry {
+        Entry(group: "Activity", name: name) {
+            var progress = TurnProgress(newApp: false)
+            progress.started = Date().addingTimeInterval(-waited - 20)
+            if let activity { progress.activity = activity }
+            progress.activitySince = Date().addingTimeInterval(-waited)
+            if activity == nil { progress.finish(worked: true) }
+            let picture = Starters.folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("countdowns/preview.png")) }
+                ?? NSImage(size: NSSize(width: 340, height: 282))
+            return AnyView(CoverView(image: picture) { CoverNote(progress: progress) }
+                .aspectRatio(picture.size, contentMode: .fit))
+        }
+    }
+
+    private static func activity(_ name: String, _ activity: String, waited: TimeInterval) -> Entry {
+        Entry(group: "Activity", name: name) {
+            var progress = TurnProgress(newApp: true)
+            progress.activity = activity
+            progress.started = Date().addingTimeInterval(-waited)
+            progress.activitySince = progress.started
+            progress.plan = [PlanPart(id: 0, title: "Add a countdown", done: false),
+                             PlanPart(id: 1, title: "See the days left at a glance", done: false)]
+            return AnyView(VStack(alignment: .leading, spacing: 16) {
+                BuildCardView(title: "Countdowns", name: "Countdowns", iconReady: false, progress: progress) {
+                    BlueprintIcon(letter: "C", size: 44)
+                }
+                ChatLook.ActivityLine(progress.activity, started: progress.started, since: progress.activitySince)
+            })
+        }
+    }
+
+    // MARK: Progress
+
+    /// The agent's lines on how the work is going: messages while its turn goes on, and still messages once it's
+    /// over, with only its steps gathered into "Worked for…" under its answer.
+    private static let progressEntries: [Entry] = [
+        chat("After a finished turn", [
+            LogLine(kind: .user, text: "add a week view"),
+            LogLine(kind: .progress, text: "The week's columns are in. Now the tasks in them."),
+            LogLine(kind: .tool, text: "Edit Sources/WeekView.swift"),
+            LogLine(kind: .status, text: "Ran: swift build", said: "Checking it builds"),
+            LogLine(kind: .progress, text: "Tasks show up. Now dragging them between days, and a few finishing touches."),
+            LogLine(kind: .tool, text: "Edit Sources/WeekView.swift"),
+            LogLine(kind: .status, text: "Today is ready"),
+            LogLine(kind: .agent, text: "The week view is in: a column for each day, and tasks you can drag between them."),
+            LogLine(kind: .summary, text: "Worked for 2m 40s · $0.21"),
+        ], group: "Progress"),
     ]
 
     // MARK: Pointed at

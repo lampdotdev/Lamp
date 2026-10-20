@@ -2,8 +2,8 @@ import XCTest
 @testable import Lamp
 import LampSidebarKit
 
-/// The agent's `progress` lines: shown as a turn goes on, gathered with its steps once it's over, and held to
-/// the same short words for every engine.
+/// The agent's `progress` lines: shown as a turn goes on, staying messages once it's over while its steps are
+/// gathered, and held to the same short words for every engine.
 final class ProgressLineTests: XCTestCase {
     private func shape(_ items: [ChatItem]) -> [String] {
         items.map { item in
@@ -16,14 +16,14 @@ final class ProgressLineTests: XCTestCase {
         }
     }
 
-    func testAFinishedTurnsProgressFoldsWithItsSteps() {
+    func testAFinishedTurnsProgressStaysAndOnlyItsStepsFold() {
         let lines = [LogLine(kind: .user, text: "add a week view"), LogLine(kind: .progress, text: "Columns are in."),
                      LogLine(kind: .status, text: "Ran: ls"), LogLine(kind: .progress, text: "Now the tasks."),
                      LogLine(kind: .agent, text: "Done."), LogLine(kind: .summary, text: "Worked for 9s · $0"),
                      LogLine(kind: .user, text: "more"), LogLine(kind: .progress, text: "Starting on it.")]
         XCTAssertEqual(shape(ChatItem.items(lines, gather: true)),
-                       ["add a week view", "Worked for 9 s:Columns are in.,Ran: ls,Now the tasks.", "Done.", "more",
-                        "progress:Starting on it."])
+                       ["add a week view", "progress:Columns are in.", "progress:Now the tasks.", "Done.",
+                        "Worked for 9 s:Ran: ls", "more", "progress:Starting on it."])
     }
 
     /// Every progress line and message stays in the chat while the turn goes on, not only the latest; what's said
@@ -36,14 +36,14 @@ final class ProgressLineTests: XCTestCase {
         XCTAssertEqual(LogLine.visible(lines, details: false).map(\.text), ["go", "I'll start.", "One.", "Now the week.", "Two.", "which?"])
     }
 
-    /// Once the turn is over, only its last message is left out of the fold: the answer.
-    func testWhatWasSaidOnTheWayFoldsAndTheAnswerStays() {
+    /// Once the turn is over, what was said on the way stays a message; the steps fold under it, where the live line was.
+    func testWhatWasSaidOnTheWayStaysAMessage() {
         let lines = [LogLine(kind: .user, text: "go"), LogLine(kind: .agent, text: "I'll start."),
                      LogLine(kind: .progress, text: "Layout's in."), LogLine(kind: .agent, text: "Now the week."),
                      LogLine(kind: .status, text: "Ran: ls"), LogLine(kind: .agent, text: "Done."),
                      LogLine(kind: .summary, text: "Worked for 9s · $0")]
         XCTAssertEqual(shape(ChatItem.items(LogLine.visible(lines, details: false), gather: true)),
-                       ["go", "Worked for 9 s:I'll start.,Layout's in.,Now the week.,Ran: ls", "Done."])
+                       ["go", "I'll start.", "progress:Layout's in.", "Now the week.", "Done.", "Worked for 9 s:Ran: ls"])
     }
 
     func testWordsAreCheckedAndARepeatIsntShown() {
@@ -95,7 +95,7 @@ final class ProgressLineTests: XCTestCase {
                      LogLine(kind: .summary, text: "Worked for 9s · $0")]
         XCTAssertEqual(shape(ChatItem.items(lines, gather: true)), ["go", "I'll look.", "progress:One.", "which?"])
         lines[3].ask?.answers = ["A"]
-        XCTAssertEqual(shape(ChatItem.items(lines, gather: true)), ["go", "Worked for 9 s:I'll look.,One.", "which?"])
+        XCTAssertEqual(shape(ChatItem.items(lines, gather: true)), ["go", "I'll look.", "progress:One.", "which?"])
     }
 
     /// Spaced as the agent's messages are, two in a row close together.
