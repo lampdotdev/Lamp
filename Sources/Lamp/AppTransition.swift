@@ -113,7 +113,7 @@ enum AppTransition {
 struct TransitionGlow: View {
     var cornerRadius: CGFloat = 12
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private static let hues: [NSColor] = [.systemBlue, .systemPurple, .systemOrange]
+    static let hues: [NSColor] = [.systemBlue, .systemPurple, .systemOrange]
     private static let cycle = 6.0
 
     var body: some View {
@@ -140,5 +140,40 @@ struct TransitionGlow: View {
         let index = Int(position) % hues.count
         let next = hues[(index + 1) % hues.count]
         return Color(nsColor: hues[index].blended(withFraction: position - Double(Int(position)), of: next) ?? hues[index])
+    }
+}
+
+/// The same light around a wish's icon on the desk while it's built: just outside the icon, its colours travelling
+/// round it, bright enough to see at a glance across the desk, since a wish that looks still looks stuck. Where the
+/// person asked for less motion it stays still. The desk fades it out when the build is done.
+struct BuildingGlow: View {
+    let size: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private static let lap = 3.0
+
+    var body: some View {
+        TimelineView(.animation(paused: reduceMotion)) { timeline in
+            let light = Self.light(at: timeline.date, still: reduceMotion)
+            // The icon's own tile, an 824pt square on its 1024pt canvas, so the light hugs its edge.
+            let side = size * 824 / 1024
+            let shape = RoundedRectangle(cornerRadius: side * 0.225, style: .continuous)
+            ZStack {
+                shape.stroke(light, lineWidth: side * 0.24).blur(radius: side * 0.15)
+                shape.stroke(light, lineWidth: side * 0.09).blur(radius: side * 0.05)
+                // A crisp rim at the icon's edge, which is what the eye catches from across the window.
+                shape.stroke(light, lineWidth: 2.5).blur(radius: 0.6)
+            }
+            .frame(width: side, height: side)
+        }
+        .frame(width: size, height: size)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    /// The light where it is at a moment.
+    private static func light(at date: Date, still: Bool) -> AngularGradient {
+        let turn = still ? 0 : (date.timeIntervalSinceReferenceDate / lap).truncatingRemainder(dividingBy: 1)
+        let colors = TransitionGlow.hues.map(Color.init(nsColor:))
+        return AngularGradient(colors: colors + [colors[0]], center: .center, angle: .degrees(turn * 360))
     }
 }

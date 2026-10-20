@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import LampSidebarKit
 import AVFoundation
 import UniformTypeIdentifiers
 
@@ -719,13 +720,30 @@ struct DeskIcon: View {
     /// This one is being dragged: its place shows faintly where it would land.
     private var lifted: Bool { arrangement.dragging == project.id }
 
-    /// What's going on with it, for VoiceOver: on screen the spinner and the dot say it.
+    /// Being built, or waiting to open until it is: its icon glows (`BuildingGlow`).
+    private var building: Bool {
+        busy && !store.preparing.contains(project.id) || store.openWhenReady.contains(project.id)
+    }
+
+    /// What its status line says while it's built: its own turn's activity in Lamp's words, or nothing when no turn is
+    /// going (a starter built out of sight), for the line's own words.
+    private var deskActivity: (words: String, since: Date)? {
+        guard let progress = store.progress[project.id], progress.finished == nil else { return nil }
+        return (progress.deskActivity, progress.deskSince)
+    }
+
+    /// What's going on with it, for VoiceOver: on screen the glow, the status line and the dot say it.
     private var status: String? {
         // A wish Lamp came with, built for the first time out of sight: nothing shows until it's clicked, and then it
         // says it's opening, which it does by itself once it's ready.
         if store.openWhenReady.contains(project.id) { return "Opening…" }
         if store.preparing.contains(project.id) { return nil }
-        if busy { return store.progress[project.id]?.newApp == true || project.untitled ? "Coming true…" : "Changing…" }
+        if busy {
+            // What the status line says, so a wish waiting for an OK isn't heard as still building; a think is told plainly,
+            // since its phrases turn over every few seconds.
+            if let words = deskActivity?.words, words != Activity.thinking { return words }
+            return store.progress[project.id]?.newApp == true || project.untitled ? "Coming true…" : "Changing…"
+        }
         if Talk.waiting(in: store.logs[project.id] ?? []) != nil { return "Has a question" }
         if store.queued[project.id]?.isEmpty == false { return "Waiting to start" }
         if project.finding { return "Finding a wish" }
@@ -736,13 +754,13 @@ struct DeskIcon: View {
     var body: some View {
         VStack(spacing: 6) {
             AppIcon(project: project, size: 76)
+                .background {
+                    if building { BuildingGlow(size: 76).transition(.opacity) }
+                }
+                // It settles rather than vanishing when the build is done.
+                .animation(.easeOut(duration: 0.8), value: building)
                 .overlay(alignment: .topTrailing) {
-                    if busy && !store.preparing.contains(project.id) || store.openWhenReady.contains(project.id) {
-                        ProgressView().controlSize(.small)
-                            .padding(3)
-                            .background(.regularMaterial, in: Circle())
-                            .offset(x: 2, y: -2)
-                    } else if store.unread.contains(project.id) {
+                    if !building && store.unread.contains(project.id) {
                         ReadyDot(size: 12)
                             .overlay(Circle().strokeBorder(.background, lineWidth: 2))
                             .offset(x: -2, y: 2)
@@ -750,11 +768,18 @@ struct DeskIcon: View {
                 }
                 .scaleEffect(lit ? 1.06 : 1)
                 .offset(y: lit ? -2 : 0)
-            Text(project.title)
-                .font(.callout.weight(.medium))
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-                .truncationMode(.tail)
+            VStack(spacing: 2) {
+                Text(project.title)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .truncationMode(.tail)
+                if building {
+                    DeskStatusLine(activity: deskActivity?.words, since: deskActivity?.since ?? .now)
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeInOut(duration: 0.3), value: building)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8).padding(.horizontal, 4)
@@ -784,12 +809,65 @@ struct DeskIcon: View {
         }
         .help("Click to use \(project.title) and change it")
         .accessibilityLabel(project.title)
-        .accessibilityHint(status ?? place?.caption ?? "")
+        // What's going on with it is its state, read with its name; where it lives is the hint after.
+        .accessibilityValue(status ?? "")
+        .accessibilityHint(place?.caption ?? "")
         // Read again as a turn ends: a change can move it, say, into the menu bar.
         .task(id: busy) {
             let current = project
             place = await Task.detached { WishPlace.of(current) }.value
         }
+    }
+}
+
+/// One line under a wish's name while it's built, saying what its own turn is doing now in Lamp's words
+/// (`TurnProgress.deskActivity`, worded as the chat's line is, `Activity.words`), or that it's getting ready when no
+/// turn is going. A sheen crosses it so a long step never looks frozen, and words that change cross-fade in place:
+/// the line is the tile's width and one line high, so nothing resizes while they change. Where the person asked for
+/// less motion it stays still, and the words still change.
+struct DeskStatusLine: View {
+    let activity: String?
+    let since: Date
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    static let placeholder = "Getting it ready…"
+    private static let sheen = 2.2
+
+    var body: some View {
+        // Still, it's redrawn only twice a second, for its words.
+        TimelineView(.animation(minimumInterval: reduceMotion ? 0.5 : nil)) { timeline in
+            let words = activity.map {
+                Activity.words($0, waited: timeline.date.timeIntervalSince(since) + 0.001,
+                               start: Int(since.timeIntervalSinceReferenceDate))
+            } ?? Self.placeholder
+            ZStack {
+                Text(words)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(style(at: timeline.date))
+                    .id(words)
+                    .transition(.opacity)
+            }
+            .frame(maxWidth: .infinity)
+            .animation(.easeInOut(duration: 0.35), value: words)
+        }
+        .accessibilityHidden(true)
+    }
+
+    /// Secondary text, with a band of brighter light crossing it every couple of seconds.
+    private func style(at date: Date) -> AnyShapeStyle {
+        let dim = Color.primary.opacity(0.5)
+        guard !reduceMotion else { return AnyShapeStyle(Color.primary.opacity(0.6)) }
+        let at = (date.timeIntervalSinceReferenceDate / Self.sheen).truncatingRemainder(dividingBy: 1) * 1.6 - 0.3
+        let stops: [Gradient.Stop] = [
+            .init(color: dim, location: 0),
+            .init(color: dim, location: min(max(at - 0.25, 0), 1)),
+            .init(color: .primary.opacity(0.95), location: min(max(at, 0), 1)),
+            .init(color: dim, location: min(max(at + 0.25, 0), 1)),
+            .init(color: dim, location: 1),
+        ]
+        return AnyShapeStyle(LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing))
     }
 }
 

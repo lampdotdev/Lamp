@@ -306,8 +306,17 @@ way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhen
 setup checks as anything typed in a chat. A click on a wish (or Return, or Open on its menu) opens it to use and
 change at once (`Store.open(fromDesk:)`): a Mac app with windows opens with
 its chat beside it (`Store.change`, below; a notification's click goes the same way, `Store.openChat`); a wish that opens no window is used (`Store.use`), and one still coming
-true, or waiting on an answer, opens its chat. Change… on its menu changes it the same way, or in Lamp's window. Under each icon is only its
-name: a spinner or a dot says what's going on with it, and VoiceOver also hears where it lives (`WishPlace`, read
+true, or waiting on an answer, opens its chat. Change… on its menu changes it the same way, or in Lamp's window. Under each icon is its
+name, and a dot says it's ready. While a wish is built the desk shows that work is moving, so it never looks stuck: its
+icon glows, the light Lamp puts round an app's windows going round it, bright enough to see at a glance, and one line
+under its name says what its own turn is doing now (`BuildingGlow`, `DeskStatusLine`). That line is the one thing
+besides the name a tile shows. It says only Lamp's own words, as the chat's live line words them (the thinking phrases,
+"Working on the interface", "Building…"), never a command the agent named or what only a coder would follow ("Running
+a command" reads as plain work, `TurnProgress.deskWords`), and "Getting it ready…" when no turn is going (a starter
+built out of sight); a sheen crosses it so a long step still moves. It is the tile's width and one line high, so words
+that change cross-fade in place and nothing resizes, and it goes when its own build ends, as the glow settles. Where the
+person asked for less motion both stay still and the words still change. VoiceOver hears what the status
+line says with the wish's name (a think plainly, as "Coming true…" or "Changing…"), and where it lives after (`WishPlace`, read
 from its files). While the pointer is on a wish, its picture and what it is take the place where a new wish is made
 (`WishStage`), which steps back and fades. When it's used where nothing comes
 forward (the menu bar, a widget, the background, the person's own phone) the desk says so in `WishHUD`, a
@@ -327,7 +336,7 @@ what to make. So the welcome is the hello and setup, and ends on the desk (a wis
 once setup is done). They're copied once, on the first launch, each saved as its first version ("From Lamp"),
 and from then on they're the person's: a later Lamp with other starters gives those only to new people. As soon
 as Apple's tools are there they're built one by one out of sight (`Store.prepareStarters`), with nothing in
-their chats; nothing on the desk shows it; one clicked before its build is done spins, says it's opening, and opens when it's
+their chats; nothing on the desk shows it; one clicked before its build is done glows, says it's opening, and opens when it's
 ready (`openWhenReady`). A
 starter opens with its chat beside it the first time (`MagicPanel.startWithChat`, the hand-off a new app gets after
 its first build); one that opens no window has its chat opened in Lamp the first time it's used. The chat opens on
