@@ -223,6 +223,7 @@ enum LiveReload {
             if type == "\u{1}launch", current != members {
                 let what = (current.first { !members.contains($0) } ?? members.first { !current.contains($0) } ?? "")
                     .split(separator: "\t").last.map { String($0.prefix { $0 != ":" }) } ?? ""
+                if what.hasPrefix("model ") { return ("the file of the SwiftData model \(what.dropFirst(6)) changed, and its data is found by key paths the open app made", nil) }
                 return ("what the app reads only at launch changed (\(what))", nil)
             }
             if current != members, !LiveSlots.casesAdded(type, members, current) {
@@ -810,7 +811,10 @@ enum LiveReload {
                     declared(name + ": " + type)
                 }
                 // A stored property's `@objc` (a static's too) is its accessors' from Objective-C: declared, not listed.
-                if rest.contains("readImpl=stored") { declared(name + ": " + type, listed: false) }
+                // Its observers (`didSet`) make every write a call to its setter, which a caller compiled without
+                // them doesn't make: declared and listed, so adding or removing them compiles every file.
+                let observed = rest.contains("with_observers")
+                if rest.contains("readImpl=stored") { declared(name + ": " + type + (observed ? " observed" : ""), listed: observed) }
             } else if let m = memberDecl.firstMatch(in: line, range: range) {
                 declared(String(line[Range(m.range(at: 3), in: line)!]) + ": " + String(line[Range(m.range(at: 4), in: line)!]))
                 scopes.append((indent, nil))
