@@ -339,7 +339,12 @@ final class FirstAnswer<T> {
 final class Store: ObservableObject {
     static let shared = Store()
 
-    @Published var projects: [LampProject] = [] { didSet { syncLocalNetwork() } }   // the network listener follows which apps open on a phone
+    @Published var projects: [LampProject] = [] {
+        didSet {
+            syncLocalNetwork()   // the network listener follows which apps open on a phone
+            DeskArrangement.shared.adopt(projects)
+        }
+    }
     /// The wish whose chat window is in front; nil while the desk is (`LampWindows`).
     @Published var selection: String? {
         didSet { if selection != oldValue { markRead() } }

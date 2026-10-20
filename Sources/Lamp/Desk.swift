@@ -85,6 +85,8 @@ struct WishDesk: View {
                 .scrollContentBackground(.hidden)
             }
         }
+        // A wish dragged about the desk is let go here, to keep its new place.
+        .onDrop(of: [DeskArrangement.wishType], delegate: DeskArrangement.Target(drop: .desk))
         .navigationTitle("Lamp")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -804,7 +806,11 @@ final class DeskArrangement: ObservableObject {
     /// The order while it's dragged, by id: where it would land if let go now.
     @Published private(set) var moving: [String]?
     /// Whether it's over the toolbar's trash.
-    @Published private(set) var overTrash = false
+    @Published fileprivate(set) var overTrash = false
+    /// Where it was let go: on the desk or its trash, the only places in Lamp that take it. A drag called off (Escape)
+    /// is let go nowhere, and changes nothing.
+    fileprivate var dropped: Drop?
+    enum Drop { case desk, trash }
     @Published private var saved: [String] = UserDefaults.standard.stringArray(forKey: DeskArrangement.savedKey) ?? []
 
     /// The order the drag began with, which it goes back to while the drag is off the window.
@@ -814,8 +820,6 @@ final class DeskArrangement: ObservableObject {
     private var passed: String?
     /// Each icon's view on the desk, which knows where the icon is.
     private var icons: [String: Weak] = [:]
-    /// The toolbar's trash, while it's shown.
-    weak var trash: NSView?
 
     private struct Weak { weak var view: NSView? }
 
@@ -840,6 +844,17 @@ final class DeskArrangement: ObservableObject {
             .map(\.element)
     }
 
+    /// Once the person has set an order, a wish seen for the first time goes after the rest and keeps that place,
+    /// whatever it's named and whatever comes after it.
+    func adopt(_ projects: [LampProject]) {
+        guard !saved.isEmpty else { return }
+        let known = Set(saved)
+        let new = projects.map(Self.key).filter { !known.contains($0) }
+        guard !new.isEmpty else { return }
+        saved += new
+        UserDefaults.standard.set(saved, forKey: Self.savedKey)
+    }
+
     func register(_ view: NSView, for id: String) {
         icons = icons.filter { $0.value.view != nil && $0.value.view !== view }
         icons[id] = Weak(view: view)
@@ -850,6 +865,7 @@ final class DeskArrangement: ObservableObject {
         passed = nil
         moving = order
         overTrash = false
+        dropped = nil
         dragging = id
     }
 
@@ -858,7 +874,6 @@ final class DeskArrangement: ObservableObject {
     @discardableResult
     func moved(to point: NSPoint, in window: NSWindow?) -> Bool {
         guard let dragging, let window, var order = moving else { return false }
-        overTrash = trash.flatMap(Self.screenFrame)?.insetBy(dx: -8, dy: -8).contains(point) ?? false
         guard window.frame.contains(point) else {
             // Off the window, to be shared or put in the Trash: the desk is as it was.
             if order != start { moving = start }
@@ -881,11 +896,11 @@ final class DeskArrangement: ObservableObject {
         return true
     }
 
-    /// The drag is over. Let go on the desk, the new order is kept; anywhere else, it's as it was. Says whether it
-    /// was let go on the toolbar's trash, to be deleted.
-    func end(at point: NSPoint, in window: NSWindow?, takenElsewhere: Bool, projects: [LampProject]) -> Bool {
-        let trashed = !takenElsewhere && (trash.flatMap(Self.screenFrame)?.insetBy(dx: -8, dy: -8).contains(point) ?? false)
-        if !takenElsewhere, !trashed, let window, window.frame.contains(point), let moving, moving != start {
+    /// The drag is over. Let go on the desk, the new order is kept; anywhere else, or called off, it's as it was.
+    /// Says whether it was let go on the toolbar's trash, to be deleted.
+    func end(projects: [LampProject]) -> Bool {
+        let trashed = dropped == .trash
+        if dropped == .desk, let moving, moving != start {
             let byID = Dictionary(projects.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             // Every wish there is, so one made later goes after them all.
             saved = arranged(projects).compactMap { byID[$0.id].map(Self.key) }
@@ -894,13 +909,27 @@ final class DeskArrangement: ObservableObject {
         moving = nil
         dragging = nil
         overTrash = false
+        dropped = nil
         start = []
         return trashed
     }
 
-    private static func screenFrame(of view: NSView) -> CGRect? {
-        guard let window = view.window else { return nil }
-        return window.convertToScreen(view.convert(view.bounds, to: nil))
+    /// What a dragged wish carries for the desk to know it by.
+    static let wishType = UTType(importedAs: "dev.lamp.wish")
+
+    /// The desk and its trash take a dragged wish, so that only one let go there counts: AppKit ends a drag called
+    /// off with Escape the same way as one let go where nothing takes it.
+    struct Target: DropDelegate {
+        let drop: Drop
+
+        func validateDrop(info: DropInfo) -> Bool { DeskArrangement.shared.dragging != nil }
+        func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+        func dropEntered(info: DropInfo) { if drop == .trash { DeskArrangement.shared.overTrash = true } }
+        func dropExited(info: DropInfo) { if drop == .trash { DeskArrangement.shared.overTrash = false } }
+        func performDrop(info: DropInfo) -> Bool {
+            DeskArrangement.shared.dropped = drop
+            return true
+        }
     }
 }
 
@@ -915,23 +944,10 @@ struct DeskTrash: View {
             .scaleEffect(arrangement.overTrash ? 1.2 : 1)
             .animation(.spring(response: 0.25, dampingFraction: 0.6), value: arrangement.overTrash)
             .frame(width: 28, height: 28)
-            .background(Marker())
+            .contentShape(Rectangle())
+            .onDrop(of: [DeskArrangement.wishType], delegate: DeskArrangement.Target(drop: .trash))
             .accessibilityLabel("Trash")
             .help("Drop a wish here to delete it")
-    }
-
-    /// Tells the arrangement where the trash is, so a drag can be matched against it.
-    private struct Marker: NSViewRepresentable {
-        func makeNSView(context: Context) -> Place { Place() }
-        func updateNSView(_ view: Place, context: Context) {}
-
-        final class Place: NSView {
-            override func hitTest(_ point: NSPoint) -> NSView? { nil }
-            override func viewDidMoveToWindow() {
-                super.viewDidMoveToWindow()
-                if window != nil { DeskArrangement.shared.trash = self }
-            }
-        }
     }
 }
 
@@ -1009,7 +1025,7 @@ struct WishDrag: NSViewRepresentable {
                     ? project.installedURL : nil
                 let payload = Payload(project: project, app: installed) { [weak self] in self?.publish() }
                 self.payload = payload
-                writer = Promise(payload: payload, name: "\(project.name).lampapp", delegate: self)
+                writer = Promise(payload: payload, name: "\(project.name).lampapp", wish: project.id, delegate: self)
             } else {
                 // A draft has nothing to share yet, but can still go to the Trash.
                 payload = nil
@@ -1029,15 +1045,14 @@ struct WishDrag: NSViewRepresentable {
         static let wishType = NSPasteboard.PasteboardType("dev.lamp.wish")
 
         func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-            // Inside Lamp a wish's file has nowhere to go: dropped on a chat it would only be an attachment.
-            guard context == .outsideApplication else { return [] }
+            // Inside Lamp only the desk and its trash take it (`DeskArrangement.Target`), as a move: a chat's drop
+            // takes a copy, and the wish's file there would only be an attachment.
+            guard context == .outsideApplication else { return .move }
             return payload == nil ? .delete : [.copy, .link, .delete]
         }
 
         func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
-            let inWindow = DeskArrangement.shared.moved(to: screenPoint, in: window)
-            // Let go in the window, it stays where it was dropped rather than flying back to where it began.
-            session.animatesToStartingPositionsOnCancelOrFail = !inWindow
+            DeskArrangement.shared.moved(to: screenPoint, in: window)
             guard let payload, payload.app != nil else { return }
             let overDock = Payload.dockIsUnder(screenPoint)
             guard overDock != payload.overDock else { return }
@@ -1065,7 +1080,7 @@ struct WishDrag: NSViewRepresentable {
 
         func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
             payload = nil
-            let trashed = DeskArrangement.shared.end(at: screenPoint, in: window, takenElsewhere: operation != [], projects: store.projects)
+            let trashed = DeskArrangement.shared.end(projects: store.projects)
             guard operation == .delete || trashed, let wish = store.projects.first(where: { $0.id == project.id }) else { return }
             Task { await store.delete(wish) }
         }
@@ -1263,13 +1278,24 @@ struct WishDrag: NSViewRepresentable {
     final class Promise: NSFilePromiseProvider {
         let payload: Payload
         let name: String
+        /// The wish's id, for the desk to know it by.
+        let wish: String
 
-        init(payload: Payload, name: String, delegate: NSFilePromiseProviderDelegate) {
+        init(payload: Payload, name: String, wish: String, delegate: NSFilePromiseProviderDelegate) {
             self.payload = payload
             self.name = name
+            self.wish = wish
             super.init()
             fileType = UTType.lampApp.identifier
             self.delegate = delegate
+        }
+
+        override func writableTypes(for pasteboard: NSPasteboard) -> [NSPasteboard.PasteboardType] {
+            super.writableTypes(for: pasteboard) + [Source.wishType]
+        }
+
+        override func pasteboardPropertyList(forType type: NSPasteboard.PasteboardType) -> Any? {
+            type == Source.wishType ? wish : super.pasteboardPropertyList(forType: type)
         }
     }
 }
