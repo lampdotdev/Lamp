@@ -171,7 +171,7 @@ enum SwiftSource {
                 if isPrivate, let r = self.range(in: line) { name += "@" + (r.start.file as NSString).lastPathComponent }
                 let full = outer.map { $0 + "." + name } ?? name
                 scopes.append((indent, full))
-                if kind == "class" { out.classes.insert(full); out.classes.insert(name) }
+                if kind == "class" { out.classes.insert(full); out.classes.insert(LiveReload.bare(name)) }
                 if kind != "extension", let r = self.range(in: line) { out.types[full] = r }
                 if isPrivate { out.privateTypes.insert(full) }
                 continue

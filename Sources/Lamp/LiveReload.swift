@@ -194,14 +194,10 @@ enum LiveReload {
     /// A private type is keyed with its file (`Row@A.swift`, each part of a nested one), since two files may each
     /// declare one of the name and the two are two types at run time; this is the key as Swift names the type.
     static func bare(_ key: String) -> String { key.replacingOccurrences(of: #"@[^\t]*?\.swift"#, with: "", options: .regularExpression) }
-    /// Layout entries with every type keyed by its bare name, for what compares them with types as the code names
-    /// them (a field's type, a use in old code); two private twins' fields merge, which errs toward reopening.
-    static func bared(_ entries: [String]) -> [String] {
-        entries.map { entry in
-            guard !isGroup(entry), let tab = entry.firstIndex(of: "\t") else { return entry }
-            return bare(String(entry[..<tab])) + String(entry[tab...])
-        }
-    }
+    /// Layout entries with every type named bare, the groups' (an alias's owner, a shape's type, a conformance's)
+    /// included, for what compares them with types as the code names them (a field's type, a use in old code);
+    /// two private twins' fields merge, which errs toward reopening.
+    static func bared(_ entries: [String]) -> [String] { entries.map(bare) }
 
     /// The kinds of entry in a layout besides a type's own fields and cases, each under a control character so none
     /// reads as a type's name: what's read at launch (`SwiftSource.launchEntries`); a constant's value
@@ -1572,7 +1568,7 @@ enum LiveSlots {
     /// enum that grew, they keep the value the open app made.
     static func constants(naming types: [String], in declarations: SwiftSource.Declarations) -> [String] {
         guard !types.isEmpty else { return [] }
-        let names = types.map { String($0.split(separator: ".").last ?? "") }
+        let names = types.map { String(LiveReload.bare($0).split(separator: ".").last ?? "") }
         return declarations.constants.keys.sorted().filter { key in
             guard let variable = declarations.constants[key], let text = initialText(of: variable, in: declarations) else { return false }
             return names.contains { SwiftText.mentions($0, in: text) }
@@ -1861,7 +1857,8 @@ enum LiveSlots {
         }
         // A constant whose value is made from a changed one is made again too (`half = size / 2`), and so on.
         let constants = withDependents(constants, in: declarations)
-        let byType = Dictionary(grouping: after, by: { String($0.prefix { $0 != "\t" }) })
+        // By bare names, as a constant's text names the enums its value is made from.
+        let byType = Dictionary(grouping: LiveReload.bared(after), by: { String($0.prefix { $0 != "\t" }) })
         for key in constants {
             guard let variable = declarations.constants[key] else { return .refused(nil) }
             byFile[variable.position.file, default: []].append((variable.binding, [], key))
