@@ -133,7 +133,9 @@ final class WorkedForTests: XCTestCase {
         let lines = [LogLine(kind: .user, text: "check it"), LogLine(kind: .tool, text: "bash ls Sources"),
                      LogLine(kind: .status, text: "Ran: ls Sources", said: "Looking around"),
                      LogLine(kind: .tool, text: "bash grep heat"), LogLine(kind: .status, text: "Ran: grep heat", said: "Looking around"),
-                     LogLine(kind: .tool, text: "read Model.swift"), LogLine(kind: .agent, text: "Done."),
+                     // File work named after the command before it is part of that step, not the same words again.
+                     LogLine(kind: .tool, text: "read Model.swift", said: "Looking around"),
+                     LogLine(kind: .tool, text: "read Shelf.swift"), LogLine(kind: .agent, text: "Done."),
                      LogLine(kind: .summary, text: "Worked for 9s · $0")]
         let visible = LogLine.visible(lines, details: false)
         XCTAssertEqual(ChatItem.live(Array(visible.prefix(4))).steps.map { $0.said ?? $0.text },
