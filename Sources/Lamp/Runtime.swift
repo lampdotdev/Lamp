@@ -95,13 +95,95 @@ enum Runtime {
 
     // MARK: - Launch
 
-    /// Waits a few seconds after launch. True when the app is already gone: it crashed or quit by itself.
-    @MainActor
-    static func diedOnLaunch(_ app: NSRunningApplication) async -> Bool {
-        for _ in 0..<12 where !app.isTerminated {
-            try? await Task.sleep(for: .milliseconds(250))
+    /// How long after a launch an app that goes away counts as having died on launch: it crashed or quit by itself.
+    static let launchWindow: Duration = .seconds(3)
+
+    /// Watches a launch for those first seconds, without anyone having to wait them out: a look goes on once the app
+    /// has pictured its window (`shown`), and hears of a death that comes later from the watch (`Store.watchLaunch`).
+    @MainActor final class LaunchWatch {
+        /// When the app was asked to open: its pictures from before are an earlier copy's.
+        let opened: Date
+        /// The launch window passed with the app alive, or it died and `crash` says what's known.
+        private(set) var ended = false
+        private(set) var crash: String?
+        /// The death was told to the agent: in a look's answer, or as a note with a later one.
+        var told = false
+        /// Lamp is closing the app itself (a rebuild, Stop, another app taking the simulator): its going is a death only
+        /// when it's surely a crash. Taken back when the app stays open (`resume`).
+        private(set) var retired = false
+        /// Whoever opened the app went on before the window was over (`untilShown`, `settle`), so a death from here
+        /// is told later, and only one that is surely a crash counts: the person may close an app that works.
+        private(set) var late = false
+        private var task: Task<Void, Never>?
+        /// The first seconds themselves: true when the app went in them.
+        private var window: Task<Bool, Never>?
+        private let alive: @MainActor () -> Bool
+
+        /// `alive` is asked every tenth of a second; `died` says what's known once it's false, given whether it came
+        /// `late` or while Lamp was closing the app (`retired`), and nil when the going doesn't count as a death after all.
+        init(opened: Date, alive: @escaping @MainActor () -> Bool,
+             died: @escaping @MainActor (_ late: Bool, _ retired: Bool) async -> String?) {
+            self.opened = opened
+            self.alive = alive
+            let window = Task {
+                let clock = ContinuousClock(), start = clock.now
+                while alive(), clock.now - start < Runtime.launchWindow {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                return !alive()
+            }
+            self.window = window
+            task = Task { [weak self] in
+                let gone = await window.value
+                let crash = gone ? await died(self?.late ?? true, self?.retired ?? true) : nil
+                self?.crash = crash
+                self?.ended = true
+            }
         }
-        return app.isTerminated
+
+        /// Called before Lamp itself ends the app. An app already gone had died before Lamp asked, which still counts.
+        func retire() { if alive() { retired = true } }
+        /// The app stayed open after all (the person kept it, at its question about unsaved work).
+        func resume() { retired = false }
+
+        /// Whether the app went in its first seconds, as soon as that's known: without waiting for what's known of why,
+        /// which for a Mac app Lamp was closing can mean waiting for a crash report that never comes.
+        func wentAway() async -> Bool {
+            await window?.value ?? false
+        }
+
+        /// What's known if the app died in its first seconds; nil once they passed with it open.
+        func verdict() async -> String? {
+            await task?.value
+            return crash
+        }
+
+        /// Waits until the app has pictured a window since it was asked to open, or the watch has ended (a menu bar
+        /// app's launch, which pictures nothing, waits the whole window). True when it died.
+        func untilShown(_ project: LampProject) async -> Bool {
+            while !ended, !Runtime.pictured(project, since: opened) {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            late = !ended
+            return ended && crash != nil
+        }
+
+        /// Waits `duration`, or less when the watch ends first: for a launch nothing reports the first picture of
+        /// (the simulator's). True when it died.
+        func settle(_ duration: Duration) async -> Bool {
+            let clock = ContinuousClock(), start = clock.now
+            while !ended, clock.now - start < duration {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            late = !ended
+            return ended && crash != nil
+        }
+    }
+
+    /// Whether the app has written a picture of a window since `date`.
+    static func pictured(_ project: LampProject, since date: Date) -> Bool {
+        let url = folder(project).appendingPathComponent("screenshot.png")
+        return (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast > date
     }
 
     /// What's known about an app that died on launch: the crash report and the last lines it printed.

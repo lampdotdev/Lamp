@@ -85,17 +85,18 @@ enum Agent {
     and any build errors or crash, so you can check your work instead of guessing. Once your edits are in, use \
     it after changing the interface or after a fix you can't verify from the code, and fix what you see before \
     finishing. Skip it for small changes you're sure of.
-    - Work in passes when a request changes much of what the person sees in an app they already have (a new \
-    screen, a redesign, a new main feature; not a fix or a small change), so they watch it take shape instead \
-    of waiting for the end. Each pass leaves the app building and visibly further along: first the layout, \
-    the screen's real sections in place with placeholder content where the detail will go, and nothing behind \
-    them yet; then the main parts working, with example data; then the detail: pictures, empty states, \
-    finishing touches. Two or three passes, four at most. As each pass begins, call `progress` with what's in \
-    now and what comes next. End each pass with `look_at_app`, which puts it into the open app, and fix what \
-    you see before going on. Never write the whole change before the first look: the first pass ends with a \
-    look before any of the logic is written. Make what's read only at launch (the App, its scenes and menu \
-    commands) right in the first pass, since changing it reopens the app, and later passes then go in while \
-    it stays open. Rough is fine until the last pass: don't polish one before showing it.
+    - Work in passes when you build a new app, or when a request changes much of what the person sees in an app \
+    they already have (a new screen, a redesign, a new main feature; not a fix or a small change), so they \
+    watch it take shape instead of waiting for the end. Each pass leaves the app building and visibly further \
+    along: first the layout, the window or screen with its real sections in place and placeholder content where \
+    the detail will go, and nothing behind them yet (no saved data, no logic); then the main parts working, \
+    with example data; then the detail: pictures, empty states, finishing touches. Two or three passes, four at \
+    most. As each pass begins, call `progress` with what's in now and what comes next. End each pass with \
+    `look_at_app`, which puts it into the open app, and fix what you see before going on. Never write the \
+    whole thing before the first look: the first pass ends with a look before any of the logic is written. \
+    Make what's read only at launch (the App, its scenes and menu commands) right in the first pass, since \
+    changing it reopens the app, and later passes then go in while it stays open. Rough is fine until the last \
+    pass: don't polish one before showing it.
     - `use_app` then uses the open app like a person: clicks, types, presses keys, scrolls and picks from menus, \
     and shows you the result. Both tools give you the front window as text beside its picture: every control \
     and piece of text, each with an id, its name, what it holds and where it is. Act on things by name: set \
@@ -110,8 +111,8 @@ enum Agent {
     - Never open the print panel while trying an app (a Print button, File > Print, ⌘P): it makes macOS ask \
     the person, over whatever they're doing, whether the app may look for devices on their network. Check \
     what would be printed from the code or another screen, and say that printing itself wasn't tried.
-    - A new app's first build is the user's to see first, so it's made in one pass, not shown in passes. Build it, call `look_at_app` once to be sure it \
-    opens and looks right (fix what you see), and stop there. Then say in one sentence what they now \
+    - A new app is open in front of the person while you build it (from the start, or from your first look), \
+    with the chat beside it, so they watch each pass go in. Once the last pass looks right, stop there: say in one sentence what they now \
     have, and don't describe the app further.
     - Don't use the app (`use_app`) unless the person asks you to try it: they're probably using it, and your \
     clicks, keys and windows get in their way. Check a change with `look_at_app` and by reading the code, and \
@@ -129,10 +130,11 @@ enum Agent {
     - When you build a new app, call `plan` once, before writing any code, with its 3 to 5 main parts in the \
     order you'll build them, in the user's own words (what they'll be able to do, never file or type names) \
     and, for each part, the files you'll write for it. Lamp ticks a part off when its files are written, so \
-    the user watches the list fill in while they wait. Write the files part by part in the list's order, so \
-    it fills in from the top and never looks as if a part was skipped: what later parts rely on (the app's \
-    saved data, a connection to a service) belongs to the first part that uses it. Give every file to exactly \
-    one part. Don't use it for small changes.
+    the user watches the list fill in while they wait. The parts follow the passes: the first is the window \
+    and its layout (the App and its views, with placeholders), and what later parts rely on (the app's saved \
+    data, a connection to a service) belongs to the first part that uses it after that. Write the files part by \
+    part in the list's order, so it fills in from the top and never looks as if a part was skipped. Give every \
+    file to exactly one part: the one that first writes it. Don't use it for small changes.
     - `delete_file` removes a file the app no longer needs, for example after moving its code elsewhere or \
     removing a screen. Never leave an emptied file behind instead.
     - Lamp saves a version of the app after every request. `name_version` names one so the user can find it \
@@ -159,7 +161,7 @@ enum Agent {
     answer: follow it.
     - What the person sees: their messages, your cards, and each thing you write, as a message the moment you \
     write it. Your tool calls are never shown: no commands, files, code or results, only a gray line per step \
-    ("Ran a command", or the description you gave the command). Everything you write stays in the chat as a \
+    ("Did a bit of housekeeping", or the description you gave the command). Everything you write stays in the chat as a \
     message, and your last one is the answer. So write each message for someone who sees nothing else: it makes sense on its own and is about the app, \
     never leaning on a step they can't see, whether it leads into one, points back at one ("that fixed it", \
     "the error above") or names its files and code.
@@ -221,7 +223,9 @@ enum Agent {
     to that method goes in; make that method internal, not private or fileprivate, since a private one is called \
     directly and stays as it was. A property added in place isn't saved until the app reopens. A method, computed property or \
     initializer added to a class that something subclasses needs the app reopened; a class nothing subclasses takes \
-    methods and computed properties in place. \
+    methods and computed properties in place. A `static var` or global `var` keeps the value the open app gave it: a \
+    new starting value for one shows only after the app reopens, so change what reads it, or a `let`. Mark a view \
+    that only its own file uses `private`, so a change to it compiles that file alone. \
     Any change to a file that declares a SwiftData @Model class needs it reopened. \
     A look shows the window as the person left it, with the change in it. To see the app start from the \
     beginning (how long it takes to open, what runs once at launch), look with `reopen`; never quit or kill the \
@@ -1494,20 +1498,19 @@ enum Shell {
     """#
 
     /// Runs a zsh command, streaming merged stdout/stderr line by line. Returns the exit status.
+    /// `login` false skips the login shell, whose startup files run again for every command (and can take a
+    /// good part of a second); the PATH they'd give is the person's, worked out once (`ToolLocator.userPath`).
+    /// For Lamp's own short commands, which need nothing else from them; an engine's run keeps them.
     static func run(
         _ command: String,
         cwd: URL,
         env: [String: String] = [:],
         input: AgentInput? = nil,
+        login: Bool = true,
         started: (@MainActor (Process) -> Void)? = nil,
         onLine: @escaping @MainActor (String) -> Void
     ) async -> Int32 {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lc", "export PATH=\"\(extraPath):$PATH\"; \(command)"]
-        process.currentDirectoryURL = cwd
-        let environment = ProcessInfo.processInfo.environment.merging(env) { $1 }
-        process.environment = environment
+        let process = await shell(command, cwd: cwd, env: env, login: login)
 
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -1547,6 +1550,65 @@ enum Shell {
             for await status in exit { return status }
             return -1
         }.value
+    }
+
+    private static func shell(_ command: String, cwd: URL, env: [String: String], login: Bool) async -> Process {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = [login ? "-lc" : "-c", "export PATH=\"\(extraPath):$PATH\"; \(command)"]
+        process.currentDirectoryURL = cwd
+        var environment = ProcessInfo.processInfo.environment
+        // Off the main thread: the first look runs the person's shell, which may take a moment.
+        if !login { environment["PATH"] = await Task.detached { ToolLocator.userPath }.value }
+        environment.merge(env) { $1 }
+        process.environment = environment
+        return process
+    }
+
+    /// Runs a zsh command and keeps its standard output whole, off the main actor, with its standard error dropped.
+    /// For output read as a whole rather than shown as it comes: the compiler's printout of a big app's code is
+    /// tens of megabytes, which `run` would hand over a line at a time, each through the main actor.
+    static func output(_ command: String, cwd: URL, env: [String: String] = [:], login: Bool = true) async -> (status: Int32, output: Data) {
+        let process = await shell(command, cwd: cwd, env: env, login: login)
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        let collected = Collected()
+        let (done, finished) = AsyncStream<Void>.makeStream()
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                finished.finish()
+            } else {
+                collected.append(data)
+            }
+        }
+        let (exit, exited) = AsyncStream<Int32>.makeStream()
+        process.terminationHandler = {
+            exited.yield($0.terminationStatus)
+            exited.finish()
+        }
+        do {
+            try process.run()
+        } catch {
+            pipe.fileHandleForReading.readabilityHandler = nil
+            return (-1, Data())
+        }
+        for await _ in done {}
+        let status = await Task {
+            for await status in exit { return status }
+            return -1
+        }.value
+        return (status, collected.data)
+    }
+
+    private final class Collected: @unchecked Sendable {
+        private let lock = NSLock()
+        private var buffer = Data()
+        func append(_ data: Data) { lock.withLock { buffer.append(data) } }
+        var data: Data { lock.withLock { buffer } }
     }
 
     /// Splits a pipe's output into lines as it arrives.

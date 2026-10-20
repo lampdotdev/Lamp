@@ -52,6 +52,58 @@ enum SwiftSource {
         /// Each type's initializers written in its code, its extensions' included: labels and parameter types, as
         /// `memberwise` has them, so one can be told from another with the same labels and other types.
         var initializers: [String: [(labels: [String], types: [String])]] = [:]
+        /// Where each type's own declaration runs, by its qualified name: what a view's `$name` means is its own.
+        var types: [String: (start: Position, last: Position)] = [:]
+        /// The types private to their file, which an extension in another file can't reach.
+        var privateTypes: Set<String> = []
+        /// The properties set in an initializer the type writes itself ("Type<tab>name"): a computed property kept
+        /// in a spare can't be set before the stored ones are, so such a property stays stored.
+        var assigned: Set<String> = []
+    }
+
+    /// A printout's line that opens a node: its indent and the node's name, the run of letters, digits, `_` and `=`
+    /// after its `(` (`var_decl`, `original_init=closure_expr`), read without a regex.
+    struct Node {
+        var indent: Int
+        var name: Substring
+        /// Whether the name begins with one of these. Every pattern read off a printout begins at a node's `(`, so one
+        /// for nodes this one's name rules out can't match its line, and isn't tried: the printout is tens of megabytes
+        /// for a big app, and a regex tried on every line of it costs seconds.
+        func opens(_ names: String...) -> Bool { names.contains { name.utf8.starts(with: $0.utf8) } }
+        func names(_ part: String) -> Bool { SwiftSource.has(String(name), part) }
+    }
+
+    /// The node a line opens; nil for any other line (the closing brackets of a deep node sometimes come on a line of
+    /// their own).
+    static func node(_ line: Substring) -> Node? {
+        let bytes = line.utf8
+        var at = bytes.startIndex, indent = 0
+        while at != bytes.endIndex, bytes[at] == UInt8(ascii: " ") { indent += 1; at = bytes.index(after: at) }
+        guard at != bytes.endIndex, bytes[at] == UInt8(ascii: "(") else { return nil }
+        let start = bytes.index(after: at)
+        var end = start
+        while end != bytes.endIndex, case let b = bytes[end],
+              b == UInt8(ascii: "_") || b == UInt8(ascii: "=") || (b >= 48 && b <= 57) || (b | 0x20 >= 97 && b | 0x20 <= 122) {
+            end = bytes.index(after: end)
+        }
+        return Node(indent: indent, name: Substring(bytes[start..<end]))
+    }
+
+    /// A printout's lines, split by their bytes rather than as characters, which costs as much again as reading them.
+    static func lines(_ dump: String) -> [Substring] {
+        dump.utf8.split(separator: UInt8(ascii: "\n")).map { Substring($0) }
+    }
+
+    /// Whether a line holds `text`, by its bytes: Foundation's `contains` goes through NSString, which costs as
+    /// much as a regex on a line this long, and the standard library's search a good deal more.
+    static func has(_ line: String, _ text: String) -> Bool {
+        var line = line, text = text
+        return line.withUTF8 { haystack in
+            text.withUTF8 { needle in
+                guard let at = haystack.baseAddress, let what = needle.baseAddress else { return needle.isEmpty }
+                return memmem(at, haystack.count, what, needle.count) != nil
+            }
+        }
     }
 
     private static let rangePattern = try! NSRegularExpression(pattern: #"range=\[([^\]]+?):(\d+):(\d+) - line:(\d+):(\d+)\]"#)
@@ -78,38 +130,57 @@ enum SwiftSource {
         // the property's own line no longer says it has observers.
         let observer = try! NSRegularExpression(pattern: #"^\s*\(accessor_decl\b.*? (?:didSet|willSet) for="(\w+)""#)
         var observed = Set<String>()
+        // An assignment in an initializer the type writes: the node under it says what's set.
+        let assigned = try! NSRegularExpression(pattern: #"^(\s*)\(member_ref_expr\b.*? decl="[^"]*?\.(\w+)@"#)
         var out = Declarations()
         var scopes: [(indent: Int, type: String?)] = []
+        // The initializer being read, and an assignment in it whose target is the next node.
+        var initializer: (indent: Int, owner: String)?, assignment: Int?
         // The binding being read, at its indent, and what's inside it.
         var binding: (indent: Int, index: Int)?
         var entryOpen = false
         var variable: (indent: Int, key: String)?
         var attribute: (start: Position, last: Position)?
-        let lines = dump.components(separatedBy: "\n")
-        for line in lines {
-            let indent = line.prefix { $0 == " " }.count
-            guard line.dropFirst(indent).first == "(" else { continue }
-            let range = NSRange(line.startIndex..., in: line)
+        for raw in lines(dump) {
+            guard let node = self.node(raw) else { continue }
+            let indent = node.indent, opens = node.opens
+            // Made only for a line a pattern is tried on.
+            lazy var line = String(raw)
+            lazy var range = NSRange(line.startIndex..., in: line)
             if let open = binding, indent <= open.indent { binding = nil }
             if let open = variable, indent <= open.indent { variable = nil; attribute = nil }
+            if let open = initializer, indent <= open.indent { initializer = nil; assignment = nil }
+            if let open = initializer {
+                if let at = assignment {
+                    if indent == at + 2, opens("member_ref_expr"), let m = assigned.firstMatch(in: line, range: range) { out.assigned.insert(open.owner + "\t" + String(line[Range(m.range(at: 2), in: line)!])) }
+                    assignment = nil
+                }
+                if opens("assign_expr") { assignment = indent }
+                continue
+            }
             while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
             let owner = scopes.last?.type
-            if let m = typeDecl.firstMatch(in: line, range: range) {
+            if opens("struct_decl", "class_decl", "enum_decl", "actor_decl", "extension_decl"), let m = typeDecl.firstMatch(in: line, range: range) {
                 let name = String(line[Range(m.range(at: 3), in: line)!])
                 let outer = scopes.compactMap(\.type).last
                 let full = outer.map { $0 + "." + name } ?? name
                 scopes.append((indent, full))
-                if line[Range(m.range(at: 2), in: line)!] == "class" { out.classes.insert(full); out.classes.insert(name) }
+                let kind = line[Range(m.range(at: 2), in: line)!]
+                if kind == "class" { out.classes.insert(full); out.classes.insert(name) }
+                if kind != "extension", let r = self.range(in: line) { out.types[full] = r }
+                if kind != "extension", line.contains(" access=private") || line.contains(" access=fileprivate") { out.privateTypes.insert(full) }
                 continue
             }
-            if let owner, let m = observer.firstMatch(in: line, range: range) {
+            if let owner, opens("accessor_decl"), let m = observer.firstMatch(in: line, range: range) {
                 var name = String(line[Range(m.range(at: 1), in: line)!])
                 if name.hasPrefix("_") { name.removeFirst() }
                 observed.insert(owner + "\t" + name)
             }
-            if scopeDecl.firstMatch(in: line, range: range) != nil {
-                if let owner, line.contains("(constructor_decl"), !line.contains(" implicit "), let made = memberwise(in: line) {
-                    out.initializers[owner, default: []].append(made)
+            if opens("func_decl", "accessor_decl", "constructor_decl", "destructor_decl", "closure_expr", "subscript_decl", "top_level_code_decl"),
+               scopeDecl.firstMatch(in: line, range: range) != nil {
+                if let owner, line.contains("(constructor_decl"), !line.contains(" implicit ") {
+                    initializer = (indent, owner)
+                    if let made = memberwise(in: line) { out.initializers[owner, default: []].append(made) }
                 }
                 if let owner, line.contains("(constructor_decl"), line.contains(" implicit "),
                    !line.contains("access=private"), !line.contains("access=fileprivate"),
@@ -121,11 +192,11 @@ enum SwiftSource {
             }
             if let open = binding {
                 // Inside a binding: its entries, each with its name and its starting value.
-                if line.contains("(pattern_entry") { out.bindings[open.index].entries.append(Entry(name: "", initial: nil)); entryOpen = true; continue }
+                if has(line, "(pattern_entry") { out.bindings[open.index].entries.append(Entry(name: "", initial: nil)); entryOpen = true; continue }
                 if entryOpen, var entry = out.bindings[open.index].entries.last {
-                    if entry.name.isEmpty, let m = named.firstMatch(in: line, range: range) {
+                    if entry.name.isEmpty, has(line, "(pattern_named"), let m = named.firstMatch(in: line, range: range) {
                         entry.name = String(line[Range(m.range(at: 1), in: line)!])
-                    } else if entry.initial == nil, line.contains("(original_init=") || line.contains("(processed_init="),
+                    } else if entry.initial == nil, has(line, "(original_init=") || has(line, "(processed_init="),
                               let r = self.range(in: line) {
                         // As written, or (when that's unresolved and has no place) as the compiler settled it.
                         entry.initial = r
@@ -136,9 +207,9 @@ enum SwiftSource {
             }
             if let open = variable {
                 // Inside a property: its attributes, each a range followed by the name it uses.
-                if line.contains("(reference_ownership_attr") { out.variables[open.key]?.special = true; continue }
-                if line.contains("(custom_attr"), let r = self.range(in: line) { attribute = r; continue }
-                if let r = attribute, let m = identifier.firstMatch(in: line, range: range) {
+                if has(line, "(reference_ownership_attr") { out.variables[open.key]?.special = true; continue }
+                if has(line, "(custom_attr"), let r = self.range(in: line) { attribute = r; continue }
+                if let r = attribute, has(line, "id=\""), let m = identifier.firstMatch(in: line, range: range) {
                     out.variables[open.key]?.attributes.append((r.start, r.last, String(line[Range(m.range(at: 1), in: line)!])))
                     attribute = nil
                 }
@@ -147,13 +218,13 @@ enum SwiftSource {
             // A type's members, and the file's own globals.
             let global = scopes.isEmpty
             guard owner != nil || global else { continue }
-            if line.contains("(pattern_binding_decl"), let r = self.range(in: line) {
+            if has(line, "(pattern_binding_decl"), let r = self.range(in: line) {
                 out.bindings.append(Binding(start: r.start, last: r.last, entries: []))
                 binding = (indent, out.bindings.count - 1)
                 entryOpen = false
                 continue
             }
-            if let m = varDecl.firstMatch(in: line, range: range), let r = self.range(in: line), let index = out.bindings.indices.last {
+            if opens("var_decl"), let m = varDecl.firstMatch(in: line, range: range), let r = self.range(in: line), let index = out.bindings.indices.last {
                 let name = String(line[Range(m.range(at: 2), in: line)!])
                 guard out.bindings[index].entries.contains(where: { $0.name == name }) else { continue }
                 let isStatic = line.contains(" static"), rest = String(line[Range(m.range(at: 4), in: line)!])
@@ -214,12 +285,15 @@ enum SwiftSource {
         var types: [(name: String, range: (start: Position, last: Position), isExtension: Bool)] = []
         var launchNames = Set<String>(), modelNames = Set<String>()
         var lastClass: (name: String, indent: Int)?
-        for line in dump.components(separatedBy: "\n") {
-            let whole = NSRange(line.startIndex..., in: line)
-            if let last = lastClass, let m = model.firstMatch(in: line, range: whole), m.range(at: 1).length == last.indent + 2 {
+        for raw in lines(dump) {
+            guard let node = self.node(raw) else { continue }
+            lazy var line = String(raw)
+            lazy var whole = NSRange(line.startIndex..., in: line)
+            if let last = lastClass, node.opens("custom_attr"), let m = model.firstMatch(in: line, range: whole), m.range(at: 1).length == last.indent + 2 {
                 modelNames.insert(last.name)
             }
-            guard let m = decl.firstMatch(in: line, range: whole), let r = range(in: line) else { continue }
+            guard node.opens("struct_decl", "class_decl", "enum_decl", "extension_decl"),
+                  let m = decl.firstMatch(in: line, range: whole), let r = range(in: line) else { continue }
             let name = String(line[Range(m.range(at: 3), in: line)!])
             let kind = line[Range(m.range(at: 2), in: line)!]
             // A conformance may be declared on the type or on an extension of it (`extension Demo: App`).

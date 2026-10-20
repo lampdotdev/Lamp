@@ -227,7 +227,8 @@ final class SidebarServer {
                                  draft: draft.text, draftVersion: draftVersions[project.id] ?? 0,
                                  attachments: draft.attachments.map { Self.attachment($0) })
         state.workingActivitySince = progress?.activitySince
-        state.workingSteps = progress == nil ? nil : Self.liveSteps(log, details: details)
+        state.workingSteps = progress == nil ? nil : Self.liveSteps(log, details: details, doing: progress?.activity,
+                                                                                 looking: progress?.looking == true)
         state.pointed = draft.pointed.map { Self.pointed($0, canChooseAgain: store.canPoint(in: project)) }
         let canSendNow = store.canSendNow(in: project)
         let lastWaiting = store.waitingToSend(in: project).last?.id
@@ -415,9 +416,9 @@ final class SidebarServer {
     }
 
     /// The steps of the turn still going, for the line that says what it's doing, as Lamp's window shows them.
-    static func liveSteps(_ log: [LogLine], details: Bool) -> [SidebarLine]? {
+    static func liveSteps(_ log: [LogLine], details: Bool, doing: String? = nil, looking: Bool = false) -> [SidebarLine]? {
         guard !details else { return nil }
-        let steps = ChatItem.live(LogLine.visible(log, details: false)).steps
+        let steps = ChatItem.live(LogLine.visible(log, details: false), doing: doing, looking: looking).steps
         return steps.isEmpty ? nil : stepLines(steps)
     }
 

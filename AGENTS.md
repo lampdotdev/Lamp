@@ -44,11 +44,15 @@ A capability given to one engine must be given to all of them that can take it, 
   request came to is the agent's last message, in a sentence or two (`Agent.Rules.finish`), under the line that says
   the app is ready or updated; a card for it said no more than that message did and hid what it said beyond it.
   While longer work goes on, the agent says how it's going with `progress`: a line of 12 words at most, shown at once
-  in both chats as a message like any other, which stays one when the turn ends. A turn's steps are never a list of
-  rows: while it goes on they're inside its one live line (`ChatLook.ActivityLine`, `ChatItem.live`, the sidebar's
-  `SidebarState.workingSteps`), which says what it's doing now, changes in place and opens to the steps so far; when
-  it ends that line's place, under the turn's last message, is taken by "Worked for…" (`ChatItem.items`), which opens
-  to the same steps, so nothing moves. Whatever the agent writes as messages on the way is
+  in both chats as a message like any other, which stays one when the turn ends. A turn's steps belong to its one
+  live line (`ChatLook.ActivityLine`, `ChatItem.live`, the sidebar's `SidebarState.workingSteps`), which says what
+  it's doing now and changes in place. While the turn goes on the line is open, at the bottom under the steps done
+  so far, oldest first, so what's done reads in order and what's going on now is always last (a command by the name
+  the agent gave it, any other tool call in the words the line said while it ran, `LogLine.visible`, never its
+  files); the step still going is the line itself and joins the list when the agent moves on (`ChatItem.live`), and a
+  click folds the list; when the turn ends the line and its
+  steps give way to "Worked for…" (`ChatItem.items`), folded, under the turn's last message, which opens to the same
+  steps. Whatever the agent writes as messages on the way is
   treated the same, each shown as it's said and kept as it was (`LogLine.visible`), since models write such updates
   whether or not they're asked to use the tool: what the person has read never turns into a gray line among the
   steps or goes away. (A Lamp from before this folded them; `ChatLook.ProgressLine` and the status line marked with
@@ -56,7 +60,12 @@ A capability given to one engine must be given to all of them that can take it, 
   (`lookRules`: the layout with placeholders, then the parts working, then the detail), each begun with a
   `progress` line and ended with `look_at_app`, which puts it into the open app, so the person watches the app
   take shape rather than waiting for the end; what's read only at launch is made right in the first pass, so later
-  ones go in without reopening the app. A new app's first build is still made in one pass.
+  ones go in without reopening the app. A new app is built in passes too, the window's layout first. A new Mac app's
+  scaffold ("Lamp is making this app.") is built and opened as its first turn starts, with the chat beside it
+  (`Store.showEarly`, `Store.present`), so the person watches every pass go in; an iPhone app's simulator comes
+  forward at the agent's first look. When no chat comes back beside the app after a pass reopens it (the reopen
+  failed, it crashed, or the pass made it an app with no window), the chat goes back to Lamp's window
+  (`MagicPanel.keepChatInSight`). The early build is settled before the turn lets go of the app, however it ends.
   Result cards saved by an earlier Lamp still read and aren't shown (`LogLine.visible`). A new app's build card folds
   to its first line (its name, Ready) once the turn is over, with no picture of the app. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
@@ -112,6 +121,12 @@ A capability given to one engine must be given to all of them that can take it, 
   in `Skills.offered`, and, when an app's code can show it applies, a check in `Skills.applying`.
 - **Approvals and privacy**: shell commands go through `/agent/approve` for every engine (pi's extension,
   Claude Code's hooks, Codex's hooks); file access outside the app's folder is checked the same way.
+  Under "Only when risky", Claude Code's own classifier (auto mode, `classifyAllShell`) decides its shell commands:
+  Lamp's hook only hands each one back confined, with no decision (`format=claude-confine`), what the classifier asks
+  about comes to Lamp's card through `PermissionRequest` with no check or rating of Lamp's, and a command that ran is
+  said in the chat from `PostToolUse` and `PostToolUseFailure` (`format=claude-ran`). What the classifier refuses stays
+  refused (the agent is told why, and the chat says "Not run:", `PermissionDenied`, `format=claude-refused`). pi and Codex keep
+  Lamp's own check (`CommandRisk`).
   Claude Code's and pi's approved commands come back confined (`Sandbox`: `sandbox-exec` with a profile
   that opens the app's folder, the system, developer tools, caches, temp folders and the network, and
   closes the rest of the home folder and both Lamps' folders), so nothing reads a command's text to see
@@ -210,14 +225,16 @@ A capability given to one engine must be given to all of them that can take it, 
   `activitySince`), and every place that shows it draws it with `ChatLook.ActivityText`: the build card, the line
   under a change, the chat beside the app (`SidebarState.workingActivitySince`) and the cover while the app reopens
   (`CoverNote`). How it reads as the wait goes on is `Activity.words`, in one place: while the model thinks, its
-  phrases turn over every 3.5 seconds and grow more reassuring the longer it goes; a build says "Still building…"
-  after 30 seconds and "Taking a little longer…" after 90; anything named ("Working on the interface") stays as it is.
+  phrases (never a bare "Thinking"; each think opens on one picked by when it began) turn over every 3.5
+  seconds and grow more reassuring the longer it goes; a build says "Still building…"
+  after 30 seconds and "Taking a little longer…" after 90, and putting a change into the open app "Still updating…"
+  and "Taking a little longer…"; anything named ("Working on the interface") stays as it is.
   The agent's progress lines are messages above the activity and are left as they are. A shell command is named in
   the engine's own words, never guessed from its text (`AgentEvent.naming`): Claude Code's description of each Bash
   call (its parser, and its approval hook, which carries the same input; `Agent.claudeNote` asks for plain words),
   and for Codex the heading of the reasoning summary before it (`model_reasoning_summary`). The name is the activity
   while the command runs and the step's row in the chat (`LogLine.said`, `ChatLook.RanCommand`; consecutive commands
-  under one name are one row, `ChatItem.items`); a command with no name stays "Ran a command". pi's bash takes only the
+  under one name are one row, `ChatItem.items`); a command with no name stays "Did a bit of housekeeping". pi's bash takes only the
   command, so Lamp's extension replaces it, as pi's extension docs allow, with pi's own bash and a `description`
   (`bashWithDescription` in `lamp-tools.ts`), sent with the approval and read by pi's parser. It's required: left
   optional, some models (Sonnet) never fill it in. While Lamp itself works in a turn (a look's build, putting a change
@@ -226,8 +243,8 @@ A capability given to one engine must be given to all of them that can take it, 
   look that reopens the app builds it whole without putting the change in first. While a look runs, what the
   engine's output says (its tool call starting, a streamed reply) doesn't change the activity (`Store.noteAgent`):
   every engine reports the call a moment after the look began, and its fixed word would cover each stage after it
-  (building, installing, opening, looking at the app, watching it move); when the look ends it's "Thinking". The
-  line's clock is the activity's (`activitySince`), not the turn's: the turn's whole time is its "Worked for…".
+  (building, installing, opening, looking at the app, watching it move); when the look ends it's "Thinking". No clock
+  is shown beside the activity, in the chat, the build card or the cover: the turn's whole time is its "Worked for…".
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
   Where an app's text AI goes is an `AppAI.TextRoute` (an OpenRouter model, the Claude Code or Codex sign-in,
   pi with its key provider, or a model on this Mac), listed by `AppAI.textRoutes` for the pickers in
@@ -279,7 +296,10 @@ and say in the PR description which engines you tried.
 
 Lamp's window opens on the desk (`WishDesk`, `Desk.swift`): the person's wishes as icons, first, since using one and
 changing it is where most wishes start, and under them the one place to make a new one. A click's hint says it
-opens to use and change (`DeskIcon`). Everything someone makes with Lamp is a **wish** in what they read; a wish may
+opens to use and change (`DeskIcon`). Wishes are dragged into the order the person wants (`DeskArrangement`, kept by
+instance so a rename keeps a wish's place; name order until the first drag, and a new wish goes at the end after it);
+while one is dragged, a trash beside Settings in the toolbar deletes what's let go on it (`DeskTrash`), as the Dock's
+Trash does (`WishDrag`). Everything someone makes with Lamp is a **wish** in what they read; a wish may
 be made of an app, a widget, a menu bar item, a watch app, so "app" stays where it means that piece. A wish is
 typed in the bar, or said with the talk button beside it (`TalkButton`, moving with `Dictation.level`); either
 way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so it passes the same
@@ -666,8 +686,9 @@ again, only just after such a quit (`chatQuitKey`). A Mac widget has it in its t
 Lamp's own widget file, which the widget rule asks for): a link the app takes as Customize with Lamp…
 (`LampWidgetLinks`, which passes every other link to SwiftUI, or for a widget-only app to whatever opens it).
 This is how a new app is changed from its first build on:
-after the turn that first builds and opens a Mac app with windows, its chat window closes and the app opens the
-chat beside its content (`MagicPanel.handOff`, once per app, marked by `.lamp/sidebar-handed-off`; the chat window
+as soon as a new Mac app's scaffold is built and opened at the start of its first turn (`Store.showEarly`, then
+`Store.present`; else at the agent's first look, or at the end of that turn), its chat window closes and the app opens the chat beside its content, so the rest of the turn's passes go
+in while the person watches (`MagicPanel.handOff`, once per app, marked by `.lamp/sidebar-handed-off`; the chat window
 closes only once the sidebar has connected, so Lamp neither quits nor leaves the chat nowhere). Lamp asks the app
 with a file in its runtime folder for a copy still starting and a notification for one already running
 (`MagicPanel.openChat`, `LampSidebar.openForLamp`). The first time the person closes the chat, a popover points at
@@ -703,6 +724,15 @@ the app's turn is going, Lamp shows that picture where the window was (`MagicPan
 with the turn's activity in its middle, "Updating…" once the turn is over, and the chat's blank paper where a chat beside it was: `cover-chat-frame.txt`, `MagicPanel.chatCover`), the new
 copy opens its first window in the same place (`putBack`), and the picture fades out once the new copy reports its window
 (or goes when the turn ends without it).
+While Lamp builds a change for a Mac app that's open, the app's windows glow softly at their edges, blurred and
+going round blue, purple and orange, and a band of light crosses them as the change goes in (`AppTransition`, drawn by
+`LampTransition` in LampSupport.swift; Lamp's cover carries the same glow, `TransitionGlow`). It starts in `Store.build`,
+lands in `reloadInPlace` (or, after a reopen, once the new copy's window is on screen, `landWhenShown`), and fades after `install` otherwise (held for Reload,
+kept open, failed); Lamp renews it while the turn goes on and the app lets it go after 90 seconds unrenewed. The app
+draws it in clear child windows that let clicks through and are left out of its pictures (`windowsOnScreen`), so the
+builder never sees it; requests are signed with the app's token, with their time and an id, and taken once. An app
+built before it has no `lampTransitionSignature` in its binary and is sent nothing: its next change reopens it with
+the new building blocks. Try it in the gallery's Transition entry on an open app.
 
 Where the chat goes (`LampSidebar.show`): always a panel of its own beside the window, never inside it (a column there
 took more room from the app than it gave the chat). It's a borderless `NSPanel` attached as the window's child
@@ -772,7 +802,13 @@ the app's own code wrote that class `final`, when the error is the agent's), and
 from then on (`no-final`). A class's finality and its initializers (which have method descriptors, a final class's
 too; one in an extension is a convenience initializer and isn't) are held with the layout (`LiveReload.Group.inits`),
 so a subclass added, or an initializer added or changed, reopens the app with its reason rather than being refused
-by the runtime after the compile. After a build, `Store.install` tries
+by the runtime after the compile. So is each type's shape (`LiveReload.Group.shape`): struct, class, enum or actor, an
+enum's `@objc` and `indirect`, whether the type is generic, a class's superclass (the first name it inherits when
+that's a class: one of the app's, or a system name not shaped like a protocol's), and a protocol's requirement
+signature (`: AnyObject`, what it inherits, its associated types' constraints), each of which lays values, objects,
+method tables or witness tables out differently while the type holds the same fields; a stored reference's `weak`
+or `unowned` is part of its field's entry (`Owner<tab>weak helper: Helper?`). A shape is compared only where both
+layouts have one, so a layout an earlier Lamp kept says nothing of it. After a build, `Store.install` tries
 `reloadInPlace` first, which decides the app is open and built live, takes the verdict and hands the changed files to
 `LiveReload.put`, the one pipeline from the layout check to the record of what the app now runs, acting on its
 `Outcome` (it went in, with what was done beyond the code; or why the app has to reopen): the change goes in when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.launchEntries`, held to what the open app had as part of the layout; a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again) or Lamp's own files, and leaves every type
@@ -807,7 +843,9 @@ app's copy, or to the library's own for a type the app doesn't have (a new one, 
 conformance's descriptor and witness table are treated the same, since the runtime tells generic types apart by them
 too (`[AnyHashable: …]` keys), which is why a protocol's requirements, their accessors included, are part of the
 layout a change is held to (`LiveReload.members`): the app's witness tables must fit. What the library's data names
-is worked out before anything is pointed at the new code, so a change refused leaves the app as it was. So is every
+is worked out before anything is pointed at the new code, so a change refused leaves the app as it was, and written
+before too, since each write opens and closes a page of the library for writing, which a thread already running
+the new code there would stop at. So is every
 stored global's or static's addressor, since the library's own code calls its own copy directly and would otherwise
 keep a second copy of the value; through the table the library's accessors reach the app's storage, so they are
 code like any other, and a `didSet` added to a static goes in. The mangled type
@@ -839,7 +877,8 @@ adds. The
 build then waits to be installed until the app closes (`LiveReload.awaitInstall`, which unlike a held build doesn't
 keep the agent off the app). Anything else needs the app reopened, with why in the chat's
 details (`LiveReload.Verdict`; what `LampLive` refused, and a change that didn't compile or load, say so there too,
-through `LiveReload.send`'s answer), so the rules can be tuned by what happens. For a request's change, while the app is open, Lamp doesn't reopen it under the person: the build is held (`Store.awaitReload`, `Runtime.awaitReload`), the app shows a Reload button beside the wand in its title bar (`LampMagic.ReloadButton`, tinted glass in the accent colour whose tint brightens and settles again, shown with a `reloadReady` notification) and the chat a line with one too (`.reload`, under the agent's answer), and a click on either reopens it where it was (`Store.reloadWaiting`; the app asks with `reloadNow`, which puts in only a change Lamp holds). The agent is told the change waits for the person (`reloadNote`) and doesn't look or use the app again in that request. Closing the app installs it too. Open App, Undo and a look with `reopen` still reopen it; when the person keeps the app open at its question (unsaved work), the build waits for Reload the same way. A live build reads the app's own files
+through `LiveReload.send`'s answer), so the rules can be tuned by what happens. The compiler's printout of a big app is tens of megabytes: it's kept whole off the main actor (`Sandbox.output`), each pattern is tried only on the nodes it could match (`SwiftSource.node`), and what's read from it is kept in memory by a digest of the code (`LiveReload.Analyses`), so the same code is never printed twice, the open app's layout after a reopen included. A change refused is refused again at the install after its build without that work, while nothing it was judged on has changed (`LiveReload.put`, `refusalKey`); a refusal by the open app itself is tried again. For a request's change, while the app is open, Lamp doesn't reopen it under the person: the build is held (`Store.awaitReload`, `Runtime.awaitReload`), the app shows a Reload button beside the wand in its title bar (`LampMagic.ReloadButton`, tinted glass in the accent colour whose tint brightens and settles again, shown with a `reloadReady` notification) and the chat a line with one too (`.reload`, under the agent's answer), and a click on either reopens it where it was (`Store.reloadWaiting`; the app asks with `reloadNow`, which puts in only a change Lamp holds). The agent is told the change waits for the person (`reloadNote`) and doesn't look or use the app again in that request. Closing the app installs it too. Open App, Undo and a look with `reopen` still reopen it, and so does every change in a new app's first turn, which
+nobody is using yet and whose passes the person is watching go in; when the person keeps the app open at its question (unsaved work), the build waits for Reload the same way. A live build reads the app's own files
 from its Assets folder rather than its bundle (`LampAssets`), so a new picture goes in live too; the package, the
 app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which tells the
 agent what goes in without reopening.
@@ -853,9 +892,17 @@ so its own `==` and hash run: they take a property never set as its starting val
 through two overloads of the keyed coding containers, which the compiler's Codable code takes over the general ones). A struct's moved properties drop out of the initializer Swift makes for it, which the new code may call with them,
 so `LiveSlots.memberwiseInitializers` makes that one again in an extension in the struct's file, from the labels and types
 the compiler lists for it (`SwiftSource.Declarations.memberwise`), one for each moved property, so a call passing any
-of them is matched by the first it passes and one passing none only by Swift's own.
+of them is matched by the first it passes and one passing none only by Swift's own. The spare itself is a parameter
+of that initializer too, with a default, which a call never notices but a reference to the initializer as a value
+(`.map(Item.init)`) does, since it matches by the whole signature: when a live build fails on the spares
+(`LiveSlots.brokeBuild`), every struct the copy gave a spare has its memberwise initializer written again without
+the spare's parameter, in `.lamp/live/Sources/LampMemberwise.swift` (`LiveSlots.addMemberwise`, from a dump of the
+plain sources, which the copy step keeps), and the build is tried once more before spares are given up.
 Left out is what a spare would break: SwiftData and Core Data models, `Sendable` classes, `Equatable` views, the App
-and its scenes, property wrappers, App Intents, and structs in a file that lays memory out by hand (vertex data). When
+and its scenes, property wrappers, App Intents, OptionSets and RawRepresentable structs (declared so, or made so in an
+extension, which the copy step's scan reports), whose `init(rawValue:)` is the memberwise one, and every struct in an
+app any of whose own files lays memory out by hand (vertex data; the struct read as bytes may be declared in another;
+Lamp's own files always do and are told apart by name, `-own=`). When
 the only difference in layout is new stored properties in such types, `LiveSlots.fit` rewrites each one-line
 declaration in the live copy into a computed property kept in a spare, found by the compiler's own
 source ranges (`SwiftSource.declarations`, from the same `-dump-ast` as the layout), so however it's written (with
@@ -898,7 +945,17 @@ and code compiled before still read the new cases. A constant made from the enum
 whose text changed (`LiveSlots.constants(naming:)`). What old code may still be doing is read more widely than a
 switch or an interpolation: any value of the enum's type, or of a type holding it by value (`LiveReload.holders`),
 that running code has in hand reopens the app, since an old frame reads it by the layout it was compiled with (an
-optional of it, a comparison, a hash, a cast). A property an explicit `CodingKeys` names stays a field (Codable needs it stored), so it reopens the app. Which property is in which spare
+optional of it, a comparison, a hash, a cast); a class is no such holder (its field keeps its layout, and old code
+reading it is caught as a use of the enum itself), nor a view, whose value lives in SwiftUI's graph, nor a key path
+passed as a function (`.map(\.name)`), an escaping closure the compiler makes for that call alone. A generic enum
+reopens the app when it grows: the runtime lays its values out for each type it's used at, and there is no one
+metadata to point at the change's. A property an explicit `CodingKeys` names stays a field (Codable needs it stored),
+so it reopens the app, as does one set in an initializer the type writes itself (`SwiftSource.Declarations.assigned`:
+a computed property can't be set before the stored ones are), one with observers, `lazy`, or held weakly or
+unowned; `LiveSlots.fitting` says which, and the chat's detail carries that reason beside the layout's, with the
+copy step's own names said as what they are (`LiveReload.readable`). A view's `$name`, its state's binding, becomes
+its box's only within that view's own declaration (`SwiftSource.Declarations.types`), since another view in the
+file may have state of the same name. Which property is in which spare
 (`.lamp/live/slots.json`) is put back into each fresh copy (they come back as additions, and `LiveSlots.fit` puts
 them in the same places) until the app is installed again; a property taken out of the code has its place retired
 once the change is in (`LiveSlots.retire`), since the place still holds its value, and its name is sent with the change
@@ -909,7 +966,9 @@ name numbered by `Slot.generation`, `LiveSlots.spareKey`); what `fit` planned (t
 whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs
 once it's installed (`LiveReload.markRunning(from:)`). A spare never reaches saved data: `LampSpare` encodes as
 nothing, and a computed property isn't encoded. If spares ever keep an app from building, it's built again without
-them and stays without (`LiveSlots.giveUp`, `.lamp/live/no-spares`), so the agent only sees errors in its own code.
+them (`LiveSlots.giveUp`, `.lamp/live/no-spares`), so the agent only sees errors in its own code; the marker, like
+`no-final`, counts the whole live builds since and goes after ten (`LiveSlots.expireGiveUps`), so the step is tried
+again now and then at the cost of one failed build when it still breaks.
 
 A constant (a static or global `let`) whose value changes would otherwise not change at all: the open app made its
 value once and keeps it in storage the new code goes on reading. So each constant's value is part of the kept layout

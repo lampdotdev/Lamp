@@ -65,7 +65,7 @@ final class WorkedForTests: XCTestCase {
             }
         }
         XCTAssertEqual(shape, ["You now have a counter.", "statuses:\(ChatLook.fixingCrash)",
-                               "Crash Now no longer crashes the app.", "Worked for 15 s:Crash Counter is ready",
+                               "Crash Now no longer crashes the app.", "Worked for 15 s:Crash Counter is ready,Working on the interface",
                                "statuses:Crash Counter is ready"])
     }
 
@@ -88,5 +88,86 @@ final class WorkedForTests: XCTestCase {
                                                  "I'll look first.", "Now the words."])
         // The step still going ("Building…") is what the line itself says.
         XCTAssertEqual(live.steps.map(\.said), ["Looking around", "Finding every mention"])
+    }
+
+    /// A turn that only read, searched and edited files, and looked at the app, ran no command: its steps are what the
+    /// line said while each call ran, never the calls' file names, and they're there while it goes on and in its
+    /// "Worked for…". These are a real turn's lines up to its second look's build.
+    func testATurnOfFileToolsHasStepsInPlainWords() {
+        let lines = [LogLine(kind: .user, text: "Add a filter row"), LogLine(kind: .detail, text: "Warning: new session"),
+                     LogLine(kind: .agent, text: "I'll add the heat filter row under the title."),
+                     LogLine(kind: .tool, text: "read APP.md"), LogLine(kind: .tool, text: "find Sources/*.swift"),
+                     LogLine(kind: .tool, text: "read ShelfView.swift"), LogLine(kind: .tool, text: "grep Model.swift"),
+                     LogLine(kind: .agent, text: "Filter by the peppers shown (intensity)."),
+                     LogLine(kind: .tool, text: "edit ShelfView.swift"), LogLine(kind: .tool, text: "look_at_app"),
+                     LogLine(kind: .status, text: "Building…"), LogLine(kind: .detail, text: "Build failed: warning"),
+                     LogLine(kind: .tool, text: "edit ShelfView.swift"), LogLine(kind: .tool, text: "look_at_app"),
+                     LogLine(kind: .status, text: "Building…")]
+        let visible = LogLine.visible(lines, details: false)
+        let live = ChatItem.live(visible)
+        XCTAssertEqual(live.shown.map(\.text), ["Add a filter row", "I'll add the heat filter row under the title.",
+                                                 "Filter by the peppers shown (intensity)."])
+        XCTAssertEqual(live.steps.map(\.text), ["Looking things over", "Working on the interface", "Checking how it looks",
+                                                 "Building…", "Working on the interface", "Checking how it looks"])
+        XCTAssertFalse(live.steps.contains { $0.text.contains(".swift") || $0.text.contains(".md") })
+        // Agent Details still shows the calls themselves.
+        XCTAssertEqual(LogLine.visible(lines, details: true).filter { $0.kind == .tool }.count, 8)
+        // Over, the same steps are what "Worked for…" opens to.
+        let done = visible + LogLine.visible([LogLine(kind: .agent, text: "Done."), LogLine(kind: .summary, text: "Worked for 3m 56s · $0.18")], details: false)
+        guard case .work(_, _, let steps)? = ChatItem.items(done, gather: true).last else { return XCTFail("no Worked for") }
+        // As on any turn, a build there is a step only until the next one.
+        XCTAssertEqual(steps.map(\.text), ["Looking things over", "Working on the interface", "Checking how it looks",
+                                            "Working on the interface", "Checking how it looks", "Building…"])
+        // A look again after a build that went before it is one step, not the same words twice.
+        let looks = lines.prefix(10) + [LogLine(kind: .status, text: "Building…"), LogLine(kind: .tool, text: "look_at_app"), LogLine(kind: .agent, text: "Done."),
+                                         LogLine(kind: .summary, text: "Worked for 1m 0s · $0.01")]
+        guard case .work(_, _, let again)? = ChatItem.items(LogLine.visible(Array(looks), details: false), gather: true).last else {
+            return XCTFail("no Worked for")
+        }
+        XCTAssertEqual(again.map(\.text), ["Looking things over", "Working on the interface", "Checking how it looks"])
+    }
+
+    /// A command is logged as a call and as its own row: only the row, by its name, is a step, so commands the agent
+    /// gave one name to stay one step.
+    func testACommandIsOneStepByItsName() {
+        let lines = [LogLine(kind: .user, text: "check it"), LogLine(kind: .tool, text: "bash ls Sources"),
+                     LogLine(kind: .status, text: "Ran: ls Sources", said: "Looking around"),
+                     LogLine(kind: .tool, text: "bash grep heat"), LogLine(kind: .status, text: "Ran: grep heat", said: "Looking around"),
+                     LogLine(kind: .tool, text: "read Model.swift"), LogLine(kind: .agent, text: "Done."),
+                     LogLine(kind: .summary, text: "Worked for 9s · $0")]
+        let visible = LogLine.visible(lines, details: false)
+        XCTAssertEqual(ChatItem.live(Array(visible.prefix(4))).steps.map { $0.said ?? $0.text },
+                       ["Looking around", "Looking around", "Looking things over"])
+        guard case .work(_, _, let steps)? = ChatItem.items(visible, gather: true).last else { return XCTFail("no Worked for") }
+        XCTAssertEqual(steps.map { $0.said ?? $0.text }, ["Looking around", "Looking things over"])
+        XCTAssertEqual(steps.first?.text, "Ran: ls Sources\ngrep heat")
+    }
+
+    /// The step the turn is still on is what the line at the bottom says, not a step done yet: it joins the list above
+    /// the line once the agent moves on (it writes, it thinks, it starts another step).
+    func testTheStepGoingOnIsTheLineNotAStepDone() {
+        let going = LogLine.visible([LogLine(kind: .user, text: "add a filter"), LogLine(kind: .tool, text: "read ShelfView.swift"),
+                                     LogLine(kind: .tool, text: "edit ShelfView.swift")], details: false)
+        XCTAssertEqual(ChatItem.live(going, doing: "Working on the interface").steps.map(\.text), ["Looking things over"])
+        // Thinking after it, the edit is done.
+        XCTAssertEqual(ChatItem.live(going, doing: Activity.thinking).steps.map(\.text), ["Looking things over", "Working on the interface"])
+        // So it is once the agent says something after it.
+        let said = going + [LogLine(kind: .agent, text: "Now the buttons.")]
+        XCTAssertEqual(ChatItem.live(said, doing: "Replying").steps.map(\.text), ["Looking things over", "Working on the interface"])
+        // While Lamp looks at the app, the line says the look's stages: the look is still going.
+        let look = going + LogLine.visible([LogLine(kind: .tool, text: "look_at_app"), LogLine(kind: .status, text: "Building…")], details: false)
+        XCTAssertEqual(ChatItem.live(look, doing: "Building…", looking: true).steps.map(\.text), ["Looking things over", "Working on the interface"])
+        XCTAssertEqual(ChatItem.live(look, doing: "Opening Hot Shelf…", looking: true).steps.map(\.text), ["Looking things over", "Working on the interface"])
+        // Once the look is over and the next call is being written, the look is done.
+        XCTAssertEqual(ChatItem.live(look, doing: "Working on the interface").steps.map(\.text),
+                       ["Looking things over", "Working on the interface", "Checking how it looks"])
+        // The next call being written says its words before it's logged: the edit before it is done.
+        XCTAssertEqual(ChatItem.live(going, doing: "Looking things over").steps.map(\.text), ["Looking things over", "Working on the interface"])
+        // So is a command named from Codex's reasoning before its row is logged, whatever its name.
+        XCTAssertEqual(ChatItem.live(going, doing: "Checking it builds").steps.map(\.text), ["Looking things over", "Working on the interface"])
+        // A named command running is the line's words, and done it's a step by that name.
+        let command = going + [LogLine(kind: .status, text: "Ran: swift build", said: "Checking it builds")]
+        XCTAssertEqual(ChatItem.live(command, doing: "Checking it builds").steps.map { $0.said ?? $0.text },
+                       ["Looking things over", "Working on the interface"])
     }
 }

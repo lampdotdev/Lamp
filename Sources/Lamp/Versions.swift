@@ -46,7 +46,7 @@ enum Versions {
     static func git(_ command: String, cwd: URL, env: [String: String] = [:],
                     onLine: @escaping @MainActor (String) -> Void = { _ in }) async -> Int32 {
         guard let confined = confined(command, in: cwd) else { return unconfined }
-        return await Shell.run(confined, cwd: cwd, env: env.merging(environment) { $1 }, onLine: onLine)
+        return await Shell.run(confined, cwd: cwd, env: env.merging(environment) { $1 }, login: false, onLine: onLine)
     }
 
     /// The same, for the one caller that can't await (the migration, at launch).

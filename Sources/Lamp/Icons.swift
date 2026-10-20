@@ -601,6 +601,16 @@ enum Icons {
         let fm = FileManager.default
         try fm.createDirectory(at: project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
 
+        // Every install asks for the icon, and drawing it (actool and Icon Composer's tool among it) takes seconds:
+        // files already drawn from the same design, artwork, tools and Lamp are kept as they are.
+        let key = renderKey(spec, art: art)
+        let made = [icnsURL(project), squareURL(project), previewURL(project)] + (IconTools.found != nil ? [carURL(project)] : [])
+        if let key, (try? String(contentsOf: renderKeyURL(project), encoding: .utf8)) == key,
+           made.allSatisfy({ fm.fileExists(atPath: $0.path) }), let image = NSImage(contentsOf: previewURL(project)) {
+            return image
+        }
+        try? fm.removeItem(at: renderKeyURL(project))
+
         try? fm.removeItem(at: carURL(project))
         try? fm.removeItem(at: documentURL(project))
         let tile: NSImage
@@ -636,7 +646,40 @@ enum Icons {
         try square(spec, art: art, tile: tile).representation(using: .png, properties: [:])?.write(to: squareURL(project))
 
         if let preview { try preview.write(to: previewURL(project)) }
+        if let key { try? key.write(to: renderKeyURL(project), atomically: true, encoding: .utf8) }
         return NSImage(contentsOf: previewURL(project)) ?? NSImage()
+    }
+
+    /// Where `write` notes what the icon's files were drawn from.
+    static func renderKeyURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/icon-drawn") }
+
+    /// What the icon's files are drawn from: the design, its artwork, Xcode's icon tools, and this Lamp, whose way of
+    /// drawing may change. Nil when the artwork can't be read back, so the icon is drawn again.
+    static func renderKey(_ spec: IconSpec, art: Artwork?) -> String? {
+        var hasher = SHA256()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        guard let design = try? encoder.encode(spec) else { return nil }
+        hasher.update(data: design)
+        switch art {
+        case .glass(let glass):
+            guard let data = try? glass.encoded() else { return nil }
+            hasher.update(data: Data("glass".utf8)); hasher.update(data: data)
+        case .picture(let picture):
+            guard let data = picture.tiffRepresentation else { return nil }
+            hasher.update(data: Data("picture".utf8)); hasher.update(data: data)
+        case .waiting:
+            hasher.update(data: Data("waiting".utf8))
+        case nil:
+            hasher.update(data: Data("none".utf8))
+        }
+        let lamp = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
+        hasher.update(data: Data("\(IconTools.found?.developer ?? "-")|\(lamp)|\(Bundle.main.executableURL.flatMap(Self.modified) ?? 0)".utf8))
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func modified(_ url: URL) -> Double? {
+        (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate?.timeIntervalSince1970
     }
 
     /// An Icon Composer document: the background fill plus a group for each foreground layer, each in Liquid Glass

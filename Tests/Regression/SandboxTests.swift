@@ -50,6 +50,22 @@ final class SandboxTests: XCTestCase {
         XCTAssertEqual(quoted.output.trimmingCharacters(in: .whitespacesAndNewlines), "it's quoted > fine")
     }
 
+    /// The commands of a turn share one profile file while its text is the same, and a file whose text was
+    /// changed is written again rather than used.
+    func testAProfileIsSharedWhileItsTextIsTheSame() throws {
+        let (project, _) = try project()
+        func file(_ wrapped: String?) throws -> String {
+            let line = try XCTUnwrap(wrapped)
+            return String(try XCTUnwrap(line.split(separator: "'").dropFirst().first))
+        }
+        let first = try file(Sandbox.wrap("ls", for: project))
+        XCTAssertEqual(try file(Sandbox.wrap("cat Sources/App.swift", for: project)), first)
+        try "(version 1)\n(allow default)\n".write(toFile: first, atomically: true, encoding: .utf8)
+        XCTAssertEqual(try file(Sandbox.wrap("ls", for: project)), first)
+        XCTAssertEqual(try String(contentsOfFile: first, encoding: .utf8), Sandbox.profile(for: project))
+        XCTAssertEqual(try run("cat ../../outside.txt", in: project).status == 0, false)
+    }
+
     /// The apps Lamp installs can't be started by a command: exec maps the binary without the read the
     /// profile closes, so the profile refuses it by name. A command could otherwise run another app with a
     /// library of its own inside (DYLD_INSERT_LIBRARIES) and read that app's secrets out of Lamp through it.

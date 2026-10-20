@@ -89,8 +89,9 @@ final class MagicPanel {
 
     private static func handedOff(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/sidebar-handed-off") }
 
-    /// After the turn that first builds and opens a new app: its chat window closes and the app opens the chat
-    /// beside its content, so the rest of the making happens in the app itself. Once for each app: a chat the
+    /// At the agent's first look that opens a new app (`Store.present`), or after the turn that first builds and opens
+    /// it when there was none: its chat window closes and the app opens the chat beside its content, so the rest of the
+    /// making happens in the app itself. Once for each app: a chat the
     /// person opened in Lamp's window afterwards stays there.
     func handOff(_ project: LampProject) async {
         guard !FileManager.default.fileExists(atPath: Self.handedOff(project).path),
@@ -104,6 +105,24 @@ final class MagicPanel {
             if SidebarServer.shared.isConnected(project.id) { return Self.closeChatWindow(of: project) }
             try? await Task.sleep(for: .milliseconds(200))
         }
+    }
+
+    /// A new app's chat moves beside it early in its first turn (`Store.present`), and every pass that reopens the app
+    /// takes it down with the old copy. When no chat comes back beside the app (the reopen failed, the app crashed, or a
+    /// pass made it a menu bar app or a widget, with no window for it), the chat goes back to Lamp's window rather than
+    /// nowhere, with the turn's progress, its errors and Stop. A chat the person closed beside the app keeps its
+    /// connection, so it isn't brought back against their wish.
+    func keepChatInSight(_ project: LampProject) async {
+        guard FileManager.default.fileExists(atPath: Self.handedOff(project).path) else { return }
+        if await Self.chatsInApp(project) {
+            // A copy that opened brings its chat back as its window comes up: give it the time that takes.
+            for _ in 0..<40 {
+                if SidebarServer.shared.isConnected(project.id) || Store.shared.chatWindows.contains(project.id) { return }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+        guard !SidebarServer.shared.isConnected(project.id), !Store.shared.chatWindows.contains(project.id) else { return }
+        Store.shared.showChat(project.id)
     }
 
     /// An app's chat is in one place at a time: when it opens beside the app, its window in Lamp closes. Not while
@@ -422,6 +441,7 @@ struct CoverView<Note: View>: View {
             .overlay(Color.black.opacity(0.12))
             // In the middle: an app's own buttons sit along its bottom and top edges, and a note there hid them.
             .overlay { note().padding(.horizontal, 12) }
+            .overlay { TransitionGlow() }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
@@ -444,8 +464,6 @@ struct CoverNote: View {
             ProgressView().controlSize(.small)
             if let progress, progress.finished == nil {
                 ChatLook.ActivityText(progress.activity, since: progress.activitySince)
-                Text("·").foregroundStyle(.secondary)
-                Elapsed(from: progress.activitySince, to: nil).foregroundStyle(.secondary)
             } else {
                 Text("Updating…")
             }

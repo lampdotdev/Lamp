@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries
+    static let entries: [Entry] = chatEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + transitionEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -242,6 +242,8 @@ enum Gallery {
     // MARK: Build
 
     private static let buildEntries: [Entry] = [
+        // A new app before the model has first answered, which has no plan yet.
+        build("Just started") { _ in },
         build("Working on its plan") {
             $0.activity = "Working on the interface"
             $0.plan = [PlanPart(id: 0, title: "Type in the bill", done: true, files: ["BillField.swift"]),
@@ -284,14 +286,14 @@ enum Gallery {
         },
         cover("Cover, building", "Building…", waited: 12),
         cover("Cover, the turn over", nil, waited: 0),
-        // The one line a turn has while it goes on, which opens (click it) to the steps so far: commands the agent
-        // named, a few under one name, and one it didn't. "Worked for…" opens to the same rows once it's over.
+        // The one line a turn has while it goes on, under the steps done so far (a click folds them): commands the agent
+        // named, a few under one name, and one it didn't; the one running is the line. "Worked for…", folded, opens to
+        // the same rows once it's over.
         Entry(group: "Activity", name: "Steps the agent named") {
             AnyView(ChatLook.ActivityLine("Checking it builds", started: Date().addingTimeInterval(-48),
                                           since: Date().addingTimeInterval(-6), hasSteps: true) {
                 ChatLook.RanCommand("cat .lamp/starter.md\ncat Sources/App.swift Sources/Model.swift\ncat Sources/ShelfView.swift",
                                     said: "Reading how the shelf works")
-                ChatLook.RanCommand("./build.sh", said: "Checking it builds")
                 ChatLook.RanCommand("ls Assets")
             })
         },
@@ -353,6 +355,15 @@ enum Gallery {
             LogLine(kind: .agent, text: "The week view is in: a column for each day, and tasks you can drag between them."),
             LogLine(kind: .summary, text: "Worked for 2m 40s · $0.21"),
         ], group: "Progress"),
+    ]
+
+    // MARK: Transition
+
+    /// The glow and the light are drawn by the app itself (`LampTransition` in LampSupport.swift), so they're tried
+    /// on a real one: the same signed requests a build sends, to an app open now. The cover's copy of the glow,
+    /// which is Lamp's, is in Activity.
+    private static let transitionEntries: [Entry] = [
+        Entry(group: "Transition", name: "On an open app") { AnyView(TransitionTrial()) },
     ]
 
     // MARK: Pointed at
@@ -490,5 +501,32 @@ private struct GalleryView: View {
             }
         }
         .preferredColorScheme(look.scheme)
+    }
+}
+
+/// Sends begin, land and end to an app open on this Mac, as a build would.
+private struct TransitionTrial: View {
+    @ObservedObject private var store = Store.shared
+    @State private var chosen: String?
+
+    var body: some View {
+        let open = store.projects.filter(AppTransition.canShow)
+        VStack(alignment: .leading, spacing: 10) {
+            if open.isEmpty {
+                Text("Open one of your apps, built by this Lamp, to try it.").foregroundStyle(.secondary)
+            } else {
+                Picker("App", selection: Binding(get: { chosen ?? open[0].id }, set: { chosen = $0 })) {
+                    ForEach(open) { Text($0.name).tag($0.id) }
+                }
+                if let project = open.first(where: { $0.id == (chosen ?? open[0].id) }) {
+                    HStack {
+                        Button("Glow") { AppTransition.send(.begin, to: project) }
+                        Button("Change Goes In") { AppTransition.send(.land, to: project) }
+                        Button("Let Go") { AppTransition.send(.end, to: project) }
+                    }
+                }
+            }
+        }
+        .padding()
     }
 }

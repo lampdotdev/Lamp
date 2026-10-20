@@ -138,6 +138,22 @@ final class CommandRiskTests: XCTestCase {
         XCTAssertEqual(seen.first { $0.questions == ["matchesRequest"] }?.request, request)
     }
 
+    /// A confined command runs whether it's judged fine or unsure, so it isn't asked about the request: one
+    /// call to the model, not two in a row, and a risky one keeps its reason.
+    func testLeftOutTheRequestsQuestionIsOneCall() async {
+        for (changes, expected) in [([:], CommandRisk.Verdict.run), (["sendsOut": ["noul": 0.97]], .risky)] as [([String: Any?], CommandRisk.Verdict)] {
+            var calls: [Set<String>] = []
+            let judgment = await CommandRisk.judge(command: "ls", request: "Rename a to b", folder: "/tmp/app", aboutRequest: false) { state, questions in
+                calls.append(Set(questions.keys))
+                XCTAssertNil(state["user_request"])
+                return self.reply(changes).filter { questions[$0.key] != nil }
+            }
+            XCTAssertEqual(calls, [["risk", "onlyReads", "sendsOut", "readsSecrets", "hidesWhatItDoes"]])
+            XCTAssertEqual(judgment.verdict, expected)
+            XCTAssertTrue(judgment.judged)
+        }
+    }
+
     /// A command that's risky on what it does stays risky when the question about the request fails, is left
     /// out or comes back broken, and isn't even asked it: unsure there would lose the reason on its card.
     func testARiskyCommandStaysRiskyWhateverBecomesOfTheRequestsQuestion() async {
