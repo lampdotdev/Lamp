@@ -805,7 +805,7 @@ enum LiveReload {
     static func analysis(of folder: URL, in project: LampProject, module: String, macOS: String)
         async -> (layout: [String], declarations: SwiftSource.Declarations, oldCode: [String])? {
         let digest = Analyses.digest(of: folder, module: module, macOS: macOS)
-        if let known = analyses.entry(digest), known.folder == folder.standardizedFileURL.path {
+        if let known = analyses.entry(digest, in: folder.standardizedFileURL.path) {
             return (known.layout, known.declarations, known.oldCode)
         }
         guard let dump = await dump(of: folder, in: project, module: module, macOS: macOS) else { return nil }
@@ -834,11 +834,14 @@ enum LiveReload {
         private let lock = NSLock()
         private var entries: [(digest: String, entry: Entry)] = []
 
-        func entry(_ digest: String) -> Entry? { lock.withLock { entries.last { $0.digest == digest }?.entry } }
+        /// The latest made from this code, in `folder` when given: only there do its declarations' places hold.
+        func entry(_ digest: String, in folder: String? = nil) -> Entry? {
+            lock.withLock { entries.last { $0.digest == digest && (folder == nil || $0.entry.folder == folder) }?.entry }
+        }
 
         func keep(_ digest: String, _ entry: Entry) {
             lock.withLock {
-                entries.removeAll { $0.digest == digest }
+                entries.removeAll { $0.digest == digest && $0.entry.folder == entry.folder }
                 entries.append((digest, entry))
                 // A few apps' worth: each is the size of a layout, much smaller than a printout.
                 if entries.count > 6 { entries.removeFirst(entries.count - 6) }
@@ -862,8 +865,10 @@ enum LiveReload {
         func add(_ text: String) { hash.update(data: Data((text + "\u{0}").utf8)) }
         extra.forEach(add)
         let fm = FileManager.default
-        for place in places {
-            add("@" + place.lastPathComponent)
+        // Each place by where it is in the list, not by its name: the live copy, `built` and `running` hold the same
+        // code under different names, and stand for one another.
+        for (index, place) in places.enumerated() {
+            add("@\(index)")
             var isFolder: ObjCBool = false
             guard fm.fileExists(atPath: place.path, isDirectory: &isFolder) else { add("-"); continue }
             guard isFolder.boolValue else { hash.update(data: fm.contents(atPath: place.path) ?? Data()); continue }
