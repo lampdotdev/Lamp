@@ -27,7 +27,8 @@ final class DataSnapshotsTests: XCTestCase {
         XCTAssertNil(DataSnapshots.snapshot(data, version: "abc"), "no database, no copy")
 
         write("PRAGMA journal_mode = WAL; CREATE TABLE t (x); INSERT INTO t VALUES (1);", in: data)
-        let copy = try XCTUnwrap(DataSnapshots.snapshot(data, version: "0123456789"))
+        let now = Date()
+        let copy = try XCTUnwrap(DataSnapshots.snapshot(data, version: "01234567", now: now))
         XCTAssertTrue(copy.lastPathComponent.hasPrefix("change-") && copy.lastPathComponent.hasSuffix("-01234567.sqlite"))
         var db: OpaquePointer?
         sqlite3_open(copy.path, &db)
@@ -37,11 +38,19 @@ final class DataSnapshotsTests: XCTestCase {
         XCTAssertEqual(sqlite3_column_int(statement, 0), 1)
         sqlite3_finalize(statement)
         sqlite3_close(db)
+        // Dated when the data it holds was last written, not when the copy finished: a write during the copy is newer.
+        let date = { (url: URL) in try! FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as! Date }
+        let source = [data.appendingPathComponent("data.sqlite"), data.appendingPathComponent("data.sqlite-wal")]
+            .filter { FileManager.default.fileExists(atPath: $0.path) }.map(date).max()!
+        XCTAssertEqual(date(copy).timeIntervalSince1970, source.timeIntervalSince1970, accuracy: 0.001)
 
-        XCTAssertNil(DataSnapshots.snapshot(data, version: "0123456789"), "unchanged since the last copy")
-        Thread.sleep(forTimeInterval: 1.1)
+        XCTAssertNil(DataSnapshots.snapshot(data, version: "01234567", now: now), "unchanged since the last copy")
+        // Changed, and copied again in the same instant under the same version: a second file, the first kept.
+        Thread.sleep(forTimeInterval: 0.05)
         write("INSERT INTO t VALUES (2);", in: data)
-        XCTAssertNotNil(DataSnapshots.snapshot(data, version: "0123456789", now: Date().addingTimeInterval(1)))
+        let second = try XCTUnwrap(DataSnapshots.snapshot(data, version: "01234567", now: now))
+        XCTAssertNotEqual(second, copy)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: copy.path))
 
         // Backups made a link elsewhere: nothing is written there.
         let elsewhere = root.appendingPathComponent("elsewhere")
@@ -58,12 +67,11 @@ final class DataSnapshotsTests: XCTestCase {
         let backups = root.appendingPathComponent("Backups")
         try FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
         let now = Date()
-        let formatter = ISO8601DateFormatter()
         // 30 copies an hour apart today and yesterday, and one from each of the 20 days before.
         var dates = (0..<30).map { now.addingTimeInterval(-Double($0) * 1800) }
         dates += (2..<22).map { now.addingTimeInterval(-Double($0) * 86_400) }
         for date in dates {
-            let url = backups.appendingPathComponent("change-\(formatter.string(from: date).replacingOccurrences(of: ":", with: "-"))-abc.sqlite")
+            let url = backups.appendingPathComponent("change-\(DataSnapshots.name(of: date))-abc.sqlite")
             FileManager.default.createFile(atPath: url.path, contents: Data())
             try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
         }
