@@ -156,7 +156,8 @@ final class LiveReloadTests: XCTestCase {
             struct Tile: Flat { var n: Int; var square: Square }
             enum Parcel<T>: Lidded { case value(T), none }
             enum Coin: Flat { case heads, tails(Int) }
-            final class Item: Identifiable { var name = "" }
+            protocol Counted { func count() -> Int }
+            final class Item: Identifiable, Counted { var name = ""; func count() -> Int { 1 } }
             protocol Drawn { associatedtype Mark; func mark() -> Mark }
             struct Round: Shape { var r: Int; var name = ""; func area() -> Int { r } }
             struct Styled: Drawn { func mark() -> some Shape { Square(side: 1, name: "s") }; func n() -> some Numeric { 1 }; func t() -> some Equatable { "a" }; func p() -> some Equatable { n() }; func l() -> some Equatable { func local() -> some Equatable { 0 }; return String() } }
@@ -173,6 +174,11 @@ final class LiveReloadTests: XCTestCase {
             final class Holder { var byName: [String: Outer.Mood] = [:]; var byMood: [Outer.Mood: Int] = [:]; var list: [Outer.Mood] = []; var picked: Picked? = nil; var stack = Stack<Int>(top: nil) }
             private struct Hidden { var v = 1 }
             final class Tagged: NSObject { @objc(oldName) func a() {}; @objc func b() {}; override var description: String { "t" }; @objc(oldStatic) static var value = 1 }
+            indirect enum Tree { case leaf, node(Tree) }
+            @objc enum Level: Int { case low }
+            class Thing {}
+            final class Owner { weak var item: Item? = nil; unowned let thing: Thing; init(thing: Thing) { self.thing = thing } }
+            struct Dated { var at: Int; var note = ""; init() { at = 1; self.note = "n" } }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
         let layout = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
         let shape = layout?.filter { $0.hasPrefix("protocol Shape") } ?? []
@@ -185,17 +191,29 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertEqual(layout?.filter { $0.hasPrefix(LiveReload.aliasGroup) },
                        [LiveReload.aliasGroup + "\tSide = Int", LiveReload.aliasGroup + "\tShapes.swift:Secret = Int", LiveReload.aliasGroup + "\tSquare.Key = String",
                         LiveReload.aliasGroup + "\tItem.ID = ObjectIdentifier", LiveReload.aliasGroup + "\tOther.Pick = Int",
-                        LiveReload.aliasGroup + "\tFeeling = Outer.Mood", LiveReload.aliasGroup + "\tChoice = Picky"])
+                        LiveReload.aliasGroup + "\tFeeling = Outer.Mood", LiveReload.aliasGroup + "\tChoice = Picky", LiveReload.aliasGroup + "\tLevel.RawValue = Int"])
         let declared = layout?.filter { $0.hasPrefix(LiveReload.declarationGroup) }.map { String($0.dropFirst(LiveReload.declarationGroup.count + 1)) } ?? []
         XCTAssertEqual(Array(declared.prefix(5)), ["Square inherits Shape", "Square.area(): (Square) -> () -> Int", "Square inherits Hashable",
                                                    "Square.key: Square.Key", "Square.grow(_:): (Square) -> (Int) -> Square"], "\(declared)")
         XCTAssertTrue(declared.contains("Optional inherits Boxed") && declared.contains("Outer.Mood inherits Shape"), "\(declared)")
+        // A type's shape: its kind, an enum's @objc and indirect, a class's superclass (the first name it inherits
+        // when that's a class, the app's own or a system one), a protocol's requirement signature; and a stored
+        // reference's weak or unowned, in its field.
+        let shapes = layout!.filter { $0.hasPrefix(LiveReload.shapeGroup) }.map { String($0.dropFirst(LiveReload.shapeGroup.count + 1)) }
+        for entry in ["Square\tstruct", "Item\tclass", "Tagged\tclass : NSObject", "Tree\tenum indirect", "Level\tenum @objc", "Thing\tclass", "Outer.Mood\tenum", "Other.Picky\tclass", "Jar\tstruct generic", "Parcel\tenum generic"] {
+            XCTAssertTrue(shapes.contains(entry), "\(entry) in \(shapes)")
+        }
+        XCTAssertTrue(shapes.contains { $0.hasPrefix("protocol Shape\t<Self where ") }, "\(shapes)")
+        XCTAssertEqual(layout!.filter { $0.hasPrefix("Owner\t") }, ["Owner\t", "Owner\tweak item: Item?", "Owner\tunowned thing: Thing"])
+        XCTAssertNil(LiveReload.layoutProblem(before: layout!.filter { !$0.hasPrefix(LiveReload.shapeGroup) }, after: layout).problem)
+        XCTAssertEqual(LiveReload.readable("Row changed what it holds (no longer Row.____lampState_Row: LazyState<LampStateBox>), Shop.Item.__lampSpare_Item_0, __lampBinding_name, __lampBody"),
+                       "Row changed what it holds (no longer Lamp's state box for Row), Lamp's spare place in Item, $name, its body")
         let retargeted = layout!.map { $0 == LiveReload.aliasGroup + "\tSide = Int" ? LiveReload.aliasGroup + "\tSide = Double" : $0 }
         XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: retargeted).problem, "the typealias Side changed from Int to Double")
         let withoutAliases = LiveReload.layoutProblem(before: layout, after: layout!.filter { !$0.hasPrefix(LiveReload.aliasGroup) })
         XCTAssertNil(withoutAliases.problem)
         // An alias taken away is kept with the open app's layout, like a type, so one brought back is held to it.
-        XCTAssertEqual(withoutAliases.layout?.filter { $0.hasPrefix(LiveReload.aliasGroup) }.count, 7)
+        XCTAssertEqual(withoutAliases.layout?.filter { $0.hasPrefix(LiveReload.aliasGroup) }.count, 8)
         XCTAssertEqual(LiveReload.layoutProblem(before: withoutAliases.layout, after: retargeted).problem, "the typealias Side changed from Int to Double")
         // A global holding the enum still counts in the grown-enum check (its owner is empty, not a group).
         XCTAssertFalse(LiveReload.isGroup(String("\tselection: Mood?".prefix { $0 != "\t" })))
@@ -269,7 +287,7 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertNil(retained.problem)
         XCTAssertEqual(LiveReload.layoutProblem(before: retained.layout, after: otherType).problem?.hasPrefix("Styled.mark()"), true)
         let otherID = try await layoutWith([("Round(r: 1)", "Square(side: 1, name: \"s\")"),
-                                            ("final class Item: Identifiable { var name = \"\" }", "final class Item: Identifiable { var name = \"\"; var id: String { name } }")])
+                                            ("final class Item: Identifiable, Counted { var name = \"\"; func count() -> Int { 1 } }", "final class Item: Identifiable, Counted { var name = \"\"; func count() -> Int { 1 }; var id: String { name } }")])
         XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: otherID).problem, "the typealias Item.ID changed from ObjectIdentifier to String")
         let renamedSelector = try await layoutWith([("var id: String { name } }", "}"), ("@objc(oldName)", "@objc(newName)")])
         XCTAssertNil(LiveReload.layoutProblem(before: layout, after: renamedSelector).problem)
@@ -277,8 +295,18 @@ final class LiveReloadTests: XCTestCase {
         let renamedStatic = try await layoutWith([("@objc(newName)", "@objc(oldName)"), ("@objc(oldStatic)", "@objc(newStatic)")])
         XCTAssertNil(LiveReload.layoutProblem(before: layout, after: renamedStatic).problem)
         XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: renamedStatic))
+        // A shape that changed reopens the app: a struct become a class, a class given a superclass, a protocol made
+        // class-bound; a reference held weakly no longer is a change to the field.
+        let classified = try await layoutWith([("@objc(newStatic)", "@objc(oldStatic)"), ("struct Tile: Flat { var n: Int; var square: Square }", "final class Tile: Flat { var n = 1; var square = Square(side: 1) }")])
+        XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: classified).problem, "Tile is a class now, where the open app's is a struct")
+        let rooted = try await layoutWith([("final class Tile: Flat { var n = 1; var square = Square(side: 1) }", "struct Tile: Flat { var n: Int; var square: Square }"), ("class Thing {}", "class Thing: NSObject {}")])
+        XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: rooted).problem, "Thing is a class under NSObject now, where the open app's is a class")
+        let bound = try await layoutWith([("class Thing: NSObject {}", "class Thing {}"), ("protocol Counted {", "protocol Counted: AnyObject {")])
+        XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: bound).problem?.hasPrefix("the protocol Counted's requirements changed in kind"), true)
+        let strongly = try await layoutWith([("protocol Counted: AnyObject {", "protocol Counted {"), ("weak var item: Item?", "var item: Item?")])
+        XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: strongly).problem, "Owner changed what it holds (Owner.item: Item?)")
         // Observers added to a stored property change no layout, but turn every write into a call: declared.
-        let observed = try await layoutWith([("@objc(newStatic)", "@objc(oldStatic)"), ("struct Tile: Flat { var n: Int;", "struct Tile: Flat { var n: Int { didSet {} };")])
+        let observed = try await layoutWith([("var item: Item?", "weak var item: Item?"), ("struct Tile: Flat { var n: Int;", "struct Tile: Flat { var n: Int { didSet {} };")])
         XCTAssertNil(LiveReload.layoutProblem(before: layout, after: observed).problem)
         XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: observed))
         XCTAssertTrue(observed.contains(LiveReload.declarationGroup + "\tTile.n: Int observed"), "\(observed.filter { $0.contains("Tile") })")
@@ -293,6 +321,9 @@ final class LiveReloadTests: XCTestCase {
         let notes = try XCTUnwrap(analysed?.layout)
         // An @Observable property's didSet is moved by the macro to its storage: still an observed property.
         XCTAssertEqual(analysed?.declarations.variables["Lab\tdirty"]?.special, true)
+        // A property set in an initializer the type writes, however it's spelt, and where each type is declared.
+        XCTAssertEqual(analysed?.declarations.assigned.filter { $0.hasPrefix("Dated") }.sorted(), ["Dated\tat", "Dated\tnote"])
+        XCTAssertEqual(analysed?.declarations.types["Dated"]?.start.file.hasSuffix("Shapes.swift"), true)
         XCTAssertTrue(notes.contains { $0.hasPrefix("\u{1}launch\tmodel Note@Notes.swift: ") }, "\(notes.filter { $0.hasPrefix("\u{1}launch") })")
         XCTAssertEqual(LiveReload.modelFiles(inLayout: notes).map { "\($0.name) \($0.file)" }, ["Note Notes.swift"])
         try """
@@ -331,7 +362,7 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertEqual(wrappedAlias, "Holder holds Picky, which carries Outer.Mood, as Picky?, which a new case would change")
         // A class's initializers are in its method table, a final class's too; and finality itself is held.
         let initAdded = try await layoutWith([("typealias Choice = Picky?", "typealias Choice = Picky"), ("var choice: Choice = nil }", "var choice: Choice? = nil }"),
-                                              ("final class Item: Identifiable { var name = \"\"", "final class Item: Identifiable { var name = \"\"; init(n: String) { name = n }")])
+                                              ("final class Item: Identifiable, Counted { var name = \"\"", "final class Item: Identifiable, Counted { var name = \"\"; init(n: String) { name = n }")])
         XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: initAdded).problem, "an initializer of Item was added, taken away or changed, and a class's initializers are in its method table")
         let unfinal = try await layoutWith([("; init(n: String) { name = n }", ""), ("; var choice: Choice? = nil }", " }"), ("final class Holder", "class Holder")])
         XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: unfinal).problem, "Holder is no longer final (something subclasses it), and its methods would go through a table the open app's class doesn't have")
@@ -344,8 +375,45 @@ final class LiveReloadTests: XCTestCase {
         _ = try await layoutWith([("var stack = Stack<Int>(top: nil) }", "var stack = Stack<Int>(top: nil); func show() -> String { \"\\(Space.Wrapper(mood: .a))\" } }")])
         let printed = await LiveReload.enumsHeld(project, grown: ["Outer.Mood"])
         XCTAssertNil(printed, printed ?? "")
-        // What holds the enum by value is changed with it, for the old code that may have one in hand.
-        XCTAssertEqual(LiveReload.holders(of: ["Outer.Mood"], inLayout: layout!).filter { ["Pick", "Picky", "Picked", "Space.Wrapper", "Holder"].contains($0) }.sorted(), ["Holder", "Pick", "Picked", "Picky", "Space.Wrapper"])
+        // What holds the enum by value is changed with it, for the old code that may have one in hand: never a class,
+        // whose field keeps its layout.
+        XCTAssertEqual(LiveReload.holders(of: ["Outer.Mood"], inLayout: layout!).filter { ["Pick", "Picky", "Picked", "Space.Wrapper", "Holder"].contains($0) }.sorted(), ["Pick", "Picked", "Picky", "Space.Wrapper"])
+        // The copy step's scan tells the spares step what no struct may have a spare for: an OptionSet made in an
+        // extension (its init(rawValue:) is the memberwise one), and every struct when any file lays memory out by hand.
+        let perl = root.appendingPathComponent("live.pl")
+        try Template.livePerl.write(to: perl, atomically: true, encoding: .utf8)
+        let zones = root.appendingPathComponent("Zones.swift"), plain = root.appendingPathComponent("Plain.swift"), bytes = root.appendingPathComponent("Bytes.swift")
+        try "struct Zone { let rawValue: Int }\nextension Zone: OptionSet {}\nstruct Flags: OptionSet { let rawValue: Int }\n".write(to: zones, atomically: true, encoding: .utf8)
+        try "struct Plain { var a = 1 }\nfinal class Box { var n = 1 }\n".write(to: plain, atomically: true, encoding: .utf8)
+        try "let size = MemoryLayout<Plain>.size\n".write(to: bytes, atomically: true, encoding: .utf8)
+        let scanned = try run("/usr/bin/perl", [perl.path, "scan", zones.path, plain.path, bytes.path]).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(scanned, "-raw -nospare:Zone")
+        // Lamp's own files always read raw memory (as the scaffold's LampSupport.swift does): no reason to keep the
+        // app's structs from their spares.
+        let own = try run("/usr/bin/perl", [perl.path, "scan", "-own=Bytes.swift,LampSupport.swift", zones.path, plain.path, bytes.path, sources.appendingPathComponent("LampSupport.swift").path]).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertFalse(own.contains("-raw"), own)
+        XCTAssertTrue(own.hasSuffix(" -nospare:Zone"), own)
+        _ = try run("/usr/bin/perl", [perl.path, "4", scanned, "s", zones.path, plain.path])
+        XCTAssertFalse(try String(contentsOf: zones, encoding: .utf8).contains("LampSpare"))
+        let rewritten = try String(contentsOf: plain, encoding: .utf8)
+        XCTAssertFalse(rewritten.contains("__lampSpare_Plain"), rewritten)
+        XCTAssertTrue(rewritten.contains("__lampSpare_Box_0"), rewritten)
+        try "struct Plain { var a = 1 }\n".write(to: plain, atomically: true, encoding: .utf8)
+        _ = try run("/usr/bin/perl", [perl.path, "4", "-nospare:Zone", "s", plain.path])
+        XCTAssertTrue(try String(contentsOf: plain, encoding: .utf8).contains("var __lampSpare_Plain = LampSpare(nil)"))
+        // The memberwise initializers written again beside the spares, from the plain sources, for the structs the
+        // live copy gave one: a reference to one as a value (`.map(Item.init)`) then still matches.
+        try "struct Item { var name: String; var count = 1 }\nstruct Keyed { let rawValue: Int }\nprivate struct Own { var n: Int }\n".write(to: project.dir.appendingPathComponent("Sources/Items.swift"), atomically: true, encoding: .utf8)
+        try "struct Item { var name: String; var count = 1\n    var __lampSpare_Item = LampSpare(nil); }\nstruct Keyed { let rawValue: Int }\nprivate struct Own { var n: Int\n    var __lampSpare_Own = LampSpare(nil); }\n".write(to: sources.appendingPathComponent("Items.swift"), atomically: true, encoding: .utf8)
+        let addedMemberwise = await LiveSlots.addMemberwise(project)
+        XCTAssertTrue(addedMemberwise)
+        XCTAssertEqual(try String(contentsOf: sources.appendingPathComponent(LiveSlots.memberwiseFile), encoding: .utf8),
+                       "extension Item { init(name: String, count: Int) { self.init(name: name, count: count, __lampSpare_Item: LampSpare(nil)) } }\n")
+        let unchangedMemberwise = await LiveSlots.addMemberwise(project)
+        XCTAssertFalse(unchangedMemberwise)
+        try FileManager.default.removeItem(at: sources.appendingPathComponent(LiveSlots.memberwiseFile))
+        try FileManager.default.removeItem(at: sources.appendingPathComponent("Items.swift"))
+        try FileManager.default.removeItem(at: project.dir.appendingPathComponent("Sources/Items.swift"))
         // A class the app's own code writes `final` is the agent's error, not the copy step's; a mention in a comment
         // or a string isn't the app writing it.
         let written = project.dir.appendingPathComponent("Sources").appendingPathComponent("Roots.swift")

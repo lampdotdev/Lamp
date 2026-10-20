@@ -4594,12 +4594,18 @@ final class Store: ObservableObject {
         note("Building…", for: project)
         await awaitLiveBuild(of: project)
         liveBuildFailed.remove(project.id)
-        if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1" }   // a change can go into the open app (LiveReload)
+        if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1"; LiveSlots.expireGiveUps(project) }   // a change can go into the open app (LiveReload)
         var status = await Self.runBuild(command, for: project, env: env,
                                          started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
-        // The live copy's spare places must never be what keeps an app from building: if they are, it's built
-        // without them from now on, and the agent only ever sees errors in its own code.
+        // The live copy's spare places must never be what keeps an app from building: if they are, the structs'
+        // initializers are written again without them and the build tried once more; if that doesn't do, it's built
+        // without spares from now on, and the agent only ever sees errors in its own code.
         // Both are judged, since one output may hold both kinds of error; the build is tried again if either gave up.
+        if status != 0, env["LAMP_LIVE"] == "1", LiveSlots.brokeBuild(output.joined(separator: "\n")), await LiveSlots.addMemberwise(project) {
+            output = []
+            status = await Self.runBuild(command, for: project, env: env,
+                                         started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
+        }
         if status != 0, env["LAMP_LIVE"] == "1", case let text = output.joined(separator: "\n"),
            case let spares = LiveSlots.brokeBuild(text) && LiveSlots.giveUp(project),
            case let finals = LiveSlots.brokeFinal(text, project: project) && LiveSlots.giveUpFinal(project), spares || finals {
@@ -4757,7 +4763,7 @@ final class Store: ObservableObject {
         // The open app already runs these sources (a change that went in before its build): nothing to do.
         case .unchanged: return true
         case .reopen(let why):
-            if saysWhy { log(project, .detail, "\(project.name) has to reopen for this change: \(why).") }
+            if saysWhy { log(project, .detail, "\(project.name) has to reopen for this change: \(LiveReload.readable(why)).") }
             return false
         }
         // The open app's data as its old code left it, before the new code can touch it.

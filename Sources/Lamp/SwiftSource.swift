@@ -52,6 +52,13 @@ enum SwiftSource {
         /// Each type's initializers written in its code, its extensions' included: labels and parameter types, as
         /// `memberwise` has them, so one can be told from another with the same labels and other types.
         var initializers: [String: [(labels: [String], types: [String])]] = [:]
+        /// Where each type's own declaration runs, by its qualified name: what a view's `$name` means is its own.
+        var types: [String: (start: Position, last: Position)] = [:]
+        /// The types private to their file, which an extension in another file can't reach.
+        var privateTypes: Set<String> = []
+        /// The properties set in an initializer the type writes itself ("Type<tab>name"): a computed property kept
+        /// in a spare can't be set before the stored ones are, so such a property stays stored.
+        var assigned: Set<String> = []
     }
 
     /// A printout's line that opens a node: its indent and the node's name, the run of letters, digits, `_` and `=`
@@ -123,8 +130,12 @@ enum SwiftSource {
         // the property's own line no longer says it has observers.
         let observer = try! NSRegularExpression(pattern: #"^\s*\(accessor_decl\b.*? (?:didSet|willSet) for="(\w+)""#)
         var observed = Set<String>()
+        // An assignment in an initializer the type writes: the node under it says what's set.
+        let assigned = try! NSRegularExpression(pattern: #"^(\s*)\(member_ref_expr\b.*? decl="[^"]*?\.(\w+)@"#)
         var out = Declarations()
         var scopes: [(indent: Int, type: String?)] = []
+        // The initializer being read, and an assignment in it whose target is the next node.
+        var initializer: (indent: Int, owner: String)?, assignment: Int?
         // The binding being read, at its indent, and what's inside it.
         var binding: (indent: Int, index: Int)?
         var entryOpen = false
@@ -138,6 +149,15 @@ enum SwiftSource {
             lazy var range = NSRange(line.startIndex..., in: line)
             if let open = binding, indent <= open.indent { binding = nil }
             if let open = variable, indent <= open.indent { variable = nil; attribute = nil }
+            if let open = initializer, indent <= open.indent { initializer = nil; assignment = nil }
+            if let open = initializer {
+                if let at = assignment {
+                    if indent == at + 2, opens("member_ref_expr"), let m = assigned.firstMatch(in: line, range: range) { out.assigned.insert(open.owner + "\t" + String(line[Range(m.range(at: 2), in: line)!])) }
+                    assignment = nil
+                }
+                if opens("assign_expr") { assignment = indent }
+                continue
+            }
             while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
             let owner = scopes.last?.type
             if opens("struct_decl", "class_decl", "enum_decl", "actor_decl", "extension_decl"), let m = typeDecl.firstMatch(in: line, range: range) {
@@ -145,7 +165,10 @@ enum SwiftSource {
                 let outer = scopes.compactMap(\.type).last
                 let full = outer.map { $0 + "." + name } ?? name
                 scopes.append((indent, full))
-                if line[Range(m.range(at: 2), in: line)!] == "class" { out.classes.insert(full); out.classes.insert(name) }
+                let kind = line[Range(m.range(at: 2), in: line)!]
+                if kind == "class" { out.classes.insert(full); out.classes.insert(name) }
+                if kind != "extension", let r = self.range(in: line) { out.types[full] = r }
+                if kind != "extension", line.contains(" access=private") || line.contains(" access=fileprivate") { out.privateTypes.insert(full) }
                 continue
             }
             if let owner, opens("accessor_decl"), let m = observer.firstMatch(in: line, range: range) {
@@ -155,8 +178,9 @@ enum SwiftSource {
             }
             if opens("func_decl", "accessor_decl", "constructor_decl", "destructor_decl", "closure_expr", "subscript_decl", "top_level_code_decl"),
                scopeDecl.firstMatch(in: line, range: range) != nil {
-                if let owner, line.contains("(constructor_decl"), !line.contains(" implicit "), let made = memberwise(in: line) {
-                    out.initializers[owner, default: []].append(made)
+                if let owner, line.contains("(constructor_decl"), !line.contains(" implicit ") {
+                    initializer = (indent, owner)
+                    if let made = memberwise(in: line) { out.initializers[owner, default: []].append(made) }
                 }
                 if let owner, line.contains("(constructor_decl"), line.contains(" implicit "),
                    !line.contains("access=private"), !line.contains("access=fileprivate"),

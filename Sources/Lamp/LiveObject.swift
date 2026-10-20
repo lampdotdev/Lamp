@@ -53,8 +53,17 @@ enum LiveObject {
 
     /// A type's mangled name with its module, from its name as the layout check has it ("Outer.Inner") and its
     /// kind ("V" a struct, "O" an enum, "C" a class): "3App5OuterV5InnerV".
-    static func mangledType(_ name: String, module: String, kind: String) -> String {
-        "\(module.utf8.count)\(module)" + name.split(separator: ".").map { "\($0.utf8.count)\($0)" + kind }.joined()
+    /// A type's mangled name: the module, then each part of its qualified name with its kind's letter (V for a
+    /// struct, C for a class or actor, O for an enum), the last part's `kind` and the outer parts' from `kinds` by
+    /// their qualified names (a `Mood` inside a `Game` struct is `4GameV4MoodO`), the last part's kind where none is known.
+    static func mangledType(_ name: String, module: String, kind: String, kinds: [String: String] = [:]) -> String {
+        var prefix = "", out = "\(module.utf8.count)\(module)"
+        let parts = name.split(separator: ".")
+        for (n, part) in parts.enumerated() {
+            prefix += (n == 0 ? "" : ".") + part
+            out += "\(part.utf8.count)\(part)" + (n == parts.count - 1 ? kind : kinds[prefix] ?? kind)
+        }
+        return out
     }
 
     private struct Section { var name: String; var offset: Int; var size: Int; var reloff: Int; var nreloc: Int; var index: Int }
