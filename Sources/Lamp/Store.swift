@@ -4256,6 +4256,8 @@ final class Store: ObservableObject {
             log(project, .detail, "Reopening \(project.name) for this change: \(why).")
             return false
         }
+        // The open app's data as its old code left it, before the new code can touch it.
+        await DataSnapshots.take(project)
         note("Updating \(project.name) in place…", for: project)
         // The changed files' compile and the whole code's check go side by side; the check decides. With properties
         // already in spares, the live copy is rewritten before anything is compiled (`LiveSlots.fit`).
@@ -4406,6 +4408,8 @@ final class Store: ObservableObject {
         owner?.updatedInPlace = false
         do {
             WidgetCard.forget(project)
+            // With the old copy closed, its data is quiet: copied before the new one opens on it.
+            await DataSnapshots.take(project)
             try await deploy(project)
             heldInstalls.installed(project.id)
             Runtime.releaseBuild(project)
