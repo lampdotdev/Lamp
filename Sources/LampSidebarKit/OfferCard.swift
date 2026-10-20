@@ -20,8 +20,26 @@ extension ChatLook {
         }
 
         public var body: some View {
+            // The buttons beside the words where they fit, else under them, at the trailing edge.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 12) {
+                    header
+                    Spacer(minLength: 8)
+                    buttons.cardButtons()
+                }
+                VStack(alignment: .trailing, spacing: 10) {
+                    header.frame(maxWidth: .infinity, alignment: .leading)
+                    buttons.cardButtons()
+                }
+            }
+            .padding(14)
+            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+        }
+
+        private var header: some View {
             let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
-            HStack(alignment: .center, spacing: 12) {
+            return HStack(alignment: .center, spacing: 12) {
                 Image(systemName: done ? "checkmark" : symbol)
                     .font(.system(size: 20, weight: .medium))
                     .foregroundStyle(.white)
@@ -36,12 +54,7 @@ extension ChatLook {
                     Text(status).font(.body).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer(minLength: 8)
-                buttons.controlSize(.small)
             }
-            .padding(14)
-            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
         }
     }
 

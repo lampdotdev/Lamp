@@ -126,7 +126,7 @@ extension ChatLook {
                         .buttonStyle(.borderedProminent)
                 }
             }
-            .controlSize(.large)
+            .cardButtons()
         }
 
         private var howToDecide: some View {

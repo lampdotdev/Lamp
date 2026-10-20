@@ -81,10 +81,10 @@ A capability given to one engine must be given to all of them that can take it, 
   a chat line that can't be read is skipped and the rest opens (`LogLine.readChat`), with the file as it was kept beside it as `chat.json.unreadable`, but that line is gone from the chat. While a card waits for its answer nothing above it changes height and the chat
   doesn't follow what's added below: a new app's card goes to its short form as the questions arrive, a
   second `ask` before the answer is turned away, and a one-at-a-time card is laid out for all its questions
-  at once (`AskSteps`), so nothing moves under the pointer. Its questions are kept the same height, so the card
-  never shows room to spare under one of them: a question's answers are one row however many there are, and its
-  tiles fill whatever another question's wording needed (`TileRows`). Only where a row would break a word (the
-  wand's narrow panel) do they go two by two or one under another, with the symbol above the words (`TileFace`). Asking ends the turn: nothing is built or saved
+  at once (`AskSteps`), so nothing moves under the pointer. Its answers are small tiles, a symbol and a line each, as the
+  chips of a card with every question on it are: one under another below a card width that takes in the wand's
+  panel at any size it opens at, in one row only on a wider card where each fits on a line (`TileRows`, and
+  `ChipRow` the same way). A question left to Lamp is "Decide for me" (`TalkCard.youDecide`). Asking ends the turn: nothing is built or saved
   until the answer, and an agent that goes on to another step after `ask` is ended by Lamp, the way a
   runaway one is (`Store.endOnQuestions`), whichever engine it is. Once the card is answered the chat
   follows its end again (`ChatFollow.followThroughSettling`). Only the card that waits is drawn as a card: answered, it folds to a line with what was chosen, and a notes receipt is a line too, so one thing in the chat asks for attention at a time. A new piece is a tool there, its view, and a line in `talkRules`. The agent still
@@ -1444,6 +1444,9 @@ card), check:
   whose job they are.
 - **Does structure carry the meaning?** Related things share a group. What depends on something sits
   indented under it and shows only while that's on. Details for the curious (paths, versions) go in `.help`.
+- **A card's buttons are one size**: the size Allow and Don't Allow are (`.cardButtons()`), on every card in both
+  chats, the main one prominent; never the small size, which in the wand's narrow panel was too slight to find.
+  Where they don't fit beside a card's words they go under them (`ChatLook.OfferCard`).
 - **Same words for the same thing**, in every screen, Help and errors. Product names come from one place
   (`Engine.title`: "ChatGPT Codex"), never a literal.
 

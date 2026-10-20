@@ -133,7 +133,7 @@ enum Gallery {
         option("At my desk", "desktopcomputer"), option("On the go", "iphone"),
         option("In the kitchen", "fork.knife"), option("Everywhere", "globe"),
     ])
-    /// Words too long to sit four to a row in the wand's panel: the tiles go two by two, or one under another.
+    /// Words too long to sit four to a row on a wide card: the tiles go one under another there too.
     private static let longWords = Talk.Question(question: "Which languages?", options: [
         option("Internationalization", "globe"), option("Accessibility", "accessibility"),
         option("Localization", "character.book.closed"), option("Documentation", "doc.text"),
@@ -155,7 +155,7 @@ enum Gallery {
         ask("A starter's first changes", Talk.Ask(layout: .steps, questions: [Talk.Question(question: "Make Today yours", options: [
             option("Five priorities instead of three", "list.number"), option("Add a water counter", "drop"),
             option("Remind me to plan at 8", "bell"),
-        ], detail: "Today came with Lamp as an example, and it's yours to change. Try one of these, or describe your own.")],
+        ])],
         offer: true)),
     ]
 
