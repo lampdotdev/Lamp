@@ -409,12 +409,11 @@ public enum ChatLook {
         status.hasPrefix("Ran: ") ? String(status.dropFirst(5)) : nil
     }
 
-    /// A turn's progress: one line saying what the agent is doing and for how long, which changes in place as it
-    /// moves from one thing to the next, and opens to show the steps so far. `since` is when the activity began,
-    /// which a long think or build is counted from and the clock shows (the turn's start when it isn't known): a
-    /// clock for the whole turn kept counting beside a step that had only just begun, which read as that step being
-    /// stuck. The whole turn's time is its "Worked for…". When the turn ends this
-    /// line's place is taken by its "Worked for…" (`Worked`), which opens to the same steps.
+    /// A turn's progress: one line saying what the agent is doing, with no clock beside it, which changes in place
+    /// as it moves from one thing to the next, and opens to show the steps so far. `since` is when the activity
+    /// began, which a long think or build is counted from (the turn's start when it isn't known). The whole turn's
+    /// time is its "Worked for…": when the turn ends this line's place is taken by it (`Worked`), which opens to the
+    /// same steps.
     public struct ActivityLine<Steps: View>: View {
         let activity: String
         let started: Date
@@ -445,8 +444,6 @@ public enum ChatLook {
                         ActivityText(activity, since: since)
                             .opacity(dim ? 0.5 : 1)
                             .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: dim)
-                        Text("·")
-                        Elapsed(from: since, to: nil)
                         if hasSteps {
                             Image(systemName: "chevron.right")
                                 .font(.caption2.weight(.semibold))
@@ -695,24 +692,6 @@ private struct PointingHand: ViewModifier {
             content.pointerStyle(.link)
         } else {
             content.onHover { inside in inside ? NSCursor.pointingHand.push() : NSCursor.pop() }
-        }
-    }
-}
-
-/// A running clock, "0:42", that stops at `end`.
-public struct Elapsed: View {
-    let start: Date
-    let end: Date?
-
-    public init(from start: Date, to end: Date?) {
-        self.start = start
-        self.end = end
-    }
-
-    public var body: some View {
-        TimelineView(.periodic(from: start, by: 1)) { context in
-            let seconds = max(0, Int((end ?? context.date).timeIntervalSince(start)))
-            Text(String(format: "%d:%02d", seconds / 60, seconds % 60)).monospacedDigit()
         }
     }
 }

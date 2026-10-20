@@ -267,10 +267,6 @@ struct BuildCardView<Icon: View>: View {
                     status.font(.body).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
-                if !progress.asking {
-                    Elapsed(from: progress.started, to: progress.finished)
-                        .font(.callout).foregroundStyle(.secondary)
-                }
             }
             .padding(14)
             // Nothing is being built while the agent waits for an answer, and nothing more once it's over:
