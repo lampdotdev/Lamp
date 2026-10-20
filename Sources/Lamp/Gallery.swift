@@ -297,6 +297,16 @@ enum Gallery {
                 ChatLook.RanCommand("ls Assets")
             })
         },
+        // A change waiting for Reload, under the answer that says so: the action line's symbol and words in the steps'
+        // column, with "Worked for…" above and Undo Last Change below.
+        Entry(group: "Activity", name: "Reload under a change") {
+            AnyView(VStack(alignment: .leading, spacing: 8) {
+                ChatLook.AgentText("Once you press Reload, the rack scrolls to each new spice as you add it.")
+                ChatLook.Worked("Worked for 54 s") { EmptyView() }
+                ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.text("Hot Shelf"), button: "Reload", prominent: true) {}
+                ChatLook.UndoChange {}
+            })
+        },
         Entry(group: "Activity", name: "Under the agent's progress lines") {
             let started = Date().addingTimeInterval(-95)
             return AnyView(VStack(alignment: .leading, spacing: 12) {
