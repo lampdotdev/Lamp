@@ -28,7 +28,7 @@ public enum ChatLook {
         }
     }
 
-    /// What the agent says, as prose with its inline markdown.
+    /// What the agent says, as prose with its markdown (`ChatLook.pieces`).
     public struct AgentText: View {
         let text: String
         let keep: Bool
@@ -41,14 +41,224 @@ public enum ChatLook {
         /// In a grey bubble on the left, as Messages draws the other person's. Answers run longer than a text
         /// message, so the bubble may take most of the width, leaving room on the right to tell it from a request.
         public var body: some View {
-            Text(ChatLook.prose(text, keep: keep))
+            content
                 .lineSpacing(3)
-                .textSelection(.enabled)
                 .padding(.horizontal, 12).padding(.vertical, 7)
                 .background(Bubble(.leading).fill(ChatLook.agentBubble))
                 .padding(.leading, ChatLook.tailRoom)
                 .padding(.trailing, 32)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        /// A reply is drawn as few texts as it can be. Each selectable text costs macOS far more to lay out than
+        /// its words do, and every reply above is measured again with each word of one being written, so a reply
+        /// cut into a text per line, cell and item made the whole chat slow while the agent wrote.
+        @ViewBuilder private var content: some View {
+            let pieces = ChatLook.pieces(text, keep: keep)
+            if pieces.count == 1, case .text(let string) = pieces[0] {
+                Text(string).textSelection(.enabled)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(pieces.indices, id: \.self) { PieceView(piece: pieces[$0]) }
+                }
+            }
+        }
+    }
+
+    /// A reply as it's drawn: its prose, headings, lists and quotes run together as one styled text, and only what a
+    /// text can't draw is a piece of its own.
+    public enum Piece: Equatable {
+        case text(AttributedString)
+        case code(String)
+        case rule
+        case table(columns: [HorizontalAlignment], header: [AttributedString], rows: [[AttributedString]])
+    }
+
+    private struct PieceView: View {
+        let piece: Piece
+
+        var body: some View {
+            switch piece {
+            case .text(let string):
+                Text(string).textSelection(.enabled)
+            case .code(let code):
+                Text(code)
+                    .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 8).padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
+            case .rule:
+                Divider()
+            case .table(let columns, let header, let rows):
+                // Top-aligned: lining cells up by their first baselines cost several times as much to lay out, and
+                // a cell's first line sits level with its neighbours' either way. The cells can't be selected, for
+                // the same cost: a selectable text in each would make a table the slowest thing in the chat.
+                Grid(alignment: .topLeading, horizontalSpacing: 14, verticalSpacing: 4) {
+                    GridRow {
+                        ForEach(header.indices, id: \.self) { column in
+                            Text(header[column]).fontWeight(.semibold).gridColumnAlignment(columns[column])
+                        }
+                    }
+                    Divider().gridCellUnsizedAxes(.horizontal)
+                    ForEach(rows.indices, id: \.self) { row in
+                        GridRow { ForEach(rows[row].indices, id: \.self) { Text(rows[row][$0]) } }
+                    }
+                }
+                .textSelection(.disabled)
+            }
+        }
+    }
+
+    /// Read once per message, like its prose.
+    @MainActor private static var pieceCache: [String: [Piece]] = [:]
+
+    /// The reply's pieces, read by Apple's markdown parser with its full syntax. A reply with nothing but prose (no
+    /// line starts as a block could) skips it and is read as before, inline styles only, so its line breaks stay as
+    /// the agent wrote them; in a reply with blocks a line break inside a paragraph is kept too.
+    @MainActor public static func pieces(_ text: String, keep: Bool = true) -> [Piece] {
+        if let cached = pieceCache[text] { return cached }
+        if pieceCache.count > 2000 { pieceCache.removeAll() }
+        var pieces = [Piece.text(prose(text, keep: keep))]
+        if mayHaveBlocks(text),
+           let parsed = try? AttributedString(markdown: text, options: .init(interpretedSyntax: .full,
+                                                                             failurePolicy: .returnPartiallyParsedIfPossible)),
+           parsed.runs.contains(where: { $0.presentationIntent?.components.contains { $0.kind != .paragraph } == true }) {
+            pieces = Self.pieces(of: parsed)
+        }
+        if keep { pieceCache[text] = pieces }
+        return pieces
+    }
+
+    /// Whether a line starts the way a heading, list, quote, table, rule or fence does. Most replies are prose, and
+    /// a quick look spares them the full parse.
+    static func mayHaveBlocks(_ text: String) -> Bool {
+        text.split(separator: "\n", omittingEmptySubsequences: true).contains { line in
+            guard let first = line.first(where: { $0 != " " && $0 != "\t" }) else { return false }
+            return "#|>-*+_`~=".contains(first) || first.isNumber
+        }
+    }
+
+    /// Walks the parsed reply's runs block by block (a paragraph, heading, code block, rule or table cell, the
+    /// innermost of each run's intents), joining what a text can draw and keeping the rest as pieces.
+    private static func pieces(of parsed: AttributedString) -> [Piece] {
+        var pieces: [Piece] = []
+        var text = AttributedString()
+        var lastBlock: [PresentationIntent.IntentType] = []
+        var markedItems = Set<Int>()
+        var table: (id: Int, columns: [HorizontalAlignment], cells: [Int: [Int: AttributedString]])?
+
+        func endText() {
+            if !text.characters.isEmpty { pieces.append(.text(text)) }
+            text = AttributedString()
+            lastBlock = []
+        }
+        func endTable() {
+            guard let done = table else { return }
+            table = nil
+            let width = done.columns.count
+            let row = { (index: Int) in (0..<width).map { done.cells[index]?[$0] ?? AttributedString() } }
+            let rows = done.cells.keys.filter { $0 > 0 }.sorted().map(row)
+            pieces.append(.table(columns: done.columns, header: row(0), rows: rows))
+        }
+
+        var index = parsed.startIndex
+        while index < parsed.endIndex {
+            let components = parsed.runs[index].presentationIntent?.components ?? []
+            let leaf = components.first?.identity
+            // The run of runs in the same block.
+            var end = parsed.runs[index].range.upperBound
+            while end < parsed.endIndex, parsed.runs[end].presentationIntent?.components.first?.identity == leaf {
+                end = parsed.runs[end].range.upperBound
+            }
+            var content = AttributedString(parsed[index..<end])
+            index = end
+
+            if let tableIntent = components.first(where: { if case .table = $0.kind { true } else { false } }) {
+                guard case .table(let columns) = tableIntent.kind else { continue }
+                if table?.id != tableIntent.identity {
+                    endText()
+                    endTable()
+                    table = (tableIntent.identity, columns.map { column in
+                        switch column.alignment {
+                        case .center: .center
+                        case .right: .trailing
+                        default: .leading
+                        }
+                    }, [:])
+                }
+                var row = 0, column = 0
+                for component in components {
+                    switch component.kind {
+                    case .tableRow(let number): row = number
+                    case .tableCell(let number): column = number
+                    default: break
+                    }
+                }
+                styleInline(&content)
+                table?.cells[row, default: [:]][column] = content
+                continue
+            }
+            endTable()
+
+            switch components.first?.kind {
+            case .codeBlock:
+                endText()
+                var code = String(content.characters)
+                if code.hasSuffix("\n") { code.removeLast() }
+                pieces.append(.code(code))
+            case .thematicBreak:
+                endText()
+                pieces.append(.rule)
+            default:
+                styleInline(&content)
+                if case .header = components.first?.kind { content.font = .headline }
+                let lists = components.filter { if case .listItem = $0.kind { true } else { false } }
+                if components.contains(where: { $0.kind == .blockQuote }) {
+                    // A bar before each of the quote's lines, as a quote is drawn in mail.
+                    content.foregroundColor = .secondary
+                    var bar = AttributedString("▍ ")
+                    bar.foregroundColor = Color.secondary.opacity(0.5)
+                    var lines = content.characters.indices.filter { content.characters[$0] == "\n" }
+                        .map { content.characters.index(after: $0) }
+                    lines.insert(content.startIndex, at: 0)
+                    for start in lines.reversed() { content.insert(bar, at: start) }
+                }
+                if let item = lists.first {
+                    // An item's marker once, before its first paragraph; nested lists go in a step each.
+                    let indent = String(repeating: "    ", count: lists.count - 1)
+                    var marker = indent + "    "
+                    if markedItems.insert(item.identity).inserted, case .listItem(let ordinal) = item.kind {
+                        let ordered = components.drop { $0.identity != item.identity }.dropFirst().first?.kind == .orderedList
+                        marker = indent + (ordered ? "\(ordinal)." : "•") + " "
+                    }
+                    content = AttributedString(marker) + content
+                }
+                if !text.characters.isEmpty {
+                    // Items of one list follow on the next line; anything else is a paragraph apart.
+                    let listsHere = Set(components.filter(isList).map(\.identity))
+                    let sameList = lastBlock.contains { isList($0) && listsHere.contains($0.identity) }
+                    text.append(AttributedString(sameList ? "\n" : "\n\n"))
+                }
+                text.append(content)
+                lastBlock = components
+            }
+        }
+        endTable()
+        endText()
+        return pieces
+    }
+
+    private static func isList(_ intent: PresentationIntent.IntentType) -> Bool {
+        intent.kind == .unorderedList || intent.kind == .orderedList
+    }
+
+    /// The parser's soft line breaks back as the line breaks the agent typed, and code spans set off as in prose.
+    private static func styleInline(_ string: inout AttributedString) {
+        for run in string.runs.reversed() {
+            guard let intent = run.inlinePresentationIntent else { continue }
+            if intent.contains(.softBreak) { string.replaceSubrange(run.range, with: AttributedString("\n")) }
+            else if intent.contains(.code) { string[run.range].backgroundColor = Color.primary.opacity(0.07) }
         }
     }
 

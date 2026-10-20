@@ -37,6 +37,35 @@ enum Gallery {
                                   LogLine(kind: .ask, text: "", ask: Talk.Ask(layout: .steps, questions: [kind, when], answers: ["Habits", "Morning"])),
                                   LogLine(kind: .agent, text: "I'll make a habit tracker that reminds you each morning.")],
              activity: "Working on the interface"),
+        // An answer with every kind of markdown block: headings, a table, lists, a quote, a rule and code.
+        chat("A reply with markdown", [
+            LogLine(kind: .user, text: "which files are the biggest?"),
+            LogLine(kind: .agent, text: """
+            ## Biggest files
+
+            | Lines | File |
+            |------:|------|
+            | 412 | `TodayView.swift` |
+            | 96 | `Theme.swift` |
+            | 58 | `HabitStore.swift` |
+
+            - **Today** draws every card itself
+              - its week strip too
+            - *Theme* holds the colors
+
+            1. Split the week strip out
+            2. Then the cards
+
+            > Splitting Today would make
+            > changes to it quicker.
+
+            ---
+
+            ```
+            swift build
+            ```
+            """),
+        ]),
     ]
 
     private static let finishedChat: [LogLine] = [
