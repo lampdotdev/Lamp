@@ -466,6 +466,10 @@ final class Store: ObservableObject {
     /// belongs to that span lives here and goes with it, so Stop, Delete and quit have one thing to cancel,
     /// and nothing has to be kept in step across a dozen dictionaries. `busy` is the set of apps that have
     /// one, for the interface.
+    /// What became of one change: it went into the open app as it ran, it waits for the person's Reload, the app
+    /// was closed and opened again for it, or it was opened with it (nobody had it open).
+    enum ChangeOutcome { case live, held, reopened, opened }
+
     @MainActor final class Turn {
         var agent: Process?                 // the engine, while it runs
         var build: Process?                 // the app's build.sh, while it runs
@@ -485,6 +489,11 @@ final class Store: ObservableObject {
         /// The turn's last install put the change into the open app without reopening it: its end says the app
         /// is updated, not ready, whether that install was the agent's look or the turn's own.
         var updatedInPlace = false
+        /// How each of the turn's changes reached the app, in order: told to the agent with its look and tallied at
+        /// the turn's end, so what went in live and what waited can be seen and learned from.
+        var outcomes: [ChangeOutcome] = []
+        /// Why the latest change couldn't go into the open app (LiveReload's reason, in words), for the agent's look.
+        var reloadWhy: String?
         /// Nil for a simulator/Mac turn; false until the chosen phone acknowledges opening the app.
         var phoneReady: Bool?
         var allowAll = false                // "Allow all for this turn"
@@ -2527,6 +2536,8 @@ final class Store: ObservableObject {
         // the rest of the turn goes on with the app as Lamp now has it, so its build is for the new kind.
         var project = started
         guard let owner = turns[project.id] else { return TurnResult(end: .failed, watched: true) }
+        // Once, when the turn is over: its own build and install, and any run that fixes a crash, come after the agent's.
+        defer { if let tally = Self.outcomeTally(owner.outcomes, name: project.name) { log(project, .detail, tally) } }
         var prompt = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
         // Attachments with no words: usually a screenshot or mockup meaning "like this", or a file to use.
         if prompt.isEmpty { prompt = Self.onlyFiles(saved.count) }
@@ -3502,7 +3513,7 @@ final class Store: ObservableObject {
             guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
             // The sidebar is the open copy's too, so it's kept from the agent on the same terms as its windows (below).
             if Runtime.holdsBuild(project), isRunning(project) {
-                return (409, ["error": Runtime.waitsForReload(project) ? Self.reloadNote : Self.keptOpenNote])
+                return (409, ["error": Runtime.waitsForReload(project) ? reloadNote(for: project) : Self.keptOpenNote])
             }
             guard !macCopies(of: project).isEmpty else {
                 return (200, ["text": "The app isn't open. Call look_at_app with sidebar first: it builds the app and opens it."])
@@ -3512,7 +3523,7 @@ final class Store: ObservableObject {
         if project.onIOS { return await useOnSimulator(project, actions: actions, json: json) }
         // Not in the copy the person kept open: what it holds is theirs, and it isn't the agent's change.
         if Runtime.holdsBuild(project), isRunning(project) {
-            return (409, ["error": Runtime.waitsForReload(project) ? Self.reloadNote : Self.keptOpenNote])
+            return (409, ["error": Runtime.waitsForReload(project) ? reloadNote(for: project) : Self.keptOpenNote])
         }
         guard let app = macCopies(of: project).first else {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
@@ -3573,7 +3584,7 @@ final class Store: ObservableObject {
         guard window.0 == 200, !macCopies(of: project).isEmpty else { return window }
         // What's open isn't the agent's change (or not the fresh launch it asked for) while it waits for the person:
         // that's what the agent must hear, not a report of the old copy's sidebar.
-        if let text = window.1["text"] as? String, [Self.askedToReopenNote, Self.reloadNote, Self.keptOpenNote].contains(text) { return window }
+        if let text = window.1["text"] as? String, [Self.askedToReopenNote, Self.keptOpenNote].contains(text) || text.hasPrefix(Self.reloadNoteStart) { return window }
         var (status, sidebar) = await BrowserPreview.look(project, page: page)
         // The window beside it, so the sidebar's items are judged against the app's, not on their own.
         if Privacy.sharesPictures, let pictures = window.1["screenshots"] as? [String], let front = pictures.first {
@@ -4795,6 +4806,7 @@ final class Store: ObservableObject {
         // The open app already runs these sources (a change that went in before its build): nothing to do.
         case .unchanged: return true
         case .reopen(let why):
+            turns[project.id]?.reloadWhy = LiveReload.readable(why)
             if saysWhy { log(project, .detail, "\(project.name) has to reopen for this change: \(LiveReload.readable(why)).") }
             return false
         }
@@ -4803,6 +4815,7 @@ final class Store: ObservableObject {
         note("Updating \(project.name) in place…", for: project)
         switch await LiveReload.put(project, changed: changed, token: Template.token(for: project)) {
         case .reopen(let why):
+            turns[project.id]?.reloadWhy = why
             if saysWhy { log(project, .detail, "\(project.name) has to reopen for this change: \(why).") }
             return false
         case .went(let said):
@@ -4899,6 +4912,8 @@ final class Store: ObservableObject {
         // The icon isn't part of such a change, so it doesn't wait for it: it's drawn meanwhile, ready for the next copy.
         if !fresh, await reloadInPlace(project, inFront: inFront) {
             owner?.updatedInPlace = true
+            owner?.outcomes.append(.live)
+            owner?.reloadWhy = nil
             await DataSnapshots.wentIn(project)
             prepareIconMeanwhile(project)
             return nil
@@ -4918,10 +4933,12 @@ final class Store: ObservableObject {
         // using it yet, and it's built in passes for the person to watch each one go in (`present`), so it reopens.
         if !reload, asksBeforeReopening(project, owner: owner) {
             awaitReload(project, owner: owner)
+            owner?.outcomes.append(.held)
             return nil
         }
         // Asked once in a turn: a second build in it leaves the app the person kept open alone.
         let asked = owner?.keptOpen == true && isRunning(project)
+        let wasOpen = isRunning(project)
         // The new copy is put together and signed in Lamp's own folder while the old one is still open, so the app is
         // closed only for the swap. Nothing of the installed copy is touched until it has closed.
         var staged: SignedCopy?
@@ -5005,6 +5022,7 @@ final class Store: ObservableObject {
                 crash = watch.crash
             } else {
                 noteOpened(true, for: project)
+                owner?.outcomes.append(wasOpen ? .reopened : .opened)
                 if inFront { log(project, .status, "\(project.name) is ready") }
                 if glowed { AppTransition.landWhenShown(project, app: app) }
             }
@@ -6989,12 +7007,35 @@ final class Store: ObservableObject {
     }
 
     /// What a look says while a change waits for the person to press Reload (`awaitReload`).
-    private static let reloadNote = """
-        The app built, but this change can't go into it while it runs: it has to be reopened, and that's the \
-        person's to do. The app and the chat show them a Reload button, and Lamp doesn't reopen it for them. What's \
-        on screen isn't your change yet, so don't look or use the app again in this request. Finish, and tell them \
-        in a sentence to press Reload to see it.
-        """
+    private static let reloadNoteStart = "The app built, but this change can't go into it while it runs"
+    /// What a look says while a change waits for the person to press Reload (`awaitReload`): with why it couldn't
+    /// go in, and where there's a known shape that would have, what that is, so the next change can take it.
+    private func reloadNote(for project: LampProject) -> String {
+        var why = ""
+        if let reason = turns[project.id]?.reloadWhy {
+            why = " Why: \(reason)."
+            if let advice = LiveReload.advice(for: reason) { why += " Next time, \(advice)" }
+        }
+        return """
+            \(Self.reloadNoteStart): it has to be reopened, and that's the person's to do.\(why) \
+            The app and the chat show them a Reload button, and Lamp doesn't reopen it for them. What's on screen \
+            isn't your change yet, so don't look or use the app again in this request. Finish, and tell them in a \
+            sentence to press Reload to see it.
+            """
+    }
+
+    /// How the turn's changes reached the app, as one line in the details ("2 went into the open app, 1 waits for
+    /// Reload"): how often a change goes in live is what the live rules are tuned by.
+    static func outcomeTally(_ outcomes: [ChangeOutcome], name: String) -> String? {
+        guard !outcomes.isEmpty else { return nil }
+        func count(_ kind: ChangeOutcome, _ words: String) -> String? {
+            let n = outcomes.filter { $0 == kind }.count
+            return n == 0 ? nil : "\(n) \(words)"
+        }
+        let parts = [count(.live, "went into the open app"), count(.held, "waited for Reload"),
+                     count(.reopened, "reopened \(name)"), count(.opened, "opened \(name)")].compactMap { $0 }
+        return "Changes this request: " + parts.joined(separator: ", ") + "."
+    }
 
     /// What a look with `reopen` says when Lamp asked the person instead (`asksBeforeReopening`).
     private static let askedToReopenNote = """
@@ -7121,7 +7162,7 @@ final class Store: ObservableObject {
             }
             return (200, ["text": Self.askedToReopenNote])
         }
-        if Runtime.waitsForReload(project), isRunning(project), !reopen { return (200, ["text": Self.reloadNote]) }
+        if Runtime.waitsForReload(project), isRunning(project), !reopen { return (200, ["text": reloadNote(for: project)]) }
         var since = Date()
         // A copy kept open in an earlier request is older than the build too: it's asked to quit, once.
         if !reopen, !changed, !Runtime.holdsBuild(project), macCopies(of: project).first != nil {
@@ -7140,7 +7181,7 @@ final class Store: ObservableObject {
             // A look with `reopen` asks for the fresh launch itself, so it doesn't wait for Reload.
             let crash = await install(project, inFront: false, fresh: reopen, reload: reopen, early: true)
             if turn.keptOpen { return (200, ["text": Self.keptOpenNote]) }
-            if Runtime.waitsForReload(project), isRunning(project) { return (200, ["text": Self.reloadNote]) }
+            if Runtime.waitsForReload(project), isRunning(project) { return (200, ["text": reloadNote(for: project)]) }
             turn.look.installed = true
             turn.look.crash = crash
             if let crash {
@@ -7148,6 +7189,13 @@ final class Store: ObservableObject {
             }
             if !changed { note = "The app is running your latest code; it was reopened without rebuilding." }
             if reopen { note = "The app was closed and opened again, so it started fresh." }
+            // Which way the change reached the app: the person sees a live change at once, as they left the window.
+            switch turn.outcomes.last {
+            case .live?: note = "The change went into the open app without reopening it: the person is seeing it now, with the window as they left it."
+            case .opened?: note = "The app wasn't open, so it was opened" + (changed ? " with the change." : ".")
+            case .reopened?: note = "The app was closed and opened again with the change" + (turn.reloadWhy.map { ": \($0)." } ?? ".")
+            default: break
+            }
             say(looking)
             // A change that went into the open app didn't launch it, so nothing takes the pictures a launch does:
             // they're asked for, once the new code has had a moment to draw.

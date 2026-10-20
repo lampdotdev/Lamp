@@ -1497,6 +1497,32 @@ enum LiveReload {
 
     /// A reason in the person's words: the copy step's own names (a spare place, a view's state box, the wrapped
     /// body, the entry) said as what they are.
+    /// For a reason a change couldn't go into the open app: the shape that would have, where there is a known one,
+    /// said to the agent with its look so the next change can take it. Nil for a reason with no such shape.
+    static func advice(for why: String) -> String? {
+        let w = why.lowercased()
+        // The App's body is what's read only at launch, whichever check saw it change (its scenes are an opaque type).
+        if w.contains("reads only at launch") || w.contains("app's scenes") || w.contains("menu commands") || w.contains("some scene")
+            || w.range(of: #"\bapp\.body\b"#, options: .regularExpression) != nil {
+            return "leave the App, its scenes and menu commands as they are once the app is open, and put new views and logic in other files."
+        }
+        if w.contains("renamed or replaced") { return "add a file rather than renaming one." }
+        if w.contains("package") || w.contains("its icon") || w.contains("widget or share") {
+            return "make such changes in a request of their own, or first, before the ones that can go in live."
+        }
+        if w.contains("initializer") || w.contains("method table") || w.contains("subclass") || w.contains("final") {
+            return "add a method to a class nothing subclasses, or put the new behaviour in a free function or a struct."
+        }
+        if w.contains("swiftdata") || w.contains("@model") { return "keep SwiftData model files as they are, and change what reads them." }
+        if w.contains("typealias") || w.contains("returns a") || w.contains("returns another") || w.contains("protocol") {
+            return "keep a type's existing names and return types, and add new ones beside them."
+        }
+        if w.contains("holds") || w.contains(" is ") || w.contains("stored") || w.contains("property") || w.contains("case") {
+            return "add state as a new property with a starting value, or in a new view, rather than changing, moving or removing an existing one, and add enum cases only at the end."
+        }
+        return nil
+    }
+
     static func readable(_ why: String) -> String {
         var text = why
         for (pattern, words) in [(#"(?:[\w.]+\.)?_*lampState_(\w+)(?:: [^),]*)?"#, "Lamp's state box for $1"),
