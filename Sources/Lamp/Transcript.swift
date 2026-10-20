@@ -695,10 +695,10 @@ struct StatusGroup: View {
 }
 
 
-/// The line under a change that waits for the app to be reopened (`Store.awaitReload`): its button does what the
-/// one in the app's title bar does.
+/// The line under a change that waits for the app to be reopened (`Store.awaitReload`): Lamp asking, since a reopen
+/// closes the app under the person. Its button does what the one in the app's title bar does.
 enum ReloadLine {
-    static func text(_ name: String) -> String { "Reload \(name) to see this change." }
+    static func text(_ name: String) -> String { "Can I reload \(name) to show you the change?" }
 }
 
 /// A turn's steps as its one line opens to them: "Worked for…" once it's over, and the live line while it goes on.
