@@ -5,8 +5,8 @@ import SwiftUI
 /// one plain activity for the turn ("Thinking", "Working on the interface", "Building…"); what people read is that,
 /// except while the model thinks or the wait itself is the news. A plain "Thinking" is the dullest thing the line can
 /// say, and a model can think for a minute without a word, which one frozen word makes read as stuck, so a think is
-/// told in phrases that turn over every few seconds and grow more reassuring the longer it goes; a build that runs
-/// long says so. Anything the agent is named as doing is shown as it is.
+/// told in phrases that turn over every few seconds and grow more reassuring the longer it goes; a build or an
+/// update in place that runs long says so. Anything the agent is named as doing is shown as it is.
 public enum Activity {
     /// The activity while the model thinks, before or between its steps.
     public static let thinking = "Thinking"
@@ -31,7 +31,13 @@ public enum Activity {
         (30, "Still building…"), (90, "Taking a little longer…"),
     ]
 
+    /// What putting a change into the open app says once it has run a while: its compile can take a minute or more.
+    static let updatingLater: [(from: TimeInterval, words: String)] = [
+        (30, "Still updating…"), (90, "Taking a little longer…"),
+    ]
+
     static func isBuilding(_ activity: String) -> Bool { activity.hasPrefix("Building") }
+    static func isUpdating(_ activity: String) -> Bool { activity.hasPrefix("Updating") && activity.hasSuffix("in place…") }
 
     /// The words for `activity` once it has gone on for `waited` seconds. `start` picks which phrase a think opens
     /// on, so a turn of many short thinks doesn't say the same one each time.
@@ -44,13 +50,14 @@ public enum Activity {
             return tier.phrases[(beat - first + abs(start % tier.phrases.count)) % tier.phrases.count]
         }
         if isBuilding(activity), let later = buildingLater.last(where: { waited >= $0.from }) { return later.words }
+        if isUpdating(activity), let later = updatingLater.last(where: { waited >= $0.from }) { return later.words }
         return activity
     }
 
     /// How often the words for `activity` can change: on the thinking phrases' beat, every 30 seconds for a build
-    /// (its later wordings come at 30 and 90), never for anything else.
+    /// or an update in place (their later wordings come at 30 and 90), never for anything else.
     static func period(of activity: String) -> TimeInterval? {
-        activity == thinking ? turnover : isBuilding(activity) ? 30 : nil
+        activity == thinking ? turnover : isBuilding(activity) || isUpdating(activity) ? 30 : nil
     }
 }
 

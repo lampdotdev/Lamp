@@ -411,16 +411,17 @@ public enum ChatLook {
 
     /// A turn's progress: one line saying what the agent is doing, with no clock beside it, which changes in place
     /// as it moves from one thing to the next, and opens to show the steps so far. `since` is when the activity
-    /// began, which a long think or build is counted from (the turn's start when it isn't known). The whole turn's
-    /// time is its "Worked for…": when the turn ends this line's place is taken by it (`Worked`), which opens to the
-    /// same steps.
+    /// began, which a long think or build is counted from (the turn's start when it isn't known). It starts open, so
+    /// each step shows under it as it comes in (a command by the name the agent gave it); a click folds it. The whole
+    /// turn's time is its "Worked for…": when the turn ends this line's place is taken by it (`Worked`), folded, which
+    /// opens to the same steps.
     public struct ActivityLine<Steps: View>: View {
         let activity: String
         let started: Date
         let since: Date
         let hasSteps: Bool
         let steps: Steps
-        @State private var expanded = false
+        @State private var expanded = true
         @State private var dim = false
 
         public init(_ activity: String, started: Date, since: Date? = nil, hasSteps: Bool,

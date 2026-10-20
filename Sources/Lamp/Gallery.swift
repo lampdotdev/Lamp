@@ -284,8 +284,8 @@ enum Gallery {
         },
         cover("Cover, building", "Building…", waited: 12),
         cover("Cover, the turn over", nil, waited: 0),
-        // The one line a turn has while it goes on, which opens (click it) to the steps so far: commands the agent
-        // named, a few under one name, and one it didn't. "Worked for…" opens to the same rows once it's over.
+        // The one line a turn has while it goes on, open on the steps so far (a click folds it): commands the agent
+        // named, a few under one name, and one it didn't. "Worked for…", folded, opens to the same rows once it's over.
         Entry(group: "Activity", name: "Steps the agent named") {
             AnyView(ChatLook.ActivityLine("Checking it builds", started: Date().addingTimeInterval(-48),
                                           since: Date().addingTimeInterval(-6), hasSteps: true) {

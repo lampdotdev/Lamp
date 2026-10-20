@@ -42,6 +42,13 @@ final class ActivityTests: XCTestCase {
         XCTAssertEqual(Activity.words("Building…", waited: 90), "Taking a little longer…")
     }
 
+    /// Putting a change into the open app can compile for a minute and more; one phrase that long reads as stuck.
+    func testUpdatingInPlaceSaysWhenItRunsLong() {
+        XCTAssertEqual(Activity.words("Updating Hot Shelf in place…", waited: 29), "Updating Hot Shelf in place…")
+        XCTAssertEqual(Activity.words("Updating Hot Shelf in place…", waited: 30), "Still updating…")
+        XCTAssertEqual(Activity.words("Updating Hot Shelf in place…", waited: 90), "Taking a little longer…")
+    }
+
     func testANamedStepStaysAsItIs() {
         XCTAssertEqual(Activity.words("Working on the interface", waited: 0), "Working on the interface")
         XCTAssertEqual(Activity.words("Working on the interface", waited: 300), "Working on the interface")
