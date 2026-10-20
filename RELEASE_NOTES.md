@@ -5,6 +5,22 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.16.0
+
+- A new app opens beside its chat as soon as it's started and takes shape there in passes, the layout first, so
+  you watch it being built instead of waiting for the end.
+- While a change is built, the open app glows softly at its edges, and a band of light crosses it as the change
+  goes in. Changes go in faster, and an app that has to restart comes back sooner.
+- Lamp asks before restarting an app you have open: a Reload button in its title bar and in the chat puts the
+  change in when you're ready.
+- The agent describes each step in its own words, and tells you what you can see now rather than what it wrote.
+- Drag wishes on the desk into any order, or onto the trash to delete them. A wish being built glows and says
+  what it's doing under its name.
+- Hot Shelf is a lit studio shelf of real bottles. A starter's suggested changes now show the first time you
+  open it, even after an update.
+- Approving the agent's commands takes about half the time, and the approval card puts the decision first.
+- More changes go into an open app without restarting it, and the ones that can't say why in plainer words.
+
 ## 0.15.1
 
 - A new case added to an enum goes into the open app more reliably: everything that reads the enum, including
