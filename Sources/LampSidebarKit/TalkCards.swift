@@ -239,9 +239,10 @@ struct AskSteps: View {
                         Button(TalkCard.youDecide) { pick(TalkCard.youDecide) }
                     }
                     if count > 1 {
-                        Button("Back") { progress.step -= 1 }
+                        // Disabled as well as hidden: the keyboard can still press a button that's only hidden.
+                        Button("Back") { if progress.step > 0 { progress.step -= 1 } }
                             .opacity(step > 0 ? 1 : 0)
-                            .allowsHitTesting(step > 0)
+                            .disabled(step == 0)
                             .accessibilityHidden(step == 0)
                     }
                     Spacer()
