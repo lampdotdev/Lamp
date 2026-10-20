@@ -110,7 +110,7 @@ enum SwiftSource {
 
     private static let rangePattern = try! NSRegularExpression(pattern: #"range=\[([^\]]+?):(\d+):(\d+) - line:(\d+):(\d+)\]"#)
 
-    private static func range(in line: String) -> (start: Position, last: Position)? {
+    static func range(in line: String) -> (start: Position, last: Position)? {
         guard let m = rangePattern.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) else { return nil }
         func group(_ i: Int) -> String { String(line[Range(m.range(at: i), in: line)!]) }
         let file = group(1)
@@ -122,124 +122,110 @@ enum SwiftSource {
 
     /// Every property declared in a type of the app's, with its declaration.
     static func declarations(inDump dump: String) -> Declarations {
-        let typeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|actor|extension)_decl\b[^"]*"([^"]+)""#)
-        let scopeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|accessor_decl|constructor_decl|destructor_decl|closure_expr|subscript_decl|top_level_code_decl)\b"#)
-        let varDecl = try! NSRegularExpression(pattern: #"^(\s*)\(var_decl\b[^"]*"([^"]+)" interface_type="([^"]*)"(.*)$"#)
-        let named = try! NSRegularExpression(pattern: #"\(pattern_named\b.*"([^"]+)"\)*\s*$"#)
-        let identifier = try! NSRegularExpression(pattern: #"id="(\w+)""#)
+        let reader = DeclarationsReader()
+        walk(dump, reader.take)
+        return reader.finish()
+    }
+
+    /// Reads where each property is declared, line by line as `walk` gives them.
+    final class DeclarationsReader {
+        private let varDecl = try! NSRegularExpression(pattern: #"^(\s*)\(var_decl\b[^"]*"([^"]+)" interface_type="([^"]*)"(.*)$"#)
+        private let named = try! NSRegularExpression(pattern: #"\(pattern_named\b.*"([^"]+)"\)*\s*$"#)
+        private let identifier = try! NSRegularExpression(pattern: #"id="(\w+)""#)
         // An observer's accessor, with the property it's for: under @Observable the macro moves a property's
         // didSet to its `_name` storage in a buffer of its own, and @Published folds it into the wrapper's setter, so
         // the property's own line no longer says it has observers.
-        let observer = try! NSRegularExpression(pattern: #"^\s*\(accessor_decl\b.*? (?:didSet|willSet) for="(\w+)""#)
-        var observed = Set<String>()
+        private let observer = try! NSRegularExpression(pattern: #"^\s*\(accessor_decl\b.*? (?:didSet|willSet) for="(\w+)""#)
         // An assignment in an initializer the type writes: the node under it says what's set.
-        let assigned = try! NSRegularExpression(pattern: #"^(\s*)\(member_ref_expr\b.*? decl="[^"]*?\.(\w+)@"#)
-        var out = Declarations()
-        var scopes: [(indent: Int, type: String?)] = []
-        // The functions, accessors and closures open at this line, by name, as `LiveReload.members` keys a type
-        // declared inside one (`Shelf.pick().Answer`).
-        var functions: [(indent: Int, name: String)] = []
+        private let assigned = try! NSRegularExpression(pattern: #"^(\s*)\(member_ref_expr\b.*? decl="[^"]*?\.(\w+)@"#)
+        private var observed = Set<String>()
+        private var out = Declarations()
         // The initializer being read, and an assignment in it whose target is the next node.
-        var initializer: (indent: Int, owner: String)?, assignment: Int?
+        private var initializer: (indent: Int, owner: String)?, assignment: Int?
         // The binding being read, at its indent, and what's inside it.
-        var binding: (indent: Int, index: Int)?
-        var entryOpen = false
-        var variable: (indent: Int, key: String)?
-        var attribute: (start: Position, last: Position)?
-        for raw in lines(dump) {
-            guard let node = self.node(raw) else { continue }
-            let indent = node.indent, opens = node.opens
-            // Made only for a line a pattern is tried on.
-            lazy var line = String(raw)
-            lazy var range = NSRange(line.startIndex..., in: line)
+        private var binding: (indent: Int, index: Int)?
+        private var entryOpen = false
+        private var variable: (indent: Int, key: String)?
+        private var attribute: (start: Position, last: Position)?
+
+        func take(_ line: Walk.Line) {
+            let indent = line.indent, opens = line.opens
             if let open = binding, indent <= open.indent { binding = nil }
             if let open = variable, indent <= open.indent { variable = nil; attribute = nil }
             if let open = initializer, indent <= open.indent { initializer = nil; assignment = nil }
             if let open = initializer {
                 if let at = assignment {
-                    if indent == at + 2, opens("member_ref_expr"), let m = assigned.firstMatch(in: line, range: range) { out.assigned.insert(open.owner + "\t" + String(line[Range(m.range(at: 2), in: line)!])) }
+                    if indent == at + 2, opens("member_ref_expr"), let m = assigned.firstMatch(in: line.text, range: line.range) { out.assigned.insert(open.owner + "\t" + String(line.text[Range(m.range(at: 2), in: line.text)!])) }
                     assignment = nil
                 }
                 if opens("assign_expr") { assignment = indent }
-                continue
+                return
             }
-            while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
-            while let last = functions.last, last.indent >= indent { functions.removeLast() }
-            let owner = scopes.last?.type
-            if opens("struct_decl", "class_decl", "enum_decl", "actor_decl", "extension_decl"), let m = typeDecl.firstMatch(in: line, range: range) {
-                var name = String(line[Range(m.range(at: 3), in: line)!])
-                let outer = scopes.compactMap(\.type).last
-                if let local = functions.last, local.indent > (scopes.last { $0.type != nil }?.indent ?? -1) { name = local.name + "." + name }
-                let kind = line[Range(m.range(at: 2), in: line)!]
-                let isPrivate = kind != "extension" && (has(line, " access=private") || has(line, " access=fileprivate"))
-                // A private type is keyed with its file, as the layout keys it (`LiveReload.bare`).
-                if isPrivate, let r = self.range(in: line) { name += "@" + (r.start.file as NSString).lastPathComponent }
-                let full = outer.map { $0 + "." + name } ?? name
-                scopes.append((indent, full))
-                if kind == "class" { out.classes.insert(full); out.classes.insert(LiveReload.bare(name)) }
-                if kind != "extension", let r = self.range(in: line) { out.types[full] = r }
-                if isPrivate { out.privateTypes.insert(full) }
-                continue
+            // A protocol's requirements aren't declarations with storage.
+            let owner = line.owner.flatMap { $0.hasPrefix("protocol ") ? nil : $0 }
+            if let type = line.type {
+                if type.kind == "class" { out.classes.insert(type.key); out.classes.insert(LiveReload.bare(String(type.key.split(separator: ".").last ?? ""))) }
+                if let r = type.range { out.types[type.key] = r }
+                if type.isPrivate { out.privateTypes.insert(type.key) }
+                return
             }
-            if let owner, opens("accessor_decl"), let m = observer.firstMatch(in: line, range: range) {
-                var name = String(line[Range(m.range(at: 1), in: line)!])
+            if line.extensionOf != nil { return }
+            if let owner, opens("accessor_decl"), let m = observer.firstMatch(in: line.text, range: line.range) {
+                var name = String(line.text[Range(m.range(at: 1), in: line.text)!])
                 if name.hasPrefix("_") { name.removeFirst() }
                 observed.insert(owner + "\t" + name)
             }
-            if opens("func_decl", "accessor_decl", "constructor_decl", "destructor_decl", "closure_expr", "subscript_decl", "top_level_code_decl"),
-               scopeDecl.firstMatch(in: line, range: range) != nil {
+            if line.function != nil {
                 // A convenience initializer sets properties only after `self.init`, when a computed one can be set.
-                if let owner, line.contains("(constructor_decl"), !line.contains(" implicit ") {
-                    if !has(line, " convenience") { initializer = (indent, owner) }
-                    if let made = memberwise(in: line) { out.initializers[owner, default: []].append(made) }
+                if let owner, opens("constructor_decl"), !line.has(" implicit ") {
+                    if !line.has(" convenience") { initializer = (indent, owner) }
+                    if let made = SwiftSource.memberwise(in: line.text) { out.initializers[owner, default: []].append(made) }
                 }
-                if let owner, line.contains("(constructor_decl"), line.contains(" implicit "),
-                   !line.contains("access=private"), !line.contains("access=fileprivate"),
-                   let made = memberwise(in: line), !made.labels.isEmpty {
+                if let owner, opens("constructor_decl"), line.has(" implicit "),
+                   !line.has("access=private"), !line.has("access=fileprivate"),
+                   let made = SwiftSource.memberwise(in: line.text), !made.labels.isEmpty {
                     out.memberwise[owner, default: []].append(made)
                 }
-                scopes.append((indent, nil))
-                functions.append((indent, scopeName(line)))
-                continue
+                return
             }
             if let open = binding {
                 // Inside a binding: its entries, each with its name and its starting value.
-                if has(line, "(pattern_entry") { out.bindings[open.index].entries.append(Entry(name: "", initial: nil)); entryOpen = true; continue }
+                if opens("pattern_entry") { out.bindings[open.index].entries.append(Entry(name: "", initial: nil)); entryOpen = true; return }
                 if entryOpen, var entry = out.bindings[open.index].entries.last {
-                    if entry.name.isEmpty, has(line, "(pattern_named"), let m = named.firstMatch(in: line, range: range) {
-                        entry.name = String(line[Range(m.range(at: 1), in: line)!])
-                    } else if entry.initial == nil, has(line, "(original_init=") || has(line, "(processed_init="),
-                              let r = self.range(in: line) {
+                    if entry.name.isEmpty, line.has("(pattern_named"), let m = named.firstMatch(in: line.text, range: line.range) {
+                        entry.name = String(line.text[Range(m.range(at: 1), in: line.text)!])
+                    } else if entry.initial == nil, line.has("(original_init=") || line.has("(processed_init="),
+                              let r = SwiftSource.range(in: line.text) {
                         // As written, or (when that's unresolved and has no place) as the compiler settled it.
                         entry.initial = r
                     }
                     out.bindings[open.index].entries[out.bindings[open.index].entries.count - 1] = entry
                 }
-                continue
+                return
             }
             if let open = variable {
                 // Inside a property: its attributes, each a range followed by the name it uses.
-                if has(line, "(reference_ownership_attr") { out.variables[open.key]?.special = true; continue }
-                if has(line, "(custom_attr"), let r = self.range(in: line) { attribute = r; continue }
-                if let r = attribute, has(line, "id=\""), let m = identifier.firstMatch(in: line, range: range) {
-                    out.variables[open.key]?.attributes.append((r.start, r.last, String(line[Range(m.range(at: 1), in: line)!])))
+                if opens("reference_ownership_attr") { out.variables[open.key]?.special = true; return }
+                if opens("custom_attr"), let r = SwiftSource.range(in: line.text) { attribute = r; return }
+                if let r = attribute, line.has("id=\""), let m = identifier.firstMatch(in: line.text, range: line.range) {
+                    out.variables[open.key]?.attributes.append((r.start, r.last, String(line.text[Range(m.range(at: 1), in: line.text)!])))
                     attribute = nil
                 }
-                continue
+                return
             }
             // A type's members, and the file's own globals.
-            let global = scopes.isEmpty
-            guard owner != nil || global else { continue }
-            if has(line, "(pattern_binding_decl"), let r = self.range(in: line) {
+            let global = line.isTopLevel
+            guard owner != nil || global else { return }
+            if opens("pattern_binding_decl"), let r = SwiftSource.range(in: line.text) {
                 out.bindings.append(Binding(start: r.start, last: r.last, entries: []))
                 binding = (indent, out.bindings.count - 1)
                 entryOpen = false
-                continue
+                return
             }
-            if opens("var_decl"), let m = varDecl.firstMatch(in: line, range: range), let r = self.range(in: line), let index = out.bindings.indices.last {
-                let name = String(line[Range(m.range(at: 2), in: line)!])
-                guard out.bindings[index].entries.contains(where: { $0.name == name }) else { continue }
-                let isStatic = line.contains(" static"), rest = String(line[Range(m.range(at: 4), in: line)!])
+            if opens("var_decl"), let m = varDecl.firstMatch(in: line.text, range: line.range), let r = SwiftSource.range(in: line.text), let index = out.bindings.indices.last {
+                let name = String(line.text[Range(m.range(at: 2), in: line.text)!])
+                guard out.bindings[index].entries.contains(where: { $0.name == name }) else { return }
+                let isStatic = line.has(" static"), rest = String(line.text[Range(m.range(at: 4), in: line.text)!])
                 if isStatic || global {
                     // A constant: a static or global `let` with a starting value.
                     if rest.contains(" let ") {
@@ -247,22 +233,25 @@ enum SwiftSource {
                         let own = rest.contains("access=private") || rest.contains("access=fileprivate")
                         let place = own ? "@" + (r.start.file as NSString).lastPathComponent : ""
                         out.constants[(owner ?? "") + "\t" + name + place] = Variable(name: name, position: r.start,
-                                                                               type: String(line[Range(m.range(at: 3), in: line)!]),
+                                                                               type: String(line.text[Range(m.range(at: 3), in: line.text)!]),
                                                                                binding: index, attributes: [])
                     }
-                    continue
+                    return
                 }
-                guard let owner else { continue }
+                guard let owner else { return }
                 let key = owner + "\t" + name
-                out.variables[key] = Variable(name: name, position: r.start, type: String(line[Range(m.range(at: 3), in: line)!]),
+                out.variables[key] = Variable(name: name, position: r.start, type: String(line.text[Range(m.range(at: 3), in: line.text)!]),
                                               binding: index, attributes: [],
                                               special: rest.contains("with_observers") || rest.contains(" lazy "))
                 if rest.contains(" let ") { out.lets.insert(key) }
                 variable = (indent, key)
             }
         }
-        for key in observed { out.variables[key]?.special = true }
-        return out
+
+        func finish() -> Declarations {
+            for key in observed { out.variables[key]?.special = true }
+            return out
+        }
     }
 
     /// What a function, accessor or closure is called where a type declared inside it is keyed by it: its quoted
@@ -276,7 +265,7 @@ enum SwiftSource {
 
     /// An implicit initializer's labels and parameter types, from its line in the dump: `"init(a:c:)"` and
     /// `interface_type="(P.Type) -> (Int, [Int]?) -> P"`. Nil for one whose parameters can't be told apart.
-    private static func memberwise(in line: String) -> (labels: [String], types: [String])? {
+    static func memberwise(in line: String) -> (labels: [String], types: [String])? {
         guard let name = line.range(of: #""init\(([^)"]*)\)""#, options: .regularExpression),
               let type = line.range(of: #"interface_type=""#) else { return nil }
         let labels = line[name].dropFirst(6).dropLast(2).split(separator: ":", omittingEmptySubsequences: false).dropLast().map(String.init)
@@ -301,41 +290,51 @@ enum SwiftSource {
     /// find its data by key paths, which a library compiled from its file makes over again under identities the
     /// app's container doesn't know, so any change to that file reopens the app.
     static func launchEntries(inDump dump: String, folder: URL) -> [String] {
-        let decl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|extension)_decl\b[^"]*"([^"]+)"(.*)$"#)
-        let launch = try! NSRegularExpression(pattern: #"inherits="[^"]*\b(App|Scene|Commands|NSApplicationDelegate|UIApplicationDelegate)\b"#)
-        let model = try! NSRegularExpression(pattern: #"^(\s*)\(custom_attr\b.*macro="SwiftData\.\(file\)\.Model\(\)""#)
-        var types: [(name: String, range: (start: Position, last: Position), isExtension: Bool)] = []
-        var launchNames = Set<String>(), modelNames = Set<String>()
-        var lastClass: (name: String, indent: Int)?
-        for raw in lines(dump) {
-            guard let node = self.node(raw) else { continue }
-            lazy var line = String(raw)
-            lazy var whole = NSRange(line.startIndex..., in: line)
-            if let last = lastClass, node.opens("custom_attr"), let m = model.firstMatch(in: line, range: whole), m.range(at: 1).length == last.indent + 2 {
+        let reader = LaunchReader()
+        walk(dump, reader.take)
+        return reader.finish(folder: folder)
+    }
+
+    /// Reads which types are read only at launch, line by line as `walk` gives them.
+    final class LaunchReader {
+        private let launch = try! NSRegularExpression(pattern: #"inherits="[^"]*\b(App|Scene|Commands|NSApplicationDelegate|UIApplicationDelegate)\b"#)
+        private let model = try! NSRegularExpression(pattern: #"^(\s*)\(custom_attr\b.*macro="SwiftData\.\(file\)\.Model\(\)""#)
+        private var types: [(name: String, range: (start: Position, last: Position), isExtension: Bool)] = []
+        private var launchNames = Set<String>(), modelNames = Set<String>()
+        private var lastClass: (name: String, indent: Int)?
+
+        func take(_ line: Walk.Line) {
+            if let last = lastClass, line.opens("custom_attr"), line.indent == last.indent + 2, model.firstMatch(in: line.text, range: line.range) != nil {
                 modelNames.insert(last.name)
             }
-            guard node.opens("struct_decl", "class_decl", "enum_decl", "extension_decl"),
-                  let m = decl.firstMatch(in: line, range: whole), let r = range(in: line) else { continue }
-            let name = String(line[Range(m.range(at: 3), in: line)!])
-            let kind = line[Range(m.range(at: 2), in: line)!]
-            // A conformance may be declared on the type or on an extension of it (`extension Demo: App`).
-            if launch.firstMatch(in: line, range: whole) != nil { launchNames.insert(name) }
-            lastClass = kind == "class" ? (name, m.range(at: 1).length) : nil
+            // By the name as written: a conformance may be declared on the type or on an extension of it (`extension Demo: App`).
+            let name: String, kind: String
+            if let type = line.type, type.kind != "actor" {
+                name = LiveReload.bare(String(type.key.split(separator: ".").last ?? "")); kind = type.kind
+            } else if let extended = line.extensionOf {
+                name = extended; kind = "extension"
+            } else { return }
+            guard let r = SwiftSource.range(in: line.text) else { return }
+            if launch.firstMatch(in: line.text, range: line.range) != nil { launchNames.insert(name) }
+            lastClass = kind == "class" ? (name, line.indent) : nil
             types.append((name, r, kind == "extension"))
         }
-        var files: [String: Text] = [:]
-        return types.filter { launchNames.contains($0.name) || (modelNames.contains($0.name) && !$0.isExtension) }.compactMap { type in
-            let path = type.range.start.file.hasPrefix("/") ? type.range.start.file : folder.appendingPathComponent(type.range.start.file).path
-            guard let text = files[path] ?? Text(path: path) else { return nil }
-            files[path] = text
-            if modelNames.contains(type.name) {
-                // With its file, which the change must not compile at all: "model Note@Notes.swift: <digest>".
-                let file = path.hasPrefix(folder.standardizedFileURL.path + "/") ? String(path.dropFirst(folder.standardizedFileURL.path.count + 1)) : (path as NSString).lastPathComponent
-                return LiveReload.Group.launch.entry("model " + type.name + "@" + file + ": " + SHA256.hash(data: Data(text.bytes)).prefix(8).map { String(format: "%02x", $0) }.joined())
+
+        func finish(folder: URL) -> [String] {
+            var files: [String: Text] = [:]
+            return types.filter { launchNames.contains($0.name) || (modelNames.contains($0.name) && !$0.isExtension) }.compactMap { type in
+                let path = type.range.start.file.hasPrefix("/") ? type.range.start.file : folder.appendingPathComponent(type.range.start.file).path
+                guard let text = files[path] ?? Text(path: path) else { return nil }
+                files[path] = text
+                if modelNames.contains(type.name) {
+                    // With its file, which the change must not compile at all: "model Note@Notes.swift: <digest>".
+                    let file = path.hasPrefix(folder.standardizedFileURL.path + "/") ? String(path.dropFirst(folder.standardizedFileURL.path.count + 1)) : (path as NSString).lastPathComponent
+                    return LiveReload.Group.launch.entry("model " + type.name + "@" + file + ": " + SHA256.hash(data: Data(text.bytes)).prefix(8).map { String(format: "%02x", $0) }.joined())
+                }
+                guard let start = text.offset(type.range.start), let end = text.tokenEnd(type.range.last) else { return nil }
+                let digest = SHA256.hash(data: Data(text.bytes[start..<end])).prefix(8).map { String(format: "%02x", $0) }.joined()
+                return LiveReload.Group.launch.entry((type.isExtension ? "extension " : "") + type.name + ": " + digest)
             }
-            guard let start = text.offset(type.range.start), let end = text.tokenEnd(type.range.last) else { return nil }
-            let digest = SHA256.hash(data: Data(text.bytes[start..<end])).prefix(8).map { String(format: "%02x", $0) }.joined()
-            return LiveReload.Group.launch.entry((type.isExtension ? "extension " : "") + type.name + ": " + digest)
         }
     }
 
@@ -408,5 +407,163 @@ enum SwiftSource {
         }
 
         func slice(_ from: Int, _ to: Int) -> String { String(decoding: bytes[from..<to], as: UTF8.self) }
+    }
+}
+
+// MARK: - One pass over a printout
+
+extension SwiftSource {
+    /// One pass over a printout with the scopes kept in one place: which type, extension, protocol or function each
+    /// line is inside, and how a type is keyed (qualified by what it's nested in, with its file when it's private,
+    /// with its function when it's declared inside one). Every reader of a printout goes through it (`members`,
+    /// `declarations`, `launchEntries`, `oldCodeUses`), so they key a type alike and the printout is read once.
+    enum Walk {
+        /// A type a line opens, as the layout keys it and as the compiler prints it.
+        struct TypeDecl {
+            /// Nested types under their outer type's key, a private one with its file (`Row@A.swift`), one declared
+            /// inside a function with the function (`Shelf.pick().Answer`): the key every reader uses.
+            var key: String
+            var kind: String
+            var access: String
+            var file: String?
+            var isPrivate: Bool
+            /// Its generic parameters (`T, U`), when it has any.
+            var parameters: String?
+            /// Generic itself, or declared inside a generic type: laid out afresh for each type it's used at.
+            var isGeneric: Bool
+            /// What it inherits or conforms to, as printed (`inherits="A, P"`).
+            var inherits: String?
+            var range: (start: Position, last: Position)?
+        }
+        enum Scope {
+            case type(TypeDecl)
+            case extensionOf(String)
+            case protocolDecl(String)
+            /// A function, initializer, accessor, closure, subscript or top-level code, by `scopeName`.
+            case function(String)
+        }
+        /// A line that opens a node, with where it sits. `text` is made only when a reader asks for it.
+        final class Line {
+            let raw: Substring
+            let node: Node
+            var indent: Int { node.indent }
+            lazy var text: String = String(raw)
+            lazy var range: NSRange = NSRange(text.startIndex..., in: text)
+            /// The scopes around this line, outermost first.
+            let scopes: [(indent: Int, scope: Scope)]
+            /// What a member on this line belongs to: the nearest scope when that's a type (its key), an extension
+            /// (its type's name) or a protocol ("protocol Name"); nil inside a function, where it's a local.
+            let owner: String?
+            var isTopLevel: Bool { scopes.isEmpty }
+            /// What this line opens, when it opens one of these.
+            let type: TypeDecl?
+            let extensionOf: String?
+            let protocolName: String?
+            let function: String?
+            init(raw: Substring, node: Node, scopes: [(indent: Int, scope: Scope)], owner: String?, type: TypeDecl?, extensionOf: String?, protocolName: String?, function: String?) {
+                self.raw = raw; self.node = node; self.scopes = scopes; self.owner = owner
+                self.type = type; self.extensionOf = extensionOf; self.protocolName = protocolName; self.function = function
+            }
+            func opens(_ names: String...) -> Bool { names.contains { node.name.utf8.starts(with: $0.utf8) } }
+            func has(_ text: String) -> Bool { SwiftSource.has(self.text, text) }
+        }
+
+        /// The names of the app's own classes and protocols, read before the pass: a class's superclass is the first
+        /// name it inherits when that's a class, told from a protocol by these (and by a system protocol's shape).
+        struct Names {
+            var classes = Set<String>(), protocols = Set<String>()
+            /// The first name a class inherits, when it's a superclass: one of the app's own classes, or a name that
+            /// isn't one of the app's protocols nor shaped like a system protocol's (`able`, `ible`, `Delegate`,
+            /// `DataSource`, `Protocol`; a system class's name never ends so). A subclass of a system class the rule
+            /// reads as a protocol would reopen for a change to the protocol list instead; neither mistake lets a
+            /// changed superclass through unnoticed.
+            func superclass(of inherited: String) -> String? {
+                guard let first = inherited.split(separator: ",").first?.trimmingCharacters(in: .whitespaces), !first.isEmpty else { return nil }
+                let bare = String(first.prefix { $0 != "<" }), simple = String(bare.split(separator: ".").last ?? "")
+                if classes.contains(simple) { return first }
+                if protocols.contains(simple) { return nil }
+                return ["able", "ible", "Delegate", "DataSource", "Protocol"].contains(where: simple.hasSuffix) ? nil : first
+            }
+        }
+    }
+
+    private static let walkTypeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|actor)_decl\b[^"]*"([^"]+)".*? access=(\w+)"#)
+    private static let walkGenericDecl = try! NSRegularExpression(pattern: #"^\s*\(\w+_decl\b[^"]*"[^"]+" "<([^"]*)>""#)
+    private static let walkInherits = try! NSRegularExpression(pattern: #" inherits="([^"]*)""#)
+    private static let walkExtensionDecl = try! NSRegularExpression(pattern: #"^(\s*)\(extension_decl\b[^"]*"([^"]+)""#)
+    private static let walkProtocolDecl = try! NSRegularExpression(pattern: #"^(\s*)\(protocol(_decl)?\b[^"]*"([^"]+)""#)
+    private static let walkClassName = try! NSRegularExpression(pattern: #"^\s*\(class_decl\b[^"]*"([^"]+)""#)
+
+    /// The app's own class and protocol names, from the printout's declaration lines.
+    static func names(inDump dump: String) -> Walk.Names {
+        var names = Walk.Names()
+        for raw in lines(dump) {
+            guard let node = node(raw), node.opens("class_decl", "protocol") else { continue }
+            let line = String(raw), range = NSRange(line.startIndex..., in: line)
+            if node.opens("class_decl"), let m = walkClassName.firstMatch(in: line, range: range) { names.classes.insert(String(line[Range(m.range(at: 1), in: line)!])) }
+            if node.opens("protocol"), let m = walkProtocolDecl.firstMatch(in: line, range: range) { names.protocols.insert(String(line[Range(m.range(at: 3), in: line)!])) }
+        }
+        return names
+    }
+
+    /// Walks the printout once, giving each line that opens a node to `visit` with the scopes around it.
+    static func walk(_ dump: String, _ visit: (Walk.Line) -> Void) {
+        var scopes: [(indent: Int, scope: Walk.Scope)] = []
+        for raw in lines(dump) {
+            // Only a line that opens a node says where it sits; the closing brackets of a deep node sometimes come on
+            // a line of their own at the left edge, which would otherwise end every scope.
+            guard let node = node(raw) else { continue }
+            let indent = node.indent
+            while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
+            var type: Walk.TypeDecl?, extensionOf: String?, protocolName: String?, function: String?
+            lazy var text = String(raw)
+            lazy var range = NSRange(text.startIndex..., in: text)
+            if node.opens("struct_decl", "class_decl", "enum_decl", "actor_decl"), let m = walkTypeDecl.firstMatch(in: text, range: range) {
+                var name = String(text[Range(m.range(at: 3), in: text)!])
+                // The nearest type around it, and whether a function comes between: a local type is keyed with it,
+                // since two functions may each declare a local type of one name.
+                var outer: String?, inFunction: String?
+                for (_, scope) in scopes {
+                    switch scope {
+                    case .type(let t): outer = t.key; inFunction = nil
+                    case .extensionOf(let n): outer = n; inFunction = nil
+                    case .protocolDecl(let n): outer = "protocol " + n; inFunction = nil
+                    case .function(let n): if inFunction == nil { inFunction = n }
+                    }
+                }
+                if let inFunction { name = inFunction + "." + name }
+                let access = String(text[Range(m.range(at: 4), in: text)!])
+                let place = self.range(in: text)
+                let file = place.map { ($0.start.file as NSString).lastPathComponent }
+                let isPrivate = ["private", "fileprivate"].contains(access)
+                // A private type is keyed with its file: another file may declare one of the same name, and the two
+                // are two types, each with its own fields (`LiveReload.bare` gives the name back).
+                if isPrivate, let file { name += "@" + file }
+                let parameters = walkGenericDecl.firstMatch(in: text, range: range).map { String(text[Range($0.range(at: 1), in: text)!]) }
+                let genericContext = scopes.contains { if case .type(let t) = $0.scope { return t.isGeneric } else { return false } }
+                type = Walk.TypeDecl(key: outer.map { $0 + "." + name } ?? name, kind: String(text[Range(m.range(at: 2), in: text)!]), access: access,
+                                     file: file, isPrivate: isPrivate, parameters: parameters, isGeneric: parameters != nil || genericContext,
+                                     inherits: walkInherits.firstMatch(in: text, range: range).map { String(text[Range($0.range(at: 1), in: text)!]) }, range: place)
+            } else if node.opens("extension_decl"), let m = walkExtensionDecl.firstMatch(in: text, range: range) {
+                extensionOf = String(text[Range(m.range(at: 2), in: text)!])
+            } else if node.opens("protocol"), let m = walkProtocolDecl.firstMatch(in: text, range: range) {
+                protocolName = String(text[Range(m.range(at: 3), in: text)!])
+            } else if node.opens("func_decl", "accessor_decl", "constructor_decl", "destructor_decl", "closure_expr", "subscript_decl", "top_level_code_decl") {
+                function = scopeName(text)
+            }
+            let owner: String?
+            switch scopes.last?.scope {
+            case .type(let t): owner = t.key
+            case .extensionOf(let n): owner = n
+            case .protocolDecl(let n): owner = "protocol " + n
+            case .function, nil: owner = nil
+            }
+            let line = Walk.Line(raw: raw, node: node, scopes: scopes, owner: owner, type: type, extensionOf: extensionOf, protocolName: protocolName, function: function)
+            visit(line)
+            if let type { scopes.append((indent, .type(type))) }
+            else if let extensionOf { scopes.append((indent, .extensionOf(extensionOf))) }
+            else if let protocolName { scopes.append((indent, .protocolDecl(protocolName))) }
+            else if let function { scopes.append((indent, .function(function))) }
+        }
     }
 }
