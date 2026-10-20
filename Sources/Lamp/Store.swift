@@ -4795,8 +4795,9 @@ final class Store: ObservableObject {
             return nil
         }
         guard exists(project) else { return nil }   // deleted while its old copy was quitting
-        // The old copy glowed while this was built: the new one, with the change, shows it going in.
-        let glowed = AppTransition.isGlowing(project.id)
+        // The old copy glowed while this was built, or this is the change it held for Reload (its glow let go when
+        // the change was held): the new copy, with the change, shows it going in.
+        let glowed = AppTransition.isGlowing(project.id) || reload
         owner?.didNotOpen = false
         owner?.updatedInPlace = false
         do {
