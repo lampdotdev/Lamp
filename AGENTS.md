@@ -256,7 +256,8 @@ A capability given to one engine must be given to all of them that can take it, 
   and for Codex the heading of the reasoning summary before it (`model_reasoning_summary`). The name is the activity
   while the command runs and the step's row in the chat (`LogLine.said`, `ChatLook.RanCommand`; consecutive commands
   under one name are one row, `ChatItem.items`); a command with no name stays "Did a bit of housekeeping". A
-  command a reviewer or classifier stopped is the same row, with "(not run)" beside it only once the row is opened. pi's bash takes only the
+  command a reviewer or classifier stopped is the same row, with "(not run)" beside it only once the row is opened, and
+  one allowed on Lamp's card is a row like one that needed no card (`Store.approveCommand`); one the person declines leaves none. pi's bash takes only the
   command, so Lamp's extension replaces it, as pi's extension docs allow, with pi's own bash and a `description`
   (`bashWithDescription` in `lamp-tools.ts`), sent with the approval and read by pi's parser. It's required: left
   optional, some models (Sonnet) never fill it in. While Lamp itself works in a turn (a look's build, putting a change

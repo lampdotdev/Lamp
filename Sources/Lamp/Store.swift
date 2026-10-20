@@ -3265,15 +3265,21 @@ final class Store: ObservableObject {
             }
             // A risky verdict always has its reason; if one were ever missing, the card still comes up as flagged.
             let flagged = judgment.verdict == .risky ? judgment.reason ?? .reachesBeyond : nil
-            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged,
-                                         said: said)
+            let allowed = await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged,
+                                                said: said)
+            if allowed, shell { log(project, .status, "Ran: \(command)", said: said) }
+            return allowed
         case .risky where shell:
             // Claude Code's own classifier judged it and asked: the person decides, with no second check of
             // Lamp's and no rating that runs it on a "low".
             return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, said: said,
                                          mayRunOnRating: false)
         default:
-            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, said: said)
+            // A command allowed on the card is a step like any other, by the name the agent gave it, whichever engine
+            // asked, as one that needed no card is.
+            let allowed = await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, said: said)
+            if allowed, shell { log(project, .status, "Ran: \(command)", said: said) }
+            return allowed
         }
     }
 
@@ -3351,7 +3357,7 @@ final class Store: ObservableObject {
         }
         // The setting is read again: it may have changed while the rating was worked out.
         if ratingDecides, CommandApproval.current == .risky, CommandRisk.runsOnRating(given, flagged: flagged) {
-            log(project, .status, "Ran: \(command)", said: said)
+            // The caller says it ran, as for an Allow.
             log(project, .detail, "Ran without asking (\(given?.risk ?? "") risk): \(given?.summary ?? "")")
             note(said ?? "Running a command", for: project)   // as after an Allow, so "Checking a command" doesn't stay
             return true
