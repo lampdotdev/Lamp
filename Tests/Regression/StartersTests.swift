@@ -35,7 +35,8 @@ final class StartersTests: XCTestCase {
         XCTAssertEqual(card.ask?.questions.first?.options.map(\.title).first, "Group my invoices by client")
         XCTAssertNotNil(Talk.open(in: [card]))
         XCTAssertNil(Talk.waiting(in: [card]))
-        XCTAssertEqual(card.ask?.questions.first?.detail?.hasPrefix("Tidy Up came with Lamp"), true)
+        // Just the offer and its changes: a line under it pushed them down in the wand's narrow panel.
+        XCTAssertNil(card.ask?.questions.first?.detail)
         XCTAssertNil(Starters.parse("name: No front matter", folder: starters))
     }
 

@@ -4,7 +4,7 @@ import Foundation
 /// request made. Here so Lamp's window and the chat inside each app's window draw them from the same values.
 public enum TalkCard {
     /// What a question left unanswered is given as, for Lamp to decide.
-    public static let youDecide = "You decide"
+    public static let youDecide = "Decide for me"
 
     /// How a set of questions is laid out. The agent picks; the person can always type instead.
     public enum Layout: String, Codable, CaseIterable {
@@ -50,8 +50,8 @@ public enum TalkCard {
         }
     }
 
-    /// Whether "You decide" is one of a question's tiles: beside up to three answers, where the tiles make a row of
-    /// four or two by two. With four of its own there's no room left in the row, and it's a link under them.
+    /// Whether "Decide for me" is one of a question's tiles: beside up to three answers, where the tiles still make a
+    /// row of four on a wide card. With four of its own there's no room left in the row, and it's a link under them.
     public static func decidesAsTile(_ question: Question) -> Bool { question.options.count < 4 }
 
     public struct Ask: Codable, Equatable {

@@ -37,14 +37,14 @@ struct SetupCard: View {
                 // Answered by drawing icons by hand, the card is where this app's is drawn, while it's plain.
                 if byHand, let project, let spec = Icons.load(project), Icons.artwork(project, spec: spec) == nil {
                     Button("Draw Icon…") { Store.shared.iconFromPlayground(project) }
-                        .controlSize(.small)
+                        .cardButtons()
                 }
                 if !done && !declined {
                     Button("Not Now") {
                         if let project { offer.decline(in: project) }
                         withAnimation { declined = true }
                     }
-                    .controlSize(.small)
+                    .cardButtons()
                 }
             }
             .padding(14)
@@ -240,7 +240,7 @@ private struct OptionRow<Accessory: View>: View {
                 Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            accessory().controlSize(.small)
+            accessory().cardButtons()
         }
     }
 }
@@ -299,7 +299,7 @@ private struct KeyUpgrade: View {
                             .disabled(key.trimmed.isEmpty)
                     }
                 }
-                .controlSize(.small)
+                .cardButtons()
                 .padding(.leading, CardColumn.indent(compact: compact))
                 HStack(spacing: 4) {
                     if let problem = check.problem {
