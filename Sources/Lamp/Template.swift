@@ -15536,16 +15536,21 @@ enum Template {
     /// and ones already `final` are left as they are. A class it shouldn't have made final (a subclass the scan
     /// didn't see) fails the build with the compiler's own words, which `LiveSlots.brokeFinal` reads: the copy is
     /// then made without this step from then on (`no-final`).
-    static let finalPerl = #"""
+    static let finalPerl = ##"""
     use strict; use warnings;
     my %subclassed = map { (split /\./)[-1] => 1 } split ' ', shift @ARGV;
     local $/;
     for my $file (@ARGV) {
         open(my $in, '<', $file) or die "$file: $!"; my $s = <$in>; close($in);
-        $s =~ s{^([ \t]*)((?:@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|nonisolated|indirect)\s+)*)(class)\s+(?!(?:func|var|let|subscript|override|class)\b)(\w+)}{ $subclassed{$4} ? "$1$2$3 $4" : "$1$2final $3 $4" }gme;
+        # A line of a string or a comment (a help text, a template, a note) is no declaration: those stretches are
+        # found first and left as they are, raw strings included.
+        my @skip;
+        while ($s =~ /(#+"""[\s\S]*?"""#+|"""[\s\S]*?"""|#+"(?:[^"\n]|"(?!#))*"#+|"(?:[^"\\\n]|\\.)*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*)/g) { push @skip, [$-[0], $+[0]]; }
+        my $inside = sub { my $p = shift; for my $span (@skip) { return 1 if $p >= $span->[0] && $p < $span->[1] } 0 };
+        $s =~ s{^([ \t]*)((?:@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|nonisolated|indirect)\s+)*)(class)\s+(?!(?:func|var|let|subscript|override|class)\b)(\w+)}{ ($inside->($-[3]) || $subclassed{$4}) ? "$1$2$3 $4" : "$1$2final $3 $4" }gme;
         open(my $out, '>', $file) or die "$file: $!"; print $out $s; close($out);
     }
-    """#
+    """##
 
     /// The live copy of the sources (LiveReload): each file copied into .lamp/live with its views' bodies wrapped,
     /// so a body's type stays the same from one change to the next (`LampLive`), and only when it differs, so the
