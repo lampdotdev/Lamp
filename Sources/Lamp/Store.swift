@@ -6915,6 +6915,7 @@ final class Store: ObservableObject {
         }
         guard !turn.look.inProgress else { return (200, ["text": "Lamp is already looking at the app. Wait for that result."]) }
         turn.look.inProgress = true
+        progress[project.id]?.looking = true
         await turn.early?.value
         turn.look.installed = false
         // Each stage says itself from here; once the look is over the model is reading what it found. Only while this
@@ -6926,6 +6927,7 @@ final class Store: ObservableObject {
         say(TurnProgress.activity(for: ToolCall("look_at_app")))
         defer {
             turn.look.inProgress = false
+            if turns[project.id] === turn { progress[project.id]?.looking = false }
             say(Activity.thinking)
         }
 

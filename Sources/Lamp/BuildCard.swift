@@ -51,6 +51,8 @@ struct TurnProgress {
     }
     /// When the activity last changed, which is what a long think or a long build is counted from.
     var activitySince = Date()
+    /// Lamp is looking at the app for the agent, so the activity is the look's stage and the look is the step going on.
+    var looking = false
     /// The file being written or edited right now, if that's what the agent is doing. Never shown: it
     /// tells which part of the plan is being worked on.
     var currentFile: String?
@@ -70,7 +72,7 @@ struct TurnProgress {
     /// going a while is being thought about.
     init(newApp: Bool) {
         self.newApp = newApp
-        activity = newApp ? "Getting started" : Activity.thinking
+        activity = newApp ? "Waking the genie" : Activity.thinking
     }
 
     /// A part's mark on the build card. A part being worked on gets a spinner instead.
@@ -450,7 +452,7 @@ struct ActivityRow: View {
     @AppStorage("showDetails") private var details = false
 
     var body: some View {
-        let steps = details ? [] : ChatItem.live(lines).steps
+        let steps = details ? [] : ChatItem.live(lines, doing: progress.activity, looking: progress.looking).steps
         ChatLook.ActivityLine(progress.activity, started: progress.started, since: progress.activitySince,
                               hasSteps: !steps.isEmpty) { StepList(steps: steps) }
     }

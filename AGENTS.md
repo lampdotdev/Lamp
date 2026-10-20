@@ -44,11 +44,15 @@ A capability given to one engine must be given to all of them that can take it, 
   request came to is the agent's last message, in a sentence or two (`Agent.Rules.finish`), under the line that says
   the app is ready or updated; a card for it said no more than that message did and hid what it said beyond it.
   While longer work goes on, the agent says how it's going with `progress`: a line of 12 words at most, shown at once
-  in both chats as a message like any other, which stays one when the turn ends. A turn's steps are never a list of
-  rows: while it goes on they're inside its one live line (`ChatLook.ActivityLine`, `ChatItem.live`, the sidebar's
-  `SidebarState.workingSteps`), which says what it's doing now, changes in place and opens to the steps so far; when
-  it ends that line's place, under the turn's last message, is taken by "Worked for…" (`ChatItem.items`), which opens
-  to the same steps, so nothing moves. Whatever the agent writes as messages on the way is
+  in both chats as a message like any other, which stays one when the turn ends. A turn's steps belong to its one
+  live line (`ChatLook.ActivityLine`, `ChatItem.live`, the sidebar's `SidebarState.workingSteps`), which says what
+  it's doing now and changes in place. While the turn goes on the line is open, at the bottom under the steps done
+  so far, oldest first, so what's done reads in order and what's going on now is always last (a command by the name
+  the agent gave it, any other tool call in the words the line said while it ran, `LogLine.visible`, never its
+  files); the step still going is the line itself and joins the list when the agent moves on (`ChatItem.live`), and a
+  click folds the list; when the turn ends the line and its
+  steps give way to "Worked for…" (`ChatItem.items`), folded, under the turn's last message, which opens to the same
+  steps. Whatever the agent writes as messages on the way is
   treated the same, each shown as it's said and kept as it was (`LogLine.visible`), since models write such updates
   whether or not they're asked to use the tool: what the person has read never turns into a gray line among the
   steps or goes away. (A Lamp from before this folded them; `ChatLook.ProgressLine` and the status line marked with
@@ -221,14 +225,16 @@ A capability given to one engine must be given to all of them that can take it, 
   `activitySince`), and every place that shows it draws it with `ChatLook.ActivityText`: the build card, the line
   under a change, the chat beside the app (`SidebarState.workingActivitySince`) and the cover while the app reopens
   (`CoverNote`). How it reads as the wait goes on is `Activity.words`, in one place: while the model thinks, its
-  phrases turn over every 3.5 seconds and grow more reassuring the longer it goes; a build says "Still building…"
-  after 30 seconds and "Taking a little longer…" after 90; anything named ("Working on the interface") stays as it is.
+  phrases (never a bare "Thinking"; each think opens on one picked by when it began) turn over every 3.5
+  seconds and grow more reassuring the longer it goes; a build says "Still building…"
+  after 30 seconds and "Taking a little longer…" after 90, and putting a change into the open app "Still updating…"
+  and "Taking a little longer…"; anything named ("Working on the interface") stays as it is.
   The agent's progress lines are messages above the activity and are left as they are. A shell command is named in
   the engine's own words, never guessed from its text (`AgentEvent.naming`): Claude Code's description of each Bash
   call (its parser, and its approval hook, which carries the same input; `Agent.claudeNote` asks for plain words),
   and for Codex the heading of the reasoning summary before it (`model_reasoning_summary`). The name is the activity
   while the command runs and the step's row in the chat (`LogLine.said`, `ChatLook.RanCommand`; consecutive commands
-  under one name are one row, `ChatItem.items`); a command with no name stays "Ran a command". pi's bash takes only the
+  under one name are one row, `ChatItem.items`); a command with no name stays "Did a bit of housekeeping". pi's bash takes only the
   command, so Lamp's extension replaces it, as pi's extension docs allow, with pi's own bash and a `description`
   (`bashWithDescription` in `lamp-tools.ts`), sent with the approval and read by pi's parser. It's required: left
   optional, some models (Sonnet) never fill it in. While Lamp itself works in a turn (a look's build, putting a change
