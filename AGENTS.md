@@ -290,7 +290,10 @@ and say in the PR description which engines you tried.
 
 Lamp's window opens on the desk (`WishDesk`, `Desk.swift`): the person's wishes as icons, first, since using one and
 changing it is where most wishes start, and under them the one place to make a new one. A click's hint says it
-opens to use and change (`DeskIcon`). Everything someone makes with Lamp is a **wish** in what they read; a wish may
+opens to use and change (`DeskIcon`). Wishes are dragged into the order the person wants (`DeskArrangement`, kept by
+instance so a rename keeps a wish's place; name order until the first drag, and a new wish goes at the end after it);
+while one is dragged, a trash beside Settings in the toolbar deletes what's let go on it (`DeskTrash`), as the Dock's
+Trash does (`WishDrag`). Everything someone makes with Lamp is a **wish** in what they read; a wish may
 be made of an app, a widget, a menu bar item, a watch app, so "app" stays where it means that piece. A wish is
 typed in the bar, or said with the talk button beside it (`TalkButton`, moving with `Dictation.level`); either
 way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so it passes the same
