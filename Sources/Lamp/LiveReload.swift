@@ -359,14 +359,17 @@ enum LiveReload {
         // A type taken away is still in the open app, with its objects and statics, until it reopens: its layout
         // is kept, so one brought back under the same name is held to what it was. So is an alias taken away, each
         // on its own, since a type kept that way still reads by it.
-        // Each group's entries by what they're about (`Group.subject`): one kept when the new code has no entry about
-        // that subject; what's read at launch and what's declared are the new code's whole.
-        let subjects = Set(now.compactMap { entry in Group(rawValue: String(entry.prefix { $0 != "\t" })).flatMap { $0.subject(of: entry) } })
+        // Each group's entries by what they're about (`Group.subject`): one kept when the new code has no entry of
+        // that group about that subject (a group of its own: an alias named Mood says nothing of the shape Mood had);
+        // what's read at launch and what's declared are the new code's whole.
+        func keyed(_ entry: String) -> String? {
+            Group(rawValue: String(entry.prefix { $0 != "\t" })).flatMap { group in group.subject(of: entry).map { group.rawValue + "\t" + $0 } }
+        }
+        let subjects = Set(now.compactMap(keyed))
         let kept = now + before.filter { entry in
             let group = String(entry.prefix { $0 != "\t" })
-            guard let kind = Group(rawValue: group) else { return new[group] == nil }
-            guard let subject = kind.subject(of: entry) else { return new[group] == nil }
-            return !subjects.contains(subject)
+            guard let key = keyed(entry) else { return new[group] == nil }
+            return !subjects.contains(key)
         }
         return (nil, kept)
     }

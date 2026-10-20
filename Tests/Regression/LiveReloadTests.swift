@@ -379,6 +379,9 @@ final class LiveReloadTests: XCTestCase {
         let constant = LiveReload.Group.constant.entry("Tones\tlimit: abc"), other = LiveReload.Group.constant.entry("Tones\tother: def")
         XCTAssertEqual(LiveReload.layoutProblem(before: [constant, other], after: [other]).layout?.contains(constant), true)
         XCTAssertEqual(LiveReload.layoutProblem(before: [constant, other], after: [LiveReload.Group.constant.entry("Tones\tlimit: xyz"), other]).layout?.contains(constant), false)
+        // Each group keeps its own history: an alias named Mood says nothing of the shape the enum Mood had.
+        let moodShape = LiveReload.Group.shape.entry("Mood", "enum"), moodAlias = LiveReload.Group.alias.entry("Mood = Int")
+        XCTAssertEqual(LiveReload.layoutProblem(before: ["Mood\t", "Mood\tcase a: (Mood.Type) -> Mood", moodShape], after: [moodAlias]).layout?.contains(moodShape), true)
         // Nested plain collections of a grown enum keep its unused numbers unused; an optional or a tuple of it doesn't.
         XCTAssertNil(LiveReload.enumsHeld(grown: ["Mood"], held: ["Mood\t", "Mood\tcase a: (Mood.Type) -> Mood", "\tnested: [[Mood]]", "\tbyName: [String : [Mood]]", "\tbyMood: [Mood : [Int]]", "\tall: Array<Mood>"], spares: [:]))
         XCTAssertEqual(LiveReload.enumsHeld(grown: ["Mood"], held: ["Mood\t", "\tmaybe: [Mood?]"], spares: [:]), "a global holds Mood as [Mood?], which a new case would change")
