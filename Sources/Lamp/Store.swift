@@ -3136,6 +3136,10 @@ final class Store: ObservableObject {
 
     // MARK: - Approvals
 
+    /// Commands confined for Claude Code's classifier to judge (`format=claude-confine`), by what they became, with
+    /// what the agent wrote and said they were for, so its card and the chat show the agent's words.
+    private var confinedCommands: [String: (original: String, said: String?)] = [:]
+
     /// The latest request per app, so the decision model can judge commands against what the user asked for.
 
     /// Applies Settings → Building → "Ask before running commands" to one command.
@@ -3163,13 +3167,10 @@ final class Store: ObservableObject {
             return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged,
                                          said: said)
         case .risky where shell:
-            // Claude Code's own classifier asked: it doesn't run on the checks alone, but what they flag keeps
-            // its card, so the in-app model's "low" can't run a command they found risky. Only risky counts here,
-            // which the request's question can't change.
-            let judgment = await commandJudgment(command, for: project, aboutRequest: false)
-            let flagged = judgment.verdict == .risky ? judgment.reason ?? .reachesBeyond : nil
-            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged,
-                                         said: said)
+            // Claude Code's own classifier judged it and asked: the person decides, with no second check of
+            // Lamp's and no rating that runs it on a "low".
+            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, said: said,
+                                         mayRunOnRating: false)
         default:
             return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, said: said)
         }
@@ -3222,7 +3223,7 @@ final class Store: ObservableObject {
     /// low runs without the card (`CommandRisk.runsOnRating`).
     func requestApproval(for project: LampProject, command: String, title: String? = nil,
                          explanation given: CommandExplanation? = nil, shell: Bool = true, sandboxed: Bool = false,
-                         flagged: CommandRisk.Reason? = nil, said: String? = nil) async -> Bool {
+                         flagged: CommandRisk.Reason? = nil, said: String? = nil, mayRunOnRating: Bool = true) async -> Bool {
         guard !command.trimmed.isEmpty else { return false }
         if turns[project.id]?.allowAll == true {
             log(project, .detail, "Ran (allowed for this turn): \(command)")
@@ -3237,7 +3238,7 @@ final class Store: ObservableObject {
         // The rating comes first when it could spare the card: a command the checks left to it, or that Claude
         // Code asked about itself, runs on a "low". It gets a few seconds (`ratingWait`); a slower one comes to
         // the card, which offers Allow and Deny at once and still runs the command if the "low" arrives after.
-        let ratingDecides = shell && title == nil && flagged == nil && CommandApproval.current == .risky
+        let ratingDecides = shell && title == nil && flagged == nil && CommandApproval.current == .risky && mayRunOnRating
         var given = given
         var asked = false   // the in-app model's answer is in, or none came
         var late: Task<CommandExplanation?, Never>?
@@ -6272,7 +6273,20 @@ final class Store: ObservableObject {
             // Whose command: Claude Code's and pi's come back wrapped (Sandbox); Codex runs inside the sandbox
             // whole, so its commands are confined already and go back as they are.
             let engine: Engine = request.path.contains("format=codex") ? .codex : request.path.contains("format=claude") ? .claude : .pi
-            let confined = shell && engine != .codex ? Sandbox.wrap(command, for: project) : nil
+            // A command Lamp confined already (below, for Claude Code's classifier) comes back wrapped: it's shown
+            // and logged as the agent wrote it, and stays as it was confined.
+            let wrapped = command
+            let known = engine == .claude ? confinedCommands[wrapped] : nil
+            if let known { command = known.original }
+            let confined = known != nil ? wrapped : shell && engine != .codex ? Sandbox.wrap(command, for: project) : nil
+            // It ran: what Claude Code's classifier let through is said in the chat as a command Lamp let run is.
+            if request.path.contains("format=claude-ran") {
+                if let known {
+                    confinedCommands[wrapped] = nil
+                    log(project, .status, "Ran: \(command)", said: known.said)
+                }
+                return (200, [:])
+            }
             let sandboxed = shell
             // No sandbox, no shell: a command that can't be confined isn't run rather than run loose.
             if shell && engine != .codex && confined == nil {
@@ -6285,6 +6299,17 @@ final class Store: ObservableObject {
                     return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason]])
                 }
                 return (200, ["allow": false, "reason": reason])
+            }
+            // Under "Only when risky", Claude Code's own classifier decides (auto mode): Lamp only confines the
+            // command, with no decision of its own, and what the classifier asks about comes back as a
+            // "claude-permission" request for the card.
+            if request.path.contains("format=claude-confine"), let confined {
+                if known == nil {
+                    let said = (input["description"] as? String ?? body["description"] as? String)?.trimmed.nilIfEmpty
+                    if confinedCommands.count > 500 { confinedCommands.removeAll() }   // ones refused never come back
+                    confinedCommands[confined] = (command, said)
+                }
+                return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "updatedInput": ["command": confined]]])
             }
             if request.path.contains("format=codex") {
                 // Codex's PreToolUse hook can only block: an empty answer lets the command run.

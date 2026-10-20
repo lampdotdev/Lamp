@@ -358,6 +358,7 @@ extension Agent {
             env["LAMP_FILE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-file"
             var preToolUse: [[String: Any]] = [["matcher": "Read|Edit|Write|Glob|Grep", "hooks": [hook("LAMP_FILE_URL", event: "PreToolUse")]]]
             var hooks: [String: Any] = [:]
+            var autoMode: [String: Any]?
             // Every shell command goes to Lamp before it runs, in every mode but Never, so the setting means
             // the same with Claude Code as with pi and Codex: Lamp's decision model decides what is routine, and
             // the user sees the rest. Claude's own classifier never gets to wave a command through on its own.
@@ -367,9 +368,15 @@ extension Agent {
             preToolUse.append(["matcher": "Bash", "hooks": [hook("LAMP_APPROVE_URL", event: "PreToolUse")]])
             switch approval {
             case .risky:
-                // For the tools that aren't shell commands (a fetch, a web search), Claude's automatic mode asks
-                // Lamp only about what its classifier escalates.
+                // Claude Code's own classifier (auto mode) decides, shell commands included: Lamp's hook only hands
+                // each command back confined (Sandbox), with no decision, and what the classifier would ask about
+                // comes to Lamp's card through PermissionRequest. A command that ran is said in the chat afterwards.
+                // `classifyAllShell` keeps any narrow allow rule from letting a command past it.
                 permissionMode = "auto"
+                env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-confine"
+                env["LAMP_RAN_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-ran"
+                hooks["PostToolUse"] = [["matcher": "Bash", "hooks": [hook("LAMP_RAN_URL", event: "PostToolUse")]]]
+                autoMode = ["classifyAllShell": true]
                 env["LAMP_PERMISSION_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-permission"
                 hooks["PermissionRequest"] = [["matcher": "*", "hooks": [hook("LAMP_PERMISSION_URL", event: "PermissionRequest")]]]
             case .always:
@@ -378,7 +385,9 @@ extension Agent {
                 allowed += ",Bash"
             }
             hooks["PreToolUse"] = preToolUse
-            env["LAMP_CLAUDE_SETTINGS"] = String(decoding: (try? JSONSerialization.data(withJSONObject: ["hooks": hooks])) ?? Data("{}".utf8), as: UTF8.self)
+            var settings: [String: Any] = ["hooks": hooks]
+            if let autoMode { settings["autoMode"] = autoMode }
+            env["LAMP_CLAUDE_SETTINGS"] = String(decoding: (try? JSONSerialization.data(withJSONObject: settings)) ?? Data("{}".utf8), as: UTF8.self)
             env["LAMP_CLAUDE_MODE"] = permissionMode
             env["LAMP_CLAUDE_ALLOWED"] = allowed
             env["LAMP_TOOL"] = EngineInstall.path(for: .claude) ?? "claude"
