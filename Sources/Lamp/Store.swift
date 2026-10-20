@@ -530,6 +530,8 @@ final class Store: ObservableObject {
         /// What the agent last said it's doing, in its own words (`AgentEvent.naming`): the name of the commands
         /// that follow, until it says something else.
         var naming: String?
+        /// Whether the chat says each command from the engine's own output (`AgentRun.saysCommands`), for the run going now.
+        var saysCommands = false
         /// The agent put its questions to the person this turn: the turn is over, whatever the agent does next.
         var asked = false
         /// Lamp ended the agent because it went on working past its own questions. Not a stop and not a failure.
@@ -2808,6 +2810,7 @@ final class Store: ObservableObject {
         }
         var run = Agent.run(prompt: prompt, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
+        turn.saysCommands = run.saysCommands
         // Held strongly: it lives only while the engine runs. (A weak capture here, in a closure kept in a
         // variable rather than passed straight to `Shell.run`, came back nil and dropped every line.)
         let onLine: @MainActor (String) -> Void = { [self] line in
@@ -2925,6 +2928,12 @@ final class Store: ObservableObject {
                     received(project)
                 case .acting(let id, let started):
                     if started { turn.codexActing.insert(id) } else { turn.codexActing.remove(id); steer(project) }
+                case .ran(let command, let refused):
+                    // A command Codex ran is said in the chat as a command Lamp let run is, by the name the agent gave
+                    // it; one its reviewer refused is the same step, marked only when it's opened (`ChatLook.ranCommand`).
+                    // A run whose commands each come to Lamp's card says nothing here: the others' don't either.
+                    guard turn.saysCommands else { break }
+                    log(project, .status, (refused ? ChatLook.notRun : "Ran: ") + command, said: turn.naming)
                 case .finished:
                     // Claude Code has answered. A message sent from now on is the next request.
                     turn.input?.close()
@@ -2971,6 +2980,8 @@ final class Store: ObservableObject {
                   let id = Self.savedSession(sessionFile), exists(project) else { break }
             run = Agent.run(prompt: Agent.carryOn(message), files: [], project: current(project) ?? project,
                             offered: offers(in: project), session: id, token: turn.agentToken)
+            // The setting may have changed since the turn began, and with it whether Lamp's hook says each command.
+            turn.saysCommands = run.saysCommands
         }
         turn.agent = nil
         turn.codexStarted = false
@@ -3254,15 +3265,21 @@ final class Store: ObservableObject {
             }
             // A risky verdict always has its reason; if one were ever missing, the card still comes up as flagged.
             let flagged = judgment.verdict == .risky ? judgment.reason ?? .reachesBeyond : nil
-            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged,
-                                         said: said)
+            let allowed = await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged,
+                                                said: said)
+            if allowed, shell { log(project, .status, "Ran: \(command)", said: said) }
+            return allowed
         case .risky where shell:
             // Claude Code's own classifier judged it and asked: the person decides, with no second check of
             // Lamp's and no rating that runs it on a "low".
             return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, said: said,
                                          mayRunOnRating: false)
         default:
-            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, said: said)
+            // A command allowed on the card is a step like any other, by the name the agent gave it, whichever engine
+            // asked, as one that needed no card is.
+            let allowed = await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, said: said)
+            if allowed, shell { log(project, .status, "Ran: \(command)", said: said) }
+            return allowed
         }
     }
 
@@ -3340,7 +3357,7 @@ final class Store: ObservableObject {
         }
         // The setting is read again: it may have changed while the rating was worked out.
         if ratingDecides, CommandApproval.current == .risky, CommandRisk.runsOnRating(given, flagged: flagged) {
-            log(project, .status, "Ran: \(command)", said: said)
+            // The caller says it ran, as for an Allow.
             log(project, .detail, "Ran without asking (\(given?.risk ?? "") risk): \(given?.summary ?? "")")
             note(said ?? "Running a command", for: project)   // as after an Allow, so "Checking a command" doesn't stay
             return true
@@ -6820,7 +6837,7 @@ final class Store: ObservableObject {
             if request.path.contains("format=claude-refused") {
                 if let known { confinedCommands[wrapped] = nil }
                 let why = (body["reason"] as? String ?? body["message"] as? String)?.trimmed.nilIfEmpty
-                log(project, .status, "Not run: \(command)", said: known?.said)
+                log(project, .status, ChatLook.notRun + command, said: known?.said)
                 if let why { log(project, .detail, "Claude Code's check stopped it: \(why)") }
                 return (200, [:])
             }

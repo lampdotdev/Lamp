@@ -110,8 +110,8 @@ A capability given to one engine must be given to all of them that can take it, 
   `read_skill`, a tool like any other, so every engine reads skills the same way. Lamp answers from its own bundle,
   so a skill changed in an update reaches a conversation that began before it. Each engine can load skills of its own,
   and Lamp keeps that off where it can (pi's `--no-skills`; Claude Code's `--disable-slash-commands`, without which
-  it loads its own skills for coding work; Codex's sandbox keeps the person's out of reach, and `skills.bundled.enabled=false` its own, which it would otherwise
-  try to copy into its folder's `skills/.system` at every start, where the sandbox keeps it from writing): those are for other
+  it loads its own skills for coding work; Codex's `skills.bundled.enabled=false` its own. Codex runs outside Lamp's sandbox, and
+  it reads the person's own skills in `~/.agents/skills` at every start, which no setting of Codex's turns off): those are for other
   work, and the same file for every engine is one place to keep up to date. When an app's own code
   shows a skill applies (`Skills.applying`: it imports RealityKit, it uses OpenStreetMap data, it has a Chrome sidebar page), Lamp names it at
   the end of the request (`Skills.brief`), sent like `AIStatus.brief` through `RequestNote`: once per
@@ -125,14 +125,35 @@ A capability given to one engine must be given to all of them that can take it, 
   Lamp's hook only hands each one back confined, with no decision (`format=claude-confine`), what the classifier asks
   about comes to Lamp's card through `PermissionRequest` with no check or rating of Lamp's, and a command that ran is
   said in the chat from `PostToolUse` and `PostToolUseFailure` (`format=claude-ran`). What the classifier refuses stays
-  refused (the agent is told why, and the chat says "Not run:", `PermissionDenied`, `format=claude-refused`). pi and Codex keep
-  Lamp's own check (`CommandRisk`).
+  refused (the agent is told why, `PermissionDenied`, `format=claude-refused`, and the command's step stays as below). Codex's
+  own reviewer (Auto-review: `approval_policy="on-request"`, `approvals_reviewer="auto_review"`) decides its commands the
+  same way, with no hook of Lamp's: only a command that needs more than Codex's sandbox gives (below) reaches it, and
+  what it refuses stays refused, with nothing coming to Lamp's card. Its policy (`CodexReview`, as `auto_review.policy`)
+  is Codex's default copied whole with Lamp's rules after it, since that key replaces the default and `extra_policy`
+  didn't reach the reviewer: refresh the copy when Codex's changes. Lamp's rules refuse what `CommandRisk` calls risky
+  (outside the app, destructive, uploads, the person's files and secrets). The network is open inside the sandbox, so
+  an upload made from inside it never reaches the reviewer. Codex's commands are said in the chat from its own output
+  (`AgentEvent.ran`, under "Only when risky" and Never, where no card of Lamp's says them), as every engine's are: by
+  the heading of Codex's reasoning summary before each (`AgentEvent.naming`; Codex's output gives a command no
+  description of its own, and a quick step often comes with no summary, so it reads "Did a bit of housekeeping"). Codex
+  shows a command as started before its reviewer decides, as Claude Code's streams before its classifier does, so a
+  refused one, whichever engine's, is no line of its own: it stays the step it was, and only opening it says it didn't
+  run (`ChatLook.notRun`, `ChatLook.ranCommand`). The agent says in its own words what it couldn't do and why,
+  never the command (`Agent.codexNote`, and the reviewer is asked for a rationale it can pass on). Under Always Lamp's hook asks about every Codex command
+  and under Never there's no hook; in both a command needing more than the sandbox is refused (`approval_policy="never"`).
+  pi keeps Lamp's own check (`CommandRisk`).
   Claude Code's and pi's approved commands come back confined (`Sandbox`: `sandbox-exec` with a profile
   that opens the app's folder, the system, developer tools, caches, temp folders and the network, and
   closes the rest of the home folder and both Lamps' folders), so nothing reads a command's text to see
-  where it looks. Codex's hook can't change a command and a sandbox can't be nested, so Codex itself runs
-  inside the profile (`Sandbox.wrapEngine`, with the copy in use and its folder opened and Codex's own sandbox off) and its
-  commands with it. SwiftPM's own sandbox can't start inside Lamp's, so a `swift` shim first on the path
+  where it looks. Codex's commands run in Codex's own sandbox instead, which its reviewer works with and which can't
+  start inside Lamp's: a permission profile (`Sandbox.codexPermissions`, `-c permissions.lamp=…`, a Beta feature of
+  Codex's) that closes everything and opens what Lamp's opens, by name: the app's folder (its `.git` kept read-only by
+  Codex), the runtime, the developer tools, Homebrew's and the applications for reading, caches and temporary folders,
+  Lamp's shims, and the network. The app's folder is named by `LampProject.realDir`, never as Codex's workspace, which
+  Codex makes of wherever the folder it starts in leads; a writable folder that is a link, or leads through one, Codex
+  refuses at its start and before each command. Codex itself (its state, its
+  hooks, Lamp's MCP endpoint) runs unconfined, and a command its reviewer lets out of the sandbox runs under the
+  controls Codex gives it, not Lamp's. SwiftPM's own sandbox can't start inside Lamp's or Codex's, so a `swift` shim first on the path
   (`Sandbox.bin`) gives `swift build`/`test`/`run`/`package` `--disable-sandbox`; the compiler's helper for macros is
   the same, so Lamp's Xcode projects pass it `-disable-sandbox` too. Xcode's interface and asset compilers hand their
   work to helpers that stay running and are found through shared memory named `ib…`, whoever started them, so the
@@ -234,7 +255,9 @@ A capability given to one engine must be given to all of them that can take it, 
   call (its parser, and its approval hook, which carries the same input; `Agent.claudeNote` asks for plain words),
   and for Codex the heading of the reasoning summary before it (`model_reasoning_summary`). The name is the activity
   while the command runs and the step's row in the chat (`LogLine.said`, `ChatLook.RanCommand`; consecutive commands
-  under one name are one row, `ChatItem.items`); a command with no name stays "Did a bit of housekeeping". pi's bash takes only the
+  under one name are one row, `ChatItem.items`); a command with no name stays "Did a bit of housekeeping". A
+  command a reviewer or classifier stopped is the same row, with "(not run)" beside it only once the row is opened, and
+  one allowed on Lamp's card is a row like one that needed no card (`Store.approveCommand`); one the person declines leaves none. pi's bash takes only the
   command, so Lamp's extension replaces it, as pi's extension docs allow, with pi's own bash and a `description`
   (`bashWithDescription` in `lamp-tools.ts`), sent with the approval and read by pi's parser. It's required: left
   optional, some models (Sonnet) never fill it in. While Lamp itself works in a turn (a look's build, putting a change
