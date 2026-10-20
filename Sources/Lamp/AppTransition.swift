@@ -170,8 +170,8 @@ struct BuildingGlow: View {
         .accessibilityHidden(true)
     }
 
-    /// The light where it is at a moment, so the bubble over the tile carries the same colours in the same place.
-    static func light(at date: Date, still: Bool) -> AngularGradient {
+    /// The light where it is at a moment.
+    private static func light(at date: Date, still: Bool) -> AngularGradient {
         let turn = still ? 0 : (date.timeIntervalSinceReferenceDate / lap).truncatingRemainder(dividingBy: 1)
         let colors = TransitionGlow.hues.map(Color.init(nsColor:))
         return AngularGradient(colors: colors + [colors[0]], center: .center, angle: .degrees(turn * 360))

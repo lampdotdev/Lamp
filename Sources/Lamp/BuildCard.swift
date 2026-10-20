@@ -51,7 +51,7 @@ struct TurnProgress {
     }
     /// When the activity last changed, which is what a long think or a long build is counted from.
     var activitySince = Date()
-    /// What the desk's bubble over the wish says: the activity in Lamp's own words only. A command the agent named,
+    /// What the status line under the wish's name on the desk says: the activity in Lamp's own words only. A command the agent named,
     /// or a step that only a coder would follow, reads there as plain work on the app (`Store.note`).
     var deskActivity: String
     var deskSince = Date()

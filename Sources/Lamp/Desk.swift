@@ -332,18 +332,10 @@ struct DeskRows: Layout {
         stride(from: 0, to: subviews.count, by: columns).map { Array(subviews[$0..<min($0 + columns, subviews.count)]) }
     }
 
-    /// The room a row keeps above its icons for the bubbles over its wishes: every tile in the row goes down by it,
-    /// so icons stay level, and a bubble drawn there covers nothing of the row above or a neighbour's name.
-    private func room(_ line: [LayoutSubviews.Element]) -> CGFloat { line.map { $0[DeskBubble.Room.self] }.max() ?? 0 }
-
-    private func height(_ line: [LayoutSubviews.Element]) -> CGFloat {
-        room(line) + (line.map { $0.sizeThatFits(ProposedViewSize(width: width, height: nil)).height }.max() ?? 0)
-    }
-
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let count = columns(in: proposal.width)
         let lines = rows(subviews, columns: count)
-        let heights = lines.map(height)
+        let heights = lines.map { $0.map { $0.sizeThatFits(ProposedViewSize(width: width, height: nil)).height }.max() ?? 0 }
         let used = CGFloat(min(count, subviews.count)) * (width + spacing) - spacing
         return CGSize(width: proposal.width ?? max(0, used),
                       height: heights.reduce(0, +) + CGFloat(max(0, lines.count - 1)) * lineSpacing)
@@ -355,13 +347,14 @@ struct DeskRows: Layout {
         for line in rows(subviews, columns: count) {
             let used = CGFloat(line.count) * (width + spacing) - spacing
             var x = bounds.midX - used / 2
-            let most = room(line)
+            var tallest: CGFloat = 0
             for view in line {
                 let size = view.sizeThatFits(ProposedViewSize(width: width, height: nil))
-                view.place(at: CGPoint(x: x, y: y + most), proposal: ProposedViewSize(width: width, height: size.height))
+                view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(width: width, height: size.height))
+                tallest = max(tallest, size.height)
                 x += width + spacing
             }
-            y += height(line) + lineSpacing
+            y += tallest + lineSpacing
         }
     }
 }
@@ -720,13 +713,6 @@ struct DeskIcon: View {
     @ObservedObject private var arrangement = DeskArrangement.shared
     @State private var hovered = false
     @State private var place: WishPlace?
-    /// Its bubble is up, and the room it takes above the row is held. The room is let go only once the bubble has
-    /// faded, so the row never closes up under a bubble still showing (`DeskBubble.Room`).
-    @State private var bubbleShown = false
-    @State private var holdsRoom = false
-    /// Counts the bubble's comings and goings, so only the latest going lets the room go: an earlier one's wait can
-    /// end while a later bubble is still fading.
-    @State private var bubbleTurn = 0
 
     private var busy: Bool { store.busy.contains(project.id) }
     /// Lit under the pointer, but not while a wish is dragged over it: the pointer is the drag's then.
@@ -739,21 +725,21 @@ struct DeskIcon: View {
         busy && !store.preparing.contains(project.id) || store.openWhenReady.contains(project.id)
     }
 
-    /// What its bubble says while it's built: its own turn's activity in Lamp's words, or nothing when no turn is
-    /// going (a starter built out of sight), for the bubble's own line.
+    /// What its status line says while it's built: its own turn's activity in Lamp's words, or nothing when no turn is
+    /// going (a starter built out of sight), for the line's own words.
     private var deskActivity: (words: String, since: Date)? {
         guard let progress = store.progress[project.id], progress.finished == nil else { return nil }
         return (progress.deskActivity, progress.deskSince)
     }
 
-    /// What's going on with it, for VoiceOver: on screen the glow, the bubble and the dot say it.
+    /// What's going on with it, for VoiceOver: on screen the glow, the status line and the dot say it.
     private var status: String? {
         // A wish Lamp came with, built for the first time out of sight: nothing shows until it's clicked, and then it
         // says it's opening, which it does by itself once it's ready.
         if store.openWhenReady.contains(project.id) { return "Opening…" }
         if store.preparing.contains(project.id) { return nil }
         if busy {
-            // What the bubble says, so a wish waiting for an OK isn't heard as still building; a think is told plainly,
+            // What the status line says, so a wish waiting for an OK isn't heard as still building; a think is told plainly,
             // since its phrases turn over every few seconds.
             if let words = deskActivity?.words, words != Activity.thinking { return words }
             return store.progress[project.id]?.newApp == true || project.untitled ? "Coming true…" : "Changing…"
@@ -782,41 +768,22 @@ struct DeskIcon: View {
                 }
                 .scaleEffect(lit ? 1.06 : 1)
                 .offset(y: lit ? -2 : 0)
-            Text(project.title)
-                .font(.callout.weight(.medium))
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-                .truncationMode(.tail)
+            VStack(spacing: 2) {
+                Text(project.title)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .truncationMode(.tail)
+                if building {
+                    DeskStatusLine(activity: deskActivity?.words, since: deskActivity?.since ?? .now)
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeInOut(duration: 0.3), value: building)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8).padding(.horizontal, 4)
         .background(Color.primary.opacity(lit ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        // The bubble sits above the tile, in the room the desk gives its whole row, and takes no part in the tile's
-        // own size: a tile is the same height with or without one, so no icon in the row moves when one comes or goes.
-        .overlay(alignment: .top) {
-            if bubbleShown {
-                DeskBubble(activity: deskActivity?.words, since: deskActivity?.since ?? .now)
-                    .frame(height: DeskBubble.room, alignment: .bottom)
-                    .padding(.horizontal, 4)
-                    .offset(y: -DeskBubble.room)
-                    .transition(.opacity)
-            }
-        }
-        .layoutValue(key: DeskBubble.Room.self, value: holdsRoom ? DeskBubble.room : 0)
-        .onChange(of: building, initial: true) { _, now in
-            bubbleTurn += 1
-            if now {
-                withAnimation(.easeInOut(duration: 0.35)) { holdsRoom = true; bubbleShown = true }
-                return
-            }
-            withAnimation(.easeOut(duration: 0.35)) { bubbleShown = false }
-            let turn = bubbleTurn
-            Task {
-                try? await Task.sleep(for: .milliseconds(400))
-                guard turn == bubbleTurn, !building else { return }
-                withAnimation(.easeInOut(duration: 0.35)) { holdsRoom = false }
-            }
-        }
         .opacity(lifted ? 0.3 : 1)
         .contentShape(Rectangle())
         .onTapGesture { store.open(fromDesk: project) }
@@ -853,21 +820,18 @@ struct DeskIcon: View {
     }
 }
 
-/// A small thought bubble over a wish while it's built, saying what its own turn is doing now in Lamp's words
+/// One line under a wish's name while it's built, saying what its own turn is doing now in Lamp's words
 /// (`TurnProgress.deskActivity`, worded as the chat's line is, `Activity.words`), or that it's getting ready when no
-/// turn is going. Its edge carries the glow's light, so the two read as one, and a sheen crosses its words so it
-/// never looks frozen on a long step. Where the person asked for less motion the edge and words stay still.
-struct DeskBubble: View {
+/// turn is going. A sheen crosses it so a long step never looks frozen, and words that change cross-fade in place:
+/// the line is the tile's width and one line high, so nothing resizes while they change. Where the person asked for
+/// less motion it stays still, and the words still change.
+struct DeskStatusLine: View {
     let activity: String?
     let since: Date
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// The height a bubble takes above its icon, its tail included.
-    static let room: CGFloat = 50
     static let placeholder = "Getting it ready…"
     private static let sheen = 2.2
-
-    struct Room: LayoutValueKey { static let defaultValue: CGFloat = 0 }
 
     var body: some View {
         // Still, it's redrawn only twice a second, for its words.
@@ -876,64 +840,34 @@ struct DeskBubble: View {
                 Activity.words($0, waited: timeline.date.timeIntervalSince(since) + 0.001,
                                start: Int(since.timeIntervalSinceReferenceDate))
             } ?? Self.placeholder
-            let shape = RoundedRectangle(cornerRadius: 11, style: .continuous)
-            VStack(spacing: 1) {
-                BubbleWords(words: words, style: text(at: timeline.date))
-                    .padding(.horizontal, 8).padding(.vertical, 5)
-                    .background(Color(nsColor: .textBackgroundColor), in: shape)
-                    .overlay(shape.strokeBorder(BuildingGlow.light(at: timeline.date, still: reduceMotion), lineWidth: 1.5))
-                    .shadow(color: .black.opacity(0.1), radius: 4, y: 1)
-                // The thought's tail, two dots stepping down to the icon.
-                HStack(spacing: 0) {
-                    Circle().frame(width: 5, height: 5)
-                    Circle().frame(width: 3, height: 3).offset(x: -5, y: 5)
-                }
-                .foregroundStyle(BuildingGlow.light(at: timeline.date, still: reduceMotion))
-                .frame(height: 6)
+            ZStack {
+                Text(words)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(style(at: timeline.date))
+                    .id(words)
+                    .transition(.opacity)
             }
+            .frame(maxWidth: .infinity)
+            .animation(.easeInOut(duration: 0.35), value: words)
         }
-        .frame(maxWidth: .infinity)
-        .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
 
-    /// The words' colour, with a band of brighter light crossing them every couple of seconds.
-    private func text(at date: Date) -> AnyShapeStyle {
-        let dim = Color.primary.opacity(0.62)
-        guard !reduceMotion else { return AnyShapeStyle(Color.primary.opacity(0.8)) }
+    /// Secondary text, with a band of brighter light crossing it every couple of seconds.
+    private func style(at date: Date) -> AnyShapeStyle {
+        let dim = Color.primary.opacity(0.5)
+        guard !reduceMotion else { return AnyShapeStyle(Color.primary.opacity(0.6)) }
         let at = (date.timeIntervalSinceReferenceDate / Self.sheen).truncatingRemainder(dividingBy: 1) * 1.6 - 0.3
         let stops: [Gradient.Stop] = [
             .init(color: dim, location: 0),
             .init(color: dim, location: min(max(at - 0.25, 0), 1)),
-            .init(color: .primary, location: min(max(at, 0), 1)),
+            .init(color: .primary.opacity(0.95), location: min(max(at, 0), 1)),
             .init(color: dim, location: min(max(at + 0.25, 0), 1)),
             .init(color: dim, location: 1),
         ]
         return AnyShapeStyle(LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing))
-    }
-}
-
-/// A bubble's words, crossing to new ones. The bubble is one size whatever it says, room for two short lines, and each
-/// set of words is laid out whole in it, so words fading out never spill past its edge or are cut, however quickly the
-/// next ones come. A bubble that fitted its words had to resize as they changed, and words caught mid-resize were cut.
-private struct BubbleWords: View {
-    let words: String
-    let style: AnyShapeStyle
-
-    static let size = CGSize(width: 86, height: 31)
-
-    var body: some View {
-        ZStack {
-            Text(words)
-                .font(.caption.weight(.medium))
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(style)
-                .id(words)
-                .transition(.opacity)
-        }
-        .frame(width: Self.size.width, height: Self.size.height)
-        .animation(.easeInOut(duration: 0.35), value: words)
     }
 }
 

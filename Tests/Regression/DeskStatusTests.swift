@@ -1,9 +1,9 @@
 import XCTest
 @testable import Lamp
 
-/// The bubble over a building wish says only Lamp's own words: a command, named by the agent or not, reads as plain
+/// The status line under a building wish says only Lamp's own words: a command, named by the agent or not, reads as plain
 /// work on the app, and Lamp's own steps read as the chat's line says them.
-final class DeskBubbleTests: XCTestCase {
+final class DeskStatusTests: XCTestCase {
     func testACommandTheAgentNamedIsPlainWork() {
         XCTAssertEqual(TurnProgress.deskWords("Run the test suite with swift test", named: true), "Working on your app")
     }
