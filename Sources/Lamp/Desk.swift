@@ -551,6 +551,10 @@ struct MoreFromLamp: View {
     @State private var rowsHeight = MoreFromLamp.tallest
     /// The most the list's rows take before they scroll: room for about six, on the shortest screens a Mac has.
     private static let tallest: CGFloat = 440
+    /// The Mac's own appearance, which the popover's material is drawn in.
+    private static var macScheme: ColorScheme {
+        NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
+    }
 
     var body: some View {
         VStack(spacing: 6) {
@@ -577,7 +581,9 @@ struct MoreFromLamp: View {
         .focusable(interactions: .activate)
         .onKeyPress(.return) { listing = true; return .handled }
         .help("Wishes that came with Lamp and aren't on your desk")
-        .popover(isPresented: $listing, arrowEdge: .trailing) { list }
+        // The desk is drawn light whatever the Mac's appearance, but the popover's glass is the system's, dark on a
+        // dark Mac: its words and buttons take the Mac's appearance, not the desk's.
+        .popover(isPresented: $listing, arrowEdge: .trailing) { list.environment(\.colorScheme, Self.macScheme) }
         .onChange(of: starters.isEmpty) { if starters.isEmpty { listing = false } }
     }
 
