@@ -28,7 +28,8 @@ public enum ChatLook {
         }
     }
 
-    /// What the agent says, as prose with its inline markdown.
+    /// What the agent says, as prose with its markdown: inline styles, and the blocks a line-by-line reading picks
+    /// out (`ChatLook.blocks`).
     public struct AgentText: View {
         let text: String
         let keep: Bool
@@ -41,7 +42,7 @@ public enum ChatLook {
         /// In a grey bubble on the left, as Messages draws the other person's. Answers run longer than a text
         /// message, so the bubble may take most of the width, leaving room on the right to tell it from a request.
         public var body: some View {
-            Text(ChatLook.prose(text, keep: keep))
+            content
                 .lineSpacing(3)
                 .textSelection(.enabled)
                 .padding(.horizontal, 12).padding(.vertical, 7)
@@ -50,6 +51,217 @@ public enum ChatLook {
                 .padding(.trailing, 32)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+
+        /// Plain prose stays one text, so it's selected in one sweep as before; only a message with blocks is
+        /// laid out piece by piece.
+        @ViewBuilder private var content: some View {
+            let blocks = ChatLook.blocks(text, keep: keep)
+            if blocks.count == 1, case .prose(let prose) = blocks[0] {
+                Text(ChatLook.prose(prose, keep: keep))
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(blocks.indices, id: \.self) { BlockView(block: blocks[$0], keep: keep) }
+                }
+            }
+        }
+    }
+
+    /// A piece of a message as markdown lays it out: what inline styles can't draw has a block of its own.
+    public enum Block: Equatable {
+        case prose(String)
+        case heading(String)
+        case code(String)
+        case quote(String)
+        case list([ListItem])
+        case rule
+        case table(header: [String], alignments: [HorizontalAlignment], rows: [[String]])
+    }
+
+    /// One item of a list: its bullet or number, how deep it's nested, and what it says.
+    public struct ListItem: Equatable {
+        public let marker: String
+        public let level: Int
+        public let text: String
+        public init(marker: String, level: Int, text: String) {
+            self.marker = marker
+            self.level = level
+            self.text = text
+        }
+    }
+
+    private struct BlockView: View {
+        let block: Block
+        let keep: Bool
+
+        var body: some View {
+            switch block {
+            case .prose(let text):
+                Text(ChatLook.prose(text, keep: keep))
+            case .heading(let text):
+                Text(ChatLook.prose(text, keep: keep)).font(.headline)
+            case .code(let text):
+                Text(text)
+                    .font(.system(.callout, design: .monospaced))
+                    .padding(.horizontal, 8).padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
+            case .quote(let text):
+                Text(ChatLook.prose(text, keep: keep))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 10)
+                    .overlay(alignment: .leading) { Capsule().fill(.tertiary).frame(width: 3) }
+            case .list(let items):
+                // Each item hangs from its marker, so a wrapped line starts under the words, not the bullet.
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(items.indices, id: \.self) { index in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(items[index].marker).monospacedDigit()
+                            Text(ChatLook.prose(items[index].text, keep: keep))
+                        }
+                        .padding(.leading, CGFloat(items[index].level) * 14)
+                    }
+                }
+            case .rule:
+                Divider()
+            case .table(let header, let alignments, let rows):
+                // Cells line up by their first lines, so a cell that wraps doesn't pull the rest of its row down to
+                // its middle.
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 14, verticalSpacing: 4) {
+                    GridRow { cells(header, alignments, bold: true) }
+                    Divider().gridCellUnsizedAxes(.horizontal)
+                    ForEach(rows.indices, id: \.self) { row in GridRow { cells(rows[row], alignments, bold: false) } }
+                }
+            }
+        }
+
+        private func cells(_ row: [String], _ alignments: [HorizontalAlignment], bold: Bool) -> some View {
+            ForEach(row.indices, id: \.self) { column in
+                Text(ChatLook.prose(row[column], keep: keep))
+                    .fontWeight(bold ? .semibold : nil)
+                    .gridColumnAlignment(alignments[column])
+            }
+        }
+    }
+
+    /// Parsed once per message, like its prose.
+    @MainActor private static var blockCache: [String: [Block]] = [:]
+
+    /// The message's blocks. Apple's markdown reading keeps a message's own line breaks only when it reads inline
+    /// styles alone, so what that leaves as typed (tables, headings, lists, fenced code, quotes, rules) is picked out
+    /// here line by line. A table is one once its line of dashes has arrived, so while a reply is still being
+    /// written its first line shows as typed.
+    @MainActor public static func blocks(_ text: String, keep: Bool = true) -> [Block] {
+        if let cached = blockCache[text] { return cached }
+        if blockCache.count > 2000 { blockCache.removeAll() }
+        let lines = text.components(separatedBy: "\n")
+        var blocks: [Block] = []
+        var prose: [String] = []
+        var list: [ListItem] = []
+        func endProse() {
+            if !list.isEmpty { blocks.append(.list(list)) }
+            list = []
+            let joined = prose.joined(separator: "\n").trimmingCharacters(in: .newlines)
+            if !joined.isEmpty { blocks.append(.prose(joined)) }
+            prose = []
+        }
+        var index = 0
+        while index < lines.count {
+            let line = lines[index]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+                // Fenced code runs to its closing fence, or to the end while the reply is still coming.
+                let fence = String(trimmed.prefix(3))
+                var code: [String] = []
+                index += 1
+                while index < lines.count, !lines[index].trimmingCharacters(in: .whitespaces).hasPrefix(fence) {
+                    code.append(lines[index])
+                    index += 1
+                }
+                endProse()
+                blocks.append(.code(code.joined(separator: "\n")))
+                index += 1
+            } else if trimmed.contains("|"), index + 1 < lines.count, let alignments = tableAlignments(lines[index + 1]),
+                      alignments.count == tableCells(trimmed).count {
+                let header = tableCells(trimmed)
+                var rows: [[String]] = []
+                index += 2
+                while index < lines.count, lines[index].contains("|"),
+                      !lines[index].trimmingCharacters(in: .whitespaces).isEmpty {
+                    rows.append(tableCells(lines[index]))
+                    index += 1
+                }
+                // Every row has the header's columns (as many as its line of dashes): missing cells are empty,
+                // extra ones dropped.
+                let width = header.count
+                let fit = { (row: [String]) in Array((row + Array(repeating: "", count: width)).prefix(width)) }
+                endProse()
+                blocks.append(.table(header: header, alignments: alignments, rows: rows.map(fit)))
+            } else if let heading = trimmed.wholeMatch(of: #/#{1,6}\s+(.*?)\s*#*/#) {
+                endProse()
+                blocks.append(.heading(String(heading.1)))
+                index += 1
+            } else if trimmed.wholeMatch(of: #/([-*_])(\s*\1){2,}/#) != nil {
+                endProse()
+                blocks.append(.rule)
+                index += 1
+            } else if trimmed.hasPrefix(">") {
+                var quote: [String] = []
+                while index < lines.count, let rest = lines[index].trimmingCharacters(in: .whitespaces).wholeMatch(of: #/>\s?(.*)/#) {
+                    quote.append(String(rest.1))
+                    index += 1
+                }
+                endProse()
+                blocks.append(.quote(quote.joined(separator: "\n")))
+            } else if let item = line.wholeMatch(of: #/(\s*)([-*+]|\d{1,3}[.)])\s+(.*)/#) {
+                if !prose.isEmpty { endProse() }
+                let marker = item.2.first?.isNumber == true ? String(item.2) : "•"
+                list.append(ListItem(marker: marker, level: item.1.count / 2, text: String(item.3)))
+                index += 1
+            } else if !list.isEmpty, !trimmed.isEmpty, line.first?.isWhitespace == true {
+                // An item's own next line, indented under it.
+                let last = list.removeLast()
+                list.append(ListItem(marker: last.marker, level: last.level, text: last.text + "\n" + trimmed))
+                index += 1
+            } else {
+                if !list.isEmpty { endProse() }
+                prose.append(line)
+                index += 1
+            }
+        }
+        endProse()
+        if keep { blockCache[text] = blocks }
+        return blocks
+    }
+
+    /// A table's line of dashes (`|---|:--:|--:|`), read as each column's alignment; nil for any other line.
+    static func tableAlignments(_ line: String) -> [HorizontalAlignment]? {
+        let cells = tableCells(line)
+        guard line.contains("-"), !cells.isEmpty else { return nil }
+        var alignments: [HorizontalAlignment] = []
+        for cell in cells {
+            guard cell.wholeMatch(of: #/:?-+:?/#) != nil else { return nil }
+            alignments.append(cell.hasPrefix(":") && cell.hasSuffix(":") ? .center : cell.hasSuffix(":") ? .trailing : .leading)
+        }
+        return alignments
+    }
+
+    /// A table row's cells, without the pipes at its ends; `\|` is a pipe inside a cell.
+    static func tableCells(_ line: String) -> [String] {
+        var row = line.trimmingCharacters(in: .whitespaces)
+        if row.hasPrefix("|") { row.removeFirst() }
+        if row.hasSuffix("|"), !row.hasSuffix("\\|") { row.removeLast() }
+        var cells: [String] = []
+        var cell = ""
+        var escaped = false
+        for character in row {
+            if escaped { cell.append(character == "|" ? "|" : "\\\(character)"); escaped = false }
+            else if character == "\\" { escaped = true }
+            else if character == "|" { cells.append(cell); cell = "" }
+            else { cell.append(character) }
+        }
+        if escaped { cell.append("\\") }
+        cells.append(cell)
+        return cells.map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
     /// The line above a fix Lamp started on its own after the app crashed: the request it sent isn't shown, so this
