@@ -651,6 +651,9 @@ final class Store: ObservableObject {
         /// The app was built and opened by the last look, and this is how that launch went.
         var installed = false
         var crash: String?
+        /// A new app was shown to the person at this turn's first look that opened it: built in passes, it's watched
+        /// as it takes shape rather than seen only at the end (`present`).
+        var presented = false
     }
     private var artInProgress: Set<String> = []
     private var pendingIconArt: Set<String> = []     // artwork finished during a turn, to apply after it
@@ -6649,6 +6652,7 @@ final class Store: ObservableObject {
             try? await Task.sleep(for: .seconds(1))
             let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
             if let udid = simulatorApps[project.id]?.udid, await Simulator.screenshot(on: udid, to: picture) { screenshots = [picture] }
+            if turn.look.crash == nil { await present(project, in: turn) }
             // Which simulator: what it can show depends on it (a Dynamic Island is only on some iPhones).
             var on = ""
             if let udid = simulatorApps[project.id]?.udid, let name = await Simulator.name(of: udid) { on = " It's open on the \(name) simulator." }
@@ -6743,7 +6747,23 @@ final class Store: ObservableObject {
         if Privacy.sharesPictures, !screenshots.isEmpty, Self.binary(of: project, contains: Self.screenTextMarker),
            let words = await Runtime.screenText(of: project, since: since) { text += "\n\n" + words }
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
+        if !screenshots.isEmpty { await present(project, in: turn) }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
+    }
+
+    /// A new app is built in passes, and the first look that opens it shows it to the person, so they watch it take
+    /// shape instead of waiting for the end: a Mac app comes forward with its chat beside it (`MagicPanel.handOff`, which
+    /// otherwise happens once the turn is over), an iPhone app's simulator comes forward. Once a turn, after the agent's
+    /// pictures are taken, and only for the first turn of a new app: later turns change an app that's open already.
+    private func present(_ project: LampProject, in turn: Turn) async {
+        guard progress[project.id]?.newApp == true, !turn.look.presented, turns[project.id] === turn, !turn.stopped,
+              !turn.keptOpen else { return }
+        turn.look.presented = true
+        if project.onIOS {
+            if let udid = simulatorApps[project.id]?.udid { await Simulator.show(udid) }
+        } else {
+            Task { await MagicPanel.shared.handOff(project) }
+        }
     }
 
     /// For an app that declares what it opens (`opens` in capabilities.json): the command that hands this

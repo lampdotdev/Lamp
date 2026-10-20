@@ -89,8 +89,9 @@ final class MagicPanel {
 
     private static func handedOff(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/sidebar-handed-off") }
 
-    /// After the turn that first builds and opens a new app: its chat window closes and the app opens the chat
-    /// beside its content, so the rest of the making happens in the app itself. Once for each app: a chat the
+    /// At the agent's first look that opens a new app (`Store.present`), or after the turn that first builds and opens
+    /// it when there was none: its chat window closes and the app opens the chat beside its content, so the rest of the
+    /// making happens in the app itself. Once for each app: a chat the
     /// person opened in Lamp's window afterwards stays there.
     func handOff(_ project: LampProject) async {
         guard !FileManager.default.fileExists(atPath: Self.handedOff(project).path),
