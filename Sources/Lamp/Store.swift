@@ -6982,6 +6982,13 @@ final class Store: ObservableObject {
         in a sentence to press Reload to see it.
         """
 
+    /// What a look with `reopen` says while the app is open: the fresh launch waits for the person (`awaitReload`).
+    private static let reopenNote = """
+        A fresh launch closes the app, and while it's open that's the person's to do: the app and the chat now show \
+        them a Reload button, and Lamp doesn't reopen it for you. Don't look or use the app again in this request. \
+        Finish, and tell them in a sentence to press Reload to see it start from the beginning.
+        """
+
     /// What a look says when the person kept the earlier build open (`Turn.keptOpen`).
     private static let keptOpenNote = """
         The app built, but the person has the version from before open and chose to keep it open (it may hold \
@@ -7080,6 +7087,12 @@ final class Store: ObservableObject {
         // The copy on screen is an earlier build the person kept open: not shown as the agent's work, and not
         // asked to quit again at every look.
         if turn.keptOpen, isRunning(project) { return (200, ["text": Self.keptOpenNote]) }
+        // A fresh launch of an app someone is using is theirs to start, like any change that needs one: it waits for
+        // Reload (`awaitReload`). Not in a new app's first turn, where nobody is using it yet.
+        if reopen, isRunning(project), progress[project.id]?.newApp != true {
+            awaitReload(project, owner: turn)
+            return (200, ["text": Self.reopenNote])
+        }
         if Runtime.waitsForReload(project), isRunning(project), !reopen { return (200, ["text": Self.reloadNote]) }
         var since = Date()
         // A copy kept open in an earlier request is older than the build too: it's asked to quit, once.
@@ -7096,7 +7109,7 @@ final class Store: ObservableObject {
         }
         if screenshots.isEmpty {
             let launched = Date()
-            // A look with `reopen` asks for the fresh launch itself, so it doesn't wait for Reload.
+            // Here with `reopen` only when nobody is using the app (closed, or a new app's first turn): it opens fresh.
             let crash = await install(project, inFront: false, fresh: reopen, reload: reopen, early: true)
             if turn.keptOpen { return (200, ["text": Self.keptOpenNote]) }
             if Runtime.waitsForReload(project), isRunning(project) { return (200, ["text": Self.reloadNote]) }
