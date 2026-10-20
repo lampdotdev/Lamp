@@ -4831,6 +4831,16 @@ final class Store: ObservableObject {
         }
         AppTransition.land(project)
         watchAfterReload(project, app: app)
+        // The live library was made from the same sources as a build waiting for Reload, so that change is in too:
+        // nothing is held from the app any more (the app's Reload button and the chat's line go, and `use_app` is
+        // allowed again), and the agent hears it, since `reloadNote` told it to wait. Here, not at the install: a
+        // look's change goes in before its build (`reloadBeforeBuilding`), and the look would otherwise still find
+        // the wait and say to press Reload. The build still goes in when the app closes (`awaitInstall`).
+        if Runtime.waitsForReload(project) || Runtime.holdsBuild(project) {
+            Runtime.releaseBuild(project)
+            Self.tellReload(project, on: false)
+            turns[project.id]?.endedReloadWait = true
+        }
         LiveReload.awaitInstall(project)
         _ = heldInstalls.mayInstall(project.id, running: true)
         noteOpened(true, for: project)
@@ -4922,14 +4932,6 @@ final class Store: ObservableObject {
             owner?.updatedInPlace = true
             owner?.outcomes.append(.live)
             owner?.reloadWhy = nil
-            // The live library was made from the same sources as a build waiting for Reload, so that change is in
-            // too: the app's Reload button and the chat's line go, and the agent hears it (`reloadNote` told it to wait).
-            if Runtime.waitsForReload(project) {
-                Runtime.endReloadWait(project)
-                Self.tellReload(project, on: false)
-                owner?.endedReloadWait = true
-                refreshOpenApps()
-            }
             await DataSnapshots.wentIn(project)
             prepareIconMeanwhile(project)
             return nil
