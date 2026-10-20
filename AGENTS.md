@@ -331,7 +331,7 @@ are Mac apps that need no key or account, use the AI the person builds with when
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
 
 Starters not on the desk (never added, or deleted since; `Starters.missing`) are offered at its end as one dashed
-tile, More from Lamp (`MoreFromLamp`): up to four of their icons and how many there are, and a click lists them with
+tile, Starter wishes (`MoreFromLamp`): up to four of their icons and how many there are, and a click lists them with
 an Add each. Add puts that one back (`Store.put(starter:)`, through `Store.add(starter:)`, the one way a starter is put
 on the desk, which the first launch uses too), saved and built out of sight like the first launch's. The tile goes
 once every one is there.
