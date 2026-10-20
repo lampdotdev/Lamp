@@ -29,17 +29,20 @@ extension ChatLook {
         let explanation: Explanation?
         /// What the person asked for in the request this step is part of, in their words: what it's weighed against.
         let request: String?
+        /// Why Lamp is asking rather than letting the step run.
+        let whyAsked: String?
         let onAllow: () -> Void
         let onAllowAll: () -> Void
         let onDeny: () -> Void
         @State private var helping = false
 
-        public init(title: String, command: String, explanation: Explanation?, request: String? = nil,
+        public init(title: String, command: String, explanation: Explanation?, request: String? = nil, whyAsked: String? = nil,
                     onAllow: @escaping () -> Void, onAllowAll: @escaping () -> Void, onDeny: @escaping () -> Void) {
             self.title = title
             self.command = command
             self.explanation = explanation
             self.request = request
+            self.whyAsked = whyAsked
             self.onAllow = onAllow
             self.onAllowAll = onAllowAll
             self.onDeny = onDeny
@@ -139,7 +142,7 @@ extension ChatLook {
             .foregroundStyle(.secondary)
             .fixedSize()
             .popover(isPresented: $helping, arrowEdge: .top) {
-                ApprovalHelp(command: command, explanation: explanation, request: request,
+                ApprovalHelp(command: command, explanation: explanation, request: request, whyAsked: whyAsked,
                              onAllowAll: { helping = false; onAllowAll() })
             }
         }
@@ -152,11 +155,13 @@ extension ChatLook {
         let command: String
         let explanation: Explanation?
         let request: String?
+        let whyAsked: String?
         let onAllowAll: () -> Void
 
-        public init(command: String, explanation: Explanation?, request: String?, onAllowAll: @escaping () -> Void) {
+        public init(command: String, explanation: Explanation?, request: String?, whyAsked: String?, onAllowAll: @escaping () -> Void) {
             self.command = command
             self.explanation = explanation
+            self.whyAsked = whyAsked
             self.request = request.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
             self.onAllowAll = onAllowAll
         }
@@ -188,9 +193,10 @@ extension ChatLook {
                         Text(explanation.why.isEmpty ? explanation.summary : explanation.why)
                     }
                 }
+                // Said by Lamp, which knows why it asked: a check, the setting, a file outside the app. The rating
+                // can't say it, since a low-risk step is asked about too when the setting asks about every command.
                 section("Why you're asked") {
-                    Text("The agent works on this app by itself, and stops for your OK only when a step could reach past it.")
-                    Text(rated ? "Lamp's check found that this one could." : "Lamp couldn't tell what this step could reach, so the choice is yours.")
+                    Text(whyAsked ?? "Lamp stops the agent for your OK before a step it won't take on its own.")
                 }
                 section("How to decide") {
                     if let request {

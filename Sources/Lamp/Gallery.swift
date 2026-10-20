@@ -169,20 +169,28 @@ enum Gallery {
     /// the turn that asked, over the message box.
     private static let approvalEntries: [Entry] = [
         approval("Working out what it does", command: download, explanation: nil),
-        approval("Low risk", command: "rm -rf build && swift build", explanation: rebuilds),
+        approval("Low risk", command: "rm -rf build && swift build", explanation: rebuilds, why: settingAsks),
         approval("Medium risk", command: download, explanation: downloads),
         approval("High risk", command: upload, explanation: uploads),
-        approval("Couldn't tell what it does", command: hidden, explanation: unknown),
+        approval("Couldn't tell what it does", command: hidden, explanation: unknown, why: unsure),
         approval("A file outside the app", command: "read ~/Documents/Garden/watering.csv", title: "The agent wants a file outside this app's folder",
                  explanation: .init(summary: "Read ~/Documents/Garden/watering.csv", risk: "medium",
-                                    why: "It's outside this app's folder, and what's read goes to the AI model.")),
+                                    why: "It's outside this app's folder, and what's read goes to the AI model."),
+                 why: Store.whyAsked(file: true, flagged: nil)),
         howToDecide("How to Decide, medium risk", command: download, explanation: downloads),
         howToDecide("How to Decide, high risk", command: upload, explanation: uploads),
-        howToDecide("How to Decide, couldn't tell", command: hidden, explanation: unknown),
+        howToDecide("How to Decide, couldn't tell", command: hidden, explanation: unknown, why: unsure),
+        howToDecide("How to Decide, asked by the setting", command: "rm -rf build && swift build", explanation: rebuilds, why: settingAsks),
         howToDecide("How to Decide, a long command",
                     command: (1...14).map { "brew install --quiet tool-number-\($0) && echo installed \($0)" }.joined(separator: " && "),
                     explanation: .init(summary: "Installs fourteen command-line tools for the whole Mac.", risk: "medium", why: reaches)),
     ]
+
+    /// Why Lamp asked, as `Store.whyAsked` says it: a check flagged the step, the checks couldn't be sure of it, or
+    /// "Ask before running commands" is set to ask about every command.
+    private static let flaggedAsk = Store.whyAsked(file: false, flagged: .reachesBeyond, always: false)
+    private static let unsure = Store.whyAsked(file: false, flagged: nil, always: false)
+    private static let settingAsks = Store.whyAsked(file: false, flagged: nil, always: true)
 
     private static let reaches = "It reaches beyond this app: other apps, the Mac's software, or something published."
     private static let download = "curl -L -o Data/trails.geojson https://example.org/hiking/trails.geojson"
@@ -196,9 +204,9 @@ enum Gallery {
     private static let unknown = ChatLook.Explanation(summary: "Lamp couldn't work out what this does.", risk: "", why: "")
 
     /// The popover's content as it opens from the card, drawn on a popover's ground: the gallery can't open one by itself.
-    private static func howToDecide(_ name: String, command: String, explanation: ChatLook.Explanation) -> Entry {
+    private static func howToDecide(_ name: String, command: String, explanation: ChatLook.Explanation, why: String = flaggedAsk) -> Entry {
         Entry(group: "Approval", name: name) {
-            AnyView(ChatLook.ApprovalHelp(command: command, explanation: explanation, request: trailsRequest, onAllowAll: {})
+            AnyView(ChatLook.ApprovalHelp(command: command, explanation: explanation, request: trailsRequest, whyAsked: why, onAllowAll: {})
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
@@ -209,7 +217,7 @@ enum Gallery {
     private static let trailsRequest = "Show the hiking trails near me on the map"
 
     private static func approval(_ name: String, command: String, title: String = "Can the agent do this?",
-                                 explanation: ChatLook.Explanation?) -> Entry {
+                                 explanation: ChatLook.Explanation?, why: String = flaggedAsk) -> Entry {
         Entry(group: "Approval", name: name) {
             AnyView(VStack(alignment: .leading, spacing: 0) {
                 Transcript(lines: [LogLine(kind: .user, text: trailsRequest),
@@ -217,7 +225,7 @@ enum Gallery {
                                    LogLine(kind: .tool, text: "Read Sources/MapView.swift")],
                            dir: URL(fileURLWithPath: "/nonexistent"), busy: true, progressShown: true)
                 ChatLook.ActivityLine("Waiting for your OK", started: .now.addingTimeInterval(-12)).padding(.top, 12)
-                ChatLook.ApprovalCard(title: title, command: command, explanation: explanation, request: trailsRequest,
+                ChatLook.ApprovalCard(title: title, command: command, explanation: explanation, request: trailsRequest, whyAsked: why,
                                       onAllow: {}, onAllowAll: {}, onDeny: {})
                     .padding(.top, 12)
                 ChatLook.MessageBar(busy: true, canSend: false, attachHelp: "", attach: {}, send: {}, stop: {}, focus: {}) {

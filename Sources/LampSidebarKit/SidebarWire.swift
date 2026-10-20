@@ -311,13 +311,17 @@ public struct SidebarApproval: Codable, Equatable {
     public var explanation: ChatLook.Explanation?
     /// What the person asked for in this turn, to weigh the step against.
     public var request: String?
+    /// Why Lamp is asking, in plain words.
+    public var whyAsked: String?
 
-    public init(id: UUID, title: String, command: String, explanation: ChatLook.Explanation?, request: String? = nil) {
+    public init(id: UUID, title: String, command: String, explanation: ChatLook.Explanation?, request: String? = nil,
+                whyAsked: String? = nil) {
         self.id = id
         self.title = title
         self.command = command
         self.explanation = explanation
         self.request = request
+        self.whyAsked = whyAsked
     }
 }
 

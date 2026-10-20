@@ -423,6 +423,8 @@ final class Store: ObservableObject {
         var explanation: CommandExplanation?
         /// What the person asked for in this turn, which the card puts beside the step to weigh it against.
         var request: String?
+        /// Why Lamp is asking rather than letting the step run, in the person's words (`Store.whyAsked`).
+        var whyAsked: String?
     }
 
     /// What a command does and how risky it is, in plain words for people who don't read shell commands.
@@ -3238,6 +3240,7 @@ final class Store: ObservableObject {
                                           explanation: given?.raised(for: flagged) ?? (asked ? .unexplained(flagged: flagged) : nil))
             if let title { pending.title = title }
             pending.request = turn.request
+            pending.whyAsked = Self.whyAsked(file: title != nil, flagged: flagged)
             pending.said = said
             approvals[project.id] = pending
             // Explain it while the card is up; until this arrives the card says it's working it out.
@@ -3266,6 +3269,20 @@ final class Store: ObservableObject {
             Task { @MainActor in first.give(await task.value) }
             Task { @MainActor in try? await Task.sleep(for: limit); first.give(nil) }
         }
+    }
+
+    /// Why the card is up, for How to Decide: a file outside the app, a check that flagged the step, the setting that
+    /// asks about every command, or a step the checks couldn't be sure stays inside the app. Each is said as it is,
+    /// so a low-risk command asked about because of the setting isn't described as reaching past the app.
+    nonisolated static func whyAsked(file: Bool, flagged: CommandRisk.Reason?, always: Bool = CommandApproval.current == .always) -> String {
+        if file { return "The agent works inside this app's folder by itself. A file outside it is yours to share or not." }
+        if flagged != nil {
+            return "The agent works on this app by itself, and stops for your OK when a step could reach past it. Lamp's check found that this one could."
+        }
+        if always {
+            return "You chose to be asked before every command the agent runs. You can change that in Settings → Building."
+        }
+        return "The agent works on this app by itself, and stops for your OK when Lamp can't be sure a step stays inside it. This is one of those."
     }
 
     func answerApproval(for project: LampProject, allow: Bool, allowAll: Bool = false) {

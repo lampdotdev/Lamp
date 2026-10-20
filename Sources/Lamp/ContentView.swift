@@ -611,7 +611,7 @@ struct ProjectView: View {
             chat(lines)
             if let approval = store.approvals[project.id] {
                 ChatLook.ApprovalCard(title: approval.title, command: approval.command, explanation: approval.explanation?.look,
-                             request: approval.request,
+                             request: approval.request, whyAsked: approval.whyAsked,
                              onAllow: { store.answerApproval(for: project, allow: true) },
                              onAllowAll: { store.answerApproval(for: project, allow: true, allowAll: true) },
                              onDeny: { store.answerApproval(for: project, allow: false) })
