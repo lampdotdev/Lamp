@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added A.Item.z, B.Item.z)
+== run
+before: x=1 | y=2
+RELOAD 1: ok
+after1 (want x=1 z=5 | y=2 z="q"): x=1 z=5 | y=2 z="q"

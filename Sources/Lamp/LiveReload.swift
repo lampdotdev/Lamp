@@ -208,7 +208,7 @@ enum LiveReload {
     /// tab, and its parts tab-separated.
     enum Group: String {
         case launch = "\u{1}launch", constant = "\u{2}constant", alias = "\u{3}alias", declared = "\u{5}declared"
-        case opaque = "\u{6}opaque", place = "\u{7}place", inits = "\u{8}inits", shape = "\u{e}shape"
+        case opaque = "\u{6}opaque", place = "\u{7}place", inits = "\u{8}inits", shape = "\u{e}shape", stored = "\u{10}stored"
         func entry(_ parts: String...) -> String { ([rawValue] + parts).joined(separator: "\t") }
         /// The entry's parts when it's of this group, else nil.
         func parts(of entry: String) -> [String]? {
@@ -225,7 +225,7 @@ enum LiveReload {
             guard let parts = parts(of: entry), let first = parts.first else { return nil }
             switch self {
             case .alias: return first.components(separatedBy: " = ").first
-            case .constant: return String(parts.joined(separator: "\t").prefix { $0 != ":" })
+            case .constant, .stored: return String(parts.joined(separator: "\t").prefix { $0 != ":" })
             case .inits: return first.hasSuffix(".final") ? String(first.dropLast(6)) : first.range(of: ".init").map { String(first[..<$0.lowerBound]) }
             case .place: return parts.joined(separator: "\t")
             case .opaque, .shape: return first
@@ -240,6 +240,9 @@ enum LiveReload {
     static func byType(_ entries: [String]) -> [String: [String]] {
         Dictionary(grouping: entries, by: { String($0.prefix { $0 != "\t" }) })
     }
+
+    /// A type's name and its qualified parts (`Outer.Mood`), wherever a type is read for the names in it.
+    static let identifierWords = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
 
     static let aliasGroup = Group.alias.rawValue, declarationGroup = Group.declared.rawValue, opaqueGroup = Group.opaque.rawValue
     static let placeGroup = Group.place.rawValue, initsGroup = Group.inits.rawValue, shapeGroup = Group.shape.rawValue
@@ -285,6 +288,20 @@ enum LiveReload {
             guard let is_ = shapes(now)[name], is_ != was else { continue }
             if name.hasPrefix("protocol ") { return ("the protocol \(name.dropFirst(9))'s requirements changed in kind (\(was) to \(is_)), and the open app's witness tables were laid out for what they were", nil) }
             return ("\(name) is \(described(is_)) now, where the open app's is \(described(was))", nil)
+        }
+        // A stored static or global `var` is made once, by the open app, the first time it's read, and kept: a new
+        // starting value can't show without reopening, and whether it seems to depends on whether it was read.
+        func startingValues(_ entries: [String]) -> [String: String] {
+            Dictionary(Group.stored.parts(in: entries).compactMap { parts -> (String, String)? in
+                let field = parts.joined(separator: "\t")
+                guard let colon = field.range(of: ": ", options: .backwards) else { return nil }
+                return (String(field[..<colon.lowerBound]), String(field[colon.upperBound...]))
+            }, uniquingKeysWith: { first, _ in first })
+        }
+        for (key, was) in startingValues(before).sorted(by: { $0.key < $1.key }) {
+            guard let is_ = startingValues(now)[key], is_ != was else { continue }
+            let name = key.hasPrefix("\t") ? String(key.dropFirst()) : key.replacingOccurrences(of: "\t", with: ".")
+            return ("the starting value of \(name) changed, and the open app made it once and keeps it", nil)
         }
         // A private type's name carries its file: moved to another, it's a new type to the runtime, so a value the
         // open app made is no longer one (`as? Helper` fails) though its layout is the same.
@@ -408,7 +425,8 @@ enum LiveReload {
         }
         // What the spares keep (properties added while the app was open), by type, name and kind: a spare holds its
         // value as any value, under the metadata the app's code had when it was set.
-        let inSpares = spares.flatMap { type, properties in properties.map { (type, $0.key, $0.value.type) } }.sorted { ($0.0, $0.1) < ($1.0, $1.1) }
+        // Not a retired place: nothing reads what it holds.
+        let inSpares = spares.flatMap { type, properties in properties.filter { $0.value.retired != true }.map { (type, $0.key, $0.value.type) } }.sorted { ($0.0, $0.1) < ($1.0, $1.1) }
         // A value of the enum could hide in what holds anything at all, where its type can't be seen: a value of
         // any type, or of any type conforming to a protocol the enum conforms to.
         let conformed = conformances(inLayout: entries)
@@ -433,7 +451,7 @@ enum LiveReload {
             let parts = entry.split(separator: "\t", maxSplits: 1)
             return parts.count == 2 && (parts[1].hasPrefix("__lampSpare_") || parts[1].hasPrefix("__lampState_")) ? String(parts[0]) : nil
         })
-        let word = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
+        let word = LiveReload.identifierWords
         func last(_ name: String) -> String { String(name.split(separator: ".").last ?? "") }
         // A kind as a field prints it may name a typealias (`Choice`, for `Picky?`): each is written out as what it
         // names, wrappers and all, until none is left, so what holds the enum is judged by the type itself. A name
@@ -576,7 +594,7 @@ enum LiveReload {
         // since the arguments (a closure among them) are the call's children, beside the function, not under it.
         private let callee = try! NSRegularExpression(pattern: #"^(\s*)\(declref_expr\b.*? decl="([\w.]+?)\.\(file\)"#)
         private let typeOf = try! NSRegularExpression(pattern: #" type="([^"]*)""#)
-        private let word = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
+        private let word = LiveReload.identifierWords
         private let casePattern = try! NSRegularExpression(pattern: #"^(\s*)\(pattern_enum_element\b.*? type="([^"]*)""#)
         private let interpolation = try! NSRegularExpression(pattern: #"^(\s*)\(declref_expr\b.*? type="[^"]*\(([^"()]*)\) -> \(\)".*? decl="Swift\.\(file\)\.DefaultStringInterpolation\.appendInterpolation"#)
         private var scopes: [(indent: Int, kind: Kind)] = [], uses: [String] = [], seen = Set<String>()
@@ -686,7 +704,7 @@ enum LiveReload {
             guard !isGroup(entry), let tab = entry.firstIndex(of: "\t") else { return nil }
             return String(entry[..<tab])
         })
-        let word = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
+        let word = LiveReload.identifierWords
         func last(_ name: String) -> String { String(name.split(separator: ".").last ?? "") }
         // A field's type may be a typealias of one: followed to what it names.
         func resolved(_ name: String) -> String {
@@ -781,7 +799,7 @@ enum LiveReload {
         let own = reach(Array(conformances.of[type] ?? []))
         // Whether a type of the app's could hold anything: a field whose type names something that isn't one of the
         // app's types or a plain value, looked through the app's types it's made of.
-        let names = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
+        let names = LiveReload.identifierWords
         func mayWrap(_ type: String, _ seen: inout Set<String>) -> Bool {
             guard seen.insert(type).inserted else { return false }
             return (conformances.fields[type] ?? []).contains { mayWrap(kind: $0, &seen) }
@@ -1046,12 +1064,10 @@ enum LiveReload {
         // A member returning `some …`: the type it builds, which the compiler prints where the body's value becomes
         // the opaque one; when that is itself opaque (a modifier's `some View`), what the body builds from instead.
         private let opaqueMember = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|var_decl)\b(?! implicit)[^"]*"([^"]+)" interface_type="([^"]*some [^"]*)" access=(\w+)"#)
-        private let attribute = try! NSRegularExpression(pattern: #" (?:decl|type)="([^"]*)""#)
+        private let declAttribute = try! NSRegularExpression(pattern: #" decl="([^"]*)""#)
         private let typeOf = try! NSRegularExpression(pattern: #" type="([^"]*)""#)
         // The place is a path (which may hold spaces, as the apps folder does), a line and a column.
         private let place = try! NSRegularExpression(pattern: #"@[^"]*?\.swift:\d+:\d+"#)
-        // A literal's value, or an argument left to its default, changes no type: left out of the digest.
-        private let valueOnly = try! NSRegularExpression(pattern: #"^\s*\((?:\w+_literal_expr|default_argument_expr)\b"#)
         private let inherits = try! NSRegularExpression(pattern: #" inherits="([^"]*)""#)
         // A type's shape (`shapeGroup`): `indirect` is the node right under an enum, as `@objc` is, which the line
         // says too; a stored reference's `weak` or `unowned` is the node right under its property, and changes what
@@ -1078,6 +1094,9 @@ enum LiveReload {
         // The `some`-returning member being read, what its body names so far, the type it builds once found, the
         // indent of a conversion to the opaque type whose child names that type, and of a declaration inside it.
         private var opaque: (indent: Int, key: String, names: [String], builds: String?, converting: Int?, inner: Int?)?
+        // A class whose first inherited name may be a superclass or a protocol, until its initializers say: one of
+        // them overriding (`override=`, the compiler's own inherited ones included) or a `super` call means a superclass.
+        private var superPending: (indent: Int, key: String, index: Int, name: String)?
 
         private func add(_ entry: String) { if seen.insert(entry).inserted { out.append(entry) } }
         private func closeOpaque() {
@@ -1090,6 +1109,16 @@ enum LiveReload {
 
         func take(_ line: SwiftSource.Walk.Line) {
             let indent = line.indent, opens = line.opens
+            if let pending = superPending {
+                if indent <= pending.indent {
+                    superPending = nil
+                } else if (opens("constructor_decl") && indent == pending.indent + 2 && line.has(" override=\""))
+                            || (opens("super_ref_expr") && line.scopes.last(where: { if case .type = $0.scope { return true } else { return false } })
+                                .map { if case .type(let t) = $0.scope { return t.key == pending.key } else { return false } } == true) {
+                    out[pending.index] += " : " + pending.name
+                    superPending = nil
+                }
+            }
             if let open = opaque {
                 if indent > open.indent {
                     if let within = open.inner, indent <= within { opaque?.inner = nil }
@@ -1106,9 +1135,12 @@ enum LiveReload {
                     } else if opens("func_decl", "var_decl", "subscript_decl", "struct_decl", "class_decl", "enum_decl", "actor_decl") {
                         opaque?.inner = indent
                     }
-                    if !(line.node.names("_literal_expr") || opens("default_argument_expr")) || valueOnly.firstMatch(in: line.text, range: line.range) == nil,
-                       line.has("decl=\"") || line.has("type=\"") {
-                        for m in attribute.matches(in: line.text, range: line.range) {
+                    // What the opaque type is made of: each call whose result is opaque, with the types it was given
+                    // (`padding [with … Self -> Text]`), which together are the type the member returns. A call whose
+                    // result is a plain type (`.bold()` on a Text, a literal, a closure's work) changes nothing of it.
+                    if line.has(" decl=\""), line.has("some "), let t = typeOf.firstMatch(in: line.text, range: line.range),
+                       line.text[Range(t.range(at: 1), in: line.text)!].contains("some ") {
+                        for m in declAttribute.matches(in: line.text, range: line.range) {
                             // A declaration of the app's is named with where it is, which differs between the copy
                             // the app runs and the new one, and moves with any edit above it.
                             let value = String(line.text[Range(m.range(at: 1), in: line.text)!])
@@ -1194,11 +1226,20 @@ enum LiveReload {
                 add(type.key + "\t")
                 // A generic type's parameters are named too (`generic<T>`): a field's type naming one is no alias.
                 var shape = type.kind + (line.has(" @objc ") ? " @objc" : "") + (type.isGeneric ? " generic" + (type.parameters.map { "<" + $0 + ">" } ?? "") : "")
-                if type.kind == "class", let inherited = type.inherits, let above = names.superclass(of: inherited) { shape += " : " + above }
+                // One of the app's own classes is a superclass, one of its protocols isn't; anything else is decided
+                // by the class's initializers (`superPending`), since a system protocol and a system class can't be
+                // told apart by name.
+                var undecided: String?
+                if type.kind == "class", let inherited = type.inherits,
+                   let first = inherited.split(separator: ",").first?.trimmingCharacters(in: .whitespaces), !first.isEmpty {
+                    let simple = String(first.prefix { $0 != "<" }.split(separator: ".").last ?? "")
+                    if names.classes.contains(simple) { shape += " : " + first } else if !names.protocols.contains(simple) { undecided = first }
+                }
                 let entry = shapeGroup + "\t" + type.key + "\t" + shape
                 if seen.insert(entry).inserted {
                     out.append(entry)
                     if type.kind == "enum" { shapePending = (indent, out.count - 1) }
+                    if let undecided { superPending = (indent, type.key, out.count - 1, undecided) }
                 }
                 // A private type is known by its file too (`placeGroup`, by its bare name): moved, it's another type.
                 if type.isPrivate, let file = type.file { add(placeGroup + "\t" + bare(type.key) + "\t" + file) }
@@ -1390,6 +1431,7 @@ enum LiveReload {
                 said.append("Gave \(fitted.constants.joined(separator: ", ")) \(fitted.constants.count == 1 ? "its" : "their") new value")
             }
         } else if !constants.isEmpty, check.problem == nil {
+            if case .refused(let why?) = fitting { return .reopen(why: why) }
             return .reopen(why: "a constant's new value can't be given in place")
         }
         // The layout's reason, and when the spares had one of their own for not taking the change, that too.
@@ -1427,6 +1469,11 @@ enum LiveReload {
             (library, problem) = await compile(project, changed: changed, keep: keep)
         }
         guard let layout = check.layout, library != nil || changed.isEmpty else {
+            // A view's state moved into its box is no parameter of the view's initializer any more, and can't be one: a
+            // value given that way is lost, since SwiftUI makes the box after the initializer has run. Said plainly.
+            if let plan, let problem, let given = plan.slots.flatMap({ type, slots in slots.filter { $0.value.holder == .view && problem.contains("extra argument '\($0.key)'") }.map { "\(type).\($0.key)" } }).sorted().first {
+                return .reopen(why: "\(given) is @State the view's initializer is given, and a property kept in a spare can't take a value that way")
+            }
             return .reopen(why: "the change didn't compile on its own.\n\(problem ?? "")")
         }
         // A SwiftData model's file compiled into the change for any reason (every file is, when what's declared
@@ -1845,10 +1892,13 @@ enum LiveSlots {
                     guard unwrap("State") || unwrap("LazyState", underscores: 2) else { return .refused("\(type).\(name) isn't @State, and a view's spare keeps state") }
                 }
                 // A property an explicit CodingKeys names has to be stored for Codable to be made: it stays a field.
-                if cases[type + ".CodingKeys"]?.contains(name) == true { return .refused("\(type).\(name) is named in its CodingKeys, so Codable needs it stored") }
+                if cases[type + ".CodingKeys"]?.contains(name) == true { return .refused("\(type).\(name) is one of \(type)'s coding keys, so Codable needs it stored") }
                 // What a computed property kept in a spare can't do: observers, `lazy`, a weak or unowned reference,
                 // or being set in an initializer the type writes, before the stored properties are all set.
                 guard let variable = declarations.variables[type + "\t" + name] else { return .refused(nil) }
+                // A struct or view declared inside a function can't be extended, and a property moved out of one takes its
+                // initializer's argument with it, which only an extension could give back.
+                if holder != .object, type.contains("().") { return .refused("\(LiveReload.bare(type)) is declared inside a function, where Lamp can't give it back the initializer a property kept in a spare leaves") }
                 if variable.special { return .refused("\(type).\(name) has observers, is lazy, or is a weak or unowned reference, which a property kept in a spare can't be") }
                 if declarations.assigned.contains(type + "\t" + name) { return .refused("\(type).\(name) is set in \(type)'s own initializer, where a property kept in a spare can't be set") }
                 // A spare is observed: a property marked ignored changes while views draw, and observed would redraw them again.
@@ -1862,7 +1912,7 @@ enum LiveSlots {
                 let initial = initialText(of: variable, in: declarations) ?? (optional ? "nil" : nil)
                 guard let initial else { return .refused("\(type).\(name) has no starting value, which a property kept in a spare needs") }
                 if holder == .view, declarations.lets.contains(type + "\t" + name) { return .refused("\(type).\(name) is a let, and a view's spare keeps state") }
-                if holder == .value, !isSteady(initial, type: kind, cases: cases) {
+                if holder == .value, !isSteady(initial, type: kind, cases: cases, literal: isLiteral(variable, in: declarations)) {
                     return .refused("\(type).\(name) starts as \(initial), which may differ from one value to the next; a struct's property kept in a spare starts from a literal, an empty collection or one of the app's enum's cases")
                 }
                 moved.insert(extra)
@@ -1912,6 +1962,9 @@ enum LiveSlots {
         let bareLayout = LiveReload.byType(LiveReload.bared(after))
         for key in constants {
             guard let variable = declarations.constants[key] else { return .refused(nil) }
+            guard declarations.bindings[variable.binding].entries.count == 1 else {
+                return .refused("\(displayName(key)) is declared in one list with others, and Lamp gives a constant its new value only on a line of its own")
+            }
             byFile[variable.position.file, default: []].append((variable.binding, [], key))
         }
         let initializers = memberwiseInitializers(for: planned.filter { $0.slot.holder == .value }.map { ($0.type, $0.name) },
@@ -1986,7 +2039,8 @@ enum LiveSlots {
             func initial(_ label: String) -> String? {
                 declarations.variables[type + "\t" + label].flatMap { initialText(of: $0, in: declarations) }
             }
-            for made in declarations.memberwise[type] ?? [] {
+            // A private one too: these go in the type's own file, which can call it.
+            for made in (declarations.memberwise[type] ?? []) + (declarations.privateMemberwise[type] ?? []) {
                 // Swift's own, told apart from these by the spare's argument, which only it takes.
                 let kept = made.labels.filter { !names.contains($0) }.compactMap { label -> String? in
                     guard label.hasPrefix("__lamp") else { return "\(label): \(label)" }
@@ -2003,9 +2057,7 @@ enum LiveSlots {
                         !label.hasPrefix("__lamp") && (!names.contains(label) || label == first || later.contains(label))
                     }
                     guard !declared.contains(where: { $0.labels == taken.map(\.0) && $0.types == taken.map(\.1) }) else { continue }
-                    let params = zip(made.labels, made.types).filter { label, _ in
-                        !label.hasPrefix("__lamp") && (!names.contains(label) || label == first || later.contains(label))
-                    }.map { label, kind in
+                    let params = taken.map { label, kind in
                         var param = "\(label): \(kind)"
                         if label != first {
                             if let value = initial(label) { param += " = " + value } else if kind.hasSuffix("?") { param += " = nil" }
@@ -2092,7 +2144,7 @@ enum LiveSlots {
     /// (an object of Lamp's building blocks, `LampAPI`, or of the system's). Made again, such an object would be a
     /// second one beside the one the open app already holds, and what's done to one wouldn't reach the other.
     static func holdsObject(_ type: String, classes: Set<String>, layout: [String: [String]], seen: inout Set<String>) -> Bool {
-        let names = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
+        let names = LiveReload.identifierWords
         for match in names.matches(in: type, range: NSRange(type.startIndex..., in: type)) {
             let range = Range(match.range, in: type)!
             // A tuple's or a case's label (`(width: Int, height: Int)`) names an element, not a type: it comes just
@@ -2190,7 +2242,9 @@ enum LiveSlots {
             }
             guard !variable.special, let made = computed(variable, item: item, keyword: keyword, declarations: declarations, cases: cases) else { return nil }
             if item.published == false, item.slot.holder ?? .object == .object, attributes.contains(where: { $0.name == "Published" }) { return nil }
-            lines += made.map { (plainPrefix.isEmpty ? "" : plainPrefix + " ") + $0 }
+            // A `final` the property was written with is the computed one's already.
+            let prefix = made.first?.hasPrefix("final ") == true ? plainPrefix.split(separator: " ").filter { $0 != "final" }.joined(separator: " ") : plainPrefix
+            lines += made.map { (prefix.isEmpty ? "" : prefix + " ") + $0 }
         }
         let kept = stays.isEmpty ? [] : [prefix + keyword + " " + stays.joined(separator: ", ")]
         return (first..<end, (kept + lines).joined(separator: "\n" + indent))
@@ -2211,12 +2265,15 @@ enum LiveSlots {
         switch item.slot.holder ?? .object {
         case .object:
             let place = place(item.slot.index, in: type)
-            let first = !isLiteral(initial) ? "let v: \(declared) = \(initial); \(place) = LampSpare(v); return v" : "return \(initial)"
+            let literal = isLiteral(initial) || isLiteral(variable, in: declarations)
+            let first = !literal ? "let v: \(declared) = \(initial); \(place) = LampSpare(v); return v" : "return \(initial)"
             let getter = "get { if let p = \(place) { \(read("p.value")) }; \(first) }"
             let setter = isLet ? "" : " set { \(place) = LampSpare(newValue) }"
-            return ["var \(name): \(declared) { \(getter)\(setter) }"]
+            // Final, so it's in no method table: a class something subclasses keeps the table the open app laid out.
+            return ["final var \(name): \(declared) { \(getter)\(setter) }"]
         case .value:
-            guard isSteady(initial, type: declared, cases: item.isNew ? cases : [enumName(item.slot.type): Set(item.slot.cases ?? [])]) else { return nil }
+            guard isSteady(initial, type: declared, cases: item.isNew ? cases : [enumName(item.slot.type): Set(item.slot.cases ?? [])],
+                           literal: isLiteral(variable, in: declarations)) else { return nil }
             if let taken = item.slot.initial, taken != initial { return nil }
             let place = place(in: type, holder: .value)
             let getter = "get { if \(place).has(\"\(key)\") { \(read("\(place).field(\"\(key)\")")) }; return \(initial) }"
@@ -2249,6 +2306,11 @@ enum LiveSlots {
 
     /// A starting value that's the same every time it's worked out: answered as it is until something is set.
     /// Anything else (`.now`, a call, another property) is worked out once and kept, as a stored property would be.
+    /// Whether a property's starting value is a literal by the compiler's word, however it's spelt.
+    private static func isLiteral(_ variable: SwiftSource.Variable, in declarations: SwiftSource.Declarations) -> Bool {
+        declarations.bindings[variable.binding].entries.first { $0.name == variable.name }?.literal == true
+    }
+
     private static func isLiteral(_ value: String) -> Bool {
         value.range(of: #"^(-?[0-9][0-9_.eE+-]*|true|false|nil|\[\]|\[:\]|"[^"\\]*")$"#, options: .regularExpression) != nil
     }
@@ -2257,8 +2319,8 @@ enum LiveSlots {
     /// starting value must come out the same every time: a literal, an empty collection (`[Item]()`), or one of
     /// the app's own enum's cases (`.sedan`, by the enum's cases in `cases`). Nothing judged by its spelling alone:
     /// `Session()` may make something new each time, and `.shared` or `.now` may be worked out on each read.
-    private static func isSteady(_ value: String, type: String, cases: [String: Set<String>]) -> Bool {
-        if isLiteral(value) || value.range(of: #"^(?:\[[\w.<>, :?]+\]|(?:Set|Dictionary|Array|String)(?:<[\w.<>, :?\[\]]+>)?)\(\)$"#, options: .regularExpression) != nil { return true }
+    private static func isSteady(_ value: String, type: String, cases: [String: Set<String>], literal: Bool) -> Bool {
+        if literal || isLiteral(value) || value.range(of: #"^(?:\[[\w.<>, :?]+\]|(?:Set|Dictionary|Array|String)(?:<[\w.<>, :?\[\]]+>)?)\(\)$"#, options: .regularExpression) != nil { return true }
         let enumName = enumName(type)
         let parts = value.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count == 2, parts[0].isEmpty || parts[0] == Substring(enumName) else { return false }

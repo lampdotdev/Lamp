@@ -1,8 +1,5 @@
-VERDICT 1: REOPEN (Framed.body(content:): (Framed) -> (Framed.Content) -> some View returns another kind of value now (some …), which what the open app made can't take)
+VERDICT 1: RELOAD
 == run
 before: ModifiedContent<Text, _PaddingLayout>
-RELOAD 1: REOPEN Framed.body(content:): (Framed) -> (Framed.Content) -> some View returns another kind of value now (some …), which what the open app made can't take
-after: ModifiedContent<Text, _PaddingLayout>
-before: ModifiedContent<Text, _PaddingLayout>
-RELOAD 1: in the restart
+RELOAD 1: ok
 after: ModifiedContent<Text, _PaddingLayout>

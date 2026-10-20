@@ -24,6 +24,9 @@ enum SwiftSource {
         var name: String
         /// The start and last token of its starting value, when it has one.
         var initial: (start: Position, last: Position)?
+        /// Whether that value is a literal by the compiler's word (a string, a number, a Bool, nil), however it's
+        /// spelt (`"a\nb"`, `0xFF`, `-1.5e3`): the same every time it's made.
+        var literal = false
     }
 
     /// A property as declared in the source, by "Type<tab>name".
@@ -44,11 +47,17 @@ enum SwiftSource {
         var variables: [String: Variable] = [:]
         /// Static and global `let`s, by "Type<tab>name" ("<tab>name" for a global).
         var constants: [String: Variable] = [:]
+        /// Stored static and global `var`s with a starting value, keyed the same: the open app made each once and keeps
+        /// it, so a new starting value can't show without reopening.
+        var stored: [String: Variable] = [:]
         /// The app's own classes, whose objects a constant may hold.
         var classes: Set<String> = []
         /// Each type's memberwise initializers that the compiler made itself and code outside the type can call: their
         /// labels and parameter types in order (`init(a:c:)`, `[Int, [Int]?]`). What a struct's code calls to make one.
         var memberwise: [String: [(labels: [String], types: [String])]] = [:]
+        /// The same for a memberwise initializer that's private to the type's file (a private stored property makes it
+        /// so): an extension in that file can call it, one in another can't.
+        var privateMemberwise: [String: [(labels: [String], types: [String])]] = [:]
         /// Each type's initializers written in its code, its extensions' included: labels and parameter types, as
         /// `memberwise` has them, so one can be told from another with the same labels and other types.
         var initializers: [String: [(labels: [String], types: [String])]] = [:]
@@ -183,9 +192,9 @@ enum SwiftSource {
                     if let made = SwiftSource.memberwise(in: line.text) { out.initializers[owner, default: []].append(made) }
                 }
                 if let owner, opens("constructor_decl"), line.has(" implicit "),
-                   !line.has("access=private"), !line.has("access=fileprivate"),
                    let made = SwiftSource.memberwise(in: line.text), !made.labels.isEmpty {
-                    out.memberwise[owner, default: []].append(made)
+                    if line.has("access=private") || line.has("access=fileprivate") { out.privateMemberwise[owner, default: []].append(made) }
+                    else { out.memberwise[owner, default: []].append(made) }
                 }
                 return
             }
@@ -199,6 +208,8 @@ enum SwiftSource {
                               let r = SwiftSource.range(in: line.text) {
                         // As written, or (when that's unresolved and has no place) as the compiler settled it.
                         entry.initial = r
+                        let kind = line.node.name.split(separator: "=").last ?? ""
+                        entry.literal = ["string_literal_expr", "integer_literal_expr", "float_literal_expr", "boolean_literal_expr", "nil_literal_expr"].contains(String(kind))
                     }
                     out.bindings[open.index].entries[out.bindings[open.index].entries.count - 1] = entry
                 }
@@ -229,14 +240,13 @@ enum SwiftSource {
                 let isStatic = line.has(" static"), rest = String(line.text[Range(m.range(at: 4), in: line.text)!])
                 if isStatic || global {
                     // A constant: a static or global `let` with a starting value.
-                    if rest.contains(" let ") {
-                        // A private or file-private one is the file's own: another file may have one by the same name.
-                        let own = rest.contains("access=private") || rest.contains("access=fileprivate")
-                        let place = own ? "@" + (r.start.file as NSString).lastPathComponent : ""
-                        out.constants[(owner ?? "") + "\t" + name + place] = Variable(name: name, position: r.start,
-                                                                               type: String(line.text[Range(m.range(at: 3), in: line.text)!]),
-                                                                               binding: index, attributes: [])
-                    }
+                    // A private or file-private one is the file's own: another file may have one by the same name.
+                    let own = rest.contains("access=private") || rest.contains("access=fileprivate")
+                    let place = own ? "@" + (r.start.file as NSString).lastPathComponent : ""
+                    let made = Variable(name: name, position: r.start, type: String(line.text[Range(m.range(at: 3), in: line.text)!]),
+                                        binding: index, attributes: [])
+                    if rest.contains(" let ") { out.constants[(owner ?? "") + "\t" + name + place] = made }
+                    else if rest.contains("readImpl=stored") { out.stored[(owner ?? "") + "\t" + name + place] = made }
                     return
                 }
                 guard let owner else { return }
@@ -343,15 +353,20 @@ enum SwiftSource {
     /// is what it keeps, so one whose value changes is rewritten in the live copy to give the new value
     /// (`LiveSlots.fit`). Not part of what a type holds: the layout comparison passes over them.
     static func constantEntries(_ declarations: Declarations) -> [String] {
+        startingValues(declarations.constants, declarations, group: .constant) + startingValues(declarations.stored, declarations, group: .stored)
+    }
+
+    /// Each one's starting value's digest, as an entry of `group`.
+    private static func startingValues(_ variables: [String: Variable], _ declarations: Declarations, group: LiveReload.Group) -> [String] {
         var files: [String: Text] = [:]
-        return declarations.constants.keys.sorted().compactMap { key in
-            guard let variable = declarations.constants[key],
+        return variables.keys.sorted().compactMap { key in
+            guard let variable = variables[key],
                   let initial = declarations.bindings[variable.binding].entries.first(where: { $0.name == variable.name })?.initial else { return nil }
             let path = initial.start.file
             guard let text = files[path] ?? Text(path: path) else { return nil }
             files[path] = text
             guard let start = text.offset(initial.start), let end = text.tokenEnd(initial.last), start < end else { return nil }
-            return LiveReload.Group.constant.entry(key + ": " + digest(text.slice(start, end)))
+            return group.entry(key + ": " + digest(text.slice(start, end)))
         }
     }
 
@@ -469,22 +484,11 @@ extension SwiftSource {
             func has(_ text: String) -> Bool { SwiftSource.has(self.text, text) }
         }
 
-        /// The names of the app's own classes and protocols, read before the pass: a class's superclass is the first
-        /// name it inherits when that's a class, told from a protocol by these (and by a system protocol's shape).
+        /// The names of the app's own classes and protocols, read before the pass: the first name a class inherits is
+        /// its superclass when it's one of these classes, and isn't when it's one of these protocols (the layout reader
+        /// asks the class's initializers about anything else).
         struct Names {
             var classes = Set<String>(), protocols = Set<String>()
-            /// The first name a class inherits, when it's a superclass: one of the app's own classes, or a name that
-            /// isn't one of the app's protocols nor shaped like a system protocol's (`able`, `ible`, `Delegate`,
-            /// `DataSource`, `Protocol`; a system class's name never ends so). A subclass of a system class the rule
-            /// reads as a protocol would reopen for a change to the protocol list instead; neither mistake lets a
-            /// changed superclass through unnoticed.
-            func superclass(of inherited: String) -> String? {
-                guard let first = inherited.split(separator: ",").first?.trimmingCharacters(in: .whitespaces), !first.isEmpty else { return nil }
-                let bare = String(first.prefix { $0 != "<" }), simple = String(bare.split(separator: ".").last ?? "")
-                if classes.contains(simple) { return first }
-                if protocols.contains(simple) { return nil }
-                return ["able", "ible", "Delegate", "DataSource", "Protocol"].contains(where: simple.hasSuffix) ? nil : first
-            }
         }
     }
 

@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: v0 ModifiedContent<Text, _PaddingLayout>
+RELOAD 1: ok
+after1 (want v1 in place: the type is the same ModifiedContent<Text, _PaddingLayout>): v1 ModifiedContent<Text, _PaddingLayout>

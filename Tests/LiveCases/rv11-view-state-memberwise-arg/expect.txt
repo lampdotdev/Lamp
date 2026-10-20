@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Row.open is @State the view's initializer is given, and a property kept in a spare can't take a value that way)
+== run
+before: t
+RELOAD 1: REOPEN Row.open is @State the view's initializer is given, and a property kept in a spare can't take a value that way
+after1 (want "t open=true" in place): t
+before: t open=true
+RELOAD 1: in the restart
+after1 (want "t open=true" in place): t open=true

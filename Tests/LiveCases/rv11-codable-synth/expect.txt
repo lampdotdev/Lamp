@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Todo changed what it holds (Todo.done: Bool); Todo.done is one of Todo's coding keys, so Codable needs it stored)
+== run
+before: {"title":"x"}
+RELOAD 1: REOPEN Todo changed what it holds (Todo.done: Bool); Todo.done is one of Todo's coding keys, so Codable needs it stored
+after1 (want done true in the JSON and read back): {"title":"x"} | n/a
+before: {"done":false,"title":"x"}
+RELOAD 1: in the restart
+after1 (want done true in the JSON and read back): {"done":true,"title":"x"} | done=true
