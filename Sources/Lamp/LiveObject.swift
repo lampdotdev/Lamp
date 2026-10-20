@@ -70,7 +70,10 @@ enum LiveObject {
             if module { module = false; continue }
             guard let kind = rest.first else { break }
             rest = rest.dropFirst()
-            pattern += #"(?:[0-9A-Za-z_]+?LL)?"# + String(kind)
+            // The discriminator is `_` and 32 hex digits, an identifier of 33; with word substitutions it starts with
+            // `0` instead of a length, which no kind letter does. Either ends at its first `LL`, so it can't run on
+            // into a nested declaration's name (`…LLO5HELLOV`).
+            pattern += #"(?:33_[0-9A-F]{32}LL|0(?:(?!LL)[0-9A-Za-z_])+LL)?"# + String(kind)
         }
         // Anchored past the last kind letter: a member of the type (`…O5countSivau`) or a type nested in it
         // (`…O4InfoVMn`) begins with a length and is the app's, not the kept type's own.

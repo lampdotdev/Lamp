@@ -393,6 +393,11 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertFalse(LiveObject.isKept("_$s6Lively6HiddenVMn", as: LiveObject.mangledType("Hidde", module: "Lively", kind: "V")))
         // A kept enum's statics and nested types are the app's, not the enum's own.
         XCTAssertFalse(LiveObject.isKept("_$s6Lively4MoodO5countSivau", as: LiveObject.mangledType("Mood", module: "Lively", kind: "O")))
+        XCTAssertFalse(LiveObject.isKept("_$s6Lively4MoodO5HELLOVN", as: LiveObject.mangledType("Mood", module: "Lively", kind: "O")))
+        XCTAssertTrue(LiveObject.isKept("_$s6Lively4Mood33_0123456789ABCDEF0123456789ABCDEFLLON", as: LiveObject.mangledType("Mood", module: "Lively", kind: "O")))
+        XCTAssertFalse(LiveObject.isKept("_$s6Lively4Mood33_0123456789ABCDEF0123456789ABCDEFLLO5HELLOVN", as: LiveObject.mangledType("Mood", module: "Lively", kind: "O")))
+        XCTAssertTrue(LiveObject.isKept("_$s6Lively4Mood022_54F0C438B1A4DABE561F3E9BA60E0A44LLON", as: LiveObject.mangledType("Mood", module: "Lively", kind: "O")))
+        XCTAssertFalse(LiveObject.isKept("_$s6Lively4Mood022_54F0C438B1A4DABE561F3E9BA60E0A44LLO5HELLOVN", as: LiveObject.mangledType("Mood", module: "Lively", kind: "O")))
         XCTAssertFalse(LiveObject.isKept("_$s6Lively4MoodO4InfoVMn", as: LiveObject.mangledType("Mood", module: "Lively", kind: "O")))
         XCTAssertTrue(LiveObject.isKept("_$s6Lively4MoodOMn", as: LiveObject.mangledType("Mood", module: "Lively", kind: "O")))
         // A signed exponent is part of a number's token.

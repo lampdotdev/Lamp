@@ -1315,6 +1315,12 @@ enum LiveReload {
                 // every caller.
                 let signature = name + ": " + String(line.text[Range(m.range(at: 4), in: line.text)!])
                 declared(signature)
+                // A stored one is a field like any other, so adding, removing or moving it is held to the layout; what
+                // it holds is its opaque entry's.
+                if line.has("readImpl=stored"), let owner = owner ?? (held && line.isTopLevel ? "" : nil), held || !line.has(" static") {
+                    let entry = owner + "\t" + signature
+                    if seen.insert(entry).inserted { out.append(entry); ownershipPending = (indent, out.count - 1) }
+                }
                 let builds = line.has("readImpl=stored") ? bindingBuilds : nil
                 if let owner { opaque = (indent, owner + "." + signature, [], builds, nil, nil) }
                 else if line.isTopLevel { opaque = (indent, signature, [], builds, nil, nil) }
@@ -1972,6 +1978,7 @@ enum LiveSlots {
                 // What a computed property kept in a spare can't do: observers, `lazy`, a weak or unowned reference,
                 // or being set in an initializer the type writes, before the stored properties are all set.
                 guard let variable = declarations.variables[type + "\t" + name] else { return .refused(nil) }
+                if kind.contains("some ") { return .refused("\(type).\(name)'s type is opaque (\(kind)), which a property kept in a spare can't have") }
                 // A struct or view declared inside a function can't be extended, and a property moved out of one takes its
                 // initializer's argument with it, which only an extension could give back.
                 if holder != .object, type.contains("().") { return .refused("\(LiveReload.bare(type)) is declared inside a function, where Lamp can't give it back the initializer a property kept in a spare leaves") }
@@ -2052,10 +2059,14 @@ enum LiveSlots {
         var stateRanges: [String: [(start: SwiftSource.Position, last: SwiftSource.Position, name: String)]] = [:]
         for item in planned where item.slot.holder == .view {
             if let declared = declarations.types[item.type] { stateRanges[declared.start.file, default: []].append((declared.start, declared.last, item.name)) }
-            let plain = LiveReload.bare(item.type), simple = String(plain.split(separator: ".").last ?? "")
+            // An extension is written at file scope with the type's qualified name (`extension Outer.Panel`), so that
+            // name is the view's; a private view's only in its own file, and a view no private one of the same name
+            // shadows in a file.
+            let plain = LiveReload.bare(item.type)
             let ownFile = item.type.contains("@") ? declarations.types[item.type]?.start.file : nil
-            for (extended, ranges) in declarations.extensions where extended == plain || extended == simple {
-                for range in ranges where ownFile == nil || range.start.file == ownFile {
+            let shadowed = Set(declarations.types.filter { $0.key != item.type && $0.key.contains("@") && LiveReload.bare($0.key) == plain }.map(\.value.start.file))
+            for (extended, ranges) in declarations.extensions where extended == plain {
+                for range in ranges where ownFile.map({ range.start.file == $0 }) ?? !shadowed.contains(range.start.file) {
                     stateRanges[range.start.file, default: []].append((range.start, range.last, item.name))
                 }
             }
