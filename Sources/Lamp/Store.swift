@@ -2926,11 +2926,10 @@ final class Store: ObservableObject {
                 case .acting(let id, let started):
                     if started { turn.codexActing.insert(id) } else { turn.codexActing.remove(id); steer(project) }
                 case .ran(let command, let refused, let call):
-                    // A command Codex's reviewer refused is no step of the person's: it didn't run, and the agent says
-                    // in its own words what it couldn't do. Codex showed it as started, so that step goes, and the
-                    // command stays only in Agent Details, as every engine's commands do there.
-                    guard refused else { break }
-                    logs[project.id] = LogLine.refusing(command, call: call, in: logs[project.id] ?? [])
+                    // Codex's commands are never the person's to read: one that ran is a step in the agent's words, and
+                    // one that was refused is no step at all. The commands stay in Agent Details.
+                    logs[project.id] = refused ? LogLine.refusing(command, call: call, in: logs[project.id] ?? [])
+                        : LogLine.ran(named: turn.naming, in: logs[project.id] ?? [])
                     saveChat(project)
                 case .finished:
                     // Claude Code has answered. A message sent from now on is the next request.
@@ -7694,6 +7693,17 @@ struct AppModels: Codable, Equatable {
 }
 
 extension LogLine {
+    /// The chat once a Codex command ran: a step named in the agent's words (`AgentEvent.naming`), or as a step with
+    /// none, never the command, which only Agent Details shows (its start, a `.tool` line). Commands in a row under one
+    /// name are one step.
+    static func ran(named said: String?, in lines: [LogLine]) -> [LogLine] {
+        let words = said ?? ChatLook.unnamedStep
+        if let last = lines.last(where: { $0.kind != .tool && $0.kind != .detail }), last.kind == .status, last.text == words {
+            return lines
+        }
+        return lines + [LogLine(kind: .status, text: words)]
+    }
+
     /// The chat once a command was refused before it ran: the step Codex showed as it started (`call`) goes, since
     /// nothing ran, and the command stays only for Agent Details. The person reads the agent's own words for it.
     static func refusing(_ command: String, call: String, in lines: [LogLine]) -> [LogLine] {

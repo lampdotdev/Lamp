@@ -132,9 +132,10 @@ A capability given to one engine must be given to all of them that can take it, 
   is Codex's default copied whole with Lamp's rules after it, since that key replaces the default and `extra_policy`
   didn't reach the reviewer: refresh the copy when Codex's changes. Lamp's rules refuse what `CommandRisk` calls risky
   (outside the app, destructive, uploads, the person's files and secrets). The network is open inside the sandbox, so
-  an upload made from inside it never reaches the reviewer. A refused command isn't in the person's chat at all: the
-  step Codex showed as it started is taken out and the command stays only in Agent Details (`AgentEvent.ran`,
-  `LogLine.refusing`, for what Codex reports `declined`); the agent says in its own words what it couldn't do and why,
+  an upload made from inside it never reaches the reviewer. The person never reads a Codex command: one that ran is a
+  step in the agent's words, or "Did a bit of housekeeping" (`AgentEvent.ran`, `LogLine.ran`), and one that was refused
+  isn't in the chat at all, the step Codex showed as it started taken out (`LogLine.refusing`, for what Codex reports
+  `declined`); the commands stay only in Agent Details; the agent says in its own words what it couldn't do and why,
   never the command (`Agent.codexNote`, and the reviewer is asked for a rationale it can pass on). Under Always Lamp's hook asks about every Codex command
   and under Never there's no hook; in both a command needing more than the sandbox is refused (`approval_policy="never"`).
   pi keeps Lamp's own check (`CommandRisk`).

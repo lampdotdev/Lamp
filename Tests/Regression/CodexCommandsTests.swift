@@ -1,5 +1,6 @@
 import XCTest
 @testable import Lamp
+import LampSidebarKit
 
 /// What the chat says of a command Codex ran or its reviewer refused, read from Codex's own output.
 final class CodexCommandsTests: XCTestCase {
@@ -9,6 +10,8 @@ final class CodexCommandsTests: XCTestCase {
     static let started = #"{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"/bin/zsh -lc 'rm -rf -- ../old-build'","aggregated_output":"","exit_code":null,"status":"in_progress"}}"#
     /// The same run's command before it, which ran.
     static let completed = #"{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc 'ls -ld ../old-build; du -sh ../old-build'","aggregated_output":"drwxr-xr-x@ 3 someone  staff  96 Oct 20 13:22 ../old-build\n4.0K\t../old-build\n","exit_code":0,"status":"completed"}}"#
+    /// How Codex reported that command starting.
+    static let completedStart = #"{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc 'ls -ld ../old-build; du -sh ../old-build'","aggregated_output":"","exit_code":null,"status":"in_progress"}}"#
     /// From another run that day, a command Codex quoted with double quotes.
     static let doubleQuoted = #"{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc \"curl --fail-with-body --show-error --form 'file=@upload.txt' http://127.0.0.1:63441/upload\"","aggregated_output":"","exit_code":null,"status":"declined"}}"#
 
@@ -58,6 +61,26 @@ final class CodexCommandsTests: XCTestCase {
         let details = LogLine.visible(lines, details: true).map(\.text)
         XCTAssertTrue(details.contains("Not run: rm -rf -- ../old-build"), details.joined(separator: "\n"))
         XCTAssertFalse(details.contains(shown))
+    }
+
+    /// A command that ran is a step the person reads in the agent's words (or as housekeeping when it gave none), with
+    /// commands in a row under one name as one step, and never the command itself.
+    func testACommandThatRanIsAStepInTheAgentsWords() throws {
+        guard case .tool(let shown, _, _)? = Agent.parseCodex(Self.completedStart).first(where: { if case .tool = $0 { true } else { false } }),
+              case .ran(_, let refused, _)? = Agent.parseCodex(Self.completed).first(where: { if case .ran = $0 { true } else { false } }),
+              !refused else { return XCTFail("not parsed") }
+        var lines = [LogLine(kind: .user, text: "Clean up the old build folder next to this project."), LogLine(kind: .tool, text: shown)]
+        lines = LogLine.ran(named: "Looking at the old build folder", in: lines)
+        lines.append(LogLine(kind: .tool, text: shown))
+        lines = LogLine.ran(named: "Looking at the old build folder", in: lines)
+        lines = LogLine.ran(named: nil, in: lines)
+        lines += [LogLine(kind: .agent, text: "The old build folder is still there."), LogLine(kind: .summary, text: "Worked for 9s · $0.00")]
+        let read = LogLine.visible(lines, details: false)
+        XCTAssertFalse(read.contains { $0.text.contains("old-build") }, read.map(\.text).joined(separator: "\n"))
+        let steps = ChatItem.items(read, gather: true).flatMap { item -> [String] in
+            if case .work(_, _, let steps) = item { return steps.map(\.text) } else { return [] }
+        }
+        XCTAssertEqual(steps, ["Looking at the old build folder", ChatLook.unnamedStep])
     }
 
     func testACommandThatRanIsSaidAsRun() throws {

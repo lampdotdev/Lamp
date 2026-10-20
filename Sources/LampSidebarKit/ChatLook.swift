@@ -379,7 +379,7 @@ public enum ChatLook {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle").frame(width: 16)
-                        Text(said ?? "Did a bit of housekeeping")
+                        Text(said ?? ChatLook.unnamedStep)
                         Image(systemName: "chevron.right")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.tertiary)
@@ -403,6 +403,9 @@ public enum ChatLook {
             .padding(.leading, ChatLook.stepIndent)
         }
     }
+
+    /// A step the agent gave no words of its own.
+    public static let unnamedStep = "Did a bit of housekeeping"
 
     /// The command in a status line that says one was run.
     public static func ranCommand(in status: String) -> String? {
