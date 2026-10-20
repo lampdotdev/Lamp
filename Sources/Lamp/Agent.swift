@@ -40,6 +40,9 @@ enum AgentEvent {
     /// What the agent says it's doing, in its own words: Claude Code's or pi's description of a command, a Codex
     /// reasoning summary's heading. Empty for a command that came without one, which leaves it unnamed.
     case naming(String)
+    /// A shell command Codex ran, or that its reviewer refused (`refused`), as it ran it: said in the chat when no
+    /// approval of Lamp's said it already (`AgentRun.saysCommands`).
+    case ran(String, refused: Bool)
 }
 
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.

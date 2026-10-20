@@ -17,8 +17,8 @@ enum Engine: String, CaseIterable, Identifiable {
 
 /// When the agent needs the user's go-ahead to run a shell command (Settings → Building).
 enum CommandApproval: String, CaseIterable, Identifiable {
-    /// risky: the card is for commands the decision model's answers show to be risky; the rest run when the
-    /// sandbox confines them, and only the plainly fine ones when it doesn't.
+    /// risky: Claude Code's and Codex's own reviewers decide their commands; for pi's, the card is for commands
+    /// the decision model's answers show to be risky, and the rest run confined.
     /// There was an "unusual" beside it, which differed only in not letting the in-app model's "low" run a
     /// command; nothing does that now, so a saved "unusual" (or the older "auto") is risky.
     case risky, always, never
@@ -244,6 +244,9 @@ struct AgentRun {
     /// For an engine that reads its request from its input and keeps reading while it works (Claude Code): the
     /// request as the first line written there. Nil for one given it on the command line.
     var opening: String? = nil
+    /// Whether the chat says each command the engine ran from its own output (`AgentEvent.ran`), for a run whose
+    /// commands come to no approval of Lamp's, which says it otherwise.
+    var saysCommands = false
 }
 
 extension Agent {
@@ -423,10 +426,14 @@ extension Agent {
             env["LAMP_TOOL"] = EngineInstall.path(for: .codex) ?? "codex"
             env.merge(EngineInstall.environment(for: .codex)) { $1 }
             env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Self.tomlString(systemPrompt(for: project) + tryRules + Self.codexNote + sandboxNote)
-            // Approvals (Settings → Building): a PreToolUse hook sends each shell command to Lamp before it runs,
-            // and Lamp applies the setting: the decision model, then the user (Only when risky), or the user
-            // every time (Always). "Never" has no hook. In
-            // every mode Codex stays in its sandbox (writes only in the app's folder), with network access.
+            // Codex's commands run in Codex's own sandbox (`Sandbox.codexPermissions`): the app's folder, the system,
+            // developer tools, caches and temporary folders, with network access; the rest of the Mac stays closed.
+            // Approvals (Settings → Building): under "Only when risky" Codex's own reviewer (Auto-review, with Lamp's
+            // rules in its policy, `CodexReview`) decides whatever needs more than the sandbox gives, and refuses
+            // what Lamp calls risky; nothing comes to Lamp's card. "Always" sends each shell command to Lamp's card
+            // first through a PreToolUse hook, and "Never" lets every command run in the sandbox. In both, a command
+            // that needs more is refused rather than reviewed (`approval_policy="never"`): the person chose to
+            // decide every command, or none.
             // Codex has no file tools of its own, and a shell command can read anything on the Mac without
             // Lamp knowing what. So it reads with Lamp's `read`, `ls`, `find` and `grep` (FileTools, listed for
             // it by `files=1`), which are held to the privacy rule pi's file tools follow, and needs no shell
@@ -436,50 +443,48 @@ extension Agent {
             env["LAMP_TOKEN"] = token
             env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=codex"
             let hook = Bundle.main.resourceURL?.appendingPathComponent("lamp-approve.sh").path ?? "lamp-approve.sh"
-            env["LAMP_CODEX_HOOKS"] = approval == .never ? "hooks={}"
+            env["LAMP_CODEX_HOOKS"] = approval != .always ? "hooks={}"
                 : #"hooks.PreToolUse=[{matcher="^Bash$",hooks=[{type="command",timeout=3600,command="'"# + hook + #"'"}]}]"#
+            env["LAMP_CODEX_PERMISSIONS"] = Sandbox.codexPermissions(for: project)
+            env["LAMP_CODEX_POLICY"] = "auto_review.policy=" + Self.tomlString(CodexReview.policy)
+            let review = approval == .risky
+                ? #"-c approval_policy="on-request" -c approvals_reviewer="auto_review" -c "$LAMP_CODEX_POLICY""#
+                : #"-c approval_policy="never""#
             let codexModel = Builder.engineModel(.codex)
             if !codexModel.isEmpty { env["LAMP_MODEL"] = codexModel }
-            // Inside Lamp's sandbox (below) Codex's own is off: one can't run inside the other, and Lamp's closes
-            // the rest of the Mac to reads as well as writes, which Codex's never did.
-            // Codex's own sandbox stays off: it runs inside Lamp's (below), and one can't be nested in the other.
-            let sandboxMode = "-c sandbox_mode=\"danger-full-access\""
-            // Codex's own bundled skills stay off, as every engine's own skills do (Skills): Codex would copy them into
-            // its folder's skills/.system at every start, which Lamp's sandbox keeps closed, and fail each time.
+            // Codex's own bundled skills stay off, as every engine's own skills do (Skills).
             // `skills.bundled.enabled` is defined in Codex's config (BundledSkillsConfig in its config schema) but isn't
-            // in OpenAI's published reference; a Codex that drops it ignores the setting and the copy fails as before.
+            // in OpenAI's published reference; a Codex that drops it ignores the setting and offers its own skills.
             // Codex sends no summaries of the model's thinking unless asked; their headings name its steps in the
             // chat (`AgentEvent.naming`), where the shell commands alone said nothing a person could follow.
             let options = (codexModel.isEmpty ? "" : "-m \"$LAMP_MODEL\" ") + """
             --json --ignore-user-config --ignore-rules --dangerously-bypass-hook-trust --skip-git-repo-check \\
-              \(sandboxMode) \\
+              -c "$LAMP_CODEX_PERMISSIONS" -c default_permissions="lamp" \(review) \\
               -c web_search="live" -c model_reasoning_summary="detailed" -c skills.bundled.enabled=false -c "$LAMP_CODEX_INSTRUCTIONS" -c "$LAMP_CODEX_HOOKS" \\
               -c mcp_servers.lamp.url="http://127.0.0.1:\(Gateway.port)/mcp?files=1" -c mcp_servers.lamp.bearer_token_env_var="LAMP_TOKEN" \\
               -c mcp_servers.lamp.tool_timeout_sec=3600 -c mcp_servers.lamp.default_tools_approval_mode="approve"
             """
+            // Lamp's `swift` first on the commands' path, as for the other engines (Sandbox.bin): SwiftPM's own
+            // sandbox can't start inside Codex's either.
+            let tool = "/usr/bin/env \(Sandbox.shimEnvironment) \"$LAMP_TOOL\""
             let launch: String
             if session != nil {
                 // `exec resume` keeps the conversation; it takes no -C/-i (Lamp already runs in the app's folder).
-                launch = "\"$LAMP_TOOL\" exec resume \(options) \"$LAMP_SESSION\" -- \"$LAMP_PROMPT\""
+                launch = "\(tool) exec resume \(options) \"$LAMP_SESSION\" -- \"$LAMP_PROMPT\""
             } else {
                 let images = files.enumerated().filter { Attachments.isImage(URL(fileURLWithPath: $0.element)) }
                     .map { "-i \"$LAMP_FILE_\($0.offset)\"" }.joined(separator: " ")
-                launch = "\"$LAMP_TOOL\" exec \(options) -C \"$LAMP_DIR\" \(images) -- \"$LAMP_PROMPT\""
+                launch = "\(tool) exec \(options) -C \"$LAMP_DIR\" \(images) -- \"$LAMP_PROMPT\""
             }
-            // The whole run confined to the app. Codex's own folder is readable, and writable only where Codex
-            // keeps its state: the files at its top (databases, locks, the sign-in it refreshes, caches) and
-            // the folders of sessions, logs, caches, snapshots and memories. What tells Codex how to behave
-            // (config.toml, AGENTS.md, and the rules, skills, plugins and prompts folders) stays out of reach
-            // of its apply_patch, which, unlike a shell command, never asks Lamp.
-            let codex = EngineInstall.configFolder(.codex).path
-            let install = EngineInstall.path(for: .codex).map(Sandbox.installFolders(of:)) ?? []
-            let state = ["sessions", "archived_sessions", "log", "tmp", ".tmp", "cache", "shell_snapshots", "memories",
-                         "thread-writer-locks", "mcp-oauth-locks"].map { codex + "/" + $0 }
-            // Without its profile Codex doesn't run at all: nothing else keeps its commands inside the app.
-            let command = Sandbox.wrapEngine(launch, for: project, opening: state, reading: install + [codex], writing: [codex],
-                                             keeping: [codex + "/config.toml", codex + "/AGENTS.md"])
-                ?? "echo 'Lamp could not set up the sandbox that keeps ChatGPT Codex inside the app.' >&2; exit 1"
-            return AgentRun(command: command, env: env)
+            // Codex makes its workspace of the folder it starts in, wherever a link there leads, and its commands
+            // may write at the app's folder's own name: one swapped for a link would open where it leads (Lamp's own
+            // folder, say) to the next run's commands. So Codex starts only in the app's real folder, and only with
+            // the shims it puts on the path.
+            let folder = project.realDir.path
+            let linked = (try? FileManager.default.destinationOfSymbolicLink(atPath: folder)) != nil
+            let command = !linked && Sandbox.prepareShims() ? launch
+                : "echo 'Lamp could not set up the sandbox that keeps ChatGPT Codex inside the app.' >&2; exit 1"
+            return AgentRun(command: command, env: env, saysCommands: approval != .always)
         }
     }
 
@@ -633,8 +638,8 @@ extension Agent {
         guard let obj = json(line), let type = obj["type"] as? String else {
             // Notices Codex prints for the flags Lamp chose on purpose.
             if line.contains("--dangerously-bypass-hook-trust") || line.hasPrefix("Reading additional input") { return [] }
-            // Codex looks for the person's own skills in ~/.agents/skills at every start, whatever its settings;
-            // the sandbox keeps the home folder closed, as it should, and Codex says so.
+            // Codex looks for the person's own skills in ~/.agents/skills at every start, whatever its settings, and
+            // says so when that folder can't be read: nothing the person needs to hear.
             if line.contains("codex_skills_extension"), line.contains("failed to walk skills root") { return [] }
             return line.trimmed.isEmpty ? [] : [.raw(line)]
         }
@@ -646,6 +651,19 @@ extension Agent {
             if type == "item.completed" { return codexEvents(type, kind, obj, item) + [.acting(id, false)] }
         }
         return codexEvents(type, kind, obj, item)
+    }
+
+    /// The command as the agent wrote it: Codex reports each one inside the shell that runs it
+    /// (`/bin/zsh -lc "…"` or `'…'`).
+    static func unwrapped(_ command: String) -> String {
+        for prefix in ["/bin/zsh -lc ", "/bin/bash -lc ", "/bin/zsh -c ", "/bin/bash -c "] where command.hasPrefix(prefix) {
+            let rest = String(command.dropFirst(prefix.count))
+            guard let quote = rest.first, quote == "'" || quote == "\"", rest.count >= 2, rest.last == quote else { return command }
+            let inner = String(rest.dropFirst().dropLast())
+            return quote == "'" ? inner.replacingOccurrences(of: "'\\''", with: "'")
+                : inner.replacingOccurrences(of: "\\\"", with: "\"").replacingOccurrences(of: "\\\\", with: "\\")
+        }
+        return command
     }
 
     private static func codexEvents(_ type: String, _ kind: String?, _ obj: [String: Any], _ item: [String: Any]) -> [AgentEvent] {
@@ -666,7 +684,11 @@ extension Agent {
         case ("item.completed", "error"):
             guard let message = item["message"] as? String, !message.contains("--dangerously-bypass-hook-trust") else { return [] }
             return [.raw(message)]
-        case ("item.completed", "command_execution"), ("item.completed", "mcp_tool_call"):
+        case ("item.completed", "command_execution"):
+            // "declined": Codex's reviewer refused it, and it never ran.
+            let command = item["command"] as? String ?? ""
+            return [.step("")] + (command.isEmpty ? [] : [.ran(Self.unwrapped(command), refused: item["status"] as? String == "declined")])
+        case ("item.completed", "mcp_tool_call"):
             return [.step("")]
         case ("item.started", "mcp_tool_call"):
             let name = item["tool"] as? String ?? "tool"
