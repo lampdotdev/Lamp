@@ -5,6 +5,13 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.15.1
+
+- A new case added to an enum goes into the open app more reliably: everything that reads the enum, including
+  printing and saving, sees the new case, lists built from it are built again, and a change that code still
+  running couldn't take reopens the app with a sentence saying why.
+- More from Lamp's list can be read on a Mac in dark mode, and the wand's flame shows on its blue glass.
+
 ## 0.15.0
 
 - Far more changes go into an open app without restarting it: a new method, computed property or stored
