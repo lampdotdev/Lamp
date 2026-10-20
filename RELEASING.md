@@ -15,8 +15,9 @@ a secure timestamp. Nested code is signed first:
 - the starters Lamp ships, already built: `build.sh` has the new Lamp build each one as a person's Mac would
   (`PrebuiltStarters.swift`), signs it and zips it beside the starter's files, so a new person's starters open at
   once, before Apple's build tools are installed. This adds about five minutes to a release and about 30 MB to Lamp.
-  A development build reuses the ones in `.build/prebuilt-starters` while what they're made from is unchanged;
-  `PREBUILD_STARTERS=0 ./build.sh` leaves them out.
+  A development build leaves them out (a Lamp Dev without them builds the starters on first launch, out of sight);
+  `PREBUILD_STARTERS=1 ./build.sh` builds them too, reusing the ones in `.build/prebuilt-starters` while what
+  they're made from is unchanged.
 - `Lamp.app`, with `Resources/Lamp.entitlements` (microphone, for dictation)
 
 Releases build into `dist/`, so they never replace the `build/Lamp.app` you run day to day. Release builds

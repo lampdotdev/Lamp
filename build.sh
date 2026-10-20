@@ -262,11 +262,14 @@ sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/Lamp
 # this checkout's LampSupport, once Lamp's own parts are signed and before Lamp is: the stamp on what Lamp builds
 # (BuildStamp) covers the signed chat sidebar. Each built app is signed like the rest of Lamp and zipped beside its
 # starter's files, so the system never takes it for an app of its own.
-# Every build does it (PREBUILD_STARTERS=0 skips it). Building them takes minutes, so a development build keeps them in
-# .build/prebuilt-starters, under a key of what they're made from: the starters, the code Lamp writes into every app,
-# the edition and the compiler. A build that finds them there only stamps them for itself (--restamp-starters). A
-# release always builds them afresh.
-if [[ "${PREBUILD_STARTERS:-1}" != 0 ]]; then
+# A release does it, afresh. Building them takes minutes and what they're made from (the code Lamp writes into every
+# app, above all) changes with most work on Lamp, so a development build leaves them out unless asked
+# (PREBUILD_STARTERS=1): a Lamp Dev without them builds the starters on first launch, out of sight, as before they
+# shipped built. Asked, it keeps them in .build/prebuilt-starters under a key of what they're made from: the starters,
+# that code, the edition and the compiler; a build that finds them there only stamps them for itself
+# (--restamp-starters).
+DEFAULT_PREBUILD=0; [ "$FLAVOR" = release ] && DEFAULT_PREBUILD=1
+if [[ "${PREBUILD_STARTERS:-$DEFAULT_PREBUILD}" != 0 ]]; then
   STARTERS="$APP/Contents/Resources/Starters"
   KEY=$( {
     echo "$FLAVOR"; xcrun swiftc --version 2>&1; xcrun --show-sdk-version
