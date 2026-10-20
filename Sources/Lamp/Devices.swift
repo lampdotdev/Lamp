@@ -345,6 +345,25 @@ enum Devices {
         return "\(project.name) keeps its data in iCloud, which Apple allows only with a paid Apple Developer membership. Your Apple account is a free one, so Lamp can't put the app on \(place). Choose a simulator under Try On to keep working, or ask Lamp to keep the data on the device instead."
     }
 
+    /// Where the person's own phone stands, told to the agent at its first look in a turn: whether Try On points at
+    /// one, which then gets every finished change, or what the person does to have the app on theirs.
+    static func tryOnNote(chosen udid: String?, among devices: [Device]) -> String {
+        let simulator = "No phone is chosen under Try On, so the person sees the app in the simulator."
+        if let udid {
+            guard let device = devices.first(where: { $0.udid == udid }) else {
+                return "Try On points at the person's own phone, but Lamp doesn't see it now: to have the app on it, they connect it and unlock it, then press Play."
+            }
+            return "Try On points at the person's \(device.name): when this turn ends Lamp puts the app on it too."
+        }
+        if let device = devices.first(where: \.paired) {
+            return simulator + " Their \(device.name) is paired with this Mac: to have the app on it, they connect it, choose it under Try On and press Play."
+        }
+        if let device = devices.first {
+            return simulator + " Lamp sees their \(device.name), which hasn't trusted this Mac yet: they choose Pair under Try On, tap Trust on it, then choose it and press Play."
+        }
+        return simulator + " Lamp doesn't see their iPhone or iPad connected: to have the app on it, they plug it in, unlock it, choose it under Try On and press Play."
+    }
+
     /// What's wrong before anything is tried, in plain words, or nil when the phone is ready.
     static func problem(_ device: Device?, team: String) -> String? {
         guard let device else { return "Lamp can't see that phone. Plug it in with a data cable and unlock it, then Retry. If it still doesn't appear, choose it again under Try On." }

@@ -688,6 +688,8 @@ final class Store: ObservableObject {
         /// A new app was shown to the person at this turn's first look that opened it: built in passes, it's watched
         /// as it takes shape rather than seen only at the end (`present`).
         var presented = false
+        /// The look has said where the person's own phone stands (`Devices.tryOnNote`), once a turn.
+        var toldPhone = false
     }
     private var artInProgress: Set<String> = []
     /// Designs whose artwork couldn't be drawn, by `Icons.artKey`: their icons show the symbol, not the blueprint.
@@ -7130,6 +7132,11 @@ final class Store: ObservableObject {
             // Which simulator: what it can show depends on it (a Dynamic Island is only on some iPhones).
             var on = ""
             if let udid = simulatorApps[project.id]?.udid, let name = await Simulator.name(of: udid) { on = " It's open on the \(name) simulator." }
+            if !turn.look.toldPhone {
+                turn.look.toldPhone = true
+                devices = await Devices.list()
+                on += " " + Devices.tryOnNote(chosen: project.device, among: devices)
+            }
             var text = note + on + " " + (screenshots.isEmpty ? "No picture of the iPhone could be taken."
                 : Privacy.sharesPictures ? "A picture of the iPhone's screen follows. Points for use_app are pixels in it." : Privacy.picturesOff)
             if !Privacy.sharesLog { text += " " + Privacy.logOff }
