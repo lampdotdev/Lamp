@@ -235,11 +235,11 @@ enum SwiftSource {
             if modelNames.contains(type.name) {
                 // With its file, which the change must not compile at all: "model Note@Notes.swift: <digest>".
                 let file = path.hasPrefix(folder.standardizedFileURL.path + "/") ? String(path.dropFirst(folder.standardizedFileURL.path.count + 1)) : (path as NSString).lastPathComponent
-                return "\u{1}launch\tmodel " + type.name + "@" + file + ": " + SHA256.hash(data: Data(text.bytes)).prefix(8).map { String(format: "%02x", $0) }.joined()
+                return LiveReload.Group.launch.entry("model " + type.name + "@" + file + ": " + SHA256.hash(data: Data(text.bytes)).prefix(8).map { String(format: "%02x", $0) }.joined())
             }
             guard let start = text.offset(type.range.start), let end = text.tokenEnd(type.range.last) else { return nil }
             let digest = SHA256.hash(data: Data(text.bytes[start..<end])).prefix(8).map { String(format: "%02x", $0) }.joined()
-            return "\u{1}launch\t" + (type.isExtension ? "extension " : "") + type.name + ": " + digest
+            return LiveReload.Group.launch.entry((type.isExtension ? "extension " : "") + type.name + ": " + digest)
         }
     }
 
@@ -255,7 +255,7 @@ enum SwiftSource {
             guard let text = files[path] ?? Text(path: path) else { return nil }
             files[path] = text
             guard let start = text.offset(initial.start), let end = text.tokenEnd(initial.last), start < end else { return nil }
-            return "\u{2}constant\t" + key + ": " + digest(text.slice(start, end))
+            return LiveReload.Group.constant.entry(key + ": " + digest(text.slice(start, end)))
         }
     }
 

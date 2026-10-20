@@ -23,7 +23,7 @@ enum PrebuiltStarters {
 
     /// The parts of the live copy that go with the app (not its build folder, which is the size of the app many
     /// times over and only speeds up the next whole build).
-    private static let liveParts = ["Package.swift", "Sources", "built", "spares.pl"]
+    private static let liveParts = ["Package.swift", "Sources", "built", "live.pl"]
 
     static func archive(of starter: Starters.Starter) -> URL { starter.folder.appendingPathComponent(archiveName) }
 

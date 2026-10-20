@@ -172,20 +172,35 @@ enum LiveReload {
     /// read at launch (`SwiftSource.launchEntries`), constants' values (`constantEntries`), typealiases (`aliasGroup`)
     /// and what's declared (`declarationGroup`). Each is compared its own way, never as a type's fields.
     static func isGroup(_ type: String) -> Bool { (type.first?.asciiValue ?? 32) < 32 }
-    static let aliasGroup = "\u{3}alias", declarationGroup = "\u{5}declared", opaqueGroup = "\u{6}opaque"
-    /// Where a private type is declared ("\u{7}place<tab>Name<tab>File.swift"): its mangled name carries its file, so
-    /// one moved to another file is another type to the runtime, whatever its layout.
-    static let placeGroup = "\u{7}place"
-    /// A class's initializers ("\u{8}inits<tab>Owner.init(…): type"): each has a method descriptor, a final class's
-    /// too, so one added or changed reshapes the method table and the runtime would refuse the change late.
-    static let initsGroup = "\u{8}inits"
+
+    /// The kinds of entry in a layout besides a type's own fields and cases, each under a control character so none
+    /// reads as a type's name: what's read at launch (`SwiftSource.launchEntries`); a constant's value
+    /// (`constantEntries`); a typealias and what it names; what's declared (functions, initializers, computed
+    /// properties, conformances, a member's `@objc`); what a `some`-returning member builds; where a private type is
+    /// declared (its mangled name carries its file, so one moved is another type at run time); and a class's
+    /// initializers and finality (each initializer has a method descriptor, a final class's too, so one added or
+    /// changed reshapes the method table). An entry is the group's mark, a tab, and its parts tab-separated.
+    enum Group: String {
+        case launch = "\u{1}launch", constant = "\u{2}constant", alias = "\u{3}alias", declared = "\u{5}declared"
+        case opaque = "\u{6}opaque", place = "\u{7}place", inits = "\u{8}inits"
+        func entry(_ parts: String...) -> String { ([rawValue] + parts).joined(separator: "\t") }
+        /// The entry's parts when it's of this group, else nil.
+        func parts(of entry: String) -> [String]? {
+            guard entry.hasPrefix(rawValue + "\t") else { return nil }
+            return entry.dropFirst(rawValue.count + 1).split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+        }
+        /// The entries of this group, each as its parts.
+        func parts(in entries: [String]) -> [[String]] { entries.compactMap(parts(of:)) }
+    }
+    static let aliasGroup = Group.alias.rawValue, declarationGroup = Group.declared.rawValue, opaqueGroup = Group.opaque.rawValue
+    static let placeGroup = Group.place.rawValue, initsGroup = Group.inits.rawValue
 
     /// The SwiftData model classes in a layout, each with the file that declares it (`SwiftSource.launchEntries`):
     /// a change that compiles that file, whatever it changed, makes the model's key paths over again.
     static func modelFiles(inLayout layout: [String]) -> [(name: String, file: String)] {
-        layout.compactMap { entry in
-            guard entry.hasPrefix("\u{1}launch\tmodel "), let at = entry.firstIndex(of: "@"), let colon = entry.range(of: ": ") else { return nil }
-            return (String(entry[entry.index(entry.startIndex, offsetBy: 14)..<at]), String(entry[entry.index(after: at)..<colon.lowerBound]))
+        Group.launch.parts(in: layout).compactMap { parts in
+            guard let what = parts.first, what.hasPrefix("model "), let at = what.firstIndex(of: "@"), let colon = what.range(of: ": ") else { return nil }
+            return (String(what[what.index(what.startIndex, offsetBy: 6)..<at]), String(what[what.index(after: at)..<colon.lowerBound]))
         }
     }
 
@@ -203,9 +218,9 @@ enum LiveReload {
         // when Money changes from Int to Double, while its size changes under the open app's values: an alias the
         // open app has must still name what it did. One added or taken away changes nothing of what exists.
         func aliases(_ entries: [String]) -> [String: String] {
-            Dictionary(entries.filter { $0.hasPrefix(aliasGroup + "\t") }.compactMap { entry -> (String, String)? in
-                guard let equals = entry.range(of: " = ") else { return nil }
-                return (String(entry[entry.index(after: entry.firstIndex(of: "\t")!)..<equals.lowerBound]), String(entry[equals.upperBound...]))
+            Dictionary(Group.alias.parts(in: entries).compactMap { parts -> (String, String)? in
+                guard let alias = parts.first, let equals = alias.range(of: " = ") else { return nil }
+                return (String(alias[..<equals.lowerBound]), String(alias[equals.upperBound...]))
             }, uniquingKeysWith: { first, _ in first })
         }
         for (name, was) in aliases(before).sorted(by: { $0.key < $1.key }) {
@@ -216,10 +231,7 @@ enum LiveReload {
         // Two files may each have a private type of one name: each name maps to every file declaring it, and a
         // move is a file that no longer declares it beside one that newly does.
         func places(_ entries: [String]) -> [String: Set<String>] {
-            Dictionary(entries.filter { $0.hasPrefix(placeGroup + "\t") }.compactMap { entry -> (String, Set<String>)? in
-                let parts = entry.split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false)
-                return parts.count == 3 ? (String(parts[1]), [String(parts[2])]) : nil
-            }, uniquingKeysWith: { $0.union($1) })
+            Dictionary(Group.place.parts(in: entries).compactMap { $0.count == 2 ? ($0[0], Set([$0[1]])) : nil }, uniquingKeysWith: { $0.union($1) })
         }
         for (name, was) in places(before).sorted(by: { $0.key < $1.key }) {
             guard let is_ = places(now)[name], let from = was.subtracting(is_).sorted().first, let to = is_.subtracting(was).sorted().first else { continue }
@@ -228,11 +240,11 @@ enum LiveReload {
         // A class the open app has whose initializers changed: each is in its method table, so the runtime would
         // refuse the change once compiled and sent; said here, before either.
         func inits(_ entries: [String]) -> [String: Set<String>] {
-            Dictionary(entries.filter { $0.hasPrefix(initsGroup + "\t") }.compactMap { entry -> (String, Set<String>)? in
-                let rest = entry.dropFirst(initsGroup.count + 1)
-                if rest.hasSuffix(".final") { return (String(rest.dropLast(6)), [String(rest)]) }
+            Dictionary(Group.inits.parts(in: entries).compactMap { parts -> (String, Set<String>)? in
+                guard let rest = parts.first else { return nil }
+                if rest.hasSuffix(".final") { return (String(rest.dropLast(6)), [rest]) }
                 guard let dot = rest.range(of: ".init") else { return nil }
-                return (String(rest[..<dot.lowerBound]), [String(rest)])
+                return (String(rest[..<dot.lowerBound]), [rest])
             }, uniquingKeysWith: { $0.union($1) })
         }
         for (owner, was) in inits(before).sorted(by: { $0.key < $1.key }) {
@@ -246,10 +258,7 @@ enum LiveReload {
         // laid out for; one that builds another type under the same name, or from other calls where the type can't
         // be printed, returns what they can't take. A value beginning "~" is a digest of the body, not a type.
         func opaque(_ entries: [String]) -> [String: String] {
-            Dictionary(entries.filter { $0.hasPrefix(opaqueGroup + "\t") }.compactMap { entry -> (String, String)? in
-                let parts = entry.split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false)
-                return parts.count == 3 ? (String(parts[1]), String(parts[2])) : nil
-            }, uniquingKeysWith: { first, _ in first })
+            Dictionary(Group.opaque.parts(in: entries).compactMap { $0.count == 2 ? ($0[0], $0[1]) : nil }, uniquingKeysWith: { first, _ in first })
         }
         for (name, was) in opaque(before).sorted(by: { $0.key < $1.key }) {
             guard let is_ = opaque(now)[name], is_ != was else { continue }
@@ -264,9 +273,9 @@ enum LiveReload {
             Dictionary(grouping: entries, by: { String($0.prefix { $0 != "\t" }) })
         }
         let old = byType(before), new = byType(now)
-        for (type, members) in old.sorted(by: { $0.key < $1.key }) where !isGroup(type) || type == "\u{1}launch" {
+        for (type, members) in old.sorted(by: { $0.key < $1.key }) where !isGroup(type) || type == Group.launch.rawValue {
             guard let current = new[type] else { continue }
-            if type == "\u{1}launch", current != members {
+            if type == Group.launch.rawValue, current != members {
                 let what = (current.first { !members.contains($0) } ?? members.first { !current.contains($0) } ?? "")
                     .split(separator: "\t").last.map { String($0.prefix { $0 != ":" }) } ?? ""
                 if what.hasPrefix("model ") { return ("the file of the SwiftData model \(what.dropFirst(6).prefix { $0 != "@" }) changed, and its data is found by key paths the open app made", nil) }
@@ -388,6 +397,60 @@ enum LiveReload {
                 }
             }
             return found.sorted()
+        }
+        // A type holding the enum keeps field records that name the app's description of it, which the new cases
+        // aren't in: its printed form (`print`, `dump`, `String(describing:)`, `Mirror`, an interpolation) shows a
+        // new case as nothing. So where the app prints such a holder, the change reopens it.
+        let typeOf = try! NSRegularExpression(pattern: #" type="([^"]*)""#)
+        let printing = try! NSRegularExpression(pattern: #"decl="Swift\.\(file\)\.(?:print|debugPrint|dump)\(|decl="Swift\.\(file\)\.String extension\.init\((?:describing|reflecting):\)|decl="Swift\.\(file\)\.Mirror\.init\(reflecting:\)|DefaultStringInterpolation\.appendInterpolation"#)
+        for type in grown {
+            var holders = Set<String>(), grew = true
+            let names = [type] + carriers(of: type)
+            while grew {
+                grew = false
+                for (owner, kinds) in fields where !holders.contains(owner) && owner != type {
+                    let known = names + Array(holders)
+                    for kind in kinds {
+                        let words = word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).map { String(kind[Range($0.range, in: kind)!]) }
+                        if words.contains(where: { known.contains($0) || known.contains(last($0)) }) { holders.insert(owner); grew = true; break }
+                    }
+                }
+            }
+            guard !holders.isEmpty else { continue }
+            // By their qualified names, as a kind prints a nested type: `Space.Wrapper` is not a `Wrapper` at the top.
+            let holder = try! NSRegularExpression(pattern: #"(?<![\w.])(?:"# + holders.sorted { $0.count > $1.count }.map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|") + #")(?![\w.])"#)
+            func printed(_ kind: String) -> String? {
+                holder.firstMatch(in: kind, range: NSRange(kind.startIndex..., in: kind)).map { String(kind[Range($0.range, in: kind)!]) }
+            }
+            // What's printed is the argument's own type: for an interpolation, `String(describing:)` and `dump` it's
+            // in the function's type on the call's line; `print` and `Mirror` take any value, so it's the type of
+            // what's made into one (the node under each `erasure_expr`), never a value's own parts or base.
+            let parameter = try! NSRegularExpression(pattern: #"-> \((.+)\) -> (?:\(\)|String)$|^\((.+?), String\?, Int, Int, Int\)"#)
+            var erasing: Int?, anyCall: Int?
+            for raw in dump.split(separator: "\n") {
+                let line = String(raw), indent = line.prefix { $0 == " " }.count
+                guard line.dropFirst(indent).first == "(" else { continue }
+                let range = NSRange(line.startIndex..., in: line)
+                if let at = anyCall, indent <= at { anyCall = nil }
+                if let at = erasing {
+                    erasing = nil
+                    if indent > at, let m = typeOf.firstMatch(in: line, range: range), let name = printed(String(line[Range(m.range(at: 1), in: line)!])) {
+                        return "\(name) holds \(type) and is printed, and its printed form would read \(type) as the open app knew it"
+                    }
+                }
+                if anyCall != nil, line.contains("(erasure_expr "), line.contains(#"type="Any""#) { erasing = indent; continue }
+                guard printing.firstMatch(in: line, range: range) != nil, let m = typeOf.firstMatch(in: line, range: range) else { continue }
+                let signature = String(line[Range(m.range(at: 1), in: line)!])
+                if let p = parameter.firstMatch(in: signature, range: NSRange(signature.startIndex..., in: signature)) {
+                    let group = p.range(at: 1).location != NSNotFound ? 1 : 2
+                    let kind = String(signature[Range(p.range(at: group), in: signature)!])
+                    if kind != "Any", let name = printed(kind) {
+                        return "\(name) holds \(type) and is printed, and its printed form would read \(type) as the open app knew it"
+                    }
+                    if kind != "Any" { continue }
+                }
+                anyCall = indent - 2
+            }
         }
         for type in grown {
             for carrier in carriers(of: type) {
@@ -550,9 +613,9 @@ enum LiveReload {
     static func conformances(inLayout entries: [String]) -> Conformances {
         var out = Conformances()
         for entry in entries {
-            if entry.hasPrefix("protocol "), entry.hasSuffix("\t") { out.protocols.insert(String(entry.dropFirst(9).dropLast())); continue }
-            if entry.hasPrefix(aliasGroup + "\t"), let equals = entry.range(of: " = ") {
-                let name = String(entry[entry.index(after: entry.firstIndex(of: "\t")!)..<equals.lowerBound]), names = String(entry[equals.upperBound...])
+            if entry.hasPrefix("protocol "), entry.hasSuffix("\t") { out.protocols.insert(String(entry.dropFirst("protocol ".count).dropLast())); continue }
+            if let alias = Group.alias.parts(of: entry)?.first, let equals = alias.range(of: " = ") {
+                let name = String(alias[..<equals.lowerBound]), names = String(alias[equals.upperBound...])
                 out.aliases[name] = names
                 out.aliases[String(name.split(separator: ".").last ?? "").split(separator: ":").last.map(String.init) ?? name] = names
                 continue
@@ -562,9 +625,7 @@ enum LiveReload {
                 out.fields[String(entry[..<tab]), default: []].append(String(entry[colon.upperBound...]))
                 continue
             }
-            guard entry.hasPrefix(declarationGroup + "\t") else { continue }
-            let declared = entry.dropFirst(declarationGroup.count + 1)
-            guard let at = declared.range(of: " inherits ") else { continue }
+            guard let declared = Group.declared.parts(of: entry)?.first, let at = declared.range(of: " inherits ") else { continue }
             let type = String(declared[..<at.lowerBound])
             for name in declared[at.upperBound...].split(separator: ",") {
                 out.of[type, default: []].insert(name.trimmingCharacters(in: .whitespaces))
@@ -789,6 +850,8 @@ enum LiveReload {
         let rawValue = try! NSRegularExpression(pattern: #"^\s*\(raw_value_expr=\w+\b.*? value=("(?:[^"\\]|\\.)*"|[^ )]+)"#)
         var scopes: [(indent: Int, type: String?)] = [], out: [String] = [], seen = Set<String>()
         var lastCase: Int?, classTypes = Set<String>()
+        // The indents of extension scopes: an initializer declared in one is a convenience initializer, in no table.
+        var extensions = Set<Int>()
         // The member just read, whose `@objc` would be the next node under it: its indent and its entry so far.
         var objcPending: (indent: Int, entry: String)?
         // The `some`-returning member being read, what its body names so far, the type it builds once found, the
@@ -852,7 +915,7 @@ enum LiveReload {
                 continue
             }
             lastCase = nil
-            while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
+            while let last = scopes.last, last.indent >= indent { extensions.remove(last.indent); scopes.removeLast() }
             // What a member line belongs to is the nearest scope around it: a type's member when that's the type,
             // nothing when it's a function, an accessor or a closure (a local).
             let owner = scopes.last?.type
@@ -910,6 +973,7 @@ enum LiveReload {
                 let type = String(line[Range(m.range(at: 2), in: line)!])
                 conformances(type)
                 scopes.append((indent, type))
+                extensions.insert(indent)
             } else if let m = inferredAlias.firstMatch(in: line, range: range), let owner, !owner.hasPrefix("\u{4}") {
                 let name = String(line[Range(m.range(at: 2), in: line)!]), type = String(line[Range(m.range(at: 3), in: line)!])
                 if !type.contains("some "), seen.insert(aliasGroup + "\t" + owner + "." + name + " = " + type).inserted {
@@ -957,7 +1021,8 @@ enum LiveReload {
                 let signature = String(line[Range(m.range(at: 3), in: line)!]) + ": " + String(line[Range(m.range(at: 4), in: line)!])
                 declared(signature)
                 // A class's initializers, the compiler's own included: each has a method descriptor.
-                if line[Range(m.range(at: 2), in: line)!] == "constructor_decl", let owner, classTypes.contains(owner) {
+                if line[Range(m.range(at: 2), in: line)!] == "constructor_decl", let owner, classTypes.contains(owner),
+                   let scope = scopes.last, !extensions.contains(scope.indent) {
                     let entry = initsGroup + "\t" + owner + "." + signature
                     if seen.insert(entry).inserted { out.append(entry) }
                 }
@@ -1049,7 +1114,7 @@ enum LiveReload {
 /// A stored property added while the app is open, put in without reopening it. A live build gives every class of the
 /// app's `count` spare places (`__lampSpare_<Class>_0`…), every other struct one that holds any number of properties
 /// by name (`__lampSpare_<Struct>`), and every view a `@State` box (`__lampState_<View>`), all written by the
-/// copy step (`Template.sparesPerl`), so the open app's objects and values already have room. When the only thing
+/// copy step (`Template.livePerl`), so the open app's objects and values already have room. When the only thing
 /// keeping a change out is new stored properties in such types, each one's declaration in the live copy becomes a
 /// computed property kept in a spare: the type then holds what it did, and the change goes in like any other. Being
 /// stored, a spare is observed like the rest (`@Observable`'s tracking, `@Published` in an `ObservableObject`, a
@@ -1121,10 +1186,20 @@ enum LiveSlots {
         ["__lampSpare_", "__lampState_", "LampSpare", "LampStateBox", "failed to produce diagnostic"].contains { output.contains($0) }
     }
 
-    /// Whether a live build's errors come from a class the copy step made final (`Template.finalPerl`) that
-    /// something subclasses or overrides after all.
-    static func brokeFinal(_ output: String) -> Bool {
-        ["from a final class", "inherit from final class", "overrides a 'final'", "override a 'final'", "cannot be overridden"].contains { output.contains($0) }
+    /// Whether a live build's errors come from a class the copy step made final (`Template.livePerl`) that
+    /// something subclasses or overrides after all: the compiler names the class, and one the app's own code writes
+    /// `final` is the agent's error, not the step's.
+    static func brokeFinal(_ output: String, project: LampProject) -> Bool {
+        if output.contains("members of 'final' classes") { return true }
+        let named = try! NSRegularExpression(pattern: #"(?:from a final class|inherit from final class|of a final class|'final' (?:class|instance|property|subscript|method)[^']*?)[^'\n]*'(\w+)'"#)
+        let range = NSRange(output.startIndex..., in: output)
+        let classes = Set(named.matches(in: output, range: range).map { String(output[Range($0.range(at: 1), in: output)!]) })
+        guard !classes.isEmpty else { return ["overrides a 'final'", "override a 'final'", "cannot be overridden"].contains { output.contains($0) } }
+        let written = project.dir.appendingPathComponent("Sources")
+        let files = (FileManager.default.enumerator(at: written, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []).filter { $0.pathExtension == "swift" }
+        // The sources as code only (`SwiftText`): a mention in a comment or a string's text isn't the app writing it.
+        let text = SwiftText.codeOnly(Array(files.compactMap { AppFile.text($0, in: project) }.joined(separator: "\n")))
+        return classes.contains { text.range(of: #"\bfinal\s+class\s+"# + NSRegularExpression.escapedPattern(for: $0) + #"\b"#, options: .regularExpression) == nil }
     }
 
     /// Live copies of the app have no classes made final from now on (`no-final`). True the first time.
@@ -1188,8 +1263,8 @@ enum LiveSlots {
     /// differ now, and those that did at an earlier change, which the fresh live copy has as they're written again.
     static func changedConstants(_ project: LampProject, before: [String], after: [String]) -> [String] {
         func values(_ entries: [String]) -> [String: String] {
-            Dictionary(entries.filter { $0.hasPrefix("\u{2}constant\t") }.compactMap { entry -> (String, String)? in
-                let field = entry.dropFirst("\u{2}constant\t".count)
+            Dictionary(LiveReload.Group.constant.parts(in: entries).compactMap { parts -> (String, String)? in
+                let field = parts.joined(separator: "\t")
                 guard let colon = field.range(of: ": ", options: .backwards) else { return nil }
                 return (String(field[..<colon.lowerBound]), String(field[colon.upperBound...]))
             }, uniquingKeysWith: { first, _ in first })
@@ -1678,7 +1753,9 @@ enum SwiftText {
             if chars[end] == "\\", end + hashes < chars.count, chars[(end + 1)..<(end + 1 + hashes)].allSatisfy({ $0 == "#" }) {
                 let after = end + 1 + hashes
                 if after < chars.count, chars[after] == "(" { end = interpolationEnd(chars, from: after + 1); continue }
-                if hashes == 0 { end += 2; continue }
+                // The escaped character is the string's, whatever it is: a raw string's `\#"` is no closing quote.
+                end = after + 1
+                continue
             }
             if !multiline, chars[end] == "\n" { return end }
             if chars[end] == "\"", end + quotes - 1 < chars.count, chars[end..<(end + quotes)].allSatisfy({ $0 == "\"" }) {

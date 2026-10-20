@@ -168,6 +168,7 @@ final class LiveReloadTests: XCTestCase {
             typealias Choice = Picky
             struct Picked { var mood: Outer.Mood; var __lampSpare_Picked = 0 }
             struct Stack<Feeling> { var top: Feeling? }
+            enum Space { struct Wrapper { var mood: Outer.Mood } }
             @Observable final class Lab { var dirty = false { didSet {} } }
             final class Holder { var byName: [String: Outer.Mood] = [:]; var byMood: [Outer.Mood: Int] = [:]; var list: [Outer.Mood] = []; var picked: Picked? = nil; var stack = Stack<Int>(top: nil) }
             private struct Hidden { var v = 1 }
@@ -334,6 +335,22 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: initAdded).problem, "an initializer of Item was added, taken away or changed, and a class's initializers are in its method table")
         let unfinal = try await layoutWith([("; init(n: String) { name = n }", ""), ("; var choice: Choice? = nil }", " }"), ("final class Holder", "class Holder")])
         XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: unfinal).problem, "Holder is no longer final (something subclasses it), and its methods would go through a table the open app's class doesn't have")
+        // An initializer in an extension is a convenience one, in no method table: declared, not held.
+        let extensionInit = try await layoutWith([("class Holder", "final class Holder"),
+                                                  ("final class Tagged: NSObject {", "extension Item { convenience init(copy: Item) { self.init(); name = copy.name } }\nfinal class Tagged: NSObject {")])
+        XCTAssertNil(LiveReload.layoutProblem(before: layout, after: extensionInit).problem)
+        XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: extensionInit))
+        // A type holding the enum, printed: its field records name the enum as the open app knew it.
+        _ = try await layoutWith([("var stack = Stack<Int>(top: nil) }", "var stack = Stack<Int>(top: nil); func show() -> String { \"\\(Space.Wrapper(mood: .a))\" } }")])
+        let printed = await LiveReload.enumsHeld(project, grown: ["Outer.Mood"])
+        XCTAssertEqual(printed, "Space.Wrapper holds Outer.Mood and is printed, and its printed form would read Outer.Mood as the open app knew it")
+        // A class the app's own code writes `final` is the agent's error, not the copy step's; a mention in a comment
+        // or a string isn't the app writing it.
+        let written = project.dir.appendingPathComponent("Sources").appendingPathComponent("Roots.swift")
+        try "/* \" */ let help = \"final class Root\"\n// Example: final class Root\nlet raw = #\"final class Root\"#\nlet nested = \"\\(String(\"final class Root\"))\"\nlet escaped = #\"\\#\"#final class Root\"#\nclass Root {}\n".write(to: written, atomically: true, encoding: .utf8)
+        XCTAssertTrue(LiveSlots.brokeFinal("error: inheritance from a final class 'Root'", project: project))
+        try "final class Root {}\n".write(to: written, atomically: true, encoding: .utf8)
+        XCTAssertFalse(LiveSlots.brokeFinal("error: inheritance from a final class 'Root'", project: project))
         XCTAssertEqual(LiveReload.existential(in: "any CustomDebugStringConvertible", holding: "Mood", conformances: conformances), "any CustomDebugStringConvertible")
         XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
         XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")

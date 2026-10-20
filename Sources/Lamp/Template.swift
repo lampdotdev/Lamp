@@ -15495,22 +15495,51 @@ enum Template {
 
 """#
 
-    /// The copy step's spare places (LiveSlots), written beside the live copy and run on each file copied: every class
-    /// of the app's gets `LiveSlots.count` (named after the class, so a subclass's don't clash with what it inherits;
-    /// `@Published` when it says it's an ObservableObject), every view one `@State` box, and every other struct one
-    /// place for any number of properties. Left out: what a spare would break (SwiftData and Core Data models,
-    /// Sendable classes, Equatable views, the App and its scenes, property wrappers, App Intents) and structs in a
-    /// file that lays memory out by hand (vertex data for the GPU), whose size must be what it says.
-    static let sparesPerl = #"""
+    /// The one pass over each file of the live copy (LiveReload), in perl so build.sh needs nothing but the system's:
+    /// `live.pl scan <files>` prints the names something may subclass (superclasses, the bounds of generic
+    /// parameters and `where` clauses, each followed through the file's typealiases), and `live.pl <spares> <names>
+    /// <flags> <files>` rewrites each file in place, with flags `s` for spare places and `f` for final classes.
+    /// Stretches of string literals (plain, multi-line and raw, with their escapes), block comments (nested) and line
+    /// comments are found first and never touched, so a `class` or `var body` in a help text stays as it is.
+    /// What it does to a file: (1) each view's `var body: some View` becomes an `AnyView` that reads
+    /// `LampLive.generation` and draws `__lampBody`, so its type never changes and every view draws again on a
+    /// reload; (2) the `@main` moves from the App to `__LampEntry`, which starts `LampLive.watch` before it; (3) every
+    /// class gets spare places and every struct and view one (`LiveSlots`; not what a spare would break: SwiftData
+    /// and Core Data models, Sendable classes, Equatable views, the App and its scenes, wrappers, intents, structs in a
+    /// file that lays memory out by hand); (4) every class nothing subclasses is made `final`, since a final class
+    /// keeps no method table and so takes a method added without reopening the app (`open` and already-final ones
+    /// are left). A member spelt `class final func` or `class private func` is no type and is passed over. A class made
+    /// final that something subclasses after all fails the build in the compiler's words, which `LiveSlots.brokeFinal`
+    /// reads, and the copy is made without that step from then on (`no-final`), as spares are (`no-spares`).
+    static let livePerl = ##"""
     use strict; use warnings;
-    my $count = shift @ARGV;
     local $/;
-    for my $file (@ARGV) {
-        open(my $in, '<', $file) or die "$file: $!"; my $s = <$in>; close($in);
-        my $raw = $s =~ /MemoryLayout|withUnsafe|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
-        $s =~ s#^([ \t]*)(((?:@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated|indirect)\s+)*)(class|struct)\s+(?!(?:func|var|let|subscript|override|class)\b)(\w+)([^{\n]*)\{)#$1 . spares($1, $2, $3 . $6, $4, $5, $raw)#gme;
-        open(my $out, '>', $file) or die "$file: $!"; print $out $s; close($out);
+    my $modifier = qr/(?:func|var|let|subscript|override|class|final|open|public|internal|private|fileprivate|package|static|dynamic|required|convenience|nonisolated|lazy|weak|unowned|optional|indirect|init|deinit)\b/;
+    if (($ARGV[0] // '') eq 'scan') {
+        shift @ARGV;
+        my (%names, %alias);
+        for my $file (@ARGV) {
+            open(my $in, '<', $file) or next; my $s = <$in>; close($in);
+            while ($s =~ /\btypealias\s+(\w+)\s*=\s*([\w.]+)/g) { $alias{$1} = $2 }
+            while ($s =~ /\bclass\s+\w+(?:<[^>]*>)?\s*:\s*([\w.]+)/g) { $names{$1} = 1 }
+            while ($s =~ /<[^<>]*>/g) { my $g = $&; while ($g =~ /:\s*([\w.]+)/g) { $names{$1} = 1 } }
+            while ($s =~ /\bwhere\b([^{]*)/g) { my $w = $1; while ($w =~ /:\s*([\w.]+)/g) { $names{$1} = 1 } }
+        }
+        for my $name (keys %names) { my $n = $name; for (1 .. 4) { last unless exists $alias{(split /\./, $n)[-1]}; $n = $alias{(split /\./, $n)[-1]}; $names{$n} = 1 } }
+        print join(' ', sort keys %names), "\n";
+        exit 0;
     }
+    my ($count, $subclassed, $flags, @files) = @ARGV;
+    my %subclassed = map { (split /\./)[-1] => 1 } split ' ', $subclassed;
+    my $wantSpares = $flags =~ /s/; my $wantFinal = $flags =~ /f/;
+    # The stretches of a file no rewrite may touch, worked out again after each rewrite moves them.
+    my @skip;
+    sub spans {
+        my $s = shift; my @found;
+        while ($s =~ /((#+)"""(?:\\\2[\s\S]|\\(?!\2)|[^\\])*?"""\2|"""(?:\\[\s\S]|[^\\])*?"""|(#+)"(?:\\\3[^\n]|\\(?!\3)|[^"\\\n]|"(?!\3))*?"\3|"(?:[^"\\\n]|\\.)*"|(?<blk>\/\*(?:(?&blk)|(?!\*\/)[\s\S])*\*\/)|\/\/[^\n]*)/g) { push @found, [$-[0], $+[0]] }
+        return @found;
+    }
+    sub inside { my $p = shift; for my $span (@skip) { return 1 if $p >= $span->[0] && $p < $span->[1] } 0 }
     sub spares {
         my ($i, $whole, $header, $kind, $name, $raw) = @_;
         my $pad = "\n$i    ";
@@ -15527,58 +15556,44 @@ enum Template {
         return $whole if $raw;
         return "${whole}${pad}var __lampSpare_${name} = LampSpare(nil);";
     }
-    """#
-
-    /// Makes every class `final` that nothing in the app subclasses (LiveReload): a final class keeps no method
-    /// table, so a method or computed property added to it goes into the open app, where one added to a class
-    /// with a table reshapes it and reopens the app. Given the names used as superclasses, or as the bounds of
-    /// generic parameters and `where` clauses (a subclass may be made of those), as one argument; `open` classes
-    /// and ones already `final` are left as they are. A class it shouldn't have made final (a subclass the scan
-    /// didn't see) fails the build with the compiler's own words, which `LiveSlots.brokeFinal` reads: the copy is
-    /// then made without this step from then on (`no-final`).
-    static let finalPerl = ##"""
-    use strict; use warnings;
-    my %subclassed = map { (split /\./)[-1] => 1 } split ' ', shift @ARGV;
-    local $/;
-    for my $file (@ARGV) {
+    for my $file (@files) {
         open(my $in, '<', $file) or die "$file: $!"; my $s = <$in>; close($in);
-        # A line of a string or a comment (a help text, a template, a note) is no declaration: those stretches are
-        # found first and left as they are, raw strings included.
-        my @skip;
-        # A raw string ends at its own number of `#`, and a backslash before that many is its escape; a plain one's
-        # escaped quote (`\"""`) is content; block comments nest.
-        while ($s =~ /((#+)"""(?:\\\2[\s\S]|\\(?!\2)|[^\\])*?"""\2|"""(?:\\[\s\S]|[^\\])*?"""|(#+)"(?:\\\3[^\n]|\\(?!\3)|[^"\\\n]|"(?!\3))*?"\3|"(?:[^"\\\n]|\\.)*"|(?<blk>\/\*(?:(?&blk)|(?!\*\/)[\s\S])*\*\/)|\/\/[^\n]*)/g) { push @skip, [$-[0], $+[0]]; }
-        my $inside = sub { my $p = shift; for my $span (@skip) { return 1 if $p >= $span->[0] && $p < $span->[1] } 0 };
-        $s =~ s{^([ \t]*)((?:@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|nonisolated|indirect)\s+)*)(class)\s+(?!(?:func|var|let|subscript|override|class)\b)(\w+)}{ ($inside->($-[3]) || $subclassed{$4}) ? $& : "$1$2final " . substr($&, length($1) + length($2)) }gme;
+        my $raw = $s =~ /MemoryLayout|withUnsafe|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
+        @skip = spans($s);
+        $s =~ s{var\s+body\s*:\s*some\s+(?:SwiftUI\.)?View\s*\{}~ inside($-[0]) ? $& : "var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\n    \@ViewBuilder var __lampBody: some View {" ~ge;
+        @skip = spans($s);
+        my $main;
+        $s =~ s{^([ \t]*(?:(?:\@\w+(?:\([^)]*\))?|public|internal|fileprivate|private|open|final)\s+)*)\@main((?:\s+(?:\@\w+(?:\([^)]*\))?|public|internal|fileprivate|private|open|final))*\s+(?:struct|class|enum|actor)\s+(\w+))}{ if (inside($-[0])) { $& } else { $main = $3; "$1$2" } }me;
+        $s .= "\n\@main enum __LampEntry { \@MainActor static func main() { LampLive.watch(); $main.main() } }\n" if defined $main;
+        if ($wantSpares) {
+            @skip = spans($s);
+            $s =~ s#^([ \t]*)(((?:\@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated|indirect)\s+)*)(class|struct)\s+(?!$modifier)(\w+)([^{\n]*)\{)#inside($-[0]) ? $& : $1 . spares($1, $2, $3 . $6, $4, $5, $raw)#gme;
+        }
+        if ($wantFinal) {
+            @skip = spans($s);
+            $s =~ s{^([ \t]*)((?:\@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|nonisolated|indirect)\s+)*)(class)\s+(?!$modifier)(\w+)}{ (inside($-[3]) || $subclassed{$4}) ? $& : "$1$2final " . substr($&, length($1) + length($2)) }gme;
+        }
         open(my $out, '>', $file) or die "$file: $!"; print $out $s; close($out);
     }
     """##
 
-    /// The live copy of the sources (LiveReload): each file copied into .lamp/live with its views' bodies wrapped,
-    /// so a body's type stays the same from one change to the next (`LampLive`), and only when it differs, so the
-    /// build stays incremental; files gone from Sources go from the copy too. Indented for the scripts' `if`.
     static let liveCopySteps = """
       LIVE=.lamp/live
       mkdir -p "$LIVE/Sources"
-      cat > "$LIVE/spares.pl" <<'LAMPSPARES'
-    \(sparesPerl)
-    LAMPSPARES
-      cat > "$LIVE/final.pl" <<'LAMPFINAL'
-    \(finalPerl)
-    LAMPFINAL
-      # The names something may subclass: superclasses, and the bounds of generic parameters and where clauses.
-      SUBCLASSED=$(perl -0ne 'while (/\\bclass\\s+\\w+(?:<[^>]*>)?\\s*:\\s*([\\w.]+)/g) { print "$1 " } while (/<[^<>]*>/g) { my $g = $&; while ($g =~ /:\\s*([\\w.]+)/g) { print "$1 " } } while (/\\bwhere\\b([^{]*)/g) { my $w = $1; while ($w =~ /:\\s*([\\w.]+)/g) { print "$1 " } }' Sources/**/*.swift(N) 2>/dev/null || true)
+      cat > "$LIVE/live.pl" <<'LAMPLIVE'
+    \(livePerl)
+    LAMPLIVE
+      # The names something may subclass, so every other class can be final.
+      SUBCLASSED=$(perl "$LIVE/live.pl" scan Sources/**/*.swift(N) 2>/dev/null || true)
       for f in Sources/**/*.swift(N); do
         out="$LIVE/$f"
         mkdir -p "${out:h}"
-        perl -0pe 's/var\\s+body\\s*:\\s*some\\s+(?:SwiftUI\\.)?View\\s*\\{/var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\\n    \\@ViewBuilder var __lampBody: some View {/g' "$f" > "$out.new"
-        # The app starts through Lamp's entry, which watches the classes Swift makes (LampLive.watch) before the App's own.
-        # Only an @main at the start of a line, after attributes or modifiers at most: LampSupport.swift shows one in a comment.
-        perl -0pi -e 's/^([ \\t]*(?:(?:\\@\\w+(?:\\([^)]*\\))?|public|internal|fileprivate|private|open|final)\\s+)*)\\@main((?:\\s+(?:\\@\\w+(?:\\([^)]*\\))?|public|internal|fileprivate|private|open|final))*\\s+(?:struct|class|enum|actor)\\s+(\\w+))/$1$2/m and $_ .= "\\n\\@main enum __LampEntry { \\@MainActor static func main() { LampLive.watch(); $3.main() } }\\n"' "$out.new"
-        # Spare places for properties added while the app is open (LiveSlots), unless they kept the app from building.
-        case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) [[ -e "$LIVE/no-spares" ]] || perl "$LIVE/spares.pl" \(LiveSlots.count) "$out.new" ;; esac
-        # Every class nothing subclasses is final, so methods added to it go in without reopening the app.
-        case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) [[ -e "$LIVE/no-final" ]] || perl "$LIVE/final.pl" "$SUBCLASSED" "$out.new" ;; esac
+        cp "$f" "$out.new"
+        # Lamp's own files get the body wrap and the entry only; the app's get spare places and final classes too,
+        # unless either kept the app from building.
+        flags=""
+        case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) [[ -e "$LIVE/no-spares" ]] || flags="${flags}s"; [[ -e "$LIVE/no-final" ]] || flags="${flags}f" ;; esac
+        perl "$LIVE/live.pl" \(LiveSlots.count) "$SUBCLASSED" "$flags" "$out.new"
         if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi
       done
       for f in "$LIVE"/Sources/**/*.swift(N); do [[ -f "${f#$LIVE/}" ]] || rm "$f"; done
