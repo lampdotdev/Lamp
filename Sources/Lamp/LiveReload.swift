@@ -329,7 +329,7 @@ enum LiveReload {
         }
         // What the spares keep (properties added while the app was open), by type, name and kind: a spare holds its
         // value as any value, under the metadata the app's code had when it was set.
-        let inSpares = LiveSlots.mapping(project).flatMap { type, properties in properties.map { (type, $0.key, $0.value.type) } }
+        let inSpares = LiveSlots.mapping(project).flatMap { type, properties in properties.map { (type, $0.key, $0.value.type) } }.sorted { ($0.0, $0.1) < ($1.0, $1.1) }
         // A value of the enum could hide in what holds anything at all, where its type can't be seen: a value of
         // any type, or of any type conforming to a protocol the enum conforms to.
         for type in grown {
@@ -398,60 +398,6 @@ enum LiveReload {
             }
             return found.sorted()
         }
-        // A type holding the enum keeps field records that name the app's description of it, which the new cases
-        // aren't in: its printed form (`print`, `dump`, `String(describing:)`, `Mirror`, an interpolation) shows a
-        // new case as nothing. So where the app prints such a holder, the change reopens it.
-        let typeOf = try! NSRegularExpression(pattern: #" type="([^"]*)""#)
-        let printing = try! NSRegularExpression(pattern: #"decl="Swift\.\(file\)\.(?:print|debugPrint|dump)\(|decl="Swift\.\(file\)\.String extension\.init\((?:describing|reflecting):\)|decl="Swift\.\(file\)\.Mirror\.init\(reflecting:\)|DefaultStringInterpolation\.appendInterpolation"#)
-        for type in grown {
-            var holders = Set<String>(), grew = true
-            let names = [type] + carriers(of: type)
-            while grew {
-                grew = false
-                for (owner, kinds) in fields where !holders.contains(owner) && owner != type {
-                    let known = names + Array(holders)
-                    for kind in kinds {
-                        let words = word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).map { String(kind[Range($0.range, in: kind)!]) }
-                        if words.contains(where: { known.contains($0) || known.contains(last($0)) }) { holders.insert(owner); grew = true; break }
-                    }
-                }
-            }
-            guard !holders.isEmpty else { continue }
-            // By their qualified names, as a kind prints a nested type: `Space.Wrapper` is not a `Wrapper` at the top.
-            let holder = try! NSRegularExpression(pattern: #"(?<![\w.])(?:"# + holders.sorted { $0.count > $1.count }.map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|") + #")(?![\w.])"#)
-            func printed(_ kind: String) -> String? {
-                holder.firstMatch(in: kind, range: NSRange(kind.startIndex..., in: kind)).map { String(kind[Range($0.range, in: kind)!]) }
-            }
-            // What's printed is the argument's own type: for an interpolation, `String(describing:)` and `dump` it's
-            // in the function's type on the call's line; `print` and `Mirror` take any value, so it's the type of
-            // what's made into one (the node under each `erasure_expr`), never a value's own parts or base.
-            let parameter = try! NSRegularExpression(pattern: #"-> \((.+)\) -> (?:\(\)|String)$|^\((.+?), String\?, Int, Int, Int\)"#)
-            var erasing: Int?, anyCall: Int?
-            for raw in dump.split(separator: "\n") {
-                let line = String(raw), indent = line.prefix { $0 == " " }.count
-                guard line.dropFirst(indent).first == "(" else { continue }
-                let range = NSRange(line.startIndex..., in: line)
-                if let at = anyCall, indent <= at { anyCall = nil }
-                if let at = erasing {
-                    erasing = nil
-                    if indent > at, let m = typeOf.firstMatch(in: line, range: range), let name = printed(String(line[Range(m.range(at: 1), in: line)!])) {
-                        return "\(name) holds \(type) and is printed, and its printed form would read \(type) as the open app knew it"
-                    }
-                }
-                if anyCall != nil, line.contains("(erasure_expr "), line.contains(#"type="Any""#) { erasing = indent; continue }
-                guard printing.firstMatch(in: line, range: range) != nil, let m = typeOf.firstMatch(in: line, range: range) else { continue }
-                let signature = String(line[Range(m.range(at: 1), in: line)!])
-                if let p = parameter.firstMatch(in: signature, range: NSRange(signature.startIndex..., in: signature)) {
-                    let group = p.range(at: 1).location != NSNotFound ? 1 : 2
-                    let kind = String(signature[Range(p.range(at: group), in: signature)!])
-                    if kind != "Any", let name = printed(kind) {
-                        return "\(name) holds \(type) and is printed, and its printed form would read \(type) as the open app knew it"
-                    }
-                    if kind != "Any" { continue }
-                }
-                anyCall = indent - 2
-            }
-        }
         for type in grown {
             for carrier in carriers(of: type) {
                 let name = NSRegularExpression.escapedPattern(for: carrier)
@@ -490,13 +436,17 @@ enum LiveReload {
         guard let dump = await dump(of: running(project), in: project, module: project.exe, macOS: Template.macMinimum(project)) else {
             return "the compiler couldn't say where the open app uses the enums that grew"
         }
-        return oldCode(meeting: grown, uses: oldCodeRecorded(project) + oldCodeUses(inDump: dump))
+        // What holds the enum by value is changed with it: an old frame holding such a value reads it by the old layout.
+        let related = grown + holders(of: grown, inLayout: members(inDump: dump, held: true))
+        return oldCode(meeting: related, uses: oldCodeRecorded(project) + oldCodeUses(inDump: dump))
     }
 
     /// Why a grown enum can't go in, among what old code may still be doing: the first use of one of the enums.
     static func oldCode(meeting enums: [String], uses: [String]) -> String? {
-        let names = Set(enums), optional = Set(enums.map { $0 + "?" })
-        for use in uses {
+        func last(_ name: String) -> String { String(name.split(separator: ".").last ?? "") }
+        let names = Set(enums + enums.map(last)), optional = Set(names.map { $0 + "?" })
+        // A switch or a print is said as such; a value merely in hand is said when nothing more telling is.
+        for use in uses.filter({ !$0.hasSuffix("\tuses") }) + uses.filter({ $0.hasSuffix("\tuses") }) {
             let parts = use.split(separator: "\t", maxSplits: 2).map(String.init)
             guard parts.count == 3, names.contains(parts[0]) || optional.contains(parts[0]) else { continue }
             return "\(parts[1]) \(parts[2]) \(parts[0]) in code that may still be running (a timer, a task, an observer), which doesn't know the new cases"
@@ -524,6 +474,8 @@ enum LiveReload {
         let call = try! NSRegularExpression(pattern: #"^(\s*)\((?:\w+=)?call_expr\b"#)
         let callee = try! NSRegularExpression(pattern: #"^(\s*)\(declref_expr\b.*? decl="([\w.]+?)\.\(file\)"#)
         let switchStmt = try! NSRegularExpression(pattern: #"^(\s*)\(switch_stmt\b"#)
+        let typeOf = try! NSRegularExpression(pattern: #" type="([^"]*)""#)
+        let word = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
         let casePattern = try! NSRegularExpression(pattern: #"^(\s*)\(pattern_enum_element\b.*? type="([^"]*)""#)
         let interpolation = try! NSRegularExpression(pattern: #"^(\s*)\(declref_expr\b.*? type="[^"]*\(([^"()]*)\) -> \(\)".*? decl="Swift\.\(file\)\.DefaultStringInterpolation\.appendInterpolation"#)
         var scopes: [(indent: Int, kind: Kind)] = [], uses: [String] = [], seen = Set<String>()
@@ -594,8 +546,45 @@ enum LiveReload {
             } else if let m = interpolation.firstMatch(in: line, range: range), risky() {
                 note(String(line[Range(m.range(at: 2), in: line)!]), "prints")
             }
+            // Any value of the enum's type, or of a type holding it, that running code has in hand: compared, hashed,
+            // cast, read as an optional, each by the layout the code was compiled with, which a new case changes.
+            if risky(), let m = typeOf.firstMatch(in: line, range: range) {
+                let kind = String(line[Range(m.range(at: 1), in: line)!])
+                for w in word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)) {
+                    let name = String(kind[Range(w.range, in: kind)!])
+                    if name.first?.isUppercase == true { note(name, "uses") }
+                }
+            }
         }
         return uses
+    }
+
+    /// The types that hold any of `types` by value, through any depth of the app's own types, from a layout's
+    /// fields: what a grown enum's new case changes beyond the enum itself.
+    static func holders(of types: [String], inLayout entries: [String]) -> [String] {
+        let conformed = conformances(inLayout: entries)
+        let word = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
+        func last(_ name: String) -> String { String(name.split(separator: ".").last ?? "") }
+        // A field's type may be a typealias of one: followed to what it names.
+        func resolved(_ name: String) -> String {
+            var name = name, steps = 0
+            while !conformed.types.contains(name), let target = conformed.aliases[name], target != name, steps < 8 { name = target; steps += 1 }
+            return name
+        }
+        var found = Set(types), grew = true
+        while grew {
+            grew = false
+            for (owner, kinds) in conformed.fields where !found.contains(owner) {
+                for kind in kinds {
+                    let names = word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).flatMap { m -> [String] in
+                        let name = String(kind[Range(m.range, in: kind)!]), target = resolved(name)
+                        return [name] + word.matches(in: target, range: NSRange(target.startIndex..., in: target)).map { String(target[Range($0.range, in: target)!]) }
+                    }
+                    if names.contains(where: { found.contains($0) || found.contains(last($0)) }) { found.insert(owner); grew = true; break }
+                }
+            }
+        }
+        return found.subtracting(types).sorted()
     }
 
     /// What each type and protocol conforms to or inherits, from the layout's declarations ("Mood inherits P, Q",
@@ -1104,21 +1093,26 @@ enum LiveReload {
         async let early: (url: URL?, problem: String?) = spared ? (nil, nil) : await compile(project, changed: changed)
         let (before, after, declarations, oldCode) = await layouts(project)
         var check = layoutProblem(before: before, after: after)
-        let constants = before.flatMap { before in after.map { LiveSlots.changedConstants(project, before: before, after: $0) } } ?? []
+        // A constant made from an enum that grew (`Mood.allCases`) keeps the value the open app made: remade too.
+        let grownEarly = before.flatMap { before in after.map { grownEnums(before: before, after: $0) } } ?? []
+        var constants = before.flatMap { before in after.map { LiveSlots.changedConstants(project, before: before, after: $0) } } ?? []
+        constants = Array(Set(constants + LiveSlots.constants(naming: grownEarly, in: declarations))).sorted()
+        var plan: LiveSlots.Plan?
         var (library, problem) = await early
         // Stored properties added to existing types go into their spares, constants whose value changed give the new
         // one, and the change is compiled with them.
         if check.problem != nil || !constants.isEmpty, let before, let after,
-           let plan = LiveSlots.fit(project, before: before, after: after, declarations: declarations, constants: constants) {
-            changed = Array(Set(changed).union(plan.files)).sorted()
+           let fitted = LiveSlots.fit(project, before: before, after: after, declarations: declarations, constants: constants) {
+            plan = fitted
+            changed = Array(Set(changed).union(fitted.files)).sorted()
             // A constant newly read through its new code is read so everywhere: the open app's own reads go to storage
             // that keeps the first value. Afterwards every caller reads through it, so later changes need no more.
-            if !plan.constants.isEmpty { changed = appFiles(project) }
-            check = layoutProblem(before: before, after: plan.layout)
+            if !fitted.constants.isEmpty { changed = appFiles(project) }
+            check = layoutProblem(before: before, after: fitted.layout)
             (library, problem) = await compile(project, changed: changed)
-            if check.problem == nil, !plan.added.isEmpty { said.append("Added \(plan.added.joined(separator: ", "))") }
-            if check.problem == nil, !plan.constants.isEmpty {
-                said.append("Gave \(plan.constants.joined(separator: ", ")) \(plan.constants.count == 1 ? "its" : "their") new value")
+            if check.problem == nil, !fitted.added.isEmpty { said.append("Added \(fitted.added.joined(separator: ", "))") }
+            if check.problem == nil, !fitted.constants.isEmpty {
+                said.append("Gave \(fitted.constants.joined(separator: ", ")) \(fitted.constants.count == 1 ? "its" : "their") new value")
             }
         } else if !constants.isEmpty, check.problem == nil {
             return .reopen(why: "a constant's new value can't be given in place")
@@ -1150,14 +1144,17 @@ enum LiveReload {
         if let model = modelFiles(inLayout: layout).first(where: { changed.contains($0.file) }) {
             return .reopen(why: "the file of the SwiftData model \(model.name) is compiled again, and its data is found by key paths the open app made")
         }
+        // A property taken out of the code leaves its spare place holding its value: the app sets its name aside,
+        // and the place is retired here, so a name brought back later gets a fresh place.
+        let retiring = after.map { LiveSlots.retiring(project, keeping: $0) } ?? []
         // Files only taken away leave nothing to load: the open app already has what's left.
-        if let library, let why = await send(library, to: project, token: token, whole: changed == appFiles(project)) { return .reopen(why: why) }
+        if let library, let why = await send(library, to: project, token: token, whole: changed == appFiles(project), retired: retiring) { return .reopen(why: why) }
+        // Only now, with the change in, are the spares' places and the constants remade written down.
+        if let plan { LiveSlots.commit(plan, for: project) }
         // What a generation's code may leave running (a timer, a task) outlives the next change's replacing its
         // sources: the installed generation's uses are recorded before the first change replaces them, each
         // change's as it goes in.
         if !hasOldCodeRecord(project), let installed = await oldCodeUsesOfRunning(project) { recordOldCode(installed, for: project) }
-        // A property taken out of the code leaves its spare place holding its value: retired, so a name brought
-        // back later gets a fresh place.
         if let after { LiveSlots.retire(project, keeping: after) }
         markRunning(project)
         keepLayout(layout, for: project)
@@ -1170,15 +1167,15 @@ enum LiveReload {
     /// Nil when the app took the change; else why not, in the app's words (`LampLive`), or that it didn't answer.
     /// `whole` says every file was compiled into the library, so the app may take what it doesn't define of a
     /// class's Objective-C methods as taken away.
-    static func send(_ library: URL, to project: LampProject, token: String, whole: Bool) async -> String? {
+    static func send(_ library: URL, to project: LampProject, token: String, whole: Bool, retired: [String] = []) async -> String? {
         let answer = Runtime.macFolder(project).appendingPathComponent("reloaded.txt")
         try? FileManager.default.removeItem(at: answer)
         let key = SymmetricKey(data: Data(token.utf8))
-        let signature = HMAC<SHA256>.authenticationCode(for: Data(("reload\n\(library.path)" + (whole ? "\nwhole" : "")).utf8), using: key)
+        let signature = HMAC<SHA256>.authenticationCode(for: Data(("reload\n\(library.path)" + (whole ? "\nwhole" : "") + (retired.isEmpty ? "" : "\nretired " + retired.joined(separator: ","))).utf8), using: key)
             .map { String(format: "%02x", $0) }.joined()
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name(Edition.notificationPrefix + "reload"), object: project.bundleID,
-            userInfo: ["path": library.path, "signature": signature, "whole": whole ? "1" : "0"], deliverImmediately: true)
+            userInfo: ["path": library.path, "signature": signature, "whole": whole ? "1" : "0", "retired": retired.joined(separator: ",")], deliverImmediately: true)
         for _ in 0..<50 {
             try? await Task.sleep(for: .milliseconds(100))
             if let text = try? String(contentsOf: answer, encoding: .utf8) {
@@ -1244,15 +1241,49 @@ enum LiveSlots {
     /// place rather than that value. Called once a change is in.
     static func retire(_ project: LampProject, keeping layout: [String]) {
         var map = whole(project)
-        var changed = false
-        for (type, properties) in map {
+        let gone = gone(in: map, keeping: layout)
+        guard !gone.isEmpty else { return }
+        for (type, name, _) in gone { map[type]?[name]?.retired = true }
+        save(map, for: project)
+    }
+    /// The places about to be retired by `retire`, each as the key its struct's or view's spare keeps the value
+    /// under (`spareKey`), for the app to set aside before the change goes in.
+    static func retiring(_ project: LampProject, keeping layout: [String]) -> [String] {
+        gone(in: whole(project), keeping: layout).map { spareKey(type: $0.type, name: $0.name, generation: $0.slot.generation) }.sorted()
+    }
+    /// The properties in spares that the new code no longer declares, by type and name.
+    private static func gone(in mapping: [String: [String: Slot]], keeping layout: [String]) -> [(type: String, name: String, slot: Slot)] {
+        var out: [(type: String, name: String, slot: Slot)] = []
+        for (type, properties) in mapping {
             for (name, slot) in properties where !name.hasPrefix(retiredKey) && slot.retired != true {
                 // As a field, or as a wrapper's storage (`_name`, `__name`).
                 let still = ["", "_", "__"].contains { prefix in layout.contains { $0.hasPrefix(type + "\t" + prefix + name + ": ") } }
-                if !still { map[type]?[name]?.retired = true; changed = true }
+                if !still { out.append((type, name, slot)) }
             }
         }
-        if changed { save(map, for: project) }
+        return out
+    }
+    /// The key a struct's or view's spare keeps a property's value under: its type and name, so two types' `score`
+    /// are two values and retiring one leaves the other, numbered when the name has been brought back.
+    static func spareKey(type: String, name: String, generation: Int?) -> String {
+        type + "." + name + (generation.map { "#\($0)" } ?? "")
+    }
+
+    /// Writes down what `fit` planned, once the change is in: the spares' places and the constants remade so far.
+    static func commit(_ plan: Plan, for project: LampProject) {
+        save(plan.slots, for: project)
+        try? JSONEncoder().encode(plan.allConstants).write(to: constantsURL(project), options: .atomic)
+    }
+
+    /// The constants (as `changedConstants` names them) whose starting value names one of `types`: made from an
+    /// enum that grew, they keep the value the open app made.
+    static func constants(naming types: [String], in declarations: SwiftSource.Declarations) -> [String] {
+        guard !types.isEmpty else { return [] }
+        let names = types.map { String($0.split(separator: ".").last ?? "") }
+        return declarations.constants.keys.sorted().filter { key in
+            guard let variable = declarations.constants[key], let text = initialText(of: variable, in: declarations) else { return false }
+            return names.contains { SwiftText.mentions($0, in: text) }
+        }
     }
 
     private static func save(_ mapping: [String: [String: Slot]], for project: LampProject) {
@@ -1279,7 +1310,7 @@ enum LiveSlots {
         let files = (FileManager.default.enumerator(at: written, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []).filter { $0.pathExtension == "swift" }
         // The sources as code only (`SwiftText`): a mention in a comment or a string's text isn't the app writing it.
         let text = SwiftText.codeOnly(Array(files.compactMap { AppFile.text($0, in: project) }.joined(separator: "\n")))
-        return classes.contains { text.range(of: #"\bfinal\s+class\s+"# + NSRegularExpression.escapedPattern(for: $0) + #"\b"#, options: .regularExpression) == nil }
+        return classes.contains { text.range(of: #"\bfinal\b(?:\s+\w+(?:\([^)]*\))?)*?\s+class\s+"# + NSRegularExpression.escapedPattern(for: $0) + #"\b"#, options: .regularExpression) == nil }
     }
 
     /// Live copies of the app have no classes made final from now on (`no-final`). True the first time.
@@ -1329,6 +1360,9 @@ enum LiveSlots {
         var files: [String]
         /// The constants given their new values for the first time ("Car.topSpeed").
         var constants: [String] = []
+        /// What to write down once the change is in (`commit`): the spares' places, and every constant remade so far.
+        var slots: [String: [String: Slot]] = [:]
+        var allConstants: [String] = []
     }
 
     private static func constantsURL(_ project: LampProject) -> URL { LiveReload.folder(project).appendingPathComponent("constants.json") }
@@ -1502,12 +1536,10 @@ enum LiveSlots {
         let base = LiveReload.sources(project).standardizedFileURL.path + "/"
         for file in written { try? file.text.write(toFile: file.path, atomically: true, encoding: .utf8) }
         let earlier = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: constantsURL(project)))) ?? []
-        save(map, for: project)
-        try? JSONEncoder().encode(constants).write(to: constantsURL(project), options: .atomic)
         return Plan(added: planned.filter(\.isNew).map { $0.type + "." + $0.name },
                     layout: after.filter { !moved.contains($0) },
                     files: written.map { URL(fileURLWithPath: $0.path).standardizedFileURL.path }.map { $0.hasPrefix(base) ? String($0.dropFirst(base.count)) : $0 },
-                    constants: constants.filter { !earlier.contains($0) }.map(displayName))
+                    constants: constants.filter { !earlier.contains($0) }.map(displayName), slots: map, allConstants: constants)
     }
 
     /// A struct's new properties, moved into its spare, are no longer stored, so the initializer Swift made for it
@@ -1589,6 +1621,14 @@ enum LiveSlots {
                 sources[other] = made
                 queue.append(made)
             }
+        }
+        // And the cases of every enum those texts name (`Mood.allCases.count`): the value is made again each time
+        // the enum grows, not only the first.
+        for (type, entries) in layout {
+            let cases = entries.filter { $0.contains("\tcase ") }
+            guard !cases.isEmpty, case let short = String(type.split(separator: ".").last ?? ""),
+                  sources.values.contains(where: { SwiftText.mentions(short, in: $0) }) else { continue }
+            sources["\u{0}" + type] = cases.sorted().joined(separator: "\n")
         }
         // Named by its key, the file of a private one included: two files' `private let spacing` are two values.
         let name = key.replacingOccurrences(of: "\t", with: ".") + "#" + SwiftSource.digest(sources.keys.sorted().map { $0 + "=" + sources[$0]! }.joined(separator: "\n"))
@@ -1734,8 +1774,7 @@ enum LiveSlots {
     private static func computed(_ variable: SwiftSource.Variable, item: (type: String, name: String, slot: Slot, published: Bool, isNew: Bool),
                                  keyword: String, declarations: SwiftSource.Declarations, cases: [String: Set<String>]) -> [String]? {
         let name = variable.name, declared = variable.type, type = item.type
-        // The name a struct's or view's place keeps the value under: numbered when the name has been brought back.
-        let key = item.slot.generation.map { "\(name)#\($0)" } ?? name
+        let key = spareKey(type: type, name: name, generation: item.slot.generation)
         let isLet = keyword == "let"
         let optional = declared.hasSuffix("?") || declared.hasPrefix("Optional<")
         guard let initial = initialText(of: variable, in: declarations) ?? (optional ? "nil" : nil) else { return nil }

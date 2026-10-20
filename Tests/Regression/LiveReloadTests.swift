@@ -340,10 +340,12 @@ final class LiveReloadTests: XCTestCase {
                                                   ("final class Tagged: NSObject {", "extension Item { convenience init(copy: Item) { self.init(); name = copy.name } }\nfinal class Tagged: NSObject {")])
         XCTAssertNil(LiveReload.layoutProblem(before: layout, after: extensionInit).problem)
         XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: extensionInit))
-        // A type holding the enum, printed: its field records name the enum as the open app knew it.
+        // A type holding the enum, printed, is no reason to reopen: the enum's description is the change's once it's in.
         _ = try await layoutWith([("var stack = Stack<Int>(top: nil) }", "var stack = Stack<Int>(top: nil); func show() -> String { \"\\(Space.Wrapper(mood: .a))\" } }")])
         let printed = await LiveReload.enumsHeld(project, grown: ["Outer.Mood"])
-        XCTAssertEqual(printed, "Space.Wrapper holds Outer.Mood and is printed, and its printed form would read Outer.Mood as the open app knew it")
+        XCTAssertNil(printed, printed ?? "")
+        // What holds the enum by value is changed with it, for the old code that may have one in hand.
+        XCTAssertEqual(LiveReload.holders(of: ["Outer.Mood"], inLayout: layout!).filter { ["Pick", "Picky", "Picked", "Space.Wrapper", "Holder"].contains($0) }.sorted(), ["Holder", "Pick", "Picked", "Picky", "Space.Wrapper"])
         // A class the app's own code writes `final` is the agent's error, not the copy step's; a mention in a comment
         // or a string isn't the app writing it.
         let written = project.dir.appendingPathComponent("Sources").appendingPathComponent("Roots.swift")
@@ -397,7 +399,8 @@ final class LiveReloadTests: XCTestCase {
         // A closure set into a property or given as a property's value is kept too, inside a body or not; what a
         // view helper returning `some View` hands SwiftUI (a Button's action) is made again at the next draw.
         let uses = LiveReload.oldCodeUses(inDump: dump)
-        XCTAssertEqual(uses.filter { $0.hasPrefix("Mood\t") }.sorted(), ["Mood\tModel\tswitches over", "Mood\tW\tswitches over", "Mood\tslow()\tswitches over", "Mood\tstart()\tswitches over", "Mood\ttick()\tprints"])
+        // A switch and an interpolation are named as such; any value of the enum's type in running code is a use.
+        XCTAssertTrue(Set(uses).isSuperset(of: ["Mood\tModel\tswitches over", "Mood\tW\tswitches over", "Mood\tslow()\tswitches over", "Mood\tstart()\tswitches over", "Mood\ttick()\tprints", "Mood\tstart()\tuses"]), "\(uses.filter { $0.hasPrefix("Mood\t") })")
         let onlyTick = dump.components(separatedBy: "\n").filter { !$0.contains("Timer") }.joined(separator: "\n")
         XCTAssertTrue(LiveReload.oldCodeUses(inDump: onlyTick).contains("Mood\ttick()\tprints"))
         // The record outlives a change: the timer's switch, recorded from the installed sources, still counts once a
@@ -420,8 +423,10 @@ final class LiveReloadTests: XCTestCase {
         let template = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/Lamp/Template.swift")
         let text = try String(contentsOf: template, encoding: .utf8)
-        let start = try XCTUnwrap(text.range(of: "    @MainActor @Observable final class LampLive {"))
-        let end = try XCTUnwrap(text.range(of: "\n    }\n", range: start.upperBound..<text.endIndex))
+        // The spare type comes with it: the loader sets aside the names of retired properties.
+        let start = try XCTUnwrap(text.range(of: "    struct LampSpare: Codable, Hashable, @unchecked Sendable {"))
+        let live = try XCTUnwrap(text.range(of: "    @MainActor @Observable final class LampLive {"))
+        let end = try XCTUnwrap(text.range(of: "\n    }\n", range: live.upperBound..<text.endIndex))
         // What an installed app reads from its Info.plist, given here.
         let install = "enum LampInstall { static let token = \"x\", note = \"t\" }\n"
         return "import Foundation\nimport CryptoKit\nimport MachO\nimport Observation\n" + install + text[start.lowerBound..<end.upperBound]
