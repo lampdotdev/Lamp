@@ -576,6 +576,10 @@ final class Store: ObservableObject {
             var pids: [pid_t] = []
             if let agent { pids += Subprocess.terminateTree(agent) }
             if let build { pids += Subprocess.terminateTree(build) }
+            // A save being put in by itself stops too: before its compile it ends at once, and one already past
+            // it finishes without a word (the app has the change, and nothing is said of it after Stop).
+            autoApply?.cancel()
+            applying?.cancel()
             return pids
         }
     }
@@ -4756,7 +4760,7 @@ final class Store: ObservableObject {
     /// per app; each goes when it's done, and a later open starts another only when there's something to work out.
     private var warmings: [String: Task<Void, Never>] = [:]
     @discardableResult private func warmLive(_ project: LampProject) -> Task<Void, Never>? {
-        guard project.platform == .mac, LiveReload.eligible(project) else { return nil }
+        guard LiveReload.eligible(project) else { return nil }
         if let warming = warmings[project.id] { return warming }
         let warming = Task { [weak self] in
             let began = Date()
@@ -4816,7 +4820,7 @@ final class Store: ObservableObject {
                 try? await Task.sleep(for: .seconds(2))
                 guard let self, !Task.isCancelled, turns[project.id] === turn, !turn.stopped, turn.agent != nil,
                       !turn.look.inProgress, !turn.building, !turn.keptOpen, turn.applying == nil,
-                      let current = current(project), current.platform == .mac, LiveReload.eligible(current),
+                      let current = current(project), LiveReload.eligible(current),
                       isRunning(current), !Runtime.waitsForReload(current) else { continue }
                 let now = Runtime.fingerprint(current)
                 // Still being written: wait for a reading with nothing new in it.
@@ -4837,7 +4841,10 @@ final class Store: ObservableObject {
                     let command = universal ? "./build.sh mac" : "./build.sh"
                     let env: [String: String] = universal ? ["LAMP_TEAM": Devices.team] : [:]
                     let glowing = AppTransition.begin(current)
-                    if await reloadBeforeBuilding(current, command: command, env: env, fingerprint: now) {
+                    let went = await reloadBeforeBuilding(current, command: command, env: env, fingerprint: now)
+                    // Stopped meanwhile: whatever went in stays in, and the turn that's over says nothing of it.
+                    guard turns[project.id] === turn, !turn.stopped else { reloadedBeforeBuild.remove(current.id); return }
+                    if went {
                         // What a look's install would note of a change that went in; the look reads it from here.
                         reloadedBeforeBuild.remove(current.id)
                         turn.updatedInPlace = true

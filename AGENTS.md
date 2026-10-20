@@ -921,7 +921,8 @@ the agent works, Lamp also puts each change it saves into the open app by itself
 every two seconds, a state tried once it holds still, through the quick path a look takes), so the person sees each
 piece as it's written; what can't go in live is left for the turn's end, which holds it for Reload once with the rest.
 A build of Lamp's waits for a change going in and keeps the loop off while it runs (`Turn.building`, `Turn.applying`);
-one for sources the agent has moved on from gives way, before its compile, to the build that takes the newer ones. The
+one for sources the agent has moved on from gives way, before its compile, to the build that takes the newer ones, and
+Stop ends one the same way (`Turn.cancel`). The
 open app's layout is worked out as soon as the app is open (`LiveReload.warm`, `Store.warmLive`), so the compiler's slow first
 read of a session is over before the agent's first save rather than in front of it.
 
