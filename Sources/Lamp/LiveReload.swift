@@ -1661,7 +1661,14 @@ enum LiveSlots {
     static func giveUp(_ project: LampProject) -> Bool {
         let marker = LiveReload.folder(project).appendingPathComponent("no-spares")
         guard !FileManager.default.fileExists(atPath: marker.path) else { return false }
+        // The initializers written for the spares would only repeat Swift's own without them.
+        try? FileManager.default.removeItem(at: LiveReload.sources(project).appendingPathComponent(memberwiseFile))
         return FileManager.default.createFile(atPath: marker.path, contents: Data())
+    }
+
+    /// Takes back a give-up (`no-spares`, `no-final`) made for a build that failed without the step as well.
+    static func takeBack(_ name: String, for project: LampProject) {
+        try? FileManager.default.removeItem(at: LiveReload.folder(project).appendingPathComponent(name))
     }
 
     /// A give-up (`no-spares`, `no-final`) isn't for ever: the code that broke the build may be gone. Each whole live
@@ -1699,7 +1706,8 @@ enum LiveSlots {
             for (type, made) in declarations.memberwise.sorted(by: { $0.key < $1.key }) where spared.contains(simpleName(type)) && !declarations.privateTypes.contains(type) {
                 for initializer in made where !(declarations.initializers[type] ?? []).contains(where: { $0.labels == initializer.labels && $0.types == initializer.types }) {
                     let params = zip(initializer.labels, initializer.types).map { "\($0): \($1)" }.joined(separator: ", ")
-                    let args = initializer.labels.map { "\($0): \($0)" } + ["__lampSpare_\(simpleName(type)): LampSpare(nil)"]
+                    // The spare is the struct's first stored property (`Template.livePerl`), so its argument comes first.
+                    let args = ["__lampSpare_\(simpleName(type)): LampSpare(nil)"] + initializer.labels.map { "\($0): \($0)" }
                     text += "extension \(type) { init(\(params)) { self.init(\(args.joined(separator: ", "))) } }\n"
                 }
             }

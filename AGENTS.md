@@ -1007,7 +1007,10 @@ name numbered by `Slot.generation`, `LiveSlots.spareKey`); what `fit` planned (t
 whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs
 once it's installed (`LiveReload.markRunning(from:)`). A spare never reaches saved data: `LampSpare` encodes as
 nothing, and a computed property isn't encoded. If spares ever keep an app from building, it's built again without
-them (`LiveSlots.giveUp`, `.lamp/live/no-spares`), so the agent only sees errors in its own code; the marker, like
+them (`LiveSlots.giveUp`, `.lamp/live/no-spares`), so the agent only sees errors in its own code. Whether they were the
+cause is judged by that build, not by the compiler's words, which print the lines around an error, spares included: when
+it fails as well the errors were the agent's, and the give-up is taken back (`LiveSlots.takeBack`, in
+`Store.buildSparing`), or every later change would wait for Reload. The marker, like
 `no-final`, counts the whole live builds since and goes after ten (`LiveSlots.expireGiveUps`), so the step is tried
 again now and then at the cost of one failed build when it still breaks.
 

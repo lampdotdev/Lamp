@@ -4670,24 +4670,8 @@ final class Store: ObservableObject {
         await awaitLiveBuild(of: project)
         liveBuildFailed.remove(project.id)
         if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1"; LiveSlots.expireGiveUps(project) }   // a change can go into the open app (LiveReload)
-        var status = await Self.runBuild(command, for: project, env: env,
-                                         started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
-        // The live copy's spare places must never be what keeps an app from building: if they are, the structs'
-        // initializers are written again without them and the build tried once more; if that doesn't do, it's built
-        // without spares from now on, and the agent only ever sees errors in its own code.
-        // Both are judged, since one output may hold both kinds of error; the build is tried again if either gave up.
-        if status != 0, env["LAMP_LIVE"] == "1", LiveSlots.brokeBuild(output.joined(separator: "\n")), await LiveSlots.addMemberwise(project) {
-            output = []
-            status = await Self.runBuild(command, for: project, env: env,
-                                         started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
-        }
-        if status != 0, env["LAMP_LIVE"] == "1", case let text = output.joined(separator: "\n"),
-           case let spares = LiveSlots.brokeBuild(text) && LiveSlots.giveUp(project),
-           case let finals = LiveSlots.brokeFinal(text, project: project) && LiveSlots.giveUpFinal(project), spares || finals {
-            output = []
-            status = await Self.runBuild(command, for: project, env: env,
-                                         started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
-        }
+        let status = await Self.buildSparing(command, for: project, env: env,
+                                             started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output = $0 }
         turns[project.id]?.build = nil
         guard exists(project) else { return "The app was deleted." }
         guard status != 0 else {
@@ -4698,6 +4682,37 @@ final class Store: ObservableObject {
         let tail = output.suffix(40).joined(separator: "\n")
         log(project, .detail, "Build failed:\n" + tail)
         return tail
+    }
+
+    /// Builds the app, and for a live build makes sure the live copy's spare places and final classes are never what
+    /// keeps it from building: if they are, the structs' initializers are written again without the spares and the
+    /// build tried once more; if that doesn't do, it's built without them from now on, so the agent only ever sees
+    /// errors in its own code. Both are judged, since one output may hold both kinds of error; the build is tried
+    /// again if either gave up. `done` gets the last build's output.
+    static func buildSparing(_ command: String, for project: LampProject, env: [String: String],
+                             started: (@MainActor (Process) -> Void)? = nil,
+                             done: ([String]) -> Void) async -> Int32 {
+        var output: [String] = []
+        defer { done(output) }
+        var status = await runBuild(command, for: project, env: env, started: started) { output.append($0) }
+        if status != 0, env["LAMP_LIVE"] == "1", LiveSlots.brokeBuild(output.joined(separator: "\n")), await LiveSlots.addMemberwise(project) {
+            output = []
+            status = await runBuild(command, for: project, env: env, started: started) { output.append($0) }
+        }
+        if status != 0, env["LAMP_LIVE"] == "1", case let text = output.joined(separator: "\n"),
+           case let spares = LiveSlots.brokeBuild(text) && LiveSlots.giveUp(project),
+           case let finals = LiveSlots.brokeFinal(text, project: project) && LiveSlots.giveUpFinal(project), spares || finals {
+            output = []
+            status = await runBuild(command, for: project, env: env, started: started) { output.append($0) }
+            // Failing without them too, the errors were the agent's own code: the compiler prints the lines around
+            // an error, spares included, so its words alone can't tell. A give-up kept then would hold every later
+            // change for Reload, since the open app has the spares the copy no longer does.
+            if status != 0 {
+                if spares { LiveSlots.takeBack("no-spares", for: project) }
+                if finals { LiveSlots.takeBack("no-final", for: project) }
+            }
+        }
+        return status
     }
 
     /// Runs the app's build.sh. It's Lamp's file, written just before, but in the agent's folder: a command the agent
