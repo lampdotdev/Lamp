@@ -7191,7 +7191,7 @@ final class Store: ObservableObject {
             // Which way the change reached the app: the person sees a live change at once, as they left the window.
             switch turn.outcomes.last {
             case .live?: note = "The change went into the open app without reopening it: the person is seeing it now, with the window as they left it."
-            case .opened?: note = "The app wasn't open, so it was opened with the change."
+            case .opened?: note = "The app wasn't open, so it was opened" + (changed ? " with the change." : ".")
             case .reopened?: note = "The app was closed and opened again with the change" + (turn.reloadWhy.map { ": \($0)." } ?? ".")
             default: break
             }

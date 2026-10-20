@@ -1501,7 +1501,9 @@ enum LiveReload {
     /// said to the agent with its look so the next change can take it. Nil for a reason with no such shape.
     static func advice(for why: String) -> String? {
         let w = why.lowercased()
-        if w.contains("reads only at launch") || w.contains("app's scenes") || w.contains("menu commands") {
+        // The App's body is what's read only at launch, whichever check saw it change (its scenes are an opaque type).
+        if w.contains("reads only at launch") || w.contains("app's scenes") || w.contains("menu commands") || w.contains("some scene")
+            || w.range(of: #"\bapp\.body\b"#, options: .regularExpression) != nil {
             return "leave the App, its scenes and menu commands as they are once the app is open, and put new views and logic in other files."
         }
         if w.contains("renamed or replaced") { return "add a file rather than renaming one." }
