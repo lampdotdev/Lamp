@@ -23,4 +23,22 @@ final class AgentMarkdownTests: XCTestCase {
             .prose("The view is the place to start."),
         ])
     }
+
+    /// A longer fence holds a shorter one as its text, as markdown does when a reply shows a code example in markdown.
+    func testALongerFenceKeepsAShorterOneInside() {
+        let reply = """
+        ````markdown
+        ```swift
+        let x = 1
+        ```
+        ````
+        """
+        XCTAssertEqual(ChatLook.blocks(reply), [.code("```swift\nlet x = 1\n```")])
+    }
+
+    /// Only hashes after a space close a heading; one that's part of a word stays.
+    func testAHashInAHeadingsWordStays() {
+        XCTAssertEqual(ChatLook.blocks("## C#"), [.heading("C#")])
+        XCTAssertEqual(ChatLook.blocks("## Done ##"), [.heading("Done")])
+    }
 }

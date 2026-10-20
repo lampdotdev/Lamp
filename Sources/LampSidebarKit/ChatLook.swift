@@ -168,12 +168,21 @@ public enum ChatLook {
         while index < lines.count {
             let line = lines[index]
             let trimmed = line.trimmingCharacters(in: .whitespaces)
+            // The patterns below are slow next to the rest, so a line only meets those its first character could
+            // start: most lines are prose, and every reply in a chat is parsed when it's first drawn.
+            let first = trimmed.first ?? " "
             if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-                // Fenced code runs to its closing fence, or to the end while the reply is still coming.
-                let fence = String(trimmed.prefix(3))
+                // Fenced code runs to its closing fence, or to the end while the reply is still coming. Only a fence
+                // of the same character, at least as long and with nothing after it, closes it, so a longer fence can
+                // hold a shorter one as its text.
+                let opening = trimmed.prefix { $0 == first }.count
+                func closes(_ line: String) -> Bool {
+                    let fence = line.trimmingCharacters(in: .whitespaces)
+                    return fence.count >= opening && fence.allSatisfy { $0 == first }
+                }
                 var code: [String] = []
                 index += 1
-                while index < lines.count, !lines[index].trimmingCharacters(in: .whitespaces).hasPrefix(fence) {
+                while index < lines.count, !closes(lines[index]) {
                     code.append(lines[index])
                     index += 1
                 }
@@ -196,15 +205,15 @@ public enum ChatLook {
                 let fit = { (row: [String]) in Array((row + Array(repeating: "", count: width)).prefix(width)) }
                 endProse()
                 blocks.append(.table(header: header, alignments: alignments, rows: rows.map(fit)))
-            } else if let heading = trimmed.wholeMatch(of: #/#{1,6}\s+(.*?)\s*#*/#) {
+            } else if first == "#", let heading = trimmed.wholeMatch(of: #/#{1,6}\s+(.*?)(?:\s+#+)?\s*/#) {
                 endProse()
                 blocks.append(.heading(String(heading.1)))
                 index += 1
-            } else if trimmed.wholeMatch(of: #/([-*_])(\s*\1){2,}/#) != nil {
+            } else if "-*_".contains(first), trimmed.wholeMatch(of: #/([-*_])(\s*\1){2,}/#) != nil {
                 endProse()
                 blocks.append(.rule)
                 index += 1
-            } else if trimmed.hasPrefix(">") {
+            } else if first == ">" {
                 var quote: [String] = []
                 while index < lines.count, let rest = lines[index].trimmingCharacters(in: .whitespaces).wholeMatch(of: #/>\s?(.*)/#) {
                     quote.append(String(rest.1))
@@ -212,7 +221,7 @@ public enum ChatLook {
                 }
                 endProse()
                 blocks.append(.quote(quote.joined(separator: "\n")))
-            } else if let item = line.wholeMatch(of: #/(\s*)([-*+]|\d{1,3}[.)])\s+(.*)/#) {
+            } else if "-*+".contains(first) || first.isNumber, let item = line.wholeMatch(of: #/(\s*)([-*+]|\d{1,3}[.)])\s+(.*)/#) {
                 if !prose.isEmpty { endProse() }
                 let marker = item.2.first?.isNumber == true ? String(item.2) : "•"
                 list.append(ListItem(marker: marker, level: item.1.count / 2, text: String(item.3)))
