@@ -637,6 +637,14 @@ final class Store: ObservableObject {
     }
     private var reloadWhenFree: Set<String> = []
 
+    /// Whether reopening the app now would close it under the person: a request's turn, the Mac app open, and not a
+    /// new app's first turn (nobody is using it yet, and its passes are built for the person to watch go in). Then
+    /// Lamp asks with Reload rather than reopening it, for a change it can't put in as the app runs and for a look
+    /// with `reopen` alike.
+    private func asksBeforeReopening(_ project: LampProject, owner: Turn?) -> Bool {
+        owner?.request != nil && isRunning(project) && !Template.isWidgetOnly(project) && progress[project.id]?.newApp != true
+    }
+
     private func release(_ project: LampProject) {
         if let turn = turns.removeValue(forKey: project.id) { agentTokens[turn.agentToken] = nil }
         busy.remove(project.id)
@@ -3492,6 +3500,10 @@ final class Store: ObservableObject {
         }
         if request["sidebar"] as? Bool == true {
             guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
+            // The sidebar is the open copy's too, so it's kept from the agent on the same terms as its windows (below).
+            if Runtime.holdsBuild(project), isRunning(project) {
+                return (409, ["error": Runtime.waitsForReload(project) ? Self.reloadNote : Self.keptOpenNote])
+            }
             guard !macCopies(of: project).isEmpty else {
                 return (200, ["text": "The app isn't open. Call look_at_app with sidebar first: it builds the app and opens it."])
             }
@@ -3559,6 +3571,9 @@ final class Store: ObservableObject {
         guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
         let window = await look(at: project, reopen: reopen)
         guard window.0 == 200, !macCopies(of: project).isEmpty else { return window }
+        // What's open isn't the agent's change (or not the fresh launch it asked for) while it waits for the person:
+        // that's what the agent must hear, not a report of the old copy's sidebar.
+        if let text = window.1["text"] as? String, [Self.askedToReopenNote, Self.reloadNote, Self.keptOpenNote].contains(text) { return window }
         var (status, sidebar) = await BrowserPreview.look(project, page: page)
         // The window beside it, so the sidebar's items are judged against the app's, not on their own.
         if Privacy.sharesPictures, let pictures = window.1["screenshots"] as? [String], let front = pictures.first {
@@ -4901,8 +4916,7 @@ final class Store: ObservableObject {
         // them to press Reload, in the app's title bar or the chat (`awaitReload`). Open App, Undo and Reload itself
         // ask for the reopen, and an app that's closed just gets the build. Not in a new app's first turn: nobody is
         // using it yet, and it's built in passes for the person to watch each one go in (`present`), so it reopens.
-        if !reload, owner?.request != nil, isRunning(project), !Template.isWidgetOnly(project),
-           progress[project.id]?.newApp != true {
+        if !reload, asksBeforeReopening(project, owner: owner) {
             awaitReload(project, owner: owner)
             return nil
         }
@@ -6982,6 +6996,13 @@ final class Store: ObservableObject {
         in a sentence to press Reload to see it.
         """
 
+    /// What a look with `reopen` says when Lamp asked the person instead (`asksBeforeReopening`).
+    private static let askedToReopenNote = """
+        The person has the app open, so Lamp asked them before reopening it: the app and the chat show a Reload \
+        button, and it opens fresh when they press it. Any change you made is built and goes in with it. Don't look \
+        or use the app again in this request. Finish, and tell them in a sentence that Reload shows it starting fresh.
+        """
+
     /// What a look says when the person kept the earlier build open (`Turn.keptOpen`).
     private static let keptOpenNote = """
         The app built, but the person has the version from before open and chose to keep it open (it may hold \
@@ -7011,6 +7032,11 @@ final class Store: ObservableObject {
         turn.look.inProgress = true
         progress[project.id]?.looking = true
         await turn.early?.value
+        // A fresh launch asked for while the person has the app open waits for them to say so, like a change that
+        // needs one: the look puts in what it can as usual, then asks with Reload.
+        let wantsFresh = reopen
+        var asking = reopen && !project.onIOS && asksBeforeReopening(project, owner: turn)
+        var reopen = reopen && !asking
         turn.look.installed = false
         // Each stage says itself from here; once the look is over the model is reading what it found. Only while this
         // look's turn is the one on screen: after Stop, a look still waiting on the app can end after the next turn began.
@@ -7080,6 +7106,21 @@ final class Store: ObservableObject {
         // The copy on screen is an earlier build the person kept open: not shown as the agent's work, and not
         // asked to quit again at every look.
         if turn.keptOpen, isRunning(project) { return (200, ["text": Self.keptOpenNote]) }
+        // Asked again after the build, which can take a minute: the person may have opened the app meanwhile.
+        if wantsFresh, !asking, asksBeforeReopening(project, owner: turn) {
+            asking = true
+            reopen = false
+        }
+        if asking {
+            if !Runtime.waitsForReload(project) {
+                _ = await install(project, inFront: false, early: true)
+                if turn.keptOpen { return (200, ["text": Self.keptOpenNote]) }
+                // Gone since (closed, or crashed with the change): nothing to ask about, and the next look opens it.
+                guard isRunning(project) else { return (200, ["text": "The app closed before Lamp could ask to reopen it. Look again to open it."]) }
+                if !Runtime.waitsForReload(project) { awaitReload(project, owner: turn) }
+            }
+            return (200, ["text": Self.askedToReopenNote])
+        }
         if Runtime.waitsForReload(project), isRunning(project), !reopen { return (200, ["text": Self.reloadNote]) }
         var since = Date()
         // A copy kept open in an earlier request is older than the build too: it's asked to quit, once.
