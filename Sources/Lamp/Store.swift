@@ -2393,6 +2393,7 @@ final class Store: ObservableObject {
         if held { await DataSnapshots.take(project) }
         do {
             try await deploy(project)
+            Self.iconReachedApp(project)
             if held { await DataSnapshots.wentIn(project) }
             // A build that waited for the app to close goes in the same way, and is the app's stamp from now on.
             if Runtime.holdsBuild(project) {
@@ -4199,6 +4200,7 @@ final class Store: ObservableObject {
             await prepareIcon(project)
             do {
                 try await deploy(project)
+                Self.iconReachedApp(project)
                 heldInstalls.installed(project.id)
                 Runtime.releaseBuild(project)
                 stamps[project.id] = BuildStamp.read(project.installedURL)
@@ -4797,6 +4799,7 @@ final class Store: ObservableObject {
             // With the old copy closed, its data is quiet: copied before the new one opens on it.
             await DataSnapshots.take(project)
             try await deploy(project)
+            Self.iconReachedApp(project)
             await DataSnapshots.wentIn(project)
             heldInstalls.installed(project.id)
             Runtime.releaseBuild(project)
@@ -5592,10 +5595,10 @@ final class Store: ObservableObject {
             if art != nil { artApplied[project.id] = spec }
             let waiting = art == nil && awaitsArtwork(project, spec: spec)
             icons[project.id] = try await Icons.write(spec, art: art ?? (waiting ? .waiting : nil), for: project)
-            if waiting {
-                FileManager.default.createFile(atPath: Icons.waitingURL(project).path, contents: nil)
-            } else {
-                try? FileManager.default.removeItem(at: Icons.waitingURL(project))
+            // The app keeps the blueprint until an install takes it what's drawn now (`iconReachedApp`).
+            let marker = Icons.waitingURL(project)
+            if waiting || FileManager.default.fileExists(atPath: marker.path) {
+                try? Data((waiting ? Self.iconWaiting : Self.iconReady).utf8).write(to: marker)
             }
         } catch {
             log(project, .detail, "Icon render failed: \(error.localizedDescription)")
@@ -5616,8 +5619,10 @@ final class Store: ObservableObject {
         if failed { artFailed.insert(Icons.artKey(project, spec: spec)) }
         guard exists(project), Icons.load(project) == spec, Icons.artwork(project, spec: spec) == nil else { return }
         guard begin(project) != nil else {
-            await renderIcon(project, spec: spec)
+            // Queued before rendering, which waits on Icon Composer: the turn may end meanwhile, and its `finish`
+            // must find this.
             iconFallbackWhenFree.insert(project.id)
+            await renderIcon(project, spec: spec)
             return
         }
         await renderIcon(project, spec: spec)
@@ -5625,12 +5630,30 @@ final class Store: ObservableObject {
         finish(project)
     }
 
+    /// What `Icons.waitingURL` says: the icon drawn is the blueprint, or the icon that replaces it, drawn but not yet
+    /// on the app (an install held while it was open, or one a quit of Lamp cut short).
+    private static let iconWaiting = "waiting", iconReady = "ready"
+
+    /// An install put the icon drawn now on the app: once that's the one that replaces the blueprint, nothing is left
+    /// to pick up.
+    private static func iconReachedApp(_ project: LampProject) {
+        let marker = Icons.waitingURL(project)
+        if (try? String(contentsOf: marker, encoding: .utf8)) == iconReady { try? FileManager.default.removeItem(at: marker) }
+    }
+
     /// Icons left waiting for artwork when Lamp last quit: drawn now, or put on the app if they came meanwhile, or
     /// given their symbol when nothing can draw them any more.
     private func resumeWaitingIcons() {
         for project in projects where FileManager.default.fileExists(atPath: Icons.waitingURL(project).path) {
             guard let spec = Icons.load(project) else { continue }
-            if Icons.artwork(project, spec: spec) != nil {
+            if (try? String(contentsOf: Icons.waitingURL(project), encoding: .utf8)) == Self.iconReady {
+                // Drawn already, and only the install is missing: the app takes it now, or when it next closes.
+                Task {
+                    guard begin(project) != nil else { return }
+                    if FileManager.default.fileExists(atPath: project.builtURL.path) { await installIcon(project) }
+                    finish(project)
+                }
+            } else if Icons.artwork(project, spec: spec) != nil {
                 Task {
                     guard begin(project) != nil else { return }
                     await applyIconArt(project, spec: spec)
