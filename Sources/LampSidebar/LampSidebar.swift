@@ -76,6 +76,9 @@ final class Link: ObservableObject {
     @Published var connected = false
     /// Lamp hasn't answered for a while: it isn't open.
     @Published var lampAway = false
+    /// The box's words as last typed here, with the draft version they were typed over. Lamp doesn't send back words
+    /// typed here, so a box drawn again (a panel was open in the chat's place) takes them from here, not from Lamp.
+    var typed: (version: Int, text: String)?
 
     private var fd: Int32 = -1
     private var outbox: SidebarOutbox?
@@ -136,6 +139,8 @@ final class Link: ObservableObject {
     }
 
     private func drop() {
+        // Versions are counted afresh by each Lamp that connects: words kept against one could be taken for another's.
+        typed = nil
         outbox?.close()
         outbox = nil
         source?.cancel()
@@ -561,6 +566,8 @@ private struct ComposerRow: View {
     @State private var height = Composer.lineHeight
     @State private var version = -1
     @State private var focus = 0
+    /// The box was just emptied by Return: that isn't the person's edit, so it isn't sent to Lamp as the draft.
+    @State private var emptiedToSend = false
 
     var body: some View {
         ChatLook.MessageBar(busy: state.busy, canSend: canSend, attachHelp: "Attach files. You can also paste images and files here.",
@@ -607,7 +614,11 @@ private struct ComposerRow: View {
         .frame(maxWidth: .infinity)
         .onAppear { take(state) }
         .onChange(of: state.draftVersion) { take(state) }
-        .onChange(of: text) { link.send(.draft(text)) }
+        .onChange(of: text) {
+            link.typed = (version, text)
+            if emptiedToSend { emptiedToSend = false; return }
+            link.send(.draft(text))
+        }
     }
 
     /// As in Lamp's window: not while a message is on its way in, and a request sent again can't wait behind a turn.
@@ -620,14 +631,21 @@ private struct ComposerRow: View {
     private func take(_ state: SidebarState) {
         guard state.draftVersion != version else { return }
         version = state.draftVersion
-        if text != state.draft { text = state.draft }
+        let words = link.typed.flatMap { $0.version == state.draftVersion ? $0.text : nil } ?? state.draft
+        if text != words { text = words }
         focus += 1
     }
 
     /// Lamp sends it and empties the box as its window does, keeping whatever came after (`afterSubmission`).
+    /// The box empties at once rather than when Lamp's answer comes back, which took a round trip and a redraw of
+    /// the whole chat: Lamp gives the words back (a new draft) if they weren't sent after all.
     private func submit() {
         guard canSend else { return }
         link.send(.send(text, sends: state.sends ?? 0))
+        if !text.isEmpty {
+            emptiedToSend = true
+            text = ""
+        }
     }
 
     /// Only this process can read what was pasted or chosen here: the files go to Lamp whole.
