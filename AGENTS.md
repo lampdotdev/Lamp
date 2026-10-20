@@ -892,7 +892,8 @@ plain sources, which the copy step keeps), and the build is tried once more befo
 Left out is what a spare would break: SwiftData and Core Data models, `Sendable` classes, `Equatable` views, the App
 and its scenes, property wrappers, App Intents, OptionSets and RawRepresentable structs (declared so, or made so in an
 extension, which the copy step's scan reports), whose `init(rawValue:)` is the memberwise one, and every struct in an
-app any of whose files lays memory out by hand (vertex data; the struct read as bytes may be declared in another). When
+app any of whose own files lays memory out by hand (vertex data; the struct read as bytes may be declared in another;
+Lamp's own files always do and are told apart by name, `-own=`). When
 the only difference in layout is new stored properties in such types, `LiveSlots.fit` rewrites each one-line
 declaration in the live copy into a computed property kept in a spare, found by the compiler's own
 source ranges (`SwiftSource.declarations`, from the same `-dump-ast` as the layout), so however it's written (with

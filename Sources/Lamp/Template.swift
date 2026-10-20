@@ -15837,8 +15837,10 @@ enum Template {
 """#
 
     /// The one pass over each file of the live copy (LiveReload), in perl so build.sh needs nothing but the system's:
-    /// `live.pl scan <files>` prints the names something may subclass (superclasses, the bounds of generic
-    /// parameters and `where` clauses, each followed through the file's typealiases), and `live.pl <spares> <names>
+    /// `live.pl scan [-own=<Lamp's files>] <files>` prints the names something may subclass (superclasses, the bounds
+    /// of generic parameters and `where` clauses, each followed through the file's typealiases), then `-raw` when a
+    /// file of the app's (not Lamp's own, which always read raw memory) lays memory out by hand and `-nospare:Name`
+    /// for each struct an extension makes an OptionSet or RawRepresentable, and `live.pl <spares> <names>
     /// <flags> <files>` rewrites each file in place, with flags `s` for spare places and `f` for final classes.
     /// Stretches of string literals (plain, multi-line and raw, with their escapes), block comments (nested) and line
     /// comments are found first and never touched, so a `class` or `var body` in a help text stays as it is.
@@ -15860,12 +15862,15 @@ enum Template {
     my $modifier = qr/(?:func|var|let|subscript|override|class|final|open|public|internal|private|fileprivate|package|static|dynamic|required|convenience|nonisolated|lazy|weak|unowned|optional|indirect|init|deinit)\b/;
     if (($ARGV[0] // '') eq 'scan') {
         shift @ARGV;
+        # Lamp's own files (`-own=LampSupport.swift,…`) are scanned for names like the rest, but what they do with
+        # raw memory is their own business, never a reason to keep the app's structs from their spares.
+        my %own = map { $_ => 1 } split /,/, (($ARGV[0] // '') =~ /^-own=(.*)/ ? do { shift @ARGV; $1 } : '');
         my (%names, %alias, %nospare, $raw);
         for my $file (@ARGV) {
             open(my $in, '<', $file) or next; my $s = <$in>; close($in);
             # A struct read as bytes anywhere (MemoryLayout, a buffer handed to Metal) must stay the size it's written
             # with, and the one read may be declared in another file: so no struct gets a spare in such an app.
-            $raw = 1 if $s =~ /MemoryLayout|withUnsafe|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
+            $raw = 1 if !$own{(split m#/#, $file)[-1]} && $s =~ /MemoryLayout|withUnsafe|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
             $s =~ s#/\*[\s\S]*?\*/# #g; $s =~ s#//[^\n]*##g;
             # A struct made an OptionSet or RawRepresentable in an extension: its memberwise initializer is the
             # protocol's `init(rawValue:)`, which a spare's parameter would unfit.
@@ -15937,7 +15942,7 @@ enum Template {
     \(livePerl)
     LAMPLIVE
       # The names something may subclass, so every other class can be final.
-      SUBCLASSED=$(perl "$LIVE/live.pl" scan Sources/**/*.swift(N) 2>/dev/null || true)
+      SUBCLASSED=$(perl "$LIVE/live.pl" scan -own=LampSupport.swift,\(sceneSupportFile) Sources/**/*.swift(N) 2>/dev/null || true)
       # The pass is kept for each file with what it was made from, and taken again only when any of that changed:
       # over LampSupport.swift, which hardly ever does, it takes a second or more, and every change waited for it.
       KEY="\(LiveSlots.count)|$(cksum < "$LIVE/live.pl")|$SUBCLASSED"

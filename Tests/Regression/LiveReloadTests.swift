@@ -388,6 +388,11 @@ final class LiveReloadTests: XCTestCase {
         try "let size = MemoryLayout<Plain>.size\n".write(to: bytes, atomically: true, encoding: .utf8)
         let scanned = try run("/usr/bin/perl", [perl.path, "scan", zones.path, plain.path, bytes.path]).trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertEqual(scanned, "-raw -nospare:Zone")
+        // Lamp's own files always read raw memory (as the scaffold's LampSupport.swift does): no reason to keep the
+        // app's structs from their spares.
+        let own = try run("/usr/bin/perl", [perl.path, "scan", "-own=Bytes.swift,LampSupport.swift", zones.path, plain.path, bytes.path, sources.appendingPathComponent("LampSupport.swift").path]).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertFalse(own.contains("-raw"), own)
+        XCTAssertTrue(own.hasSuffix(" -nospare:Zone"), own)
         _ = try run("/usr/bin/perl", [perl.path, "4", scanned, "s", zones.path, plain.path])
         XCTAssertFalse(try String(contentsOf: zones, encoding: .utf8).contains("LampSpare"))
         let rewritten = try String(contentsOf: plain, encoding: .utf8)
