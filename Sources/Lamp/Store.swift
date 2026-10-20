@@ -2631,14 +2631,15 @@ final class Store: ObservableObject {
             let untold = lateCrash(of: turn)
             crash = turn.look.crash ?? untold
             if crash == nil {
-                if let app = macCopies(of: project).first {
+                // An app for both pointed at the iPhone goes to the simulator or the phone, even with its Mac copy open.
+                if !project.onIOS, let app = macCopies(of: project).first {
                     // The look opened it behind the user's windows. Now it's theirs: it shows itself, as when it's
                     // opened again. An app that lives in the menu bar opens its panel (see LampWindows).
                     DistributedNotificationCenter.default().postNotificationName(
                         Notification.Name(Edition.notificationPrefix + "showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
                     app.activate()
                     log(project, .status, "\(project.name) is \(owner.updatedInPlace ? "updated" : "ready")")
-                } else {
+                } else if !isOnChosenPhone(project) {
                     crash = await install(project)
                 }
             }
@@ -5284,6 +5285,8 @@ final class Store: ObservableObject {
         if progress[project.id]?.finished != nil { progress[project.id]?.failed = true }
         clearPhoneRetry(project)
         let team = Devices.team
+        // The code as it's staged, kept once it's on the phone, so a turn that changes nothing doesn't put it there again.
+        let build = Runtime.fingerprint(project)
         // Recheck after the person unlocks, trusts or restarts the phone; the menu's snapshot may be stale.
         devices = await Devices.list()
         guard stillOwns() else { return nil }
@@ -5332,6 +5335,8 @@ final class Store: ObservableObject {
         log(project, .status, "Putting \(project.name) on \(name)…")
         defer { try? FileManager.default.removeItem(at: app.deletingLastPathComponent()) }
         do {
+            // What's on the phone is about to change, whether or not the launch after it works.
+            onPhone[project.id] = nil
             try await Devices.install(app, on: udid)
             guard stillOwns() else { return nil }
             deviceApps[project.id]?.terminate()
@@ -5343,6 +5348,7 @@ final class Store: ObservableObject {
             owner.build = nil
             guard stillOwns() else { Subprocess.terminateTree(attached); return nil }
             deviceApps[project.id] = attached
+            onPhone[project.id] = PhoneBuild(udid: udid, build: build)
             owner.phoneReady = true
             if progress[project.id]?.finished != nil { progress[project.id]?.failed = false }
             attached.terminationHandler = { _ in Task { @MainActor in Store.shared.refreshOpenApps() } }
@@ -5362,6 +5368,16 @@ final class Store: ObservableObject {
 
     /// For each app on a phone, the devicectl process attached to it: ending the process ends the app.
     private var deviceApps: [String: Process] = [:]
+
+    /// For each app, the phone Lamp last put it on and the code it put there (`Runtime.fingerprint`).
+    private struct PhoneBuild: Equatable { let udid: String; let build: String }
+    private var onPhone: [String: PhoneBuild] = [:]
+
+    /// The code as it is now is on the phone chosen under Try On.
+    private func isOnChosenPhone(_ project: LampProject) -> Bool {
+        guard project.onIOS, let udid = project.device else { return false }
+        return onPhone[project.id] == PhoneBuild(udid: udid, build: Runtime.fingerprint(project))
+    }
 
     /// Finishes the bundle build.sh made, the way `deploy` finishes a Mac app's: the reasons iOS shows when
     /// the app first asks for the microphone, photos or calendar (without which it's killed on the spot), the
@@ -7185,6 +7201,13 @@ final class Store: ObservableObject {
                 if reopen { note = "The app was closed and opened again, so it started fresh." }
             } else {
                 note = "The app is running your latest code; nothing needed rebuilding."
+                // With a phone chosen under Try On, what's open in the simulator is this code, as after a launch: the
+                // turn's end puts it on the phone, as it does after a look that opened it. Without one the simulator is
+                // left as the agent found it, its state kept.
+                if project.device != nil {
+                    turn.look.installed = true
+                    turn.look.crash = nil
+                }
             }
             say(looking)
             let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
