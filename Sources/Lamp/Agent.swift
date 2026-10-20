@@ -371,8 +371,8 @@ enum Agent {
         static let universalHeader = """
         You are Lamp's builder agent. The current directory is a standalone SwiftUI app for the Mac and for iPhone and \
         iPad, one code for both (a Swift Package, Swift 5.9 language mode, macOS 14+ and iOS 17+; Lamp keeps an Xcode \
-        project of its own for the builds). Lamp opens it on the user's Mac or in the {{DEVICE}} simulator, whichever \
-        Try On points at, and that is what the user sees. \(phone) Read APP.md first for context.
+        project of its own for the builds). Lamp opens it on the user's Mac, in the {{DEVICE}} simulator or on their own \
+        phone, whichever Try On points at, and that is what the user sees. \(phone) Read APP.md first for context.
         """
 
         static let universal = """
@@ -432,14 +432,13 @@ enum Agent {
         first while keeping the other usable. \(phone) Read APP.md first for context.
         """
 
-        /// Said in both headers for iOS: an agent told only of the simulator tells the person their phone can't
-        /// have the app, when one chosen under Try On gets every finished change.
+        /// Installing on the person's own phone and looking in the simulator, shared by both iOS prompts.
         static let phone = """
-        Lamp also puts it on the person's own iPhone or iPad, even with a free Apple account: on the one they \
-        choose under Try On, when they press Play and with every finished change. Your looks stay on the \
-        simulator. Never say the app can't go on their phone. Your first look in a turn says which phone is chosen \
-        and whether Lamp sees one; say only what it told you. Without that, say the app goes on the phone they \
-        choose under Try On, and that they plug one in and choose it there.
+        Lamp can build, sign and install the app on the person's own iPhone or iPad, the one chosen under Try On, \
+        with a free Apple account; some capabilities, such as iCloud, need a paid Apple Developer membership. To \
+        open the app on a phone, the person connects it, chooses it under Try On and presses Play. Your looks at \
+        the iPhone app are in the simulator. The first iPhone look in a turn includes which phone Try On is set to \
+        and the phones Lamp's device list returned.
         """
 
         static let edit = """

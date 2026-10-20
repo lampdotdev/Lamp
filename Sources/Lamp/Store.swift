@@ -688,7 +688,7 @@ final class Store: ObservableObject {
         /// A new app was shown to the person at this turn's first look that opened it: built in passes, it's watched
         /// as it takes shape rather than seen only at the end (`present`).
         var presented = false
-        /// The look has said where the person's own phone stands (`Devices.tryOnNote`), once a turn.
+        /// A look this turn has said what Try On is set to and what the device list returned (`Devices.tryOnNote`).
         var toldPhone = false
     }
     private var artInProgress: Set<String> = []

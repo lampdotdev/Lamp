@@ -1,36 +1,37 @@
 import XCTest
 @testable import Lamp
 
-/// Lamp puts an iPhone app on the person's own phone when it's chosen under Try On, free Apple account or not.
-/// An agent once told someone it couldn't; it should say where the app goes, or ask for a phone to be connected.
+/// Lamp builds, signs and installs an iPhone app on the person's own phone chosen under Try On, with a free Apple
+/// account. The prompts say so, and the first iPhone look says what Try On is set to and what the device list holds.
 @MainActor
 final class PhoneTryOnNoteTests: XCTestCase {
     private let phone = Devices.Device(udid: "00008110-TEST", name: "Test iPhone", model: "iPhone 16",
                                        connected: true, paired: true, developerMode: true)
 
-    func testThePromptsNeverSayAPhoneCantHaveTheApp() {
+    func testThePromptsSayTheAppCanGoOnTheChosenPhone() {
         for prompt in [Agent.iPhonePrompt(for: .iphone), Agent.universalPrompt(for: .iphone)] {
             XCTAssertFalse(prompt.contains("can't be put on a real device"))
-            XCTAssertTrue(prompt.contains("even with a free Apple account"))
+            XCTAssertTrue(prompt.contains("install the app on the person's own iPhone or iPad, the one chosen under Try On"))
+            XCTAssertTrue(prompt.contains("with a free Apple account"))
         }
     }
 
-    func testAChosenPhoneThatsThereGetsTheApp() {
+    func testAChosenPhoneThatsListedIsWhereTryOnIsSet() {
         let note = Devices.tryOnNote(chosen: phone.udid, among: [phone])
-        XCTAssertTrue(note.contains("Test iPhone"))
-        XCTAssertTrue(note.contains("puts the app on it"))
+        XCTAssertTrue(note.contains("Try On is set to the person's Test iPhone"))
+        XCTAssertTrue(note.contains("Play builds, signs and installs the app there"))
     }
 
-    func testNoPhoneMeansTheSimulatorAndAnAskToConnectOne() {
+    func testAnEmptyListMeansTheSimulatorAndHowToConnectOne() {
         let note = Devices.tryOnNote(chosen: nil, among: [])
-        XCTAssertTrue(note.contains("in the simulator"))
-        XCTAssertTrue(note.contains("doesn't see their iPhone or iPad connected"))
-        XCTAssertTrue(note.contains("plug it in"))
+        XCTAssertTrue(note.contains("Try On is set to the simulator"))
+        XCTAssertTrue(note.contains("device list returned no iPhone or iPad"))
+        XCTAssertTrue(note.contains("connect and unlock it, choose it under Try On and press Play"))
     }
 
-    func testAChosenPhoneThatsGoneIsAskedFor() {
+    func testAChosenPhoneTheListDidntReturnIsSaidSo() {
         let note = Devices.tryOnNote(chosen: phone.udid, among: [])
-        XCTAssertTrue(note.contains("doesn't see it now"))
-        XCTAssertTrue(note.contains("connect it"))
+        XCTAssertTrue(note.contains("device list didn't return"))
+        XCTAssertTrue(note.contains("connect and unlock it, then press Play"))
     }
 }
