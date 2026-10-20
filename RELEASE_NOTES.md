@@ -5,6 +5,23 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.15.0
+
+- Far more changes go into an open app without restarting it: a new method, computed property or stored
+  property, a new case in an enum, a new default for an argument, a changed constant, a changed typealias, and
+  what an extension adds from Objective-C. When a change can't go in that way, the chat says why in a sentence
+  and the app shows a Reload button where it was, which puts the change in when you're ready; Undo, a restore and
+  Rebuild & Open wait for it the same way.
+- Before a change goes into an app, Lamp keeps a copy of the app's data from just before it, so a change that
+  spoils what the app saved can be put right.
+- Every app Lamp builds is drawn with Liquid Glass on macOS Tahoe, and the Reload button is glass too.
+- The chat draws the agent's tables, headings, lists, code blocks and quotes, and its text can be selected.
+- While the agent works, its steps are one line that says what it's doing now and opens to the rest, in Lamp's
+  window and beside the app; what it writes on the way stays as a message. A build that runs long says so, and
+  the agent names each command in its own words.
+- Approvals ask only for what reaches beyond the app: a command that works on the app itself, its files, builds
+  and tests, runs without a card.
+
 ## 0.14.0
 
 - Change an app while you use it: the wand in its title bar opens its chat beside the window, and most changes
