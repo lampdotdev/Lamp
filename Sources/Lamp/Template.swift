@@ -4047,7 +4047,7 @@ enum Template {
             guard let image = (0..<_dyld_image_count()).first(where: { [path, real].contains(String(cString: _dyld_get_image_name($0))) }),
                   let header = _dyld_get_image_header(image) else { return }
             let slide = _dyld_get_image_vmaddr_slide(image)
-            Self.takeFieldOffsets(header, slide: slide)
+            Self.takeFieldOffsets(header, slide: slide, earlier: images)
             let defined = Self.definedSymbols(header, slide: slide)
             let everything = Self.definedSymbols(header, slide: slide, local: true)
             let all = Self.copies(in: everything)
@@ -4116,8 +4116,11 @@ enum Template {
             for write in descriptors where write.apply() { rebound += 1 }
             let bindings = latest.merging(kept) { new, _ in new }
             images.append(String(cString: _dyld_get_image_name(image)))
-            rebound += Self.rebind(image: 0, to: latest)
+            // The libraries first, this one included, so its references to the types it brings are bound before its
+            // new classes are worked out, and both before the app's calls reach its code.
             for index in images.compactMap(Self.imageIndex) { rebound += Self.rebind(image: index, to: bindings) }
+            Self.takeFieldOffsets(header, slide: slide, earlier: images, ownClasses: true)
+            rebound += Self.rebind(image: 0, to: latest)
             orders.merge(listed) { first, _ in first }
             Self.lock.lock()
             // Every version of each function, the app's included, so a table made from any description that ever
@@ -4770,10 +4773,22 @@ enum Template {
         /// such field at the start of the object, and look for the table where there is none. So they take the
         /// app's values, once the app has worked the class out (asking for its metadata does that). A field's
         /// value the compiler knew may differ from the app's too (a guess under a system class), so a copy that
-        /// differs is replaced, not only an empty one. A field the app has none for is new, and stays the library's.
-        private static func takeFieldOffsets(_ header: UnsafePointer<mach_header>, slide: Int) {
-            guard let app = _dyld_get_image_header(0) else { return }
-            let theirs = Dictionary(definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0), local: true), uniquingKeysWith: { first, _ in first })
+        /// differs is replaced, not only an empty one. A class an earlier change brought takes that change's values the
+        /// same way. A field neither has is new, and stays the library's:
+        /// its class is worked out by the library's own accessor, only with `ownClasses`, once the library's
+        /// references to its own types are bound (`rebind`): before, the accessor reads a null description and the
+        /// app crashes.
+        private static func takeFieldOffsets(_ header: UnsafePointer<mach_header>, slide: Int, earlier: [String], ownClasses: Bool = false) {
+            // The app's, then each earlier change's that went in (`images`, in that order): a class an earlier change
+            // brought is that change's (`kept`), which worked its fields out when it went in, and a later change that
+            // compiles the class again has to take them from there, or its code would read every field at the
+            // object's start. A change refused is left out: its own classes were never worked out.
+            var theirs: [String: UnsafeRawPointer] = [:]
+            for image in [UInt32(0)] + earlier.compactMap(imageIndex) {
+                guard let other = _dyld_get_image_header(image), other != header else { continue }
+                theirs.merge(definedSymbols(other, slide: _dyld_get_image_vmaddr_slide(image), local: true), uniquingKeysWith: { first, _ in first })
+            }
+            guard !theirs.isEmpty else { return }
             let accessors = theirs.filter { $0.key.hasSuffix("CMa") }
             let mine = definedSymbols(header, slide: slide, local: true)
             let ownAccessors = Dictionary(mine.filter { $0.0.hasSuffix("CMa") }, uniquingKeysWith: { first, _ in first })
@@ -4788,9 +4803,10 @@ enum Template {
                     // A field the app has under no such name: a new class's, or a private one whose code moved to
                     // another file (a private name carries its file's). The library works its class out itself,
                     // which lays it out as the app did when it's the same class.
-                    if address.load(as: Int.self) == 0 { complete(name, in: ownAccessors) }
+                    if ownClasses, address.load(as: Int.self) == 0 { complete(name, in: ownAccessors) }
                     continue
                 }
+                guard !ownClasses else { continue }
                 if source.load(as: Int.self) == 0 { complete(name, in: accessors) }
                 // The bounds are where the members begin, then two sizes; a field's place is one word.
                 for offset in bounds ? [0, 8] : [0] {
