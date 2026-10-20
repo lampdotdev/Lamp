@@ -284,7 +284,11 @@ enum LiveReload {
     /// Why a grown enum can't go in, if it can't: something the app keeps holds it other than as itself or in a
     /// plain collection of it (an optional, another enum's case, a wrapper), where Swift gives its unused numbers
     /// meanings that a new case takes over. Looked for in every stored field, static and global of the new code,
-    /// and in what the spares keep, whose types the compiler no longer sees.
+    /// and in what the spares keep, whose types the compiler no longer sees. A value type of the app's that carries
+    /// the enum by value (a struct with a field of it, an enum with a payload of it, through any depth of such
+    /// types) lends its own optional and payload cases the enum's unused numbers too, so what holds such a carrier
+    /// is held to the same plain forms; a struct with a spare of Lamp's isn't one, since the spare's `Any?` gives
+    /// Swift more unused numbers than the enum does.
     @MainActor static func enumsHeld(_ project: LampProject, grown: [String]) async -> String? {
         guard let dump = await dump(of: sources(project), in: project, module: project.exe, macOS: Template.macMinimum(project)) else {
             return "the compiler couldn't say what holds the enums that grew"
@@ -303,15 +307,71 @@ enum LiveReload {
                 }
             }
         }
+        // The classes, by their qualified names as the layout keys types, so a nested class of one name doesn't
+        // stand for a struct of the same name at the top.
+        let anyDecl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|actor|extension)_decl\b[^"]*"([^"]+)""#)
+        var classes = Set<String>(), scopes: [(indent: Int, name: String)] = []
+        for raw in dump.split(separator: "\n") {
+            let line = String(raw), indent = line.prefix { $0 == " " }.count
+            guard line.dropFirst(indent).first == "(" else { continue }
+            while let open = scopes.last, open.indent >= indent { scopes.removeLast() }
+            guard let m = anyDecl.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) else { continue }
+            let name = String(line[Range(m.range(at: 3), in: line)!])
+            let full = (scopes.map(\.name) + [name]).joined(separator: ".")
+            if line[Range(m.range(at: 2), in: line)!] == "class" { classes.insert(full) }
+            scopes.append((indent, name))
+        }
+        let spared = Set(entries.compactMap { entry -> String? in
+            let parts = entry.split(separator: "\t", maxSplits: 1)
+            return parts.count == 2 && (parts[1].hasPrefix("__lampSpare_") || parts[1].hasPrefix("__lampState_")) ? String(parts[0]) : nil
+        })
+        let conformed = conformances(inLayout: entries)
+        let word = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
+        func last(_ name: String) -> String { String(name.split(separator: ".").last ?? "") }
+        // A kind as a field prints it may name a typealias (`Choice`, for `Picky?`): each is written out as what it
+        // names, wrappers and all, until none is left, so what holds the enum is judged by the type itself. A name
+        // that is a type's of the app's is that type, not a nested alias of the same short name elsewhere.
+        func expanded(_ kind: String) -> String {
+            var kind = kind
+            for _ in 0..<8 {
+                var changed = false
+                for m in word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).reversed() {
+                    let range = Range(m.range, in: kind)!, name = String(kind[range])
+                    guard !conformed.types.contains(name), let target = conformed.aliases[name], target != name else { continue }
+                    kind.replaceSubrange(range, with: target)
+                    changed = true
+                }
+                if !changed { break }
+            }
+            return kind
+        }
+        let fields = conformed.fields.mapValues { $0.map(expanded) }
+        let holders = held.map { ($0.0, expanded($0.1)) }
+        func carriers(of enumName: String) -> [String] {
+            var found = Set([enumName]), grew = true
+            while grew {
+                grew = false
+                for (type, kinds) in fields where !found.contains(type) && !classes.contains(type) && !spared.contains(type) {
+                    for kind in kinds {
+                        let names = word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).map { String(kind[Range($0.range, in: kind)!]) }
+                        if names.contains(where: { found.contains($0) || found.contains(last($0)) }) { found.insert(type); grew = true; break }
+                    }
+                }
+            }
+            return found.sorted()
+        }
         for type in grown {
-            let name = NSRegularExpression.escapedPattern(for: type)
-            let mention = try! NSRegularExpression(pattern: #"(?<![\w.])"# + name + #"(?![\w])"#)
-            // The compiler prints a dictionary's key with a space before the colon (`[String : Mood]`).
-            let plainly = try! NSRegularExpression(pattern: #"^(\[(\w[\w.]*\s*:\s*)?"# + name + #"\]|Set<"# + name + #">|"# + name + #"|\("# + name + #"\.Type\) -> "# + name + #")$"#)
-            for (owner, kind) in held {
-                let range = NSRange(kind.startIndex..., in: kind)
-                if mention.firstMatch(in: kind, range: range) != nil, plainly.firstMatch(in: kind, range: range) == nil {
-                    return "\(owner.isEmpty ? "a global" : owner) holds \(type) as \(kind), which a new case would change"
+            for carrier in carriers(of: type) {
+                let name = NSRegularExpression.escapedPattern(for: carrier)
+                let mention = try! NSRegularExpression(pattern: #"(?<![\w.])"# + name + #"(?![\w])"#)
+                // The compiler prints a dictionary's key with a space before the colon (`[String : Mood]`).
+                let plainly = try! NSRegularExpression(pattern: #"^(\[(\w[\w.]*\s*:\s*)?"# + name + #"\]|Set<"# + name + #">|"# + name + #"|\("# + name + #"\.Type\) -> "# + name + #")$"#)
+                for (owner, kind) in holders {
+                    let range = NSRange(kind.startIndex..., in: kind)
+                    if mention.firstMatch(in: kind, range: range) != nil, plainly.firstMatch(in: kind, range: range) == nil {
+                        let what = carrier == type ? type : "\(carrier), which carries \(type),"
+                        return "\(owner.isEmpty ? "a global" : owner) holds \(what) as \(kind), which a new case would change"
+                    }
                 }
             }
         }
