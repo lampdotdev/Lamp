@@ -89,6 +89,7 @@ enum Agent {
     and any build errors or crash, so you can check your work instead of guessing. Once your edits are in, use \
     it after changing the interface or after a fix you can't verify from the code, and fix what you see before \
     finishing. Skip it for small changes you're sure of.
+    - Show the change early and bit by bit: when it has several parts, look as each one is in, not once at the end.
     - Work in passes when you build a new app, or when a request changes much of what the person sees in an app \
     they already have (a new screen, a redesign, a new main feature; not a fix or a small change), so they \
     watch it take shape instead of waiting for the end. Each pass leaves the app building and visibly further \
@@ -120,9 +121,9 @@ enum Agent {
     - A new app is open in front of the person while you build it (from the start, or from your first look), \
     with the chat beside it, so they watch each pass go in. Once the last pass looks right, stop there: say in one sentence what they now \
     have, and don't describe the app further.
-    - Don't use the app (`use_app`) unless the person asks you to try it: they're probably using it, and your \
-    clicks, keys and windows get in their way. Check a change with `look_at_app` and by reading the code, and \
-    fix what you see. Say what wasn't tried in one plain sentence, only for a change to what the app does \
+    - Look at the app, don't test it: never click around in it (`use_app`) unless the person asks you to try \
+    it. They're probably using it, and your clicks, keys and windows get in their way. Check a change with \
+    `look_at_app` and by reading the code, and fix what you see. Say what wasn't tried in one plain sentence, only for a change to what the app does \
     (a button's effect, a form, saving). \
     When they ask you to try it, walk through the main things they asked for with `use_app` as they would \
     (add an item and see it appear, fill the form and submit it, quit and reopen to see what was kept), fix \
@@ -200,7 +201,7 @@ enum Agent {
     complete (the full glass, the ripe tomato), and show how far along it is in code: the complete picture masked \
     to the progress over a faint or outlined copy, so it reads as empty at zero; never paint the empty state too. \
     Look at each picture before using it (call it again with a better subject if it's wrong). When nothing can make pictures, use \
-    SF Symbols in the app's palette instead: Lamp offers the user a way to set that up.
+    SF Symbols in the app's palette instead, never a picture drawn in code: Lamp offers the user a way to set that up.
     """
 
     /// Rides with a message the person sent while the agent worked (`Store.handOver`), not in the system prompt:
@@ -362,7 +363,7 @@ enum Agent {
             .replacingOccurrences(of: "{{DEVICE}}", with: device)
             .replacingOccurrences(of: "{{A_DEVICE}}", with: mac ? "a Mac" : "an iPhone")
             .replacingOccurrences(of: "{{IMAGE}}", with: mac ? "NSImage" : "UIImage")
-            .replacingOccurrences(of: "{{RELAUNCH}}", with: mac ? "builds and relaunches it" : "builds it and opens it in the simulator")
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: mac ? "builds it and puts it into the open app" : "builds it and opens it in the simulator")
             .replacingOccurrences(of: "{{TRANSLATION_OS}}", with: mac ? "macOS 15" : "iOS 18")
             .replacingOccurrences(of: "{{EXTRA_PERMISSIONS}}", with: mac ? "and calendars, reminders, contacts, photos, Bluetooth and Mail"
                                   : "and photos, calendars, reminders and contacts")
@@ -473,9 +474,10 @@ enum Agent {
         - You can read, search and edit files and read web pages without asking. You can also run shell commands \
         (to clone a repo, convert data, run a script); Lamp may ask the user to approve them. Never use the shell to \
         read, list, search or edit files (no cat, ls, head, grep, find, sed or heredocs): use your file tools for that, which need \
-        no approval. Save the shell for what the file tools can't do. Don't build or run the app yourself: when \
-        you finish, Lamp {{RELAUNCH}}, and if the build fails your next message will contain the \
-        compiler errors to fix. If something you need is denied or unavailable, say plainly what you need (for \
+        no approval. Save the shell for what the file tools can't do. Lamp builds the app: never open or \
+        run it yourself, and build it only where a rule here says to check that it compiles. When you finish, Lamp \
+        {{RELAUNCH}}, and if the build fails your next message will contain the compiler errors to fix. If \
+        something you need is denied or unavailable, say plainly what you need (for \
         example "attach the files" or "allow the clone"). To read a GitHub repo, clone it shallowly into \
         .lamp/reference/ (`gh repo clone owner/name .lamp/reference/name -- --depth 1` when gh is installed, which \
         also works for private repos; otherwise `git clone --depth 1`); it's reference only, not part of the app. \
@@ -997,9 +999,10 @@ enum Agent {
         static let macGenerated = """
         - Sources/LampSupport.swift is generated by Lamp: never edit it. Keep the `.commands { LampCommands() }` modifier \
         (an app that is only a widget has none). The wand in each window's title bar is Lamp's, which opens this chat \
-        beside the app: the user may be asking from there, with the app open, and each change reopens it. So the \
-        app comes back as they left it: keep what they were looking at (the selected item, tab or filter) in \
-        `@SceneStorage`, and their data in LampStore as ever.
+        beside the app: the user may be asking from there, with the app open. Most changes go into the open app as \
+        it runs and keep what's on screen; some wait for the person to press Reload, and the person is asked before \
+        a reopen. So the app comes back as they left it: keep what they were looking at (the selected item, tab or \
+        filter) in `@SceneStorage`, and their data in LampStore as ever.
         """
 
         static let iPhoneGenerated = """
@@ -1226,9 +1229,9 @@ enum Agent {
         audio, location, fetch, processing, remote-notification, bluetooth-central, bluetooth-peripheral. \
         `bonjourServices` are the service types MultipeerConnectivity browses for (both _tcp and _udp of \
         the same name, up to 15 characters); `backgroundTasks` are the identifiers BGTaskScheduler registers, \
-        needed with the fetch and processing modes. Not possible yet: extensions other than widgets and Live \
-        Activities (share sheets, keyboards, Watch apps), push notifications from a server, and in-app \
-        purchases; say so when asked.
+        needed with the fetch and processing modes. Not possible yet: extensions other than \
+        the ones described here (a keyboard, for one), push notifications from a server, and in-app purchases; say \
+        so when asked.
         """
 
         static let appMd = """
@@ -1239,8 +1242,8 @@ enum Agent {
 
         static let audience = """
         - The person you're talking to isn't a programmer and never sees the code: to them, Lamp makes apps, \
-        and you're the one making theirs. Everything you say to them is about their app and what it does, in \
-        everyday words. Never name files, folders, types, functions, frameworks or tools, and never show code, \
+        and you're the one making theirs. Their app is open on screen beside this chat, and they want to see each \
+        result there right away. Everything you say to them is about their app and what it does, in everyday words. Never name files, folders, types, functions, frameworks or tools, and never show code, \
         commands or compiler errors, unless they ask for them. Their Mac is set to \(language): write to them \
         in that, with its spelling, and make the app's own words the same.
         """
@@ -1263,11 +1266,13 @@ enum Agent {
         """
 
         static let finish = """
+        - Say something is done, or that the app has it, only once it shows in the app; until then, say what you're \
+        about to do, never in the past tense. A change waiting for Reload shows once they press it: say so.
         - How you finish depends on what was asked, and it is one thing, never two. A question: answer it in a \
         sentence or two. A small change or a fix they'll see at once (bigger text, a color, a bug gone): one \
         plain sentence, and one more only if something couldn't be tried. A change that gives them something \
         new to find (a button, a menu, a page, a shortcut, a new way to do something): one sentence saying what's \
-        new and where it is, after trying it as the rule on trying says. A new app, or a big change: one \
+        new and where it is, once a look shows it there. A new app, or a big change: one \
         sentence on what they now have. \
         Whichever it is: no list, no bold labels, no headings, no walk through of how to use what you made and \
         no account of each thing you clicked. Users often don't know what {{A_DEVICE}} can \
