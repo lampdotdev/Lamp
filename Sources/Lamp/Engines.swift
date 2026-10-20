@@ -244,9 +244,6 @@ struct AgentRun {
     /// For an engine that reads its request from its input and keeps reading while it works (Claude Code): the
     /// request as the first line written there. Nil for one given it on the command line.
     var opening: String? = nil
-    /// Whether the chat says each command the engine ran from its own output (`AgentEvent.ran`), for a run whose
-    /// commands come to no approval of Lamp's, which says it otherwise.
-    var saysCommands = false
 }
 
 extension Agent {
@@ -483,7 +480,7 @@ extension Agent {
             let linked = (try? FileManager.default.destinationOfSymbolicLink(atPath: folder)) != nil
             let command = !linked && Sandbox.prepareShims() ? launch
                 : "echo 'Lamp could not set up the sandbox that keeps ChatGPT Codex inside the app.' >&2; exit 1"
-            return AgentRun(command: command, env: env, saysCommands: approval != .always)
+            return AgentRun(command: command, env: env)
         }
     }
 
@@ -502,6 +499,10 @@ extension Agent {
     - (Codex) Your file tools are Lamp's `read`, `ls`, `find` and `grep`. Read, list and search files with \
     them, never with the shell (no cat, sed, nl, ls, rg, grep or find there): inside the app's folder they need \
     no approval, while a shell command may wait for the user's OK. Change files with apply_patch.
+    - (Codex) A command that would reach outside this app may be refused by a review the person never sees. Then \
+    it didn't run: don't try another way. Say in a sentence, in their words, what you couldn't do and why (\
+    "I didn't delete the old-notes folder: it's outside this app."), never the command, a path you didn't name \
+    for them, or the review itself.
     """
 
     /// A TOML basic string, for `codex -c key=value`.
