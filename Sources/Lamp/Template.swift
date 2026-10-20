@@ -4816,6 +4816,15 @@ enum Template {
                         LampSidebar.restore(window)
                     }
                 }
+                // The lit wand's symbol follows whether its window is in front (`showWand`).
+                for name in [NSWindow.didBecomeMainNotification, NSWindow.didResignMainNotification,
+                             NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
+                    center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                        MainActor.assumeIsolated {
+                            for window in NSApp.windows where isAppWindow(window) { showWand(in: window) }
+                        }
+                    }
+                }
                 // Opened behind the person's windows (Lamp's looks during a change), no window becomes key: the
                 // first one is put back in place and reported once launching is done all the same.
                 center.addObserver(forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main) { _ in
@@ -5402,11 +5411,14 @@ enum Template {
             if let floating = wand as? FloatingWand {
                 floating.active = open
             } else {
-                // A toggle that's on, as a toolbar's are drawn lit, and the symbol in the accent colour itself: a tint
-                // alone doesn't show on a glass button, nor in a window that isn't in front.
+                // A toggle that's on, as a toolbar's are drawn lit. In the window in front the lit glass is filled
+                // with the accent colour and draws the symbol white; behind, or with the app in the back, the glass
+                // is gray and the symbol is put in the accent colour itself, since a tint alone doesn't show there.
+                // An accent symbol on the accent glass all but disappeared.
+                let inFront = NSApp.isActive && window.isMainWindow
                 wand.setButtonType(.pushOnPushOff)
                 wand.state = open ? .on : .off
-                wand.image = LampGlyph.image(pointSize: 14, weight: .medium, color: open ? .controlAccentColor : nil)
+                wand.image = LampGlyph.image(pointSize: 14, weight: .medium, color: open && !inFront ? .controlAccentColor : nil)
             }
         }
 
