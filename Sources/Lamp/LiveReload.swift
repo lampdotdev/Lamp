@@ -1321,7 +1321,8 @@ enum LiveReload {
     /// runs, given the files the verdict found changed. The changed files' compile and the whole code's check go
     /// side by side, and the check decides; with properties already in spares, the live copy is rewritten before
     /// anything is compiled (`LiveSlots.fit`). What's declared changed, an enum that grew and a constant given a new
-    /// value each compile every file. The app loads the library (`send`) and, once it has, the sources it runs, its
+    /// value each widen what's compiled to every file; the files are decided first and compiled once, the early
+    /// compile standing when nothing widened it. The app loads the library (`send`) and, once it has, the sources it runs, its
     /// layout and what its code may leave running are recorded for the next change.
     @MainActor static func put(_ project: LampProject, changed files: [String], token: String) async -> Outcome {
         // A change that couldn't go in is tried again at the install after its build, on the same live copy and the
@@ -1355,7 +1356,11 @@ enum LiveReload {
     /// `put`'s work. `settled` is set false when the change was refused by the open app itself rather than by
     /// what it was judged on, which a later try might not repeat.
     @MainActor private static func attempt(_ project: LampProject, changed files: [String], token: String, settled: inout Bool) async -> Outcome {
-        var changed = files, said: [String] = []
+        // What's compiled is decided first and compiled once, at the end: the changed files, every file when what's
+        // declared changed or an enum grew or a constant is remade, and the enums whose metadata the change keeps.
+        // The changed files alone are compiled meanwhile, beside the layout's check, since most changes need no more;
+        // that compile is the one sent when nothing widened it.
+        var changed = files, keep: [String] = [], said: [String] = []
         let spared = !LiveSlots.mapping(project).isEmpty || LiveSlots.hasConstants(project)
         async let early: (url: URL?, problem: String?) = spared ? (nil, nil) : await compile(project, changed: changed)
         let (before, after, declarations, oldCode) = await layouts(project)
@@ -1365,7 +1370,8 @@ enum LiveReload {
         var constants = before.flatMap { before in after.map { LiveSlots.changedConstants(project, before: before, after: $0) } } ?? []
         constants = Array(Set(constants + LiveSlots.constants(naming: grownEarly, in: declarations))).sorted()
         var plan: LiveSlots.Plan?
-        var (library, problem) = await early
+        // Awaited before the fit rewrites the live copy that compile reads.
+        let first = await early
         // Stored properties added to existing types go into their spares, constants whose value changed give the new
         // one, and the change is compiled with them.
         var fitting: LiveSlots.Fit?
@@ -1379,15 +1385,12 @@ enum LiveReload {
             // that keeps the first value. Afterwards every caller reads through it, so later changes need no more.
             if !fitted.constants.isEmpty { changed = appFiles(project) }
             check = layoutProblem(before: before, after: fitted.layout)
-            (library, problem) = await compile(project, changed: changed)
             if check.problem == nil, !fitted.added.isEmpty { said.append("Added \(fitted.added.joined(separator: ", "))") }
             if check.problem == nil, !fitted.constants.isEmpty {
                 said.append("Gave \(fitted.constants.joined(separator: ", ")) \(fitted.constants.count == 1 ? "its" : "their") new value")
             }
         } else if !constants.isEmpty, check.problem == nil {
             return .reopen(why: "a constant's new value can't be given in place")
-        } else if spared, check.problem == nil {
-            (library, problem) = await compile(project, changed: changed)
         }
         // The layout's reason, and when the spares had one of their own for not taking the change, that too.
         if let why = check.problem {
@@ -1396,10 +1399,7 @@ enum LiveReload {
         }
         // What's declared changed (a function added, an overload, a conformance): an unchanged caller may now mean
         // another one, so every file is compiled again and every call goes to code compiled with the new declarations.
-        if let before, let after, declarationsChanged(before: before, after: after), changed != appFiles(project) {
-            changed = appFiles(project)
-            (library, problem) = await compile(project, changed: changed)
-        }
+        if let before, let after, declarationsChanged(before: before, after: after) { changed = appFiles(project) }
         // An enum that only gained cases goes in when nothing holds it where a new case would change what's there.
         // Then every file of the app's is compiled again, so no code of the open app's meets a case it never knew
         // (a switch, or printing it), and the enum's own metadata is the change's, which knows the new cases.
@@ -1417,7 +1417,14 @@ enum LiveReload {
                 guard parts.count == 2, let kind = parts[1].split(separator: " ").first else { return nil }
                 return (bare(parts[0]), kind == "struct" ? "V" : kind == "enum" ? "O" : "C")
             }, uniquingKeysWith: { first, _ in first })
-            (library, problem) = await compile(project, changed: changed, keep: grown.map { LiveObject.mangledType(bare($0), module: project.exe, kind: "O", kinds: kinds) })
+            keep = grown.map { LiveObject.mangledType(bare($0), module: project.exe, kind: "O", kinds: kinds) }
+        }
+        // The one compile: the early one stands when nothing widened it (no spares rewrote the copy, the same files,
+        // nothing kept); else every file the change needs, once.
+        var (library, problem) = first
+        if spared || plan != nil || changed != files || !keep.isEmpty {
+            if let early = library { try? FileManager.default.removeItem(at: early) }
+            (library, problem) = await compile(project, changed: changed, keep: keep)
         }
         guard let layout = check.layout, library != nil || changed.isEmpty else {
             return .reopen(why: "the change didn't compile on its own.\n\(problem ?? "")")
