@@ -307,16 +307,13 @@ setup checks as anything typed in a chat. A click on a wish (or Return, or Open 
 change at once (`Store.open(fromDesk:)`): a Mac app with windows opens with
 its chat beside it (`Store.change`, below; a notification's click goes the same way, `Store.openChat`); a wish that opens no window is used (`Store.use`), and one still coming
 true, or waiting on an answer, opens its chat. Change… on its menu changes it the same way, or in Lamp's window. Under each icon is its
-name, and a dot says it's ready. While a wish is built the desk shows that work is moving, so it never looks stuck: its
-icon glows, the light Lamp puts round an app's windows going round it, bright enough to see at a glance, and one line
-under its name says what its own turn is doing now (`BuildingGlow`, `DeskStatusLine`). That line is the one thing
-besides the name a tile shows. It says only Lamp's own words, as the chat's live line words them (the thinking phrases,
-"Working on the interface", "Building…"), never a command the agent named or what only a coder would follow ("Running
-a command" reads as plain work, `TurnProgress.deskWords`), and "Getting it ready…" when no turn is going (a starter
-built out of sight); a sheen crosses it so a long step still moves. It is the tile's width and one line high, so words
-that change cross-fade in place and nothing resizes, and it goes when its own build ends, as the glow settles. Where the
-person asked for less motion both stay still and the words still change. VoiceOver hears what the status
-line says with the wish's name (a think plainly, as "Coming true…" or "Changing…"), and where it lives after (`WishPlace`, read
+name, and a dot says it's ready. The one wait the desk shows is a starter clicked before Lamp has built it, since
+nothing else on screen says the click did anything until it opens by itself (`openWhenReady`): its icon glows, the light
+Lamp puts round an app's windows going round it, and "Getting it ready…" is under its name, a sheen crossing it so the
+wait never looks frozen (`BuildingGlow`, `DeskStatusLine`); both settle when it opens, and stay still where the person
+asked for less motion. Nothing else lights a tile: a wish being made or changed shows that in its chat, and Lamp's own
+work on a wish (a rename, Undo, Reload, a new icon) shows nothing on the desk. VoiceOver hears "Opening…" for such a
+starter, "Coming true…" or "Changing…" for a wish being worked on, and where a wish lives after its name (`WishPlace`, read
 from its files). While the pointer is on a wish, its picture and what it is take the place where a new wish is made
 (`WishStage`), which steps back and fades. When it's used where nothing comes
 forward (the menu bar, a widget, the background, the person's own phone) the desk says so in `WishHUD`, a
