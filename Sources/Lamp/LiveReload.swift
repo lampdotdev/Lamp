@@ -1085,6 +1085,86 @@ enum LiveReload {
         return (library, nil)
     }
 
+    /// What putting a change into the open app came to: it went in, with what was done beyond the code (a property
+    /// added, a constant given its new value, each a line for the chat); or the app has to reopen, with why.
+    enum Outcome {
+        case went(said: [String])
+        case reopen(why: String)
+    }
+
+    /// Puts a change into the open app: the one pipeline, from the layout check to the record of what the app now
+    /// runs, given the files the verdict found changed. The changed files' compile and the whole code's check go
+    /// side by side, and the check decides; with properties already in spares, the live copy is rewritten before
+    /// anything is compiled (`LiveSlots.fit`). What's declared changed, an enum that grew and a constant given a new
+    /// value each compile every file. The app loads the library (`send`) and, once it has, the sources it runs, its
+    /// layout and what its code may leave running are recorded for the next change.
+    @MainActor static func put(_ project: LampProject, changed files: [String], token: String) async -> Outcome {
+        var changed = files, said: [String] = []
+        let spared = !LiveSlots.mapping(project).isEmpty || LiveSlots.hasConstants(project)
+        async let early: (url: URL?, problem: String?) = spared ? (nil, nil) : await compile(project, changed: changed)
+        let (before, after, declarations, oldCode) = await layouts(project)
+        var check = layoutProblem(before: before, after: after)
+        let constants = before.flatMap { before in after.map { LiveSlots.changedConstants(project, before: before, after: $0) } } ?? []
+        var (library, problem) = await early
+        // Stored properties added to existing types go into their spares, constants whose value changed give the new
+        // one, and the change is compiled with them.
+        if check.problem != nil || !constants.isEmpty, let before, let after,
+           let plan = LiveSlots.fit(project, before: before, after: after, declarations: declarations, constants: constants) {
+            changed = Array(Set(changed).union(plan.files)).sorted()
+            // A constant newly read through its new code is read so everywhere: the open app's own reads go to storage
+            // that keeps the first value. Afterwards every caller reads through it, so later changes need no more.
+            if !plan.constants.isEmpty { changed = appFiles(project) }
+            check = layoutProblem(before: before, after: plan.layout)
+            (library, problem) = await compile(project, changed: changed)
+            if check.problem == nil, !plan.added.isEmpty { said.append("Added \(plan.added.joined(separator: ", "))") }
+            if check.problem == nil, !plan.constants.isEmpty {
+                said.append("Gave \(plan.constants.joined(separator: ", ")) \(plan.constants.count == 1 ? "its" : "their") new value")
+            }
+        } else if !constants.isEmpty, check.problem == nil {
+            return .reopen(why: "a constant's new value can't be given in place")
+        } else if spared, check.problem == nil {
+            (library, problem) = await compile(project, changed: changed)
+        }
+        if let why = check.problem { return .reopen(why: why) }
+        // What's declared changed (a function added, an overload, a conformance): an unchanged caller may now mean
+        // another one, so every file is compiled again and every call goes to code compiled with the new declarations.
+        if let before, let after, declarationsChanged(before: before, after: after), changed != appFiles(project) {
+            changed = appFiles(project)
+            (library, problem) = await compile(project, changed: changed)
+        }
+        // An enum that only gained cases goes in when nothing holds it where a new case would change what's there.
+        // Then every file of the app's is compiled again, so no code of the open app's meets a case it never knew
+        // (a switch, or printing it), and the enum's own metadata is the change's, which knows the new cases.
+        if let before, let layout = check.layout, case let grown = grownEnums(before: before, after: layout), !grown.isEmpty {
+            var why = await enumsHeld(project, grown: grown)
+            if why == nil { why = await enumsMetByOldCode(project, grown: grown) }
+            if let why { return .reopen(why: why) }
+            changed = appFiles(project)
+            (library, problem) = await compile(project, changed: changed, keep: grown.map { LiveObject.mangledType($0, module: project.exe, kind: "O") })
+        }
+        guard let layout = check.layout, library != nil || changed.isEmpty else {
+            return .reopen(why: "the change didn't compile on its own.\n\(problem ?? "")")
+        }
+        // A SwiftData model's file compiled into the change for any reason (every file is, when what's declared
+        // changed) makes the model's key paths over again, which the open app's container doesn't know.
+        if let model = modelFiles(inLayout: layout).first(where: { changed.contains($0.file) }) {
+            return .reopen(why: "the file of the SwiftData model \(model.name) is compiled again, and its data is found by key paths the open app made")
+        }
+        // Files only taken away leave nothing to load: the open app already has what's left.
+        if let library, let why = await send(library, to: project, token: token, whole: changed == appFiles(project)) { return .reopen(why: why) }
+        // What a generation's code may leave running (a timer, a task) outlives the next change's replacing its
+        // sources: the installed generation's uses are recorded before the first change replaces them, each
+        // change's as it goes in.
+        if !hasOldCodeRecord(project), let installed = await oldCodeUsesOfRunning(project) { recordOldCode(installed, for: project) }
+        // A property taken out of the code leaves its spare place holding its value: retired, so a name brought
+        // back later gets a fresh place.
+        if let after { LiveSlots.retire(project, keeping: after) }
+        markRunning(project)
+        keepLayout(layout, for: project)
+        recordOldCode(oldCode, for: project)
+        return .went(said: said)
+    }
+
     /// Asks the open app to load the library, signed with its token (only Lamp has it), and waits a moment for
     /// its answer, which it leaves in its runtime folder.
     /// Nil when the app took the change; else why not, in the app's words (`LampLive`), or that it didn't answer.
