@@ -719,7 +719,12 @@ struct DeskIcon: View {
     /// This one is being dragged: its place shows faintly where it would land.
     private var lifted: Bool { arrangement.dragging == project.id }
 
-    /// What's going on with it, for VoiceOver: on screen the spinner and the dot say it.
+    /// Being built, or waiting to open until it is: its icon glows (`BuildingGlow`).
+    private var building: Bool {
+        busy && !store.preparing.contains(project.id) || store.openWhenReady.contains(project.id)
+    }
+
+    /// What's going on with it, for VoiceOver: on screen the glow and the dot say it.
     private var status: String? {
         // A wish Lamp came with, built for the first time out of sight: nothing shows until it's clicked, and then it
         // says it's opening, which it does by itself once it's ready.
@@ -736,13 +741,13 @@ struct DeskIcon: View {
     var body: some View {
         VStack(spacing: 6) {
             AppIcon(project: project, size: 76)
+                .background {
+                    if building { BuildingGlow(size: 76).transition(.opacity) }
+                }
+                // It settles rather than vanishing when the build is done.
+                .animation(.easeOut(duration: 0.8), value: building)
                 .overlay(alignment: .topTrailing) {
-                    if busy && !store.preparing.contains(project.id) || store.openWhenReady.contains(project.id) {
-                        ProgressView().controlSize(.small)
-                            .padding(3)
-                            .background(.regularMaterial, in: Circle())
-                            .offset(x: 2, y: -2)
-                    } else if store.unread.contains(project.id) {
+                    if !building && store.unread.contains(project.id) {
                         ReadyDot(size: 12)
                             .overlay(Circle().strokeBorder(.background, lineWidth: 2))
                             .offset(x: -2, y: 2)

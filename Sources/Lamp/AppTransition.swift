@@ -113,7 +113,7 @@ enum AppTransition {
 struct TransitionGlow: View {
     var cornerRadius: CGFloat = 12
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private static let hues: [NSColor] = [.systemBlue, .systemPurple, .systemOrange]
+    static let hues: [NSColor] = [.systemBlue, .systemPurple, .systemOrange]
     private static let cycle = 6.0
 
     var body: some View {
@@ -140,5 +140,34 @@ struct TransitionGlow: View {
         let index = Int(position) % hues.count
         let next = hues[(index + 1) % hues.count]
         return Color(nsColor: hues[index].blended(withFraction: position - Double(Int(position)), of: next) ?? hues[index])
+    }
+}
+
+/// The same light around a wish's icon on the desk while it's built: soft, just outside the icon, its colours
+/// travelling slowly round it. Where the person asked for less motion it stays still. The desk fades it out when
+/// the build is done.
+struct BuildingGlow: View {
+    let size: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private static let lap = 4.0
+
+    var body: some View {
+        TimelineView(.animation(paused: reduceMotion)) { timeline in
+            let turn = reduceMotion ? 0 : (timeline.date.timeIntervalSinceReferenceDate / Self.lap).truncatingRemainder(dividingBy: 1)
+            // The icon's own tile, an 824pt square on its 1024pt canvas, so the light hugs its edge.
+            let side = size * 824 / 1024
+            let shape = RoundedRectangle(cornerRadius: side * 0.225, style: .continuous)
+            let light = AngularGradient(colors: TransitionGlow.hues.map(Color.init(nsColor:)) + [Color(nsColor: TransitionGlow.hues[0])],
+                                        center: .center, angle: .degrees(turn * 360))
+            ZStack {
+                shape.stroke(light, lineWidth: side * 0.16).blur(radius: side * 0.14)
+                shape.stroke(light, lineWidth: side * 0.05).blur(radius: side * 0.04)
+            }
+            .frame(width: side, height: side)
+            .opacity(0.85)
+        }
+        .frame(width: size, height: size)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
