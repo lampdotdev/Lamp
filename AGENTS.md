@@ -827,9 +827,11 @@ as Identifiable's `ID` or a Sequence's `Iterator`, is a typealias it declares it
 returning `some …`, a modifier's `body(content:)` or a style's `makeBody`, whose type is what it builds, is listed by that
 type as the compiler prints it where the body's value becomes the opaque one, `LiveReload.opaqueGroup`, so `1` may
 become `1.5` only if the member returns a Double now, and `Text("a")` may become `Text("a").bold()`; where that type is
-opaque too (a modifier's `some View`) it's listed by a digest of the calls in its body whose results are opaque, each
-with the types it was given (`padding [with … Self -> Text]`), which together are the type, so `.bold()` added before
-`.padding()` changes nothing and `.font()` after it does: the open app's witness tables and callers were laid out for the type it had, and the
+opaque too (a modifier's `some View`) it's listed by a digest of every node in its body whose type involves an opaque
+one, by that type (`(some Equatable, Int)`, so a tuple's or array's plain parts count) and by the declaration it calls
+with the types it was given (`padding [with … Self -> Text]`), which together are the type: `.bold()` added before
+`.padding()` changes nothing, `.font()` after it does, and so does another overload (`padding()` to `padding(12)`),
+whose opaque result is another type even when it builds the same one: the open app's witness tables and callers were laid out for the type it had, and the
 compiler prints both as `some View`; a view's own body, wrapped by the live copy, and a private member are left out; a private type is listed with its file,
 `LiveReload.placeGroup`, since its mangled name carries it and one moved to another file is another type at run time,
 and keyed with its file throughout the layout and the declarations (`Row@A.swift`, each part of a nested one; `LiveReload.bare`
