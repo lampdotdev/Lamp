@@ -2536,6 +2536,8 @@ final class Store: ObservableObject {
         // the rest of the turn goes on with the app as Lamp now has it, so its build is for the new kind.
         var project = started
         guard let owner = turns[project.id] else { return TurnResult(end: .failed, watched: true) }
+        // Once, when the turn is over: its own build and install, and any run that fixes a crash, come after the agent's.
+        defer { if let tally = Self.outcomeTally(owner.outcomes, name: project.name) { log(project, .detail, tally) } }
         var prompt = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
         // Attachments with no words: usually a screenshot or mockup meaning "like this", or a file to use.
         if prompt.isEmpty { prompt = Self.onlyFiles(saved.count) }
@@ -2946,7 +2948,6 @@ final class Store: ObservableObject {
         turn.writing = nil
         // Pictures are already in the app's building cost (recordArt); the summary shows them with the rest.
         log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost + turn.artCost - artBefore))
-        if let tally = Self.outcomeTally(turn.outcomes, name: project.name) { log(project, .detail, tally) }
         recordAgent(project, cost: cost)
         if turn.stopped {
             turn.stopped = false
