@@ -49,6 +49,9 @@ enum Runtime {
         try? AppFolder.write(Data(), to: reloadURL(project), in: project.dir)
     }
     static func waitsForReload(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: reloadURL(project).path) }
+    /// A change that went into the open app took the one waiting for Reload with it (it was compiled from the same
+    /// sources), so nothing waits for the person any more; the build still goes in when the app closes.
+    static func endReloadWait(_ project: LampProject) { AppFolder.remove(reloadURL(project), in: project.dir) }
     static func holdsBuild(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: heldURL(project).path) }
 
     /// What the app is built from, as one hash: the contents of Sources, its widget's folder, Package.swift and the icon design,
