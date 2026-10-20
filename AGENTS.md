@@ -316,7 +316,8 @@ only a coder would follow ("Running a command" reads as plain work, `TurnProgres
 when no turn is going (a starter built out of sight); a sheen crosses its words so a long step still moves. It stays
 inside its own tile, and the row it's in makes room for it above every icon, so bubbles never cover each other, a
 neighbour or the row above (`DeskBubble.Room`, `DeskRows`). Each goes when its own build ends, as the glow settles;
-where the person asked for less motion both stay still and the words still change. VoiceOver also hears where it lives (`WishPlace`, read
+where the person asked for less motion both stay still and the words still change. VoiceOver hears what the bubble
+says with the wish's name (a think plainly, as "Coming true…" or "Changing…"), and where it lives after (`WishPlace`, read
 from its files). While the pointer is on a wish, its picture and what it is take the place where a new wish is made
 (`WishStage`), which steps back and fades. When it's used where nothing comes
 forward (the menu bar, a widget, the background, the person's own phone) the desk says so in `WishHUD`, a

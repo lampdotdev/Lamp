@@ -748,7 +748,12 @@ struct DeskIcon: View {
         // says it's opening, which it does by itself once it's ready.
         if store.openWhenReady.contains(project.id) { return "Opening…" }
         if store.preparing.contains(project.id) { return nil }
-        if busy { return store.progress[project.id]?.newApp == true || project.untitled ? "Coming true…" : "Changing…" }
+        if busy {
+            // What the bubble says, so a wish waiting for an OK isn't heard as still building; a think is told plainly,
+            // since its phrases turn over every few seconds.
+            if let words = deskActivity?.words, words != Activity.thinking { return words }
+            return store.progress[project.id]?.newApp == true || project.untitled ? "Coming true…" : "Changing…"
+        }
         if Talk.waiting(in: store.logs[project.id] ?? []) != nil { return "Has a question" }
         if store.queued[project.id]?.isEmpty == false { return "Waiting to start" }
         if project.finding { return "Finding a wish" }
@@ -815,7 +820,9 @@ struct DeskIcon: View {
         }
         .help("Click to use \(project.title) and change it")
         .accessibilityLabel(project.title)
-        .accessibilityHint(status ?? place?.caption ?? "")
+        // What's going on with it is its state, read with its name; where it lives is the hint after.
+        .accessibilityValue(status ?? "")
+        .accessibilityHint(place?.caption ?? "")
         // Read again as a turn ends: a change can move it, say, into the menu bar.
         .task(id: busy) {
             let current = project
