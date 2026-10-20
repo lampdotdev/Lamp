@@ -421,6 +421,8 @@ final class Store: ObservableObject {
         var said: String?
         let answer: CheckedContinuation<Bool, Never>
         var explanation: CommandExplanation?
+        /// What the person asked for in this turn, which the card puts beside the step to weigh it against.
+        var request: String?
     }
 
     /// What a command does and how risky it is, in plain words for people who don't read shell commands.
@@ -3235,6 +3237,7 @@ final class Store: ObservableObject {
             var pending = PendingApproval(command: command, answer: continuation,
                                           explanation: given?.raised(for: flagged) ?? (asked ? .unexplained(flagged: flagged) : nil))
             if let title { pending.title = title }
+            pending.request = turn.request
             pending.said = said
             approvals[project.id] = pending
             // Explain it while the card is up; until this arrives the card says it's working it out.

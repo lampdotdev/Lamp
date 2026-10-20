@@ -249,7 +249,7 @@ final class SidebarServer {
         }
         state.waitingForSetup = !store.setup.ready
         state.approval = store.approvals[project.id].map {
-            SidebarApproval(id: $0.id, title: $0.title, command: $0.command, explanation: $0.explanation?.look)
+            SidebarApproval(id: $0.id, title: $0.title, command: $0.command, explanation: $0.explanation?.look, request: $0.request)
         }
         state.notResponding = store.notResponding[project.id] != nil ? ErrorMessages.notResponding(project.name) : nil
         state.replacing = draft.replacing != nil
