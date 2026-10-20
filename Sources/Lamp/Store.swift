@@ -3500,6 +3500,10 @@ final class Store: ObservableObject {
         }
         if request["sidebar"] as? Bool == true {
             guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
+            // The sidebar is the open copy's too, so it's kept from the agent on the same terms as its windows (below).
+            if Runtime.holdsBuild(project), isRunning(project) {
+                return (409, ["error": Runtime.waitsForReload(project) ? Self.reloadNote : Self.keptOpenNote])
+            }
             guard !macCopies(of: project).isEmpty else {
                 return (200, ["text": "The app isn't open. Call look_at_app with sidebar first: it builds the app and opens it."])
             }
