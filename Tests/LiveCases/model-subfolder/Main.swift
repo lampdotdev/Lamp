@@ -5,5 +5,5 @@ import SwiftData
     let n = Note(title: "abc"); container.mainContext.insert(n)
     print("before:", label(n))
     reload(1); print("after1 (want LABEL):", label(n))
-    reload(2); print("after2 (should have reopened):", label(n))
+    reload(2); print("after2 (want LABEL abc!, in live: the model's file names nothing newly declared):", label(n))
 }}}

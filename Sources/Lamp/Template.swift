@@ -3896,7 +3896,23 @@ enum Template {
                 let until = note.userInfo?["until"] as? String ?? ""
                 MainActor.assumeIsolated { shared.load(path, signature: signature, whole: whole, retired: retired, until: until) }
             }
+            // A change of the app's files alone (a picture in Assets, read from the app's folder in a live build) has no
+            // code to load: the views draw again, and read the new file.
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name(LampInstall.note + "redraw"), object: Bundle.main.bundleIdentifier, queue: .main
+            ) { note in
+                let at = note.userInfo?["at"] as? String, signature = note.userInfo?["signature"] as? String
+                MainActor.assumeIsolated { shared.redraw(at: at, signature: signature) }
+            }
         }()
+
+        private func redraw(at: String?, signature: String?) {
+            guard let at, let signature, let time = Double(at), abs(Date().timeIntervalSince1970 - time) < 30 else { return }
+            let key = SymmetricKey(data: Data(LampInstall.token.utf8))
+            let expected = HMAC<SHA256>.authenticationCode(for: Data(("redraw\n" + at).utf8), using: key).map { String(format: "%02x", $0) }.joined()
+            guard signature == expected else { return }
+            generation += 1
+        }
 
         private var loaded: Set<String> = []
         /// Every replacement so far, by name, and the images whose calls go through pointers: the app and each

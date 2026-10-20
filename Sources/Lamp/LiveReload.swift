@@ -224,6 +224,7 @@ enum LiveReload {
     enum Group: String {
         case launch = "\u{1}launch", constant = "\u{2}constant", alias = "\u{3}alias", declared = "\u{5}declared"
         case opaque = "\u{6}opaque", place = "\u{7}place", inits = "\u{8}inits", shape = "\u{e}shape", stored = "\u{10}stored"
+        case hash = "\u{11}hash"
         func entry(_ parts: String...) -> String { ([rawValue] + parts).joined(separator: "\t") }
         /// The entry's parts when it's of this group, else nil.
         func parts(of entry: String) -> [String]? {
@@ -240,7 +241,7 @@ enum LiveReload {
             guard let parts = parts(of: entry), let first = parts.first else { return nil }
             switch self {
             case .alias: return first.components(separatedBy: " = ").first
-            case .constant, .stored: return String(parts.joined(separator: "\t").prefix { $0 != ":" })
+            case .constant, .stored, .hash: return String(parts.joined(separator: "\t").prefix { $0 != ":" })
             case .inits: return first.hasSuffix(".final") ? String(first.dropLast(6)) : first.range(of: ".init").map { String(first[..<$0.lowerBound]) }
             case .place: return parts.joined(separator: "\t")
             case .opaque, .shape: return first
@@ -276,6 +277,25 @@ enum LiveReload {
     /// where a protocol's default stood in, an extension's method over a system one), so every file is compiled again.
     static func declarationsChanged(before: [String], after: [String]) -> Bool {
         Set(before.filter { $0.hasPrefix(declarationGroup + "\t") }) != Set(after.filter { $0.hasPrefix(declarationGroup + "\t") })
+    }
+
+    /// The names a caller writes to reach what was newly declared, when nothing was taken away and every addition is
+    /// reached by its name: a function, a property, an initializer (by its type's name). Nil when a caller could reach
+    /// one without naming it: a conformance, a subscript or an operator, or a declaration taken away.
+    static func addedNames(before: [String], after: [String]) -> Set<String>? {
+        let old = Set(Group.declared.parts(in: before).map { $0.joined(separator: "\t") })
+        let new = Set(Group.declared.parts(in: after).map { $0.joined(separator: "\t") })
+        guard old.isSubset(of: new) else { return nil }
+        var names = Set<String>()
+        for entry in new.subtracting(old) {
+            guard !entry.contains(" inherits "), let colon = entry.range(of: ": ") else { return nil }
+            let path = entry[..<colon.lowerBound].prefix { $0 != "(" }.split(separator: ".")
+            guard var name = path.last.map(String.init) else { return nil }
+            if name == "init" { name = path.dropLast().last.map { String($0.prefix { $0 != "@" }) } ?? "" }
+            guard let first = name.unicodeScalars.first, CharacterSet.letters.union(["_"]).contains(first), name != "subscript" else { return nil }
+            names.insert(name)
+        }
+        return names
     }
 
     static func layoutProblem(before: [String]?, after: [String]?) -> (problem: String?, layout: [String]?) {
@@ -335,6 +355,15 @@ enum LiveReload {
             guard let is_ = startingValues(now)[key], is_ != was else { continue }
             let name = key.hasPrefix("\t") ? String(key.dropFirst()) : key.replacingOccurrences(of: "\t", with: ".")
             return ("the starting value of \(name) changed, and the open app made it once and keeps it", nil)
+        }
+        // A type's own hash: the sets and dictionaries the open app keeps put each value where the old one said, and
+        // a lookup by the new one would look elsewhere and not find it.
+        let hashes = Dictionary(Group.hash.parts(in: before).compactMap { $0.first.map { ($0.prefix { $0 != ":" }, $0) } }, uniquingKeysWith: { a, _ in a })
+        for part in Group.hash.parts(in: now).compactMap(\.first) {
+            let type = part.prefix { $0 != ":" }
+            if let was = hashes[type], was != part {
+                return ("\(type)'s hash(into:) changed, and the sets and dictionaries the open app keeps were laid out by the old one", nil)
+            }
         }
         // A private type's name carries its file: moved to another, it's a new type to the runtime, so a value the
         // open app made is no longer one (`as? Helper` fails) though its layout is the same.
@@ -1486,7 +1515,7 @@ enum LiveReload {
         var check = layoutProblem(before: before, after: after)
         // A constant made from an enum that grew (`Mood.allCases`) keeps the value the open app made: remade too.
         let grownEarly = before.flatMap { before in after.map { grownEnums(before: before, after: $0) } } ?? []
-        var constants = before.flatMap { before in after.map { LiveSlots.changedConstants(project, before: before, after: $0) } } ?? []
+        var constants = before.flatMap { before in after.map { LiveSlots.changedConstants(project, before: before, after: $0, declarations: declarations) } } ?? []
         constants = Array(Set(constants + LiveSlots.constants(naming: grownEarly, in: declarations))).sorted()
         var plan: LiveSlots.Plan?
         // Awaited before the fit rewrites the live copy that compile reads.
@@ -1519,7 +1548,20 @@ enum LiveReload {
         }
         // What's declared changed (a function added, an overload, a conformance): an unchanged caller may now mean
         // another one, so every file is compiled again and every call goes to code compiled with the new declarations.
-        if let before, let after, declarationsChanged(before: before, after: after) { changed = appFiles(project) }
+        if let before, let after, declarationsChanged(before: before, after: after) {
+            changed = appFiles(project)
+            // Except a SwiftData model's file the change didn't touch, when it names nothing newly declared: compiled
+            // again, its data would be found by new key paths (below), and nothing in it can mean another declaration.
+            if let names = addedNames(before: before, after: after) {
+                let models = Set(modelFiles(inLayout: after).map(\.file)).subtracting(files)
+                changed.removeAll { file in
+                    guard models.contains(file) else { return false }
+                    guard let text = SwiftSource.Text(path: sources(project).appendingPathComponent(file).path) else { return false }
+                    let code = String(decoding: text.bytes, as: UTF8.self)
+                    return !names.contains { SwiftText.mentions(identifier: $0, in: code) }
+                }
+            }
+        }
         // An enum that only gained cases goes in when nothing holds it where a new case would change what's there.
         // Then every file of the app's is compiled again, so no code of the open app's meets a case it never knew
         // (a switch, or printing it), and the enum's own metadata is the change's, which knows the new cases.
@@ -1634,6 +1676,16 @@ enum LiveReload {
     /// Nil when the app took the change; else why not, in the app's words (`LampLive`), or that it didn't answer.
     /// `whole` says every file was compiled into the library, so the app may take what it doesn't define of a
     /// class's Objective-C methods as taken away.
+    /// Asks the open app to draw its views again, for a change with no code in it (a picture in Assets).
+    static func redraw(_ project: LampProject, token: String) {
+        let at = String(Int(Date().timeIntervalSince1970))
+        let signature = HMAC<SHA256>.authenticationCode(for: Data(("redraw\n" + at).utf8), using: SymmetricKey(data: Data(token.utf8)))
+            .map { String(format: "%02x", $0) }.joined()
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(Edition.notificationPrefix + "redraw"), object: project.bundleID,
+            userInfo: ["at": at, "signature": signature], deliverImmediately: true)
+    }
+
     static func send(_ library: URL, to project: LampProject, token: String, whole: Bool, retired: [String] = []) async -> String? {
         let answer = Runtime.macFolder(project).appendingPathComponent("reloaded.txt")
         try? FileManager.default.removeItem(at: answer)
@@ -1809,14 +1861,16 @@ enum LiveSlots {
     }
 
     /// A give-up (`no-spares`, `no-final`) isn't for ever: the code that broke the build may be gone. Each whole live
-    /// build counts in the marker, and the tenth takes it away, so the step is tried again now and then at the cost
-    /// of one failed build when it still breaks.
-    static func expireGiveUps(_ project: LampProject) {
+    /// build counts in the marker, and from the tenth on, one built while the app isn't open takes it away, so the step
+    /// is tried again now and then at the cost of one failed build when it still breaks. Not while the app is open:
+    /// its next changes would be judged against the open app's code without the step, and held for reasons about
+    /// Lamp's own spare places or `final`.
+    static func expireGiveUps(_ project: LampProject, appOpen: Bool) {
         for name in ["no-spares", "no-final"] {
             let marker = LiveReload.folder(project).appendingPathComponent(name)
             guard let text = try? String(contentsOf: marker, encoding: .utf8) else { continue }
             let count = (Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0) + 1
-            if count >= 10 { try? FileManager.default.removeItem(at: marker) } else { try? "\(count)".write(to: marker, atomically: true, encoding: .utf8) }
+            if count >= 10, !appOpen { try? FileManager.default.removeItem(at: marker) } else { try? "\(count)".write(to: marker, atomically: true, encoding: .utf8) }
         }
     }
 
@@ -1901,7 +1955,11 @@ enum LiveSlots {
 
     /// The constants (static or global `let`s, "Type<tab>name") whose value changed since the app opened: those that
     /// differ now, and those that did at an earlier change, which the fresh live copy has as they're written again.
-    static func changedConstants(_ project: LampProject, before: [String], after: [String]) -> [String] {
+    /// A constant's entry is its own text's digest, then after a `+` what it calls (`SwiftSource.constantEntries`). One
+    /// changed only in what it calls is given its new value too, unless it can hold an object: an object the open app
+    /// made (`static let shared = Store()`) is its state, which the change keeps, as it keeps every other object.
+    static func changedConstants(_ project: LampProject, before: [String], after: [String],
+                                 declarations: SwiftSource.Declarations? = nil) -> [String] {
         func values(_ entries: [String]) -> [String: String] {
             Dictionary(LiveReload.Group.constant.parts(in: entries).compactMap { parts -> (String, String)? in
                 let field = parts.joined(separator: "\t")
@@ -1911,7 +1969,15 @@ enum LiveSlots {
         }
         let old = values(before), new = values(after)
         let earlier = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: constantsURL(project)))) ?? []
-        return Set(new.keys.filter { key in old[key].map { $0 != new[key] } ?? false } + earlier.filter { new[$0] != nil }).sorted()
+        let layout = LiveReload.byType(LiveReload.bared(after))
+        func own(_ value: String) -> Substring { value.prefix { $0 != "+" } }
+        return Set(new.keys.filter { key in
+            guard let was = old[key], let is_ = new[key], was != is_ else { return false }
+            if own(was) != own(is_) { return true }
+            guard let variable = declarations?.constants[key] else { return false }
+            var seen = Set<String>()
+            return !holdsObject(variable.type, classes: declarations?.classes ?? [], layout: layout, seen: &seen)
+        } + earlier.filter { new[$0] != nil }).sorted()
     }
 
     /// When every way the new code's types differ from the open app's is a stored property added to a type with a
@@ -2224,6 +2290,14 @@ enum LiveSlots {
                   sources.values.contains(where: { SwiftText.mentions(short, in: $0) }) else { continue }
             sources["\u{0}" + type] = cases.sorted().joined(separator: "\n")
         }
+        // And what they call (`build()`, a computed `width`): made by other code, it's another value.
+        var files: [String: SwiftSource.Text] = [:]
+        let called = sources.keys.sorted().compactMap { name -> String? in
+            guard let made = declarations.constants[name] else { return nil }
+            let binding = declarations.bindings[made.binding]
+            return SwiftSource.calledText(from: binding.start, to: binding.last, in: declarations, files: &files)
+        }.joined(separator: "\n")
+        if !called.isEmpty { sources["\u{1}calls"] = called }
         // Named by its key, the file of a private one included: two files' `private let spacing` are two values.
         let name = key.replacingOccurrences(of: "\t", with: ".") + "#" + SwiftSource.digest(sources.keys.sorted().map { $0 + "=" + sources[$0]! }.joined(separator: "\n"))
         let quoted = name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")

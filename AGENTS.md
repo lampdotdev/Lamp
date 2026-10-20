@@ -824,7 +824,7 @@ or `unowned` is part of its field's entry (`Owner<tab>weak helper: Helper?`). A 
 layouts have one, so a layout an earlier Lamp kept says nothing of it. After a build, `Store.install` tries
 `reloadInPlace` first, which decides the app is open and built live, takes the verdict and hands the changed files to
 `LiveReload.put`, the one pipeline from the layout check to the record of what the app now runs, acting on its
-`Outcome` (it went in, with what was done beyond the code; or why the app has to reopen): the change goes in when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.LaunchReader`, held to what the open app had as part of the layout; a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again) or Lamp's own files, and leaves every type
+`Outcome` (it went in, with what was done beyond the code; or why the app has to reopen): the change goes in when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.LaunchReader`, held to what the open app had as part of the layout; a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again, and one the change didn't touch is left out of a compile of every file when it names nothing newly declared, `LiveReload.addedNames`; a conformance, subscript or operator, which code reaches without naming it, or a declaration taken away keeps it in) or Lamp's own files, and leaves every type
 holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties and cases,
 from `-dump-ast` of just the changed files, compared for the open app's sources and the new ones; no reading of the
 text; a typealias is printed as itself wherever it's used, so each is listed with what it names and one the open app has that now names something else reopens, `LiveReload.aliasGroup`, as does a name that was a
@@ -910,8 +910,7 @@ app is installed (`LiveReload.forgetLibraries`): a loaded one stays mapped, and 
 for every change tried. Anything else needs the app reopened, with why in the chat's
 details (`LiveReload.Verdict`; what `LampLive` refused, and a change that didn't compile or load, say so there too,
 through `LiveReload.send`'s answer), so the rules can be tuned by what happens. The compiler's printout of a big app is tens of megabytes: it's kept whole off the main actor (`Sandbox.output`), each pattern is tried only on the nodes it could match (`SwiftSource.node`), and what's read from it is kept in memory by a digest of the code (`LiveReload.Analyses`), so the same code is never printed twice, the open app's layout after a reopen included. A change refused is refused again at the install after its build without that work, while nothing it was judged on has changed (`LiveReload.put`, `refusalKey`); a refusal by the open app itself is tried again. For a request's change, while the app is open, Lamp doesn't reopen it under the person: the build is held (`Store.awaitReload`, `Runtime.awaitReload`), the app shows a Reload button beside the wand in its title bar (`LampMagic.ReloadButton`, tinted glass in the accent colour whose tint brightens and settles again, shown with a `reloadReady` notification) and the chat a line with one too (`.reload`, under the agent's answer), and a click on either reopens it where it was (`Store.reloadWaiting`; the app asks with `reloadNow`, which puts in only a change Lamp holds). The agent is told the change waits for the person (`reloadNote`) and doesn't look or use the app again in that request. Closing the app installs it too. A look with `reopen` asks the same way while the person has the app open (`Store.asksBeforeReopening`, the one check for both): it puts in what it can as the app runs, then holds the app for Reload and tells the agent so (`askedToReopenNote`). Both show the same Reload button and chat line, nothing of their own. Open App and Undo still reopen it, and so does every change and every look in a new app's first turn, which
-nobody is using yet and whose passes the person is watching go in; when the person keeps the app open at its question (unsaved work), the build waits for Reload the same way. A live build reads the app's own files
-from its Assets folder rather than its bundle (`LampAssets`), so a new picture goes in live too; the package, the
+nobody is using yet and whose passes the person is watching go in; when the person keeps the app open at its question (unsaved work), the build waits for Reload the same way. A live build reads the app's own files from its Assets folder rather than its bundle (`LampAssets`), so a new picture goes in live too (a change of those files alone has no code to load, so the app is asked to draw again, `LiveReload.redraw`); the package, the
 app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which tells the
 agent what goes in without reopening. The note opens by saying the person is watching the app beside the chat and
 sees a live change at once and a held one not until Reload, so the agent works in small shown steps. Each look then
@@ -1033,8 +1032,7 @@ nothing, and a computed property isn't encoded. If spares ever keep an app from 
 them (`LiveSlots.giveUp`, `.lamp/live/no-spares`), so the agent only sees errors in its own code. Whether they were the
 cause is judged by that build, not by the compiler's words, which print the lines around an error, spares included: when
 it fails as well the errors were the agent's, and the give-up is taken back (`LiveSlots.takeBack`, in
-`Store.buildSparing`), or every later change would wait for Reload. The marker, like
-`no-final`, counts the whole live builds since and goes after ten (`LiveSlots.expireGiveUps`), so the step is tried
+`Store.buildSparing`), or every later change would wait for Reload. The marker, like `no-final`, counts the whole live builds since and goes at the first one from the tenth on made while the app isn't open (`LiveSlots.expireGiveUps`; while it's open, its next changes would be judged against code without the step), so the step is tried
 again now and then at the cost of one failed build when it still breaks.
 
 A constant (a static or global `let`) whose value changes would otherwise not change at all: the open app made its
@@ -1046,12 +1044,17 @@ compiled again, so every reader goes through it; it stays rewritten until the ap
 hold an object needs the app reopened instead (it waits for Reload, as above), since a second object would split the
 app's state: one of the app's own classes, and anything that isn't a plain value of Swift's or SwiftUI's
 (`holdsObject`), so a Lamp building block such as `LampAPI.own(…)` or a system class too. A tuple's labels and Lamp's
-own spare places in a struct name no type of their own, so they don't count. A constant declared in one list with
-others (`let a = 1, b = 2`) isn't rewritten, and the reason says so.
+own spare places in a struct name no type of their own, so they don't count. A constant declared in one list with others (`let a = 1, b = 2`) isn't rewritten, and the reason says so. A
+constant's digest also takes in what its starting value calls: the text of every declaration of the app's it calls,
+as far down as that goes (`SwiftSource.calledText`), so one made by `build()` or from a computed `width` is given its
+new value when that code changes, and its kept value is named by that text too, so the next change to it is another
+value again. One that can hold an object isn't (`static let shared = Store()`): the object is the app's state, kept
+like every other.
 
 A stored static or global `var` is made once too, the first time it's read, so a new starting value for one can't
-show without reopening, and whether it seemed to would depend on whether it had been read: its starting value and its type are part of the layout as a digest as well (`LiveReload.Group.stored`), and one that
-changed reopens the app.
+show without reopening, and whether it seemed to would depend on whether it had been read: its starting value and its type are part of the layout as a digest as well (`LiveReload.Group.stored`), and one that changed reopens the app. So does a
+type's own `hash(into:)` changing (`LiveReload.Group.hash`): the sets and dictionaries the open app keeps put each value
+where the old one said, and a lookup by the new one looks elsewhere.
 
 **The live cases** (`Tests/LiveCases`, run by `LiveCasesTests`) are the record of which side each kind of change
 lands on: every case found by a review round, as an app's sources, one `afterN/` folder per change and `expect.txt`

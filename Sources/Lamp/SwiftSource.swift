@@ -73,6 +73,14 @@ enum SwiftSource {
         /// The properties set in an initializer the type writes itself ("Type<tab>name"): a computed property kept
         /// in a spare can't be set before the stored ones are, so such a property stays stored.
         var assigned: Set<String> = []
+        /// Where each declaration a call can name runs (a function, an initializer, a subscript, a property with what
+        /// makes it), and every call to one of the app's, from where it's made to where what it names is declared:
+        /// a constant's value is made by what it calls, as far down as that goes (`constantEntries`).
+        var bodies: [(start: Position, last: Position)] = []
+        var calls: [(at: Position, to: Position)] = []
+        /// Each type's own `hash(into:)`, by its qualified name: sets and dictionaries the open app keeps were laid out
+        /// by it (`hashEntries`).
+        var hashing: [String: (start: Position, last: Position)] = [:]
     }
 
     /// A printout's line that opens a node: its indent and the node's name, the run of letters, digits, `_` and `=`
@@ -122,6 +130,18 @@ enum SwiftSource {
 
     private static let rangePattern = try! NSRegularExpression(pattern: #"range=\[([^\]]+?):(\d+):(\d+) - line:(\d+):(\d+)\]"#)
 
+    /// Where what a reference names is declared, when it's the app's own code (`decl="Case.(file).build()@<file>:3:6"`);
+    /// the system's declarations carry no place.
+    static func declared(in line: String) -> Position? {
+        guard let open = line.range(of: " decl=\""), let close = line[open.upperBound...].firstIndex(of: "\""),
+              case let value = line[open.upperBound..<close], let at = value.lastIndex(of: "@") else { return nil }
+        let place = value[value.index(after: at)...].split(separator: ":")
+        guard place.count >= 3, let row = Int(place[place.count - 2]), let column = Int(place[place.count - 1]) else { return nil }
+        let file = place.dropLast(2).joined(separator: ":")
+        guard !file.hasPrefix("__swiftmacro"), file.hasSuffix(".swift") else { return nil }
+        return Position(file: file, line: row, column: column)
+    }
+
     static func range(in line: String) -> (start: Position, last: Position)? {
         guard let m = rangePattern.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) else { return nil }
         func group(_ i: Int) -> String { String(line[Range(m.range(at: i), in: line)!]) }
@@ -162,6 +182,13 @@ enum SwiftSource {
 
         func take(_ line: Walk.Line) {
             let indent = line.indent, opens = line.opens
+            if opens("func_decl", "constructor_decl", "subscript_decl", "pattern_binding_decl"), !line.has(" implicit"),
+               let r = SwiftSource.range(in: line.text) {
+                out.bodies.append(r)
+                if opens("func_decl"), line.has(" \"hash(into:)\" "), let owner = line.owner { out.hashing[owner] = r }
+            } else if line.has(" decl=\""), let to = SwiftSource.declared(in: line.text), let at = SwiftSource.range(in: line.text)?.start {
+                out.calls.append((at, to))
+            }
             if let open = binding, indent <= open.indent { binding = nil }
             if let open = variable, indent <= open.indent { variable = nil; attribute = nil }
             if let open = initializer, indent <= open.indent { initializer = nil; assignment = nil }
@@ -353,11 +380,49 @@ enum SwiftSource {
     /// is what it keeps, so one whose value changes is rewritten in the live copy to give the new value
     /// (`LiveSlots.fit`). Not part of what a type holds: the layout comparison passes over them.
     static func constantEntries(_ declarations: Declarations) -> [String] {
-        startingValues(declarations.constants, declarations, group: .constant) + startingValues(declarations.stored, declarations, group: .stored)
+        startingValues(declarations.constants, declarations, group: .constant, withCalls: true)
+            + startingValues(declarations.stored, declarations, group: .stored) + hashEntries(declarations)
+    }
+
+    /// Each type's own `hash(into:)`, as "\u{11}hash<tab>Type: <digest of its text>": a set or dictionary the open app
+    /// keeps put each value where the old one said, and a lookup by the new one looks elsewhere.
+    static func hashEntries(_ declarations: Declarations) -> [String] {
+        var files: [String: Text] = [:]
+        return declarations.hashing.keys.sorted().compactMap { type in
+            guard let r = declarations.hashing[type], let text = files[r.start.file] ?? Text(path: r.start.file) else { return nil }
+            files[r.start.file] = text
+            guard let start = text.offset(r.start), let end = text.tokenEnd(r.last), start < end else { return nil }
+            return LiveReload.Group.hash.entry(type + ": " + digest(text.slice(start, end)))
+        }
+    }
+
+    static func before(_ a: Position, _ b: Position) -> Bool { a.line < b.line || (a.line == b.line && a.column <= b.column) }
+
+    /// The text of every declaration of the app's that a stretch of code calls, and of what those call, as far down
+    /// as it goes, in a steady order: a constant made by `build()` is another value once `build()` says otherwise.
+    static func calledText(from start: Position, to last: Position, in declarations: Declarations, files: inout [String: Text]) -> String {
+        func within(_ p: Position, _ r: (start: Position, last: Position)) -> Bool { p.file == r.start.file && before(r.start, p) && before(p, r.last) }
+        var seen: Set<Int> = [], pending = [(start: start, last: last)], parts: [String] = []
+        while let r = pending.popLast() {
+            for call in declarations.calls where within(call.at, r) {
+                // The innermost declaration holding the place it names.
+                guard let index = declarations.bodies.indices.filter({ within(call.to, declarations.bodies[$0]) })
+                        .min(by: { before(declarations.bodies[$1].start, declarations.bodies[$0].start) }),
+                      !seen.contains(index), case let body = declarations.bodies[index], !(body.start == start && body.last == last) else { continue }
+                seen.insert(index)
+                guard let text = files[body.start.file] ?? Text(path: body.start.file) else { continue }
+                files[body.start.file] = text
+                guard let from = text.offset(body.start), let end = text.tokenEnd(body.last), from < end else { continue }
+                parts.append(text.slice(from, end))
+                pending.append(body)
+            }
+        }
+        return parts.sorted().joined(separator: "\n")
     }
 
     /// Each one's starting value's digest, as an entry of `group`.
-    private static func startingValues(_ variables: [String: Variable], _ declarations: Declarations, group: LiveReload.Group) -> [String] {
+    private static func startingValues(_ variables: [String: Variable], _ declarations: Declarations, group: LiveReload.Group,
+                                       withCalls: Bool = false) -> [String] {
         var files: [String: Text] = [:]
         return variables.keys.sorted().compactMap { key in
             guard let variable = variables[key],
@@ -367,7 +432,11 @@ enum SwiftSource {
             files[path] = text
             guard let start = text.offset(initial.start), let end = text.tokenEnd(initial.last), start < end else { return nil }
             // With its type: one whose type changed is another value, kept in other storage by the change's code.
-            return group.entry(key + ": " + digest(variable.type + "=" + text.slice(start, end)))
+            let own = digest(variable.type + "=" + text.slice(start, end))
+            // And for a constant, after a `+`, what it calls: made again, it's another value though its text is the same.
+            guard withCalls else { return group.entry(key + ": " + own) }
+            let binding = declarations.bindings[variable.binding]
+            return group.entry(key + ": " + own + "+" + digest(calledText(from: binding.start, to: binding.last, in: declarations, files: &files)))
         }
     }
 
