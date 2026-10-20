@@ -1447,6 +1447,12 @@ enum LiveReload {
         // A property taken out of the code leaves its spare place holding its value: the app sets its name aside,
         // and the place is retired here, so a name brought back later gets a fresh place.
         let retiring = after.map { LiveSlots.retiring(project, keeping: $0) } ?? []
+        // A change put in by itself (`Store.autoApply`) may have been stopped while it compiled: its library isn't
+        // sent, and nothing of this is kept against the next try of the same change.
+        if Task.isCancelled {
+            settled = false
+            return .reopen(why: "the change was stopped before it went in")
+        }
         // Files only taken away leave nothing to load: the open app already has what's left.
         if let library, let why = await (deliver ?? send)(library, project, token, changed == appFiles(project), retiring) {
             settled = false
