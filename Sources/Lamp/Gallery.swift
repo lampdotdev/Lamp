@@ -201,6 +201,11 @@ enum Gallery {
         activity("A named step", "Working on the interface", waited: 40),
         activity("Building, 45 seconds", "Building…", waited: 45),
         activity("Building, 2 minutes", "Building…", waited: 120),
+        // A stage of a look, a few seconds in, well into the turn: the clock is the stage's.
+        Entry(group: "Activity", name: "A look's stage") {
+            AnyView(ChatLook.ActivityLine("Opening Countdowns…", started: Date().addingTimeInterval(-95),
+                                          since: Date().addingTimeInterval(-4)))
+        },
         cover("Cover, building", "Building…", waited: 12),
         cover("Cover, the turn over", nil, waited: 0),
         // The one line a turn has while it goes on, which opens (click it) to the steps so far: commands the agent
