@@ -7086,8 +7086,8 @@ final class Store: ObservableObject {
             let total = max(0, Int(interval.rounded()))
             return total < 60 ? "\(total) s" : total % 60 == 0 ? "\(total / 60) min" : "\(total / 60) min \(total % 60) s"
         }
-        let times = [began] + shown
-        let longest = zip(times, times.dropFirst()).map { $1.timeIntervalSince($0) }.max() ?? 0
+        // Between changes only: the wait for the first is its own measure, and its own part of the rule.
+        let longest = zip(shown, shown.dropFirst()).map { $1.timeIntervalSince($0) }.max() ?? 0
         let firstPart = "First change on screen after \(spoken(first.timeIntervalSince(began)))"
         return shown.count < 2 ? firstPart + "." : firstPart + "; longest wait between changes \(spoken(longest))."
     }
