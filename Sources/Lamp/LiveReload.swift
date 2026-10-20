@@ -284,7 +284,11 @@ enum LiveReload {
     /// Why a grown enum can't go in, if it can't: something the app keeps holds it other than as itself or in a
     /// plain collection of it (an optional, another enum's case, a wrapper), where Swift gives its unused numbers
     /// meanings that a new case takes over. Looked for in every stored field, static and global of the new code,
-    /// and in what the spares keep, whose types the compiler no longer sees.
+    /// and in what the spares keep, whose types the compiler no longer sees. A value type of the app's that carries
+    /// the enum by value (a struct with a field of it, an enum with a payload of it, through any depth of such
+    /// types) lends its own optional and payload cases the enum's unused numbers too, so what holds such a carrier
+    /// is held to the same plain forms; a struct with a spare of Lamp's isn't one, since the spare's `Any?` gives
+    /// Swift more unused numbers than the enum does.
     @MainActor static func enumsHeld(_ project: LampProject, grown: [String]) async -> String? {
         guard let dump = await dump(of: sources(project), in: project, module: project.exe, macOS: Template.macMinimum(project)) else {
             return "the compiler couldn't say what holds the enums that grew"
@@ -303,15 +307,44 @@ enum LiveReload {
                 }
             }
         }
+        let classDecl = try! NSRegularExpression(pattern: #"^\s*\(class_decl\b[^"]*"([^"]+)""#)
+        var classes = Set<String>()
+        for raw in dump.split(separator: "\n") {
+            let line = String(raw)
+            if let m = classDecl.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) { classes.insert(String(line[Range(m.range(at: 1), in: line)!])) }
+        }
+        let spared = Set(entries.compactMap { entry -> String? in
+            let parts = entry.split(separator: "\t", maxSplits: 1)
+            return parts.count == 2 && (parts[1].hasPrefix("__lampSpare_") || parts[1].hasPrefix("__lampState_")) ? String(parts[0]) : nil
+        })
+        let fields = conformances(inLayout: entries).fields
+        let word = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
+        func last(_ name: String) -> String { String(name.split(separator: ".").last ?? "") }
+        func carriers(of enumName: String) -> [String] {
+            var found = Set([enumName]), grew = true
+            while grew {
+                grew = false
+                for (type, kinds) in fields where !found.contains(type) && !classes.contains(type) && !classes.contains(last(type)) && !spared.contains(type) {
+                    for kind in kinds {
+                        let names = word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).map { String(kind[Range($0.range, in: kind)!]) }
+                        if names.contains(where: { found.contains($0) || found.contains(last($0)) }) { found.insert(type); grew = true; break }
+                    }
+                }
+            }
+            return found.sorted()
+        }
         for type in grown {
-            let name = NSRegularExpression.escapedPattern(for: type)
-            let mention = try! NSRegularExpression(pattern: #"(?<![\w.])"# + name + #"(?![\w])"#)
-            // The compiler prints a dictionary's key with a space before the colon (`[String : Mood]`).
-            let plainly = try! NSRegularExpression(pattern: #"^(\[(\w[\w.]*\s*:\s*)?"# + name + #"\]|Set<"# + name + #">|"# + name + #"|\("# + name + #"\.Type\) -> "# + name + #")$"#)
-            for (owner, kind) in held {
-                let range = NSRange(kind.startIndex..., in: kind)
-                if mention.firstMatch(in: kind, range: range) != nil, plainly.firstMatch(in: kind, range: range) == nil {
-                    return "\(owner.isEmpty ? "a global" : owner) holds \(type) as \(kind), which a new case would change"
+            for carrier in carriers(of: type) {
+                let name = NSRegularExpression.escapedPattern(for: carrier)
+                let mention = try! NSRegularExpression(pattern: #"(?<![\w.])"# + name + #"(?![\w])"#)
+                // The compiler prints a dictionary's key with a space before the colon (`[String : Mood]`).
+                let plainly = try! NSRegularExpression(pattern: #"^(\[(\w[\w.]*\s*:\s*)?"# + name + #"\]|Set<"# + name + #">|"# + name + #"|\("# + name + #"\.Type\) -> "# + name + #")$"#)
+                for (owner, kind) in held {
+                    let range = NSRange(kind.startIndex..., in: kind)
+                    if mention.firstMatch(in: kind, range: range) != nil, plainly.firstMatch(in: kind, range: range) == nil {
+                        let what = carrier == type ? type : "\(carrier), which carries \(type),"
+                        return "\(owner.isEmpty ? "a global" : owner) holds \(what) as \(kind), which a new case would change"
+                    }
                 }
             }
         }

@@ -848,7 +848,10 @@ in an extension) reopens it too. `@State` is read in both forms the compiler has
 spare: its values keep their size (`LiveSlots.casesAdded`). Only while nothing the app keeps holds it but as itself or
 in a plain collection: Swift uses the numbers after the last case for `nil` in an optional of it and for other enums'
 cases that carry it, which a new case would take over. That's looked for in every stored field, static and global of
-the new code and in the types the spares keep (`LiveReload.enumsHeld`), before the change goes in; an app that keeps
+the new code and in the types the spares keep (`LiveReload.enumsHeld`), before the change goes in, and a value type
+that carries the enum by value (a struct with a field of it, an enum with a payload of it) is held to the same plain
+forms, since its own optional and payload cases borrow the enum's numbers, unless it has a spare of Lamp's, whose
+`Any?` gives Swift more; an app that keeps
 values of any type reopens instead, since one could hide there: `Any`, `AnyObject` (a value is boxed for it),
 `AnyHashable`, a `NavigationPath` or one of Foundation's collections, `any P` for a protocol the app doesn't declare (the standard wrappers conform to those on their own,
 so `any Collection` may hold `[Mood?]`), or `any P` for one of the app's own when the enum conforms to P, directly,

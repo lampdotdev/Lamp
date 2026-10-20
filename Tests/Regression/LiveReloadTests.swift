@@ -160,7 +160,9 @@ final class LiveReloadTests: XCTestCase {
             struct Round: Shape { var r: Int; var name = ""; func area() -> Int { r } }
             struct Styled: Drawn { func mark() -> some Shape { Square(side: 1, name: "s") }; func n() -> some Numeric { 1 }; func t() -> some Equatable { "a" }; func p() -> some Equatable { n() }; func l() -> some Equatable { func local() -> some Equatable { 0 }; return String() } }
             struct Outer { enum Mood: Shape { case a, b; func area() -> Int { 0 }; var name: String { get { "" } set {} } } }
-            final class Holder { var byName: [String: Outer.Mood] = [:]; var list: [Outer.Mood] = [] }
+            struct Pick { var mood: Outer.Mood; var n: Int }
+            struct Picked { var mood: Outer.Mood; var __lampSpare_Picked = 0 }
+            final class Holder { var byName: [String: Outer.Mood] = [:]; var list: [Outer.Mood] = []; var picked: Picked? = nil }
             private struct Hidden { var v = 1 }
             final class Tagged: NSObject { @objc(oldName) func a() {}; @objc func b() {}; override var description: String { "t" }; @objc(oldStatic) static var value = 1 }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
@@ -303,6 +305,10 @@ final class LiveReloadTests: XCTestCase {
         let oneLeft = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
         XCTAssertEqual(try XCTUnwrap(both).filter { $0.hasPrefix(LiveReload.placeGroup) }.count, 2)
         XCTAssertNil(LiveReload.layoutProblem(before: both, after: try XCTUnwrap(oneLeft)).problem)
+        // A struct carrying the enum lends its optional the enum's numbers; one with a spare of Lamp's doesn't.
+        _ = try await layoutWith([("var picked: Picked? = nil }", "var picked: Picked? = nil; var pick: Pick? = nil }")])
+        let carried = await LiveReload.enumsHeld(project, grown: ["Outer.Mood"])
+        XCTAssertEqual(carried, "Holder holds Pick, which carries Outer.Mood, as Pick?, which a new case would change")
         XCTAssertEqual(LiveReload.existential(in: "any CustomDebugStringConvertible", holding: "Mood", conformances: conformances), "any CustomDebugStringConvertible")
         XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
         XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")
