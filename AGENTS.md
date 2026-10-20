@@ -870,9 +870,7 @@ in a plain collection: Swift uses the numbers after the last case for `nil` in a
 cases that carry it, which a new case would take over. That's looked for in every stored field, static and global of
 the new code (`LiveReload.enumsHeld`), before the change goes in; a property added while the app was open keeps its
 value in a spare as any value, under the metadata the app's code had, which the grown enum's own no longer reads
-from, so one holding the enum or a carrier reopens the app; a type holding the enum that the app prints (`print`, `dump`,
-`String(describing:)`, `Mirror`, an interpolation) reopens it too, since its field records name the enum as the open
-app knew it and a new case would print as nothing; and a value type
+from, so one holding the enum or a carrier reopens the app; and a value type
 that carries the enum by value (a struct with a field of it, an enum with a payload of it) is held to the same plain
 forms, since its own optional and payload cases borrow the enum's numbers, unless it has a spare of Lamp's, whose
 `Any?` gives Swift more; an app that keeps
@@ -890,11 +888,20 @@ member returning a view, or one a body hands to anything but SwiftUI, a Timer's,
 sets into a property or gives as a property's value; a Button's action is made again at the next draw), an async
 closure or an async function (`LiveReload.enumsMetByOldCode`), and the app reopens when there is one. The enum's metadata stays the change's own rather
 than the app's (`LiveReload.compile(keep:)`, renamed `$lampown` so `LampLive` binds every later change to it), since
-the app's doesn't know the new cases. A property an explicit `CodingKeys` names stays a field (Codable needs it stored), so it reopens the app. Which property is in which spare
+the app's doesn't know the new cases; and the app's own metadata is pointed at the change's description of the enum
+(`LampLive.load`, one pointer), so the app's field records, the runtime's asks (printing, Codable, hashing, a cast)
+and code compiled before still read the new cases. A constant made from the enum (`Mood.allCases`) is remade like one
+whose text changed (`LiveSlots.constants(naming:)`). What old code may still be doing is read more widely than a
+switch or an interpolation: any value of the enum's type, or of a type holding it by value (`LiveReload.holders`),
+that running code has in hand reopens the app, since an old frame reads it by the layout it was compiled with (an
+optional of it, a comparison, a hash, a cast). A property an explicit `CodingKeys` names stays a field (Codable needs it stored), so it reopens the app. Which property is in which spare
 (`.lamp/live/slots.json`) is put back into each fresh copy (they come back as additions, and `LiveSlots.fit` puts
 them in the same places) until the app is installed again; a property taken out of the code has its place retired
-once the change is in (`LiveSlots.retire`), since the place still holds its value, and a name brought back gets a
-place of its own (a class's under a new index, a struct's or view's under the name numbered by `Slot.generation`): the
+once the change is in (`LiveSlots.retire`), since the place still holds its value, and its name is sent with the change
+for the app to set aside (`LampSpare.retired`: what it left neither reads nor counts in `==` or `hash`), and a name
+brought back gets a place of its own (a class's under a new index, a struct's or view's under the name numbered by
+`Slot.generation`); what `fit` planned (the places, the constants remade) is written down only once the change is in
+(`LiveSlots.commit`), so a change refused leaves no record of places it never took: the
 whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs
 once it's installed (`LiveReload.markRunning(from:)`). A spare never reaches saved data: `LampSpare` encodes as
 nothing, and a computed property isn't encoded. If spares ever keep an app from building, it's built again without

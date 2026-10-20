@@ -3767,8 +3767,11 @@ enum Template {
             var container = encoder.singleValueContainer()
             try container.encodeNil()
         }
+        /// The names of properties taken out of the code while the app was open (`LiveSlots.retire`): what they left
+        /// in a spare neither reads nor counts.
+        nonisolated(unsafe) static var retired = Set<String>()
         /// A struct's property, by name: what was set, kept as set.
-        func field(_ name: String) -> Any? { (value as? [String: Entry])?[name]?.value }
+        func field(_ name: String) -> Any? { Self.retired.contains(name) ? nil : (value as? [String: Entry])?[name]?.value }
         struct Entry { var value: Any; var initial: Any }
         /// Keeps what was set beside the property's starting value, which is what a struct that never set it holds:
         /// two values compare and hash by what their properties are, set or not, as they would stored.
@@ -3786,7 +3789,7 @@ enum Template {
         static func == (a: LampSpare, b: LampSpare) -> Bool {
             guard let left = a.value as? [String: Entry] ?? (a.value == nil ? [:] : nil),
                   let right = b.value as? [String: Entry] ?? (b.value == nil ? [:] : nil) else { return same(a.value, b.value) }
-            for name in Set(left.keys).union(right.keys) {
+            for name in Set(left.keys).union(right.keys).subtracting(retired) {
                 let one = left[name]?.value ?? right[name]?.initial, other = right[name]?.value ?? left[name]?.initial
                 if !same(one, other) { return false }
             }
@@ -3798,7 +3801,7 @@ enum Template {
                 return
             }
             // What equals its starting value hashes as if never set, as it compares.
-            for (name, entry) in entries.sorted(by: { $0.key < $1.key }) where !Self.same(entry.value, entry.initial) {
+            for (name, entry) in entries.sorted(by: { $0.key < $1.key }) where !Self.retired.contains(name) && !Self.same(entry.value, entry.initial) {
                 hasher.combine(name)
                 if let value = entry.value as? AnyHashable { hasher.combine(value) }
             }
@@ -3878,7 +3881,8 @@ enum Template {
             ) { note in
                 let path = note.userInfo?["path"] as? String, signature = note.userInfo?["signature"] as? String
                 let whole = note.userInfo?["whole"] as? String == "1"
-                MainActor.assumeIsolated { shared.load(path, signature: signature, whole: whole) }
+                let retired = (note.userInfo?["retired"] as? String ?? "").split(separator: ",").map(String.init)
+                MainActor.assumeIsolated { shared.load(path, signature: signature, whole: whole, retired: retired) }
             }
         }()
 
@@ -4002,12 +4006,12 @@ enum Template {
 
         /// Loads a change. `whole` says every file of the app's was compiled into it (what's declared changed), so
         /// what it doesn't define of a class's Objective-C methods was taken away, not left in a file it didn't compile.
-        private func load(_ path: String?, signature: String?, whole: Bool = false) {
+        private func load(_ path: String?, signature: String?, whole: Bool = false, retired: [String] = []) {
             let folder = LampInstall.app + "/.lamp/live/"
             guard let path, let signature, path.hasPrefix(folder), !path.contains(".."), path.hasSuffix(".dylib"),
                   !loaded.contains(path) else { return }
             let key = SymmetricKey(data: Data(LampInstall.token.utf8))
-            let expected = HMAC<SHA256>.authenticationCode(for: Data(("reload\n\(path)" + (whole ? "\nwhole" : "")).utf8), using: key)
+            let expected = HMAC<SHA256>.authenticationCode(for: Data(("reload\n\(path)" + (whole ? "\nwhole" : "") + (retired.isEmpty ? "" : "\nretired " + retired.joined(separator: ","))).utf8), using: key)
                 .map { String(format: "%02x", $0) }.joined()
             guard signature == expected else { return }
             loaded.insert(path)
@@ -4131,6 +4135,17 @@ enum Template {
                 rebound += Self.attach(category, to: target, accessor: Self.accessor(of: target, original: original, defined: defined))
             }
             for write in descriptors where write.apply() { rebound += 1 }
+            // An enum that gained cases keeps its old metadata in the app, which the app's field records, old code
+            // and the runtime's own asks (printing, Codable, hashing, a cast) still reach: its description is pointed
+            // at the change's, which knows the new cases.
+            for copy in all where copy.own && copy.name.hasSuffix("ON") {
+                if let old = original[copy.name], old != copy.address,
+                   case let description = copy.address.load(fromByteOffset: 8, as: UnsafeRawPointer.self),
+                   DescriptorWrite(field: old.advanced(by: 8), pointer: description).apply() { rebound += 1 }
+            }
+            // A struct's property taken out of the code leaves its value in the spare, which would go on counting in
+            // `==` and `hash`: the names retired are set aside.
+            LampSpare.retired.formUnion(retired)
             Self.watch(image: image)
             generation += 1
             result = "ok \(rebound)"
@@ -15520,7 +15535,8 @@ enum Template {
         my (%names, %alias);
         for my $file (@ARGV) {
             open(my $in, '<', $file) or next; my $s = <$in>; close($in);
-            while ($s =~ /\btypealias\s+(\w+)\s*=\s*([\w.]+)/g) { $alias{$1} = $2 }
+            $s =~ s#/\*[\s\S]*?\*/# #g; $s =~ s#//[^\n]*##g;
+            while ($s =~ /\btypealias\s+(\w+)(?:<[^>]*>)?\s*=\s*([\w.]+)/g) { $alias{$1} = $2 }
             while ($s =~ /\bclass\s+\w+(?:<[^>]*>)?\s*:\s*([\w.]+)/g) { $names{$1} = 1 }
             while ($s =~ /<[^<>]*>/g) { my $g = $&; while ($g =~ /:\s*([\w.]+)/g) { $names{$1} = 1 } }
             while ($s =~ /\bwhere\b([^{]*)/g) { my $w = $1; while ($w =~ /:\s*([\w.]+)/g) { $names{$1} = 1 } }
@@ -15567,7 +15583,7 @@ enum Template {
         $s .= "\n\@main enum __LampEntry { \@MainActor static func main() { LampLive.watch(); $main.main() } }\n" if defined $main;
         if ($wantSpares) {
             @skip = spans($s);
-            $s =~ s#^([ \t]*)(((?:\@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated|indirect)\s+)*)(class|struct)\s+(?!$modifier)(\w+)([^{\n]*)\{)#inside($-[0]) ? $& : $1 . spares($1, $2, $3 . $6, $4, $5, $raw)#gme;
+            $s =~ s#^([ \t]*)(((?:\@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated|indirect)\s+)*)(class|struct)\s+(?!$modifier)(\w+)([^{;]*)\{)#inside($-[0]) ? $& : $1 . spares($1, $2, $3 . $6, $4, $5, $raw)#gme;
         }
         if ($wantFinal) {
             @skip = spans($s);
