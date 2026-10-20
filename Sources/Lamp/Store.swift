@@ -4710,7 +4710,7 @@ final class Store: ObservableObject {
         note("Building…", for: project)
         await awaitLiveBuild(of: project)
         liveBuildFailed.remove(project.id)
-        if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1"; LiveSlots.expireGiveUps(project) }   // a change can go into the open app (LiveReload)
+        if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1"; LiveSlots.expireGiveUps(project, appOpen: !macCopies(of: project).isEmpty) }   // a change can go into the open app (LiveReload)
         let status = await Self.buildSparing(command, for: project, env: env,
                                              started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output = $0 }
         turns[project.id]?.build = nil
@@ -4981,8 +4981,11 @@ final class Store: ObservableObject {
         var changed: [String]
         switch await LiveReload.verdict(project) {
         case .reload(let files): changed = files
-        // The open app already runs these sources (a change that went in before its build): nothing to do.
-        case .unchanged: return true
+        // The open app already runs these sources (a change that went in before its build, or one only of its files,
+        // which a live build reads from the app's folder): it draws again, so a new picture shows.
+        case .unchanged:
+            LiveReload.redraw(project, token: Template.token(for: project))
+            return true
         case .reopen(let why):
             turns[project.id]?.reloadWhy = LiveReload.readable(why)
             if saysWhy { log(project, .detail, "\(project.name) has to reopen for this change: \(LiveReload.readable(why)).") }

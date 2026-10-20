@@ -1,13 +1,8 @@
 VERDICT 1: RELOAD
-VERDICT 2: REOPEN (the file of the SwiftData model Note is compiled again, and its data is found by key paths the open app made)
+VERDICT 2: RELOAD
 == run
 before: label abc
 RELOAD 1: ok
 after1 (want LABEL): LABEL abc
-RELOAD 2: REOPEN the file of the SwiftData model Note is compiled again, and its data is found by key paths the open app made
-after2 (should have reopened): LABEL abc
-before: LABEL abc!
-RELOAD 1: in the restart
-after1 (want LABEL): LABEL abc!
-RELOAD 2: in the restart
-after2 (should have reopened): LABEL abc!
+RELOAD 2: ok
+after2 (want LABEL abc!, in live: the model's file names nothing newly declared): LABEL abc!
