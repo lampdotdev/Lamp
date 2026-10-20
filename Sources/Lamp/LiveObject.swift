@@ -29,7 +29,7 @@ enum LiveObject {
     /// copy directly, private or not, so without this the library's accessors would keep a second copy of the value,
     /// starting over; through the table they reach the app's, and so the accessors themselves (with a `didSet`) can
     /// be the change's.
-    static func isIdentity(_ name: String, local: Bool = false) -> Bool {
+    static func isIdentity(_ name: String) -> Bool {
         guard name.hasPrefix("_$s"), !name.hasSuffix(copySuffix), !name.hasSuffix(ownSuffix) else { return false }
         if name.hasSuffix("vau") { return true }
         if name.hasSuffix("Mp") || name.hasSuffix("Mc") || name.hasSuffix("WP") { return true }
@@ -71,7 +71,9 @@ enum LiveObject {
             rest = rest.dropFirst()
             pattern += #"(?:33_[0-9A-F]{32}LL)?"# + String(kind)
         }
-        return symbol.range(of: pattern, options: .regularExpression) != nil
+        // Anchored past the last kind letter: a member of the type (`…O5countSivau`) or a type nested in it
+        // (`…O4InfoVMn`) begins with a length and is the app's, not the kept type's own.
+        return symbol.range(of: pattern + #"(?!\d)"#, options: .regularExpression) != nil
     }
 
     static func mangledType(_ name: String, module: String, kind: String, kinds: [String: String] = [:]) -> String {
@@ -148,7 +150,7 @@ enum LiveObject {
                 bytes[desc + 1] = UInt8(value >> 8)
                 continue
             }
-            guard type & UInt8(N_TYPE) == UInt8(N_SECT), isIdentity(name, local: type & UInt8(N_EXT) == 0) else { continue }
+            guard type & UInt8(N_TYPE) == UInt8(N_SECT), isIdentity(name) else { continue }
             if let keep = kept.first(where: { isKept(name, as: $0) }) { matched.insert(keep); own.insert(index) }
             renamed[index] = symtab.nsyms + added.count
             added.append((name, UInt8(N_UNDF) | UInt8(N_EXT), UInt16(N_WEAK_REF)))
