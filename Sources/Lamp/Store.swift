@@ -2563,7 +2563,11 @@ final class Store: ObservableObject {
         } else if let turn = turns[project.id], turn.look.installed {
             // The look went on once the app showed: a death in its first seconds is known by now, or in a moment. One the
             // agent was never told of is a crash on launch even when a later launch came through: it may come again.
-            for watch in turn.launches where !watch.told { _ = await watch.verdict() }
+            // A launch Lamp itself closed and replaced isn't waited for: only a crash report would make its going a
+            // death, and the wait for one that never comes would hold up the turn for nothing.
+            for watch in turn.launches where !watch.told {
+                if await watch.wentAway(), !watch.retired { _ = await watch.verdict() }
+            }
             let untold = lateCrash(of: turn)
             crash = turn.look.crash ?? untold
             if crash == nil {

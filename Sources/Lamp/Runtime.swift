@@ -115,6 +115,8 @@ enum Runtime {
         /// is told later, and only one that is surely a crash counts: the person may close an app that works.
         private(set) var late = false
         private var task: Task<Void, Never>?
+        /// The first seconds themselves: true when the app went in them.
+        private var window: Task<Bool, Never>?
         private let alive: @MainActor () -> Bool
 
         /// `alive` is asked every tenth of a second; `died` says what's known once it's false, given whether it came
@@ -123,12 +125,17 @@ enum Runtime {
              died: @escaping @MainActor (_ late: Bool, _ retired: Bool) async -> String?) {
             self.opened = opened
             self.alive = alive
-            task = Task { [weak self] in
+            let window = Task {
                 let clock = ContinuousClock(), start = clock.now
                 while alive(), clock.now - start < Runtime.launchWindow {
                     try? await Task.sleep(for: .milliseconds(100))
                 }
-                let crash = alive() ? nil : await died(self?.late ?? true, self?.retired ?? true)
+                return !alive()
+            }
+            self.window = window
+            task = Task { [weak self] in
+                let gone = await window.value
+                let crash = gone ? await died(self?.late ?? true, self?.retired ?? true) : nil
                 self?.crash = crash
                 self?.ended = true
             }
@@ -138,6 +145,12 @@ enum Runtime {
         func retire() { if alive() { retired = true } }
         /// The app stayed open after all (the person kept it, at its question about unsaved work).
         func resume() { retired = false }
+
+        /// Whether the app went in its first seconds, as soon as that's known: without waiting for what's known of why,
+        /// which for a Mac app Lamp was closing can mean waiting for a crash report that never comes.
+        func wentAway() async -> Bool {
+            await window?.value ?? false
+        }
 
         /// What's known if the app died in its first seconds; nil once they passed with it open.
         func verdict() async -> String? {
