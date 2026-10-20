@@ -1048,7 +1048,8 @@ to call a method of the app's each time, so a change to that method goes in.
 Where a class's fields are is sometimes worked out at run time (a subclass, or fields after a system type such as
 an `@Observable` class's registrar), kept in a global for each field that the app fills in. A library has its own
 copies, which nothing fills in, so `LampLive` copies the app's values into each library as it loads
-(`takeFieldOffsets`), asking for the class's metadata first when the app hasn't worked it out yet. A field the app
+(`takeFieldOffsets`), asking for the class's metadata first when the app hasn't worked it out yet; a class an earlier
+change brought takes that change's values, since it is that change's class from then on (`kept`). A field the app
 has under no such name (a new class's, or a private one whose code moved to another file, since a private name
 carries its file's) is laid out by the library itself, which does it as the app did for the same class. That waits
 until the library's references to its own types are bound (`rebind`), since its accessor reads the class's description
