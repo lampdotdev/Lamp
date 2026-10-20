@@ -3492,6 +3492,9 @@ final class Store: ObservableObject {
         }
         if request["sidebar"] as? Bool == true {
             guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
+            if Runtime.holdsBuild(project), isRunning(project) {
+                return (409, ["error": Runtime.waitsForReload(project) ? Self.reloadNote : Self.keptOpenNote])
+            }
             guard !macCopies(of: project).isEmpty else {
                 return (200, ["text": "The app isn't open. Call look_at_app with sidebar first: it builds the app and opens it."])
             }
@@ -3558,7 +3561,9 @@ final class Store: ObservableObject {
     private func lookAtSidebar(_ project: LampProject, page: String?, reopen: Bool = false) async -> (Int, [String: Any]) {
         guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
         let window = await look(at: project, reopen: reopen)
-        guard window.0 == 200, !macCopies(of: project).isEmpty else { return window }
+        // The open copy isn't the agent's change (it waits for Reload, or was kept open): the look's note says so, and
+        // a preview of that copy's sidebar would hide it.
+        guard window.0 == 200, !macCopies(of: project).isEmpty, !Runtime.holdsBuild(project) else { return window }
         var (status, sidebar) = await BrowserPreview.look(project, page: page)
         // The window beside it, so the sidebar's items are judged against the app's, not on their own.
         if Privacy.sharesPictures, let pictures = window.1["screenshots"] as? [String], let front = pictures.first {
