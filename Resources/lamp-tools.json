@@ -2,7 +2,7 @@
   {
     "name": "look_at_app",
     "label": "Look at the app",
-    "description": "Builds the app with your changes, opens it, and shows you the result: a picture of its windows, what it printed, and any build errors or crash. For an iPhone app it also lists the screen as text: each control and piece of text with its name, what it holds and the point to tap it. Takes up to a minute. Use it after a change to the interface, or to check a fix you can't verify by reading the code. Each look that has to rebuild takes a while, so make your edits first and don't use it for small changes you're sure of. With `sidebar`, it shows a Mac app's sidebar in Chrome instead of its windows, drawn by Lamp as Chrome draws it, as text and a picture, and says whether `page` fits the app's browser.json. For a Mac app, `motion` watches the window for a couple of seconds instead and says what changed from frame to frame and whether anything flickers; `prop` shows one of a 3D scene's props on its own, from four sides. A change goes into the open app as it runs, so `reopen` is for what only a fresh launch shows (how long it takes to open, code run once at the start): it closes the app the usual way and opens it again. Never end the app's process yourself.",
+    "description": "Builds the app with your changes, opens it, and shows you the result: a picture of its windows, what it printed, and any build errors or crash. For an iPhone app it also lists the screen as text: each control and piece of text with its name, what it holds and the point to tap it. Takes up to a minute. Use it after a change to the interface, or to check a fix you can't verify by reading the code. Each look that has to rebuild takes a while, so make your edits first and don't use it for small changes you're sure of. With `sidebar`, it shows a Mac app's sidebar in Chrome instead of its windows, drawn by Lamp as Chrome draws it, as text and a picture, and says whether `page` fits the app's browser.json. For a Mac app, `motion` watches the window for a couple of seconds instead and says what changed from frame to frame and whether anything flickers; `prop` shows one of a 3D scene's props on its own, from four sides. A change goes into the open app as it runs, so `reopen` is for what only a fresh launch shows (how long it takes to open, code run once at the start): it closes the app the usual way and opens it again, or, while the person has the app open, asks them first with a Reload button. Never end the app's process yourself.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -25,6 +25,10 @@
         "prop": {
           "type": "string",
           "description": "The name of a prop in the LampSceneView's props, to see it on its own from four sides."
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "type": "object"
@@ -124,6 +128,10 @@
         "selection": {
           "description": "With sidebar: the passage selected on that page, for a button that reads a selection",
           "type": "string"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "required": [
@@ -184,6 +192,10 @@
         "path": {
           "description": "Path of the file, relative to the app's folder, e.g. Sources/CardsView.swift",
           "type": "string"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "required": [
@@ -198,7 +210,12 @@
     "description": "Lists the app's saved versions, newest first: an id, when it was made, its name if it has one, and the request that made it. Lamp saves one after every request.",
     "inputSchema": {
       "additionalProperties": false,
-      "properties": {},
+      "properties": {
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
+        }
+      },
       "type": "object"
     }
   },
@@ -216,6 +233,10 @@
         "version": {
           "description": "A version id from list_versions",
           "type": "string"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "required": [
@@ -234,6 +255,10 @@
         "version": {
           "description": "A version id from list_versions",
           "type": "string"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "required": [
@@ -256,6 +281,10 @@
             "app"
           ],
           "type": "string"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "type": "object"
@@ -283,6 +312,10 @@
         "summary": {
           "description": "One plain line on what the notes cover, as you'd say it to the person: “How my apps should look and sound, and how I write dates”",
           "type": "string"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "required": [
@@ -322,6 +355,10 @@
             "9:16"
           ],
           "type": "string"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "required": [
@@ -355,6 +392,10 @@
         "away": {
           "description": "iPhone apps only: the app needs it on the phone away from this Mac",
           "type": "boolean"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "required": [
@@ -388,6 +429,10 @@
             ]
           },
           "description": "Every device the app runs on from now on"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       }
     }
@@ -403,6 +448,10 @@
         "service": {
           "type": "string",
           "description": "A connector's id from the list"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       }
     }
@@ -518,6 +567,10 @@
         "name": {
           "description": "The skill's name, as listed",
           "type": "string"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "required": [

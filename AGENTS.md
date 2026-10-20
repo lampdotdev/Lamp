@@ -81,10 +81,10 @@ A capability given to one engine must be given to all of them that can take it, 
   a chat line that can't be read is skipped and the rest opens (`LogLine.readChat`), with the file as it was kept beside it as `chat.json.unreadable`, but that line is gone from the chat. While a card waits for its answer nothing above it changes height and the chat
   doesn't follow what's added below: a new app's card goes to its short form as the questions arrive, a
   second `ask` before the answer is turned away, and a one-at-a-time card is laid out for all its questions
-  at once (`AskSteps`), so nothing moves under the pointer. Its questions are kept the same height, so the card
-  never shows room to spare under one of them: a question's answers are one row however many there are, and its
-  tiles fill whatever another question's wording needed (`TileRows`). Only where a row would break a word (the
-  wand's narrow panel) do they go two by two or one under another, with the symbol above the words (`TileFace`). Asking ends the turn: nothing is built or saved
+  at once (`AskSteps`), so nothing moves under the pointer. Its answers are small tiles, a symbol and a line each, as the
+  chips of a card with every question on it are: one under another below a card width that takes in the wand's
+  panel at any size it opens at, in one row only on a wider card where each fits on a line (`TileRows`, and
+  `ChipRow` the same way). A question left to Lamp is "Decide for me" (`TalkCard.youDecide`). Asking ends the turn: nothing is built or saved
   until the answer, and an agent that goes on to another step after `ask` is ended by Lamp, the way a
   runaway one is (`Store.endOnQuestions`), whichever engine it is. Once the card is answered the chat
   follows its end again (`ChatFollow.followThroughSettling`). Only the card that waits is drawn as a card: answered, it folds to a line with what was chosen, and a notes receipt is a line too, so one thing in the chat asks for attention at a time. A new piece is a tool there, its view, and a line in `talkRules`. The agent still
@@ -398,7 +398,12 @@ its secrets, Lamp's ports, scheme and folders: `Template.installValues`) into ev
 (`Store.setInstallValues`, and the phone project's Info.plist), and LampSupport reads it at launch (`LampInstall`).
 None of it is compiled in, so a compiled app is the same for every install. The app-signing keychain is shared on purpose, so apps keep their permissions whichever
 Lamp rebuilds them. `scripts/dev-data.sh` copies your apps, keys, settings and the agent's sign-ins from the
-installed Lamp into Lamp Dev, so the development build has something to work on. To see what someone with a bare Mac
+installed Lamp into Lamp Dev, so the development build has something to work on. A build from a checkout under
+`.claude/worktrees/` is an instance of its own, "Lamp Dev <worktree>" (`scripts/instance.sh`, which `LAMP_INSTANCE`
+overrides; empty makes the plain Lamp Dev): its bundle id ends in the name, and `Edition.instance` gives it its own
+folders, four ports from a hash of the name, URL scheme and prefixes, so builds from two worktrees run at once without
+sharing a desk, a gateway or Launch Services' idea of which is which. `fresh-start.sh` and `dev-data.sh` work on this
+checkout's instance. The agent's sandbox closes every Lamp's folder (`Edition.lampFolderNames`), instances included. The Chrome experiment's native host is the one thing instances share: the extension names it, and Chrome keeps one registration per name, so the instance that connected last owns it. To see what someone with a bare Mac
 sees, `LAMP_PRETEND_MISSING` (`Pretend`, Lamp Dev only) makes Lamp's own checks miss the Command Line Tools,
 Xcode, the person's own Claude Code and Codex or tools from the PATH; a new check for something a fresh Mac lacks goes through it too.
 
@@ -803,7 +808,8 @@ from then on (`no-final`). A class's finality and its initializers (which have m
 too; one in an extension is a convenience initializer and isn't) are held with the layout (`LiveReload.Group.inits`),
 so a subclass added, or an initializer added or changed, reopens the app with its reason rather than being refused
 by the runtime after the compile. So is each type's shape (`LiveReload.Group.shape`): struct, class, enum or actor, an
-enum's `@objc` and `indirect`, whether the type is generic, a class's superclass (the first name it inherits when
+enum's `@objc` and `indirect`, whether the type is generic (itself or declared inside a generic type, with its
+parameters, `generic<T>`), a class's superclass (the first name it inherits when
 that's a class: one of the app's, or a system name not shaped like a protocol's), and a protocol's requirement
 signature (`: AnyObject`, what it inherits, its associated types' constraints), each of which lays values, objects,
 method tables or witness tables out differently while the type holds the same fields; a stored reference's `weak`
@@ -822,7 +828,10 @@ type as the compiler prints it where the body's value becomes the opaque one, `L
 become `1.5` only if the member returns a Double now, and `Text("a")` may become `Text("a").bold()`; where that type is
 opaque too (a modifier's `some View`) it's listed by a digest of the calls and types its body names instead: the open app's witness tables and callers were laid out for the type it had, and the
 compiler prints both as `some View`; a view's own body, wrapped by the live copy, and a private member are left out; a private type is listed with its file,
-`LiveReload.placeGroup`, since its mangled name carries it and one moved to another file is another type at run time;
+`LiveReload.placeGroup`, since its mangled name carries it and one moved to another file is another type at run time,
+and keyed with its file throughout the layout and the declarations (`Row@A.swift`, each part of a nested one; `LiveReload.bare`
+gives the name back where the code names it, as a field's type or a use in old code does, and `readable` says "Row in
+A.swift"), since two files may each declare a private type of one name and the two are two types with their own fields;
 every such entry beyond a type's own fields is one of `LiveReload.Group`, which makes and reads them) (`LiveReload.reloadable`, comparing with the sources the
 open app runs, kept in `.lamp/live/running`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
 linked into a library. Every file is compiled when what's declared changed (a function, an initializer, a computed
@@ -875,13 +884,19 @@ it would go on answering with old code; that last is judged only for a change co
 with the change), which is what a declaration taken away gets, since another leaves what an unchanged file's extension
 adds. The
 build then waits to be installed until the app closes (`LiveReload.awaitInstall`, which unlike a held build doesn't
-keep the agent off the app). Anything else needs the app reopened, with why in the chat's
+keep the agent off the app). The libraries of earlier changes go once a later one is in, and all of them when the
+app is installed (`LiveReload.forgetLibraries`): a loaded one stays mapped, and otherwise a long session leaves one
+for every change tried. Anything else needs the app reopened, with why in the chat's
 details (`LiveReload.Verdict`; what `LampLive` refused, and a change that didn't compile or load, say so there too,
-through `LiveReload.send`'s answer), so the rules can be tuned by what happens. The compiler's printout of a big app is tens of megabytes: it's kept whole off the main actor (`Sandbox.output`), each pattern is tried only on the nodes it could match (`SwiftSource.node`), and what's read from it is kept in memory by a digest of the code (`LiveReload.Analyses`), so the same code is never printed twice, the open app's layout after a reopen included. A change refused is refused again at the install after its build without that work, while nothing it was judged on has changed (`LiveReload.put`, `refusalKey`); a refusal by the open app itself is tried again. For a request's change, while the app is open, Lamp doesn't reopen it under the person: the build is held (`Store.awaitReload`, `Runtime.awaitReload`), the app shows a Reload button beside the wand in its title bar (`LampMagic.ReloadButton`, tinted glass in the accent colour whose tint brightens and settles again, shown with a `reloadReady` notification) and the chat a line with one too (`.reload`, under the agent's answer), and a click on either reopens it where it was (`Store.reloadWaiting`; the app asks with `reloadNow`, which puts in only a change Lamp holds). The agent is told the change waits for the person (`reloadNote`) and doesn't look or use the app again in that request. Closing the app installs it too. Open App, Undo and a look with `reopen` still reopen it, and so does every change in a new app's first turn, which
+through `LiveReload.send`'s answer), so the rules can be tuned by what happens. The compiler's printout of a big app is tens of megabytes: it's kept whole off the main actor (`Sandbox.output`), each pattern is tried only on the nodes it could match (`SwiftSource.node`), and what's read from it is kept in memory by a digest of the code (`LiveReload.Analyses`), so the same code is never printed twice, the open app's layout after a reopen included. A change refused is refused again at the install after its build without that work, while nothing it was judged on has changed (`LiveReload.put`, `refusalKey`); a refusal by the open app itself is tried again. For a request's change, while the app is open, Lamp doesn't reopen it under the person: the build is held (`Store.awaitReload`, `Runtime.awaitReload`), the app shows a Reload button beside the wand in its title bar (`LampMagic.ReloadButton`, tinted glass in the accent colour whose tint brightens and settles again, shown with a `reloadReady` notification) and the chat a line with one too (`.reload`, under the agent's answer), and a click on either reopens it where it was (`Store.reloadWaiting`; the app asks with `reloadNow`, which puts in only a change Lamp holds). The agent is told the change waits for the person (`reloadNote`) and doesn't look or use the app again in that request. Closing the app installs it too. A look with `reopen` asks the same way while the person has the app open (`Store.asksBeforeReopening`, the one check for both): it puts in what it can as the app runs, then holds the app for Reload and tells the agent so (`askedToReopenNote`). Both show the same Reload button and chat line, nothing of their own. Open App and Undo still reopen it, and so does every change and every look in a new app's first turn, which
 nobody is using yet and whose passes the person is watching go in; when the person keeps the app open at its question (unsaved work), the build waits for Reload the same way. A live build reads the app's own files
 from its Assets folder rather than its bundle (`LampAssets`), so a new picture goes in live too; the package, the
 app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which tells the
-agent what goes in without reopening.
+agent what goes in without reopening. The note opens by saying the person is watching the app beside the chat and
+sees a live change at once and a held one not until Reload, so the agent works in small shown steps. Each look then
+tells the agent which way its change went (`ChangeOutcome`): into the open app, waiting for Reload with LiveReload's
+reason and, where there's a known shape that would have gone in, that shape (`LiveReload.advice`), or reopened or
+opened. The turn's end tallies them in a detail line (`Store.outcomeTally`), which is how often changes go in live.
 
 New stored properties go in live too (`LiveSlots`, in LiveReload.swift). The copy step (`Template.livePerl`) gives
 each type of the app's spare room the open app's values already have: every class a few places,
@@ -909,7 +924,9 @@ source ranges (`SwiftSource.declarations`, from the same `-dump-ast` as the layo
 attributes on lines above, in a `var a = 1, b = 2` list, in a type written on one line) it's replaced exactly, with
 no reading of the text (a view's `$name` becomes a binding to its
 box), and the change is compiled again and checked as usual. Being stored, a spare is observed like any property, so
-views redraw. A class's starting value that isn't a literal (`.now`, a call) is worked out on the first read and kept;
+views redraw. A value set is read back as set, nil included: a spare tells "set to nil" from "never set" by holding an entry at
+all (`LampSpare.has`, a class's non-nil `LampSpare?`, the state box's stored entry), since a nil boxed as `Any`
+doesn't cast back. A class's starting value that isn't a literal (`.now`, a call) is worked out on the first read and kept;
 a struct can't keep one from a read, so its new property needs a starting value that comes out the same every time (a
 literal, an empty collection, or one of the app's own enum's cases, judged again each time the property is put back;
 anything else, or a different one later, reopens the app, since the spare compares a value that never set the
@@ -917,7 +934,7 @@ property by the starting value it was taken in with); a `@Published` property in
 in an extension) reopens it too. `@State` is read in both forms the compiler has given it: `_name: State<T>`, and
 `__name: LazyState<T>` where it is a macro. Cases added at the end of an enum whose cases carry nothing need no
 spare: its values keep their size (`LiveSlots.casesAdded`). Only while nothing the app keeps holds it but as itself or
-in a plain collection: Swift uses the numbers after the last case for `nil` in an optional of it and for other enums'
+in a plain collection (an array, set or dictionary through any depth): Swift uses the numbers after the last case for `nil` in an optional of it and for other enums'
 cases that carry it, which a new case would take over. That's looked for in every stored field, static and global of
 the new code (`LiveReload.enumsHeld`), before the change goes in; a property added while the app was open keeps its
 value in a spare as any value, under the metadata the app's code had, which the grown enum's own no longer reads
@@ -949,10 +966,16 @@ optional of it, a comparison, a hash, a cast); a class is no such holder (its fi
 reading it is caught as a use of the enum itself), nor a view, whose value lives in SwiftUI's graph, nor a key path
 passed as a function (`.map(\.name)`), an escaping closure the compiler makes for that call alone. A generic enum
 reopens the app when it grows: the runtime lays its values out for each type it's used at, and there is no one
-metadata to point at the change's. A property an explicit `CodingKeys` names stays a field (Codable needs it stored),
+metadata to point at the change's; a private enum's symbols carry the compiler's discriminator, which
+`LiveObject.isKept` allows for. What a grown enum is checked against (the layout with statics and globals, `held`)
+and what old code does come from the analyses already made (`Analyses.Entry`), not a further run of the compiler.
+A property an explicit `CodingKeys` names stays a field (Codable needs it stored),
 so it reopens the app, as does one set in an initializer the type writes itself (`SwiftSource.Declarations.assigned`:
-a computed property can't be set before the stored ones are), one with observers, `lazy`, or held weakly or
-unowned; `LiveSlots.fitting` says which, and the chat's detail carries that reason beside the layout's, with the
+a computed property can't be set before the stored ones are; a convenience initializer sets them after `self.init`
+and doesn't count), one with observers, `lazy`, or held weakly or
+unowned, or `@ObservationIgnored` (a spare is observed), or a `@Published` one whose `$name` publisher is used, or
+one with no starting value, or a struct's whose starting value isn't the same every time; `LiveSlots.fitting` says
+which, and the chat's detail carries that reason beside the layout's, with the
 copy step's own names said as what they are (`LiveReload.readable`). A view's `$name`, its state's binding, becomes
 its box's only within that view's own declaration (`SwiftSource.Declarations.types`), since another view in the
 file may have state of the same name. Which property is in which spare
@@ -1430,6 +1453,9 @@ card), check:
   whose job they are.
 - **Does structure carry the meaning?** Related things share a group. What depends on something sits
   indented under it and shows only while that's on. Details for the curious (paths, versions) go in `.help`.
+- **A card's buttons are one size**: the size Allow and Don't Allow are (`.cardButtons()`), on every card in both
+  chats, the main one prominent; never the small size, which in the wand's narrow panel was too slight to find.
+  Where they don't fit beside a card's words they go under them (`ChatLook.OfferCard`).
 - **Same words for the same thing**, in every screen, Help and errors. Product names come from one place
   (`Engine.title`: "ChatGPT Codex"), never a literal.
 

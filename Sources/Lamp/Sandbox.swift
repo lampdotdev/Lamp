@@ -182,7 +182,7 @@ enum Sandbox {
             lines.append("(allow file-read* file-write* (subpath \(quotedPath(real(tmp)))))")
         }
         // Both Lamps' folders (keys, sign-ins, every other app) stay closed; the app's own folder opens.
-        for name in ["Lamp", "Lamp Dev"] {
+        for name in Edition.lampFolderNames {
             lines.append("(deny file-read* file-write* (subpath \(quotedPath(support + "/" + name))))")
             // And the apps Lamp installs are for the person to run, not the command: running one needs no
             // read the profile closes (exec maps it), so it's refused by name. A command could otherwise

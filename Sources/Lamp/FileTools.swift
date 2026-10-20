@@ -35,6 +35,7 @@ enum FileTools {
             "(whichever is hit first). Use offset/limit for large files. When you need the full file, continue with " +
             "offset until complete.",
          "inputSchema": ["type": "object", "required": ["path"], "additionalProperties": false, "properties": [
+            "doing": ["type": "string", "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."],
             "path": ["type": "string", "description": "Path to the file to read (relative or absolute)"],
             "offset": ["type": "number", "description": "Line number to start reading from (1-indexed)"],
             "limit": ["type": "number", "description": "Maximum number of lines to read"],
@@ -43,6 +44,7 @@ enum FileTools {
          "description": "List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. " +
             "Includes dotfiles. Output is truncated to 500 entries or \(maxBytes / 1024)KB (whichever is hit first).",
          "inputSchema": ["type": "object", "additionalProperties": false, "properties": [
+            "doing": ["type": "string", "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."],
             "path": ["type": "string", "description": "Directory to list (default: current directory)"],
             "limit": ["type": "number", "description": "Maximum number of entries to return (default: 500)"],
          ]]],
@@ -51,6 +53,7 @@ enum FileTools {
             "Skips build output and version-control folders. Output is truncated to 1000 results or " +
             "\(maxBytes / 1024)KB (whichever is hit first).",
          "inputSchema": ["type": "object", "required": ["pattern"], "additionalProperties": false, "properties": [
+            "doing": ["type": "string", "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."],
             "pattern": ["type": "string", "description": "Glob pattern to match files, e.g. '*.swift', '**/*.json', or 'Sources/**/*View.swift'"],
             "path": ["type": "string", "description": "Directory to search in (default: current directory)"],
             "limit": ["type": "number", "description": "Maximum number of results (default: 1000)"],
@@ -60,6 +63,7 @@ enum FileTools {
             "Skips build output and version-control folders. Output is truncated to 100 matches or " +
             "\(maxBytes / 1024)KB (whichever is hit first). Long lines are truncated to \(maxLineLength) chars.",
          "inputSchema": ["type": "object", "required": ["pattern"], "additionalProperties": false, "properties": [
+            "doing": ["type": "string", "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."],
             "pattern": ["type": "string", "description": "Search pattern (regex or literal string)"],
             "path": ["type": "string", "description": "Directory or file to search (default: current directory)"],
             "glob": ["type": "string", "description": "Filter files by glob pattern, e.g. '*.swift' or '**/*View.swift'"],

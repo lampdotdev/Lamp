@@ -56,6 +56,8 @@ enum SwiftSource {
         var types: [String: (start: Position, last: Position)] = [:]
         /// The types private to their file, which an extension in another file can't reach.
         var privateTypes: Set<String> = []
+        /// The stored properties declared with `let` ("Type<tab>name").
+        var lets: Set<String> = []
         /// The properties set in an initializer the type writes itself ("Type<tab>name"): a computed property kept
         /// in a spare can't be set before the stored ones are, so such a property stays stored.
         var assigned: Set<String> = []
@@ -161,14 +163,17 @@ enum SwiftSource {
             while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
             let owner = scopes.last?.type
             if opens("struct_decl", "class_decl", "enum_decl", "actor_decl", "extension_decl"), let m = typeDecl.firstMatch(in: line, range: range) {
-                let name = String(line[Range(m.range(at: 3), in: line)!])
+                var name = String(line[Range(m.range(at: 3), in: line)!])
                 let outer = scopes.compactMap(\.type).last
+                let kind = line[Range(m.range(at: 2), in: line)!]
+                let isPrivate = kind != "extension" && (has(line, " access=private") || has(line, " access=fileprivate"))
+                // A private type is keyed with its file, as the layout keys it (`LiveReload.bare`).
+                if isPrivate, let r = self.range(in: line) { name += "@" + (r.start.file as NSString).lastPathComponent }
                 let full = outer.map { $0 + "." + name } ?? name
                 scopes.append((indent, full))
-                let kind = line[Range(m.range(at: 2), in: line)!]
-                if kind == "class" { out.classes.insert(full); out.classes.insert(name) }
+                if kind == "class" { out.classes.insert(full); out.classes.insert(LiveReload.bare(name)) }
                 if kind != "extension", let r = self.range(in: line) { out.types[full] = r }
-                if kind != "extension", line.contains(" access=private") || line.contains(" access=fileprivate") { out.privateTypes.insert(full) }
+                if isPrivate { out.privateTypes.insert(full) }
                 continue
             }
             if let owner, opens("accessor_decl"), let m = observer.firstMatch(in: line, range: range) {
@@ -178,8 +183,9 @@ enum SwiftSource {
             }
             if opens("func_decl", "accessor_decl", "constructor_decl", "destructor_decl", "closure_expr", "subscript_decl", "top_level_code_decl"),
                scopeDecl.firstMatch(in: line, range: range) != nil {
+                // A convenience initializer sets properties only after `self.init`, when a computed one can be set.
                 if let owner, line.contains("(constructor_decl"), !line.contains(" implicit ") {
-                    initializer = (indent, owner)
+                    if !has(line, " convenience") { initializer = (indent, owner) }
                     if let made = memberwise(in: line) { out.initializers[owner, default: []].append(made) }
                 }
                 if let owner, line.contains("(constructor_decl"), line.contains(" implicit "),
@@ -245,6 +251,7 @@ enum SwiftSource {
                 out.variables[key] = Variable(name: name, position: r.start, type: String(line[Range(m.range(at: 3), in: line)!]),
                                               binding: index, attributes: [],
                                               special: rest.contains("with_observers") || rest.contains(" lazy "))
+                if rest.contains(" let ") { out.lets.insert(key) }
                 variable = (indent, key)
             }
         }
@@ -373,7 +380,15 @@ enum SwiftSource {
             guard isWord(byte) else { return start + 1 }
             var end = start
             let number = byte >= 48 && byte <= 57
-            while end < bytes.count, isWord(bytes[end]) || (number && bytes[end] == UInt8(ascii: ".")) { end += 1 }
+            let hex = number && start + 1 < bytes.count && byte == UInt8(ascii: "0") && bytes[start + 1] | 0x20 == UInt8(ascii: "x")
+            while end < bytes.count {
+                let b = bytes[end]
+                if isWord(b) || (number && b == UInt8(ascii: ".")) { end += 1; continue }
+                // A signed exponent is part of the literal: after `e` in a decimal one, after `p` in a hex one.
+                if number, end > start, b == UInt8(ascii: "+") || b == UInt8(ascii: "-"),
+                   bytes[end - 1] | 0x20 == (hex ? UInt8(ascii: "p") : UInt8(ascii: "e")) { end += 1; continue }
+                break
+            }
             return end
         }
 

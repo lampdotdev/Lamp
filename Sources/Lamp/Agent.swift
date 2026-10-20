@@ -22,7 +22,8 @@ enum AgentEvent {
     case textPiece(String) // a piece of the message the model is writing, as it streams in; `.text` follows with the whole
     /// A tool call as shown in the chat ("grep cache.json"), and the whole call with its arguments,
     /// which is what tells a repeated call from a similar one.
-    case tool(String, call: String)
+    /// `said`: what the agent said the step is for, in its own words (a command's description, a tool's `doing`).
+    case tool(String, call: String, said: String? = nil)
     case cost(Double)
     case failed(String)
     case raw(String)
@@ -161,7 +162,8 @@ enum Agent {
     answer: follow it.
     - What the person sees: their messages, your cards, and each thing you write, as a message the moment you \
     write it. Your tool calls are never shown: no commands, files, code or results, only a gray line per step \
-    ("Did a bit of housekeeping", or the description you gave the command). Everything you write stays in the chat as a \
+    ("Did a bit of housekeeping", or the words you gave the step: a command's description, a tool's `doing`). Give \
+    those words to every step, in their terms, since they're what the person reads while it runs. Everything you write stays in the chat as a \
     message, and your last one is the answer. So write each message for someone who sees nothing else: it makes sense on its own and is about the app, \
     never leaning on a step they can't see, whether it leads into one, points back at one ("that fixed it", \
     "the error above") or names its files and code.
@@ -211,6 +213,10 @@ enum Agent {
 
 
     ---
+    The person has this app open beside the chat and is watching it as you work. A change that goes into the \
+    open app shows at once; one that can't waits until they press Reload, and until then they see nothing of it. \
+    So work in small steps, each shown with a look as it lands, prefer the shape of change that goes in live, and \
+    say what they can see now, not what you've written. Each look tells you which way the change went and why. \
     This app is updated in place while it's open, keeping what's on screen, when a change only edits or adds code. \
     New stored properties go in too, in a class, a struct or (as @State) a view, when each has a starting value \
     (or is an optional) and no didSet or willSet; so do new cases at the end of an enum whose cases carry nothing, \
@@ -224,12 +230,14 @@ enum Agent {
     directly and stays as it was. A property added in place isn't saved until the app reopens. A method, computed property or \
     initializer added to a class that something subclasses needs the app reopened; a class nothing subclasses takes \
     methods and computed properties in place. A `static var` or global `var` keeps the value the open app gave it: a \
-    new starting value for one shows only after the app reopens, so change what reads it, or a `let`. Mark a view \
+    new starting value for one shows only after the app reopens, so change what reads it, or a `let`. A `let` made \
+    by calling a function (`static let table = build()`) is remade only when its own line changes, not when the \
+    function does. Mark a view \
     that only its own file uses `private`, so a change to it compiles that file alone. \
     Any change to a file that declares a SwiftData @Model class needs it reopened. \
     A look shows the window as the person left it, with the change in it. To see the app start from the \
-    beginning (how long it takes to open, what runs once at launch), look with `reopen`; never quit or kill the \
-    app yourself.
+    beginning (how long it takes to open, what runs once at launch), look with `reopen`, which asks the person \
+    first while they have it open; never quit or kill the app yourself.
     """
 
     /// Short for the same reason. What AI the app has comes at the end of a request (AIStatus.brief), since it
@@ -1410,7 +1418,8 @@ enum Agent {
         case "tool_execution_start":
             let name = obj["toolName"] as? String ?? "tool"
             let args = obj["args"] as? [String: Any] ?? [:]
-            var events: [AgentEvent] = [.tool(describe(name, args), call: callKey(name, args))]
+            let said = ((args["doing"] as? String) ?? (name == "bash" ? args["description"] as? String : nil))?.trimmed.nilIfEmpty
+            var events: [AgentEvent] = [.tool(describe(name, args), call: callKey(name, args), said: said)]
             // Lamp's extension gives pi's bash a description, which the model fills in as Claude Code's does.
             if name == "bash" { events.insert(.naming((args["description"] as? String)?.trimmed ?? ""), at: 0) }
             if name == "plan", args["parts"] != nil { events.append(.plan(PlanPart.parts(from: args))) }

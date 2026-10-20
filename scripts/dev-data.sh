@@ -14,11 +14,15 @@ set -euo pipefail
 replace=0
 [ "${1:-}" = --all ] && replace=1
 support="$HOME/Library/Application Support"
-from="$support/Lamp"; to="$support/Lamp Dev"
-from_domain="dev.lamp.host"; to_domain="dev.lamp.host.dev"
+# Into this checkout's own instance of the development build (scripts/instance.sh), or the plain Lamp Dev.
+instance="$("${0:A:h}/instance.sh")"
+to_name="Lamp Dev${instance:+ $instance}"
+from="$support/Lamp"; to="$support/$to_name"
+from_domain="dev.lamp.host"; to_domain="dev.lamp.host.dev${instance:+.$instance}"
+to_prefix="dev.lamp.dev.${instance:+$instance.}app."
 
 [ -d "$from" ] || { echo "Nothing to copy: no $from." >&2; exit 1; }
-osascript -e 'quit app "Lamp Dev"' >/dev/null 2>&1 || true
+osascript -e "quit app \"$to_name\"" >/dev/null 2>&1 || true
 sleep 1
 mkdir -p "$to/Apps"
 
@@ -27,7 +31,7 @@ copied=0
 for app in "$from"/Apps/*(N/); do
   name="${app:t}"
   if [ -d "$to/Apps/$name" ]; then
-    [ $replace = 1 ] || { echo "kept    $name (already in Lamp Dev)"; continue }
+    [ $replace = 1 ] || { echo "kept    $name (already in $to_name)"; continue }
     rm -rf "$to/Apps/$name"
   fi
   cp -R "$app" "$to/Apps/$name"
@@ -35,13 +39,13 @@ for app in "$from"/Apps/*(N/); do
   # the app's build script is rewritten here and committed, so a restored version carries it too (Lamp
   # also puts it right before every build, whichever way the app arrived).
   rm -f "$to/Apps/$name/.lamp/runtime/built"
-  [ -f "$to/Apps/$name/build.sh" ] && sed -i '' "s|<string>dev\.lamp\.app\.$name</string>|<string>dev.lamp.dev.app.$name</string>|" "$to/Apps/$name/build.sh"
+  [ -f "$to/Apps/$name/build.sh" ] && sed -i '' "s|<string>dev\.lamp\.app\.$name</string>|<string>$to_prefix$name</string>|" "$to/Apps/$name/build.sh"
   [ -f "$to/Apps/$name/build.sh" ] && git -C "$to/Apps/$name" add build.sh >/dev/null 2>&1 && \
     git -C "$to/Apps/$name" -c user.name=Lamp -c user.email=lamp@localhost commit -qm "Lamp Dev's copy" >/dev/null 2>&1 || true
   # The app's own saved data, under its dev bundle id, so it opens where it left off.
-  if [ -d "$support/dev.lamp.app.$name" ] && { [ $replace = 1 ] || [ ! -d "$support/dev.lamp.dev.app.$name" ]; }; then
-    rm -rf "$support/dev.lamp.dev.app.$name"
-    cp -R "$support/dev.lamp.app.$name" "$support/dev.lamp.dev.app.$name"
+  if [ -d "$support/dev.lamp.app.$name" ] && { [ $replace = 1 ] || [ ! -d "$support/$to_prefix$name" ]; }; then
+    rm -rf "$support/$to_prefix$name"
+    cp -R "$support/dev.lamp.app.$name" "$support/$to_prefix$name"
   fi
   echo "copied  $name"
   copied=$((copied + 1))
@@ -94,4 +98,4 @@ else
   echo "kept    settings"
 fi
 
-echo "Done: $copied app(s) copied. Open build/Lamp Dev.app."
+echo "Done: $copied app(s) copied. Open \"build/$to_name.app\"."

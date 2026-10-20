@@ -684,6 +684,10 @@ public enum ChatLook {
 }
 
 extension View {
+    /// A card's buttons, on every card in both chats: the size Allow and Don't Allow are, never the small one. In
+    /// the wand's narrow panel a small button beside a card's words was too slight to find and hard to hit.
+    public func cardButtons() -> some View { controlSize(.large) }
+
     /// The pointing hand over something that opens or closes when clicked (a line of steps, a command to show):
     /// it says the line is a control, which text alone doesn't.
     public func pointingHand() -> some View { modifier(PointingHand()) }

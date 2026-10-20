@@ -8,7 +8,7 @@ final class AskCardTests: XCTestCase {
         let codex = #"{"type":"item.started","item":{"type":"mcp_tool_call","tool":"ask","arguments":{"questions":[]}}}"#
 
         for line in [claude, codex] {
-            guard case .tool(let label, _) = Agent.parse(line, engine: line == claude ? .claude : .codex).first else {
+            guard case .tool(let label, _, _) = Agent.parse(line, engine: line == claude ? .claude : .codex).first else {
                 return XCTFail("The ask call was not parsed as a tool")
             }
             XCTAssertEqual(label, "ask")

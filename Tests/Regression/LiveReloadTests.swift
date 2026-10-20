@@ -168,7 +168,7 @@ final class LiveReloadTests: XCTestCase {
             struct Picky { var mood: Feeling; var n: Int }
             typealias Choice = Picky
             struct Picked { var mood: Outer.Mood; var __lampSpare_Picked = 0 }
-            struct Stack<Feeling> { var top: Feeling? }
+            struct Stack<Feeling> { var top: Feeling?; enum Inner { case x } }
             enum Space { struct Wrapper { var mood: Outer.Mood } }
             @Observable final class Lab { var dirty = false { didSet {} } }
             final class Holder { var byName: [String: Outer.Mood] = [:]; var byMood: [Outer.Mood: Int] = [:]; var list: [Outer.Mood] = []; var picked: Picked? = nil; var stack = Stack<Int>(top: nil) }
@@ -178,7 +178,10 @@ final class LiveReloadTests: XCTestCase {
             @objc enum Level: Int { case low }
             class Thing {}
             final class Owner { weak var item: Item? = nil; unowned let thing: Thing; init(thing: Thing) { self.thing = thing } }
-            struct Dated { var at: Int; var note = ""; init() { at = 1; self.note = "n" } }
+            struct Dated { var at: Int; var note = ""; init() { at = 1; self.note = "n" }; let fixed = 2 }
+            final class Doc { var title = ""; init() {}; convenience init(named: String) { self.init(); title = named } }
+            private enum Tone: CaseIterable { case a, b; typealias Pair = (Tone, Tone) }
+            enum Tones { static let count = Tone.allCases.count }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
         let layout = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
         let shape = layout?.filter { $0.hasPrefix("protocol Shape") } ?? []
@@ -191,7 +194,8 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertEqual(layout?.filter { $0.hasPrefix(LiveReload.aliasGroup) },
                        [LiveReload.aliasGroup + "\tSide = Int", LiveReload.aliasGroup + "\tShapes.swift:Secret = Int", LiveReload.aliasGroup + "\tSquare.Key = String",
                         LiveReload.aliasGroup + "\tItem.ID = ObjectIdentifier", LiveReload.aliasGroup + "\tOther.Pick = Int",
-                        LiveReload.aliasGroup + "\tFeeling = Outer.Mood", LiveReload.aliasGroup + "\tChoice = Picky", LiveReload.aliasGroup + "\tLevel.RawValue = Int"])
+                        LiveReload.aliasGroup + "\tFeeling = Outer.Mood", LiveReload.aliasGroup + "\tChoice = Picky", LiveReload.aliasGroup + "\tLevel.RawValue = Int",
+                        LiveReload.aliasGroup + "\tTone@Shapes.swift.Pair = (Tone, Tone)", LiveReload.aliasGroup + "\tTone@Shapes.swift.AllCases = [Tone]"])
         let declared = layout?.filter { $0.hasPrefix(LiveReload.declarationGroup) }.map { String($0.dropFirst(LiveReload.declarationGroup.count + 1)) } ?? []
         XCTAssertEqual(Array(declared.prefix(5)), ["Square inherits Shape", "Square.area(): (Square) -> () -> Int", "Square inherits Hashable",
                                                    "Square.key: Square.Key", "Square.grow(_:): (Square) -> (Int) -> Square"], "\(declared)")
@@ -200,7 +204,7 @@ final class LiveReloadTests: XCTestCase {
         // when that's a class, the app's own or a system one), a protocol's requirement signature; and a stored
         // reference's weak or unowned, in its field.
         let shapes = layout!.filter { $0.hasPrefix(LiveReload.shapeGroup) }.map { String($0.dropFirst(LiveReload.shapeGroup.count + 1)) }
-        for entry in ["Square\tstruct", "Item\tclass", "Tagged\tclass : NSObject", "Tree\tenum indirect", "Level\tenum @objc", "Thing\tclass", "Outer.Mood\tenum", "Other.Picky\tclass", "Jar\tstruct generic", "Parcel\tenum generic"] {
+        for entry in ["Square\tstruct", "Item\tclass", "Tagged\tclass : NSObject", "Tree\tenum indirect", "Level\tenum @objc", "Thing\tclass", "Outer.Mood\tenum", "Other.Picky\tclass", "Jar\tstruct generic<T>", "Parcel\tenum generic<T>", "Stack.Inner\tenum generic"] {
             XCTAssertTrue(shapes.contains(entry), "\(entry) in \(shapes)")
         }
         XCTAssertTrue(shapes.contains { $0.hasPrefix("protocol Shape\t<Self where ") }, "\(shapes)")
@@ -213,7 +217,7 @@ final class LiveReloadTests: XCTestCase {
         let withoutAliases = LiveReload.layoutProblem(before: layout, after: layout!.filter { !$0.hasPrefix(LiveReload.aliasGroup) })
         XCTAssertNil(withoutAliases.problem)
         // An alias taken away is kept with the open app's layout, like a type, so one brought back is held to it.
-        XCTAssertEqual(withoutAliases.layout?.filter { $0.hasPrefix(LiveReload.aliasGroup) }.count, 8)
+        XCTAssertEqual(withoutAliases.layout?.filter { $0.hasPrefix(LiveReload.aliasGroup) }.count, 10)
         XCTAssertEqual(LiveReload.layoutProblem(before: withoutAliases.layout, after: retargeted).problem, "the typealias Side changed from Int to Double")
         // A global holding the enum still counts in the grown-enum check (its owner is empty, not a group).
         XCTAssertFalse(LiveReload.isGroup(String("\tselection: Mood?".prefix { $0 != "\t" })))
@@ -323,6 +327,15 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertEqual(analysed?.declarations.variables["Lab\tdirty"]?.special, true)
         // A property set in an initializer the type writes, however it's spelt, and where each type is declared.
         XCTAssertEqual(analysed?.declarations.assigned.filter { $0.hasPrefix("Dated") }.sorted(), ["Dated\tat", "Dated\tnote"])
+        // Not what a convenience initializer sets after `self.init`, when a computed property can be set; a let is known.
+        XCTAssertEqual(analysed?.declarations.assigned.filter { $0.hasPrefix("Doc") }, [])
+        XCTAssertEqual(analysed?.declarations.lets.contains("Dated\tfixed"), true)
+        XCTAssertEqual(analysed?.declarations.privateTypes.contains("Hidden@Shapes.swift"), true)
+        XCTAssertNotNil(analysed?.declarations.types["Hidden@Shapes.swift"])
+        // A constant made from a private enum is found by the enum's bare name, and the bared layout names every
+        // type bare, an alias's owner included.
+        XCTAssertEqual(LiveSlots.constants(naming: ["Tone@Shapes.swift"], in: try XCTUnwrap(analysed?.declarations)), ["Tones\tcount"])
+        XCTAssertTrue(LiveReload.bared(layout!).contains(LiveReload.aliasGroup + "\tTone.Pair = (Tone, Tone)"), "\(LiveReload.bared(layout!).filter { $0.contains("Tone") })")
         XCTAssertEqual(analysed?.declarations.types["Dated"]?.start.file.hasSuffix("Shapes.swift"), true)
         XCTAssertTrue(notes.contains { $0.hasPrefix("\u{1}launch\tmodel Note@Notes.swift: ") }, "\(notes.filter { $0.hasPrefix("\u{1}launch") })")
         XCTAssertEqual(LiveReload.modelFiles(inLayout: notes).map { "\($0.name) \($0.file)" }, ["Note Notes.swift"])
@@ -336,6 +349,43 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertEqual(LiveReload.layoutProblem(before: notes, after: notesChanged).problem, "the file of the SwiftData model Note changed, and its data is found by key paths the open app made")
         // The model keeps its data as any value, which would hide a grown enum from the checks below.
         try FileManager.default.removeItem(at: sources.appendingPathComponent("Notes.swift"))
+        // A private type is keyed with its file, so two files' private types of one name are two types; it's named
+        // bare where the code names it, and known by its file for a move.
+        XCTAssertEqual(layout!.filter { $0.hasPrefix("Hidden") }, ["Hidden@Shapes.swift\t", "Hidden@Shapes.swift\tv: Int"])
+        XCTAssertEqual(LiveReload.bare("Outer@A.swift.Hidden@A.swift"), "Outer.Hidden")
+        // Two files' private types of one name are judged each by its own key: a class in one doesn't speak for a
+        // struct in the other, which still carries the enum.
+        let twins = ["Twin@A.swift\t", "Twin@A.swift\tmood: Outer.Mood", LiveReload.shapeGroup + "\tTwin@A.swift\tstruct",
+                     "Twin@B.swift\t", LiveReload.shapeGroup + "\tTwin@B.swift\tclass", "Keep\t", "Keep\tkept: Twin?", LiveReload.shapeGroup + "\tKeep\tclass"]
+        XCTAssertEqual(LiveReload.holders(of: ["Outer.Mood"], inLayout: twins), ["Twin"])
+        XCTAssertEqual(LiveReload.enumsHeld(grown: ["Outer.Mood"], held: twins, spares: [:]), "Keep holds Twin, which carries Outer.Mood, as Twin?, which a new case would change")
+        XCTAssertEqual(LiveReload.readable("Hidden@Shapes.swift changed what it holds"), "Hidden in Shapes.swift changed what it holds")
+        XCTAssertTrue(LiveObject.isKept("_$s6Lively6Hidden33_0123456789ABCDEF0123456789ABCDEFLLVMn", as: LiveObject.mangledType("Hidden", module: "Lively", kind: "V")))
+        XCTAssertTrue(LiveObject.isKept("_$s6Lively5Outer4MoodOMn", as: LiveObject.mangledType("Outer.Mood", module: "Lively", kind: "O", kinds: ["Outer": "V"])) == false)
+        XCTAssertTrue(LiveObject.isKept("_$s6Lively5OuterV4MoodOMn", as: LiveObject.mangledType("Outer.Mood", module: "Lively", kind: "O", kinds: ["Outer": "V"])))
+        XCTAssertFalse(LiveObject.isKept("_$s6Lively6HiddenVMn", as: LiveObject.mangledType("Hidde", module: "Lively", kind: "V")))
+        // A kept enum's statics and nested types are the app's, not the enum's own.
+        XCTAssertFalse(LiveObject.isKept("_$s6Lively4MoodO5countSivau", as: LiveObject.mangledType("Mood", module: "Lively", kind: "O")))
+        XCTAssertFalse(LiveObject.isKept("_$s6Lively4MoodO4InfoVMn", as: LiveObject.mangledType("Mood", module: "Lively", kind: "O")))
+        XCTAssertTrue(LiveObject.isKept("_$s6Lively4MoodOMn", as: LiveObject.mangledType("Mood", module: "Lively", kind: "O")))
+        // A signed exponent is part of a number's token.
+        let numbers = SwiftSource.Text("let a = 1e-7, b = 0xFFp-1, c = 2.5E+3, d = 7")
+        XCTAssertEqual(numbers.tokenEnd(SwiftSource.Position(file: "", line: 1, column: 9)), 12)
+        XCTAssertEqual(numbers.tokenEnd(SwiftSource.Position(file: "", line: 1, column: 19)), 25)
+        XCTAssertEqual(numbers.tokenEnd(SwiftSource.Position(file: "", line: 1, column: 32)), 37)
+        XCTAssertEqual(numbers.tokenEnd(SwiftSource.Position(file: "", line: 1, column: 44)), 44)
+        // A constant taken away keeps its value's digest with the open app's layout, like a type: brought back with
+        // another value, it's remade rather than read from the app's storage.
+        let constant = LiveReload.Group.constant.entry("Tones\tlimit: abc"), other = LiveReload.Group.constant.entry("Tones\tother: def")
+        XCTAssertEqual(LiveReload.layoutProblem(before: [constant, other], after: [other]).layout?.contains(constant), true)
+        XCTAssertEqual(LiveReload.layoutProblem(before: [constant, other], after: [LiveReload.Group.constant.entry("Tones\tlimit: xyz"), other]).layout?.contains(constant), false)
+        // Each group keeps its own history: an alias named Mood says nothing of the shape the enum Mood had.
+        let moodShape = LiveReload.Group.shape.entry("Mood", "enum"), moodAlias = LiveReload.Group.alias.entry("Mood = Int")
+        XCTAssertEqual(LiveReload.layoutProblem(before: ["Mood\t", "Mood\tcase a: (Mood.Type) -> Mood", moodShape], after: [moodAlias]).layout?.contains(moodShape), true)
+        // Nested plain collections of a grown enum keep its unused numbers unused; an optional or a tuple of it doesn't.
+        XCTAssertNil(LiveReload.enumsHeld(grown: ["Mood"], held: ["Mood\t", "Mood\tcase a: (Mood.Type) -> Mood", "\tnested: [[Mood]]", "\tbyName: [String : [Mood]]", "\tbyMood: [Mood : [Int]]", "\tall: Array<Mood>"], spares: [:]))
+        XCTAssertEqual(LiveReload.enumsHeld(grown: ["Mood"], held: ["Mood\t", "\tmaybe: [Mood?]"], spares: [:]), "a global holds Mood as [Mood?], which a new case would change")
+        XCTAssertEqual(LiveReload.readable("Model changed what it holds (Model.$__lazy_storage_$_cache: Int?)"), "Model changed what it holds (Model.cache (lazy): Int?)")
         // A private type moved to another file is another type to the runtime, whatever its layout.
         XCTAssertTrue(layout!.contains(LiveReload.placeGroup + "\tHidden\tShapes.swift"), "\(layout!.filter { $0.hasPrefix(LiveReload.placeGroup) })")
         _ = try await layoutWith([("private struct Hidden { var v = 1 }\n", "")])
@@ -347,7 +397,7 @@ final class LiveReloadTests: XCTestCase {
         let both = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift", "Hidden.swift"], module: project.exe, macOS: "14.0")
         try FileManager.default.removeItem(at: sources.appendingPathComponent("Hidden.swift"))
         let oneLeft = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
-        XCTAssertEqual(try XCTUnwrap(both).filter { $0.hasPrefix(LiveReload.placeGroup) }.count, 2)
+        XCTAssertEqual(try XCTUnwrap(both).filter { $0.hasPrefix(LiveReload.placeGroup + "\tHidden") }.count, 2)
         XCTAssertNil(LiveReload.layoutProblem(before: both, after: try XCTUnwrap(oneLeft)).problem)
         // A struct carrying the enum lends its optional the enum's numbers; one with a spare of Lamp's doesn't.
         _ = try await layoutWith([("var stack = Stack<Int>(top: nil) }", "var stack = Stack<Int>(top: nil); var pick: Pick? = nil }")])
@@ -398,9 +448,11 @@ final class LiveReloadTests: XCTestCase {
         let rewritten = try String(contentsOf: plain, encoding: .utf8)
         XCTAssertFalse(rewritten.contains("__lampSpare_Plain"), rewritten)
         XCTAssertTrue(rewritten.contains("__lampSpare_Box_0"), rewritten)
-        try "struct Plain { var a = 1 }\n".write(to: plain, atomically: true, encoding: .utf8)
+        try "struct Plain { var a = 1; struct Sub { var b = 0 }; var sub = Sub() }\n".write(to: plain, atomically: true, encoding: .utf8)
         _ = try run("/usr/bin/perl", [perl.path, "4", "-nospare:Zone", "s", plain.path])
-        XCTAssertTrue(try String(contentsOf: plain, encoding: .utf8).contains("var __lampSpare_Plain = LampSpare(nil)"))
+        let spared = try String(contentsOf: plain, encoding: .utf8)
+        XCTAssertTrue(spared.contains("var __lampSpare_Plain = LampSpare(nil)"), spared)
+        XCTAssertTrue(spared.contains("struct Sub { var __lampSpare_Sub = LampSpare(nil); var b = 0 }"), spared)
         // The memberwise initializers written again beside the spares, from the plain sources, for the structs the
         // live copy gave one: a reference to one as a value (`.map(Item.init)`) then still matches.
         try "struct Item { var name: String; var count = 1 }\nstruct Keyed { let rawValue: Int }\nprivate struct Own { var n: Int }\n".write(to: project.dir.appendingPathComponent("Sources/Items.swift"), atomically: true, encoding: .utf8)

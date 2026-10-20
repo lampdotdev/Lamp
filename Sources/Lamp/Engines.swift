@@ -578,7 +578,8 @@ extension Agent {
                 case "text": return (block["text"] as? String)?.trimmed.nilIfEmpty.map { [AgentEvent.text($0)] } ?? []
                 case "tool_use":
                     let name = block["name"] as? String ?? "Tool", input = block["input"] as? [String: Any] ?? [:]
-                    let call = AgentEvent.tool(tool(name, input), call: callKey(plainName(name), input))
+                    let said = ((input["doing"] as? String) ?? (name == "Bash" ? input["description"] as? String : nil))?.trimmed.nilIfEmpty
+                    let call = AgentEvent.tool(tool(name, input), call: callKey(plainName(name), input), said: said)
                     // Claude Code has the model say what each command is for, in a few words of its own.
                     guard name == "Bash" else { return [call] }
                     return [.naming((input["description"] as? String)?.trimmed ?? ""), call]
@@ -670,7 +671,7 @@ extension Agent {
         case ("item.started", "mcp_tool_call"):
             let name = item["tool"] as? String ?? "tool"
             let arguments = item["arguments"] as? [String: Any] ?? [:]
-            return [.tool(tool(name, arguments), call: callKey(name, arguments))]
+            return [.tool(tool(name, arguments), call: callKey(name, arguments), said: (arguments["doing"] as? String)?.trimmed.nilIfEmpty)]
         case ("item.started", "command_execution"):
             let command = "Run: \(item["command"] as? String ?? "")"
             return [.tool(command, call: command)]

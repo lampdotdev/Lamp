@@ -28,7 +28,12 @@ set -euo pipefail
 here="${0:A:h}/.."
 support="$HOME/Library/Application Support"
 if [ "${EDITION:-dev}" = release ]; then name="Lamp"; domain="dev.lamp.host"; prefix="dev.lamp.app."
-else name="Lamp Dev"; domain="dev.lamp.host.dev"; prefix="dev.lamp.dev.app."; fi
+else
+  # This checkout's own instance of the development build (scripts/instance.sh), or the plain Lamp Dev.
+  instance="$("${0:A:h}/instance.sh")"
+  name="Lamp Dev${instance:+ $instance}"; domain="dev.lamp.host.dev${instance:+.$instance}"
+  prefix="dev.lamp.dev.${instance:+$instance.}app."
+fi
 apps="$HOME/Applications/$name Apps"
 state="$support/$name"
 backup="$support/$name-fresh-start"
@@ -103,7 +108,7 @@ begin() {
   # Lamp Dev is this checkout's own build when there is one: by name, macOS picks whichever copy it likes, and
   # every worktree that ever built Lamp Dev has one, however old.
   local own="$here/build/$name.app"
-  if [ "$name" = "Lamp Dev" ] && [ -d "$own" ]; then
+  if [ "${EDITION:-dev}" = dev ] && [ -d "$own" ]; then
     open "${env[@]}" "$own"
   else
     open "${env[@]}" -a "$name" 2>/dev/null || open "${env[@]}" "$own"
