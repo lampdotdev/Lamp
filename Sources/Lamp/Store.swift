@@ -6588,11 +6588,16 @@ final class Store: ObservableObject {
         guard !turn.look.inProgress else { return (200, ["text": "Lamp is already looking at the app. Wait for that result."]) }
         turn.look.inProgress = true
         turn.look.installed = false
-        // Each stage says itself from here; once the look is over the model is reading what it found.
-        self.note(TurnProgress.activity(for: ToolCall("look_at_app")), for: project)
+        // Each stage says itself from here; once the look is over the model is reading what it found. Only while this
+        // look's turn is the one on screen: after Stop, a look still waiting on the app can end after the next turn began.
+        func say(_ activity: String) {
+            guard turns[project.id] === turn, !turn.stopped else { return }
+            self.note(activity, for: project)
+        }
+        say(TurnProgress.activity(for: ToolCall("look_at_app")))
         defer {
             turn.look.inProgress = false
-            self.note(Activity.thinking, for: project)
+            say(Activity.thinking)
         }
 
         try? await writeOwnFiles(project, all: false)
@@ -6620,7 +6625,7 @@ final class Store: ObservableObject {
             } else {
                 note = "The app is running your latest code; nothing needed rebuilding."
             }
-            self.note(looking, for: project)
+            say(looking)
             try? await Task.sleep(for: .seconds(1))
             let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
             if let udid = simulatorApps[project.id]?.udid, await Simulator.screenshot(on: udid, to: picture) { screenshots = [picture] }
@@ -6657,7 +6662,7 @@ final class Store: ObservableObject {
             // Nothing to rebuild and the app is open: ask it for fresh pictures instead of relaunching it.
             let asked = Date()
             since = asked
-            self.note(looking, for: project)
+            say(looking)
             Runtime.requestScreenshots(of: project)
             screenshots = await Runtime.screenshots(of: project, since: asked, waiting: 2)
             note = "The app is running your latest code; nothing needed rebuilding."
@@ -6678,14 +6683,14 @@ final class Store: ObservableObject {
             }
             if !changed { note = "The app is running your latest code; it was reopened without rebuilding." }
             if reopen { note = "The app was closed and opened again, so it started fresh." }
-            self.note(looking, for: project)
+            say(looking)
             screenshots = await Runtime.screenshots(of: project, since: launched)
         }
         var lead = ""
         if let prop, !prop.isEmpty, !screenshots.isEmpty {
             // One prop on its own: the app shows it from four sides over its scene, pictures it, and goes back.
             let asked = Date()
-            self.note("Looking at it from all sides", for: project)
+            say("Looking at it from all sides")
             Runtime.requestProp(prop, of: project)
             switch await Runtime.propAnswer(of: project) {
             case "shown"?:
@@ -6699,7 +6704,7 @@ final class Store: ObservableObject {
             }
         }
         if motion, !screenshots.isEmpty {
-            self.note("Watching it move", for: project)
+            say("Watching it move")
             if Privacy.sharesPictures, let watched = await Runtime.motion(of: project) {
                 lead += watched.text + " "
                 if !watched.pictures.isEmpty { screenshots = watched.pictures }
