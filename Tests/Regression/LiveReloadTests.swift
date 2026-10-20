@@ -347,7 +347,7 @@ final class LiveReloadTests: XCTestCase {
         // A class the app's own code writes `final` is the agent's error, not the copy step's; a mention in a comment
         // or a string isn't the app writing it.
         let written = project.dir.appendingPathComponent("Sources").appendingPathComponent("Roots.swift")
-        try "/* \" */ let help = \"final class Root\"\n// Example: final class Root\nlet raw = #\"final class Root\"#\nlet nested = \"\\(String(\"final class Root\"))\"\nclass Root {}\n".write(to: written, atomically: true, encoding: .utf8)
+        try "/* \" */ let help = \"final class Root\"\n// Example: final class Root\nlet raw = #\"final class Root\"#\nlet nested = \"\\(String(\"final class Root\"))\"\nlet escaped = #\"\\#\"#final class Root\"#\nclass Root {}\n".write(to: written, atomically: true, encoding: .utf8)
         XCTAssertTrue(LiveSlots.brokeFinal("error: inheritance from a final class 'Root'", project: project))
         try "final class Root {}\n".write(to: written, atomically: true, encoding: .utf8)
         XCTAssertFalse(LiveSlots.brokeFinal("error: inheritance from a final class 'Root'", project: project))

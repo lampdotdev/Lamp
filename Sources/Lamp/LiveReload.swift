@@ -1753,7 +1753,9 @@ enum SwiftText {
             if chars[end] == "\\", end + hashes < chars.count, chars[(end + 1)..<(end + 1 + hashes)].allSatisfy({ $0 == "#" }) {
                 let after = end + 1 + hashes
                 if after < chars.count, chars[after] == "(" { end = interpolationEnd(chars, from: after + 1); continue }
-                if hashes == 0 { end += 2; continue }
+                // The escaped character is the string's, whatever it is: a raw string's `\#"` is no closing quote.
+                end = after + 1
+                continue
             }
             if !multiline, chars[end] == "\n" { return end }
             if chars[end] == "\"", end + quotes - 1 < chars.count, chars[end..<(end + quotes)].allSatisfy({ $0 == "\"" }) {
