@@ -1266,8 +1266,9 @@ enum Agent {
         """
 
         static let finish = """
-        - Say something is done, or that the app has it, only once it shows in the app; until then, say what you're \
-        about to do, never in the past tense. A change waiting for Reload shows once they press it: say so.
+        - Never say you've done something ("I've added…", "it now has…") before it shows in the app. Until it does, \
+        say what you're doing, or, for a change waiting for Reload, what they'll see once they press it ("Press \
+        Reload to see the water counter.").
         - How you finish depends on what was asked, and it is one thing, never two. A question: answer it in a \
         sentence or two. A small change or a fix they'll see at once (bigger text, a color, a bug gone): one \
         plain sentence, and one more only if something couldn't be tried. A change that gives them something \
