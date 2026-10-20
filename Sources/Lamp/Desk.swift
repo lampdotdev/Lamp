@@ -332,14 +332,12 @@ struct DeskRows: Layout {
         stride(from: 0, to: subviews.count, by: columns).map { Array(subviews[$0..<min($0 + columns, subviews.count)]) }
     }
 
-    /// How far down each icon in a row goes, so a row with a bubble over one of its wishes keeps every icon level
-    /// and the bubble has room of its own, over nothing of the row above.
+    /// The room a row keeps above its icons for the bubbles over its wishes: every tile in the row goes down by it,
+    /// so icons stay level, and a bubble drawn there covers nothing of the row above or a neighbour's name.
     private func room(_ line: [LayoutSubviews.Element]) -> CGFloat { line.map { $0[DeskBubble.Room.self] }.max() ?? 0 }
 
     private func height(_ line: [LayoutSubviews.Element]) -> CGFloat {
-        let most = room(line)
-        return line.map { $0.sizeThatFits(ProposedViewSize(width: width, height: nil)).height + most - $0[DeskBubble.Room.self] }
-            .max() ?? 0
+        room(line) + (line.map { $0.sizeThatFits(ProposedViewSize(width: width, height: nil)).height }.max() ?? 0)
     }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
@@ -360,8 +358,7 @@ struct DeskRows: Layout {
             let most = room(line)
             for view in line {
                 let size = view.sizeThatFits(ProposedViewSize(width: width, height: nil))
-                view.place(at: CGPoint(x: x, y: y + most - view[DeskBubble.Room.self]),
-                           proposal: ProposedViewSize(width: width, height: size.height))
+                view.place(at: CGPoint(x: x, y: y + most), proposal: ProposedViewSize(width: width, height: size.height))
                 x += width + spacing
             }
             y += height(line) + lineSpacing
@@ -723,6 +720,10 @@ struct DeskIcon: View {
     @ObservedObject private var arrangement = DeskArrangement.shared
     @State private var hovered = false
     @State private var place: WishPlace?
+    /// Its bubble is up, and the room it takes above the row is held. The room is let go only once the bubble has
+    /// faded, so the row never closes up under a bubble still showing (`DeskBubble.Room`).
+    @State private var bubbleShown = false
+    @State private var holdsRoom = false
 
     private var busy: Bool { store.busy.contains(project.id) }
     /// Lit under the pointer, but not while a wish is dragged over it: the pointer is the drag's then.
@@ -763,11 +764,6 @@ struct DeskIcon: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            if building {
-                DeskBubble(activity: deskActivity?.words, since: deskActivity?.since ?? .now)
-                    .frame(height: DeskBubble.room - 6, alignment: .bottom)
-                    .transition(.opacity.combined(with: .scale(scale: 0.85, anchor: .bottom)))
-            }
             AppIcon(project: project, size: 76)
                 .background {
                     if building { BuildingGlow(size: 76).transition(.opacity) }
@@ -792,9 +788,30 @@ struct DeskIcon: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8).padding(.horizontal, 4)
         .background(Color.primary.opacity(lit ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        // The room its bubble takes above it, which the desk gives the whole row so icons stay level.
-        .layoutValue(key: DeskBubble.Room.self, value: building ? DeskBubble.room : 0)
-        .animation(.easeInOut(duration: 0.4), value: building)
+        // The bubble sits above the tile, in the room the desk gives its whole row, and takes no part in the tile's
+        // own size: a tile is the same height with or without one, so no icon in the row moves when one comes or goes.
+        .overlay(alignment: .top) {
+            if bubbleShown {
+                DeskBubble(activity: deskActivity?.words, since: deskActivity?.since ?? .now)
+                    .frame(height: DeskBubble.room, alignment: .bottom)
+                    .padding(.horizontal, 4)
+                    .offset(y: -DeskBubble.room)
+                    .transition(.opacity)
+            }
+        }
+        .layoutValue(key: DeskBubble.Room.self, value: holdsRoom ? DeskBubble.room : 0)
+        .onChange(of: building, initial: true) { _, now in
+            if now {
+                withAnimation(.easeInOut(duration: 0.35)) { holdsRoom = true; bubbleShown = true }
+                return
+            }
+            withAnimation(.easeOut(duration: 0.35)) { bubbleShown = false }
+            Task {
+                try? await Task.sleep(for: .milliseconds(400))
+                guard !building else { return }
+                withAnimation(.easeInOut(duration: 0.35)) { holdsRoom = false }
+            }
+        }
         .opacity(lifted ? 0.3 : 1)
         .contentShape(Rectangle())
         .onTapGesture { store.open(fromDesk: project) }
@@ -856,17 +873,23 @@ struct DeskBubble: View {
             } ?? Self.placeholder
             let shape = RoundedRectangle(cornerRadius: 11, style: .continuous)
             VStack(spacing: 1) {
-                Text(words)
-                    .font(.caption.weight(.medium))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(text(at: timeline.date))
-                    .contentTransition(.opacity)
-                    .animation(.easeInOut(duration: 0.35), value: words)
-                    .padding(.horizontal, 8).padding(.vertical, 5)
-                    .background(Color(nsColor: .textBackgroundColor), in: shape)
-                    .overlay(shape.strokeBorder(BuildingGlow.light(at: timeline.date, still: reduceMotion), lineWidth: 1.5))
-                    .shadow(color: .black.opacity(0.1), radius: 4, y: 1)
+                // Old words fade as new ones come, each laid out whole at its own size, and the bubble holds both
+                // while they cross, so neither is cut as the bubble grows or shrinks to the new words.
+                ZStack {
+                    Text(words)
+                        .font(.caption.weight(.medium))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .foregroundStyle(text(at: timeline.date))
+                        .id(words)
+                        .transition(.opacity)
+                }
+                .animation(.easeInOut(duration: 0.35), value: words)
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .background(Color(nsColor: .textBackgroundColor), in: shape)
+                .overlay(shape.strokeBorder(BuildingGlow.light(at: timeline.date, still: reduceMotion), lineWidth: 1.5))
+                .shadow(color: .black.opacity(0.1), radius: 4, y: 1)
                 // The thought's tail, two dots stepping down to the icon.
                 HStack(spacing: 0) {
                     Circle().frame(width: 5, height: 5)
