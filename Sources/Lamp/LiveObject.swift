@@ -57,7 +57,8 @@ enum LiveObject {
     /// struct, C for a class or actor, O for an enum), the last part's `kind` and the outer parts' from `kinds` by
     /// their qualified names (a `Mood` inside a `Game` struct is `4GameV4MoodO`), the last part's kind where none is known.
     /// Whether a symbol is the kept type's: its mangled name, where a private type's part carries the compiler's
-    /// discriminator between its name and its kind letter (`4Mood33_<32 hex>LLO`).
+    /// discriminator between its name and its kind letter (`4Mood33_<32 hex>LLO`, or with the compiler's word
+    /// substitutions, `4Mood022_<hex>LLO`).
     static func isKept(_ symbol: String, as kept: String) -> Bool {
         var pattern = "^_\\$s", rest = Substring(kept), module = true
         while let m = rest.firstMatch(of: #/^(\d+)/#), let length = Int(m.1) {
@@ -69,7 +70,10 @@ enum LiveObject {
             if module { module = false; continue }
             guard let kind = rest.first else { break }
             rest = rest.dropFirst()
-            pattern += #"(?:33_[0-9A-F]{32}LL)?"# + String(kind)
+            // The discriminator is `_` and 32 hex digits, an identifier of 33; with word substitutions it starts with
+            // `0` instead of a length, which no kind letter does. Either ends at its first `LL`, so it can't run on
+            // into a nested declaration's name (`…LLO5HELLOV`).
+            pattern += #"(?:33_[0-9A-F]{32}LL|0(?:(?!LL)[0-9A-Za-z_])+LL)?"# + String(kind)
         }
         // Anchored past the last kind letter: a member of the type (`…O5countSivau`) or a type nested in it
         // (`…O4InfoVMn`) begins with a length and is the app's, not the kept type's own.

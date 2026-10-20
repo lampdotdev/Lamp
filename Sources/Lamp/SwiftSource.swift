@@ -63,6 +63,9 @@ enum SwiftSource {
         var initializers: [String: [(labels: [String], types: [String])]] = [:]
         /// Where each type's own declaration runs, by its qualified name: what a view's `$name` means is its own.
         var types: [String: (start: Position, last: Position)] = [:]
+        /// Where each extension runs, by the name it extends as written (`Row`, `Shelf.Row`): a view's `$name` means
+        /// its own there too.
+        var extensions: [String: [(start: Position, last: Position)]] = [:]
         /// The types private to their file, which an extension in another file can't reach.
         var privateTypes: Set<String> = []
         /// The stored properties declared with `let` ("Type<tab>name").
@@ -179,7 +182,10 @@ enum SwiftSource {
                 if type.isPrivate { out.privateTypes.insert(type.key) }
                 return
             }
-            if line.extensionOf != nil { return }
+            if let extended = line.extensionOf {
+                if let r = SwiftSource.range(in: line.text) { out.extensions[extended, default: []].append(r) }
+                return
+            }
             if let owner, opens("accessor_decl"), let m = observer.firstMatch(in: line.text, range: line.range) {
                 var name = String(line.text[Range(m.range(at: 1), in: line.text)!])
                 if name.hasPrefix("_") { name.removeFirst() }
@@ -299,14 +305,8 @@ enum SwiftSource {
     /// entries the layout comparison holds to what the open app had, so a change to one reopens the app.
     /// A SwiftData model class is listed the same, as "model Name" with a digest of its whole file: its accessors
     /// find its data by key paths, which a library compiled from its file makes over again under identities the
-    /// app's container doesn't know, so any change to that file reopens the app.
-    static func launchEntries(inDump dump: String, folder: URL) -> [String] {
-        let reader = LaunchReader()
-        walk(dump, reader.take)
-        return reader.finish(folder: folder)
-    }
-
-    /// Reads which types are read only at launch, line by line as `walk` gives them.
+    /// app's container doesn't know, so any change to that file reopens the app. Read line by line as `walk`
+    /// gives them.
     final class LaunchReader {
         private let launch = try! NSRegularExpression(pattern: #"inherits="[^"]*\b(App|Scene|Commands|NSApplicationDelegate|UIApplicationDelegate)\b"#)
         private let model = try! NSRegularExpression(pattern: #"^(\s*)\(custom_attr\b.*macro="SwiftData\.\(file\)\.Model\(\)""#)
@@ -366,7 +366,8 @@ enum SwiftSource {
             guard let text = files[path] ?? Text(path: path) else { return nil }
             files[path] = text
             guard let start = text.offset(initial.start), let end = text.tokenEnd(initial.last), start < end else { return nil }
-            return group.entry(key + ": " + digest(text.slice(start, end)))
+            // With its type: one whose type changed is another value, kept in other storage by the change's code.
+            return group.entry(key + ": " + digest(variable.type + "=" + text.slice(start, end)))
         }
     }
 

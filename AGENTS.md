@@ -824,11 +824,11 @@ or `unowned` is part of its field's entry (`Owner<tab>weak helper: Helper?`). A 
 layouts have one, so a layout an earlier Lamp kept says nothing of it. After a build, `Store.install` tries
 `reloadInPlace` first, which decides the app is open and built live, takes the verdict and hands the changed files to
 `LiveReload.put`, the one pipeline from the layout check to the record of what the app now runs, acting on its
-`Outcome` (it went in, with what was done beyond the code; or why the app has to reopen): the change goes in when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.launchEntries`, held to what the open app had as part of the layout; a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again) or Lamp's own files, and leaves every type
+`Outcome` (it went in, with what was done beyond the code; or why the app has to reopen): the change goes in when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.LaunchReader`, held to what the open app had as part of the layout; a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again) or Lamp's own files, and leaves every type
 holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties and cases,
 from `-dump-ast` of just the changed files, compared for the open app's sources and the new ones; no reading of the
-text; a typealias is printed as itself wherever it's used, so each is listed with what it names and one the open app
-has that now names something else reopens, `LiveReload.aliasGroup`; an associated type the compiler inferred, such
+text; a typealias is printed as itself wherever it's used, so each is listed with what it names and one the open app has that now names something else reopens, `LiveReload.aliasGroup`, as does a name that was a
+typealias and is now a type of its own, or the other way round; a case is listed with whether it's `indirect`; an associated type the compiler inferred, such
 as Identifiable's `ID` or a Sequence's `Iterator`, is a typealias it declares itself and is listed the same; a member
 returning `some …`, a modifier's `body(content:)` or a style's `makeBody`, whose type is what it builds, is listed by that
 type as the compiler prints it where the body's value becomes the opaque one, `LiveReload.opaqueGroup`, so `1` may
@@ -838,7 +838,7 @@ one, by that type (`(some Equatable, Int)`, so a tuple's or array's plain parts 
 with the types it was given (`padding [with … Self -> Text]`), which together are the type: `.bold()` added before
 `.padding()` changes nothing, `.font()` after it does, and so does another overload (`padding()` to `padding(12)`),
 whose opaque result is another type even when it builds the same one: the open app's witness tables and callers were laid out for the type it had, and the
-compiler prints both as `some View`; a view's own body, wrapped by the live copy, and a private member are left out; a private type is listed with its file,
+compiler prints both as `some View`; a view's own body, wrapped by the live copy, and a private member that isn't stored are left out; a private type is listed with its file,
 `LiveReload.placeGroup`, since its mangled name carries it and one moved to another file is another type at run time,
 and keyed with its file throughout the layout and the declarations (`Row@A.swift`, each part of a nested one; `LiveReload.bare`
 gives the name back where the code names it, as a field's type or a use in old code does, and `readable` says "Row in
@@ -848,8 +848,9 @@ read in one pass, `SwiftSource.walk`, which keeps the scopes and keys every type
 type, a private one with its file, a local one with its function) for every reader of it: the layout (`LiveReload.Members`),
 where each property is declared (`SwiftSource.DeclarationsReader`), what's read at launch (`LaunchReader`) and what
 old code does (`LiveReload.OldCode`), all taking the same lines in one walk in `LiveReload.analysis`, so a type can't
-be keyed two ways by two readers) (`LiveReload.reloadable`, comparing with the sources the
-open app runs, kept in `.lamp/live/running`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
+be keyed two ways by two readers) (`LiveReload.reloadable`, comparing with the sources the open app runs, kept in `.lamp/live/running`, which holds only
+for the copy that took the last change: one opened again since, by the person or macOS, starts from what was installed,
+so it's forgotten and the change reopens the app, `LiveReload.tookChanges`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
 linked into a library. Every file is compiled when what's declared changed (a function, an initializer, a computed
 property, a conformance, a member's `@objc` and its selector, a stored property's observers, which turn every write
 into a call: `LiveReload.declarationGroup`, `declarationsChanged`), since an unchanged caller may then mean
@@ -959,8 +960,8 @@ the only difference in layout is new stored properties in such types, `LiveSlots
 declaration in the live copy into a computed property kept in a spare, found by the compiler's own
 source ranges (`SwiftSource.declarations`, from the same `-dump-ast` as the layout), so however it's written (with
 attributes on lines above, in a `var a = 1, b = 2` list, in a type written on one line) it's replaced exactly, with
-no reading of the text (a view's `$name` becomes a binding to its
-box), and the change is compiled again and checked as usual. Being stored, a spare is observed like any property, so
+no reading of the text (a view's `$name` becomes a binding to its box, in the view
+and in every extension of it), and the change is compiled again and checked as usual. Being stored, a spare is observed like any property, so
 views redraw. A value set is read back as set, nil included: a spare tells "set to nil" from "never set" by holding an entry at
 all (`LampSpare.has`, a class's non-nil `LampSpare?`, the state box's stored entry), since a nil boxed as `Any`
 doesn't cast back. A class's starting value that isn't a literal (`.now`, a call) is worked out on the first read and kept;
@@ -992,11 +993,12 @@ so the sources the open app runs, and those of every change that went in since i
 enum, or an interpolation of it, in an escaping closure that outlives a draw (one made outside a view's body or a
 member returning a view, or one a body hands to anything but SwiftUI, a Timer's, a dispatch queue's, the app's own, or
 sets into a property or gives as a property's value; a Button's action is made again at the next draw), an async
-closure or an async function (`LiveReload.enumsMetByOldCode`), and the app reopens when there is one. The enum's metadata stays the change's own rather
-than the app's (`LiveReload.compile(keep:)`, renamed `$lampown` so `LampLive` binds every later change to it), since
-the app's doesn't know the new cases; and the app's own metadata is pointed at the change's description of the enum
-(`LampLive.load`, one pointer), so the app's field records, the runtime's asks (printing, Codable, hashing, a cast)
-and code compiled before still read the new cases. A constant made from the enum (`Mood.allCases`) is remade like one
+closure or an async function (`LiveReload.enumsMetByOldCode`), and the app reopens when there is one. The enum's description and value witnesses stay the change's
+own (`LiveReload.compile(keep:)`, renamed `$lampown` so `LampLive` binds every later change to them), since the app's
+don't know the new cases; its metadata stays the app's, so a value boxed before the change and one boxed after are the
+same type to a cast, and the app's metadata is pointed at the change's description and value witnesses (`LampLive.load`,
+two pointers), so the app's field records, the runtime's asks (printing, Codable, hashing, a cast) and code compiled
+before still read the new cases. A constant made from the enum (`Mood.allCases`) is remade like one
 whose text changed (`LiveSlots.constants(naming:)`). What old code may still be doing is read more widely than a
 switch or an interpolation: any value of the enum's type, or of a type holding it by value (`LiveReload.holders`),
 that running code has in hand reopens the app, since an old frame reads it by the layout it was compiled with (an
@@ -1011,7 +1013,8 @@ A property an explicit `CodingKeys` names stays a field (Codable needs it stored
 so it reopens the app, as does one set in an initializer the type writes itself (`SwiftSource.Declarations.assigned`:
 a computed property can't be set before the stored ones are; a convenience initializer sets them after `self.init`
 and doesn't count), one with observers, `lazy`, or held weakly or
-unowned, or `@ObservationIgnored` (a spare is observed), or a `@Published` one whose `$name` publisher is used, or
+unowned, or `@ObservationIgnored` (a spare is observed), or a `@Published` one whose `$name` publisher is used
+anywhere in the app, or
 one with no starting value, or a struct's whose starting value isn't the same every time; `LiveSlots.fitting` says
 which, and the chat's detail carries that reason beside the layout's, with the
 copy step's own names said as what they are (`LiveReload.readable`). A view's `$name`, its state's binding, becomes
@@ -1047,8 +1050,8 @@ own spare places in a struct name no type of their own, so they don't count. A c
 others (`let a = 1, b = 2`) isn't rewritten, and the reason says so.
 
 A stored static or global `var` is made once too, the first time it's read, so a new starting value for one can't
-show without reopening, and whether it seemed to would depend on whether it had been read: its starting value is
-part of the layout as a digest as well (`LiveReload.Group.stored`), and one that changed reopens the app.
+show without reopening, and whether it seemed to would depend on whether it had been read: its starting value and its type are part of the layout as a digest as well (`LiveReload.Group.stored`), and one that
+changed reopens the app.
 
 **The live cases** (`Tests/LiveCases`, run by `LiveCasesTests`) are the record of which side each kind of change
 lands on: every case found by a review round, as an app's sources, one `afterN/` folder per change and `expect.txt`

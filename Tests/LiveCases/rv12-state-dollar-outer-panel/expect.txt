@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Outer.Panel.pinned)
+== run
+before: AnyView | AnyView
+RELOAD 1 (whole): ok
+after1 (state added to Outer.Panel; the top-level Panel's extension keeps its own $pinned: want it in live): AnyView | AnyView

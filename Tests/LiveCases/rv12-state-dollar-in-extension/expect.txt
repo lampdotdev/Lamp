@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Panel.pinned)
+== run
+before: AnyView
+RELOAD 1 (whole): ok
+after1 (want a toggle bound to the new state, as when it's used in the body): AnyView
