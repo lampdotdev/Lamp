@@ -769,7 +769,9 @@ from then on (`no-final`). A class's finality and its initializers (which have m
 too; one in an extension is a convenience initializer and isn't) are held with the layout (`LiveReload.Group.inits`),
 so a subclass added, or an initializer added or changed, reopens the app with its reason rather than being refused
 by the runtime after the compile. After a build, `Store.install` tries
-`reloadInPlace` first: when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.launchEntries`, held to what the open app had as part of the layout; a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again) or Lamp's own files, and leaves every type
+`reloadInPlace` first, which decides the app is open and built live, takes the verdict and hands the changed files to
+`LiveReload.put`, the one pipeline from the layout check to the record of what the app now runs, acting on its
+`Outcome` (it went in, with what was done beyond the code; or why the app has to reopen): the change goes in when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.launchEntries`, held to what the open app had as part of the layout; a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again) or Lamp's own files, and leaves every type
 holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties and cases,
 from `-dump-ast` of just the changed files, compared for the open app's sources and the new ones; no reading of the
 text; a typealias is printed as itself wherever it's used, so each is listed with what it names and one the open app
