@@ -274,7 +274,8 @@ const webFetch = defineTool({
  * as the step's name and the turn's activity, as it does Claude Code's description of its commands. pi's bash
  * takes only the command, so nothing else says it in words a person can follow, and the command's text is never
  * read for it. An extension may register a tool under a built-in's name to replace it (pi's extension docs); the
- * rest is pi's bash as it is, which runs the command once the description is set aside.
+ * rest is pi's bash as it is, which runs the command once the description is set aside. It's required: left
+ * optional, Sonnet through pi left it off every command, where Opus filled it in.
  */
 function bashWithDescription() {
 	const bash = createBashTool(process.cwd());
@@ -282,9 +283,9 @@ function bashWithDescription() {
 		...bash,
 		parameters: Type.Object({
 			...bash.parameters.properties,
-			description: Type.Optional(Type.String({
+			description: Type.String({
 				description: "What this command does, in 5-10 plain words a non-programmer would follow, e.g. \"Building the app\" or \"Checking which files changed\"",
-			})),
+			}),
 		}),
 		async execute(id: string, params: { command: string; timeout?: number; description?: string }, ...rest: unknown[]) {
 			const { description: _said, ...run } = params;
