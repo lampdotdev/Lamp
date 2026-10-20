@@ -103,12 +103,23 @@ enum Privacy {
         return lampFolders.contains { $0 == root || $0.hasPrefix(root.hasSuffix("/") ? root : root + "/") }
     }
 
-    /// The support folders of both Lamps on this Mac, the installed one's and the development build's,
-    /// as real paths: neither is the agent's to open, whichever Lamp it runs under.
-    private static let lampFolders: [String] = {
+    /// The support folders of every Lamp on this Mac, the installed one's, the development build's and each
+    /// worktree's instance, as real paths: none is the agent's to open, whichever Lamp it runs under. An instance
+    /// made while this Lamp runs is read in within a few seconds; a search asks for every path it passes, so the
+    /// list isn't read off the disk for each.
+    private static var lampFolders: [String] {
+        lampFoldersLock.lock()
+        defer { lampFoldersLock.unlock() }
+        let now = Date()
+        if now.timeIntervalSince(lampFoldersRead) < 5 { return lampFoldersCache }
         let support = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        return Edition.lampFolderNames.map { support.appendingPathComponent($0).resolvingSymlinksInPath().standardizedFileURL.path }
-    }()
+        lampFoldersCache = Edition.lampFolderNames.map { support.appendingPathComponent($0).resolvingSymlinksInPath().standardizedFileURL.path }
+        lampFoldersRead = now
+        return lampFoldersCache
+    }
+    private static let lampFoldersLock = NSLock()
+    nonisolated(unsafe) private static var lampFoldersCache: [String] = []
+    nonisolated(unsafe) private static var lampFoldersRead = Date.distantPast
 
     /// Whether a search that started somewhere the agent may look should still pass over `path` further down:
     /// the places the rule above never opens.
