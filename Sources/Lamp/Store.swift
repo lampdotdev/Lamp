@@ -4600,12 +4600,29 @@ final class Store: ObservableObject {
     private var liveBuildFailed: Set<String> = []
     /// Apps whose change went in before their build: the install that follows the build has nothing to do.
     private var reloadedBeforeBuild: Set<String> = []
+    /// What each running whole build after an early change was started from: its process, to end it when a newer
+    /// change makes it stale, and the fingerprint of the sources it builds, to tell when nothing changed since.
+    private var liveBuildRuns: [String: (process: Process?, fingerprint: String)] = [:]
+    /// Whole builds ended because a newer change replaced them: what they leave in build/ isn't installed.
+    private var liveBuildsSuperseded: Set<String> = []
 
     /// Waits for the whole build after an early change, which can take a minute: meanwhile the turn says it's
     /// building, not that the change is going in, which was said seconds before and is done.
     private func awaitLiveBuild(of project: LampProject) async {
         guard let whole = liveBuilds[project.id] else { return }
         note("Building…", for: project)
+        await whole.value
+    }
+
+    /// Ends the whole build after an earlier change, and waits for it to be gone, since the next build writes the
+    /// same folders. What it left in build/ is the version before the change, or half of it, so until another
+    /// whole build is done the app is treated as one whose whole build failed: never installed from it.
+    private func supersedeLiveBuild(of project: LampProject) async {
+        guard let whole = liveBuilds[project.id] else { return }
+        liveBuildsSuperseded.insert(project.id)
+        liveBuildFailed.insert(project.id)
+        // Not started yet (the process is handed over as it starts): it runs, briefly, and ends at its first check.
+        if let process = liveBuildRuns[project.id]?.process { Subprocess.terminateTree(process) }
         await whole.value
     }
 
@@ -4616,7 +4633,14 @@ final class Store: ObservableObject {
     private func reloadBeforeBuilding(_ project: LampProject, command: String, env: [String: String], fingerprint: String) async -> Bool {
         reloadedBeforeBuild.remove(project.id)
         guard LiveReload.eligible(project), !macCopies(of: project).isEmpty, Self.binary(of: project, contains: "reloaded.txt") else { return false }
-        await awaitLiveBuild(of: project)
+        // The open app already runs these sources, and their whole build is on its way: nothing more to do.
+        if liveBuilds[project.id] != nil, liveBuildRuns[project.id]?.fingerprint == fingerprint {
+            reloadedBeforeBuild.insert(project.id)
+            return true
+        }
+        // A whole build of earlier sources is stale: only the newest change's build is ever installed, and waiting for
+        // it held this change back by as long as it had left. It's ended, and whatever comes next builds the whole app.
+        await supersedeLiveBuild(of: project)
         liveBuildFailed.remove(project.id)
         var copy = env
         copy["LAMP_LIVE"] = "1"
@@ -4632,12 +4656,17 @@ final class Store: ObservableObject {
         LiveReload.startedBuilding(project)
         var full = env
         full["LAMP_LIVE"] = "1"
+        liveBuildRuns[project.id] = (nil, fingerprint)
         liveBuilds[project.id] = Task { [weak self] in
             var output: [String] = []
-            let status = await Self.runBuild(command, for: project, env: full) { output.append($0) }
+            let status = await Self.runBuild(command, for: project, env: full,
+                                             started: { [weak self] in self?.liveBuildRuns[project.id]?.process = $0 }) { output.append($0) }
             guard let self else { return }
             self.liveBuilds[project.id] = nil
+            self.liveBuildRuns[project.id] = nil
             LiveReload.finishedBuilding(project)
+            // Ended for a newer change, whose own build follows: not a failure, and nothing of it counts as built.
+            if self.liveBuildsSuperseded.remove(project.id) != nil { return }
             guard let current = self.current(project) else { return }
             if status == 0 {
                 Runtime.markBuilt(current, from: fingerprint)
@@ -6756,6 +6785,12 @@ final class Store: ObservableObject {
             if !changed { note = "The app is running your latest code; it was reopened without rebuilding." }
             if reopen { note = "The app was closed and opened again, so it started fresh." }
             say(looking)
+            // A change that went into the open app didn't launch it, so nothing takes the pictures a launch does:
+            // they're asked for, once the new code has had a moment to draw.
+            if turn.updatedInPlace {
+                try? await Task.sleep(for: .milliseconds(300))
+                Runtime.requestScreenshots(of: project)
+            }
             screenshots = await Runtime.screenshots(of: project, since: launched)
         }
         var lead = ""
