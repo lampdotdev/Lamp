@@ -1496,19 +1496,26 @@ enum Shell {
     """#
 
     /// Runs a zsh command, streaming merged stdout/stderr line by line. Returns the exit status.
+    /// `login` false skips the login shell, whose startup files run again for every command (and can take a
+    /// good part of a second); the PATH they'd give is the person's, worked out once (`ToolLocator.userPath`).
+    /// For Lamp's own short commands, which need nothing else from them; an engine's run keeps them.
     static func run(
         _ command: String,
         cwd: URL,
         env: [String: String] = [:],
         input: AgentInput? = nil,
+        login: Bool = true,
         started: (@MainActor (Process) -> Void)? = nil,
         onLine: @escaping @MainActor (String) -> Void
     ) async -> Int32 {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lc", "export PATH=\"\(extraPath):$PATH\"; \(command)"]
+        process.arguments = [login ? "-lc" : "-c", "export PATH=\"\(extraPath):$PATH\"; \(command)"]
         process.currentDirectoryURL = cwd
-        let environment = ProcessInfo.processInfo.environment.merging(env) { $1 }
+        var environment = ProcessInfo.processInfo.environment
+        // Off the main thread: the first look runs the person's shell, which may take a moment.
+        if !login { environment["PATH"] = await Task.detached { ToolLocator.userPath }.value }
+        environment.merge(env) { $1 }
         process.environment = environment
 
         let pipe = Pipe()

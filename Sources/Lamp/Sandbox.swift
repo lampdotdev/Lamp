@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Where a shell command may go, enforced by macOS rather than guessed from the command's text: the
@@ -35,7 +36,7 @@ enum Sandbox {
             await onLine("Lamp couldn't set up the sandbox for \(project.name), so nothing was run.")
             return unconfined
         }
-        return await Shell.run(confined, cwd: cwd ?? project.dir, env: env, started: started, onLine: onLine)
+        return await Shell.run(confined, cwd: cwd ?? project.dir, env: env, login: false, started: started, onLine: onLine)
     }
 
     /// The shell line that runs `command` under `profile`, with Lamp's `swift` first on the path (below). A
@@ -108,23 +109,40 @@ enum Sandbox {
     }
 
     /// Where the profiles live: in Lamp's own folder, which every profile closes, so what sandbox-exec reads
-    /// is what Lamp wrote and not something the agent could change. One file per command, kept for an hour
-    /// (a command may wait that long for the user), then cleared.
+    /// is what Lamp wrote and not something the agent could change. One file for each profile's text, named by
+    /// it, so the commands of a turn share one; each use renews it, and one unused for an hour (a command may
+    /// wait that long for the user) is cleared.
     static let folder = Edition.supportFolder.appendingPathComponent("Sandbox")
+
+    /// When old profiles were last cleared: listing the folder for every command cost more than the command.
+    nonisolated(unsafe) private static var cleared = Date.distantPast
+    private static let lock = NSLock()
 
     private static func writeProfile(for project: LampProject, opening folders: [String] = [], reading: [String] = [],
                                      writing: [String] = [], keeping: [String] = []) -> URL? {
         let fm = FileManager.default
+        let text = profile(for: project, opening: folders, reading: reading, writing: writing, keeping: keeping)
+        let digest = SHA256.hash(data: Data(text.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
+        let file = folder.appendingPathComponent("\(project.id)-\(digest).sb")
+        lock.lock()
+        defer { lock.unlock() }
         try? fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         guard writeShims() else { return nil }
-        let cutoff = Date().addingTimeInterval(-3600)
-        for old in (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        where old.pathExtension == "sb"
-            && ((try? old.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantFuture) < cutoff {
-            try? fm.removeItem(at: old)
+        if Date().timeIntervalSince(cleared) > 60 {
+            cleared = Date()
+            let cutoff = Date().addingTimeInterval(-3600)
+            for old in (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+            where old.pathExtension == "sb"
+                && ((try? old.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantFuture) < cutoff {
+                try? fm.removeItem(at: old)
+            }
         }
-        let file = folder.appendingPathComponent("\(project.id)-\(UUID().uuidString).sb")
-        let text = profile(for: project, opening: folders, reading: reading, writing: writing, keeping: keeping)
+        // Read back rather than trusted by name: the file is used only when it holds exactly this text.
+        if (try? String(contentsOf: file, encoding: .utf8)) == text {
+            try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
+            return file
+        }
+        try? fm.removeItem(at: file)
         guard fm.createFile(atPath: file.path, contents: Data(text.utf8),
                             attributes: [.posixPermissions: 0o600]) else { return nil }
         return file

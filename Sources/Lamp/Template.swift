@@ -579,7 +579,9 @@ enum Template {
     set -euo pipefail
     cd "$(dirname "$0")"
     SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
-    FLAGS=(-c release --triple arm64-apple-ios17.0-simulator --sdk "$SDK" -Xswiftc -g)
+    # Debug, as Xcode builds for the simulator: a release build optimizes the whole module at once, so every change
+    # compiled all of it again, Lamp's own library included, and went through dsymutil too. The phone's is Xcode's.
+    FLAGS=(-c debug --triple arm64-apple-ios17.0-simulator --sdk "$SDK")
     \(appIntentsSetup(ios: true))
     # The simulator takes an app's entitlements (Health, iCloud) from a section of its binary, as Xcode puts
     # them, and refuses an app whose signature claims them without a provisioning profile. Lamp writes the file.
@@ -987,7 +989,7 @@ enum Template {
         var steps = """
         # The Apple Watch app, built for the watch simulator and carried in the iPhone app, where iOS looks for it.
         if WATCH_SDK="$(xcrun --sdk watchsimulator --show-sdk-path 2>/dev/null)"; then
-        WATCH_FLAGS=(-c release --triple arm64-apple-watchos10.0-simulator --sdk "$WATCH_SDK" -Xswiftc -g)
+        WATCH_FLAGS=(-c debug --triple arm64-apple-watchos10.0-simulator --sdk "$WATCH_SDK")
         WATCH_ENT=".lamp/watch-entitlements.plist"
         if [[ -f "$WATCH_ENT" ]]; then
           mkdir -p .build
@@ -15913,15 +15915,28 @@ enum Template {
     LAMPLIVE
       # The names something may subclass, so every other class can be final.
       SUBCLASSED=$(perl "$LIVE/live.pl" scan Sources/**/*.swift(N) 2>/dev/null || true)
+      # The pass is kept for each file with what it was made from, and taken again only when any of that changed:
+      # over LampSupport.swift, which hardly ever does, it takes a second or more, and every change waited for it.
+      KEY="\(LiveSlots.count)|$(cksum < "$LIVE/live.pl")|$SUBCLASSED"
       for f in Sources/**/*.swift(N); do
         out="$LIVE/$f"
-        mkdir -p "${out:h}"
-        cp "$f" "$out.new"
+        made="$LIVE/.made/$f"
+        mkdir -p "${out:h}" "${made:h}"
         # Lamp's own files get the body wrap and the entry only; the app's get spare places and final classes too,
         # unless either kept the app from building.
         flags=""
         case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) [[ -e "$LIVE/no-spares" ]] || flags="${flags}s"; [[ -e "$LIVE/no-final" ]] || flags="${flags}f" ;; esac
+        if [[ -f "$made.out" ]] && cmp -s "$f" "$made.in" && [[ "$(cat "$made.key" 2>/dev/null)" == "$KEY|$flags" ]]; then
+          cmp -s "$made.out" "$out" || cp "$made.out" "$out"
+          continue
+        fi
+        # The entry is void until it's whole again, and holds the very text the pass was made from: the agent may
+        # edit the file meanwhile, and a build ended halfway (a newer change's) must leave no entry that looks right.
+        rm -f "$made.key"
+        cp "$f" "$made.in"
+        cp "$made.in" "$out.new"
         perl "$LIVE/live.pl" \(LiveSlots.count) "$SUBCLASSED" "$flags" "$out.new"
+        cp "$out.new" "$made.out"; print -r -- "$KEY|$flags" > "$made.key"
         if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi
       done
       for f in "$LIVE"/Sources/**/*.swift(N); do [[ -f "${f#$LIVE/}" ]] || rm "$f"; done

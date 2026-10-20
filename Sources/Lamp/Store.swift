@@ -481,11 +481,15 @@ final class Store: ObservableObject {
         /// Nil for a simulator/Mac turn; false until the chosen phone acknowledges opening the app.
         var phoneReady: Bool?
         var allowAll = false                // "Allow all for this turn"
+        /// What the checks made of each command this turn (`commandJudgment`): an agent runs the same build or
+        /// look at a file again and again, and the answer can't differ while the request is the same.
+        var judgments: [String: CommandRisk.Judgment] = [:]
         var approving = false               // between the queue check and the approval card
         var look = Look()                   // what the agent's look_at_app has done
         /// The watch on the turn's last launch: a look goes on once the app shows, so a death in its first seconds can
         /// come after the look's answer, and is told with the next look or use_app (`lateCrash`) or at the turn's end.
-        var launch: Runtime.LaunchWatch?
+        var launches: [Runtime.LaunchWatch] = []
+        var launch: Runtime.LaunchWatch? { launches.last }
         /// A new app's scaffold being built and opened as the turn starts (`showEarly`): a look and the turn's own
         /// build wait for it, since a turn has one build at a time.
         var early: Task<Void, Never>?
@@ -667,7 +671,9 @@ final class Store: ObservableObject {
     private var heldDrawingOffers: Set<String> = []  // "Draw Icon…" wanted during a turn, to offer after it
     private var artApplied: [String: IconSpec] = [:] // the spec whose artwork the rendered icon includes
     private var iconDesigns: [String: Task<Void, Never>] = [:]   // icons designed from the first message
-    /// Icons being drawn while the app goes on (after a change went into the open app): a copy waits for its icon.
+    /// Icons being prepared while the app goes on (after a change went into the open app): a copy waits for its icon.
+    private var iconPreparations: [String: Task<Void, Never>] = [:]
+    /// The last icon render asked for, by app: each waits for the one before, so two never write the same files.
     private var iconRenders: [String: Task<Void, Never>] = [:]
     private var tokens: [String: String] = [:]   // app token → project id, for the app's own routes (/ai…)
     /// The agent's token for the turn in progress → project id. Minted per turn and gone with it, so the agent's
@@ -2555,9 +2561,11 @@ final class Store: ObservableObject {
         if changed {
             crash = await install(project)
         } else if let turn = turns[project.id], turn.look.installed {
-            // The look went on once the app showed: a death in its first seconds is known by now, or in a moment.
-            if let watch = turn.launch, !watch.told, await watch.verdict() != nil { _ = lateCrash(of: turn) }
-            crash = turn.look.crash
+            // The look went on once the app showed: a death in its first seconds is known by now, or in a moment. One the
+            // agent was never told of is a crash on launch even when a later launch came through: it may come again.
+            for watch in turn.launches where !watch.told { _ = await watch.verdict() }
+            let untold = lateCrash(of: turn)
+            crash = turn.look.crash ?? untold
             if crash == nil {
                 if let app = macCopies(of: project).first {
                     // The look opened it behind the user's windows. Now it's theirs: it shows itself, as when it's
@@ -3152,7 +3160,7 @@ final class Store: ObservableObject {
             log(project, .status, "Ran: \(command)", said: said)
             return true
         case .risky where !escalated:
-            let judgment = await commandJudgment(command, for: project)
+            let judgment = await commandJudgment(command, for: project, aboutRequest: !sandboxed)
             // A command the sandbox confines can only change the app's own folder (Sandbox), so only one the
             // checks find risky asks: one they're merely unsure of, or that doesn't seem to match the request
             // (looking for the app's process while fixing it), runs. Asking about those was most of the cards,
@@ -3168,8 +3176,9 @@ final class Store: ObservableObject {
                                          said: said)
         case .risky where shell:
             // Claude Code's own classifier asked: it doesn't run on the checks alone, but what they flag keeps
-            // its card, so the in-app model's "low" can't run a command they found risky.
-            let judgment = await commandJudgment(command, for: project)
+            // its card, so the in-app model's "low" can't run a command they found risky. Only risky counts here,
+            // which the request's question can't change.
+            let judgment = await commandJudgment(command, for: project, aboutRequest: false)
             let flagged = judgment.verdict == .risky ? judgment.reason ?? .reachesBeyond : nil
             return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged,
                                          said: said)
@@ -3179,11 +3188,19 @@ final class Store: ObservableObject {
     }
 
     /// Whether a command is plainly fine, for every engine: the decision model's answers (CommandRisk),
-    /// against the user's request. No decision model available → not plainly fine.
-    private func commandJudgment(_ command: String, for project: LampProject) async -> CommandRisk.Judgment {
-        await CommandRisk.judge(command: command, request: turns[project.id]?.request ?? "", folder: project.dir.path) { state, questions in
+    /// against the user's request when `aboutRequest`. No decision model available → not plainly fine.
+    /// A command judged once in a turn isn't sent again for the same request; one the model couldn't judge is.
+    private func commandJudgment(_ command: String, for project: LampProject, aboutRequest: Bool) async -> CommandRisk.Judgment {
+        let turn = turns[project.id]
+        let request = turn?.request ?? ""
+        let key = [aboutRequest ? request : "", project.dir.path, command].joined(separator: "\u{0}")
+        if let known = turn?.judgments[key] { return known }
+        let judgment = await CommandRisk.judge(command: command, request: request, folder: project.dir.path,
+                                               aboutRequest: aboutRequest) { state, questions in
             try await AppAI.decide(state: state, questions: questions).0
         }
+        if judgment.judged { turn?.judgments[key] = judgment }
+        return judgment
     }
 
     /// Applies Settings → Building → Permissions and Privacy to one of the agent's file tools, about to touch `path`: pi's own
@@ -3433,12 +3450,15 @@ final class Store: ObservableObject {
         return (status, answer)
     }
 
-    /// What's known of a death the turn's last launch saw and nobody has been told of yet; it's told from here on.
+    /// What's known of the deaths the turn's launches saw and nobody has been told of yet; they're told from here on.
+    /// A look may have opened the app again since one of them (seeing it gone), so each launch is asked, not just
+    /// the last; only the last one's is what the app does now (`turn.look.crash`).
     private func lateCrash(of turn: Turn) -> String? {
-        guard let watch = turn.launch, watch.ended, let crash = watch.crash, !watch.told else { return nil }
-        watch.told = true
-        turn.look.crash = crash
-        return crash
+        let untold = turn.launches.filter { $0.ended && $0.crash != nil && !$0.told }
+        guard !untold.isEmpty else { return nil }
+        for watch in untold { watch.told = true }
+        if let last = turn.launch, untold.contains(where: { $0 === last }) { turn.look.crash = last.crash }
+        return untold.compactMap(\.crash).joined(separator: "\n\n")
     }
 
     private func useNow(_ project: LampProject, request body: Data) async -> (Int, [String: Any]) {
@@ -4618,12 +4638,29 @@ final class Store: ObservableObject {
     private var liveBuildFailed: Set<String> = []
     /// Apps whose change went in before their build: the install that follows the build has nothing to do.
     private var reloadedBeforeBuild: Set<String> = []
+    /// What each running whole build after an early change was started from: its process, to end it when a newer
+    /// change makes it stale, and the fingerprint of the sources it builds, to tell when nothing changed since.
+    private var liveBuildRuns: [String: (process: Process?, fingerprint: String)] = [:]
+    /// Whole builds ended because a newer change replaced them: what they leave in build/ isn't installed.
+    private var liveBuildsSuperseded: Set<String> = []
 
     /// Waits for the whole build after an early change, which can take a minute: meanwhile the turn says it's
     /// building, not that the change is going in, which was said seconds before and is done.
     private func awaitLiveBuild(of project: LampProject) async {
         guard let whole = liveBuilds[project.id] else { return }
         note("Building…", for: project)
+        await whole.value
+    }
+
+    /// Ends the whole build after an earlier change, and waits for it to be gone, since the next build writes the
+    /// same folders. What it left in build/ is the version before the change, or half of it, so until another
+    /// whole build is done the app is treated as one whose whole build failed: never installed from it.
+    private func supersedeLiveBuild(of project: LampProject) async {
+        guard let whole = liveBuilds[project.id] else { return }
+        liveBuildsSuperseded.insert(project.id)
+        liveBuildFailed.insert(project.id)
+        // Not started yet (the process is handed over as it starts): it runs, briefly, and ends at its first check.
+        if let process = liveBuildRuns[project.id]?.process { Subprocess.terminateTree(process) }
         await whole.value
     }
 
@@ -4634,7 +4671,14 @@ final class Store: ObservableObject {
     private func reloadBeforeBuilding(_ project: LampProject, command: String, env: [String: String], fingerprint: String) async -> Bool {
         reloadedBeforeBuild.remove(project.id)
         guard LiveReload.eligible(project), !macCopies(of: project).isEmpty, Self.binary(of: project, contains: "reloaded.txt") else { return false }
-        await awaitLiveBuild(of: project)
+        // The open app already runs these sources, and their whole build is on its way: nothing more to do.
+        if liveBuilds[project.id] != nil, liveBuildRuns[project.id]?.fingerprint == fingerprint {
+            reloadedBeforeBuild.insert(project.id)
+            return true
+        }
+        // A whole build of earlier sources is stale: only the newest change's build is ever installed, and waiting for
+        // it held this change back by as long as it had left. It's ended, and whatever comes next builds the whole app.
+        await supersedeLiveBuild(of: project)
         liveBuildFailed.remove(project.id)
         var copy = env
         copy["LAMP_LIVE"] = "1"
@@ -4650,12 +4694,17 @@ final class Store: ObservableObject {
         LiveReload.startedBuilding(project)
         var full = env
         full["LAMP_LIVE"] = "1"
+        liveBuildRuns[project.id] = (nil, fingerprint)
         liveBuilds[project.id] = Task { [weak self] in
             var output: [String] = []
-            let status = await Self.runBuild(command, for: project, env: full) { output.append($0) }
+            let status = await Self.runBuild(command, for: project, env: full,
+                                             started: { [weak self] in self?.liveBuildRuns[project.id]?.process = $0 }) { output.append($0) }
             guard let self else { return }
             self.liveBuilds[project.id] = nil
+            self.liveBuildRuns[project.id] = nil
             LiveReload.finishedBuilding(project)
+            // Ended for a newer change, whose own build follows: not a failure, and nothing of it counts as built.
+            if self.liveBuildsSuperseded.remove(project.id) != nil { return }
             guard let current = self.current(project) else { return }
             if status == 0 {
                 Runtime.markBuilt(current, from: fingerprint)
@@ -4904,7 +4953,7 @@ final class Store: ObservableObject {
         do {
             let opened = Date()
             let app = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
-            let watch = watchLaunch(project, owner: owner, opened: opened, alive: { !app.isTerminated }) {
+            let watch = watchLaunch(project, owner: owner, opened: opened, crashOnly: true, alive: { !app.isTerminated }) {
                 await Runtime.launchReport(project)
             }
             // A look goes on once the app has pictured its window; anything else waits its first seconds out, since what
@@ -4956,16 +5005,28 @@ final class Store: ObservableObject {
 
     /// Watches a launch's first seconds (`Runtime.LaunchWatch`) as the turn's last launch, and says in the chat when the
     /// app dies in them, `report` giving what's known of it.
-    private func watchLaunch(_ project: LampProject, owner: Turn?, opened: Date, alive: @escaping @MainActor () -> Bool,
+    /// `crashOnly` is for a Mac app, which leaves a crash report: a going after the opener went on counts only with
+    /// one, since the person may have closed an app that works.
+    private func watchLaunch(_ project: LampProject, owner: Turn?, opened: Date, crashOnly: Bool = false,
+                             alive: @escaping @MainActor () -> Bool,
                              report: @escaping @MainActor () async -> String) -> Runtime.LaunchWatch {
-        let watch = Runtime.LaunchWatch(opened: opened, alive: alive) { [weak self] in
+        let watch = Runtime.LaunchWatch(opened: opened, alive: alive) { [weak self] late in
+            if late, crashOnly {
+                // macOS writes the report after the process is gone, sometimes ten seconds or more later.
+                var crashed = false
+                for _ in 0..<40 where !crashed {
+                    crashed = Runtime.crashed(project, since: opened)
+                    if !crashed { try? await Task.sleep(for: .milliseconds(500)) }
+                }
+                guard crashed else { return nil }
+            }
             owner?.diedOnLaunch = true
             self?.log(project, .status, "\(project.name) quit right after opening. Looking at why…")
             let crash = await report()
             self?.log(project, .detail, crash)
             return crash
         }
-        owner?.launch = watch
+        owner?.launches.append(watch)
         return watch
     }
 
@@ -4988,13 +5049,17 @@ final class Store: ObservableObject {
         await finishSimulatorBundle(project)
         do {
             try await Simulator.boot(udid, show: inFront)
+            retireLaunches(of: project)
             await Simulator.terminate(project.bundleID, on: udid)
             try await Simulator.install(project.builtURL, on: udid)
             guard stillOwns() else { return giveBack("The app was deleted or stopped before it opened.") }
             // One Lamp app per simulator: another project's app on this device is closed first, so what the
             // simulator shows is always the app being worked on (and that app's use_app batch, if any, stops).
             for (other, launched) in simulatorApps where other != project.id && launched.udid == udid {
-                if let theirs = projects.first(where: { $0.id == other }) { await Simulator.terminate(theirs.bundleID, on: udid) }
+                if let theirs = projects.first(where: { $0.id == other }) {
+                    retireLaunches(of: theirs)
+                    await Simulator.terminate(theirs.bundleID, on: udid)
+                }
                 simulatorApps[other] = nil
             }
             guard stillOwns() else { return giveBack("The app was deleted or stopped before it opened.") }
@@ -5461,7 +5526,9 @@ final class Store: ObservableObject {
     /// only the swap waits for the app to close.
     private func stageSigned(_ project: LampProject) async throws -> SignedCopy {
         let fm = FileManager.default
-        // An icon still being drawn (after a change that went into the open app) is finished before it's copied in.
+        // An icon still being drawn (after a change that went into the open app, New Icon, new artwork) is finished
+        // before it's copied in.
+        await iconPreparations[project.id]?.value
         await iconRenders[project.id]?.value
         // Everything from here to the swap is done to a copy in the apps folder, which the agent's commands can't
         // write: the build folder is theirs, and a bundle there could be changed between Lamp's look at it and its
@@ -5710,16 +5777,16 @@ final class Store: ObservableObject {
 
     /// Makes sure icon.json exists, then renders it (with cached artwork if there is any).
     private func prepareIcon(_ project: LampProject) async {
-        // One being drawn while the app went on goes first, so two never write the same files.
-        await iconRenders[project.id]?.value
+        // One prepared while the app went on goes first.
+        await iconPreparations[project.id]?.value
         await drawIcon(project)
     }
 
     /// `prepareIcon` without waiting for it, for a change that went into the open app: whatever puts a copy together
     /// next waits for it (`stageSigned`).
     private func prepareIconMeanwhile(_ project: LampProject) {
-        let before = iconRenders[project.id]
-        iconRenders[project.id] = Task { [weak self] in
+        let before = iconPreparations[project.id]
+        iconPreparations[project.id] = Task { [weak self] in
             await before?.value
             await self?.drawIcon(project)
         }
@@ -5739,7 +5806,19 @@ final class Store: ObservableObject {
         await renderIcon(project, spec: spec!)
     }
 
+    /// Every render of an app's icon goes through here, one after another: New Icon, new artwork and an install
+    /// can ask at once, and two at a time would write the same files.
     private func renderIcon(_ project: LampProject, spec: IconSpec) async {
+        let before = iconRenders[project.id]
+        let mine = Task { [weak self] in
+            await before?.value
+            await self?.renderIconNow(project, spec: spec)
+        }
+        iconRenders[project.id] = mine
+        await mine.value
+    }
+
+    private func renderIconNow(_ project: LampProject, spec: IconSpec) async {
         do {
             let art = Icons.artwork(project, spec: spec)
             if art != nil { artApplied[project.id] = spec }
@@ -6088,7 +6167,13 @@ final class Store: ObservableObject {
 
     /// The person's click on Force Quit: ends the copy that isn't responding, and whatever was waiting for
     /// it to close (a build, Lamp's Quit, Delete) goes on.
+    /// Before Lamp itself ends an app: a launch still being watched doesn't take its going for a death.
+    private func retireLaunches(of project: LampProject) {
+        for watch in turns[project.id]?.launches ?? [] { watch.retire() }
+    }
+
     func forceQuit(_ project: LampProject) {
+        retireLaunches(of: project)
         guard let pid = notResponding.removeValue(forKey: project.id),
               let app = macCopies(of: project).first(where: { $0.processIdentifier == pid }) else { return }
         app.forceTerminate()
@@ -6100,6 +6185,8 @@ final class Store: ObservableObject {
     /// `only` quits the copy in one place (an app for both can be open on this Mac and in a simulator at once);
     /// without it every copy is quit, as deleting or renaming the app needs.
     private func quit(_ project: LampProject, for owner: Turn? = nil, only place: Destination? = nil) async -> Bool {
+        // Lamp closing it isn't the app dying on launch.
+        retireLaunches(of: project)
         if project.platform.hasIOS, place != .mac {
             if let attached = deviceApps[project.id] {
                 if attached.isRunning { attached.terminate() }
@@ -6873,6 +6960,12 @@ final class Store: ObservableObject {
             if !changed { note = "The app is running your latest code; it was reopened without rebuilding." }
             if reopen { note = "The app was closed and opened again, so it started fresh." }
             say(looking)
+            // A change that went into the open app didn't launch it, so nothing takes the pictures a launch does:
+            // they're asked for, once the new code has had a moment to draw.
+            if turn.updatedInPlace {
+                try? await Task.sleep(for: .milliseconds(300))
+                Runtime.requestScreenshots(of: project)
+            }
             // Since this copy was asked to open, not since the look began: the copy it replaced pictures its window as it quits.
             since = max(launched, turn.launch?.opened ?? launched)
             screenshots = await Runtime.screenshots(of: project, since: since)
