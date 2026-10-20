@@ -3189,6 +3189,10 @@ enum Template {
 
     """
 
+    /// How long a Mac app's driver waits for Lamp's cursor to reach the spot of an action before doing it
+    /// (`LampDriver.lead` in LampSupport.swift, which must say the same).
+    static let useAppLead = 0.45
+
     static let lampSupportSwift = Connectors.fill(lampSupportTemplate) + "\n#if os(macOS)" + lampGlyphSwift + "#endif\n"
 
     private static let lampSupportTemplate = #"""
@@ -6779,6 +6783,12 @@ enum Template {
                 let signature = note.userInfo?["lampUseAppSignature"] as? String
                 MainActor.assumeIsolated { LampDriver.perform(actions, id: id, signature: signature) }
             }
+            // ...and stops part way through when the person takes the app back with Lamp's Stop.
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name(LampInstall.note + "useAppStop." + LampInstall.slug), object: nil, queue: .main) { note in
+                let id = note.userInfo?["id"] as? String, signature = note.userInfo?["lampUseAppStop"] as? String
+                MainActor.assumeIsolated { LampDriver.Handover.stop(id: id, signature: signature, token: LampInstall.token) }
+            }
             // ...and, before it asks the app to quit for a rebuild, whether it still answers, so it can tell the
             // person when an app isn't responding rather than wait in silence. Answered on the main thread,
             // since that's the one a stuck app has lost. The file says this copy listens.
@@ -7849,8 +7859,110 @@ enum Template {
             var to_y: Double?
         }
 
+        // begin LampDriver.Handover
+        /// The batch of actions being carried out, and the person's way to take the app back part way through it.
+        /// Lamp's Stop (or Esc while Lamp is in front) arrives as a stop signed like the request. The person's own
+        /// click or key in the app is seen here as it reaches the app: the driver's own events go straight to the
+        /// window, never through the app's event queue, and the one kind that does (a key held down) is marked.
+        /// Either way nothing more is done, keys held down are let go, and Lamp hears at once how far it got.
+        @MainActor
+        final class Handover {
+            private(set) static var current: Handover?
+            let id: String
+            let count: Int
+            /// How many of the actions have been begun.
+            var done = 0
+            private(set) var stopped = false
+            private let finish: (String) -> Void
+            private var held: [(up: NSEvent, timer: Timer)] = []
+            /// When the driver's own queued presses were made: the queue keeps a press's time only to the
+            /// nanosecond, so it's matched within a hair of that.
+            private var own: [TimeInterval] = []
+            private static var monitor: Any?
+
+            private init(id: String, count: Int, finish: @escaping (String) -> Void) {
+                self.id = id
+                self.count = count
+                self.finish = finish
+            }
+
+            /// A new batch. One still running is no longer carried on: its steps ask `carriesOn` first.
+            static func begin(id: String, count: Int, finish: @escaping (String) -> Void) -> Handover {
+                current?.letGo()
+                let batch = Handover(id: id, count: count, finish: finish)
+                current = batch
+                watch()
+                return batch
+            }
+
+            /// Whether the batch's next step may run: it wasn't stopped, and no newer batch took its place.
+            var carriesOn: Bool { !stopped && Self.current === self }
+
+            /// Every action was carried out: from now on the person's clicks and keys are just theirs.
+            func end() {
+                if Self.current === self { Self.current = nil }
+            }
+
+            /// A key held down by the driver: pressed now through the app's own event queue (where a game's key
+            /// monitors see it) and let go after `seconds`, or at once if the batch stops first.
+            func hold(_ down: NSEvent, _ up: NSEvent, for seconds: Double) {
+                own.append(down.timestamp)
+                NSApp.postEvent(down, atStart: false)
+                let timer = Timer(timeInterval: seconds, repeats: false) { timer in
+                    MainActor.assumeIsolated {
+                        guard let index = self.held.firstIndex(where: { $0.timer === timer }) else { return }
+                        NSApp.postEvent(self.held.remove(at: index).up, atStart: false)
+                    }
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                held.append((up, timer))
+            }
+
+            /// Ends the batch where it is: nothing more is done, keys held down are let go, and Lamp is told.
+            func stop() {
+                guard carriesOn else { return }
+                stopped = true
+                letGo()
+                finish("Stopped after \(done) of \(count) action\(count == 1 ? "" : "s"): the person took the app over. Nothing after that was done.")
+            }
+
+            private func letGo() {
+                for key in held {
+                    key.timer.invalidate()
+                    NSApp.postEvent(key.up, atStart: true)
+                }
+                held = []
+            }
+
+            /// Lamp's Stop for batch `id`, signed with the app's token like the request, so no other process can stop it.
+            static func stop(id: String?, signature: String?, token: String) {
+                guard let id, let signature, let batch = current, batch.id == id else { return }
+                let expected = HMAC<SHA256>.authenticationCode(for: Data("stop\n\(id)".utf8), using: SymmetricKey(data: Data(token.utf8)))
+                    .map { String(format: "%02x", $0) }.joined()
+                guard signature == expected else { return }
+                batch.stop()
+            }
+
+            /// The person's own presses, as they reach the app, while a batch runs. Esc only stops; anything else
+            /// goes on to the app as they meant it, so what they click or type isn't lost.
+            private static func watch() {
+                guard monitor == nil else { return }
+                monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]) { event in
+                    let made = event.timestamp, escape = event.type == .keyDown && event.keyCode == 53
+                    let stopped = MainActor.assumeIsolated { () -> Bool in
+                        guard let batch = current, batch.carriesOn, !batch.own.contains(where: { abs($0 - made) < 0.000_01 }) else { return false }
+                        batch.stop()
+                        return true
+                    }
+                    return stopped && escape ? nil : event
+                }
+            }
+        }
+        // end LampDriver.Handover
+
         /// Only Lamp knows this app's token, so only Lamp can sign a request (the "lampUseAppSignature" key marks
-        /// builds that check it; notifications reach every process, so the token itself never travels).
+        /// builds that check it; notifications reach every process, so the token itself never travels). Builds
+        /// that take Lamp's Stop (`Handover`) have "lampUseAppStop" in them.
         static func perform(_ json: String?, id: String?, signature: String?) {
             guard let id, let json, let signature, let data = json.data(using: .utf8),
                   let actions = try? JSONDecoder().decode([Action].self, from: data) else { return }
@@ -7863,6 +7975,18 @@ enum Template {
             let front = LampRuntime.windowsOnScreen.first
             let before = front.flatMap(LampRuntime.picture), dialog = front.map(isDialog) ?? false
             var report: [String] = []
+            func answer(stopped: Bool) {
+                LampRuntime.snapshot()
+                var answer = ["id": id, "report": report.joined(separator: "\n")]
+                if stopped { answer["stopped"] = "person" }
+                try? JSONSerialization.data(withJSONObject: answer)
+                    .write(to: LampRuntime.folder.appendingPathComponent("use.json"), options: .atomic)
+            }
+            let batch = Handover.begin(id: id, count: actions.count) { why in
+                keepBarPanel()
+                report.append(why)
+                answer(stopped: true)
+            }
             // The last action that should have changed something: its line, and how its window looked before.
             var last: (line: Int, window: NSWindow, picture: Data?)?
             func note() {
@@ -7872,38 +7996,87 @@ enum Template {
                 report[last.line] += " (nothing changed on screen)"
             }
             func step(_ index: Int) {
+                guard batch.carriesOn else { return }
                 keepBarPanel()
                 note()
                 guard index < actions.count else {
+                    batch.end()
                     // Let the app react, then show the result.
                     after(0.6) {
                         keepBarPanel()
                         report.append(outcome(since: front, before, wasDialog: dialog))
-                        LampRuntime.snapshot()
-                        let answer = ["id": id, "report": report.joined(separator: "\n")]
-                        try? JSONSerialization.data(withJSONObject: answer)
-                            .write(to: LampRuntime.folder.appendingPathComponent("use.json"), options: .atomic)
+                        answer(stopped: false)
                     }
                     return
                 }
                 let action = actions[index]
                 let held = action.action == "key" ? min(action.amount ?? 0, 10) : 0
                 let pause = action.action == "wait" ? min(action.amount ?? 1, 10) : action.action == "bar_icon" ? 1 : held > 0 ? held + 0.2 : 0.35
+                // Where it happens is shown first: Lamp's cursor goes there, and the action follows once it has.
+                let aim = aimed(action)
+                if let aim { announce(id, aim) }
+                let lead = aim == nil ? 0 : Self.lead
                 // The next step is set up first: a click that opens a save panel or an alert doesn't return until
                 // that closes, and the steps after it are how it gets answered.
-                after(pause) { step(index + 1) }
-                let line = report.count
-                report.append("\(action.action): opened something that waits for an answer before the app carries on")
-                if action.action != "wait", action.item == nil, let window = LampRuntime.windowsOnScreen.first,
-                   !(window is NSSavePanel) {
-                    last = (line, window, LampRuntime.picture(of: window))
+                after(lead + pause) { step(index + 1) }
+                func act() {
+                    guard batch.carriesOn else { return }
+                    batch.done = index + 1
+                    let line = report.count
+                    report.append("\(action.action): opened something that waits for an answer before the app carries on")
+                    if action.action != "wait", action.item == nil, let window = LampRuntime.windowsOnScreen.first,
+                       !(window is NSSavePanel) {
+                        last = (line, window, LampRuntime.picture(of: window))
+                    }
+                    report[line] = run(action)
+                    if action.action != "bar_icon" { keepBarPanel() }
+                    // A menu that was only read out, or an action that found nothing to do, isn't expected to change anything.
+                    if report[line].contains("\n") || report[line].contains("nothing on the screen is called that") || report[line].contains("several things are called that") { last = nil }
                 }
-                report[line] = run(action)
-                if action.action != "bar_icon" { keepBarPanel() }
-                // A menu that was only read out, or an action that found nothing to do, isn't expected to change anything.
-                if report[line].contains("\n") || report[line].contains("nothing on the screen is called that") || report[line].contains("several things are called that") { last = nil }
+                if lead > 0 { after(lead) { act() } } else { act() }
             }
             after(0) { step(0) }
+        }
+
+        /// How long an action that happens at a spot waits for Lamp's cursor to get there (`aimed`).
+        static let lead = 0.45
+
+        /// Where an action happens on screen, what it's doing in a few words, and whether it presses there, for
+        /// the cursor Lamp shows going to each spot first. Nil for what happens nowhere in particular (a key, a
+        /// menu, a wait, typing into whatever has focus). The point is in screen points from the top left of the
+        /// main display, as Lamp draws.
+        private static func aimed(_ action: Action) -> (point: CGPoint, doing: String, window: Int, press: Bool)? {
+            let verbs = ["click": "clicking", "double_click": "double-clicking", "right_click": "right-clicking", "drag": "dragging",
+                         "scroll": "scrolling", "type": "typing into", "key": "pressing a key in"]
+            let named = action.target?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            guard var verb = verbs[action.action], named || !["type", "key"].contains(action.action),
+                  let window = LampRuntime.windowsOnScreen.first, !(window is NSSavePanel), let frame = window.contentView?.superview else { return nil }
+            var x = action.x, y = action.y, name = ""
+            if named, let target = action.target?.trimmingCharacters(in: .whitespacesAndNewlines) {
+                let items = elements(in: window).map(\.item)
+                guard case .one(let index) = LampScreen.find(target, in: items) else { return nil }
+                x = items[index].frame.midX
+                y = items[index].frame.midY
+                name = items[index].label.count > 30 ? String(items[index].label.prefix(29)) + "…" : items[index].label
+            }
+            guard let x, let y else { return nil }
+            if name.isEmpty { verb = verb.replacingOccurrences(of: " into", with: "").replacingOccurrences(of: " in", with: "") }
+            let scale = LampRuntime.scale(of: window)
+            let local = NSPoint(x: x / scale, y: frame.bounds.height - y / scale)
+            guard frame.bounds.contains(local) else { return nil }
+            let onScreen = window.convertPoint(toScreen: frame.convert(local, to: nil))
+            let top = NSScreen.screens.first?.frame.maxY ?? 0
+            return (CGPoint(x: onScreen.x, y: top - onScreen.y), name.isEmpty ? verb : verb + " " + name, window.windowNumber,
+                    ["click", "double_click", "right_click", "type"].contains(action.action))
+        }
+
+        /// Tells Lamp where the next action happens. In the notification's object, the one part a sandboxed app may send.
+        private static func announce(_ id: String, _ aim: (point: CGPoint, doing: String, window: Int, press: Bool)) {
+            let step: [String: Any] = ["id": id, "x": aim.point.x, "y": aim.point.y, "doing": aim.doing, "window": aim.window, "press": aim.press]
+            guard let data = try? JSONSerialization.data(withJSONObject: step) else { return }
+            DistributedNotificationCenter.default().postNotificationName(
+                Notification.Name(LampInstall.note + "useAppStep." + LampInstall.slug), object: String(decoding: data, as: UTF8.self),
+                userInfo: nil, deliverImmediately: true)
         }
 
         /// Steps run from run-loop timers, not the main dispatch queue: that queue stands still while a step is
@@ -8053,8 +8226,8 @@ enum Template {
                     let hold = min(seconds, 10)
                     guard let down = event(.keyDown, characters, code, flags, window),
                           let up = event(.keyUp, characters, code, flags, window) else { return "key \(name): couldn't press it" }
-                    NSApp.postEvent(down, atStart: false)
-                    after(hold) { NSApp.postEvent(up, atStart: false) }
+                    guard let batch = Handover.current else { return "key \(name): couldn't press it" }
+                    batch.hold(down, up, for: hold)
                     return "held \(name) for \(LampScreen.number(hold)) s, sent to \(focus(of: window))"
                 }
                 if let named, let what {

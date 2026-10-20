@@ -322,17 +322,18 @@ enum Runtime {
         return fresh()
     }
 
-    /// What the app says happened when it carried out a `use_app` request (see `LampDriver` in the app). It
-    /// writes this after its fresh pictures, so once it's here they're ready too. nil if it never answers,
-    /// or `running` turns false: the app is gone.
+    /// What the app says happened when it carried out a `use_app` request (see `LampDriver` in the app), and
+    /// whether the person stopped it part way (`LampDriver.Handover`). It writes this after its fresh pictures,
+    /// so once it's here they're ready too. nil if it never answers, or `running` turns false: the app is gone.
     @MainActor
     static func useReport(of project: LampProject, id: String, waiting seconds: Double,
-                          while running: () -> Bool) async -> String? {
+                          while running: () -> Bool) async -> (report: String, stopped: Bool)? {
         let url = folder(project).appendingPathComponent("use.json")
         for _ in 0..<Int(seconds * 4) where running() {
             if let data = AppFile.read(url, in: project),
-               let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: String], answer["id"] == id {
-                return answer["report"]
+               let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: String], answer["id"] == id,
+               let report = answer["report"] {
+                return (report, answer["stopped"] != nil)
             }
             try? await Task.sleep(for: .milliseconds(250))
         }

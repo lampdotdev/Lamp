@@ -702,6 +702,24 @@ stepper takes a number or a step, and what has no action of its own, or isn't li
 is clicked at a point, pixels in the picture. Lamp tells an app built before the list existed by a line of the
 heading in its binary (`Store.screenTextMarker`): such an app is told to be rebuilt when a target is used.
 
+`use_app` happens in plain sight, and the person can take the app back at any moment (`Handover`). While the
+actions run, the window in use glows, Lamp's cursor (a fingertip over the simulator) goes to each spot before
+anything happens there with a word on what it's doing ("Lamp · clicking Add"), and a pill above the window says
+"Lamp is trying <app>" with Stop and esc (`ComputerOverlay`, the same signs an app's use of other apps shows). A
+Mac app says where each action is about to happen (`LampDriver.aimed`, a distributed notification whose object
+carries it, since a sandboxed app may send nothing else) and waits `Template.useAppLead` for the cursor to get
+there. The person takes the app back with Stop, with Esc while Lamp or the app is in front, or by clicking or
+typing in it themselves. A Mac app sees their own presses as they reach its event queue (`LampDriver.Handover`):
+the driver's events go straight to the window and never pass through it, and the one kind that does (a key held
+down) is marked. Lamp's Stop reaches it as a stop signed with the app's token like the request
+("lampUseAppStop" marks the builds that take it; older ones are rebuilt first). For the simulator Lamp watches
+for a click in its window or a key while it's in front (`Handover.isPersons`), and marks the taps and keys it
+posts itself. Either way the rest of the batch is dropped, keys held down are let go, the Simulator isn't
+brought forward again, the pill says "You have the app. Lamp stopped trying it.", the chat gets a "Trying it:
+stopped by you" line, and `use_app` answers how far it got and refuses further calls until the person's next
+message reaches the agent (`Turn.tookOver`). `UseAppStopTests` compiles the app's half out of the template and
+drives it with real events.
+
 A Mac app can be changed while it's in use (apps show the wand while the file `MagicPanel.flag`, which Lamp writes
 at launch, is beside their folders, checked each time a window comes forward): `LampMagic` in LampSupport.swift puts a
 wand at the top right of each of its windows, which opens the app's chat beside that window
