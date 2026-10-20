@@ -107,7 +107,7 @@ enum Privacy {
     /// as real paths: neither is the agent's to open, whichever Lamp it runs under.
     private static let lampFolders: [String] = {
         let support = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        return ["Lamp", "Lamp Dev"].map { support.appendingPathComponent($0).resolvingSymlinksInPath().standardizedFileURL.path }
+        return Edition.lampFolderNames.map { support.appendingPathComponent($0).resolvingSymlinksInPath().standardizedFileURL.path }
     }()
 
     /// Whether a search that started somewhere the agent may look should still pass over `path` further down:
