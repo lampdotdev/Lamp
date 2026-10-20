@@ -57,10 +57,29 @@ enum PrebuiltStarters {
                 FileHandle.standardError.write(Data("Couldn't prebuild \(starter.name): \(error.localizedDescription)\n".utf8))
                 failed = true
             }
+            // Each starter's project and build folder go as soon as it's done: together they run to gigabytes.
+            remove(root)
         }
-        // exit doesn't unwind: the projects and their build folders go first.
-        try? fm.removeItem(at: root)
+        // exit doesn't unwind: nothing of the work folder is left behind.
+        remove(root)
         exit(failed ? 1 : 0)
+    }
+
+    /// Removes the work folder, falling back to `rm -rf` when FileManager stops at something it can't remove (a
+    /// build folder's odd entries), and says so when even that leaves it: a folder left behind is gigabytes in the
+    /// temporary folder, silently.
+    private static func remove(_ folder: URL) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: folder.path) else { return }
+        if (try? fm.removeItem(at: folder)) != nil { return }
+        let rm = Process()
+        rm.executableURL = URL(fileURLWithPath: "/bin/rm")
+        rm.arguments = ["-rf", folder.path]
+        try? rm.run()
+        rm.waitUntilExit()
+        if fm.fileExists(atPath: folder.path) {
+            FileHandle.standardError.write(Data("Couldn't remove the prebuild folder \(folder.path)\n".utf8))
+        }
     }
 
     /// `Lamp --restamp-starters`: a development build that kept its prebuilt starters from an earlier one (build.sh)
