@@ -189,13 +189,17 @@ extension LogLine {
 
     /// Tool calls as the steps a person reads: what the live line said while each ran ("Looking things over",
     /// "Working on the interface", `TurnProgress.activity`), never the call itself with its files. Calls in a row
-    /// that said the same are one step, and a call that says nothing of its own (a progress line) is no step. Without
-    /// this a turn that only read and edited files, with no command, had nothing under its open line.
+    /// that said the same are one step, and a call that says nothing of its own (a progress line) is no step. A
+    /// command is no step here either: its own row ("Ran: …", by the name the agent gave it) already is, and commands
+    /// under one name are gathered there. Without this a turn that only read and edited files had nothing under its
+    /// open line.
     private static func said(_ lines: [LogLine]) -> [LogLine] {
         var out: [LogLine] = []
         for line in lines {
             guard line.kind == .tool else { out.append(line); continue }
-            let words = TurnProgress.activity(for: ToolCall(line.text))
+            let call = ToolCall(line.text)
+            guard call.action != .run else { continue }
+            let words = TurnProgress.activity(for: call)
             guard !words.isEmpty else { continue }
             if let last = out.last, last.kind == .status, last.text == words, last.said == nil { continue }
             out.append(LogLine(id: line.id, kind: .status, text: words))

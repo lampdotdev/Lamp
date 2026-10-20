@@ -126,4 +126,20 @@ final class WorkedForTests: XCTestCase {
         }
         XCTAssertEqual(again.map(\.text), ["Looking things over", "Working on the interface", "Checking how it looks"])
     }
+
+    /// A command is logged as a call and as its own row: only the row, by its name, is a step, so commands the agent
+    /// gave one name to stay one step.
+    func testACommandIsOneStepByItsName() {
+        let lines = [LogLine(kind: .user, text: "check it"), LogLine(kind: .tool, text: "bash ls Sources"),
+                     LogLine(kind: .status, text: "Ran: ls Sources", said: "Looking around"),
+                     LogLine(kind: .tool, text: "bash grep heat"), LogLine(kind: .status, text: "Ran: grep heat", said: "Looking around"),
+                     LogLine(kind: .tool, text: "read Model.swift"), LogLine(kind: .agent, text: "Done."),
+                     LogLine(kind: .summary, text: "Worked for 9s · $0")]
+        let visible = LogLine.visible(lines, details: false)
+        XCTAssertEqual(ChatItem.live(Array(visible.prefix(4))).steps.map { $0.said ?? $0.text },
+                       ["Looking around", "Looking around", "Looking things over"])
+        guard case .work(_, _, let steps)? = ChatItem.items(visible, gather: true).last else { return XCTFail("no Worked for") }
+        XCTAssertEqual(steps.map { $0.said ?? $0.text }, ["Looking around", "Looking things over"])
+        XCTAssertEqual(steps.first?.text, "Ran: ls Sources\ngrep heat")
+    }
 }
