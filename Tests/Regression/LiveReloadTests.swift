@@ -334,6 +334,15 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: initAdded).problem, "an initializer of Item was added, taken away or changed, and a class's initializers are in its method table")
         let unfinal = try await layoutWith([("; init(n: String) { name = n }", ""), ("; var choice: Choice? = nil }", " }"), ("final class Holder", "class Holder")])
         XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: unfinal).problem, "Holder is no longer final (something subclasses it), and its methods would go through a table the open app's class doesn't have")
+        // An initializer in an extension is a convenience one, in no method table: declared, not held.
+        let extensionInit = try await layoutWith([("class Holder", "final class Holder"),
+                                                  ("final class Tagged: NSObject {", "extension Item { convenience init(copy: Item) { self.init(); name = copy.name } }\nfinal class Tagged: NSObject {")])
+        XCTAssertNil(LiveReload.layoutProblem(before: layout, after: extensionInit).problem)
+        XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: extensionInit))
+        // A type holding the enum, printed: its field records name the enum as the open app knew it.
+        _ = try await layoutWith([("var stack = Stack<Int>(top: nil) }", "var stack = Stack<Int>(top: nil); func show() -> String { \"\\(self)\" } }")])
+        let printed = await LiveReload.enumsHeld(project, grown: ["Outer.Mood"])
+        XCTAssertEqual(printed, "Holder holds Outer.Mood and is printed, and its printed form would read Outer.Mood as the open app knew it")
         XCTAssertEqual(LiveReload.existential(in: "any CustomDebugStringConvertible", holding: "Mood", conformances: conformances), "any CustomDebugStringConvertible")
         XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
         XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")

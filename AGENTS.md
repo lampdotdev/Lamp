@@ -757,15 +757,18 @@ built live (a widget or share extension is built from the same copy, and a chang
 (`Template.liveCopySteps`: the body becomes `AnyView` and reads `LampLive.generation`, so its type never changes and
 every view draws again on a reload with its state kept), and builds that copy unoptimized, testable, with
 `LAMP_LIVE` and `-Xlinker -interposable` (SwiftPM for a Mac app; Xcode for an app for both, from a copy of the
-device project, with its debug library off so the code is in the one binary). The copy also makes every class
-`final` that nothing in Sources subclasses (`Template.finalPerl`, given the names used as superclasses and as the
-bounds of generic parameters and `where` clauses): a final class keeps no method table, so a method or computed
+device project, with its debug library off so the code is in the one binary). The copy is made by one
+perl pass over each file (`Template.livePerl`: the body wrap, Lamp's entry, the spare places and the `final` below,
+with the stretches of strings and comments found once and never touched). It makes every class `final` that nothing
+in Sources subclasses (`live.pl scan` lists the names used as superclasses and as the bounds of generic parameters
+and `where` clauses, followed through typealiases): a final class keeps no method table, so a method or computed
 property added to it goes in, where one added to a class with a table reopens the app; a class made final that
-something subclasses after all fails the build in the compiler's words, which `LiveSlots.brokeFinal` reads, and the
-copy is made without the step from then on (`no-final`). A class's finality and its initializers (which have method
-descriptors, a final class's too) are held with the layout (`LiveReload.initsGroup`), so a subclass added, or an
-initializer added or changed, reopens the app with its reason rather than being refused by the runtime after the
-compile. After a build, `Store.install` tries
+something subclasses after all fails the build in the compiler's words, which `LiveSlots.brokeFinal` reads (unless
+the app's own code wrote that class `final`, when the error is the agent's), and the copy is made without the step
+from then on (`no-final`). A class's finality and its initializers (which have method descriptors, a final class's
+too; one in an extension is a convenience initializer and isn't) are held with the layout (`LiveReload.Group.inits`),
+so a subclass added, or an initializer added or changed, reopens the app with its reason rather than being refused
+by the runtime after the compile. After a build, `Store.install` tries
 `reloadInPlace` first: when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.launchEntries`, held to what the open app had as part of the layout; a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again) or Lamp's own files, and leaves every type
 holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties and cases,
 from `-dump-ast` of just the changed files, compared for the open app's sources and the new ones; no reading of the
@@ -777,7 +780,8 @@ type as the compiler prints it where the body's value becomes the opaque one, `L
 become `1.5` only if the member returns a Double now, and `Text("a")` may become `Text("a").bold()`; where that type is
 opaque too (a modifier's `some View`) it's listed by a digest of the calls and types its body names instead: the open app's witness tables and callers were laid out for the type it had, and the
 compiler prints both as `some View`; a view's own body, wrapped by the live copy, and a private member are left out; a private type is listed with its file,
-`LiveReload.placeGroup`, since its mangled name carries it and one moved to another file is another type at run time) (`LiveReload.reloadable`, comparing with the sources the
+`LiveReload.placeGroup`, since its mangled name carries it and one moved to another file is another type at run time;
+every such entry beyond a type's own fields is one of `LiveReload.Group`, which makes and reads them) (`LiveReload.reloadable`, comparing with the sources the
 open app runs, kept in `.lamp/live/running`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
 linked into a library. Every file is compiled when what's declared changed (a function, an initializer, a computed
 property, a conformance, a member's `@objc` and its selector, a stored property's observers, which turn every write
@@ -834,7 +838,7 @@ from its Assets folder rather than its bundle (`LampAssets`), so a new picture g
 app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which tells the
 agent what goes in without reopening.
 
-New stored properties go in live too (`LiveSlots`, in LiveReload.swift). The copy step (`Template.sparesPerl`) gives
+New stored properties go in live too (`LiveSlots`, in LiveReload.swift). The copy step (`Template.livePerl`) gives
 each type of the app's spare room the open app's values already have: every class a few places,
 `__lampSpare_<Class>_0`… of `LampSpare?` (named after the class, so a subclass's don't clash with what it inherits;
 `@Published` when the header says `ObservableObject`), every view one `@State` box (`__lampState_<View>`, a
@@ -864,7 +868,9 @@ in a plain collection: Swift uses the numbers after the last case for `nil` in a
 cases that carry it, which a new case would take over. That's looked for in every stored field, static and global of
 the new code (`LiveReload.enumsHeld`), before the change goes in; a property added while the app was open keeps its
 value in a spare as any value, under the metadata the app's code had, which the grown enum's own no longer reads
-from, so one holding the enum or a carrier reopens the app; and a value type
+from, so one holding the enum or a carrier reopens the app; a type holding the enum that the app prints (`print`, `dump`,
+`String(describing:)`, `Mirror`, an interpolation) reopens it too, since its field records name the enum as the open
+app knew it and a new case would print as nothing; and a value type
 that carries the enum by value (a struct with a field of it, an enum with a payload of it) is held to the same plain
 forms, since its own optional and payload cases borrow the enum's numbers, unless it has a spare of Lamp's, whose
 `Any?` gives Swift more; an app that keeps

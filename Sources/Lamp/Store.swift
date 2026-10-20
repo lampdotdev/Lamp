@@ -4494,8 +4494,10 @@ final class Store: ObservableObject {
                                          started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
         // The live copy's spare places must never be what keeps an app from building: if they are, it's built
         // without them from now on, and the agent only ever sees errors in its own code.
+        // Both are judged, since one output may hold both kinds of error; the build is tried again if either gave up.
         if status != 0, env["LAMP_LIVE"] == "1", case let text = output.joined(separator: "\n"),
-           (LiveSlots.brokeBuild(text) && LiveSlots.giveUp(project)) || (LiveSlots.brokeFinal(text) && LiveSlots.giveUpFinal(project)) {
+           case let spares = LiveSlots.brokeBuild(text) && LiveSlots.giveUp(project),
+           case let finals = LiveSlots.brokeFinal(text, project: project) && LiveSlots.giveUpFinal(project), spares || finals {
             output = []
             status = await Self.runBuild(command, for: project, env: env,
                                          started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
