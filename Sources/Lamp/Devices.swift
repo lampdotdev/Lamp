@@ -346,17 +346,18 @@ enum Devices {
     }
 
     /// Where the person's own phone stands, told to the agent at its first look in a turn: whether Try On points at
-    /// one, which then gets every finished change, or what the person does to have the app on theirs.
+    /// one, which then gets every finished change, or what the person does to have the app on theirs. Only what the
+    /// list shows: a phone in it may be paired and away, so the agent isn't told it's connected.
     static func tryOnNote(chosen udid: String?, among devices: [Device]) -> String {
         let simulator = "No phone is chosen under Try On, so the person sees the app in the simulator."
         if let udid {
             guard let device = devices.first(where: { $0.udid == udid }) else {
                 return "Try On points at the person's own phone, but Lamp doesn't see it now: to have the app on it, they connect it and unlock it, then press Play."
             }
-            return "Try On points at the person's \(device.name): when this turn ends Lamp puts the app on it too."
+            return "Try On points at the person's \(device.name): when this turn ends Lamp puts the app on it too, if it's connected and unlocked."
         }
         if let device = devices.first(where: \.paired) {
-            return simulator + " Their \(device.name) is paired with this Mac: to have the app on it, they connect it, choose it under Try On and press Play."
+            return simulator + " Their \(device.name) has been paired with this Mac: to have the app on it, they connect it, choose it under Try On and press Play."
         }
         if let device = devices.first {
             return simulator + " Lamp sees their \(device.name), which hasn't trusted this Mac yet: they choose Pair under Try On, tap Trust on it, then choose it and press Play."

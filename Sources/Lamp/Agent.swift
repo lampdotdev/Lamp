@@ -435,10 +435,11 @@ enum Agent {
         /// Said in both headers for iOS: an agent told only of the simulator tells the person their phone can't
         /// have the app, when one chosen under Try On gets every finished change.
         static let phone = """
-        Lamp also puts it on the person's own iPhone or iPad, even with a free Apple account: they connect it, \
-        choose it under Try On and press Play, and every finished change goes there too. Your looks stay on the \
-        simulator. Your first look in a turn says whether a phone is chosen; never say the app can't go on their \
-        phone: when none is, say you didn't see one connected and ask them to connect it.
+        Lamp also puts it on the person's own iPhone or iPad, even with a free Apple account: on the one they \
+        choose under Try On, when they press Play and with every finished change. Your looks stay on the \
+        simulator. Never say the app can't go on their phone. Your first look in a turn says which phone is chosen \
+        and whether Lamp sees one; say only what it told you. Without that, say the app goes on the phone they \
+        choose under Try On, and that they plug one in and choose it there.
         """
 
         static let edit = """
