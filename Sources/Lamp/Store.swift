@@ -481,6 +481,9 @@ final class Store: ObservableObject {
         /// Nil for a simulator/Mac turn; false until the chosen phone acknowledges opening the app.
         var phoneReady: Bool?
         var allowAll = false                // "Allow all for this turn"
+        /// What the checks made of each command this turn (`commandJudgment`): an agent runs the same build or
+        /// look at a file again and again, and the answer can't differ while the request is the same.
+        var judgments: [String: CommandRisk.Judgment] = [:]
         var approving = false               // between the queue check and the approval card
         var look = Look()                   // what the agent's look_at_app has done
         /// A new app's scaffold being built and opened as the turn starts (`showEarly`): a look and the turn's own
@@ -3145,7 +3148,7 @@ final class Store: ObservableObject {
             log(project, .status, "Ran: \(command)", said: said)
             return true
         case .risky where !escalated:
-            let judgment = await commandJudgment(command, for: project)
+            let judgment = await commandJudgment(command, for: project, aboutRequest: !sandboxed)
             // A command the sandbox confines can only change the app's own folder (Sandbox), so only one the
             // checks find risky asks: one they're merely unsure of, or that doesn't seem to match the request
             // (looking for the app's process while fixing it), runs. Asking about those was most of the cards,
@@ -3161,8 +3164,9 @@ final class Store: ObservableObject {
                                          said: said)
         case .risky where shell:
             // Claude Code's own classifier asked: it doesn't run on the checks alone, but what they flag keeps
-            // its card, so the in-app model's "low" can't run a command they found risky.
-            let judgment = await commandJudgment(command, for: project)
+            // its card, so the in-app model's "low" can't run a command they found risky. Only risky counts here,
+            // which the request's question can't change.
+            let judgment = await commandJudgment(command, for: project, aboutRequest: false)
             let flagged = judgment.verdict == .risky ? judgment.reason ?? .reachesBeyond : nil
             return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged,
                                          said: said)
@@ -3172,11 +3176,19 @@ final class Store: ObservableObject {
     }
 
     /// Whether a command is plainly fine, for every engine: the decision model's answers (CommandRisk),
-    /// against the user's request. No decision model available → not plainly fine.
-    private func commandJudgment(_ command: String, for project: LampProject) async -> CommandRisk.Judgment {
-        await CommandRisk.judge(command: command, request: turns[project.id]?.request ?? "", folder: project.dir.path) { state, questions in
+    /// against the user's request when `aboutRequest`. No decision model available → not plainly fine.
+    /// A command judged once in a turn isn't sent again for the same request; one the model couldn't judge is.
+    private func commandJudgment(_ command: String, for project: LampProject, aboutRequest: Bool) async -> CommandRisk.Judgment {
+        let turn = turns[project.id]
+        let request = turn?.request ?? ""
+        let key = [aboutRequest ? request : "", project.dir.path, command].joined(separator: "\u{0}")
+        if let known = turn?.judgments[key] { return known }
+        let judgment = await CommandRisk.judge(command: command, request: request, folder: project.dir.path,
+                                               aboutRequest: aboutRequest) { state, questions in
             try await AppAI.decide(state: state, questions: questions).0
         }
+        if judgment.judged { turn?.judgments[key] = judgment }
+        return judgment
     }
 
     /// Applies Settings → Building → Permissions and Privacy to one of the agent's file tools, about to touch `path`: pi's own
@@ -4588,12 +4600,29 @@ final class Store: ObservableObject {
     private var liveBuildFailed: Set<String> = []
     /// Apps whose change went in before their build: the install that follows the build has nothing to do.
     private var reloadedBeforeBuild: Set<String> = []
+    /// What each running whole build after an early change was started from: its process, to end it when a newer
+    /// change makes it stale, and the fingerprint of the sources it builds, to tell when nothing changed since.
+    private var liveBuildRuns: [String: (process: Process?, fingerprint: String)] = [:]
+    /// Whole builds ended because a newer change replaced them: what they leave in build/ isn't installed.
+    private var liveBuildsSuperseded: Set<String> = []
 
     /// Waits for the whole build after an early change, which can take a minute: meanwhile the turn says it's
     /// building, not that the change is going in, which was said seconds before and is done.
     private func awaitLiveBuild(of project: LampProject) async {
         guard let whole = liveBuilds[project.id] else { return }
         note("Building…", for: project)
+        await whole.value
+    }
+
+    /// Ends the whole build after an earlier change, and waits for it to be gone, since the next build writes the
+    /// same folders. What it left in build/ is the version before the change, or half of it, so until another
+    /// whole build is done the app is treated as one whose whole build failed: never installed from it.
+    private func supersedeLiveBuild(of project: LampProject) async {
+        guard let whole = liveBuilds[project.id] else { return }
+        liveBuildsSuperseded.insert(project.id)
+        liveBuildFailed.insert(project.id)
+        // Not started yet (the process is handed over as it starts): it runs, briefly, and ends at its first check.
+        if let process = liveBuildRuns[project.id]?.process { Subprocess.terminateTree(process) }
         await whole.value
     }
 
@@ -4604,7 +4633,14 @@ final class Store: ObservableObject {
     private func reloadBeforeBuilding(_ project: LampProject, command: String, env: [String: String], fingerprint: String) async -> Bool {
         reloadedBeforeBuild.remove(project.id)
         guard LiveReload.eligible(project), !macCopies(of: project).isEmpty, Self.binary(of: project, contains: "reloaded.txt") else { return false }
-        await awaitLiveBuild(of: project)
+        // The open app already runs these sources, and their whole build is on its way: nothing more to do.
+        if liveBuilds[project.id] != nil, liveBuildRuns[project.id]?.fingerprint == fingerprint {
+            reloadedBeforeBuild.insert(project.id)
+            return true
+        }
+        // A whole build of earlier sources is stale: only the newest change's build is ever installed, and waiting for
+        // it held this change back by as long as it had left. It's ended, and whatever comes next builds the whole app.
+        await supersedeLiveBuild(of: project)
         liveBuildFailed.remove(project.id)
         var copy = env
         copy["LAMP_LIVE"] = "1"
@@ -4620,12 +4656,17 @@ final class Store: ObservableObject {
         LiveReload.startedBuilding(project)
         var full = env
         full["LAMP_LIVE"] = "1"
+        liveBuildRuns[project.id] = (nil, fingerprint)
         liveBuilds[project.id] = Task { [weak self] in
             var output: [String] = []
-            let status = await Self.runBuild(command, for: project, env: full) { output.append($0) }
+            let status = await Self.runBuild(command, for: project, env: full,
+                                             started: { [weak self] in self?.liveBuildRuns[project.id]?.process = $0 }) { output.append($0) }
             guard let self else { return }
             self.liveBuilds[project.id] = nil
+            self.liveBuildRuns[project.id] = nil
             LiveReload.finishedBuilding(project)
+            // Ended for a newer change, whose own build follows: not a failure, and nothing of it counts as built.
+            if self.liveBuildsSuperseded.remove(project.id) != nil { return }
             guard let current = self.current(project) else { return }
             if status == 0 {
                 Runtime.markBuilt(current, from: fingerprint)
@@ -6744,6 +6785,12 @@ final class Store: ObservableObject {
             if !changed { note = "The app is running your latest code; it was reopened without rebuilding." }
             if reopen { note = "The app was closed and opened again, so it started fresh." }
             say(looking)
+            // A change that went into the open app didn't launch it, so nothing takes the pictures a launch does:
+            // they're asked for, once the new code has had a moment to draw.
+            if turn.updatedInPlace {
+                try? await Task.sleep(for: .milliseconds(300))
+                Runtime.requestScreenshots(of: project)
+            }
             screenshots = await Runtime.screenshots(of: project, since: launched)
         }
         var lead = ""

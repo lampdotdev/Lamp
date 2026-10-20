@@ -219,9 +219,12 @@ enum CommandRisk {
 
     /// One command, judged, for every engine: the questions put to `decide` (the decision model), and the
     /// verdict from its answers. A model that can't be reached or leaves a question out is unsure, never run.
-    static func judge(command: String, request: String, folder: String,
+    /// `aboutRequest` false leaves the request's question out, for a command whose outcome it can't change: a
+    /// confined one runs whether it's judged fine or unsure (`Store.approveCommand`), and only risky asks,
+    /// which the request never lifts. Asked one after the other, the two calls were most of a command's wait.
+    static func judge(command: String, request: String, folder: String, aboutRequest: Bool = true,
                       decide: (_ state: [String: Any], _ questions: [String: Any]) async throws -> [String: Any]) async -> Judgment {
-        let asked = questions(hasRequest: !request.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        let asked = questions(hasRequest: aboutRequest && !request.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         let aboutCommand = asked.filter { $0.key != requestQuestion }
         guard let given = try? await decide(state(command: command, folder: folder), aboutCommand),
               var answers = Answers(given, asked: aboutCommand) else { return Judgment(verdict: .unsure, judged: false) }

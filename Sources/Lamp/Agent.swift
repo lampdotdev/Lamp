@@ -1496,15 +1496,19 @@ enum Shell {
     """#
 
     /// Runs a zsh command, streaming merged stdout/stderr line by line. Returns the exit status.
+    /// `login` false skips the login shell, whose startup files run again for every command (and can take a
+    /// good part of a second); the PATH they'd give is the person's, worked out once (`ToolLocator.userPath`).
+    /// For Lamp's own short commands, which need nothing else from them; an engine's run keeps them.
     static func run(
         _ command: String,
         cwd: URL,
         env: [String: String] = [:],
         input: AgentInput? = nil,
+        login: Bool = true,
         started: (@MainActor (Process) -> Void)? = nil,
         onLine: @escaping @MainActor (String) -> Void
     ) async -> Int32 {
-        let process = shell(command, cwd: cwd, env: env)
+        let process = await shell(command, cwd: cwd, env: env, login: login)
 
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -1546,20 +1550,24 @@ enum Shell {
         }.value
     }
 
-    private static func shell(_ command: String, cwd: URL, env: [String: String]) -> Process {
+    private static func shell(_ command: String, cwd: URL, env: [String: String], login: Bool) async -> Process {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lc", "export PATH=\"\(extraPath):$PATH\"; \(command)"]
+        process.arguments = [login ? "-lc" : "-c", "export PATH=\"\(extraPath):$PATH\"; \(command)"]
         process.currentDirectoryURL = cwd
-        process.environment = ProcessInfo.processInfo.environment.merging(env) { $1 }
+        var environment = ProcessInfo.processInfo.environment
+        // Off the main thread: the first look runs the person's shell, which may take a moment.
+        if !login { environment["PATH"] = await Task.detached { ToolLocator.userPath }.value }
+        environment.merge(env) { $1 }
+        process.environment = environment
         return process
     }
 
     /// Runs a zsh command and keeps its standard output whole, off the main actor, with its standard error dropped.
     /// For output read as a whole rather than shown as it comes: the compiler's printout of a big app's code is
     /// tens of megabytes, which `run` would hand over a line at a time, each through the main actor.
-    static func output(_ command: String, cwd: URL, env: [String: String] = [:]) async -> (status: Int32, output: Data) {
-        let process = shell(command, cwd: cwd, env: env)
+    static func output(_ command: String, cwd: URL, env: [String: String] = [:], login: Bool = true) async -> (status: Int32, output: Data) {
+        let process = await shell(command, cwd: cwd, env: env, login: login)
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
