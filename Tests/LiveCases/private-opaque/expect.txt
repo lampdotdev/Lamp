@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: VStack<Text> VStack<Text>
+RELOAD 1: ok
+after: VStack<Text> VStack<Text> VStack<Text>

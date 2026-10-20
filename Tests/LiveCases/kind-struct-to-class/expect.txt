@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Item is a class now, where the open app's is a struct)
+== run
+before: one=c/3 items=["a/1", "b/2"]
+RELOAD 1: REOPEN Item is a class now, where the open app's is a struct
+after1 (want reopen; a reload here reads structs as objects): one=c/4 items=["a/1", "b/2"]
+before: one=c/3 items=["a/1", "b/2"]
+RELOAD 1: in the restart
+after1 (want reopen; a reload here reads structs as objects): one=c/4 items=["a/1", "b/2"]

@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: ["step-old", "private-old"]
+RELOAD 1: ok
+after (want step-NEW, private stays old): ["private-NEW", "step-NEW"]

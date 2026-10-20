@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: e e
+RELOAD 1 (whole): ok
+after: e f

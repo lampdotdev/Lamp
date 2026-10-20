@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Game.score, Game.box, Pt.tag)
+== run
+before: size=(w: 3, h: 4) p=(x: 0.0, y: 0.0)
+RELOAD 1: ok
+after1 (want score=1 box=(a: 1, b: 2) tag=t2): size=(w: 3, h: 4) p=(x: 0.0, y: 0.0) score=1 box=(a: 1, b: 2) tag=t2

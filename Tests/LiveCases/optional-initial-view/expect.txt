@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Row.limit)
+== run
+before: 0
+RELOAD 1 (whole): ok
+after1 (want "0 10"): 0 10

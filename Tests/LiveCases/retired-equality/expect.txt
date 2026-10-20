@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD (Added Item.bass)
+VERDICT 2: RELOAD
+== run
+before: equal=true sameHash=true set=1
+RELOAD 1: ok
+after1 (want equal=false): equal=false sameHash=false set=2
+RELOAD 2: ok
+after2 (want equal=true, sameHash=true): equal=true sameHash=true set=1 fresh: equal=true sameHash=true set=1

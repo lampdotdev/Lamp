@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (start() prints Wrapper in code that may still be running (a timer, a task, an observer), which doesn't know the new cases)
+== run
+before: holder=Wrapper(__lampSpare_Wrapper: Case.LampSpare(value: nil), mood: Case.Mood.happy) direct=happy list=[Case.Mood.happy] now=happy
+RELOAD 1: REOPEN start() prints Wrapper in code that may still be running (a timer, a task, an observer), which doesn't know the new cases
+after (want angry in all): holder=Wrapper(__lampSpare_Wrapper: Case.LampSpare(value: nil), mood: Case.Mood.sad) direct=sad list=[Case.Mood.sad] now=sad
+before: count=1 now=happy
+RELOAD 1: in the restart
+after (want angry in all): count=1 now=angry

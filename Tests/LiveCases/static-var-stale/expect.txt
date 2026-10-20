@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Gave Config.name its new value)
+== run
+before: limit=3 name=a retries=2
+RELOAD 1 (whole): ok
+after1 (the agent wrote 5): limit=3 name=b retries=2

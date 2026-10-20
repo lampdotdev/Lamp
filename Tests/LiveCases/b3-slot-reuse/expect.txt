@@ -1,0 +1,11 @@
+VERDICT 1: RELOAD (Added Game.score)
+VERDICT 2: RELOAD
+VERDICT 3: RELOAD (Added Game.score)
+== run
+before: level=1
+RELOAD 1: ok
+after1 (want score=42): level=2 score=42
+RELOAD 2: ok
+after2 (no score): level=2
+RELOAD 3: ok
+after3 (want score=0, fresh property): level=2 score=0 fresh object: level=1 score=0

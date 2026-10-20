@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: [1, 2]
+RELOAD 1: ok
+after1 (the maintainer must decide what is wanted; now): [1, 2] fresh: [1, 2, 3]

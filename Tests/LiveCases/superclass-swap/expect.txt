@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (B is a class under A2 now, where the open app's is a class under A1)
+== run
+before: p=1 r=3 label=b
+RELOAD 1: REOPEN B is a class under A2 now, where the open app's is a class under A1
+after1 (want reopen; a reload reads B's fields where A2 lays them): p=1 r=3 label=b
+before: p=1 r=3 label=b
+RELOAD 1: in the restart
+after1 (want reopen; a reload reads B's fields where A2 lays them): p=1 r=3 label=b

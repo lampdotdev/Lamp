@@ -1,0 +1,11 @@
+VERDICT 1: RELOAD (Added ContentView.flag)
+VERDICT 2: RELOAD
+VERDICT 3: RELOAD (Added ContentView.flag)
+== run
+before: v0
+RELOAD 1 (whole): ok
+after1: v1
+RELOAD 2 (whole): ok
+after2: v2
+RELOAD 3 (whole): ok
+after3: v3

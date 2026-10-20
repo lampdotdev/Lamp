@@ -1,0 +1,13 @@
+VERDICT 1: RELOAD (Added Item.limit)
+VERDICT 2: REOPEN (Item changed what it holds (Item.limit: Int); Item.limit starts as 20 now, where it was put in its spare starting as 10, which the values the open app holds compare by)
+== run
+before: 1
+RELOAD 1: ok
+after1 (want "1 10"): 1 10
+RELOAD 2: REOPEN Item changed what it holds (Item.limit: Int); Item.limit starts as 20 now, where it was put in its spare starting as 10, which the values the open app holds compare by
+after2 (reopen expected; its reason should name the starting value): 1 10
+before: 1 20
+RELOAD 1: in the restart
+after1 (want "1 10"): 1 20
+RELOAD 2: in the restart
+after2 (reopen expected; its reason should name the starting value): 1 20

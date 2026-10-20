@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: mood=happy mirror=["LampSpare(value: nil)", "happy"]
+RELOAD 1 (whole): ok
+after (want angry, no crash): mood=angry mirror=["LampSpare(value: nil)", "angry"]

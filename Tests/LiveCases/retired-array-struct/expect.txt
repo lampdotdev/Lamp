@@ -1,0 +1,17 @@
+VERDICT 1: RELOAD (Added Item.done)
+VERDICT 2: RELOAD
+VERDICT 3: RELOAD (Added Item.done)
+VERDICT 4: RELOAD
+VERDICT 5: RELOAD (Added Item.done)
+== run
+before: equal=true first=- set=2
+RELOAD 1: ok
+after1 (want equal=false first=T): equal=false first=T set=3
+RELOAD 2: ok
+after2 (want equal=true): equal=true first=- set=2
+RELOAD 3: ok
+after3 (want equal=true first=F, fresh place): equal=true first=F set=2
+RELOAD 4: ok
+after4 (want equal=true): equal=true first=- set=2
+RELOAD 5: ok
+after5 (want equal=true first=F, fresh place again): equal=true first=F set=2

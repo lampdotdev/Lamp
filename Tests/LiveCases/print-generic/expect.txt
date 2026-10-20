@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: generic=Wrapper(__lampSpare_Wrapper: Case.LampSpare(value: nil), mood: Case.Mood.happy) any=Wrapper(__lampSpare_Wrapper: Case.LampSpare(value: nil), mood: Case.Mood.happy) direct=happy
+RELOAD 1 (whole): ok
+after (want angry in all): generic=Wrapper(__lampSpare_Wrapper: Case.LampSpare(value: nil), mood: Case.Mood.angry) any=Wrapper(__lampSpare_Wrapper: Case.LampSpare(value: nil), mood: Case.Mood.angry) direct=angry

@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: mood=Mood(rawValue: 0) raw=0 list=[Case.Mood] from=nil mirror=["nil", "nil", "nil", "nil", "Mood", "[Case.Mood]"]
+RELOAD 1 (whole): ok
+after (want angry/2, no crash): mood=Mood(rawValue: 2) raw=2 list=[Case.Mood, Case.Mood] from=Optional(Case.Mood) mirror=["nil", "nil", "nil", "nil", "Mood", "[Case.Mood, Case.Mood]"]

@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD (Gave Catalog.count its new value)
+VERDICT 2: RELOAD
+== run
+before: count=2 live=2
+RELOAD 1 (whole): ok
+after1 (want 3 3): count=3 live=3
+RELOAD 2 (whole): ok
+after2 (want 4 4): count=4 live=4

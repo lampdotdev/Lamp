@@ -1,0 +1,16 @@
+VERDICT 1: REOPEN (Game holds Mood as Mood?, which a new case would change)
+VERDICT 2: REOPEN (Game changed what it holds (Game.extra: Double))
+== run
+before: volume=1
+RELOAD 1: REOPEN Game holds Mood as Mood?, which a new case would change
+after1 (reopen expected: Mood? held): volume=1
+before: volume=1 extra=0
+RELOAD 1: in the restart
+after1 (reopen expected: Mood? held): volume=1 extra=0
+RELOAD 2: REOPEN Game changed what it holds (Game.extra: Double)
+after2 (want extra=0.0): volume=1 extra=0
+before: volume=1 extra=0.0
+RELOAD 1: in the restart
+after1 (reopen expected: Mood? held): volume=1 extra=0.0
+RELOAD 2: in the restart
+after2 (want extra=0.0): volume=1 extra=0.0
