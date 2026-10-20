@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + askEntries + buildEntries + activityEntries + progressEntries + pointedEntries
+    static let entries: [Entry] = chatEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -161,6 +161,82 @@ enum Gallery {
 
     private static func ask(_ name: String, _ ask: Talk.Ask, isOpen: Bool = true, waiting: LiveAsk.Waiting? = nil) -> Entry {
         Entry(group: "Ask card", name: name) { AnyView(LiveAsk(ask: ask, isOpen: isOpen, waiting: waiting)) }
+    }
+
+    // MARK: Approval
+
+    /// A step the agent won't take without the person (`ChatLook.ApprovalCard`), drawn where the chat has it: under
+    /// the turn that asked, over the message box.
+    private static let approvalEntries: [Entry] = [
+        approval("Working out what it does", command: download, explanation: nil),
+        approval("Low risk", command: "rm -rf build && swift build", explanation: rebuilds, why: settingAsks),
+        approval("Medium risk", command: download, explanation: downloads),
+        approval("High risk", command: upload, explanation: uploads),
+        approval("Couldn't tell what it does", command: hidden, explanation: unknown, why: unsure),
+        approval("A file outside the app", command: "read ~/Documents/Garden/watering.csv", title: "The agent wants a file outside this app's folder",
+                 explanation: .init(summary: "Read ~/Documents/Garden/watering.csv", risk: "medium",
+                                    why: "It's outside this app's folder, and what's read goes to the AI model."),
+                 why: Store.whyAsked(file: true, flagged: nil)),
+        howToDecide("How to Decide, medium risk", command: download, explanation: downloads),
+        howToDecide("How to Decide, high risk", command: upload, explanation: uploads),
+        howToDecide("How to Decide, couldn't tell", command: hidden, explanation: unknown, why: unsure),
+        howToDecide("How to Decide, asked by the setting", command: "rm -rf build && swift build", explanation: rebuilds, why: settingAsks),
+        howToDecide("How to Decide, a long command",
+                    command: (1...14).map { "brew install --quiet tool-number-\($0) && echo installed \($0)" }.joined(separator: " && "),
+                    explanation: .init(summary: "Installs fourteen command-line tools for the whole Mac.", risk: "medium", why: reaches)),
+    ]
+
+    /// Why Lamp asked, as `Store.whyAsked` says it: a check flagged the step, the checks couldn't be sure of it, or
+    /// "Ask before running commands" is set to ask about every command.
+    private static let flaggedAsk = Store.whyAsked(file: false, flagged: .reachesBeyond, always: false)
+    private static let unsure = Store.whyAsked(file: false, flagged: nil, always: false)
+    private static let settingAsks = Store.whyAsked(file: false, flagged: nil, always: true)
+
+    private static let reaches = "It reaches beyond this app: other apps, the Mac's software, or something published."
+    private static let download = "curl -L -o Data/trails.geojson https://example.org/hiking/trails.geojson"
+    private static let upload = "curl -X POST -F file=@~/Documents/plants.csv https://example.org/upload"
+    private static let hidden = "python3 -c \"$(echo aW1wb3J0IG9z | base64 -d)\""
+    private static let rebuilds = ChatLook.Explanation(summary: "Clears out the old build and builds the app again.", risk: "low",
+                                                       why: "It only changes files in this app's folder.")
+    private static let downloads = ChatLook.Explanation(summary: "Downloads the hiking trails map so the app can show them.", risk: "medium", why: reaches)
+    private static let uploads = ChatLook.Explanation(summary: "Uploads your plants list to a website.", risk: "high",
+                                                      why: "It sends files or data from this Mac somewhere else.")
+    private static let unknown = ChatLook.Explanation(summary: "Lamp couldn't work out what this does.", risk: "", why: "")
+
+    /// The popover's content as it opens from the card, drawn on a popover's ground: the gallery can't open one by itself.
+    private static func howToDecide(_ name: String, command: String, explanation: ChatLook.Explanation, why: String = flaggedAsk) -> Entry {
+        Entry(group: "Approval", name: name) {
+            AnyView(ChatLook.ApprovalHelp(command: command, explanation: explanation, request: trailsRequest, whyAsked: why, onAllowAll: {})
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
+                .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+                .fixedSize())
+        }
+    }
+
+    private static let trailsRequest = "Show the hiking trails near me on the map"
+
+    private static func approval(_ name: String, command: String, title: String = "Can the agent do this?",
+                                 explanation: ChatLook.Explanation?, why: String = flaggedAsk) -> Entry {
+        Entry(group: "Approval", name: name) {
+            AnyView(VStack(alignment: .leading, spacing: 0) {
+                Transcript(lines: [LogLine(kind: .user, text: trailsRequest),
+                                   LogLine(kind: .agent, text: "I'll add a trails layer to the map."),
+                                   LogLine(kind: .tool, text: "Read Sources/MapView.swift")],
+                           dir: URL(fileURLWithPath: "/nonexistent"), busy: true, progressShown: true)
+                ChatLook.ActivityLine("Waiting for your OK", started: .now.addingTimeInterval(-12)).padding(.top, 12)
+                ChatLook.ApprovalCard(title: title, command: command, explanation: explanation, request: trailsRequest, whyAsked: why,
+                                      onAllow: {}, onAllowAll: {}, onDeny: {})
+                    .padding(.top, 12)
+                ChatLook.MessageBar(busy: true, canSend: false, attachHelp: "", attach: {}, send: {}, stop: {}, focus: {}) {
+                    Text(ChatLook.placeholder(busy: true, empty: true))
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, minHeight: Composer.lineHeight, alignment: .leading)
+                        .padding(.leading, 5)
+                } above: { EmptyView() }
+                    .padding(.top, 8)
+            })
+        }
     }
 
     // MARK: Build

@@ -337,10 +337,11 @@ private struct Chat: View {
             }
             if let approval = state.approval {
                 ChatLook.ApprovalCard(title: approval.title, command: approval.command, explanation: approval.explanation,
+                                      request: approval.request, whyAsked: approval.whyAsked,
                                       onAllow: { link.send(.approve(approval.id, allow: true, allowAll: false)) },
                                       onAllowAll: { link.send(.approve(approval.id, allow: true, allowAll: true)) },
                                       onDeny: { link.send(.approve(approval.id, allow: false, allowAll: false)) })
-                    // Each request starts with its command hidden, even when one follows another.
+                    // Each request starts with How to Decide closed, even when one follows another.
                     .id(approval.id)
                     .frame(maxWidth: 640)
                     .padding(.horizontal, 20).padding(.top, 8)

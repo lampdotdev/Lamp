@@ -611,10 +611,11 @@ struct ProjectView: View {
             chat(lines)
             if let approval = store.approvals[project.id] {
                 ChatLook.ApprovalCard(title: approval.title, command: approval.command, explanation: approval.explanation?.look,
+                             request: approval.request, whyAsked: approval.whyAsked,
                              onAllow: { store.answerApproval(for: project, allow: true) },
                              onAllowAll: { store.answerApproval(for: project, allow: true, allowAll: true) },
                              onDeny: { store.answerApproval(for: project, allow: false) })
-                    // Each request starts with its command hidden, even when one follows another.
+                    // Each request starts with How to Decide closed, even when one follows another.
                     .id(approval.id)
                     .frame(maxWidth: 640)
                     .padding(.horizontal, 20).padding(.top, 8)
