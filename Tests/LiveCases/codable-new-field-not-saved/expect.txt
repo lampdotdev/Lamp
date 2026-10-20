@@ -3,3 +3,6 @@ VERDICT 1: REOPEN (Todo changed what it holds (Todo.done: Bool); Todo.done is na
 before: {"title":"x"}
 RELOAD 1: REOPEN Todo changed what it holds (Todo.done: Bool); Todo.done is named in its CodingKeys, so Codable needs it stored
 after1 (want done true in the JSON and read back): {"title":"x"} | Todo(__lampSpare_Todo: Case.LampSpare(value: nil), title: "x")
+before: {"done":false,"title":"x"}
+RELOAD 1: in the restart
+after1 (want done true in the JSON and read back): {"done":true,"title":"x"} | done=true

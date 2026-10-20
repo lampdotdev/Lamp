@@ -6,3 +6,7 @@ RELOAD 1: ok
 after1 (formatting only; want true): true
 RELOAD 2: REOPEN the new code doesn't type-check as a whole
 after2 (moved; reopen expected): true
+BUILD FAILED
+A.swift:4:33: error: 'Row' is inaccessible due to 'private' protection level
+  |                                 `- error: 'Row' is inaccessible due to 'private' protection level
+A.swift:5:48: error: 'Row' is inaccessible due to 'private' protection level

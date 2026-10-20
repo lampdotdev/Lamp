@@ -3,3 +3,6 @@ VERDICT 1: REOPEN (start() uses Mood in code that may still be running (a timer,
 before: sad=1 hasLast=true lastName=sad count=2
 RELOAD 1: REOPEN start() uses Mood in code that may still be running (a timer, a task, an observer), which doesn't know the new cases
 after (want sad=1 angry=1 last=angry): sad=2 hasLast=true lastName=sad count=3
+before: sad=1 hasLast=false lastName=none count=2
+RELOAD 1: in the restart
+after (want sad=1 angry=1 last=angry): sad=1 hasLast=false lastName=none count=3

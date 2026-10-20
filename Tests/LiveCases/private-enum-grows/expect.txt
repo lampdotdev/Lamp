@@ -5,3 +5,6 @@ before: a b
 RELOAD 1: REOPEN the change didn't compile on its own.
 an enum that gained cases wasn't found in the change
 after1 (want a b c): a b
+before: a b c
+RELOAD 1: in the restart
+after1 (want a b c): a b c

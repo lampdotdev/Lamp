@@ -3,3 +3,6 @@ VERDICT 1: REOPEN (Row in A.swift changed what it holds (no longer Row in A.swif
 before: 4 10
 RELOAD 1: REOPEN Row@A.swift changed what it holds (no longer Row@A.swift.b: Int)
 after1 (want reopen; else A.sum should still be 4 and B.sum 10): 4 10
+before: 4 10
+RELOAD 1: in the restart
+after1 (want reopen; else A.sum should still be 4 and B.sum 10): 4 10

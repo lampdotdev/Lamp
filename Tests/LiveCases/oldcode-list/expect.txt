@@ -3,3 +3,6 @@ VERDICT 1: REOPEN (start() uses Mood in code that may still be running (a timer,
 before: list=[Case.Mood.happy] now=happy
 RELOAD 1: REOPEN start() uses Mood in code that may still be running (a timer, a task, an observer), which doesn't know the new cases
 after (want angry in all): list=[Case.Mood.sad] now=sad
+before: count=1 now=happy
+RELOAD 1: in the restart
+after (want angry in all): count=1 now=angry

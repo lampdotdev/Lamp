@@ -3,3 +3,6 @@ VERDICT 1: REOPEN (ContentView holds Tab as LazyState<Tab>, which a new case wou
 before: home [Case.Tab.home]
 RELOAD 1: REOPEN ContentView holds Tab as LazyState<Tab>, which a new case would change
 after: home [Case.Tab.home]
+before: home [Case.Tab.home]
+RELOAD 1: in the restart
+after: home [Case.Tab.home]

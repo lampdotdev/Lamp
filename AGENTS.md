@@ -999,8 +999,11 @@ own spare places in a struct name no type of their own, so they don't count.
 lands on: every case found by a review round, as an app's sources, one `afterN/` folder per change and `expect.txt`
 with the verdicts Lamp gave and what the app printed. The test runs each through Lamp's own pipeline (`verdict`,
 `put`, with the library handed to a process built from the case instead of an open app, `LiveReload.deliver`), so
-it tries the code as Lamp runs it, not a copy. Each case costs a build and a few compiles, so they run only when
-asked (`LAMP_LIVE_CASES=1 swift test --filter LiveCasesTests`, or `LAMP_LIVE_CASES=name,name` for some), and
+it tries the code as Lamp runs it, not a copy. The process runs alongside: its `reload(n)` waits for the n-th
+change, loads the library when it's delivered and answers, which is what `put` commits on, and after a refused
+change it's ended, rebuilt from the new code and started again, as Reload does (a `keep-open` file in the case
+says the person kept the app open instead, so the next change is judged against the code still running). Each case costs a build and a few compiles, so they run only when
+asked (`LAMP_LIVE_CASES=1 swift test --filter LiveCasesTests`, a few minutes with the cases running several at once, or `LAMP_LIVE_CASES=name,name` for some), and
 `LAMP_LIVE_CASES_RECORD=1` writes the expectations instead of checking them: after a change to anything above,
 run them all, read every difference as a change of behaviour (the first line of each print says what's wanted),
 and record only what's meant. A new kind of change gets a case: its sources, its edits, and a print of what the

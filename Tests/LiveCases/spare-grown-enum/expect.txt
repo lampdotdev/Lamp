@@ -6,3 +6,8 @@ RELOAD 1: ok
 after1 (want mood=sad in all): level=1 volume=1 game.mood=sad history=[Case.Mood.sad, Case.Mood.sad] settings.mood=sad
 RELOAD 2: REOPEN Game keeps history, added while the app was open, in a place that holds it as any value, which the grown Mood no longer reads from
 after2 (want mood=sad still): level=1 volume=1 game.mood=sad history=[Case.Mood.sad, Case.Mood.sad] settings.mood=sad
+before: level=1 volume=1 game.mood=happy history=[] settings.mood=happy
+RELOAD 1: in the restart
+after1 (want mood=sad in all): level=1 volume=1 game.mood=sad history=[Case.Mood.sad, Case.Mood.sad] settings.mood=sad
+RELOAD 2: in the restart
+after2 (want mood=sad still): level=1 volume=1 game.mood=sad history=[Case.Mood.sad, Case.Mood.sad] settings.mood=sad

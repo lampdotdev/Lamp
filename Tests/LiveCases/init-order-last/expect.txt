@@ -3,3 +3,6 @@ VERDICT 1: REOPEN (Chore changed what it holds (Chore.priority: Int); Chore.prio
 before: a/false
 RELOAD 1: REOPEN Chore changed what it holds (Chore.priority: Int); Chore.priority is set in Chore's own initializer, where a property kept in a spare can't be set
 after1: a/false
+before: a/false/1
+RELOAD 1: in the restart
+after1: a/false/1 b/false/1

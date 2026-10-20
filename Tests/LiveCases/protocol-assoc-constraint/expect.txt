@@ -3,3 +3,6 @@ VERDICT 1: REOPEN (the protocol Container's requirements changed in kind (<Self 
 before: count=3
 RELOAD 1: REOPEN the protocol Container's requirements changed in kind (<Self where Self : Copyable, Self : Escapable, Self.Item : Copyable, Self.Item : Escapable> to <Self where Self : Copyable, Self : Escapable, Self.Item : Copyable, Self.Item : Equatable, Self.Item : Escapable>), and the open app's witness tables were laid out for what they were
 after1 (want reopen; a reload reads a witness slot the app's table doesn't have): count=3
+before: count=3 lastTwoEqual=true
+RELOAD 1: in the restart
+after1 (want reopen; a reload reads a witness slot the app's table doesn't have): count=3 lastTwoEqual=true

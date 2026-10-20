@@ -6,3 +6,8 @@ RELOAD 1 (whole): ok
 after1 (want 3.0 / 6.0 / big): 3.0 / 6.0 / big / 1.0 / e
 RELOAD 2: REOPEN an initializer of Engine was added, taken away or changed, and a class's initializers are in its method table
 after2 (reopen expected: Settings holds an object): 3.0 / 6.0 / big / 1.0 / e
+before: 3.0 / 6.0 / big / 5.0 / f
+RELOAD 1: in the restart
+after1 (want 3.0 / 6.0 / big): 3.0 / 6.0 / big / 5.0 / f
+RELOAD 2: in the restart
+after2 (reopen expected: Settings holds an object): 3.0 / 6.0 / big / 5.0 / f

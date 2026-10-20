@@ -13,7 +13,7 @@ struct Item: Identifiable { let id = UUID(); var name: String; var done = false 
     func tick() { ticks += 1 }
     func load() async { try? await Task.sleep(for: .milliseconds(5)); items.append(Item(name: "b")) }
     func save() async { ticks += 100 }
-    func describe() -> String { "tab=\(tab) title=\(title) cases=\(Tab.allCases.count) ticks=\(ticks) items=\(items.count)" }
+    func describe() -> String { "tab=\(tab) title=\(title) cases=\(Tab.allCases.count) ticking=\(ticks > 0) items=\(items.count)" }
 }
 struct ContentView: View {
     @Bindable var model: Model

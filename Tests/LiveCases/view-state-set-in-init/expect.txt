@@ -3,3 +3,6 @@ VERDICT 1: REOPEN (Row changed what it holds (Row._open: State<Bool>); Row.open 
 before: 2
 RELOAD 1: REOPEN Row changed what it holds (Row._open: State<Bool>); Row.open has no starting value, which a property kept in a spare needs
 after1 (reopen expected, with a reason naming the initializer): 2
+before: 2 true
+RELOAD 1: in the restart
+after1 (reopen expected, with a reason naming the initializer): 2 true

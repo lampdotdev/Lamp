@@ -4,5 +4,13 @@ VERDICT 2: REOPEN (Foo is final now, and its methods would go through a table th
 before: 1
 RELOAD 1: REOPEN Foo is no longer final (something subclasses it), and its methods would go through a table the open app's class doesn't have
 after1: 1
+before: 1 2
+RELOAD 1: in the restart
+after1: 1 2
 RELOAD 2: REOPEN Foo is final now, and its methods would go through a table the open app's class doesn't have
-after2: 1
+after2: 1 2
+before: 1 alone
+RELOAD 1: in the restart
+after1: 1 alone
+RELOAD 2: in the restart
+after2: 1 alone

@@ -3,3 +3,6 @@ VERDICT 1: REOPEN (Stack.Mode is generic, and the open app laid its values out f
 before: mode b a
 RELOAD 1: REOPEN Stack.Mode is generic, and the open app laid its values out for each type it's used at from the cases it had
 after1 (want "mode b" and the third case): mode b a
+before: mode b a c
+RELOAD 1: in the restart
+after1 (want "mode b" and the third case): mode b a c

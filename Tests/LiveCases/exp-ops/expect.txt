@@ -27,3 +27,10 @@ old json: {"mood":"sad"}
 old decode: sad
 old allCases: 2 init(rawValue): sad
 new raw: sad reflecting: Case.Mood.sad ==: true dict: 1 set: 1 true anyhash: true casts: true allCases: 2 json: {"mood":"sad"}
+--- before
+new closure: count=1
+new raw: happy reflecting: Case.Mood.happy ==: true dict: 1 set: 1 true anyhash: true casts: true allCases: 3 json: {"mood":"happy"}
+RELOAD 1: in the restart
+--- after (want angry/3/true everywhere, no crash)
+new closure: count=1
+new raw: angry reflecting: Case.Mood.angry ==: true dict: 1 set: 1 true anyhash: true casts: true allCases: 3 json: {"mood":"angry"}

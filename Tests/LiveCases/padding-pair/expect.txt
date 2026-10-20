@@ -3,3 +3,6 @@ VERDICT 1: REOPEN (Framed.body(content:): (Framed) -> (Framed.Content) -> some V
 before: ModifiedContent<Text, _PaddingLayout>
 RELOAD 1: REOPEN Framed.body(content:): (Framed) -> (Framed.Content) -> some View returns another kind of value now (some …), which what the open app made can't take
 after: ModifiedContent<Text, _PaddingLayout>
+before: ModifiedContent<Text, _PaddingLayout>
+RELOAD 1: in the restart
+after: ModifiedContent<Text, _PaddingLayout>

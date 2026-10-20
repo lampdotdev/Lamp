@@ -3,3 +3,6 @@ VERDICT 1: REOPEN (Plain changed what it holds (Plain.b: Int); Plain has no spar
 before: 1 3
 RELOAD 1: REOPEN Plain changed what it holds (Plain.b: Int); Plain has no spare place of Lamp's (a model, a Sendable class, an Equatable view, a wrapper or a struct in a file that lays memory out by hand gets none)
 after: 1 3
+before: 1 2 3
+RELOAD 1: in the restart
+after: 1 2 3
