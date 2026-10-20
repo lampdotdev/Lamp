@@ -307,31 +307,51 @@ enum LiveReload {
                 }
             }
         }
-        let classDecl = try! NSRegularExpression(pattern: #"^\s*\(class_decl\b[^"]*"([^"]+)""#)
-        var classes = Set<String>()
+        // The classes, by their qualified names as the layout keys types, so a nested class of one name doesn't
+        // stand for a struct of the same name at the top.
+        let anyDecl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|actor|extension)_decl\b[^"]*"([^"]+)""#)
+        var classes = Set<String>(), scopes: [(indent: Int, name: String)] = []
         for raw in dump.split(separator: "\n") {
-            let line = String(raw)
-            if let m = classDecl.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) { classes.insert(String(line[Range(m.range(at: 1), in: line)!])) }
+            let line = String(raw), indent = line.prefix { $0 == " " }.count
+            guard line.dropFirst(indent).first == "(" else { continue }
+            while let open = scopes.last, open.indent >= indent { scopes.removeLast() }
+            guard let m = anyDecl.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) else { continue }
+            let name = String(line[Range(m.range(at: 3), in: line)!])
+            let full = (scopes.map(\.name) + [name]).joined(separator: ".")
+            if line[Range(m.range(at: 2), in: line)!] == "class" { classes.insert(full) }
+            scopes.append((indent, name))
         }
         let spared = Set(entries.compactMap { entry -> String? in
             let parts = entry.split(separator: "\t", maxSplits: 1)
             return parts.count == 2 && (parts[1].hasPrefix("__lampSpare_") || parts[1].hasPrefix("__lampState_")) ? String(parts[0]) : nil
         })
-        let fields = conformances(inLayout: entries).fields
+        let conformed = conformances(inLayout: entries), fields = conformed.fields
         let word = try! NSRegularExpression(pattern: #"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*"#)
         func last(_ name: String) -> String { String(name.split(separator: ".").last ?? "") }
+        // A name as a field prints it may be a typealias of the enum or of a carrier: followed to what it names.
+        func resolved(_ name: String) -> String {
+            var name = name, steps = 0
+            while let target = conformed.aliases[name] ?? conformed.aliases[last(name)], steps < 8 { name = target; steps += 1 }
+            return name
+        }
         func carriers(of enumName: String) -> [String] {
             var found = Set([enumName]), grew = true
+            func carries(_ name: String) -> Bool {
+                let target = resolved(name)
+                return found.contains(name) || found.contains(last(name)) || found.contains(target) || found.contains(last(target))
+            }
             while grew {
                 grew = false
-                for (type, kinds) in fields where !found.contains(type) && !classes.contains(type) && !classes.contains(last(type)) && !spared.contains(type) {
+                for (type, kinds) in fields where !found.contains(type) && !classes.contains(type) && !spared.contains(type) {
                     for kind in kinds {
                         let names = word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).map { String(kind[Range($0.range, in: kind)!]) }
-                        if names.contains(where: { found.contains($0) || found.contains(last($0)) }) { found.insert(type); grew = true; break }
+                        if names.contains(where: carries) { found.insert(type); grew = true; break }
                     }
                 }
             }
-            return found.sorted()
+            // The aliases of the enum and its carriers are looked for by their own names too.
+            let aliases = conformed.aliases.keys.filter { !found.contains($0) && (found.contains(resolved($0)) || found.contains(last(resolved($0)))) }
+            return (found.union(aliases)).sorted()
         }
         for type in grown {
             for carrier in carriers(of: type) {

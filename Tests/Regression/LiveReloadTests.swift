@@ -161,6 +161,10 @@ final class LiveReloadTests: XCTestCase {
             struct Styled: Drawn { func mark() -> some Shape { Square(side: 1, name: "s") }; func n() -> some Numeric { 1 }; func t() -> some Equatable { "a" }; func p() -> some Equatable { n() }; func l() -> some Equatable { func local() -> some Equatable { 0 }; return String() } }
             struct Outer { enum Mood: Shape { case a, b; func area() -> Int { 0 }; var name: String { get { "" } set {} } } }
             struct Pick { var mood: Outer.Mood; var n: Int }
+            enum Other { final class Pick {} }
+            typealias Feeling = Outer.Mood
+            struct Picky { var mood: Feeling; var n: Int }
+            typealias Choice = Picky
             struct Picked { var mood: Outer.Mood; var __lampSpare_Picked = 0 }
             final class Holder { var byName: [String: Outer.Mood] = [:]; var list: [Outer.Mood] = []; var picked: Picked? = nil }
             private struct Hidden { var v = 1 }
@@ -176,7 +180,8 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertEqual(layout?.filter { $0.hasPrefix("Square\t") }, ["Square\t", "Square\tside: Side", "Square\tname: String"])
         XCTAssertEqual(layout?.filter { $0.hasPrefix(LiveReload.aliasGroup) },
                        [LiveReload.aliasGroup + "\tSide = Int", LiveReload.aliasGroup + "\tShapes.swift:Secret = Int", LiveReload.aliasGroup + "\tSquare.Key = String",
-                        LiveReload.aliasGroup + "\tItem.ID = ObjectIdentifier"])
+                        LiveReload.aliasGroup + "\tItem.ID = ObjectIdentifier",
+                        LiveReload.aliasGroup + "\tFeeling = Outer.Mood", LiveReload.aliasGroup + "\tChoice = Picky"])
         let declared = layout?.filter { $0.hasPrefix(LiveReload.declarationGroup) }.map { String($0.dropFirst(LiveReload.declarationGroup.count + 1)) } ?? []
         XCTAssertEqual(Array(declared.prefix(5)), ["Square inherits Shape", "Square.area(): (Square) -> () -> Int", "Square inherits Hashable",
                                                    "Square.key: Square.Key", "Square.grow(_:): (Square) -> (Int) -> Square"], "\(declared)")
@@ -186,7 +191,7 @@ final class LiveReloadTests: XCTestCase {
         let withoutAliases = LiveReload.layoutProblem(before: layout, after: layout!.filter { !$0.hasPrefix(LiveReload.aliasGroup) })
         XCTAssertNil(withoutAliases.problem)
         // An alias taken away is kept with the open app's layout, like a type, so one brought back is held to it.
-        XCTAssertEqual(withoutAliases.layout?.filter { $0.hasPrefix(LiveReload.aliasGroup) }.count, 4)
+        XCTAssertEqual(withoutAliases.layout?.filter { $0.hasPrefix(LiveReload.aliasGroup) }.count, 6)
         XCTAssertEqual(LiveReload.layoutProblem(before: withoutAliases.layout, after: retargeted).problem, "the typealias Side changed from Int to Double")
         // A global holding the enum still counts in the grown-enum check (its owner is empty, not a group).
         XCTAssertFalse(LiveReload.isGroup(String("\tselection: Mood?".prefix { $0 != "\t" })))
@@ -309,6 +314,10 @@ final class LiveReloadTests: XCTestCase {
         _ = try await layoutWith([("var picked: Picked? = nil }", "var picked: Picked? = nil; var pick: Pick? = nil }")])
         let carried = await LiveReload.enumsHeld(project, grown: ["Outer.Mood"])
         XCTAssertEqual(carried, "Holder holds Pick, which carries Outer.Mood, as Pick?, which a new case would change")
+        // A carrier through typealiases, held by one: both are followed.
+        _ = try await layoutWith([("var pick: Pick? = nil }", "var choice: Choice? = nil }")])
+        let aliased = await LiveReload.enumsHeld(project, grown: ["Outer.Mood"])
+        XCTAssertEqual(aliased, "Holder holds Choice, which carries Outer.Mood, as Choice?, which a new case would change")
         XCTAssertEqual(LiveReload.existential(in: "any CustomDebugStringConvertible", holding: "Mood", conformances: conformances), "any CustomDebugStringConvertible")
         XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
         XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")
