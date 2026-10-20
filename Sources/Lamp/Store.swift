@@ -4444,7 +4444,9 @@ final class Store: ObservableObject {
         }
     }
 
-    private func build(_ project: LampProject) async -> String? {
+    /// `inPlace` false builds the whole app without first putting the change into the open one: a look that reopens
+    /// the app installs the whole build anyway.
+    private func build(_ project: LampProject, inPlace: Bool = true) async -> String? {
         guard exists(project) else { return "The app was deleted." }
         log(project, .status, "Building…")
         // Lamp's own files first, and no build without them: the build runs build.sh and Package.swift.
@@ -4480,8 +4482,8 @@ final class Store: ObservableObject {
         var env: [String: String] = universal ? ["LAMP_TEAM": Devices.team] : [:]
         // The open app takes the change first, when it can (LiveReload): a few seconds, where the whole build
         // takes several more. That build goes on afterwards, for the app to be installed from when it closes.
-        if await reloadBeforeBuilding(project, command: command, env: env, fingerprint: fingerprint) { return nil }
-        await liveBuilds[project.id]?.value
+        if inPlace, await reloadBeforeBuilding(project, command: command, env: env, fingerprint: fingerprint) { return nil }
+        await awaitLiveBuild(of: project)
         liveBuildFailed.remove(project.id)
         if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1" }   // a change can go into the open app (LiveReload)
         var status = await Self.runBuild(command, for: project, env: env,
@@ -4530,6 +4532,14 @@ final class Store: ObservableObject {
     /// Apps whose change went in before their build: the install that follows the build has nothing to do.
     private var reloadedBeforeBuild: Set<String> = []
 
+    /// Waits for the whole build after an early change, which can take a minute: meanwhile the turn says it's
+    /// building, not that the change is going in, which was said seconds before and is done.
+    private func awaitLiveBuild(of project: LampProject) async {
+        guard let whole = liveBuilds[project.id] else { return }
+        note("Building…", for: project)
+        await whole.value
+    }
+
     /// The quick path: refresh the live copy only (build.sh with LAMP_LIVE_COPY), and when the change can go in,
     /// compile just its files and put them into the open app; then build the whole app in the background, for
     /// its install when it closes. False, having changed nothing in the open app, when any of it can't be done:
@@ -4537,7 +4547,7 @@ final class Store: ObservableObject {
     private func reloadBeforeBuilding(_ project: LampProject, command: String, env: [String: String], fingerprint: String) async -> Bool {
         reloadedBeforeBuild.remove(project.id)
         guard LiveReload.eligible(project), !macCopies(of: project).isEmpty, Self.binary(of: project, contains: "reloaded.txt") else { return false }
-        await liveBuilds[project.id]?.value
+        await awaitLiveBuild(of: project)
         liveBuildFailed.remove(project.id)
         var copy = env
         copy["LAMP_LIVE"] = "1"
@@ -4592,7 +4602,7 @@ final class Store: ObservableObject {
                 }
                 return true
             }
-            await liveBuilds[project.id]?.value
+            await awaitLiveBuild(of: project)
             return false
         }
         guard LiveReload.eligible(project), let app = macCopies(of: project).first,
@@ -4764,7 +4774,7 @@ final class Store: ObservableObject {
         }
         // A whole build after an early change may still be writing build/: what's installed is what it makes,
         // and nothing when it failed (build/ is the version before the change).
-        await liveBuilds[project.id]?.value
+        await awaitLiveBuild(of: project)
         if liveBuildFailed.contains(project.id) {
             let problem = "\(project.name) couldn't be built as a whole after its last change, so it wasn't installed. It's built again with the next request."
             log(project, .error, problem)
@@ -6626,7 +6636,7 @@ final class Store: ObservableObject {
 
         try? await writeOwnFiles(project, all: false)
         let changed = Runtime.sourcesChanged(project)
-        if changed, let errors = await build(project) {
+        if changed, let errors = await build(project, inPlace: !reopen) {
             if errors == macMembershipProblem(project) {
                 return (200, ["text": "The app can't be built for this Mac, and Lamp has told the person why: \(errors)\n\nThis isn't a mistake in the code. Don't take iCloud out unless the person asked for that; finish what was asked without a look."])
             }
