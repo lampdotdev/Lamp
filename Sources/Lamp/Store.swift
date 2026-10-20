@@ -4665,6 +4665,12 @@ final class Store: ObservableObject {
             log(project, .detail, "\(project.name) has to reopen for this change: the change didn't compile on its own.\n\(problem ?? "")")
             return false
         }
+        // A SwiftData model's file compiled into the change for any reason (every file is, when what's declared
+        // changed) makes the model's key paths over again, which the open app's container doesn't know.
+        if let model = LiveReload.modelFiles(inLayout: layout).first(where: { changed.contains($0.file) }) {
+            log(project, .detail, "\(project.name) has to reopen for this change: the file of the SwiftData model \(model.name) is compiled again, and its data is found by key paths the open app made.")
+            return false
+        }
         // Files only taken away leave nothing to load: the open app already has what's left.
         if let library, let why = await LiveReload.send(library, to: project, token: Template.token(for: project), whole: changed == LiveReload.appFiles(project)) {
             log(project, .detail, "\(project.name) has to reopen for this change: \(why).")

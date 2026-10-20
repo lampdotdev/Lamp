@@ -193,25 +193,39 @@ enum SwiftSource {
     /// The types SwiftUI or AppKit read only at launch, at any depth: the App, its scenes, its menu commands and
     /// an application delegate, with extensions of them. Each is "\u{1}launch<tab>Name: <digest of its text>",
     /// entries the layout comparison holds to what the open app had, so a change to one reopens the app.
+    /// A SwiftData model class is listed the same, as "model Name" with a digest of its whole file: its accessors
+    /// find its data by key paths, which a library compiled from its file makes over again under identities the
+    /// app's container doesn't know, so any change to that file reopens the app.
     static func launchEntries(inDump dump: String, folder: URL) -> [String] {
-        let decl = try! NSRegularExpression(pattern: #"^\s*\((struct|class|enum|extension)_decl\b[^"]*"([^"]+)"(.*)$"#)
+        let decl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|extension)_decl\b[^"]*"([^"]+)"(.*)$"#)
         let launch = try! NSRegularExpression(pattern: #"inherits="[^"]*\b(App|Scene|Commands|NSApplicationDelegate|UIApplicationDelegate)\b"#)
+        let model = try! NSRegularExpression(pattern: #"^(\s*)\(custom_attr\b.*macro="SwiftData\.\(file\)\.Model\(\)""#)
         var types: [(name: String, range: (start: Position, last: Position), isExtension: Bool)] = []
-        var launchNames = Set<String>()
+        var launchNames = Set<String>(), modelNames = Set<String>()
+        var lastClass: (name: String, indent: Int)?
         for line in dump.components(separatedBy: "\n") {
             let whole = NSRange(line.startIndex..., in: line)
+            if let last = lastClass, let m = model.firstMatch(in: line, range: whole), m.range(at: 1).length == last.indent + 2 {
+                modelNames.insert(last.name)
+            }
             guard let m = decl.firstMatch(in: line, range: whole), let r = range(in: line) else { continue }
-            let name = String(line[Range(m.range(at: 2), in: line)!])
-            let isExtension = line[Range(m.range(at: 1), in: line)!] == "extension"
+            let name = String(line[Range(m.range(at: 3), in: line)!])
+            let kind = line[Range(m.range(at: 2), in: line)!]
             // A conformance may be declared on the type or on an extension of it (`extension Demo: App`).
             if launch.firstMatch(in: line, range: whole) != nil { launchNames.insert(name) }
-            types.append((name, r, isExtension))
+            lastClass = kind == "class" ? (name, m.range(at: 1).length) : nil
+            types.append((name, r, kind == "extension"))
         }
         var files: [String: Text] = [:]
-        return types.filter { launchNames.contains($0.name) }.compactMap { type in
+        return types.filter { launchNames.contains($0.name) || (modelNames.contains($0.name) && !$0.isExtension) }.compactMap { type in
             let path = type.range.start.file.hasPrefix("/") ? type.range.start.file : folder.appendingPathComponent(type.range.start.file).path
             guard let text = files[path] ?? Text(path: path) else { return nil }
             files[path] = text
+            if modelNames.contains(type.name) {
+                // With its file, which the change must not compile at all: "model Note@Notes.swift: <digest>".
+                let file = path.hasPrefix(folder.standardizedFileURL.path + "/") ? String(path.dropFirst(folder.standardizedFileURL.path.count + 1)) : (path as NSString).lastPathComponent
+                return "\u{1}launch\tmodel " + type.name + "@" + file + ": " + SHA256.hash(data: Data(text.bytes)).prefix(8).map { String(format: "%02x", $0) }.joined()
+            }
             guard let start = text.offset(type.range.start), let end = text.tokenEnd(type.range.last) else { return nil }
             let digest = SHA256.hash(data: Data(text.bytes[start..<end])).prefix(8).map { String(format: "%02x", $0) }.joined()
             return "\u{1}launch\t" + (type.isExtension ? "extension " : "") + type.name + ": " + digest

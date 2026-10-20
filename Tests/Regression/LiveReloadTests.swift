@@ -265,6 +265,30 @@ final class LiveReloadTests: XCTestCase {
         let renamedStatic = try await layoutWith([("@objc(newName)", "@objc(oldName)"), ("@objc(oldStatic)", "@objc(newStatic)")])
         XCTAssertNil(LiveReload.layoutProblem(before: layout, after: renamedStatic).problem)
         XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: renamedStatic))
+        // Observers added to a stored property change no layout, but turn every write into a call: declared.
+        let observed = try await layoutWith([("@objc(newStatic)", "@objc(oldStatic)"), ("struct Tile: Flat { var n: Int;", "struct Tile: Flat { var n: Int { didSet {} };")])
+        XCTAssertNil(LiveReload.layoutProblem(before: layout, after: observed).problem)
+        XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: observed))
+        XCTAssertTrue(observed.contains(LiveReload.declarationGroup + "\tTile.n: Int observed"), "\(observed.filter { $0.contains("Tile") })")
+        // A SwiftData model's file is held whole: its accessors find its data by key paths the open app made.
+        try """
+            import SwiftData
+            @Model final class Note { var title = ""; init() {} }
+            func noteHelper() -> Int { 1 }
+            """.write(to: sources.appendingPathComponent("Notes.swift"), atomically: true, encoding: .utf8)
+        // What's read at launch is part of the whole analysis, not of a few files' layout.
+        let notesLayout = await LiveReload.analysis(of: sources, in: project, module: project.exe, macOS: "14.0")?.layout
+        let notes = try XCTUnwrap(notesLayout)
+        XCTAssertTrue(notes.contains { $0.hasPrefix("\u{1}launch\tmodel Note@Notes.swift: ") }, "\(notes.filter { $0.hasPrefix("\u{1}launch") })")
+        XCTAssertEqual(LiveReload.modelFiles(inLayout: notes).map { "\($0.name) \($0.file)" }, ["Note Notes.swift"])
+        try """
+            import SwiftData
+            @Model final class Note { var title = ""; init() {} }
+            func noteHelper() -> Int { 2 }
+            """.write(to: sources.appendingPathComponent("Notes.swift"), atomically: true, encoding: .utf8)
+        let notesChangedLayout = await LiveReload.analysis(of: sources, in: project, module: project.exe, macOS: "14.0")?.layout
+        let notesChanged = try XCTUnwrap(notesChangedLayout)
+        XCTAssertEqual(LiveReload.layoutProblem(before: notes, after: notesChanged).problem, "the file of the SwiftData model Note changed, and its data is found by key paths the open app made")
         XCTAssertEqual(LiveReload.existential(in: "any CustomDebugStringConvertible", holding: "Mood", conformances: conformances), "any CustomDebugStringConvertible")
         XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
         XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")

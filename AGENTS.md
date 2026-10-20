@@ -752,7 +752,7 @@ built live (a widget or share extension is built from the same copy, and a chang
 every view draws again on a reload with its state kept), and builds that copy unoptimized, testable, with
 `LAMP_LIVE` and `-Xlinker -interposable` (SwiftPM for a Mac app; Xcode for an app for both, from a copy of the
 device project, with its debug library off so the code is in the one binary). After a build, `Store.install` tries
-`reloadInPlace` first: when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.launchEntries`, held to what the open app had as part of the layout; a view or helper beside them goes in like any code) or Lamp's own files, and leaves every type
+`reloadInPlace` first: when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.launchEntries`, held to what the open app had as part of the layout; a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again) or Lamp's own files, and leaves every type
 holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties and cases,
 from `-dump-ast` of just the changed files, compared for the open app's sources and the new ones; no reading of the
 text; a typealias is printed as itself wherever it's used, so each is listed with what it names and one the open app
@@ -765,7 +765,8 @@ opaque too (a modifier's `some View`) it's listed by a digest of the calls and t
 compiler prints both as `some View`; a view's own body, wrapped by the live copy, and a private member are left out) (`LiveReload.reloadable`, comparing with the sources the
 open app runs, kept in `.lamp/live/running`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
 linked into a library. Every file is compiled when what's declared changed (a function, an initializer, a computed
-property, a conformance, a member's `@objc` and its selector: `LiveReload.declarationGroup`, `declarationsChanged`), since an unchanged caller may then mean
+property, a conformance, a member's `@objc` and its selector, a stored property's observers, which turn every write
+into a call: `LiveReload.declarationGroup`, `declarationsChanged`), since an unchanged caller may then mean
 another one (a new overload, a method where a protocol's default stood in), and a file taken away while another
 arrives (one renamed) reopens the app, since what was private to it is named after its file and would start over. The library is what the app loads when asked with a request signed with its token, only from its
 own `.lamp/live` (`LampLive` in LampSupport, under `#if LAMP_LIVE`). It points the app's own calls at the new
