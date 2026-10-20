@@ -125,13 +125,15 @@ final class LiveCasesTests: XCTestCase {
                 try tell(why)
                 guard !keepOpen else { return }
                 // The person pressed Reload: the whole build installs this code and the app opens again with it,
-                // holding every change so far.
+                // holding every change so far. Built from a fresh live copy, as build.sh makes one: the fit may have
+                // rewritten the copy before the change was refused, and that copy is not what a whole build compiles.
                 try await Task.sleep(for: .milliseconds(300))
                 end(process)
+                try await copyLive(project)
+                if let failed = try await build() { output.add(failed + "\n"); return }
                 LiveReload.markRunning(project, from: liveSources)
                 LiveSlots.clear(project)
                 LiveReload.forgetLibraries(project)
-                if let failed = try await build() { output.add(failed + "\n"); return }
                 process = try start(app, project: project, from: number, output: output)
             }
             switch await LiveReload.verdict(project) {
