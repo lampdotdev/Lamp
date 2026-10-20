@@ -1096,7 +1096,8 @@ enum LiveReload {
         private var opaque: (indent: Int, key: String, names: [String], builds: String?, converting: Int?, inner: Int?)?
         // A class whose first inherited name may be a superclass or a protocol, until its initializers say: one of
         // them overriding (`override=`, the compiler's own inherited ones included) or a `super` call means a superclass.
-        private var superPending: (indent: Int, key: String, index: Int, name: String)?
+        // One for each class still open, since a nested class's initializers come before the outer class's own.
+        private var superPending: [(indent: Int, key: String, index: Int, name: String)] = []
 
         private func add(_ entry: String) { if seen.insert(entry).inserted { out.append(entry) } }
         private func closeOpaque() {
@@ -1109,14 +1110,16 @@ enum LiveReload {
 
         func take(_ line: SwiftSource.Walk.Line) {
             let indent = line.indent, opens = line.opens
-            if let pending = superPending {
-                if indent <= pending.indent {
-                    superPending = nil
-                } else if (opens("constructor_decl") && indent == pending.indent + 2 && line.has(" override=\""))
-                            || (opens("super_ref_expr") && line.scopes.last(where: { if case .type = $0.scope { return true } else { return false } })
-                                .map { if case .type(let t) = $0.scope { return t.key == pending.key } else { return false } } == true) {
-                    out[pending.index] += " : " + pending.name
-                    superPending = nil
+            superPending.removeAll { indent <= $0.indent }
+            if !superPending.isEmpty, opens("constructor_decl", "super_ref_expr") {
+                // The class the line belongs to: an initializer directly in it, or a `super` call whose nearest type is it.
+                let nearest = line.scopes.last(where: { if case .type = $0.scope { return true } else { return false } })
+                    .flatMap { if case .type(let t) = $0.scope { return t.key } else { return nil } }
+                if let at = superPending.firstIndex(where: { pending in
+                    opens("constructor_decl") ? indent == pending.indent + 2 && line.has(" override=\"") : nearest == pending.key
+                }) {
+                    out[superPending[at].index] += " : " + superPending[at].name
+                    superPending.remove(at: at)
                 }
             }
             if let open = opaque {
@@ -1135,11 +1138,13 @@ enum LiveReload {
                     } else if opens("func_decl", "var_decl", "subscript_decl", "struct_decl", "class_decl", "enum_decl", "actor_decl") {
                         opaque?.inner = indent
                     }
-                    // What the opaque type is made of: each call whose result is opaque, with the types it was given
-                    // (`padding [with … Self -> Text]`), which together are the type the member returns. A call whose
-                    // result is a plain type (`.bold()` on a Text, a literal, a closure's work) changes nothing of it.
-                    if line.has(" decl=\""), line.has("some "), let t = typeOf.firstMatch(in: line.text, range: line.range),
-                       line.text[Range(t.range(at: 1), in: line.text)!].contains("some ") {
+                    // What the opaque type is made of: every node whose type involves an opaque one, by that type
+                    // (`(some Equatable, Int)` in a tuple or array, so its plain parts count) and by the declaration it
+                    // calls, with the types it was given (`padding [with … Self -> Text]`). A node of a plain type
+                    // (`.bold()` on a Text, a literal, a closure's work) changes nothing of it.
+                    if line.has("some "), let t = typeOf.firstMatch(in: line.text, range: line.range),
+                       case let type = String(line.text[Range(t.range(at: 1), in: line.text)!]), type.contains("some ") {
+                        opaque?.names.append(!type.contains("@") ? type : place.stringByReplacingMatches(in: type, range: NSRange(type.startIndex..., in: type), withTemplate: ""))
                         for m in declAttribute.matches(in: line.text, range: line.range) {
                             // A declaration of the app's is named with where it is, which differs between the copy
                             // the app runs and the new one, and moves with any edit above it.
@@ -1239,7 +1244,7 @@ enum LiveReload {
                 if seen.insert(entry).inserted {
                     out.append(entry)
                     if type.kind == "enum" { shapePending = (indent, out.count - 1) }
-                    if let undecided { superPending = (indent, type.key, out.count - 1, undecided) }
+                    if let undecided { superPending.append((indent, type.key, out.count - 1, undecided)) }
                 }
                 // A private type is known by its file too (`placeGroup`, by its bare name): moved, it's another type.
                 if type.isPrivate, let file = type.file { add(placeGroup + "\t" + bare(type.key) + "\t" + file) }
