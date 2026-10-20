@@ -974,16 +974,19 @@ final class Store: ObservableObject {
     /// was for): the chat shows the agent's words, the desk only Lamp's. Empty leaves the desk saying what it did.
     private func note(_ activity: String, file: String? = nil, desk: String? = nil, for project: LampProject) {
         // A step that changes nothing about what's being done (the agent's progress line).
-        guard !activity.isEmpty else { return }
-        guard let current = progress[project.id], current.activity != activity || current.currentFile != file else { return }
+        guard !activity.isEmpty, let current = progress[project.id] else { return }
+        // The desk's words first, on their own: a step can keep the chat's words (the agent's name for what follows)
+        // while Lamp's words for it change, a heading followed by the reads it names.
+        if desk?.isEmpty != true {
+            let words = TurnProgress.deskWords(desk ?? activity, named: false)
+            if current.deskActivity != words {
+                progress[project.id]?.deskActivity = words
+                progress[project.id]?.deskSince = Date()
+            }
+        }
+        guard current.activity != activity || current.currentFile != file else { return }
         progress[project.id]?.activity = activity
         progress[project.id]?.currentFile = file
-        guard desk?.isEmpty != true else { return }
-        let words = TurnProgress.deskWords(desk ?? activity, named: false)
-        if current.deskActivity != words {
-            progress[project.id]?.deskActivity = words
-            progress[project.id]?.deskSince = Date()
-        }
     }
 
     /// The same, from what the agent's own output says it's doing. While Lamp looks at the app for it, the look's
