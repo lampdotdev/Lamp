@@ -724,6 +724,9 @@ struct DeskIcon: View {
     /// faded, so the row never closes up under a bubble still showing (`DeskBubble.Room`).
     @State private var bubbleShown = false
     @State private var holdsRoom = false
+    /// Counts the bubble's comings and goings, so only the latest going lets the room go: an earlier one's wait can
+    /// end while a later bubble is still fading.
+    @State private var bubbleTurn = 0
 
     private var busy: Bool { store.busy.contains(project.id) }
     /// Lit under the pointer, but not while a wish is dragged over it: the pointer is the drag's then.
@@ -801,14 +804,16 @@ struct DeskIcon: View {
         }
         .layoutValue(key: DeskBubble.Room.self, value: holdsRoom ? DeskBubble.room : 0)
         .onChange(of: building, initial: true) { _, now in
+            bubbleTurn += 1
             if now {
                 withAnimation(.easeInOut(duration: 0.35)) { holdsRoom = true; bubbleShown = true }
                 return
             }
             withAnimation(.easeOut(duration: 0.35)) { bubbleShown = false }
+            let turn = bubbleTurn
             Task {
                 try? await Task.sleep(for: .milliseconds(400))
-                guard !building else { return }
+                guard turn == bubbleTurn, !building else { return }
                 withAnimation(.easeInOut(duration: 0.35)) { holdsRoom = false }
             }
         }
