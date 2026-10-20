@@ -3148,10 +3148,13 @@ enum Template {
 
     """
 
-    /// The line every fresh scaffold shows. It's gone as soon as an agent writes the app's real interface.
-    static let scaffoldHint = "Press ⇧⌘E to tell Lamp what to build."
-    /// The same line in scaffolds made before the app was renamed, which still say it.
-    static let earlierScaffoldHints = ["Press ⇧⌘E to tell Forge what to build."]   // apps made before the rename
+    /// The line every fresh scaffold shows. It's gone as soon as an agent writes the app's real interface. A
+    /// scaffold is written with the first request and opened while the agent starts on it (`Store.showEarly`), so it
+    /// says the app is being made.
+    static let scaffoldHint = "Lamp is making this app."
+    /// The line in scaffolds written by earlier Lamps, which still say it.
+    static let earlierScaffoldHints = ["Press ⇧⌘E to tell Lamp what to build.",
+                                       "Press ⇧⌘E to tell Forge what to build."]   // apps made before the rename
 
     /// Whether the app is still the empty scaffold: nothing has been built into it yet.
     static func isScaffold(_ project: LampProject) -> Bool {

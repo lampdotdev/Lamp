@@ -56,7 +56,12 @@ A capability given to one engine must be given to all of them that can take it, 
   (`lookRules`: the layout with placeholders, then the parts working, then the detail), each begun with a
   `progress` line and ended with `look_at_app`, which puts it into the open app, so the person watches the app
   take shape rather than waiting for the end; what's read only at launch is made right in the first pass, so later
-  ones go in without reopening the app. A new app's first build is still made in one pass.
+  ones go in without reopening the app. A new app is built in passes too, the window's layout first. A new Mac app's
+  scaffold ("Lamp is making this app.") is built and opened as its first turn starts, with the chat beside it
+  (`Store.showEarly`, `Store.present`), so the person watches every pass go in; an iPhone app's simulator comes
+  forward at the agent's first look. When no chat comes back beside the app after a pass reopens it (the reopen
+  failed, it crashed, or the pass made it an app with no window), the chat goes back to Lamp's window
+  (`MagicPanel.keepChatInSight`). The early build is settled before the turn lets go of the app, however it ends.
   Result cards saved by an earlier Lamp still read and aren't shown (`LogLine.visible`). A new app's build card folds
   to its first line (its name, Ready) once the turn is over, with no picture of the app. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
@@ -666,8 +671,9 @@ again, only just after such a quit (`chatQuitKey`). A Mac widget has it in its t
 Lamp's own widget file, which the widget rule asks for): a link the app takes as Customize with Lamp…
 (`LampWidgetLinks`, which passes every other link to SwiftUI, or for a widget-only app to whatever opens it).
 This is how a new app is changed from its first build on:
-after the turn that first builds and opens a Mac app with windows, its chat window closes and the app opens the
-chat beside its content (`MagicPanel.handOff`, once per app, marked by `.lamp/sidebar-handed-off`; the chat window
+as soon as a new Mac app's scaffold is built and opened at the start of its first turn (`Store.showEarly`, then
+`Store.present`; else at the agent's first look, or at the end of that turn), its chat window closes and the app opens the chat beside its content, so the rest of the turn's passes go
+in while the person watches (`MagicPanel.handOff`, once per app, marked by `.lamp/sidebar-handed-off`; the chat window
 closes only once the sidebar has connected, so Lamp neither quits nor leaves the chat nowhere). Lamp asks the app
 with a file in its runtime folder for a copy still starting and a notification for one already running
 (`MagicPanel.openChat`, `LampSidebar.openForLamp`). The first time the person closes the chat, a popover points at
@@ -839,7 +845,8 @@ adds. The
 build then waits to be installed until the app closes (`LiveReload.awaitInstall`, which unlike a held build doesn't
 keep the agent off the app). Anything else needs the app reopened, with why in the chat's
 details (`LiveReload.Verdict`; what `LampLive` refused, and a change that didn't compile or load, say so there too,
-through `LiveReload.send`'s answer), so the rules can be tuned by what happens. For a request's change, while the app is open, Lamp doesn't reopen it under the person: the build is held (`Store.awaitReload`, `Runtime.awaitReload`), the app shows a Reload button beside the wand in its title bar (`LampMagic.ReloadButton`, tinted glass in the accent colour whose tint brightens and settles again, shown with a `reloadReady` notification) and the chat a line with one too (`.reload`, under the agent's answer), and a click on either reopens it where it was (`Store.reloadWaiting`; the app asks with `reloadNow`, which puts in only a change Lamp holds). The agent is told the change waits for the person (`reloadNote`) and doesn't look or use the app again in that request. Closing the app installs it too. Open App, Undo and a look with `reopen` still reopen it; when the person keeps the app open at its question (unsaved work), the build waits for Reload the same way. A live build reads the app's own files
+through `LiveReload.send`'s answer), so the rules can be tuned by what happens. For a request's change, while the app is open, Lamp doesn't reopen it under the person: the build is held (`Store.awaitReload`, `Runtime.awaitReload`), the app shows a Reload button beside the wand in its title bar (`LampMagic.ReloadButton`, tinted glass in the accent colour whose tint brightens and settles again, shown with a `reloadReady` notification) and the chat a line with one too (`.reload`, under the agent's answer), and a click on either reopens it where it was (`Store.reloadWaiting`; the app asks with `reloadNow`, which puts in only a change Lamp holds). The agent is told the change waits for the person (`reloadNote`) and doesn't look or use the app again in that request. Closing the app installs it too. Open App, Undo and a look with `reopen` still reopen it, and so does every change in a new app's first turn, which
+nobody is using yet and whose passes the person is watching go in; when the person keeps the app open at its question (unsaved work), the build waits for Reload the same way. A live build reads the app's own files
 from its Assets folder rather than its bundle (`LampAssets`), so a new picture goes in live too; the package, the
 app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which tells the
 agent what goes in without reopening.
