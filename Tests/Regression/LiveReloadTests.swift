@@ -168,6 +168,7 @@ final class LiveReloadTests: XCTestCase {
             typealias Choice = Picky
             struct Picked { var mood: Outer.Mood; var __lampSpare_Picked = 0 }
             struct Stack<Feeling> { var top: Feeling? }
+            enum Space { struct Wrapper { var mood: Outer.Mood } }
             @Observable final class Lab { var dirty = false { didSet {} } }
             final class Holder { var byName: [String: Outer.Mood] = [:]; var byMood: [Outer.Mood: Int] = [:]; var list: [Outer.Mood] = []; var picked: Picked? = nil; var stack = Stack<Int>(top: nil) }
             private struct Hidden { var v = 1 }
@@ -340,9 +341,16 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertNil(LiveReload.layoutProblem(before: layout, after: extensionInit).problem)
         XCTAssertTrue(LiveReload.declarationsChanged(before: layout!, after: extensionInit))
         // A type holding the enum, printed: its field records name the enum as the open app knew it.
-        _ = try await layoutWith([("var stack = Stack<Int>(top: nil) }", "var stack = Stack<Int>(top: nil); func show() -> String { \"\\(self)\" } }")])
+        _ = try await layoutWith([("var stack = Stack<Int>(top: nil) }", "var stack = Stack<Int>(top: nil); func show() -> String { \"\\(Space.Wrapper(mood: .a))\" } }")])
         let printed = await LiveReload.enumsHeld(project, grown: ["Outer.Mood"])
-        XCTAssertEqual(printed, "Holder holds Outer.Mood and is printed, and its printed form would read Outer.Mood as the open app knew it")
+        XCTAssertEqual(printed, "Space.Wrapper holds Outer.Mood and is printed, and its printed form would read Outer.Mood as the open app knew it")
+        // A class the app's own code writes `final` is the agent's error, not the copy step's; a mention in a comment
+        // or a string isn't the app writing it.
+        let written = project.dir.appendingPathComponent("Sources").appendingPathComponent("Roots.swift")
+        try "// Example: final class Root\nlet help = \"final class Root\"\nclass Root {}\n".write(to: written, atomically: true, encoding: .utf8)
+        XCTAssertTrue(LiveSlots.brokeFinal("error: inheritance from a final class 'Root'", project: project))
+        try "final class Root {}\n".write(to: written, atomically: true, encoding: .utf8)
+        XCTAssertFalse(LiveSlots.brokeFinal("error: inheritance from a final class 'Root'", project: project))
         XCTAssertEqual(LiveReload.existential(in: "any CustomDebugStringConvertible", holding: "Mood", conformances: conformances), "any CustomDebugStringConvertible")
         XCTAssertEqual(LiveReload.existential(in: "any Hashable", holding: "Mood", conformances: conformances), "any Hashable")
         XCTAssertEqual(LiveReload.existential(in: "[Any]", holding: "Mood", conformances: conformances), "Any")

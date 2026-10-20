@@ -417,7 +417,8 @@ enum LiveReload {
                 }
             }
             guard !holders.isEmpty else { continue }
-            let holder = try! NSRegularExpression(pattern: #"(?<![\w.])(?:"# + holders.map { NSRegularExpression.escapedPattern(for: last($0)) }.joined(separator: "|") + #")(?![\w])"#)
+            // By their qualified names, as a kind prints a nested type: `Space.Wrapper` is not a `Wrapper` at the top.
+            let holder = try! NSRegularExpression(pattern: #"(?<![\w.])(?:"# + holders.sorted { $0.count > $1.count }.map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|") + #")(?![\w.])"#)
             func printed(_ kind: String) -> String? {
                 holder.firstMatch(in: kind, range: NSRange(kind.startIndex..., in: kind)).map { String(kind[Range($0.range, in: kind)!]) }
             }
@@ -1196,8 +1197,20 @@ enum LiveSlots {
         guard !classes.isEmpty else { return ["overrides a 'final'", "override a 'final'", "cannot be overridden"].contains { output.contains($0) } }
         let written = project.dir.appendingPathComponent("Sources")
         let files = (FileManager.default.enumerator(at: written, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []).filter { $0.pathExtension == "swift" }
-        let text = files.compactMap { AppFile.text($0, in: project) }.joined(separator: "\n")
+        let text = code(files.compactMap { AppFile.text($0, in: project) }.joined(separator: "\n"))
         return classes.contains { text.range(of: #"\bfinal\s+class\s+"# + NSRegularExpression.escapedPattern(for: $0) + #"\b"#, options: .regularExpression) == nil }
+    }
+
+    /// Swift text with its comments and string literals blanked, so a word in a note or a help text isn't read as
+    /// code: multi-line and raw strings, plain strings with their escapes, block comments (nested) and line comments.
+    static func code(_ text: String) -> String {
+        var out = text
+        for pattern in [#"(#+)"""[\s\S]*?"""\1"#, #""""(?:\\[\s\S]|[^\\])*?""""#, #"(#+)"(?:[^"\n]|"(?!\1))*?"\1"#, #""(?:[^"\\\n]|\\.)*""#, #"//[^\n]*"#] {
+            out = out.replacingOccurrences(of: pattern, with: " ", options: .regularExpression)
+        }
+        // Block comments nest: the innermost go first, until none is left.
+        while let range = out.range(of: #"/\*(?:(?!/\*|\*/)[\s\S])*\*/"#, options: .regularExpression) { out.replaceSubrange(range, with: " ") }
+        return out
     }
 
     /// Live copies of the app have no classes made final from now on (`no-final`). True the first time.
