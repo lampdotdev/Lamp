@@ -15545,8 +15545,9 @@ enum Template {
         # A line of a string or a comment (a help text, a template, a note) is no declaration: those stretches are
         # found first and left as they are, raw strings included.
         my @skip;
-        # A raw string ends at its own number of `#`; a plain one's escaped quote (`\"""`) is content; block comments nest.
-        while ($s =~ /((#+)"""[\s\S]*?"""\2|"""(?:\\[\s\S]|[^\\])*?"""|(#+)"(?:[^"\n]|"(?!\3))*?"\3|"(?:[^"\\\n]|\\.)*"|(?<blk>\/\*(?:(?&blk)|(?!\*\/)[\s\S])*\*\/)|\/\/[^\n]*)/g) { push @skip, [$-[0], $+[0]]; }
+        # A raw string ends at its own number of `#`, and a backslash before that many is its escape; a plain one's
+        # escaped quote (`\"""`) is content; block comments nest.
+        while ($s =~ /((#+)"""(?:\\\2[\s\S]|\\(?!\2)|[^\\])*?"""\2|"""(?:\\[\s\S]|[^\\])*?"""|(#+)"(?:\\\3[^\n]|\\(?!\3)|[^"\\\n]|"(?!\3))*?"\3|"(?:[^"\\\n]|\\.)*"|(?<blk>\/\*(?:(?&blk)|(?!\*\/)[\s\S])*\*\/)|\/\/[^\n]*)/g) { push @skip, [$-[0], $+[0]]; }
         my $inside = sub { my $p = shift; for my $span (@skip) { return 1 if $p >= $span->[0] && $p < $span->[1] } 0 };
         $s =~ s{^([ \t]*)((?:@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|nonisolated|indirect)\s+)*)(class)\s+(?!(?:func|var|let|subscript|override|class)\b)(\w+)}{ ($inside->($-[3]) || $subclassed{$4}) ? $& : "$1$2final " . substr($&, length($1) + length($2)) }gme;
         open(my $out, '>', $file) or die "$file: $!"; print $out $s; close($out);
