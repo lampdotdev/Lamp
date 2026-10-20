@@ -143,31 +143,37 @@ struct TransitionGlow: View {
     }
 }
 
-/// The same light around a wish's icon on the desk while it's built: soft, just outside the icon, its colours
-/// travelling slowly round it. Where the person asked for less motion it stays still. The desk fades it out when
-/// the build is done.
+/// The same light around a wish's icon on the desk while it's built: just outside the icon, its colours travelling
+/// round it, bright enough to see at a glance across the desk, since a wish that looks still looks stuck. Where the
+/// person asked for less motion it stays still. The desk fades it out when the build is done.
 struct BuildingGlow: View {
     let size: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private static let lap = 4.0
+    private static let lap = 3.0
 
     var body: some View {
         TimelineView(.animation(paused: reduceMotion)) { timeline in
-            let turn = reduceMotion ? 0 : (timeline.date.timeIntervalSinceReferenceDate / Self.lap).truncatingRemainder(dividingBy: 1)
+            let light = Self.light(at: timeline.date, still: reduceMotion)
             // The icon's own tile, an 824pt square on its 1024pt canvas, so the light hugs its edge.
             let side = size * 824 / 1024
             let shape = RoundedRectangle(cornerRadius: side * 0.225, style: .continuous)
-            let light = AngularGradient(colors: TransitionGlow.hues.map(Color.init(nsColor:)) + [Color(nsColor: TransitionGlow.hues[0])],
-                                        center: .center, angle: .degrees(turn * 360))
             ZStack {
-                shape.stroke(light, lineWidth: side * 0.16).blur(radius: side * 0.14)
-                shape.stroke(light, lineWidth: side * 0.05).blur(radius: side * 0.04)
+                shape.stroke(light, lineWidth: side * 0.24).blur(radius: side * 0.15)
+                shape.stroke(light, lineWidth: side * 0.09).blur(radius: side * 0.05)
+                // A crisp rim at the icon's edge, which is what the eye catches from across the window.
+                shape.stroke(light, lineWidth: 2.5).blur(radius: 0.6)
             }
             .frame(width: side, height: side)
-            .opacity(0.85)
         }
         .frame(width: size, height: size)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+
+    /// The light where it is at a moment, so the bubble over the tile carries the same colours in the same place.
+    static func light(at date: Date, still: Bool) -> AngularGradient {
+        let turn = still ? 0 : (date.timeIntervalSinceReferenceDate / lap).truncatingRemainder(dividingBy: 1)
+        let colors = TransitionGlow.hues.map(Color.init(nsColor:))
+        return AngularGradient(colors: colors + [colors[0]], center: .center, angle: .degrees(turn * 360))
     }
 }

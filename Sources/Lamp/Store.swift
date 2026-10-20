@@ -970,20 +970,26 @@ final class Store: ObservableObject {
 
     /// Updates what the app's turn is doing right now, for the build card and the activity line.
     /// `file` is the file being written or edited, when that's the step.
-    private func note(_ activity: String, file: String? = nil, for project: LampProject) {
+    /// `named` is a command the agent named itself: the chat shows it by that name, the desk doesn't.
+    private func note(_ activity: String, file: String? = nil, named: Bool = false, for project: LampProject) {
         // A step that changes nothing about what's being done (the agent's progress line).
         guard !activity.isEmpty else { return }
         guard let current = progress[project.id], current.activity != activity || current.currentFile != file else { return }
         progress[project.id]?.activity = activity
         progress[project.id]?.currentFile = file
+        let desk = TurnProgress.deskWords(activity, named: named)
+        if current.deskActivity != desk {
+            progress[project.id]?.deskActivity = desk
+            progress[project.id]?.deskSince = Date()
+        }
     }
 
     /// The same, from what the agent's own output says it's doing. While Lamp looks at the app for it, the look's
     /// stages are what's going on ("Building…", "Opening…"): the engine reports the call a moment after the look has
     /// begun, and its one fixed word for it would stay over every stage of a look that can take minutes.
-    private func noteAgent(_ activity: String, file: String? = nil, for project: LampProject) {
+    private func noteAgent(_ activity: String, file: String? = nil, named: Bool = false, for project: LampProject) {
         guard turns[project.id]?.look.inProgress != true else { return }
-        note(activity, file: file, for: project)
+        note(activity, file: file, named: named, for: project)
     }
 
     /// The installed app was built by an older Lamp and hasn't been rebuilt since.
@@ -2862,7 +2868,7 @@ final class Store: ObservableObject {
                     Skills.compacted(project)
                 case .naming(let words):
                     turn.naming = words.nilIfEmpty
-                    if let words = turn.naming { noteAgent(words, for: project) }
+                    if let words = turn.naming { noteAgent(words, named: true, for: project) }
                 case .tool(let text, let fullCall, let said):
                     let call = ToolCall(text)
                     // The step in the agent's own words: what it gave this call, else what it last said it's doing (a
@@ -2871,7 +2877,8 @@ final class Store: ObservableObject {
                     let named = said ?? (call.action == .run || fileWork ? turn.naming : nil)
                     log(project, .tool, text, said: named)
                     endOnQuestions(turn, before: call.name)
-                    noteAgent(named ?? TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
+                    noteAgent(named ?? TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call),
+                              named: named != nil, for: project)
                     if let file = TurnProgress.file(changedBy: call) { progress[project.id]?.wrote(file) }
                     toolCalls += 1
                     // Compared in full: six different searches of one file all read "grep cache.json".
@@ -3308,7 +3315,7 @@ final class Store: ObservableObject {
         if ratingDecides, CommandApproval.current == .risky, CommandRisk.runsOnRating(given, flagged: flagged) {
             log(project, .status, "Ran: \(command)", said: said)
             log(project, .detail, "Ran without asking (\(given?.risk ?? "") risk): \(given?.summary ?? "")")
-            note(said ?? "Running a command", for: project)   // as after an Allow, so "Checking a command" doesn't stay
+            note(said ?? "Running a command", named: said != nil, for: project)   // as after an Allow, so "Checking a command" doesn't stay
             return true
         }
         NSApp.requestUserAttention(.informationalRequest)
@@ -3369,7 +3376,8 @@ final class Store: ObservableObject {
         guard let pending = approvals.removeValue(forKey: project.id) else { return }
         if allowAll { turns[project.id]?.allowAll = true }
         log(project, .detail, (allow ? "Allowed: " : "Denied: ") + pending.command)
-        note(allow && pending.title == PendingApproval.commandTitle ? pending.said ?? "Running a command" : "Thinking", for: project)
+        let command = allow && pending.title == PendingApproval.commandTitle
+        note(command ? pending.said ?? "Running a command" : "Thinking", named: command && pending.said != nil, for: project)
         pending.answer.resume(returning: allow)
     }
 

@@ -51,6 +51,16 @@ struct TurnProgress {
     }
     /// When the activity last changed, which is what a long think or a long build is counted from.
     var activitySince = Date()
+    /// What the desk's bubble over the wish says: the activity in Lamp's own words only. A command the agent named,
+    /// or a step that only a coder would follow, reads there as plain work on the app (`Store.note`).
+    var deskActivity: String
+    var deskSince = Date()
+    /// What the desk says for `activity`: Lamp's own words as they are, and a command (named by the agent or not)
+    /// as plain work on the app, since a tile is no place for what only a coder would follow.
+    static func deskWords(_ activity: String, named: Bool) -> String {
+        if activity.hasPrefix("Waiting for your OK") { return "Waiting for your OK" }
+        return named || activity.localizedCaseInsensitiveContains("command") ? "Working on your app" : activity
+    }
     /// Lamp is looking at the app for the agent, so the activity is the look's stage and the look is the step going on.
     var looking = false
     /// The file being written or edited right now, if that's what the agent is doing. Never shown: it
@@ -73,6 +83,7 @@ struct TurnProgress {
     init(newApp: Bool) {
         self.newApp = newApp
         activity = newApp ? "Waking the genie" : Activity.thinking
+        deskActivity = activity
     }
 
     /// A part's mark on the build card. A part being worked on gets a spinner instead.
