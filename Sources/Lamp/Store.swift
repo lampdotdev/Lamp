@@ -2212,8 +2212,12 @@ final class Store: ObservableObject {
         let watching = Template.isWidgetOnly(project) && isRunning(project)
         if watching { await quit(project) }
         guard heldInstalls.mayInstall(project.id, running: isRunning(project)) else { return false }
+        // A build that waited goes in now the app is closed: its data is copied first, as `install` does.
+        let held = Runtime.holdsBuild(project)
+        if held { await DataSnapshots.take(project) }
         do {
             try await deploy(project)
+            if held { await DataSnapshots.wentIn(project) }
             // A build that waited for the app to close goes in the same way, and is the app's stamp from now on.
             if Runtime.holdsBuild(project) {
                 Runtime.releaseBuild(project)
@@ -4195,6 +4199,7 @@ final class Store: ObservableObject {
         guard await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: copy) { _ in } == 0,
               await reloadInPlace(project, inFront: false) else { return false }
         reloadedBeforeBuild.insert(project.id)
+        await DataSnapshots.wentIn(project)
         // Nothing to install until the whole build is done: the copy in build/ is the one before this change. Only
         // then do these sources count as built, so a Lamp quit meanwhile builds them again (`recoverUnfinishedBuild`).
         LiveReload.installed(project)
@@ -4376,6 +4381,7 @@ final class Store: ObservableObject {
         // installed until the app closes (LiveReload).
         if !fresh, await reloadInPlace(project, inFront: inFront) {
             owner?.updatedInPlace = true
+            await DataSnapshots.wentIn(project)
             return nil
         }
         // A whole build after an early change may still be writing build/: what's installed is what it makes,
@@ -4411,6 +4417,7 @@ final class Store: ObservableObject {
             // With the old copy closed, its data is quiet: copied before the new one opens on it.
             await DataSnapshots.take(project)
             try await deploy(project)
+            await DataSnapshots.wentIn(project)
             heldInstalls.installed(project.id)
             Runtime.releaseBuild(project)
         } catch {
