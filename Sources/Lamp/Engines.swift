@@ -375,7 +375,12 @@ extension Agent {
                 permissionMode = "auto"
                 env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-confine"
                 env["LAMP_RAN_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-ran"
+                // A command that ran says so whether it succeeded or failed (a failing build or test).
                 hooks["PostToolUse"] = [["matcher": "Bash", "hooks": [hook("LAMP_RAN_URL", event: "PostToolUse")]]]
+                hooks["PostToolUseFailure"] = [["matcher": "Bash", "hooks": [hook("LAMP_RAN_URL", event: "PostToolUseFailure")]]]
+                // What the classifier refused is the classifier's to refuse (the agent is told why), and the chat says so.
+                env["LAMP_REFUSED_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-refused"
+                hooks["PermissionDenied"] = [["matcher": "Bash", "hooks": [hook("LAMP_REFUSED_URL", event: "PermissionDenied")]]]
                 autoMode = ["classifyAllShell": true]
                 env["LAMP_PERMISSION_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-permission"
                 hooks["PermissionRequest"] = [["matcher": "*", "hooks": [hook("LAMP_PERMISSION_URL", event: "PermissionRequest")]]]

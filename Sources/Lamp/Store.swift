@@ -6280,6 +6280,13 @@ final class Store: ObservableObject {
             if let known { command = known.original }
             let confined = known != nil ? wrapped : shell && engine != .codex ? Sandbox.wrap(command, for: project) : nil
             // It ran: what Claude Code's classifier let through is said in the chat as a command Lamp let run is.
+            if request.path.contains("format=claude-refused") {
+                if let known { confinedCommands[wrapped] = nil }
+                let why = (body["reason"] as? String ?? body["message"] as? String)?.trimmed.nilIfEmpty
+                log(project, .status, "Not run: \(command)", said: known?.said)
+                if let why { log(project, .detail, "Claude Code's check stopped it: \(why)") }
+                return (200, [:])
+            }
             if request.path.contains("format=claude-ran") {
                 if let known {
                     confinedCommands[wrapped] = nil

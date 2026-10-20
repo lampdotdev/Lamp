@@ -120,7 +120,9 @@ A capability given to one engine must be given to all of them that can take it, 
   Under "Only when risky", Claude Code's own classifier (auto mode, `classifyAllShell`) decides its shell commands:
   Lamp's hook only hands each one back confined, with no decision (`format=claude-confine`), what the classifier asks
   about comes to Lamp's card through `PermissionRequest` with no check or rating of Lamp's, and a command that ran is
-  said in the chat from `PostToolUse` (`format=claude-ran`). pi and Codex keep Lamp's own check (`CommandRisk`).
+  said in the chat from `PostToolUse` and `PostToolUseFailure` (`format=claude-ran`). What the classifier refuses stays
+  refused (the agent is told why, and the chat says "Not run:", `PermissionDenied`, `format=claude-refused`). pi and Codex keep
+  Lamp's own check (`CommandRisk`).
   Claude Code's and pi's approved commands come back confined (`Sandbox`: `sandbox-exec` with a profile
   that opens the app's folder, the system, developer tools, caches, temp folders and the network, and
   closes the rest of the home folder and both Lamps' folders), so nothing reads a command's text to see
