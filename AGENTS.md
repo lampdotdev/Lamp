@@ -793,7 +793,13 @@ the app's own code wrote that class `final`, when the error is the agent's), and
 from then on (`no-final`). A class's finality and its initializers (which have method descriptors, a final class's
 too; one in an extension is a convenience initializer and isn't) are held with the layout (`LiveReload.Group.inits`),
 so a subclass added, or an initializer added or changed, reopens the app with its reason rather than being refused
-by the runtime after the compile. After a build, `Store.install` tries
+by the runtime after the compile. So is each type's shape (`LiveReload.Group.shape`): struct, class, enum or actor, an
+enum's `@objc` and `indirect`, whether the type is generic, a class's superclass (the first name it inherits when
+that's a class: one of the app's, or a system name not shaped like a protocol's), and a protocol's requirement
+signature (`: AnyObject`, what it inherits, its associated types' constraints), each of which lays values, objects,
+method tables or witness tables out differently while the type holds the same fields; a stored reference's `weak`
+or `unowned` is part of its field's entry (`Owner<tab>weak helper: Helper?`). A shape is compared only where both
+layouts have one, so a layout an earlier Lamp kept says nothing of it. After a build, `Store.install` tries
 `reloadInPlace` first, which decides the app is open and built live, takes the verdict and hands the changed files to
 `LiveReload.put`, the one pipeline from the layout check to the record of what the app now runs, acting on its
 `Outcome` (it went in, with what was done beyond the code; or why the app has to reopen): the change goes in when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.launchEntries`, held to what the open app had as part of the layout; a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again) or Lamp's own files, and leaves every type
@@ -828,7 +834,9 @@ app's copy, or to the library's own for a type the app doesn't have (a new one, 
 conformance's descriptor and witness table are treated the same, since the runtime tells generic types apart by them
 too (`[AnyHashable: …]` keys), which is why a protocol's requirements, their accessors included, are part of the
 layout a change is held to (`LiveReload.members`): the app's witness tables must fit. What the library's data names
-is worked out before anything is pointed at the new code, so a change refused leaves the app as it was. So is every
+is worked out before anything is pointed at the new code, so a change refused leaves the app as it was, and written
+before too, since each write opens and closes a page of the library for writing, which a thread already running
+the new code there would stop at. So is every
 stored global's or static's addressor, since the library's own code calls its own copy directly and would otherwise
 keep a second copy of the value; through the table the library's accessors reach the app's storage, so they are
 code like any other, and a `didSet` added to a static goes in. The mangled type
@@ -875,9 +883,16 @@ so its own `==` and hash run: they take a property never set as its starting val
 through two overloads of the keyed coding containers, which the compiler's Codable code takes over the general ones). A struct's moved properties drop out of the initializer Swift makes for it, which the new code may call with them,
 so `LiveSlots.memberwiseInitializers` makes that one again in an extension in the struct's file, from the labels and types
 the compiler lists for it (`SwiftSource.Declarations.memberwise`), one for each moved property, so a call passing any
-of them is matched by the first it passes and one passing none only by Swift's own.
+of them is matched by the first it passes and one passing none only by Swift's own. The spare itself is a parameter
+of that initializer too, with a default, which a call never notices but a reference to the initializer as a value
+(`.map(Item.init)`) does, since it matches by the whole signature: when a live build fails on the spares
+(`LiveSlots.brokeBuild`), every struct the copy gave a spare has its memberwise initializer written again without
+the spare's parameter, in `.lamp/live/Sources/LampMemberwise.swift` (`LiveSlots.addMemberwise`, from a dump of the
+plain sources, which the copy step keeps), and the build is tried once more before spares are given up.
 Left out is what a spare would break: SwiftData and Core Data models, `Sendable` classes, `Equatable` views, the App
-and its scenes, property wrappers, App Intents, and structs in a file that lays memory out by hand (vertex data). When
+and its scenes, property wrappers, App Intents, OptionSets and RawRepresentable structs (declared so, or made so in an
+extension, which the copy step's scan reports), whose `init(rawValue:)` is the memberwise one, and every struct in an
+app any of whose files lays memory out by hand (vertex data; the struct read as bytes may be declared in another). When
 the only difference in layout is new stored properties in such types, `LiveSlots.fit` rewrites each one-line
 declaration in the live copy into a computed property kept in a spare, found by the compiler's own
 source ranges (`SwiftSource.declarations`, from the same `-dump-ast` as the layout), so however it's written (with
@@ -920,7 +935,17 @@ and code compiled before still read the new cases. A constant made from the enum
 whose text changed (`LiveSlots.constants(naming:)`). What old code may still be doing is read more widely than a
 switch or an interpolation: any value of the enum's type, or of a type holding it by value (`LiveReload.holders`),
 that running code has in hand reopens the app, since an old frame reads it by the layout it was compiled with (an
-optional of it, a comparison, a hash, a cast). A property an explicit `CodingKeys` names stays a field (Codable needs it stored), so it reopens the app. Which property is in which spare
+optional of it, a comparison, a hash, a cast); a class is no such holder (its field keeps its layout, and old code
+reading it is caught as a use of the enum itself), nor a view, whose value lives in SwiftUI's graph, nor a key path
+passed as a function (`.map(\.name)`), an escaping closure the compiler makes for that call alone. A generic enum
+reopens the app when it grows: the runtime lays its values out for each type it's used at, and there is no one
+metadata to point at the change's. A property an explicit `CodingKeys` names stays a field (Codable needs it stored),
+so it reopens the app, as does one set in an initializer the type writes itself (`SwiftSource.Declarations.assigned`:
+a computed property can't be set before the stored ones are), one with observers, `lazy`, or held weakly or
+unowned; `LiveSlots.fitting` says which, and the chat's detail carries that reason beside the layout's, with the
+copy step's own names said as what they are (`LiveReload.readable`). A view's `$name`, its state's binding, becomes
+its box's only within that view's own declaration (`SwiftSource.Declarations.types`), since another view in the
+file may have state of the same name. Which property is in which spare
 (`.lamp/live/slots.json`) is put back into each fresh copy (they come back as additions, and `LiveSlots.fit` puts
 them in the same places) until the app is installed again; a property taken out of the code has its place retired
 once the change is in (`LiveSlots.retire`), since the place still holds its value, and its name is sent with the change
@@ -931,7 +956,9 @@ name numbered by `Slot.generation`, `LiveSlots.spareKey`); what `fit` planned (t
 whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs
 once it's installed (`LiveReload.markRunning(from:)`). A spare never reaches saved data: `LampSpare` encodes as
 nothing, and a computed property isn't encoded. If spares ever keep an app from building, it's built again without
-them and stays without (`LiveSlots.giveUp`, `.lamp/live/no-spares`), so the agent only sees errors in its own code.
+them (`LiveSlots.giveUp`, `.lamp/live/no-spares`), so the agent only sees errors in its own code; the marker, like
+`no-final`, counts the whole live builds since and goes after ten (`LiveSlots.expireGiveUps`), so the step is tried
+again now and then at the cost of one failed build when it still breaks.
 
 A constant (a static or global `let`) whose value changes would otherwise not change at all: the open app made its
 value once and keeps it in storage the new code goes on reading. So each constant's value is part of the kept layout

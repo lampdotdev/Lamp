@@ -3887,7 +3887,8 @@ enum Template {
                 let path = note.userInfo?["path"] as? String, signature = note.userInfo?["signature"] as? String
                 let whole = note.userInfo?["whole"] as? String == "1"
                 let retired = (note.userInfo?["retired"] as? String ?? "").split(separator: ",").map(String.init)
-                MainActor.assumeIsolated { shared.load(path, signature: signature, whole: whole, retired: retired) }
+                let until = note.userInfo?["until"] as? String ?? ""
+                MainActor.assumeIsolated { shared.load(path, signature: signature, whole: whole, retired: retired, until: until) }
             }
         }()
 
@@ -4011,18 +4012,25 @@ enum Template {
 
         /// Loads a change. `whole` says every file of the app's was compiled into it (what's declared changed), so
         /// what it doesn't define of a class's Objective-C methods was taken away, not left in a file it didn't compile.
-        private func load(_ path: String?, signature: String?, whole: Bool = false, retired: [String] = []) {
+        private func load(_ path: String?, signature: String?, whole: Bool = false, retired: [String] = [], until: String = "") {
             let folder = LampInstall.app + "/.lamp/live/"
             guard let path, let signature, path.hasPrefix(folder), !path.contains(".."), path.hasSuffix(".dylib"),
                   !loaded.contains(path) else { return }
             let key = SymmetricKey(data: Data(LampInstall.token.utf8))
-            let expected = HMAC<SHA256>.authenticationCode(for: Data(("reload\n\(path)" + (whole ? "\nwhole" : "") + (retired.isEmpty ? "" : "\nretired " + retired.joined(separator: ","))).utf8), using: key)
-                .map { String(format: "%02x", $0) }.joined()
+            let expected = HMAC<SHA256>.authenticationCode(for: Data(("reload\n\(path)" + (whole ? "\nwhole" : "") + (retired.isEmpty ? "" : "\nretired " + retired.joined(separator: ","))
+                + (until.isEmpty ? "" : "\nuntil " + until)).utf8), using: key).map { String(format: "%02x", $0) }.joined()
             guard signature == expected else { return }
             loaded.insert(path)
             var result = "failed"
             defer {
                 try? result.write(to: LampRuntime.folder.appendingPathComponent("reloaded.txt"), atomically: true, encoding: .utf8)
+            }
+            // Lamp waits only so long for the answer and then treats the change as not in: one that reaches the app
+            // after that (the app busy, the notification late) must stay out, or the app would run code Lamp doesn't
+            // know it has.
+            if let deadline = Double(until), Date().timeIntervalSince1970 > deadline {
+                result = "failed: the change reached the app too late to go in"
+                return
             }
             guard dlopen(path, RTLD_NOW) != nil else {
                 result = "failed: the change couldn't be loaded (\(String(cString: dlerror()).prefix(200)))"
@@ -4095,9 +4103,14 @@ enum Template {
             guard let descriptors = Self.plannedDescriptors(header, copies: copies, kept: kept) else {
                 return refuse("the change's types couldn't all be made the app's")
             }
+            // The library's data is pointed at the app's types before any call is pointed at its code: each write
+            // opens and closes a page of the library for writing, and a thread already running the new code on that
+            // page would stop there.
+            var rebound = 0
+            for write in descriptors where write.apply() { rebound += 1 }
             let bindings = latest.merging(kept) { new, _ in new }
             images.append(String(cString: _dyld_get_image_name(image)))
-            var rebound = Self.rebind(image: 0, to: latest)
+            rebound += Self.rebind(image: 0, to: latest)
             for index in images.compactMap(Self.imageIndex) { rebound += Self.rebind(image: index, to: bindings) }
             orders.merge(listed) { first, _ in first }
             Self.lock.lock()
@@ -4139,7 +4152,6 @@ enum Template {
                 let target = keptClass[category.class_] ?? category.class_
                 rebound += Self.attach(category, to: target, accessor: Self.accessor(of: target, original: original, defined: defined))
             }
-            for write in descriptors where write.apply() { rebound += 1 }
             // An enum that gained cases keeps its old metadata in the app, which the app's field records, old code
             // and the runtime's own asks (printing, Codable, hashing, a cast) still reach: its description is pointed
             // at the change's, which knows the new cases.
@@ -15834,8 +15846,10 @@ enum Template {
     /// `LampLive.generation` and draws `__lampBody`, so its type never changes and every view draws again on a
     /// reload; (2) the `@main` moves from the App to `__LampEntry`, which starts `LampLive.watch` before it; (3) every
     /// class gets spare places and every struct and view one (`LiveSlots`; not what a spare would break: SwiftData
-    /// and Core Data models, Sendable classes, Equatable views, the App and its scenes, wrappers, intents, structs in a
-    /// file that lays memory out by hand); (4) every class nothing subclasses is made `final`, since a final class
+    /// and Core Data models, Sendable classes, Equatable views, the App and its scenes, wrappers, intents, OptionSets
+    /// and RawRepresentable structs, whose `init(rawValue:)` is the memberwise one, and any struct in an app that
+    /// lays memory out by hand in any file, since the one read as bytes may be declared in another); (4) every class
+    /// nothing subclasses is made `final`, since a final class
     /// keeps no method table and so takes a method added without reopening the app (`open` and already-final ones
     /// are left). A member spelt `class final func` or `class private func` is no type and is passed over. A class made
     /// final that something subclasses after all fails the build in the compiler's words, which `LiveSlots.brokeFinal`
@@ -15846,21 +15860,30 @@ enum Template {
     my $modifier = qr/(?:func|var|let|subscript|override|class|final|open|public|internal|private|fileprivate|package|static|dynamic|required|convenience|nonisolated|lazy|weak|unowned|optional|indirect|init|deinit)\b/;
     if (($ARGV[0] // '') eq 'scan') {
         shift @ARGV;
-        my (%names, %alias);
+        my (%names, %alias, %nospare, $raw);
         for my $file (@ARGV) {
             open(my $in, '<', $file) or next; my $s = <$in>; close($in);
+            # A struct read as bytes anywhere (MemoryLayout, a buffer handed to Metal) must stay the size it's written
+            # with, and the one read may be declared in another file: so no struct gets a spare in such an app.
+            $raw = 1 if $s =~ /MemoryLayout|withUnsafe|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
             $s =~ s#/\*[\s\S]*?\*/# #g; $s =~ s#//[^\n]*##g;
+            # A struct made an OptionSet or RawRepresentable in an extension: its memberwise initializer is the
+            # protocol's `init(rawValue:)`, which a spare's parameter would unfit.
+            while ($s =~ /\bextension\s+([\w.]+)\s*:[^{]*\b(?:OptionSet|RawRepresentable)\b/g) { $nospare{(split /\./, $1)[-1]} = 1 }
             while ($s =~ /\btypealias\s+(\w+)(?:<[^>]*>)?\s*=\s*([\w.]+)/g) { $alias{$1} = $2 }
             while ($s =~ /\bclass\s+\w+(?:<[^>]*>)?\s*:\s*([\w.]+)/g) { $names{$1} = 1 }
             while ($s =~ /<[^<>]*>/g) { my $g = $&; while ($g =~ /:\s*([\w.]+)/g) { $names{$1} = 1 } }
             while ($s =~ /\bwhere\b([^{]*)/g) { my $w = $1; while ($w =~ /:\s*([\w.]+)/g) { $names{$1} = 1 } }
         }
         for my $name (keys %names) { my $n = $name; for (1 .. 4) { last unless exists $alias{(split /\./, $n)[-1]}; $n = $alias{(split /\./, $n)[-1]}; $names{$n} = 1 } }
-        print join(' ', sort keys %names), "\n";
+        # The names, then what the spares step is told: `-raw`, and `-nospare:Name` for each.
+        print join(' ', sort(keys %names), ($raw ? '-raw' : ()), map { "-nospare:$_" } sort keys %nospare), "\n";
         exit 0;
     }
     my ($count, $subclassed, $flags, @files) = @ARGV;
-    my %subclassed = map { (split /\./)[-1] => 1 } split ' ', $subclassed;
+    my %subclassed = map { (split /\./)[-1] => 1 } grep { !/^-/ } split ' ', $subclassed;
+    my $rawAll = $subclassed =~ /(?:^|\s)-raw(?:\s|$)/;
+    my %nospare = map { substr($_, 9) => 1 } grep { /^-nospare:/ } split ' ', $subclassed;
     my $wantSpares = $flags =~ /s/; my $wantFinal = $flags =~ /f/;
     # The stretches of a file no rewrite may touch, worked out again after each rewrite moves them.
     my @skip;
@@ -15883,12 +15906,12 @@ enum Template {
             return $whole if $header =~ /\b(?:Equatable|Hashable)\b/;
             return "${whole}${pad}\@State private var __lampState_${name} = LampStateBox();";
         }
-        return $whole if $raw;
+        return $whole if $raw || $nospare{$name} || $header =~ /\b(?:OptionSet|RawRepresentable)\b/;
         return "${whole}${pad}var __lampSpare_${name} = LampSpare(nil);";
     }
     for my $file (@files) {
         open(my $in, '<', $file) or die "$file: $!"; my $s = <$in>; close($in);
-        my $raw = $s =~ /MemoryLayout|withUnsafe|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
+        my $raw = $rawAll || $s =~ /MemoryLayout|withUnsafe|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
         @skip = spans($s);
         $s =~ s{var\s+body\s*:\s*some\s+(?:SwiftUI\.)?View\s*\{}~ inside($-[0]) ? $& : "var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\n    \@ViewBuilder var __lampBody: some View {" ~ge;
         @skip = spans($s);
@@ -15939,7 +15962,8 @@ enum Template {
         cp "$out.new" "$made.out"; print -r -- "$KEY|$flags" > "$made.key"
         if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi
       done
-      for f in "$LIVE"/Sources/**/*.swift(N); do [[ -f "${f#$LIVE/}" ]] || rm "$f"; done
+      # Lamp's own file beside the spares (LiveSlots.addMemberwise) has no original to be kept by.
+      for f in "$LIVE"/Sources/**/*.swift(N); do [[ -f "${f#$LIVE/}" || "${f:t}" == \(LiveSlots.memberwiseFile) ]] || rm "$f"; done
       # What's built beside the app (a widget, a share extension) is built from the copy too, as it is.
       for d in Widget Share; do
         if [[ -d "$d" ]]; then mkdir -p "$LIVE/$d"; rsync -a --delete "$d/" "$LIVE/$d/"; else rm -rf "$LIVE/$d"; fi
