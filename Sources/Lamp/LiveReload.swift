@@ -31,7 +31,13 @@ enum LiveReload {
     static func markRunning(_ project: LampProject, from: URL? = nil) {
         try? AppFolder.copy(from ?? sources(project), to: running(project), in: project.dir)
         try? AppFolder.write(inputs(project), to: runningInputs(project), in: project.dir)
-        AppFolder.remove(runningLayout(project), in: project.dir)
+        // What it now runs was most often read already, as the live copy a change was tried with (`Analyses`): its
+        // layout is kept, so the next change doesn't have the compiler print it again.
+        if let known = analyses.entry(Analyses.digest(of: running(project), module: project.exe, macOS: Template.macMinimum(project))) {
+            keepLayout(known.layout, for: project)
+        } else {
+            AppFolder.remove(runningLayout(project), in: project.dir)
+        }
         // Installed, the app runs one generation of code again: nothing older is left running in it.
         if from != nil { AppFolder.remove(oldCodeURL(project), in: project.dir) }
     }
@@ -80,7 +86,9 @@ enum LiveReload {
     static func hasOldCodeRecord(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: oldCodeURL(project).path) }
     /// The uses in the sources the open app runs, for the record; nil when the compiler can't say.
     @MainActor static func oldCodeUsesOfRunning(_ project: LampProject) async -> [String]? {
-        await dump(of: running(project), in: project, module: project.exe, macOS: Template.macMinimum(project)).map(oldCodeUses(inDump:))
+        let macOS = Template.macMinimum(project)
+        if let known = analyses.entry(Analyses.digest(of: running(project), module: project.exe, macOS: macOS)) { return known.oldCode }
+        return await dump(of: running(project), in: project, module: project.exe, macOS: macOS).map(oldCodeUses(inDump:))
     }
 
     /// The open app has a change the copy in the apps folder doesn't: the build goes in when the app closes.
@@ -344,10 +352,12 @@ enum LiveReload {
         // And each type's generic parameters (`"Stack" "<Element>"`), which are no alias of anything however they're named.
         let anyDecl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|actor|extension)_decl\b[^"]*"([^"]+)"(?: "<([^"]*)>")?"#)
         var classes = Set<String>(), generics: [String: Set<String>] = [:], scopes: [(indent: Int, name: String)] = []
-        for raw in dump.split(separator: "\n") {
-            let line = String(raw), indent = line.prefix { $0 == " " }.count
-            guard line.dropFirst(indent).first == "(" else { continue }
+        for raw in SwiftSource.lines(dump) {
+            guard let node = SwiftSource.node(raw) else { continue }
+            let indent = node.indent
             while let open = scopes.last, open.indent >= indent { scopes.removeLast() }
+            guard node.opens("struct_decl", "class_decl", "enum_decl", "actor_decl", "extension_decl") else { continue }
+            let line = String(raw)
             guard let m = anyDecl.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) else { continue }
             let name = String(line[Range(m.range(at: 3), in: line)!])
             let full = (scopes.map(\.name) + [name]).joined(separator: ".")
@@ -479,7 +489,7 @@ enum LiveReload {
         let casePattern = try! NSRegularExpression(pattern: #"^(\s*)\(pattern_enum_element\b.*? type="([^"]*)""#)
         let interpolation = try! NSRegularExpression(pattern: #"^(\s*)\(declref_expr\b.*? type="[^"]*\(([^"()]*)\) -> \(\)".*? decl="Swift\.\(file\)\.DefaultStringInterpolation\.appendInterpolation"#)
         var scopes: [(indent: Int, kind: Kind)] = [], uses: [String] = [], seen = Set<String>()
-        var switching: Int?
+        var switching: Int?, typeNames: [String: [String]] = [:]
         // The calls around the line being read, by the module each one's function is from.
         var calls: [Int] = [], callees: [(indent: Int, module: String)] = [], holders: [Int] = []
         func note(_ type: String, _ how: String) {
@@ -505,55 +515,60 @@ enum LiveReload {
             }
             return "the app"
         }
-        for raw in dump.split(separator: "\n") {
-            let line = String(raw), range = NSRange(line.startIndex..., in: line)
-            let indent = line.prefix { $0 == " " }.count
-            guard line.dropFirst(indent).first == "(" else { continue }
+        for raw in SwiftSource.lines(dump) {
+            guard let node = SwiftSource.node(raw) else { continue }
+            let indent = node.indent, opens = node.opens
+            // Made only for a line a pattern is tried on.
+            lazy var line = String(raw)
+            lazy var range = NSRange(line.startIndex..., in: line)
             while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
             while let last = callees.last, last.indent >= indent { callees.removeLast() }
             while let last = calls.last, last >= indent { calls.removeLast() }
             while let last = holders.last, last >= indent { holders.removeLast() }
             if let at = switching, at >= indent { switching = nil }
-            if call.firstMatch(in: line, range: range) != nil { calls.append(indent) }
-            if holder.firstMatch(in: line, range: range) != nil { holders.append(indent) }
+            if node.names("call_expr"), call.firstMatch(in: line, range: range) != nil { calls.append(indent) }
+            if opens("assign_expr", "pattern_binding_decl"), holder.firstMatch(in: line, range: range) != nil { holders.append(indent) }
             // The call's function is the first thing named under it; what its arguments name is theirs.
-            if let m = callee.firstMatch(in: line, range: range), let at = calls.last, callees.last?.indent != at {
+            if let at = calls.last, callees.last?.indent != at, opens("declref_expr"), let m = callee.firstMatch(in: line, range: range) {
                 callees.append((at, String(line[Range(m.range(at: 2), in: line)!])))
             }
-            if bodyDecl.firstMatch(in: line, range: range) != nil {
+            if opens("var_decl"), bodyDecl.firstMatch(in: line, range: range) != nil {
                 scopes.append((indent, .body))
-            } else if let m = closure.firstMatch(in: line, range: range) {
+            } else if node.names("closure_expr"), let m = closure.firstMatch(in: line, range: range) {
                 let rest = String(line[Range(m.range(at: 2), in: line)!])
                 // An escaping closure handed to anything but SwiftUI is kept by it, however deep in a body it's made;
                 // so is one set into a property or given as a value, whatever call it's made inside.
                 let stored = (holders.last ?? -1) > (calls.last ?? -1)
                 let kept = stored || !["SwiftUI", "SwiftUICore"].contains(callees.last?.module ?? "SwiftUI")
                 scopes.append((indent, rest.contains(" async") ? .async : rest.contains(" escaping") ? (kept ? .async : .escaping) : .other))
-            } else if let m = function.firstMatch(in: line, range: range) {
+            } else if opens("func_decl", "accessor_decl", "constructor_decl"), let m = function.firstMatch(in: line, range: range) {
                 let type = String(line[Range(m.range(at: 3), in: line)!])
                 let name = m.range(at: 2).location == NSNotFound ? nil : String(line[Range(m.range(at: 2), in: line)!])
                 // A member that returns a view is drawn by a body, and what it hands SwiftUI is made again with it;
                 // one that is async may be suspended across the change, so it stays a function.
                 let async = type.contains(" async")
                 scopes.append((indent, type.hasSuffix("some View") && !async ? .body : .function(name, async: async)))
-            } else if let m = scope.firstMatch(in: line, range: range) {
+            } else if opens("var_decl", "subscript_decl", "struct_decl", "class_decl", "enum_decl", "actor_decl", "extension_decl", "protocol"),
+                      let m = scope.firstMatch(in: line, range: range) {
                 // A type or property, named so a use can say where it is; a type's name is what a body's uses show.
                 scopes.append((indent, m.range(at: 2).location == NSNotFound ? .other : .named(String(line[Range(m.range(at: 2), in: line)!]))))
-            } else if switchStmt.firstMatch(in: line, range: range) != nil {
+            } else if opens("switch_stmt"), switchStmt.firstMatch(in: line, range: range) != nil {
                 if risky() { switching = indent }
-            } else if let at = switching, indent > at, let m = casePattern.firstMatch(in: line, range: range) {
+            } else if let at = switching, indent > at, opens("pattern_enum_element"), let m = casePattern.firstMatch(in: line, range: range) {
                 note(String(line[Range(m.range(at: 2), in: line)!]), "switches over")
-            } else if let m = interpolation.firstMatch(in: line, range: range), risky() {
+            } else if opens("declref_expr"), SwiftSource.has(line, "appendInterpolation"), risky(), let m = interpolation.firstMatch(in: line, range: range) {
                 note(String(line[Range(m.range(at: 2), in: line)!]), "prints")
             }
             // Any value of the enum's type, or of a type holding it, that running code has in hand: compared, hashed,
             // cast, read as an optional, each by the layout the code was compiled with, which a new case changes.
-            if risky(), let m = typeOf.firstMatch(in: line, range: range) {
+            if risky(), SwiftSource.has(line, " type=\""), let m = typeOf.firstMatch(in: line, range: range) {
                 let kind = String(line[Range(m.range(at: 1), in: line)!])
-                for w in word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)) {
-                    let name = String(kind[Range(w.range, in: kind)!])
-                    if name.first?.isUppercase == true { note(name, "uses") }
+                // The same few types come up on most lines: each is read for its names once.
+                if typeNames[kind] == nil {
+                    typeNames[kind] = word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind))
+                        .map { String(kind[Range($0.range, in: kind)!]) }.filter { $0.first?.isUppercase == true }
                 }
+                for name in typeNames[kind]! { note(name, "uses") }
             }
         }
         return uses
@@ -698,7 +713,10 @@ enum LiveReload {
         // Written back after a reload, so never read through a link: it would bring what it leads to into the folder.
         var before = AppFile.text(runningLayout(project), in: project).map { $0.components(separatedBy: "\n").filter { !$0.isEmpty } }
         if before == nil {
-            before = await analysis(of: running(project), in: project, module: project.exe, macOS: Template.macMinimum(project))?.layout
+            // Most often what a change before read as the live copy (`Analyses`).
+            let macOS = Template.macMinimum(project)
+            before = analyses.entry(Analyses.digest(of: running(project), module: project.exe, macOS: macOS))?.layout
+            if before == nil { before = await analysis(of: running(project), in: project, module: project.exe, macOS: macOS)?.layout }
             if let before { try? AppFolder.write(before.joined(separator: "\n"), to: runningLayout(project), in: project.dir) }
         }
         let new = await after
@@ -763,11 +781,10 @@ enum LiveReload {
         // app's code can't change what they hold or make them stop compiling, and they're most of the time.
         let primaries = files ?? swiftFiles(in: folder).keys.filter { ($0 as NSString).lastPathComponent != "LampSupport.swift" }.sorted()
         guard !primaries.isEmpty else { return [] }
-        var output: [String] = []
-        let status = await Sandbox.run(frontend("-dump-ast", in: folder, primaries: primaries, module: module, macOS: macOS, ios: ios) + " 2>/dev/null",
-                                       for: project, cwd: folder) { output.append($0) }
+        let (status, output) = await Sandbox.output(frontend("-dump-ast", in: folder, primaries: primaries, module: module, macOS: macOS, ios: ios),
+                                                    for: project, cwd: folder)
         guard status == 0 else { return nil }
-        return members(inDump: output.joined(separator: "\n"), rawValues: rawValues)
+        return members(inDump: String(decoding: output, as: UTF8.self), rawValues: rawValues)
     }
 
     /// The compiler's printout of a live copy's whole code but Lamp's own, or nil when it doesn't type-check (or
@@ -775,21 +792,94 @@ enum LiveReload {
     static func dump(of folder: URL, in project: LampProject, module: String, macOS: String) async -> String? {
         let primaries = swiftFiles(in: folder).keys.filter { ($0 as NSString).lastPathComponent != "LampSupport.swift" }.sorted()
         guard !primaries.isEmpty else { return "" }
-        var output: [String] = []
-        let status = await Sandbox.run(frontend("-dump-ast", in: folder, primaries: primaries, module: module, macOS: macOS) + " 2>/dev/null",
-                                       for: project, cwd: folder) { output.append($0) }
-        return status == 0 ? output.joined(separator: "\n") : nil
+        // Tens of megabytes for a big app: kept whole as it comes, off the main actor, never handed over line by line.
+        let (status, output) = await Sandbox.output(frontend("-dump-ast", in: folder, primaries: primaries, module: module, macOS: macOS),
+                                                    for: project, cwd: folder)
+        return status == 0 ? String(decoding: output, as: UTF8.self) : nil
     }
 
     /// A live copy's layout as `layout` gives it, with what's read only at launch (`SwiftSource.launchEntries`)
     /// and where each property is declared, all from the one printout.
     /// And where its code may go on running after the next change (`oldCodeUses`), to record once it's in.
+    /// Kept by what it was made from (`Analyses`), so the same code is never printed and read twice.
     static func analysis(of folder: URL, in project: LampProject, module: String, macOS: String)
         async -> (layout: [String], declarations: SwiftSource.Declarations, oldCode: [String])? {
+        let digest = Analyses.digest(of: folder, module: module, macOS: macOS)
+        if let known = analyses.entry(digest), known.folder == folder.standardizedFileURL.path {
+            return (known.layout, known.declarations, known.oldCode)
+        }
         guard let dump = await dump(of: folder, in: project, module: module, macOS: macOS) else { return nil }
         let declarations = SwiftSource.declarations(inDump: dump)
-        return (members(inDump: dump) + SwiftSource.launchEntries(inDump: dump, folder: folder) + SwiftSource.constantEntries(declarations),
-                declarations, oldCodeUses(inDump: dump))
+        let made = (layout: members(inDump: dump) + SwiftSource.launchEntries(inDump: dump, folder: folder) + SwiftSource.constantEntries(declarations),
+                    declarations: declarations, oldCode: oldCodeUses(inDump: dump))
+        // Kept only when the code didn't change while it was read.
+        if Analyses.digest(of: folder, module: module, macOS: macOS) == digest {
+            analyses.keep(digest, .init(folder: folder.standardizedFileURL.path, layout: made.layout, declarations: made.declarations, oldCode: made.oldCode))
+        }
+        return made
+    }
+
+    /// The analyses made lately, in memory, by a digest of the code they were made from. Two reads of the same code
+    /// are common: a change that can't go in is tried before its build and again at the install after it, on the
+    /// same live copy; and once the app reopens, the sources it runs are the live copy that change read. A big app's
+    /// printout takes the compiler several seconds. The layout and what old code does name no folder, so they stand for
+    /// any copy of the same code; where each property is declared names the files, so it stands only for its own folder.
+    final class Analyses: @unchecked Sendable {
+        struct Entry {
+            var folder: String
+            var layout: [String]
+            var declarations: SwiftSource.Declarations
+            var oldCode: [String]
+        }
+        private let lock = NSLock()
+        private var entries: [(digest: String, entry: Entry)] = []
+
+        func entry(_ digest: String) -> Entry? { lock.withLock { entries.last { $0.digest == digest }?.entry } }
+
+        func keep(_ digest: String, _ entry: Entry) {
+            lock.withLock {
+                entries.removeAll { $0.digest == digest }
+                entries.append((digest, entry))
+                // A few apps' worth: each is the size of a layout, much smaller than a printout.
+                if entries.count > 6 { entries.removeFirst(entries.count - 6) }
+            }
+        }
+
+        /// What the compiler reads for a copy's printout: its Swift files (each by its place in the copy and what it
+        /// holds), the widget's shared code read beside it (`frontend`), the module's name and the macOS it's for.
+        static func digest(of folder: URL, module: String, macOS: String) -> String {
+            let shared = folder.deletingLastPathComponent().appendingPathComponent(Template.widgetFolder).appendingPathComponent(Template.sharedWidgetFolder)
+            return LiveReload.digest(of: [folder, shared], extra: [module, macOS, ProcessInfo.processInfo.environment["DEVELOPER_DIR"] ?? ""],
+                                     only: { $0.pathExtension == "swift" })
+        }
+    }
+    private static let analyses = Analyses()
+
+    /// A digest of what these files and folders hold, each file by its path under the one given and its bytes, with
+    /// `extra` beside them. Read as Lamp, but only hashed: nothing read is passed on.
+    static func digest(of places: [URL], extra: [String] = [], only include: (URL) -> Bool = { _ in true }) -> String {
+        var hash = SHA256()
+        func add(_ text: String) { hash.update(data: Data((text + "\u{0}").utf8)) }
+        extra.forEach(add)
+        let fm = FileManager.default
+        for place in places {
+            add("@" + place.lastPathComponent)
+            var isFolder: ObjCBool = false
+            guard fm.fileExists(atPath: place.path, isDirectory: &isFolder) else { add("-"); continue }
+            guard isFolder.boolValue else { hash.update(data: fm.contents(atPath: place.path) ?? Data()); continue }
+            let base = place.standardizedFileURL.path + "/"
+            let files = (fm.enumerator(at: place, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? [])
+                .filter(include)
+                .map { (String($0.standardizedFileURL.path.dropFirst(base.count)), $0) }
+                .sorted { $0.0 < $1.0 }
+            for (name, url) in files {
+                var isDirectory: ObjCBool = false
+                guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue else { continue }
+                add(name)
+                hash.update(data: fm.contents(atPath: url.path) ?? Data())
+            }
+        }
+        return hash.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     /// The stored members of every type in a `-dump-ast` printout: each line's indent says what it's inside, so
@@ -854,12 +944,14 @@ enum LiveReload {
             if seen.insert(entry).inserted { out.append(entry) }
             opaque = nil
         }
-        for raw in dump.split(separator: "\n") {
-            let line = String(raw), range = NSRange(line.startIndex..., in: line)
-            let indent = line.prefix { $0 == " " }.count
+        for raw in SwiftSource.lines(dump) {
             // Only a line that opens a node says where it sits; the closing brackets of a deep node sometimes
             // come on a line of their own at the left edge, which would otherwise end every scope.
-            guard line.dropFirst(indent).first == "(" else { continue }
+            guard let node = SwiftSource.node(raw) else { continue }
+            let indent = node.indent, opens = node.opens
+            // Made only for a line a pattern is tried on.
+            lazy var line = String(raw)
+            lazy var range = NSRange(line.startIndex..., in: line)
             if let open = opaque {
                 if indent > open.indent {
                     if let within = open.inner, indent <= within { opaque?.inner = nil }
@@ -867,21 +959,23 @@ enum LiveReload {
                         // Inside a local declaration: its names count, its conversions don't.
                     } else if let at = open.converting, indent > at {
                         opaque?.converting = nil
-                        if open.builds == nil, let m = typeOf.firstMatch(in: line, range: range) {
+                        if open.builds == nil, SwiftSource.has(line, " type=\""), let m = typeOf.firstMatch(in: line, range: range) {
                             let type = String(line[Range(m.range(at: 1), in: line)!])
                             if !type.contains("some ") { opaque?.builds = place.stringByReplacingMatches(in: type, range: NSRange(type.startIndex..., in: type), withTemplate: "") }
                         }
-                    } else if toOpaque.firstMatch(in: line, range: range) != nil {
+                    } else if opens("underlying_to_opaque_expr"), toOpaque.firstMatch(in: line, range: range) != nil {
                         opaque?.converting = indent
-                    } else if inner.firstMatch(in: line, range: range) != nil {
+                    } else if opens("func_decl", "var_decl", "subscript_decl", "struct_decl", "class_decl", "enum_decl", "actor_decl"),
+                              inner.firstMatch(in: line, range: range) != nil {
                         opaque?.inner = indent
                     }
-                    if valueOnly.firstMatch(in: line, range: range) == nil {
+                    if !(node.names("_literal_expr") || opens("default_argument_expr")) || valueOnly.firstMatch(in: line, range: range) == nil,
+                       SwiftSource.has(line, "decl=\"") || SwiftSource.has(line, "type=\"") {
                         for m in attribute.matches(in: line, range: range) {
                             // A declaration of the app's is named with where it is, which differs between the copy
                             // the app runs and the new one, and moves with any edit above it.
                             let value = String(line[Range(m.range(at: 1), in: line)!])
-                            opaque?.names.append(place.stringByReplacingMatches(in: value, range: NSRange(value.startIndex..., in: value), withTemplate: ""))
+                            opaque?.names.append(!value.contains("@") ? value : place.stringByReplacingMatches(in: value, range: NSRange(value.startIndex..., in: value), withTemplate: ""))
                         }
                     }
                     continue
@@ -889,7 +983,7 @@ enum LiveReload {
                 closeOpaque()
             }
             if let pending = objcPending {
-                if indent == pending.indent + 2, let m = objcAttr.firstMatch(in: line, range: range) {
+                if indent == pending.indent + 2, opens("objc_attr"), let m = objcAttr.firstMatch(in: line, range: range) {
                     let selector = m.range(at: 2).location == NSNotFound ? "" : "(" + String(line[Range(m.range(at: 2), in: line)!]) + ")"
                     let entry = pending.entry + " @objc" + selector
                     if seen.insert(entry).inserted { out.append(entry) }
@@ -898,7 +992,7 @@ enum LiveReload {
                 }
                 if indent <= pending.indent { objcPending = nil }
             }
-            if rawValues, let index = lastCase, let m = rawValue.firstMatch(in: line, range: range) {
+            if rawValues, let index = lastCase, opens("raw_value_expr"), let m = rawValue.firstMatch(in: line, range: range) {
                 out[index] += " = " + String(line[Range(m.range(at: 1), in: line)!])
                 lastCase = nil
                 continue
@@ -922,20 +1016,21 @@ enum LiveReload {
             func conformances(_ type: String) {
                 if let m = inherits.firstMatch(in: line, range: range) { declared(type + " inherits " + String(line[Range(m.range(at: 1), in: line)!])) }
             }
-            if let m = protocolDecl.firstMatch(in: line, range: range) {
+            if opens("protocol"), let m = protocolDecl.firstMatch(in: line, range: range) {
                 let type = "protocol " + String(line[Range(m.range(at: 3), in: line)!])
                 conformances(String(line[Range(m.range(at: 3), in: line)!]))
                 scopes.append((indent, type))
                 if seen.insert(type + "\t").inserted { out.append(type + "\t") }
-            } else if let owner, owner.hasPrefix("protocol "), let m = requirement.firstMatch(in: line, range: range) {
+            } else if let owner, owner.hasPrefix("protocol "), opens("func_decl", "var_decl", "subscript_decl", "constructor_decl", "associated_type_decl"),
+                      let m = requirement.firstMatch(in: line, range: range) {
                 let entry = owner + "\t" + String(line[Range(m.range(at: 3), in: line)!]) + ": " + String(line[Range(m.range(at: 4), in: line)!])
                 if seen.insert(entry).inserted { out.append(entry) }
                 scopes.append((indent, "\u{4}" + entry))
-            } else if let owner, owner.hasPrefix("\u{4}"), let m = accessor.firstMatch(in: line, range: range) {
+            } else if let owner, owner.hasPrefix("\u{4}"), opens("accessor_decl"), let m = accessor.firstMatch(in: line, range: range) {
                 let entry = String(owner.dropFirst()) + " " + String(line[Range(m.range(at: 3), in: line)!]) + ": " + String(line[Range(m.range(at: 2), in: line)!])
                 if seen.insert(entry).inserted { out.append(entry) }
                 scopes.append((indent, nil))
-            } else if let m = typeDecl.firstMatch(in: line, range: range) {
+            } else if opens("struct_decl", "class_decl", "enum_decl", "actor_decl"), let m = typeDecl.firstMatch(in: line, range: range) {
                 let name = String(line[Range(m.range(at: 3), in: line)!])
                 let outer = scopes.compactMap(\.type).last
                 let type = outer.map { $0 + "." + name } ?? name
@@ -958,17 +1053,17 @@ enum LiveReload {
                     let entry = placeGroup + "\t" + type + "\t" + (String(line[Range(f.range(at: 1), in: line)!]) as NSString).lastPathComponent
                     if seen.insert(entry).inserted { out.append(entry) }
                 }
-            } else if let m = extensionDecl.firstMatch(in: line, range: range) {
+            } else if opens("extension_decl"), let m = extensionDecl.firstMatch(in: line, range: range) {
                 let type = String(line[Range(m.range(at: 2), in: line)!])
                 conformances(type)
                 scopes.append((indent, type))
                 extensions.insert(indent)
-            } else if let m = inferredAlias.firstMatch(in: line, range: range), let owner, !owner.hasPrefix("\u{4}") {
+            } else if opens("typealias"), let m = inferredAlias.firstMatch(in: line, range: range), let owner, !owner.hasPrefix("\u{4}") {
                 let name = String(line[Range(m.range(at: 2), in: line)!]), type = String(line[Range(m.range(at: 3), in: line)!])
                 if !type.contains("some "), seen.insert(aliasGroup + "\t" + owner + "." + name + " = " + type).inserted {
                     out.append(aliasGroup + "\t" + owner + "." + name + " = " + type)
                 }
-            } else if let m = opaqueMember.firstMatch(in: line, range: range), !["private", "fileprivate"].contains(String(line[Range(m.range(at: 5), in: line)!])),
+            } else if opens("func_decl", "var_decl"), let m = opaqueMember.firstMatch(in: line, range: range), !["private", "fileprivate"].contains(String(line[Range(m.range(at: 5), in: line)!])),
                       case let name = String(line[Range(m.range(at: 3), in: line)!]), name != "__lampBody", !name.hasPrefix("$") {
                 // A view's body is wrapped by the live copy (`__lampBody`, read only by `body` beside it), so its type
                 // may change; a private member's callers are all in its file, compiled with it. Keyed with its
@@ -979,7 +1074,7 @@ enum LiveReload {
                 if let owner, !owner.hasPrefix("\u{4}") { opaque = (indent, owner + "." + signature, [], nil, nil, nil) }
                 else if scopes.isEmpty { opaque = (indent, signature, [], nil, nil, nil) }
                 scopes.append((indent, nil))
-            } else if let m = aliasDecl.firstMatch(in: line, range: range) {
+            } else if opens("typealias"), let m = aliasDecl.firstMatch(in: line, range: range) {
                 var name = String(line[Range(m.range(at: 3), in: line)!])
                 let type = String(line[Range(m.range(at: 5), in: line)!]), access = String(line[Range(m.range(at: 4), in: line)!])
                 // One private to its file is known by its file too: another file may have one of the same name.
@@ -991,7 +1086,7 @@ enum LiveReload {
                 } else if scopes.isEmpty, seen.insert(aliasGroup + "\t" + name + " = " + type).inserted {
                     out.append(aliasGroup + "\t" + name + " = " + type)
                 }
-            } else if let m = varDecl.firstMatch(in: line, range: range) {
+            } else if opens("var_decl"), let m = varDecl.firstMatch(in: line, range: range) {
                 let rest = String(line[Range(m.range(at: 4), in: line)!])
                 let global = held && scopes.isEmpty
                 let name = String(line[Range(m.range(at: 2), in: line)!]), type = String(line[Range(m.range(at: 3), in: line)!])
@@ -1006,7 +1101,7 @@ enum LiveReload {
                 // them doesn't make: declared and listed, so adding or removing them compiles every file.
                 let observed = rest.contains("with_observers")
                 if rest.contains("readImpl=stored") { declared(name + ": " + type + (observed ? " observed" : ""), listed: observed) }
-            } else if let m = memberDecl.firstMatch(in: line, range: range) {
+            } else if opens("func_decl", "constructor_decl", "subscript_decl"), let m = memberDecl.firstMatch(in: line, range: range) {
                 let signature = String(line[Range(m.range(at: 3), in: line)!]) + ": " + String(line[Range(m.range(at: 4), in: line)!])
                 declared(signature)
                 // A class's initializers, the compiler's own included: each has a method descriptor.
@@ -1016,13 +1111,14 @@ enum LiveReload {
                     if seen.insert(entry).inserted { out.append(entry) }
                 }
                 scopes.append((indent, nil))
-            } else if let m = caseDecl.firstMatch(in: line, range: range), let owner {
+            } else if opens("enum_element_decl"), let m = caseDecl.firstMatch(in: line, range: range), let owner {
                 let entry = owner + "\tcase " + String(line[Range(m.range(at: 2), in: line)!]) + ": " + String(line[Range(m.range(at: 3), in: line)!])
                 if seen.insert(entry).inserted {
                     out.append(entry)
                     lastCase = out.count - 1
                 }
-            } else if scopeDecl.firstMatch(in: line, range: range) != nil {
+            } else if opens("func_decl", "accessor_decl", "constructor_decl", "destructor_decl", "closure_expr", "subscript_decl", "top_level_code_decl"),
+                      scopeDecl.firstMatch(in: line, range: range) != nil {
                 scopes.append((indent, nil))
             }
         }
@@ -1088,6 +1184,32 @@ enum LiveReload {
     /// value each compile every file. The app loads the library (`send`) and, once it has, the sources it runs, its
     /// layout and what its code may leave running are recorded for the next change.
     @MainActor static func put(_ project: LampProject, changed files: [String], token: String) async -> Outcome {
+        // A change that couldn't go in is tried again at the install after its build, on the same live copy and the
+        // same open app: the answer is the same, so it's given again without the compiler's seconds of work.
+        let key = refusalKey(project, changed: files)
+        if let known = refused[project.id], known.key == key { return .reopen(why: known.why) }
+        var settled = true
+        let outcome = await attempt(project, changed: files, token: token, settled: &settled)
+        if case .reopen(let why) = outcome, settled { refused[project.id] = (key, why) } else { refused[project.id] = nil }
+        return outcome
+    }
+
+    /// Why each app's last change couldn't go in, with what it was judged on (`refusalKey`).
+    @MainActor private static var refused: [String: (key: String, why: String)] = [:]
+
+    /// Everything `put` judges a change by: the live copy and the sources the open app runs, what else goes into the
+    /// app (`inputs`, the widget's shared code among it), which properties are in spares and which constants are remade,
+    /// and what old code may still be running. Not the open app's own answer to a change, which `attempt` leaves unsettled.
+    private static func refusalKey(_ project: LampProject, changed: [String]) -> String {
+        let live = folder(project)
+        return digest(of: [sources(project), running(project), live.appendingPathComponent("slots.json"),
+                           live.appendingPathComponent("constants.json"), oldCodeURL(project), runningInputs(project)],
+                      extra: [inputs(project), Template.macMinimum(project)] + changed)
+    }
+
+    /// `put`'s work. `settled` is set false when the change was refused by the open app itself rather than by
+    /// what it was judged on, which a later try might not repeat.
+    @MainActor private static func attempt(_ project: LampProject, changed files: [String], token: String, settled: inout Bool) async -> Outcome {
         var changed = files, said: [String] = []
         let spared = !LiveSlots.mapping(project).isEmpty || LiveSlots.hasConstants(project)
         async let early: (url: URL?, problem: String?) = spared ? (nil, nil) : await compile(project, changed: changed)
@@ -1148,7 +1270,10 @@ enum LiveReload {
         // and the place is retired here, so a name brought back later gets a fresh place.
         let retiring = after.map { LiveSlots.retiring(project, keeping: $0) } ?? []
         // Files only taken away leave nothing to load: the open app already has what's left.
-        if let library, let why = await send(library, to: project, token: token, whole: changed == appFiles(project), retired: retiring) { return .reopen(why: why) }
+        if let library, let why = await send(library, to: project, token: token, whole: changed == appFiles(project), retired: retiring) {
+            settled = false
+            return .reopen(why: why)
+        }
         // Only now, with the change in, are the spares' places and the constants remade written down.
         if let plan { LiveSlots.commit(plan, for: project) }
         // What a generation's code may leave running (a timer, a task) outlives the next change's replacing its

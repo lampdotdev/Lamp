@@ -38,6 +38,13 @@ enum Sandbox {
         return await Shell.run(confined, cwd: cwd ?? project.dir, env: env, started: started, onLine: onLine)
     }
 
+    /// `run` for a command whose standard output is read as a whole (`Shell.output`): kept in one buffer off the
+    /// main actor, its standard error dropped. Confined the same way.
+    static func output(_ command: String, for project: LampProject, cwd: URL? = nil) async -> (status: Int32, output: Data) {
+        guard let confined = wrap("/bin/zsh -c " + quoted(command), for: project) else { return (unconfined, Data()) }
+        return await Shell.output(confined, cwd: cwd ?? project.dir)
+    }
+
     /// The shell line that runs `command` under `profile`, with Lamp's `swift` first on the path (below). A
     /// login shell started inside (Codex runs its commands with `zsh -lc`) rebuilds the path with the system's
     /// folders first, so zsh is also given Lamp's startup files, which put the shims back in front; the
