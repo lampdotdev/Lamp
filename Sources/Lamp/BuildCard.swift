@@ -51,6 +51,8 @@ struct TurnProgress {
     }
     /// When the activity last changed, which is what a long think or a long build is counted from.
     var activitySince = Date()
+    /// Lamp is looking at the app for the agent, so the activity is the look's stage and the look is the step going on.
+    var looking = false
     /// The file being written or edited right now, if that's what the agent is doing. Never shown: it
     /// tells which part of the plan is being worked on.
     var currentFile: String?
@@ -197,11 +199,6 @@ struct TurnProgress {
             .map { $0.count > 3 && $0.hasSuffix("s") ? String($0.dropLast()) : String($0) })
         return areas.first { !words.isDisjoint(with: $0.words) }?.activity ?? "Working on your app"
     }
-
-    /// Everything the line says while a call of the agent's runs: what tells a call being written from Lamp's own stages.
-    static let callWords: Set<String> = Set(ToolCall.names.map { activity(for: ToolCall("\($0) x")) }
-        + areas.map(\.activity) + ["APP.md", "icon.json", "MyApp.swift", "x"].map(area(of:))
-        + [activity(for: ToolCall("read screenshot.png")), "Running a command"])
 
     /// In order: "SettingsView" is the settings, not just any part of the interface.
     private static let areas: [(activity: String, words: Set<String>)] = [
@@ -455,7 +452,7 @@ struct ActivityRow: View {
     @AppStorage("showDetails") private var details = false
 
     var body: some View {
-        let steps = details ? [] : ChatItem.live(lines, doing: progress.activity).steps
+        let steps = details ? [] : ChatItem.live(lines, doing: progress.activity, looking: progress.looking).steps
         ChatLook.ActivityLine(progress.activity, started: progress.started, since: progress.activitySince,
                               hasSteps: !steps.isEmpty) { StepList(steps: steps) }
     }

@@ -27,9 +27,6 @@ struct ToolCall {
 
     var isKnown: Bool { action != .other }
 
-    /// Every tool name the engines' calls are known by.
-    static var names: Dictionary<String, Action>.Keys { actions.keys }
-
     private static let actions: [String: Action] = [
         "read": .read, "write": .write,
         "edit": .edit, "multiedit": .edit, "patch": .edit, "apply_patch": .edit, "notebookedit": .edit,
@@ -269,25 +266,26 @@ enum ChatItem: Identifiable {
     /// (`ActivityRow`, the sidebar's `workingSteps`), which opens to show them. `shown` is the chat without them,
     /// `steps` what that line opens to. The turn still going is what comes after the last summary, from its
     /// request on: a status left after the summary before it ("Hot Shelf is ready") belongs to that turn's end.
-    /// `doing` is what the line says the turn is doing now (`TurnProgress.activity`). The step it's about is still
-    /// going and isn't one of the steps done yet: it joins them once the agent moves on.
-    static func live(_ lines: [LogLine], doing: String? = nil) -> (shown: [LogLine], steps: [LogLine]) {
+    /// `doing` is what the line says the turn is doing now (`TurnProgress.activity`), and `looking` whether Lamp is
+    /// looking at the app for the agent (`TurnProgress.looking`). The step the line is about is still going and isn't
+    /// one of the steps done yet: it joins them once the agent moves on.
+    static func live(_ lines: [LogLine], doing: String? = nil, looking: Bool = false) -> (shown: [LogLine], steps: [LogLine]) {
         let end = lines.lastIndex { $0.kind == .summary }.map { $0 + 1 } ?? lines.startIndex
         let start = lines[end...].firstIndex { $0.kind == .user } ?? end
         var steps = Transcript.withoutStepInProgress(lines[start...].filter(isStep))
-        if let last = steps.last, isGoing(last, in: lines[start...], doing: doing) { steps.removeLast() }
+        if let last = steps.last, isGoing(last, in: lines[start...], doing: doing, looking: looking) { steps.removeLast() }
         let taken = Set(lines[start...].filter(isStep).map(\.id))
         return (lines.filter { !taken.contains($0.id) }, steps)
     }
 
     /// Whether `step` is the one the turn is still on: nothing came after it but Lamp's own stages of it, and the line
-    /// says its words, or (a look, whose stages are Lamp's: "Building…", "Opening…") says no call's words at all. A
-    /// call's words for another step mean the next call is already being written, which the engines report before it's
-    /// logged, so the step before it is done.
-    private static func isGoing(_ step: LogLine, in lines: ArraySlice<LogLine>, doing: String?) -> Bool {
+    /// says its words, or it's a look and Lamp is still looking (the line then says the look's stages: "Building…",
+    /// "Opening…"). Any other words are the next thing already, which the engines report before it's logged (a call
+    /// being written, a command's name from Codex's reasoning), so the step before it is done.
+    private static func isGoing(_ step: LogLine, in lines: ArraySlice<LogLine>, doing: String?, looking: Bool) -> Bool {
         guard let doing, doing != Activity.thinking, let index = lines.lastIndex(where: { $0.id == step.id }),
               lines[(index + 1)...].allSatisfy({ $0.kind == .status && $0.text.hasSuffix("…") }) else { return false }
-        return doing == (step.said ?? step.text) || !TurnProgress.callWords.contains(doing)
+        return doing == (step.said ?? step.text) || looking && step.text == TurnProgress.activity(for: ToolCall("look_at_app"))
     }
 
     /// A finished run's lines, its steps under one line at its end: the same place the live line had while it went

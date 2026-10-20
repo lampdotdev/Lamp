@@ -154,16 +154,17 @@ final class WorkedForTests: XCTestCase {
         // So it is once the agent says something after it.
         let said = going + [LogLine(kind: .agent, text: "Now the buttons.")]
         XCTAssertEqual(ChatItem.live(said, doing: "Replying").steps.map(\.text), ["Looking things over", "Working on the interface"])
-        // A look's own stages after it ("Building…") are still the look.
+        // While Lamp looks at the app, the line says the look's stages: the look is still going.
         let look = going + LogLine.visible([LogLine(kind: .tool, text: "look_at_app"), LogLine(kind: .status, text: "Building…")], details: false)
-        XCTAssertEqual(ChatItem.live(look, doing: "Building…").steps.map(\.text), ["Looking things over", "Working on the interface"])
-        // The next call being written says its words before it's logged: the edit before it is done.
-        XCTAssertEqual(ChatItem.live(going, doing: "Looking things over").steps.map(\.text), ["Looking things over", "Working on the interface"])
-        // Nor is a look still going once the next call is being written after it.
+        XCTAssertEqual(ChatItem.live(look, doing: "Building…", looking: true).steps.map(\.text), ["Looking things over", "Working on the interface"])
+        XCTAssertEqual(ChatItem.live(look, doing: "Opening Hot Shelf…", looking: true).steps.map(\.text), ["Looking things over", "Working on the interface"])
+        // Once the look is over and the next call is being written, the look is done.
         XCTAssertEqual(ChatItem.live(look, doing: "Working on the interface").steps.map(\.text),
                        ["Looking things over", "Working on the interface", "Checking how it looks"])
-        // While it's going, its stages are Lamp's own words, not a call's.
-        XCTAssertEqual(ChatItem.live(look, doing: "Opening Hot Shelf…").steps.map(\.text), ["Looking things over", "Working on the interface"])
+        // The next call being written says its words before it's logged: the edit before it is done.
+        XCTAssertEqual(ChatItem.live(going, doing: "Looking things over").steps.map(\.text), ["Looking things over", "Working on the interface"])
+        // So is a command named from Codex's reasoning before its row is logged, whatever its name.
+        XCTAssertEqual(ChatItem.live(going, doing: "Checking it builds").steps.map(\.text), ["Looking things over", "Working on the interface"])
         // A named command running is the line's words, and done it's a step by that name.
         let command = going + [LogLine(kind: .status, text: "Ran: swift build", said: "Checking it builds")]
         XCTAssertEqual(ChatItem.live(command, doing: "Checking it builds").steps.map { $0.said ?? $0.text },
