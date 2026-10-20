@@ -48,20 +48,13 @@ enum BottleImages {
     static let generic: NSImage = LampAssets.image("bottle.png") ?? NSImage(systemSymbolName: "waterbottle.fill", accessibilityDescription: nil)!
 
     static func style(for bottle: Bottle) -> BottleStyle? {
-        if bottle.artName != nil { return nil }
         guard let name = bottle.imageName else { return .woozy }
         guard name.hasPrefix("style:") else { return nil }
         return BottleStyle.all.first { "style:" + $0.id == name } ?? .woozy
     }
 
-    /// What stands on the shelf: the illustration once it's drawn, else the label photo, else a painted bottle.
+    /// What stands on the shelf: its label photo, cut out, or a painted bottle until there is one.
     static func image(for bottle: Bottle) -> NSImage {
-        if let art = bottle.artName, let image = file(art) { return image }
-        return photo(for: bottle)
-    }
-
-    /// The real label photo (or the painted placeholder), the source the illustration is drawn from.
-    static func photo(for bottle: Bottle) -> NSImage {
         if bottle.imageName.map({ $0.hasPrefix("style:") }) ?? true {
             return (BottleStyle.all.first { "style:" + $0.id == bottle.imageName } ?? .woozy).image
         }

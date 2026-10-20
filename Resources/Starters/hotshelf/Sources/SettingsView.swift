@@ -25,6 +25,5 @@ struct SettingsView: View {
         .frame(width: 460)
         .onChange(of: friday) { Nudges.reschedule(Shelf.shared.bottles) }
         .onChange(of: quarterly) { Nudges.reschedule(Shelf.shared.bottles) }
-        .onChange(of: profile) { Shelf.shared.refreshTasteMapSoon() }
     }
 }

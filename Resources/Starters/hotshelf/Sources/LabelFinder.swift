@@ -61,9 +61,6 @@ final class LabelFinder: ObservableObject {
         if let cutout, let name = BottleImages.save(cutout) {
             if b.hasPhoto, let old = b.imageName { BottleImages.remove(old) }
             b.imageName = name
-            if let art = b.artName { BottleImages.remove(art) }
-            b.artName = nil
-            b.artTried = nil
             withAnimation(.easeInOut(duration: 0.5)) { Shelf.shared.update(b) }
         } else {
             Shelf.shared.update(b)
