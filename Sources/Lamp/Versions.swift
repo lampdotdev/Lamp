@@ -101,7 +101,7 @@ enum Versions {
     /// (keys, sign-ins, every other app): a setting that names a folder, the home folder say, would
     /// otherwise open all of it, Lamp's included.
     private static func personalFiles() -> [String] {
-        let lamps = ["Lamp", "Lamp Dev"].map {
+        let lamps = Edition.lampFolderNames.map {
             FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/\($0)")
                 .resolvingSymlinksInPath().standardizedFileURL.path
         }

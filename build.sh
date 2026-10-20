@@ -73,7 +73,11 @@ FLAVOR="${FLAVOR:-dev}"
 if [ "$FLAVOR" = release ]; then
   NAME="Lamp"; BUNDLE_ID="dev.lamp.host"; SCHEME="lamp"; HANDLER_RANK="Owner"
 else
-  NAME="Lamp Dev"; BUNDLE_ID="dev.lamp.host.dev"; SCHEME="lamp-dev"; HANDLER_RANK="Alternate"
+  # A worktree's build is an instance of its own (scripts/instance.sh): "Lamp Dev <name>", with its own bundle
+  # id, folders, ports and scheme, so builds from two worktrees run side by side (Edition.instance).
+  INSTANCE="$(scripts/instance.sh)"
+  NAME="Lamp Dev${INSTANCE:+ $INSTANCE}"; BUNDLE_ID="dev.lamp.host.dev${INSTANCE:+.$INSTANCE}"
+  SCHEME="lamp-dev${INSTANCE:+-$INSTANCE}"; HANDLER_RANK="Alternate"
 fi
 
 swift build -c release
