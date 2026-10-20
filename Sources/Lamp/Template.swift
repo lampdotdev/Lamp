@@ -15918,9 +15918,13 @@ enum Template {
           cmp -s "$made.out" "$out" || cp "$made.out" "$out"
           continue
         fi
-        cp "$f" "$out.new"
+        # The entry is void until it's whole again, and holds the very text the pass was made from: the agent may
+        # edit the file meanwhile, and a build ended halfway (a newer change's) must leave no entry that looks right.
+        rm -f "$made.key"
+        cp "$f" "$made.in"
+        cp "$made.in" "$out.new"
         perl "$LIVE/live.pl" \(LiveSlots.count) "$SUBCLASSED" "$flags" "$out.new"
-        cp "$f" "$made.in"; cp "$out.new" "$made.out"; print -r -- "$KEY|$flags" > "$made.key"
+        cp "$out.new" "$made.out"; print -r -- "$KEY|$flags" > "$made.key"
         if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi
       done
       for f in "$LIVE"/Sources/**/*.swift(N); do [[ -f "${f#$LIVE/}" ]] || rm "$f"; done
