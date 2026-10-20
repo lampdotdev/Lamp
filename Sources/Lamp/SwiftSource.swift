@@ -164,7 +164,8 @@ enum SwiftSource {
             // A protocol's requirements aren't declarations with storage.
             let owner = line.owner.flatMap { $0.hasPrefix("protocol ") ? nil : $0 }
             if let type = line.type {
-                if type.kind == "class" { out.classes.insert(type.key); out.classes.insert(LiveReload.bare(String(type.key.split(separator: ".").last ?? ""))) }
+                // By its key and by its bare last name, which a type's words in a constant's type name it by.
+                if type.kind == "class" { out.classes.insert(type.key); out.classes.insert(String(LiveReload.bare(type.key).split(separator: ".").last ?? "")) }
                 if let r = type.range { out.types[type.key] = r }
                 if type.isPrivate { out.privateTypes.insert(type.key) }
                 return
@@ -310,7 +311,7 @@ enum SwiftSource {
             // By the name as written: a conformance may be declared on the type or on an extension of it (`extension Demo: App`).
             let name: String, kind: String
             if let type = line.type, type.kind != "actor" {
-                name = LiveReload.bare(String(type.key.split(separator: ".").last ?? "")); kind = type.kind
+                name = String(LiveReload.bare(type.key).split(separator: ".").last ?? ""); kind = type.kind
             } else if let extended = line.extensionOf {
                 name = extended; kind = "extension"
             } else { return }
@@ -520,18 +521,19 @@ extension SwiftSource {
             lazy var range = NSRange(text.startIndex..., in: text)
             if node.opens("struct_decl", "class_decl", "enum_decl", "actor_decl"), let m = walkTypeDecl.firstMatch(in: text, range: range) {
                 var name = String(text[Range(m.range(at: 3), in: text)!])
-                // The nearest type around it, and whether a function comes between: a local type is keyed with it,
-                // since two functions may each declare a local type of one name.
-                var outer: String?, inFunction: String?
+                // The nearest type around it, and the functions between it and here: a local type is keyed with
+                // them all (`Shelf.pick().first().Answer`), since two functions may each declare a local type of
+                // one name, nested ones included.
+                var outer: String?, inFunctions: [String] = []
                 for (_, scope) in scopes {
                     switch scope {
-                    case .type(let t): outer = t.key; inFunction = nil
-                    case .extensionOf(let n): outer = n; inFunction = nil
-                    case .protocolDecl(let n): outer = "protocol " + n; inFunction = nil
-                    case .function(let n): if inFunction == nil { inFunction = n }
+                    case .type(let t): outer = t.key; inFunctions = []
+                    case .extensionOf(let n): outer = n; inFunctions = []
+                    case .protocolDecl(let n): outer = "protocol " + n; inFunctions = []
+                    case .function(let n): inFunctions.append(n)
                     }
                 }
-                if let inFunction { name = inFunction + "." + name }
+                if !inFunctions.isEmpty { name = inFunctions.joined(separator: ".") + "." + name }
                 let access = String(text[Range(m.range(at: 4), in: text)!])
                 let place = self.range(in: text)
                 let file = place.map { ($0.start.file as NSString).lastPathComponent }

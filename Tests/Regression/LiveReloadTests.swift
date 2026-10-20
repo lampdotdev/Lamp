@@ -182,6 +182,16 @@ final class LiveReloadTests: XCTestCase {
             final class Doc { var title = ""; init() {}; convenience init(named: String) { self.init(); title = named } }
             private enum Tone: CaseIterable { case a, b; typealias Pair = (Tone, Tone) }
             enum Tones { static let count = Tone.allCases.count }
+            enum Answers {
+                static func a() -> Int { struct Answer { let dish: String }; return Answer(dish: "x").dish.count }
+                static func b() -> Int { struct Answer { let dish: String; let why: String }; return Answer(dish: "x", why: "y").why.count }
+                static func c() -> Int {
+                    func first() -> Int { struct Answer { let n: Int }; return Answer(n: 1).n }
+                    func second() -> Int { struct Answer { let n: Int; let s: String }; return Answer(n: 2, s: "").n }
+                    return first() + second()
+                }
+            }
+            private final class Vault { var n = 1 }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
         let layout = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
         let shape = layout?.filter { $0.hasPrefix("protocol Shape") } ?? []
@@ -332,6 +342,14 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertEqual(analysed?.declarations.lets.contains("Dated\tfixed"), true)
         XCTAssertEqual(analysed?.declarations.privateTypes.contains("Hidden@Shapes.swift"), true)
         XCTAssertNotNil(analysed?.declarations.types["Hidden@Shapes.swift"])
+        // A type declared inside a function is keyed with the whole path of functions around it, nested ones too,
+        // and with its file, since the compiler marks a local type private: two functions' local types of one name
+        // are two. A private class is known by its bare name.
+        XCTAssertEqual(layout!.filter { $0.hasPrefix("Answers.") && !$0.hasSuffix("\t") }.sorted(),
+                       ["Answers.a().Answer@Shapes.swift\tdish: String", "Answers.b().Answer@Shapes.swift\tdish: String", "Answers.b().Answer@Shapes.swift\twhy: String",
+                        "Answers.c().first().Answer@Shapes.swift\tn: Int", "Answers.c().second().Answer@Shapes.swift\tn: Int", "Answers.c().second().Answer@Shapes.swift\ts: String"])
+        XCTAssertNotNil(analysed?.declarations.variables["Answers.c().second().Answer@Shapes.swift\ts"])
+        XCTAssertEqual(analysed?.declarations.classes.contains("Vault"), true)
         // A constant made from a private enum is found by the enum's bare name, and the bared layout names every
         // type bare, an alias's owner included.
         XCTAssertEqual(LiveSlots.constants(naming: ["Tone@Shapes.swift"], in: try XCTUnwrap(analysed?.declarations)), ["Tones\tcount"])
