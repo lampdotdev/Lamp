@@ -5005,13 +5005,15 @@ final class Store: ObservableObject {
 
     /// Watches a launch's first seconds (`Runtime.LaunchWatch`) as the turn's last launch, and says in the chat when the
     /// app dies in them, `report` giving what's known of it.
-    /// `crashOnly` is for a Mac app, which leaves a crash report: a going after the opener went on counts only with
-    /// one, since the person may have closed an app that works.
+    /// `crashOnly` is for a Mac app, which leaves a crash report: a going after the opener went on, or while Lamp was
+    /// closing the app, counts only with one, since the person or Lamp may have closed an app that works. Without
+    /// one (the simulator), a going while Lamp closed the app is Lamp's doing.
     private func watchLaunch(_ project: LampProject, owner: Turn?, opened: Date, crashOnly: Bool = false,
                              alive: @escaping @MainActor () -> Bool,
                              report: @escaping @MainActor () async -> String) -> Runtime.LaunchWatch {
-        let watch = Runtime.LaunchWatch(opened: opened, alive: alive) { [weak self] late in
-            if late, crashOnly {
+        let watch = Runtime.LaunchWatch(opened: opened, alive: alive) { [weak self] late, retired in
+            if retired, !crashOnly { return nil }
+            if late || retired, crashOnly {
                 // macOS writes the report after the process is gone, sometimes ten seconds or more later.
                 var crashed = false
                 for _ in 0..<40 where !crashed {
@@ -6167,7 +6169,8 @@ final class Store: ObservableObject {
 
     /// The person's click on Force Quit: ends the copy that isn't responding, and whatever was waiting for
     /// it to close (a build, Lamp's Quit, Delete) goes on.
-    /// Before Lamp itself ends an app: a launch still being watched doesn't take its going for a death.
+    /// Before Lamp itself ends an app: a launch still being watched takes its going for a death only when it's
+    /// surely a crash (`watchLaunch`).
     private func retireLaunches(of project: LampProject) {
         for watch in turns[project.id]?.launches ?? [] { watch.retire() }
     }
@@ -6223,6 +6226,8 @@ final class Store: ObservableObject {
             })
             if !gone { closed = false }
         }
+        // Kept open: its launch is watched again for what's left of its first seconds.
+        if !closed { for watch in turns[project.id]?.launches ?? [] { watch.resume() } }
         return closed
     }
 

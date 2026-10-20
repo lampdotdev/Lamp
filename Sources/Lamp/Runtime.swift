@@ -108,7 +108,8 @@ enum Runtime {
         private(set) var crash: String?
         /// The death was told to the agent: in a look's answer, or as a note with a later one.
         var told = false
-        /// Lamp closed the app itself (a rebuild, Stop, another app taking the simulator): its going isn't a death.
+        /// Lamp is closing the app itself (a rebuild, Stop, another app taking the simulator): its going is a death only
+        /// when it's surely a crash. Taken back when the app stays open (`resume`).
         private(set) var retired = false
         /// Whoever opened the app went on before the window was over (`untilShown`, `settle`), so a death from here
         /// is told later, and only one that is surely a crash counts: the person may close an app that works.
@@ -117,17 +118,17 @@ enum Runtime {
         private let alive: @MainActor () -> Bool
 
         /// `alive` is asked every tenth of a second; `died` says what's known once it's false, given whether it came
-        /// `late`, and nil when the app's going doesn't count as a death after all.
-        init(opened: Date, alive: @escaping @MainActor () -> Bool, died: @escaping @MainActor (_ late: Bool) async -> String?) {
+        /// `late` or while Lamp was closing the app (`retired`), and nil when the going doesn't count as a death after all.
+        init(opened: Date, alive: @escaping @MainActor () -> Bool,
+             died: @escaping @MainActor (_ late: Bool, _ retired: Bool) async -> String?) {
             self.opened = opened
             self.alive = alive
             task = Task { [weak self] in
                 let clock = ContinuousClock(), start = clock.now
-                while alive(), self?.retired != true, clock.now - start < Runtime.launchWindow {
+                while alive(), clock.now - start < Runtime.launchWindow {
                     try? await Task.sleep(for: .milliseconds(100))
                 }
-                let gone = !alive() && self?.retired != true
-                let crash = gone ? await died(self?.late ?? true) : nil
+                let crash = alive() ? nil : await died(self?.late ?? true, self?.retired ?? true)
                 self?.crash = crash
                 self?.ended = true
             }
@@ -135,6 +136,8 @@ enum Runtime {
 
         /// Called before Lamp itself ends the app. An app already gone had died before Lamp asked, which still counts.
         func retire() { if alive() { retired = true } }
+        /// The app stayed open after all (the person kept it, at its question about unsaved work).
+        func resume() { retired = false }
 
         /// What's known if the app died in its first seconds; nil once they passed with it open.
         func verdict() async -> String? {
