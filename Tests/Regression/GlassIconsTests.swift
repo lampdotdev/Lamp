@@ -62,7 +62,7 @@ final class GlassIconsTests: XCTestCase {
             switch Icons.artwork(project, spec: spec) {
             case .glass: XCTAssertFalse(spec.game, "\(starter.name) is a game, painted rather than glass")
             case .picture: XCTAssertTrue(spec.game, "\(starter.name) ships a picture where glass was expected")
-            case nil: XCTFail("\(starter.name) has no artwork")
+            case .waiting, nil: XCTFail("\(starter.name) has no artwork")
             }
         }
     }
@@ -78,6 +78,11 @@ final class GlassIconsTests: XCTestCase {
         spec.game = true
         XCTAssertNotEqual(Icons.artURL(project, spec: spec), plain)
         XCTAssertNotEqual(Icons.glassURL(project, spec: spec).deletingPathExtension(), plain.deletingPathExtension())
+    }
+
+    func testASubjectOfTwoObjectsIsCaught() {
+        XCTAssertEqual(Icons.secondObject(in: "a monstera leaf overlapping a frosted clipboard"), "overlapping")
+        XCTAssertNil(Icons.secondObject(in: "a red tomato kitchen timer with a green leafy stem"))
     }
 
     func testACopyTurnsTheHuesAndKeepsTheWhites() {

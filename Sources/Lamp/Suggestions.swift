@@ -124,8 +124,11 @@ enum AppName {
     the go, tilting or shaking it); ["mac", "iphone"] when they want it on their Mac and their phone, or kept the \
     same on each; ["mac"] otherwise. Set "devices_by_user" to true only when they said where it runs.
 
+    And the color of its icon's background, one of: \(Icons.backgrounds.map(\.name).joined(separator: ", ")). Pick \
+    what suits its mood, like Apple's own icons: mostly one vivid color, sometimes white or graphite.
+
     Respond with JSON: {"named_by_user": true or false, "name": "...", "parts": ["...", "..."], \
-    "devices": ["..."], "devices_by_user": true or false}
+    "devices": ["..."], "devices_by_user": true or false, "color": "..."}
     """
 
     struct Suggestion {
@@ -137,6 +140,9 @@ enum AppName {
         var kindSaid = false
         /// The person wants an Apple Watch app too (the agent writes it; `chooseKind` says so in the chat).
         var watch = false
+        /// The icon's background (`Icons.backgrounds`), chosen here so the blueprint shows it from the start and the
+        /// icon keeps it.
+        var color: String?
     }
 
     static func suggest(for brief: String) async -> Suggestion? {
@@ -150,7 +156,8 @@ enum AppName {
         let devices = Set(object["devices"] as? [String] ?? [])
         return Suggestion(name: name(object, asked: brief), sketch: sketch.count >= 2 ? Array(sketch) : [],
                           kind: Platform(devices: devices), kindSaid: object["devices_by_user"] as? Bool ?? false,
-                          watch: devices.contains("watch"))
+                          watch: devices.contains("watch"),
+                          color: (object["color"] as? String).flatMap { name in Icons.backgrounds.first { $0.name == name.trimmed.lowercased() }?.name })
     }
 
     static func name(_ object: [String: Any], asked brief: String) -> String? {

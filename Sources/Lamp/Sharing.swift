@@ -222,7 +222,7 @@ enum Sharing {
             switch Icons.artwork(project, spec: spec) {
             case .glass(let glass): try glass.encoded().write(to: stage.appendingPathComponent(glassEntry))
             case .picture: try fm.copyItem(at: Icons.artURL(project, spec: spec), to: stage.appendingPathComponent("icon-art.png"))
-            case nil: break
+            case .waiting, nil: break
             }
         }
         // The icon as drawn here, for Quick Look and the picture sent with the file. The Mac that opens the file
