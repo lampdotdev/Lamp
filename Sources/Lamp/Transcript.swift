@@ -307,8 +307,14 @@ enum ChatItem: Identifiable {
             case (.tool, .tools(let run)?): items[items.count - 1] = .tools(run + [line])
             case (.tool, _): items.append(.tools([line]))
             case (.status, .statuses(let run)?):
-                // A progress step ("Building…") is superseded by whatever status follows it.
+                // A progress step ("Building…") is superseded by whatever status follows it, and a step that says what
+                // the one before it said (two looks with a build between them) is that step again.
                 var kept = run.filter { !$0.text.hasSuffix("…") }
+                if line.said == nil, ChatLook.ranCommand(in: line.text) == nil, let last = kept.last, last.said == nil,
+                   last.text == line.text {
+                    items[items.count - 1] = .statuses(kept)
+                    continue
+                }
                 // Commands the agent gave one name to are one step: the name once, their commands under it.
                 if let said = line.said, let last = kept.last, last.said == said,
                    let command = ChatLook.ranCommand(in: line.text), ChatLook.ranCommand(in: last.text) != nil {

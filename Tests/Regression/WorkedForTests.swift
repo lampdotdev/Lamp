@@ -118,5 +118,12 @@ final class WorkedForTests: XCTestCase {
         // As on any turn, a build there is a step only until the next one.
         XCTAssertEqual(steps.map(\.text), ["Looking things over", "Working on the interface", "Checking how it looks",
                                             "Working on the interface", "Checking how it looks", "Building…"])
+        // A look again after a build that went before it is one step, not the same words twice.
+        let looks = lines.prefix(10) + [LogLine(kind: .status, text: "Building…"), LogLine(kind: .tool, text: "look_at_app"), LogLine(kind: .agent, text: "Done."),
+                                         LogLine(kind: .summary, text: "Worked for 1m 0s · $0.01")]
+        guard case .work(_, _, let again)? = ChatItem.items(LogLine.visible(Array(looks), details: false), gather: true).last else {
+            return XCTFail("no Worked for")
+        }
+        XCTAssertEqual(again.map(\.text), ["Looking things over", "Working on the interface", "Checking how it looks"])
     }
 }
