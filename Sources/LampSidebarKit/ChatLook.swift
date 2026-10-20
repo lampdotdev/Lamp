@@ -379,7 +379,7 @@ public enum ChatLook {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle").frame(width: 16)
-                        Text(said ?? "Ran a command")
+                        Text(said ?? "Did a bit of housekeeping")
                         Image(systemName: "chevron.right")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.tertiary)

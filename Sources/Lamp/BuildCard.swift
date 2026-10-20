@@ -70,7 +70,7 @@ struct TurnProgress {
     /// going a while is being thought about.
     init(newApp: Bool) {
         self.newApp = newApp
-        activity = newApp ? "Getting started" : Activity.thinking
+        activity = newApp ? "Waking the genie" : Activity.thinking
     }
 
     /// A part's mark on the build card. A part being worked on gets a spinner instead.

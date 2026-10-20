@@ -19,11 +19,11 @@ public enum Activity {
     /// shows only the first phrase it gets.
     static let thinkingPhrases: [(from: TimeInterval, phrases: [String])] = [
         (0, ["Rubbing the lamp", "Mulling it over", "Picturing it", "Turning it over"]),
-        (20, ["Still thinking", "Thinking it through", "Weighing a few ways", "Consulting the genie",
+        (20, ["Polishing the lamp", "Thinking it through", "Weighing a few ways", "Consulting the genie",
               "Getting the details right"]),
-        (60, ["Thinking hard about this one", "Deep in thought", "The genie is concentrating", "Worth getting right",
+        (60, ["The genie is squinting at this one", "Deep in thought", "The genie is concentrating", "Worth getting right",
               "Untangling the tricky part"]),
-        (180, ["Still on it, nothing's stuck", "Big wishes take a few minutes", "Still here, still thinking"]),
+        (180, ["Still on it, nothing's stuck", "Big wishes take a few minutes", "The genie hasn't wandered off"]),
     ]
 
     /// What a build says once it has run a while.
