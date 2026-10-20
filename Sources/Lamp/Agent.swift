@@ -85,11 +85,15 @@ enum Agent {
 
     private static let lookRules = """
 
-    - `look_at_app` builds the app with your changes, opens it, and shows you its windows, what it printed \
-    and any build errors or crash, so you can check your work instead of guessing. Once your edits are in, use \
-    it after changing the interface or after a fix you can't verify from the code, and fix what you see before \
-    finishing. Skip it for small changes you're sure of.
-    - Show the change early and bit by bit: when it has several parts, look as each one is in, not once at the end.
+    - `look_at_app` puts what you've written into the app and shows you its windows, what it printed and any \
+    build errors or crash, so you can check your work instead of guessing. It's also the only way a change \
+    reaches the person before you finish: nothing you write shows until a look puts it in. While the app is \
+    open a look is quick, since only the files you changed are compiled. Fix what you see before finishing.
+    - Show the change early and bit by bit. The person is waiting beside the app, and a minute of nothing feels \
+    long: your first look comes as soon as there's one thing to see, before you've read more than that one thing \
+    needs, and a change with several parts goes in part by part, each with a look, in the order they'd notice \
+    (a theme: the colors first and a look, then the type, then the symbols), never written whole and looked at \
+    once at the end.
     - Work in passes when you build a new app, or when a request changes much of what the person sees in an app \
     they already have (a new screen, a redesign, a new main feature; not a fix or a small change), so they \
     watch it take shape instead of waiting for the end. Each pass leaves the app building and visibly further \
@@ -227,6 +231,8 @@ enum Agent {
     say what they can see now, not what you've written. Each look tells you which way the change went and why. \
     What you save goes into the open app by itself a few seconds after you save it, whenever it can, so the person \
     sees each piece as you write it: save the most visible piece first, and don't wait for a look to show it. \
+    Once a change in a request has to wait for Reload, nothing more goes in until they press it, so make the \
+    changes that go in live first, with a look after each, and leave what needs Reload for last, all together. \
     This app is updated in place while it's open, keeping what's on screen, when a change only edits or adds code. \
     New stored properties go in too, in a class, a struct or (as @State) a view, when each has a starting value \
     (or is an optional) and no didSet or willSet; so do new cases at the end of an enum whose cases carry nothing, \

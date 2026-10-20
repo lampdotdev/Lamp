@@ -7581,6 +7581,9 @@ final class Store: ObservableObject {
         guard !turn.look.inProgress else { return (200, ["text": "Lamp is already looking at the app. Wait for that result."]) }
         turn.look.inProgress = true
         progress[project.id]?.looking = true
+        // Told at the end how long the look took: the agent is asked to look after each part of a change, and
+        // a cost it has seen is one it allows for, where "takes a while" had it putting looks off.
+        let began = Date()
         await turn.early?.value
         // A fresh launch asked for while the person has the app open waits for them to say so, like a change that
         // needs one: the look puts in what it can as usual, then asks with Reload.
@@ -7772,6 +7775,7 @@ final class Store: ObservableObject {
             ? "It has no window open, so there's no picture. If it lives in the menu bar, use_app's bar_icon opens its panel."
             : Privacy.sharesPictures ? (lead.isEmpty ? "Pictures of its windows follow, frontmost first; x and y for use_app are pixels in the first." : "") : Privacy.picturesOff)
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
+        text += " This look took \(Int(Date().timeIntervalSince(began).rounded())) seconds."
         text += Self.handingHint(for: project)
         text += await Self.intentsHint(for: project)
         text += Self.shareHint(for: project)
