@@ -141,10 +141,11 @@ A capability given to one engine must be given to all of them that can take it, 
   closes the rest of the home folder and both Lamps' folders), so nothing reads a command's text to see
   where it looks. Codex's commands run in Codex's own sandbox instead, which its reviewer works with and which can't
   start inside Lamp's: a permission profile (`Sandbox.codexPermissions`, `-c permissions.lamp=…`, a Beta feature of
-  Codex's) that closes everything and opens what Lamp's opens, by name: the app's folder (Codex's workspace, its `.git`
-  and `.codex` kept read-only), the runtime, the developer tools, Homebrew's and the applications for reading, caches
-  and temporary folders, Lamp's shims, and the network. Codex makes its workspace of wherever the folder it starts in
-  leads, so it's started only in the app's real folder, never one swapped for a link. Codex itself (its state, its
+  Codex's) that closes everything and opens what Lamp's opens, by name: the app's folder (its `.git` kept read-only by
+  Codex), the runtime, the developer tools, Homebrew's and the applications for reading, caches and temporary folders,
+  Lamp's shims, and the network. The app's folder is named by `LampProject.realDir`, never as Codex's workspace, which
+  Codex makes of wherever the folder it starts in leads; a writable folder that is a link, or leads through one, Codex
+  refuses at its start and before each command. Codex itself (its state, its
   hooks, Lamp's MCP endpoint) runs unconfined, and a command its reviewer lets out of the sandbox runs under the
   controls Codex gives it, not Lamp's. SwiftPM's own sandbox can't start inside Lamp's or Codex's, so a `swift` shim first on the path
   (`Sandbox.bin`) gives `swift build`/`test`/`run`/`package` `--disable-sandbox`; the compiler's helper for macros is

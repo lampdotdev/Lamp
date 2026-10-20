@@ -72,6 +72,20 @@ final class CodexSandboxTests: XCTestCase {
         XCTAssertFalse(through.output.contains("secret"), through.output)
     }
 
+    /// An app's folder swapped for a link leads nowhere: a command could do it between Lamp's look at the folder and
+    /// Codex's start, and Codex would otherwise take where it leads for the app.
+    func testAnAppFolderSwappedForALinkOpensNothing() throws {
+        guard let codex else { throw XCTSkip("Codex isn't installed here") }
+        let (project, root) = try project()
+        let elsewhere = root.appendingPathComponent("elsewhere")
+        try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        try FileManager.default.removeItem(at: project.dir)
+        try FileManager.default.createSymbolicLink(at: project.dir, withDestinationURL: elsewhere)
+        let written = try run("echo x > left.txt", in: project, codex: codex)
+        XCTAssertNotEqual(written.status, 0, written.output)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: elsewhere.appendingPathComponent("left.txt").path), written.output)
+    }
+
     /// Lamp's `swift` is first on a login shell's path, as Codex starts its commands, and temporary folders open.
     func testLampsSwiftComesFirstAndTemporaryFoldersAreOpen() throws {
         guard let codex else { throw XCTSkip("Codex isn't installed here") }

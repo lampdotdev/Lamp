@@ -476,10 +476,9 @@ extension Agent {
                     .map { "-i \"$LAMP_FILE_\($0.offset)\"" }.joined(separator: " ")
                 launch = "\(tool) exec \(options) -C \"$LAMP_DIR\" \(images) -- \"$LAMP_PROMPT\""
             }
-            // Codex makes its workspace of the folder it starts in, wherever a link there leads, and its commands
-            // may write at the app's folder's own name: one swapped for a link would open where it leads (Lamp's own
-            // folder, say) to the next run's commands. So Codex starts only in the app's real folder, and only with
-            // the shims it puts on the path.
+            // The profile names the app's folder by its own name, and Codex refuses a writable folder that is a link
+            // (`Sandbox.codexPermissions`); a folder already swapped for one is said here in Lamp's own words. Codex
+            // starts only with the shims it puts on the path.
             let folder = project.realDir.path
             let linked = (try? FileManager.default.destinationOfSymbolicLink(atPath: folder)) != nil
             let command = !linked && Sandbox.prepareShims() ? launch

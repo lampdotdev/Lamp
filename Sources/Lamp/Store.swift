@@ -530,6 +530,8 @@ final class Store: ObservableObject {
         /// What the agent last said it's doing, in its own words (`AgentEvent.naming`): the name of the commands
         /// that follow, until it says something else.
         var naming: String?
+        /// Whether the chat says each command from the engine's own output (`AgentRun.saysCommands`), for the run going now.
+        var saysCommands = false
         /// The agent put its questions to the person this turn: the turn is over, whatever the agent does next.
         var asked = false
         /// Lamp ended the agent because it went on working past its own questions. Not a stop and not a failure.
@@ -2808,7 +2810,7 @@ final class Store: ObservableObject {
         }
         var run = Agent.run(prompt: prompt, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
-        let saysCommands = run.saysCommands
+        turn.saysCommands = run.saysCommands
         // Held strongly: it lives only while the engine runs. (A weak capture here, in a closure kept in a
         // variable rather than passed straight to `Shell.run`, came back nil and dropped every line.)
         let onLine: @MainActor (String) -> Void = { [self] line in
@@ -2928,7 +2930,7 @@ final class Store: ObservableObject {
                     if started { turn.codexActing.insert(id) } else { turn.codexActing.remove(id); steer(project) }
                 case .ran(let command, let refused, let call):
                     // Codex's reviewer decided, or nothing had to: the chat says so as it does for a command Lamp let run.
-                    guard saysCommands else { break }
+                    guard turn.saysCommands else { break }
                     // Codex shows a command as started before its reviewer refuses it: that step never ran, so it goes.
                     if refused, let index = logs[project.id]?.lastIndex(where: { $0.kind == .tool && $0.text == call }) {
                         logs[project.id]?.remove(at: index)
@@ -2980,6 +2982,8 @@ final class Store: ObservableObject {
                   let id = Self.savedSession(sessionFile), exists(project) else { break }
             run = Agent.run(prompt: Agent.carryOn(message), files: [], project: current(project) ?? project,
                             offered: offers(in: project), session: id, token: turn.agentToken)
+            // The setting may have changed since the turn began, and with it whether Lamp's hook says each command.
+            turn.saysCommands = run.saysCommands
         }
         turn.agent = nil
         turn.codexStarted = false

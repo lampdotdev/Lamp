@@ -89,8 +89,7 @@ enum Sandbox {
     /// Codex's own sandbox for its commands, as one of Codex's permission profiles (`-c permissions.lamp=…` with
     /// `default_permissions="lamp"`): Codex can't run inside Lamp's profile and keep its own reviewer, since its
     /// commands' sandbox can't be started inside another. The profile closes everything (`:root`), then opens what
-    /// the profile above opens for a build: the app's folder (Codex's workspace, whose `.git` and `.codex` it keeps
-    /// read-only), the platform's runtime (`:minimal`), the developer tools, Homebrew's and the applications for
+    /// the profile above opens for a build: the app's folder (whose `.git` Codex keeps read-only), the platform's runtime (`:minimal`), the developer tools, Homebrew's and the applications for
     /// reading, caches and temporary folders for writing, Lamp's shims, and the network. Unlike Lamp's, which
     /// allows by default, it lists what is open, so the person's files, Lamp's folders and the apps Lamp installs
     /// (which can't be run without being read) stay closed by not being named. What the app shows and prints is
@@ -111,12 +110,15 @@ enum Sandbox {
             let folder = kernelPath(path)
             if !paths.contains(where: { $0.0 == folder }) { paths.append((folder, "write")) }
         }
+        // The app's folder by its own name, not Codex's workspace: Codex makes that of wherever the folder it starts
+        // in leads, which a command could change between Lamp's look and Codex's start. A folder named here that is a
+        // link, or leads through one, Codex refuses to start with or to run a command in.
+        paths.append((project.realDir.path, "write"))
         if !Privacy.sharesPictures || !Privacy.sharesLog {
             paths.append((project.realDir.path + "/.lamp/runtime", "deny"))
         }
         let filesystem = paths.map { "\(Agent.tomlString($0.0))=\(Agent.tomlString($0.1))" }
-            + [#"":workspace_roots"={"."="write"}"#]
-        return #"permissions.lamp={extends=":workspace",filesystem={"# + filesystem.joined(separator: ",") + "},network={enabled=true}}"
+        return "permissions.lamp={filesystem={" + filesystem.joined(separator: ",") + "},network={enabled=true}}"
     }
 
     /// One of the system's configuration strings (`getconf`), without its trailing slash; nil when it has none.
