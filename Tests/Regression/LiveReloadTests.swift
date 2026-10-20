@@ -273,7 +273,8 @@ final class LiveReloadTests: XCTestCase {
         // What's read at launch is part of the whole analysis, not of a few files' layout.
         let notesLayout = await LiveReload.analysis(of: sources, in: project, module: project.exe, macOS: "14.0")?.layout
         let notes = try XCTUnwrap(notesLayout)
-        XCTAssertTrue(notes.contains { $0.hasPrefix("\u{1}launch\tmodel Note: ") }, "\(notes.filter { $0.hasPrefix("\u{1}launch") })")
+        XCTAssertTrue(notes.contains { $0.hasPrefix("\u{1}launch\tmodel Note@Notes.swift: ") }, "\(notes.filter { $0.hasPrefix("\u{1}launch") })")
+        XCTAssertEqual(LiveReload.modelFiles(inLayout: notes).map { "\($0.name) \($0.file)" }, ["Note Notes.swift"])
         try """
             import SwiftData
             @Model final class Note { var title = ""; init() {} }

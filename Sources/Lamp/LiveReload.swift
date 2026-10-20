@@ -174,6 +174,15 @@ enum LiveReload {
     static func isGroup(_ type: String) -> Bool { (type.first?.asciiValue ?? 32) < 32 }
     static let aliasGroup = "\u{3}alias", declarationGroup = "\u{5}declared", opaqueGroup = "\u{6}opaque"
 
+    /// The SwiftData model classes in a layout, each with the file that declares it (`SwiftSource.launchEntries`):
+    /// a change that compiles that file, whatever it changed, makes the model's key paths over again.
+    static func modelFiles(inLayout layout: [String]) -> [(name: String, file: String)] {
+        layout.compactMap { entry in
+            guard entry.hasPrefix("\u{1}launch\tmodel "), let at = entry.firstIndex(of: "@"), let colon = entry.range(of: ": ") else { return nil }
+            return (String(entry[entry.index(entry.startIndex, offsetBy: 14)..<at]), String(entry[entry.index(after: at)..<colon.lowerBound]))
+        }
+    }
+
     /// Whether the new code declares other functions, initializers, subscripts, computed properties or
     /// conformances than the open app's: an unchanged caller may then mean another one (a new overload, a method
     /// where a protocol's default stood in, an extension's method over a system one), so every file is compiled again.
@@ -223,7 +232,7 @@ enum LiveReload {
             if type == "\u{1}launch", current != members {
                 let what = (current.first { !members.contains($0) } ?? members.first { !current.contains($0) } ?? "")
                     .split(separator: "\t").last.map { String($0.prefix { $0 != ":" }) } ?? ""
-                if what.hasPrefix("model ") { return ("the file of the SwiftData model \(what.dropFirst(6)) changed, and its data is found by key paths the open app made", nil) }
+                if what.hasPrefix("model ") { return ("the file of the SwiftData model \(what.dropFirst(6).prefix { $0 != "@" }) changed, and its data is found by key paths the open app made", nil) }
                 return ("what the app reads only at launch changed (\(what))", nil)
             }
             if current != members, !LiveSlots.casesAdded(type, members, current) {
