@@ -221,7 +221,8 @@ A capability given to one engine must be given to all of them that can take it, 
   `activitySince`), and every place that shows it draws it with `ChatLook.ActivityText`: the build card, the line
   under a change, the chat beside the app (`SidebarState.workingActivitySince`) and the cover while the app reopens
   (`CoverNote`). How it reads as the wait goes on is `Activity.words`, in one place: while the model thinks, its
-  phrases turn over every 3.5 seconds and grow more reassuring the longer it goes; a build says "Still building…"
+  phrases (never a bare "Thinking"; each think opens on one picked by when it began) turn over every 3.5
+  seconds and grow more reassuring the longer it goes; a build says "Still building…"
   after 30 seconds and "Taking a little longer…" after 90; anything named ("Working on the interface") stays as it is.
   The agent's progress lines are messages above the activity and are left as they are. A shell command is named in
   the engine's own words, never guessed from its text (`AgentEvent.naming`): Claude Code's description of each Bash

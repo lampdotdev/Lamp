@@ -3,9 +3,10 @@ import SwiftUI
 /// What a turn in progress says it's doing, worked out in one place for every place that shows it: the build card,
 /// the line under a change in Lamp's window, the chat beside the app and the cover while the app reopens. Lamp keeps
 /// one plain activity for the turn ("Thinking", "Working on the interface", "Building…"); what people read is that,
-/// except while the wait itself is the news. A model can think for a minute without a word, and one frozen
-/// "Thinking" for that long reads as stuck, so the words turn over every few seconds and grow more reassuring the
-/// longer it goes; a build that runs long says so. Anything the agent is named as doing is shown as it is.
+/// except while the model thinks or the wait itself is the news. A plain "Thinking" is the dullest thing the line can
+/// say, and a model can think for a minute without a word, which one frozen word makes read as stuck, so a think is
+/// told in phrases that turn over every few seconds and grow more reassuring the longer it goes; a build that runs
+/// long says so. Anything the agent is named as doing is shown as it is.
 public enum Activity {
     /// The activity while the model thinks, before or between its steps.
     public static let thinking = "Thinking"
@@ -14,9 +15,10 @@ public enum Activity {
     public static let turnover: TimeInterval = 3.5
 
     /// The thinking phrases, from how long the think has gone on. Calm, a little playful, and short enough for the
-    /// chat beside the app at its narrowest.
+    /// chat beside the app at its narrowest. None is a bare "Thinking": a short think, the few seconds after a look,
+    /// shows only the first phrase it gets.
     static let thinkingPhrases: [(from: TimeInterval, phrases: [String])] = [
-        (0, ["Thinking", "Mulling it over", "Picturing it", "Rubbing the lamp", "Turning it over"]),
+        (0, ["Rubbing the lamp", "Mulling it over", "Picturing it", "Turning it over"]),
         (20, ["Still thinking", "Thinking it through", "Weighing a few ways", "Consulting the genie",
               "Getting the details right"]),
         (60, ["Thinking hard about this one", "Deep in thought", "The genie is concentrating", "Worth getting right",
@@ -31,14 +33,15 @@ public enum Activity {
 
     static func isBuilding(_ activity: String) -> Bool { activity.hasPrefix("Building") }
 
-    /// The words for `activity` once it has gone on for `waited` seconds.
-    public static func words(_ activity: String, waited: TimeInterval) -> String {
+    /// The words for `activity` once it has gone on for `waited` seconds. `start` picks which phrase a think opens
+    /// on, so a turn of many short thinks doesn't say the same one each time.
+    public static func words(_ activity: String, waited: TimeInterval, start: Int = 0) -> String {
         if activity == thinking {
             // Phrases change only on the turnover's beat, a new tier included, so nothing changes twice in a moment.
             let beat = Int(max(0, waited) / turnover)
             let tier = thinkingPhrases.last { Double(beat) * turnover >= $0.from } ?? thinkingPhrases[0]
             let first = Int((tier.from / turnover).rounded(.up))
-            return tier.phrases[(beat - first) % tier.phrases.count]
+            return tier.phrases[(beat - first + abs(start % tier.phrases.count)) % tier.phrases.count]
         }
         if isBuilding(activity), let later = buildingLater.last(where: { waited >= $0.from }) { return later.words }
         return activity
@@ -72,7 +75,9 @@ extension ChatLook {
 
         private func words(at date: Date) -> some View {
             // A hair past the tick, which arithmetic on dates can land just short of.
-            let text = Activity.words(activity, waited: date.timeIntervalSince(since) + 0.001)
+            // The think's own start picks its first phrase, the same in every place that shows it.
+            let text = Activity.words(activity, waited: date.timeIntervalSince(since) + 0.001,
+                                      start: Int(since.timeIntervalSinceReferenceDate))
             return Text(text)
                 .lineLimit(1)
                 .contentTransition(.opacity)

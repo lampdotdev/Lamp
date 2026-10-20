@@ -5,10 +5,26 @@ import LampSidebarKit
 /// stronger, a build that says when it runs long, and a named step shown as it is.
 final class ActivityTests: XCTestCase {
     func testThinkingTurnsOverEveryFewSeconds() {
-        XCTAssertEqual(Activity.words("Thinking", waited: 0), "Thinking")
-        XCTAssertEqual(Activity.words("Thinking", waited: 3.4), "Thinking")
+        XCTAssertEqual(Activity.words("Thinking", waited: 0), "Rubbing the lamp")
+        XCTAssertEqual(Activity.words("Thinking", waited: 3.4), "Rubbing the lamp")
         XCTAssertEqual(Activity.words("Thinking", waited: 3.5), "Mulling it over")
         XCTAssertEqual(Activity.words("Thinking", waited: 7), "Picturing it")
+    }
+
+    /// The line never says a bare "Thinking", however short the think or whichever phrase it opens on.
+    func testAThinkNeverSaysPlainThinking() {
+        for start in [0, 1, 2, 3, 7, -5, 802_000_000] {
+            for second in stride(from: 0.0, through: 400, by: 0.5) {
+                XCTAssertNotEqual(Activity.words("Thinking", waited: second, start: start), "Thinking",
+                                  "at \(second)s, opening on \(start)")
+            }
+        }
+    }
+
+    /// Thinks that begin at different moments open on different phrases, so a turn of short ones isn't one phrase.
+    func testShortThinksOpenOnDifferentPhrases() {
+        let openers = Set((0..<4).map { Activity.words("Thinking", waited: 0, start: $0) })
+        XCTAssertEqual(openers, ["Rubbing the lamp", "Mulling it over", "Picturing it", "Turning it over"])
     }
 
     func testThinkingGrowsStrongerTheLongerItGoes() {
