@@ -22,7 +22,8 @@ enum AgentEvent {
     case textPiece(String) // a piece of the message the model is writing, as it streams in; `.text` follows with the whole
     /// A tool call as shown in the chat ("grep cache.json"), and the whole call with its arguments,
     /// which is what tells a repeated call from a similar one.
-    case tool(String, call: String)
+    /// `said`: what the agent said the step is for, in its own words (a command's description, a tool's `doing`).
+    case tool(String, call: String, said: String? = nil)
     case cost(Double)
     case failed(String)
     case raw(String)
@@ -161,7 +162,8 @@ enum Agent {
     answer: follow it.
     - What the person sees: their messages, your cards, and each thing you write, as a message the moment you \
     write it. Your tool calls are never shown: no commands, files, code or results, only a gray line per step \
-    ("Did a bit of housekeeping", or the description you gave the command). Everything you write stays in the chat as a \
+    ("Did a bit of housekeeping", or the words you gave the step: a command's description, a tool's `doing`). Give \
+    those words to every step, in their terms, since they're what the person reads while it runs. Everything you write stays in the chat as a \
     message, and your last one is the answer. So write each message for someone who sees nothing else: it makes sense on its own and is about the app, \
     never leaning on a step they can't see, whether it leads into one, points back at one ("that fixed it", \
     "the error above") or names its files and code.
@@ -1416,7 +1418,8 @@ enum Agent {
         case "tool_execution_start":
             let name = obj["toolName"] as? String ?? "tool"
             let args = obj["args"] as? [String: Any] ?? [:]
-            var events: [AgentEvent] = [.tool(describe(name, args), call: callKey(name, args))]
+            let said = ((args["doing"] as? String) ?? (name == "bash" ? args["description"] as? String : nil))?.trimmed.nilIfEmpty
+            var events: [AgentEvent] = [.tool(describe(name, args), call: callKey(name, args), said: said)]
             // Lamp's extension gives pi's bash a description, which the model fills in as Claude Code's does.
             if name == "bash" { events.insert(.naming((args["description"] as? String)?.trimmed ?? ""), at: 0) }
             if name == "plan", args["parts"] != nil { events.append(.plan(PlanPart.parts(from: args))) }
