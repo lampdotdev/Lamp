@@ -450,7 +450,7 @@ struct ActivityRow: View {
     @AppStorage("showDetails") private var details = false
 
     var body: some View {
-        let steps = details ? [] : ChatItem.live(lines).steps
+        let steps = details ? [] : ChatItem.live(lines, doing: progress.activity).steps
         ChatLook.ActivityLine(progress.activity, started: progress.started, since: progress.activitySince,
                               hasSteps: !steps.isEmpty) { StepList(steps: steps) }
     }

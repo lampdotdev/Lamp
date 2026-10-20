@@ -410,11 +410,11 @@ public enum ChatLook {
     }
 
     /// A turn's progress: one line saying what the agent is doing, with no clock beside it, which changes in place
-    /// as it moves from one thing to the next, and opens to show the steps so far. `since` is when the activity
-    /// began, which a long think or build is counted from (the turn's start when it isn't known). It starts open, so
-    /// each step shows under it as it comes in (a command by the name the agent gave it); a click folds it. The whole
-    /// turn's time is its "Worked for…": when the turn ends this line's place is taken by it (`Worked`), folded, which
-    /// opens to the same steps.
+    /// as it moves from one thing to the next. `since` is when the activity began, which a long think or build is
+    /// counted from (the turn's start when it isn't known). It starts open, with the steps done so far above it,
+    /// oldest first, and itself at the bottom saying what's going on now; a click folds them. The whole turn's time is
+    /// its "Worked for…": when the turn ends this line's place is taken by it (`Worked`), folded, which opens to the
+    /// same steps.
     public struct ActivityLine<Steps: View>: View {
         let activity: String
         let started: Date
@@ -435,6 +435,12 @@ public enum ChatLook {
 
         public var body: some View {
             VStack(alignment: .leading, spacing: 4) {
+                // What's done reads down in the order it happened, and the line saying what's going on now stays at the
+                // bottom, under all of it: a step that finishes joins the list above the line.
+                if expanded && hasSteps {
+                    VStack(alignment: .leading, spacing: 4) { steps }
+                        .transition(.opacity)
+                }
                 Button {
                     guard hasSteps else { return }
                     withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
@@ -449,7 +455,7 @@ public enum ChatLook {
                             Image(systemName: "chevron.right")
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(.tertiary)
-                                .rotationEffect(.degrees(expanded ? 90 : 0))
+                                .rotationEffect(.degrees(expanded ? -90 : 0))
                         }
                     }
                     .contentShape(Rectangle())
@@ -461,10 +467,6 @@ public enum ChatLook {
                 .padding(.leading, ChatLook.stepIndent)
                 .help(hasSteps ? (expanded ? "Hide the steps" : "Show the steps") : "")
                 .onAppear { dim = true }
-                if expanded && hasSteps {
-                    VStack(alignment: .leading, spacing: 4) { steps }
-                        .transition(.opacity)
-                }
             }
         }
     }

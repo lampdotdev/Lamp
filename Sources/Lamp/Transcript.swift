@@ -266,12 +266,22 @@ enum ChatItem: Identifiable {
     /// (`ActivityRow`, the sidebar's `workingSteps`), which opens to show them. `shown` is the chat without them,
     /// `steps` what that line opens to. The turn still going is what comes after the last summary, from its
     /// request on: a status left after the summary before it ("Hot Shelf is ready") belongs to that turn's end.
-    static func live(_ lines: [LogLine]) -> (shown: [LogLine], steps: [LogLine]) {
+    /// `doing` is what the line says the turn is doing now (`TurnProgress.activity`). The step it's about is still
+    /// going and isn't one of the steps done yet: it joins them once the agent moves on.
+    static func live(_ lines: [LogLine], doing: String? = nil) -> (shown: [LogLine], steps: [LogLine]) {
         let end = lines.lastIndex { $0.kind == .summary }.map { $0 + 1 } ?? lines.startIndex
         let start = lines[end...].firstIndex { $0.kind == .user } ?? end
-        let steps = Transcript.withoutStepInProgress(lines[start...].filter(isStep))
+        var steps = Transcript.withoutStepInProgress(lines[start...].filter(isStep))
+        if let last = steps.last, isGoing(last, in: lines[start...], doing: doing) { steps.removeLast() }
         let taken = Set(lines[start...].filter(isStep).map(\.id))
         return (lines.filter { !taken.contains($0.id) }, steps)
+    }
+
+    /// Whether `step` is the one the turn is still on: nothing came after it but Lamp's own stages of it (a look's
+    /// "Building…"), and the line isn't saying the model is thinking, which it does once a step is over.
+    private static func isGoing(_ step: LogLine, in lines: ArraySlice<LogLine>, doing: String?) -> Bool {
+        guard let doing, doing != Activity.thinking, let index = lines.lastIndex(where: { $0.id == step.id }) else { return false }
+        return lines[(index + 1)...].allSatisfy { $0.kind == .status && $0.text.hasSuffix("…") }
     }
 
     /// A finished run's lines, its steps under one line at its end: the same place the live line had while it went

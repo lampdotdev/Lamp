@@ -142,4 +142,24 @@ final class WorkedForTests: XCTestCase {
         XCTAssertEqual(steps.map { $0.said ?? $0.text }, ["Looking around", "Looking things over"])
         XCTAssertEqual(steps.first?.text, "Ran: ls Sources\ngrep heat")
     }
+
+    /// The step the turn is still on is what the line at the bottom says, not a step done yet: it joins the list above
+    /// the line once the agent moves on (it writes, it thinks, it starts another step).
+    func testTheStepGoingOnIsTheLineNotAStepDone() {
+        let going = LogLine.visible([LogLine(kind: .user, text: "add a filter"), LogLine(kind: .tool, text: "read ShelfView.swift"),
+                                     LogLine(kind: .tool, text: "edit ShelfView.swift")], details: false)
+        XCTAssertEqual(ChatItem.live(going, doing: "Working on the interface").steps.map(\.text), ["Looking things over"])
+        // Thinking after it, the edit is done.
+        XCTAssertEqual(ChatItem.live(going, doing: Activity.thinking).steps.map(\.text), ["Looking things over", "Working on the interface"])
+        // So it is once the agent says something after it.
+        let said = going + [LogLine(kind: .agent, text: "Now the buttons.")]
+        XCTAssertEqual(ChatItem.live(said, doing: "Replying").steps.map(\.text), ["Looking things over", "Working on the interface"])
+        // A look's own stages after it ("Building…") are still the look.
+        let look = going + LogLine.visible([LogLine(kind: .tool, text: "look_at_app"), LogLine(kind: .status, text: "Building…")], details: false)
+        XCTAssertEqual(ChatItem.live(look, doing: "Building…").steps.map(\.text), ["Looking things over", "Working on the interface"])
+        // A named command running is the line's words, and done it's a step by that name.
+        let command = going + [LogLine(kind: .status, text: "Ran: swift build", said: "Checking it builds")]
+        XCTAssertEqual(ChatItem.live(command, doing: "Checking it builds").steps.map { $0.said ?? $0.text },
+                       ["Looking things over", "Working on the interface"])
+    }
 }
