@@ -47,7 +47,8 @@ A capability given to one engine must be given to all of them that can take it, 
   in both chats as a message like any other, which stays one when the turn ends. A turn's steps belong to its one
   live line (`ChatLook.ActivityLine`, `ChatItem.live`, the sidebar's `SidebarState.workingSteps`), which says what
   it's doing now and changes in place. While the turn goes on the line is open, so each step shows under it as it
-  comes in (a command by the name the agent gave it), and a click folds it; when the turn ends the line and its
+  comes in (a command by the name the agent gave it, any other tool call in the words the line said while it ran,
+  `LogLine.visible`, never its files), and a click folds it; when the turn ends the line and its
   steps give way to "Worked for…" (`ChatItem.items`), folded, under the turn's last message, which opens to the same
   steps. Whatever the agent writes as messages on the way is
   treated the same, each shown as it's said and kept as it was (`LogLine.visible`), since models write such updates

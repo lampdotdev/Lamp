@@ -65,7 +65,7 @@ final class WorkedForTests: XCTestCase {
             }
         }
         XCTAssertEqual(shape, ["You now have a counter.", "statuses:\(ChatLook.fixingCrash)",
-                               "Crash Now no longer crashes the app.", "Worked for 15 s:Crash Counter is ready",
+                               "Crash Now no longer crashes the app.", "Worked for 15 s:Crash Counter is ready,Working on the interface",
                                "statuses:Crash Counter is ready"])
     }
 
@@ -88,5 +88,35 @@ final class WorkedForTests: XCTestCase {
                                                  "I'll look first.", "Now the words."])
         // The step still going ("Building…") is what the line itself says.
         XCTAssertEqual(live.steps.map(\.said), ["Looking around", "Finding every mention"])
+    }
+
+    /// A turn that only read, searched and edited files, and looked at the app, ran no command: its steps are what the
+    /// line said while each call ran, never the calls' file names, and they're there while it goes on and in its
+    /// "Worked for…". These are a real turn's lines up to its second look's build.
+    func testATurnOfFileToolsHasStepsInPlainWords() {
+        let lines = [LogLine(kind: .user, text: "Add a filter row"), LogLine(kind: .detail, text: "Warning: new session"),
+                     LogLine(kind: .agent, text: "I'll add the heat filter row under the title."),
+                     LogLine(kind: .tool, text: "read APP.md"), LogLine(kind: .tool, text: "find Sources/*.swift"),
+                     LogLine(kind: .tool, text: "read ShelfView.swift"), LogLine(kind: .tool, text: "grep Model.swift"),
+                     LogLine(kind: .agent, text: "Filter by the peppers shown (intensity)."),
+                     LogLine(kind: .tool, text: "edit ShelfView.swift"), LogLine(kind: .tool, text: "look_at_app"),
+                     LogLine(kind: .status, text: "Building…"), LogLine(kind: .detail, text: "Build failed: warning"),
+                     LogLine(kind: .tool, text: "edit ShelfView.swift"), LogLine(kind: .tool, text: "look_at_app"),
+                     LogLine(kind: .status, text: "Building…")]
+        let visible = LogLine.visible(lines, details: false)
+        let live = ChatItem.live(visible)
+        XCTAssertEqual(live.shown.map(\.text), ["Add a filter row", "I'll add the heat filter row under the title.",
+                                                 "Filter by the peppers shown (intensity)."])
+        XCTAssertEqual(live.steps.map(\.text), ["Looking things over", "Working on the interface", "Checking how it looks",
+                                                 "Building…", "Working on the interface", "Checking how it looks"])
+        XCTAssertFalse(live.steps.contains { $0.text.contains(".swift") || $0.text.contains(".md") })
+        // Agent Details still shows the calls themselves.
+        XCTAssertEqual(LogLine.visible(lines, details: true).filter { $0.kind == .tool }.count, 8)
+        // Over, the same steps are what "Worked for…" opens to.
+        let done = visible + LogLine.visible([LogLine(kind: .agent, text: "Done."), LogLine(kind: .summary, text: "Worked for 3m 56s · $0.18")], details: false)
+        guard case .work(_, _, let steps)? = ChatItem.items(done, gather: true).last else { return XCTFail("no Worked for") }
+        // As on any turn, a build there is a step only until the next one.
+        XCTAssertEqual(steps.map(\.text), ["Looking things over", "Working on the interface", "Checking how it looks",
+                                            "Working on the interface", "Checking how it looks", "Building…"])
     }
 }

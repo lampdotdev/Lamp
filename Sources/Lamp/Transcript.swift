@@ -178,11 +178,29 @@ extension LogLine {
             }
         }
         // A result card saved by an earlier Lamp isn't shown: the agent's last message says what it did. A turn's summary
-        // stays, for how long it worked (`ChatItem.items`), and isn't drawn as a line of its own.
-        return lines.filter {
+        // stays, for how long it worked (`ChatItem.items`), and isn't drawn as a line of its own. A tool call is a step
+        // in the words the live line said while it ran (`steps(said:)`).
+        return said(lines.filter {
             !hidden.contains($0.id)
-                && ($0.kind == .agent ? !afterAsk.contains($0.id) : $0.kind == .summary || !$0.isDetail && $0.kind != .result)
+                && ($0.kind == .agent ? !afterAsk.contains($0.id)
+                    : $0.kind == .summary || $0.kind == .tool || !$0.isDetail && $0.kind != .result)
+        })
+    }
+
+    /// Tool calls as the steps a person reads: what the live line said while each ran ("Looking things over",
+    /// "Working on the interface", `TurnProgress.activity`), never the call itself with its files. Calls in a row
+    /// that said the same are one step, and a call that says nothing of its own (a progress line) is no step. Without
+    /// this a turn that only read and edited files, with no command, had nothing under its open line.
+    private static func said(_ lines: [LogLine]) -> [LogLine] {
+        var out: [LogLine] = []
+        for line in lines {
+            guard line.kind == .tool else { out.append(line); continue }
+            let words = TurnProgress.activity(for: ToolCall(line.text))
+            guard !words.isEmpty else { continue }
+            if let last = out.last, last.kind == .status, last.text == words, last.said == nil { continue }
+            out.append(LogLine(id: line.id, kind: .status, text: words))
         }
+        return out
     }
 }
 
