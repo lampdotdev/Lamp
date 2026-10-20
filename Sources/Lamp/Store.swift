@@ -4087,7 +4087,7 @@ final class Store: ObservableObject {
         }
     }
 
-    /// A starter put back on the desk after the first launch (More from Lamp's Add): added, shown on the desk, and
+    /// A starter put back on the desk after the first launch (Starter wishes' Add): added, shown on the desk, and
     /// saved and built out of sight like the first launch's (`prepareStarters`).
     @discardableResult func put(starter: Starters.Starter) -> LampProject? {
         guard let added = add(starter: starter) else { return nil }
