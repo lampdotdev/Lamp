@@ -58,7 +58,9 @@ extension ChatLook {
         }
     }
 
-    /// A line offering one thing to do, like Draw Icon: a symbol, what's so, and the button.
+    /// A line offering one thing to do, like Draw Icon: a symbol, what's so, and the button. Laid out as a status
+    /// line is (`StatusLine`): its symbol in the steps' column and its words in their size, in line with the agent's
+    /// bubbles, "Worked for…" and Undo Last Change around it.
     public struct ActionLine: View {
         let symbol: String
         let text: String
@@ -79,9 +81,9 @@ extension ChatLook {
         }
 
         public var body: some View {
-            HStack(spacing: 8) {
-                Image(systemName: symbol).foregroundStyle(.secondary)
-                Text(text).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Image(systemName: symbol).foregroundStyle(.secondary).frame(width: 16)
+                Text(text).font(ChatLook.stepFont).foregroundStyle(.secondary)
                 if prominent {
                     Button(button, action: action)
                         .controlSize(.small)
@@ -93,6 +95,8 @@ extension ChatLook {
                         .disabled(disabled)
                 }
             }
+            .font(ChatLook.stepFont)
+            .padding(.leading, ChatLook.stepIndent)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
