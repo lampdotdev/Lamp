@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: no taps
+RELOAD 1 (whole): ok
+after (want Taps: 1): Taps: 1

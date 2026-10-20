@@ -1050,7 +1050,9 @@ an `@Observable` class's registrar), kept in a global for each field that the ap
 copies, which nothing fills in, so `LampLive` copies the app's values into each library as it loads
 (`takeFieldOffsets`), asking for the class's metadata first when the app hasn't worked it out yet. A field the app
 has under no such name (a new class's, or a private one whose code moved to another file, since a private name
-carries its file's) is laid out by the library itself, which does it as the app did for the same class.
+carries its file's) is laid out by the library itself, which does it as the app did for the same class. That waits
+until the library's references to its own types are bound (`rebind`), since its accessor reads the class's description
+through them, and comes before the app's calls are pointed at the new code.
 
 A file taken away doesn't reopen the app: its code stays in the open app, which the new code no longer calls, and a
 type it declared that something still holds shows as that holder changing. A type taken away is therefore no
