@@ -54,7 +54,7 @@ struct AppIcon: View {
         if let icon = store.icons[project.id] {
             Image(nsImage: icon).resizable().interpolation(.high).frame(width: size, height: size)
         } else {
-            StandInIcon(project: project, size: size)
+            StandInIcon(project: project, size: size, color: store.standInColor(for: project))
         }
     }
 }
@@ -64,12 +64,15 @@ struct AppIcon: View {
 struct StandInIcon: View {
     let project: LampProject
     let size: CGFloat
+    /// The icon's background once it's chosen (`Store.standInColor`), so the tile is the icon's color from the start.
+    var color: String?
 
     var body: some View {
         if project.untitled {
             WishIcon(size: size)
         } else {
-            BlueprintIcon(letter: project.untitled ? nil : project.name.first, size: size)
+            BlueprintIcon(letter: project.name.first ?? "A", size: size,
+                          ground: color.map { BlueprintTile.ground(Icons.background(named: $0)) } ?? BlueprintTile.gray)
         }
     }
 }
@@ -121,44 +124,81 @@ struct WishIcon: View {
 struct BlueprintIcon: View {
     let letter: Character?
     let size: CGFloat
+    var ground = BlueprintTile.gray
 
     var body: some View {
         // Same footprint as a real macOS icon: an 824pt tile on a 1024pt canvas.
         let side = size * 824 / 1024
-        let shape = RoundedRectangle(cornerRadius: side * 0.225, style: .continuous)
-        ZStack {
-            shape.fill(LinearGradient(colors: [Color(red: 0.20, green: 0.46, blue: 0.86),
-                                               Color(red: 0.10, green: 0.30, blue: 0.66)],
-                                      startPoint: .top, endPoint: .bottom))
-            Canvas { context, canvas in
-                let w = canvas.width
-                let thin = max(0.5, w / 400)
-                var grid = Path()
-                for i in 1..<8 {
-                    let p = w * CGFloat(i) / 8
-                    grid.move(to: CGPoint(x: p, y: 0)); grid.addLine(to: CGPoint(x: p, y: w))
-                    grid.move(to: CGPoint(x: 0, y: p)); grid.addLine(to: CGPoint(x: w, y: p))
+        BlueprintTile(letter: letter, ground: ground)
+            .clipShape(RoundedRectangle(cornerRadius: side * 0.225, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: side * 0.225, style: .continuous)
+                .strokeBorder(.white.opacity(0.35), lineWidth: max(0.5, side / 160)))
+            .frame(width: side, height: side)
+            .shadow(color: .black.opacity(0.18), radius: size / 60, y: size / 80)
+            .frame(width: size, height: size)
+    }
+}
+
+/// The blueprint itself, square and full bleed: gray until the icon is designed, then in the design's colors with
+/// a stand-in in place of the initial while its artwork is drawn (`Icons.Artwork.waiting`), so something has moved
+/// on without passing for the icon itself.
+struct BlueprintTile: View {
+    /// The initial; nil once the icon is designed and its artwork is on its way.
+    let letter: Character?
+    var ground = gray
+
+    struct Ground {
+        let top: Color
+        let bottom: Color
+        /// Lines and marks dark on a light ground.
+        var light = false
+    }
+
+    static let gray = Ground(top: Color(white: 0.56), bottom: Color(white: 0.40))
+
+    /// The ground for an icon's background, the same gradient its tile has at every later stage.
+    static func ground(_ background: Icons.Background) -> Ground {
+        Ground(top: Color(nsColor: background.gradient.top), bottom: Color(nsColor: background.gradient.bottom),
+               light: background.isLight)
+    }
+
+    var body: some View {
+        GeometryReader { area in
+            let side = area.size.width
+            let ink: Color = ground.light ? .black : .white
+            ZStack {
+                LinearGradient(colors: [ground.top, ground.bottom], startPoint: .top, endPoint: .bottom)
+                Canvas { context, canvas in
+                    let w = canvas.width
+                    let thin = max(0.5, w / 400)
+                    var grid = Path()
+                    for i in 1..<8 {
+                        let p = w * CGFloat(i) / 8
+                        grid.move(to: CGPoint(x: p, y: 0)); grid.addLine(to: CGPoint(x: p, y: w))
+                        grid.move(to: CGPoint(x: 0, y: p)); grid.addLine(to: CGPoint(x: w, y: p))
+                    }
+                    if w > 40 { context.stroke(grid, with: .color(ink.opacity(0.12)), lineWidth: thin) }
+                    var guides = Path()
+                    guides.move(to: .zero); guides.addLine(to: CGPoint(x: w, y: w))
+                    guides.move(to: CGPoint(x: w, y: 0)); guides.addLine(to: CGPoint(x: 0, y: w))
+                    for r in [0.19, 0.31] { guides.addEllipse(in: CGRect(x: w * (0.5 - r), y: w * (0.5 - r), width: w * r * 2, height: w * r * 2)) }
+                    guides.addRect(CGRect(x: w * 0.16, y: w * 0.16, width: w * 0.68, height: w * 0.68))
+                    context.stroke(guides, with: .color(ink.opacity(0.28)), lineWidth: thin * 1.5)
                 }
-                if w > 40 { context.stroke(grid, with: .color(.white.opacity(0.12)), lineWidth: thin) }
-                var guides = Path()
-                guides.move(to: .zero); guides.addLine(to: CGPoint(x: w, y: w))
-                guides.move(to: CGPoint(x: w, y: 0)); guides.addLine(to: CGPoint(x: 0, y: w))
-                for r in [0.19, 0.31] { guides.addEllipse(in: CGRect(x: w * (0.5 - r), y: w * (0.5 - r), width: w * r * 2, height: w * r * 2)) }
-                guides.addRect(CGRect(x: w * 0.16, y: w * 0.16, width: w * 0.68, height: w * 0.68))
-                context.stroke(guides, with: .color(.white.opacity(0.28)), lineWidth: thin * 1.5)
-            }
-            .clipShape(shape)
-            shape.strokeBorder(.white.opacity(0.35), lineWidth: max(0.5, side / 160))
-            if let letter {
-                Text(String(letter).uppercased())
-                    .font(.system(size: side * 0.48, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.15), radius: side / 60, y: side / 120)
+                Group {
+                    if let letter {
+                        Text(String(letter).uppercased())
+                            .font(.system(size: side * 0.48, weight: .medium, design: .rounded))
+                    } else {
+                        Image(systemName: "app.background.dotted")
+                            .font(.system(size: side * 0.44, weight: .regular))
+                    }
+                }
+                .foregroundStyle(ground.light ? Color.black.opacity(0.55) : .white)
+                .shadow(color: .black.opacity(0.15), radius: side / 60, y: side / 120)
             }
         }
-        .frame(width: side, height: side)
-        .shadow(color: .black.opacity(0.18), radius: size / 60, y: size / 80)
-        .frame(width: size, height: size)
+        .aspectRatio(1, contentMode: .fit)
     }
 }
 

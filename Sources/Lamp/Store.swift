@@ -404,6 +404,8 @@ final class Store: ObservableObject {
     @Published var welcomeFinished = false
     @Published var usage: [String: AppUsage] = [:]
     @Published var icons: [String: NSImage] = [:]
+    /// The icon's background chosen with the app's name, before its icon is designed: the blueprint shows it.
+    @Published var iconColors: [String: String] = [:]
     /// The shared app whose review is up. When it goes, the next one kept from before setup gets its turn.
     @Published var pendingImport: PendingImport? {
         didSet { if pendingImport == nil, oldValue != nil { openWaitingImport() } }
@@ -653,6 +655,8 @@ final class Store: ObservableObject {
         var crash: String?
     }
     private var artInProgress: Set<String> = []
+    /// Designs whose artwork couldn't be drawn, by `Icons.artKey`: their icons show the symbol, not the blueprint.
+    private var artFailed: Set<String> = []
     private var pendingIconArt: Set<String> = []     // artwork finished during a turn, to apply after it
     private var heldInstalls = HeldInstalls()        // new icons waiting for their app to close
     private var heldDrawingOffers: Set<String> = []  // "Draw Icon…" wanted during a turn, to offer after it
@@ -2121,11 +2125,13 @@ final class Store: ObservableObject {
                 project = await chooseKind(project, kind, said: suggestion.kindSaid, watch: suggestion.watch)
             }
             if project.untitled, let name = suggestion?.name { project = await performRename(project, to: name) }
+            if let color = suggestion?.color, Icons.load(project) == nil { iconColors[project.id] = color }
         }
         if Icons.load(project) == nil {
             let designing = project
+            let color = iconColors[project.id]
             iconDesigns[project.id] = Task {
-                let spec = await Icons.design(for: designing, brief: brief)
+                let spec = await Icons.design(for: designing, brief: brief, background: color)
                 if Icons.load(designing) == nil {
                     Icons.save(spec, for: designing)
                     await renderIcon(designing, spec: spec)
@@ -5578,10 +5584,29 @@ final class Store: ObservableObject {
         do {
             let art = Icons.artwork(project, spec: spec)
             if art != nil { artApplied[project.id] = spec }
-            icons[project.id] = try await Icons.write(spec, art: art, for: project)
+            icons[project.id] = try await Icons.write(spec, art: art ?? (awaitsArtwork(project, spec: spec) ? .waiting : nil),
+                                                      for: project)
         } catch {
             log(project, .detail, "Icon render failed: \(error.localizedDescription)")
         }
+    }
+
+    /// Whether this design's artwork is on its way, drawn by Lamp: the icon is the blueprint until it comes. Not for a
+    /// starter (it never gets any), nor while the person draws icons themselves, nor once drawing it failed.
+    private func awaitsArtwork(_ project: LampProject, spec: IconSpec) -> Bool {
+        !Starters.isStarter(project) && !AppAI.iconsByHand && !spec.subject.trimmed.isEmpty
+            && !artFailed.contains(Icons.artKey(project, spec: spec)) && (GlassIcons.canDraw || AppAI.imageRoute != nil)
+    }
+
+    /// Artwork that won't come after all: the icon goes from the blueprint to its symbol, on the app too when nothing
+    /// else has it (otherwise the next install takes it).
+    private func artworkWontCome(_ project: LampProject, spec: IconSpec) async {
+        artFailed.insert(Icons.artKey(project, spec: spec))
+        guard exists(project), Icons.load(project) == spec, Icons.artwork(project, spec: spec) == nil else { return }
+        guard begin(project) != nil else { return await renderIcon(project, spec: spec) }
+        await renderIcon(project, spec: spec)
+        if FileManager.default.fileExists(atPath: project.builtURL.path) { await installIcon(project) }
+        finish(project)
     }
 
     /// The setup offers already in an app's chat.
@@ -5657,7 +5682,7 @@ final class Store: ObservableObject {
             guard await AppAI.imageRoute() != nil else {
                 offerSetup(project, SetupOffer(capability: .pictures, icon: true),
                            because: "Nothing on this Mac can draw pictures yet. Set up one of the ways below and Lamp will paint \(project.name) a proper icon, and your apps will be able to make pictures too.")
-                return
+                return await artworkWontCome(project, spec: spec)
             }
             // The person may choose to draw icons themselves during either wait here: from then on nothing
             // Lamp drew is used, and the drawing is theirs to do.
@@ -5677,6 +5702,7 @@ final class Store: ObservableObject {
                 switch art {
                 case .glass(let glass):
                     try Icons.save(glass, for: project, spec: spec)
+                case .waiting: return
                 case .picture(let image):
                     let url = Icons.artURL(project, spec: spec)
                     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -5704,8 +5730,10 @@ final class Store: ObservableObject {
                 // Codex signed out between the check and the pictures: the key card is still the right answer.
                 offerSetup(project, SetupOffer(capability: .pictures, icon: true),
                            because: "Nothing on this Mac can draw pictures yet. Set up one of the ways below and Lamp will paint \(project.name) a proper icon, and your apps will be able to make pictures too.")
+                await artworkWontCome(project, spec: spec)
             } catch {
                 log(project, .detail, "Couldn't draw the icon's artwork. \(error.localizedDescription)")
+                await artworkWontCome(project, spec: spec)
             }
         }
     }
