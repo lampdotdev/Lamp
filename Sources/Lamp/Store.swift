@@ -4757,8 +4757,10 @@ final class Store: ObservableObject {
         }
         // A request's change the open app can't take as it runs doesn't close it under the person: it waits for
         // them to press Reload, in the app's title bar or the chat (`awaitReload`). Open App, Undo and Reload itself
-        // ask for the reopen, and an app that's closed just gets the build.
-        if !reload, owner?.request != nil, isRunning(project), !Template.isWidgetOnly(project) {
+        // ask for the reopen, and an app that's closed just gets the build. Not in a new app's first turn: nobody is
+        // using it yet, and it's built in passes for the person to watch each one go in (`present`), so it reopens.
+        if !reload, owner?.request != nil, isRunning(project), !Template.isWidgetOnly(project),
+           progress[project.id]?.newApp != true {
             awaitReload(project, owner: owner)
             return nil
         }
