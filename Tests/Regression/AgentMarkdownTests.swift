@@ -5,6 +5,20 @@ import LampSidebarKit
 /// An agent's reply with a table used to come out in the chat as its pipes and dashes.
 @MainActor
 final class AgentMarkdownTests: XCTestCase {
+    /// Each piece as words: what it says and, for a table, how its columns line up.
+    private func shape(_ pieces: [ChatLook.Piece]) -> [String] {
+        pieces.map { piece in
+            switch piece {
+            case .text(let text): "text:" + String(text.characters)
+            case .code(let code): "code:" + code
+            case .rule: "rule"
+            case .table(let columns, let header, let rows):
+                "table:" + columns.map { $0 == .trailing ? "trailing" : $0 == .center ? "center" : "leading" }.joined(separator: ",")
+                    + ([header] + rows).map { "|" + $0.map { String($0.characters) }.joined(separator: ",") }.joined()
+            }
+        }
+    }
+
     func testATableInAReplyIsATable() {
         let reply = """
         Here's where the time goes:
@@ -16,11 +30,10 @@ final class AgentMarkdownTests: XCTestCase {
 
         The view is the place to start.
         """
-        XCTAssertEqual(ChatLook.blocks(reply), [
-            .prose("Here's where the time goes:"),
-            .table(header: ["Lines", "File"], alignments: [.trailing, .leading],
-                   rows: [["412", "`TodayView.swift`"], ["96", "`Theme.swift`"]]),
-            .prose("The view is the place to start."),
+        XCTAssertEqual(shape(ChatLook.pieces(reply)), [
+            "text:Here's where the time goes:",
+            "table:trailing,leading|Lines,File|412,TodayView.swift|96,Theme.swift",
+            "text:The view is the place to start.",
         ])
     }
 
@@ -33,12 +46,12 @@ final class AgentMarkdownTests: XCTestCase {
         ```
         ````
         """
-        XCTAssertEqual(ChatLook.blocks(reply), [.code("```swift\nlet x = 1\n```")])
+        XCTAssertEqual(shape(ChatLook.pieces(reply)), ["code:```swift\nlet x = 1\n```"])
     }
 
     /// Only hashes after a space close a heading; one that's part of a word stays.
     func testAHashInAHeadingsWordStays() {
-        XCTAssertEqual(ChatLook.blocks("## C#"), [.heading("C#")])
-        XCTAssertEqual(ChatLook.blocks("## Done ##"), [.heading("Done")])
+        XCTAssertEqual(shape(ChatLook.pieces("## C#")), ["text:C#"])
+        XCTAssertEqual(shape(ChatLook.pieces("## Done ##")), ["text:Done"])
     }
 }
