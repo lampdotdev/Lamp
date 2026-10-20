@@ -345,8 +345,8 @@ enum Devices {
         return "\(project.name) keeps its data in iCloud, which Apple allows only with a paid Apple Developer membership. Your Apple account is a free one, so Lamp can't put the app on \(place). Choose a simulator under Try On to keep working, or ask Lamp to keep the data on the device instead."
     }
 
-    /// What Try On is set to and what Lamp's device list returned, for the first iPhone look in a turn. The list
-    /// holds paired phones that are away too, and a lookup that fails returns nothing, so this says what it holds.
+    /// What Try On is set to and what Lamp's device lookup returned, for an iPhone preview result once per turn. The
+    /// lookup holds paired phones that are away too, and one that fails returns nothing, so this says what it holds.
     static func tryOnNote(chosen udid: String?, among devices: [Device]) -> String {
         let simulator = "Try On is set to the simulator."
         if let udid {

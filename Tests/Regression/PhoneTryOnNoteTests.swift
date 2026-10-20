@@ -2,7 +2,8 @@ import XCTest
 @testable import Lamp
 
 /// Lamp builds, signs and installs an iPhone app on the person's own phone chosen under Try On, with a free Apple
-/// account. The prompts say so, and the first iPhone look says what Try On is set to and what the device list holds.
+/// account. The prompts say so, and an iPhone preview result once per turn notes the Try On selection and Lamp's
+/// device lookup.
 @MainActor
 final class PhoneTryOnNoteTests: XCTestCase {
     private let phone = Devices.Device(udid: "00008110-TEST", name: "Test iPhone", model: "iPhone 16",

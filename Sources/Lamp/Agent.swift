@@ -435,10 +435,10 @@ enum Agent {
         /// Installing on the person's own phone and looking in the simulator, shared by both iOS prompts.
         static let phone = """
         Lamp can build, sign and install the app on the person's own iPhone or iPad, the one chosen under Try On, \
-        with a free Apple account; some capabilities, such as iCloud, need a paid Apple Developer membership. To \
-        open the app on a phone, the person connects it, chooses it under Try On and presses Play. Your looks at \
-        the iPhone app are in the simulator. The first iPhone look in a turn includes which phone Try On is set to \
-        and the phones Lamp's device list returned.
+        with a free Apple account; some capabilities require a paid Apple Developer membership. To open the app \
+        on a phone, the person connects it, chooses it under Try On and presses Play. Your looks at the iPhone app \
+        are in the simulator. An iPhone preview result includes a note about the Try On selection and Lamp's \
+        device lookup once per turn, after the simulator app opens.
         """
 
         static let edit = """
