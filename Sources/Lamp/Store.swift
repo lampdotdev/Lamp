@@ -2926,9 +2926,13 @@ final class Store: ObservableObject {
                     received(project)
                 case .acting(let id, let started):
                     if started { turn.codexActing.insert(id) } else { turn.codexActing.remove(id); steer(project) }
-                case .ran(let command, let refused):
+                case .ran(let command, let refused, let call):
                     // Codex's reviewer decided, or nothing had to: the chat says so as it does for a command Lamp let run.
                     guard saysCommands else { break }
+                    // Codex shows a command as started before its reviewer refuses it: that step never ran, so it goes.
+                    if refused, let index = logs[project.id]?.lastIndex(where: { $0.kind == .tool && $0.text == call }) {
+                        logs[project.id]?.remove(at: index)
+                    }
                     log(project, .status, (refused ? "Not run: " : "Ran: ") + command, said: turn.naming)
                 case .finished:
                     // Claude Code has answered. A message sent from now on is the next request.

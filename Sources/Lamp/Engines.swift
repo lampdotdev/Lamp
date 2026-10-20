@@ -687,7 +687,8 @@ extension Agent {
         case ("item.completed", "command_execution"):
             // "declined": Codex's reviewer refused it, and it never ran.
             let command = item["command"] as? String ?? ""
-            return [.step("")] + (command.isEmpty ? [] : [.ran(Self.unwrapped(command), refused: item["status"] as? String == "declined")])
+            return [.step("")] + (command.isEmpty ? [] : [.ran(Self.unwrapped(command), refused: item["status"] as? String == "declined",
+                                                                call: "Run: \(command)")])
         case ("item.completed", "mcp_tool_call"):
             return [.step("")]
         case ("item.started", "mcp_tool_call"):

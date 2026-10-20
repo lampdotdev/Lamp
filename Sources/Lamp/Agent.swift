@@ -41,8 +41,8 @@ enum AgentEvent {
     /// reasoning summary's heading. Empty for a command that came without one, which leaves it unnamed.
     case naming(String)
     /// A shell command Codex ran, or that its reviewer refused (`refused`), as it ran it: said in the chat when no
-    /// approval of Lamp's said it already (`AgentRun.saysCommands`).
-    case ran(String, refused: Bool)
+    /// approval of Lamp's said it already (`AgentRun.saysCommands`). `call` is the step its start was shown as.
+    case ran(String, refused: Bool, call: String)
 }
 
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.
