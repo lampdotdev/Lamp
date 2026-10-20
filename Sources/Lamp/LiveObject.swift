@@ -56,6 +56,24 @@ enum LiveObject {
     /// A type's mangled name: the module, then each part of its qualified name with its kind's letter (V for a
     /// struct, C for a class or actor, O for an enum), the last part's `kind` and the outer parts' from `kinds` by
     /// their qualified names (a `Mood` inside a `Game` struct is `4GameV4MoodO`), the last part's kind where none is known.
+    /// Whether a symbol is the kept type's: its mangled name, where a private type's part carries the compiler's
+    /// discriminator between its name and its kind letter (`4Mood33_<32 hex>LLO`).
+    static func isKept(_ symbol: String, as kept: String) -> Bool {
+        var pattern = "^_\\$s", rest = Substring(kept), module = true
+        while let m = rest.firstMatch(of: #/^(\d+)/#), let length = Int(m.1) {
+            rest = rest.dropFirst(m.1.count)
+            let part = rest.prefix(length)
+            rest = rest.dropFirst(length)
+            pattern += m.1 + NSRegularExpression.escapedPattern(for: String(part))
+            // The module carries no kind letter; each type's part has one, with the discriminator before it.
+            if module { module = false; continue }
+            guard let kind = rest.first else { break }
+            rest = rest.dropFirst()
+            pattern += #"(?:33_[0-9A-F]{32}LL)?"# + String(kind)
+        }
+        return symbol.range(of: pattern, options: .regularExpression) != nil
+    }
+
     static func mangledType(_ name: String, module: String, kind: String, kinds: [String: String] = [:]) -> String {
         var prefix = "", out = "\(module.utf8.count)\(module)"
         let parts = name.split(separator: ".")
@@ -131,7 +149,7 @@ enum LiveObject {
                 continue
             }
             guard type & UInt8(N_TYPE) == UInt8(N_SECT), isIdentity(name, local: type & UInt8(N_EXT) == 0) else { continue }
-            if let keep = kept.first(where: { name.hasPrefix("_$s" + $0) }) { matched.insert(keep); own.insert(index) }
+            if let keep = kept.first(where: { isKept(name, as: $0) }) { matched.insert(keep); own.insert(index) }
             renamed[index] = symtab.nsyms + added.count
             added.append((name, UInt8(N_UNDF) | UInt8(N_EXT), UInt16(N_WEAK_REF)))
             names.append(name)

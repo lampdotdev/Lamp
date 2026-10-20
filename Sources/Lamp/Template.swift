@@ -3777,6 +3777,8 @@ enum Template {
         nonisolated(unsafe) static var retired = Set<String>()
         /// A struct's property, by name: what was set, kept as set.
         func field(_ name: String) -> Any? { Self.retired.contains(name) ? nil : (value as? [String: Entry])?[name]?.value }
+        /// Whether the property was ever set: a value set to nil is a value, told apart from one never set.
+        func has(_ name: String) -> Bool { !Self.retired.contains(name) && (value as? [String: Entry])?[name] != nil }
         struct Entry { var value: Any; var initial: Any }
         /// Keeps what was set beside the property's starting value, which is what a struct that never set it holds:
         /// two values compare and hash by what their properties are, set or not, as they would stored.
@@ -3859,7 +3861,11 @@ enum Template {
         private var changes = 0
         func get<T>(_ name: String, _ initial: () -> T) -> T {
             _ = changes
-            if let value = values[name] as? T { return value }
+            if let stored = values[name] {
+                if let value = stored as? T { return value }
+                // An optional set to nil is kept boxed, which doesn't cast: it was set, to nil.
+                if let kind = T.self as? ExpressibleByNilLiteral.Type { return kind.init(nilLiteral: ()) as! T }
+            }
             let value = initial()
             values[name] = value
             return value
@@ -15870,7 +15876,7 @@ enum Template {
             open(my $in, '<', $file) or next; my $s = <$in>; close($in);
             # A struct read as bytes anywhere (MemoryLayout, a buffer handed to Metal) must stay the size it's written
             # with, and the one read may be declared in another file: so no struct gets a spare in such an app.
-            $raw = 1 if !$own{(split m#/#, $file)[-1]} && $s =~ /MemoryLayout|withUnsafe|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
+            $raw = 1 if !$own{(split m#/#, $file)[-1]} && $s =~ /MemoryLayout|withUnsafe|unsafeBitCast|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
             $s =~ s#/\*[\s\S]*?\*/# #g; $s =~ s#//[^\n]*##g;
             # A struct made an OptionSet or RawRepresentable in an extension: its memberwise initializer is the
             # protocol's `init(rawValue:)`, which a spare's parameter would unfit.
@@ -15900,7 +15906,8 @@ enum Template {
     sub inside { my $p = shift; for my $span (@skip) { return 1 if $p >= $span->[0] && $p < $span->[1] } 0 }
     sub spares {
         my ($i, $whole, $header, $kind, $name, $raw) = @_;
-        my $pad = "\n$i    ";
+        # On a line of its own the places go under it, indented; after other text they go on the same line.
+        my $pad = $i =~ /^[ \t]*$/ ? "\n$i    " : " ";
         if ($kind eq 'class') {
             return $whole if $header =~ /\@Model\b|NSManagedObject|(?<!unchecked )\bSendable\b/;
             my $published = $header =~ /ObservableObject/ ? '@Published ' : '';
@@ -15916,7 +15923,7 @@ enum Template {
     }
     for my $file (@files) {
         open(my $in, '<', $file) or die "$file: $!"; my $s = <$in>; close($in);
-        my $raw = $rawAll || $s =~ /MemoryLayout|withUnsafe|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
+        my $raw = $rawAll || $s =~ /MemoryLayout|withUnsafe|unsafeBitCast|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
         @skip = spans($s);
         $s =~ s{var\s+body\s*:\s*some\s+(?:SwiftUI\.)?View\s*\{}~ inside($-[0]) ? $& : "var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\n    \@ViewBuilder var __lampBody: some View {" ~ge;
         @skip = spans($s);
@@ -15925,7 +15932,8 @@ enum Template {
         $s .= "\n\@main enum __LampEntry { \@MainActor static func main() { LampLive.watch(); $main.main() } }\n" if defined $main;
         if ($wantSpares) {
             @skip = spans($s);
-            $s =~ s#^([ \t]*)(((?:\@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated|indirect)\s+)*)(class|struct)\s+(?!$modifier)(\w+)([^{;]*)\{)#inside($-[0]) ? $& : $1 . spares($1, $2, $3 . $6, $4, $5, $raw)#gme;
+            # At the start of a line, or after a brace or semicolon on one (a type declared inside another on one line).
+            $s =~ s#(^[ \t]*|[{;][ \t]*)(((?:\@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated|indirect)\s+)*)(class|struct)\s+(?!$modifier)(\w+)([^{;]*)\{)#inside($-[0] + length($1)) ? $& : $1 . spares($1, $2, $3 . $6, $4, $5, $raw)#gme;
         }
         if ($wantFinal) {
             @skip = spans($s);
