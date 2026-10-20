@@ -403,7 +403,7 @@ installed Lamp into Lamp Dev, so the development build has something to work on.
 overrides; empty makes the plain Lamp Dev): its bundle id ends in the name, and `Edition.instance` gives it its own
 folders, four ports from a hash of the name, URL scheme and prefixes, so builds from two worktrees run at once without
 sharing a desk, a gateway or Launch Services' idea of which is which. `fresh-start.sh` and `dev-data.sh` work on this
-checkout's instance. The agent's sandbox closes every Lamp's folder (`Edition.lampFolderNames`), instances included. To see what someone with a bare Mac
+checkout's instance. The agent's sandbox closes every Lamp's folder (`Edition.lampFolderNames`), instances included. The Chrome experiment's native host is the one thing instances share: the extension names it, and Chrome keeps one registration per name, so the instance that connected last owns it. To see what someone with a bare Mac
 sees, `LAMP_PRETEND_MISSING` (`Pretend`, Lamp Dev only) makes Lamp's own checks miss the Command Line Tools,
 Xcode, the person's own Claude Code and Codex or tools from the PATH; a new check for something a fresh Mac lacks goes through it too.
 
