@@ -177,7 +177,9 @@ final class LiveCasesTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(100))
         report.append("== run")
         report += output.lines
-        return report.joined(separator: "\n") + "\n"
+        // A file by its path in the app: the case's folder is made anew each run, under this Mac's home folder.
+        return (report.joined(separator: "\n") + "\n").replacingOccurrences(of: liveSources.path + "/", with: "")
+            .replacingOccurrences(of: project.dir.path, with: "<app>")
     }
 
     /// The case's process, with the app's folder and how many changes its binary already holds; what it prints

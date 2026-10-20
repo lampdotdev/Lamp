@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: v0 true
+RELOAD 1: ok
+after1 (want v1): v1 true

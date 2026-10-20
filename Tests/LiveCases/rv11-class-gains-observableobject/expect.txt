@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Model changed what it holds (Lamp's spare place in Model))
+== run
+before: v0 n=1
+RELOAD 1: REOPEN Model changed what it holds (Model.___lampSpare_Model_0: Published<LampSpare?>)
+after1 (want v1 in place: a protocol was added, no superclass): v0 n=1
+before: v1 n=1
+RELOAD 1: in the restart
+after1 (want v1 in place: a protocol was added, no superclass): v1 n=1

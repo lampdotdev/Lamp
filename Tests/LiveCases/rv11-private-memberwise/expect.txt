@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Item.count)
+== run
+before: a 1
+RELOAD 1: ok
+after1 (want "a 1" then "a 6"): a 1 a 6

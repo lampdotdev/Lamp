@@ -819,7 +819,8 @@ so a subclass added, or an initializer added or changed, reopens the app with it
 by the runtime after the compile. So is each type's shape (`LiveReload.Group.shape`): struct, class, enum or actor, an
 enum's `@objc` and `indirect`, whether the type is generic (itself or declared inside a generic type, with its
 parameters, `generic<T>`), a class's superclass (the first name it inherits when
-that's a class: one of the app's, or a system name not shaped like a protocol's), and a protocol's requirement
+that's one of the app's classes, or a system name the class's initializers show it inherits from: one of them
+overriding, the compiler's own included, or a `super` call; a system protocol such as `ObservableObject` is no superclass), and a protocol's requirement
 signature (`: AnyObject`, what it inherits, its associated types' constraints), each of which lays values, objects,
 method tables or witness tables out differently while the type holds the same fields; a stored reference's `weak`
 or `unowned` is part of its field's entry (`Owner<tab>weak helper: Helper?`). A shape is compared only where both
@@ -835,7 +836,11 @@ as Identifiable's `ID` or a Sequence's `Iterator`, is a typealias it declares it
 returning `some …`, a modifier's `body(content:)` or a style's `makeBody`, whose type is what it builds, is listed by that
 type as the compiler prints it where the body's value becomes the opaque one, `LiveReload.opaqueGroup`, so `1` may
 become `1.5` only if the member returns a Double now, and `Text("a")` may become `Text("a").bold()`; where that type is
-opaque too (a modifier's `some View`) it's listed by a digest of the calls and types its body names instead: the open app's witness tables and callers were laid out for the type it had, and the
+opaque too (a modifier's `some View`) it's listed by a digest of every node in its body whose type involves an opaque
+one, by that type (`(some Equatable, Int)`, so a tuple's or array's plain parts count) and by the declaration it calls
+with the types it was given (`padding [with … Self -> Text]`), which together are the type: `.bold()` added before
+`.padding()` changes nothing, `.font()` after it does, and so does another overload (`padding()` to `padding(12)`),
+whose opaque result is another type even when it builds the same one: the open app's witness tables and callers were laid out for the type it had, and the
 compiler prints both as `some View`; a view's own body, wrapped by the live copy, and a private member are left out; a private type is listed with its file,
 `LiveReload.placeGroup`, since its mangled name carries it and one moved to another file is another type at run time,
 and keyed with its file throughout the layout and the declarations (`Row@A.swift`, each part of a nested one; `LiveReload.bare`
@@ -927,13 +932,20 @@ so its own `==` and hash run: they take a property never set as its starting val
 through two overloads of the keyed coding containers, which the compiler's Codable code takes over the general ones). A struct's moved properties drop out of the initializer Swift makes for it, which the new code may call with them,
 so `LiveSlots.memberwiseInitializers` makes that one again in an extension in the struct's file, from the labels and types
 the compiler lists for it (`SwiftSource.Declarations.memberwise`), one for each moved property, so a call passing any
-of them is matched by the first it passes and one passing none only by Swift's own. The spare itself is a parameter
+of them is matched by the first it passes and one passing none only by Swift's own. So does a struct whose memberwise
+initializer is private, since these extensions go in the type's own file. A view's moved `@State` is no parameter of
+the view's initializer any more, and can't be made one (SwiftUI makes the state box lazily, after the initializer
+has run, so a value given that way would be lost): a change whose code passes it there reopens the app, saying so. A struct or view declared inside a function can't be extended, so a
+property added to one reopens the app with that reason. A class's moved property is a `final` computed one, so a
+class something subclasses keeps the method table the open app laid out. The spare itself is a parameter
 of that initializer too, with a default, which a call never notices but a reference to the initializer as a value
 (`.map(Item.init)`) does, since it matches by the whole signature: when a live build fails on the spares
 (`LiveSlots.brokeBuild`), every struct the copy gave a spare has its memberwise initializer written again without
 the spare's parameter, in `.lamp/live/Sources/LampMemberwise.swift` (`LiveSlots.addMemberwise`, from a dump of the
 plain sources, which the copy step keeps), and the build is tried once more before spares are given up.
-Left out is what a spare would break: SwiftData and Core Data models, `Sendable` classes, `Equatable` views, the App
+Left out is what a spare would break: SwiftData and Core Data models, `Sendable` classes, `Equatable` views (declared
+so, or made so in an extension, which the scan reports), a class under a class of the same simple name (whose spare
+places would clash), the App
 and its scenes, property wrappers, App Intents, OptionSets and RawRepresentable structs (declared so, or made so in an
 extension, which the copy step's scan reports), whose `init(rawValue:)` is the memberwise one, and every struct in an
 app any of whose own files lays memory out by hand (vertex data; the struct read as bytes may be declared in another;
@@ -948,7 +960,8 @@ views redraw. A value set is read back as set, nil included: a spare tells "set 
 all (`LampSpare.has`, a class's non-nil `LampSpare?`, the state box's stored entry), since a nil boxed as `Any`
 doesn't cast back. A class's starting value that isn't a literal (`.now`, a call) is worked out on the first read and kept;
 a struct can't keep one from a read, so its new property needs a starting value that comes out the same every time (a
-literal, an empty collection, or one of the app's own enum's cases, judged again each time the property is put back;
+literal (by the compiler's word, however it's spelt: `"a\nb"`, `0xFF`), an empty collection, or one of the app's own
+enum's cases, judged again each time the property is put back;
 anything else, or a different one later, reopens the app, since the spare compares a value that never set the
 property by the starting value it was taken in with); a `@Published` property in a class whose places aren't published (conforming
 in an extension) reopens it too. `@State` is read in both forms the compiler has given it: `_name: State<T>`, and
@@ -1025,7 +1038,12 @@ compiled again, so every reader goes through it; it stays rewritten until the ap
 hold an object needs the app reopened instead (it waits for Reload, as above), since a second object would split the
 app's state: one of the app's own classes, and anything that isn't a plain value of Swift's or SwiftUI's
 (`holdsObject`), so a Lamp building block such as `LampAPI.own(…)` or a system class too. A tuple's labels and Lamp's
-own spare places in a struct name no type of their own, so they don't count.
+own spare places in a struct name no type of their own, so they don't count. A constant declared in one list with
+others (`let a = 1, b = 2`) isn't rewritten, and the reason says so.
+
+A stored static or global `var` is made once too, the first time it's read, so a new starting value for one can't
+show without reopening, and whether it seemed to would depend on whether it had been read: its starting value is
+part of the layout as a digest as well (`LiveReload.Group.stored`), and one that changed reopens the app.
 
 **The live cases** (`Tests/LiveCases`, run by `LiveCasesTests`) are the record of which side each kind of change
 lands on: every case found by a review round, as an app's sources, one `afterN/` folder per change and `expect.txt`

@@ -1,8 +1,16 @@
-VERDICT 1: RELOAD
-VERDICT 2: RELOAD
+VERDICT 1: REOPEN (the starting value of Settings.volume changed, and the open app made it once and keeps it)
+VERDICT 2: REOPEN (the starting value of Settings.brightness changed, and the open app made it once and keeps it)
 == run
 before: 1
-RELOAD 1: ok
+RELOAD 1: REOPEN the starting value of Settings.volume changed, and the open app made it once and keeps it
 after1 (the app read it already: 1 is right; the new 5 can't apply): 1
-RELOAD 2: ok
-after2 (never read before: should it be 9?): 2
+before: 5
+RELOAD 1: in the restart
+after1 (the app read it already: 1 is right; the new 5 can't apply): 5
+RELOAD 2: REOPEN the starting value of Settings.brightness changed, and the open app made it once and keeps it
+after2 (never read before: should it be 9?): 
+before: 5
+RELOAD 1: in the restart
+after1 (the app read it already: 1 is right; the new 5 can't apply): 5
+RELOAD 2: in the restart
+after2 (never read before: should it be 9?): 9

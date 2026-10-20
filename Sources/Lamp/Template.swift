@@ -15878,7 +15878,7 @@ enum Template {
         # Lamp's own files (`-own=LampSupport.swift,…`) are scanned for names like the rest, but what they do with
         # raw memory is their own business, never a reason to keep the app's structs from their spares.
         my %own = map { $_ => 1 } split /,/, (($ARGV[0] // '') =~ /^-own=(.*)/ ? do { shift @ARGV; $1 } : '');
-        my (%names, %alias, %nospare, $raw);
+        my (%names, %alias, %nospare, %equatable, $raw);
         for my $file (@ARGV) {
             open(my $in, '<', $file) or next; my $s = <$in>; close($in);
             # A struct read as bytes anywhere (MemoryLayout, a buffer handed to Metal) must stay the size it's written
@@ -15888,6 +15888,12 @@ enum Template {
             # A struct made an OptionSet or RawRepresentable in an extension: its memberwise initializer is the
             # protocol's `init(rawValue:)`, which a spare's parameter would unfit.
             while ($s =~ /\bextension\s+([\w.]+)\s*:[^{]*\b(?:OptionSet|RawRepresentable)\b/g) { $nospare{(split /\./, $1)[-1]} = 1 }
+            # A view made Equatable or Hashable in an extension: its state box isn't either, and the synthesized
+            # conformance would fail as it does for one declared so (`spares` reads only the declaration's header).
+            while ($s =~ /\bextension\s+([\w.]+)\s*:[^{]*\b(?:Equatable|Hashable)\b/g) { $equatable{(split /\./, $1)[-1]} = 1 }
+            # A class under a class of the same simple name (`B.Item: A.Item`): spare places are named by the simple
+            # name, so the subclass's would override the superclass's stored ones. Neither gets any.
+            while ($s =~ /\bclass\s+(?!$modifier)(\w+)(?:<[^>]*>)?\s*:\s*([\w.]+)/g) { my ($n, $up) = ($1, (split /\./, $2)[-1]); $nospare{$n} = 1 if $n eq $up }
             while ($s =~ /\btypealias\s+(\w+)(?:<[^>]*>)?\s*=\s*([\w.]+)/g) { $alias{$1} = $2 }
             while ($s =~ /\bclass\s+\w+(?:<[^>]*>)?\s*:\s*([\w.]+)/g) { $names{$1} = 1 }
             while ($s =~ /<[^<>]*>/g) { my $g = $&; while ($g =~ /:\s*([\w.]+)/g) { $names{$1} = 1 } }
@@ -15895,13 +15901,14 @@ enum Template {
         }
         for my $name (keys %names) { my $n = $name; for (1 .. 4) { last unless exists $alias{(split /\./, $n)[-1]}; $n = $alias{(split /\./, $n)[-1]}; $names{$n} = 1 } }
         # The names, then what the spares step is told: `-raw`, and `-nospare:Name` for each.
-        print join(' ', sort(keys %names), ($raw ? '-raw' : ()), map { "-nospare:$_" } sort keys %nospare), "\n";
+        print join(' ', sort(keys %names), ($raw ? '-raw' : ()), (map { "-nospare:$_" } sort keys %nospare), map { "-equatable:$_" } sort keys %equatable), "\n";
         exit 0;
     }
     my ($count, $subclassed, $flags, @files) = @ARGV;
     my %subclassed = map { (split /\./)[-1] => 1 } grep { !/^-/ } split ' ', $subclassed;
     my $rawAll = $subclassed =~ /(?:^|\s)-raw(?:\s|$)/;
     my %nospare = map { substr($_, 9) => 1 } grep { /^-nospare:/ } split ' ', $subclassed;
+    my %equatable = map { substr($_, 11) => 1 } grep { /^-equatable:/ } split ' ', $subclassed;
     my $wantSpares = $flags =~ /s/; my $wantFinal = $flags =~ /f/;
     # The stretches of a file no rewrite may touch, worked out again after each rewrite moves them.
     my @skip;
@@ -15916,13 +15923,13 @@ enum Template {
         # On a line of its own the places go under it, indented; after other text they go on the same line.
         my $pad = $i =~ /^[ \t]*$/ ? "\n$i    " : " ";
         if ($kind eq 'class') {
-            return $whole if $header =~ /\@Model\b|NSManagedObject|(?<!unchecked )\bSendable\b/;
+            return $whole if $nospare{$name} || $header =~ /\@Model\b|NSManagedObject|(?<!unchecked )\bSendable\b/;
             my $published = $header =~ /ObservableObject/ ? '@Published ' : '';
             return $whole . join('', map { "${pad}${published}var __lampSpare_${name}_$_: LampSpare? = nil;" } 0 .. $count - 1);
         }
         return $whole if $header =~ /\@propertyWrapper|\@frozen|\b(?:App|Scene|Commands|DynamicProperty|AppIntent|\w*Intent|AppEntity|\w*Query|TimelineProvider|TimelineEntry|Widget\w*)\b/;
         if ($header =~ /\bView\b/) {
-            return $whole if $header =~ /\b(?:Equatable|Hashable)\b/;
+            return $whole if $equatable{$name} || $header =~ /\b(?:Equatable|Hashable)\b/;
             return "${whole}${pad}\@State private var __lampState_${name} = LampStateBox();";
         }
         return $whole if $raw || $nospare{$name} || $header =~ /\b(?:OptionSet|RawRepresentable)\b/;

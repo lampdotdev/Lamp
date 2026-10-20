@@ -229,8 +229,8 @@ enum Agent {
     to that method goes in; make that method internal, not private or fileprivate, since a private one is called \
     directly and stays as it was. A property added in place isn't saved until the app reopens. A method, computed property or \
     initializer added to a class that something subclasses needs the app reopened; a class nothing subclasses takes \
-    methods and computed properties in place. A `static var` or global `var` keeps the value the open app gave it: a \
-    new starting value for one shows only after the app reopens, so change what reads it, or a `let`. A `let` made \
+    methods and computed properties in place. A new starting value for a `static var` or global `var` needs the app \
+    reopened, since the open app made its value once; a `let`'s goes in place. A `let` made \
     by calling a function (`static let table = build()`) is remade only when its own line changes, not when the \
     function does. Mark a view \
     that only its own file uses `private`, so a change to it compiles that file alone. \

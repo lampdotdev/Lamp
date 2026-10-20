@@ -192,6 +192,9 @@ final class LiveReloadTests: XCTestCase {
                 }
             }
             private final class Vault { var n = 1 }
+            final class Shell: NSObject { final class Core: NSObject {}; override init() { super.init() } }
+            func element() -> some Equatable { 1 }
+            func items() -> some Collection { [(element(), 1)] }
             """.write(to: sources.appendingPathComponent("Shapes.swift"), atomically: true, encoding: .utf8)
         let layout = await LiveReload.layout(of: sources, in: project, files: ["Shapes.swift"], module: project.exe, macOS: "14.0")
         let shape = layout?.filter { $0.hasPrefix("protocol Shape") } ?? []
@@ -291,6 +294,9 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertNil(LiveReload.layoutProblem(before: layout, after: sameType).problem)
         let otherLiteral = try await layoutWith([("some Numeric { 1 }", "some Numeric { 1.5 }")])
         XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: otherLiteral).problem, "Styled.n(): (Styled) -> () -> some Numeric returns a Double now, where the open app's returned a Int")
+        let tupled = try await layoutWith([("[(element(), 1)]", "[(element(), \"x\")]")])
+        XCTAssertEqual(LiveReload.layoutProblem(before: otherLiteral, after: tupled).problem?.hasPrefix("items(): () -> some Collection returns another kind of value now"), true)
+        _ = try await layoutWith([("[(element(), \"x\")]", "[(element(), 1)]")])
         let otherCall = try await layoutWith([("some Numeric { 1.5 }", "some Numeric { 1 }"), ("some Equatable { n() }", "some Equatable { t() }")])
         XCTAssertEqual(LiveReload.layoutProblem(before: layout, after: otherCall).problem, "Styled.p(): (Styled) -> () -> some Equatable returns another kind of value now (some …), which what the open app made can't take")
         let otherType = try await layoutWith([("some Equatable { t() }", "some Equatable { n() }"), ("Square(side: 2, name: \"t\")", "Round(r: 1)")])
@@ -350,6 +356,9 @@ final class LiveReloadTests: XCTestCase {
                         "Answers.c().first().Answer@Shapes.swift\tn: Int", "Answers.c().second().Answer@Shapes.swift\tn: Int", "Answers.c().second().Answer@Shapes.swift\ts: String"])
         XCTAssertNotNil(analysed?.declarations.variables["Answers.c().second().Answer@Shapes.swift\ts"])
         XCTAssertEqual(analysed?.declarations.classes.contains("Vault"), true)
+        // A nested class's initializers come before its outer class's: both are known to be under NSObject.
+        XCTAssertTrue(layout!.contains(LiveReload.shapeGroup + "\tShell\tclass : NSObject"), "\(layout!.filter { $0.contains("Shell") })")
+        XCTAssertTrue(layout!.contains(LiveReload.shapeGroup + "\tShell.Core\tclass : NSObject"), "\(layout!.filter { $0.contains("Core") })")
         // A constant made from a private enum is found by the enum's bare name, and the bared layout names every
         // type bare, an alias's owner included.
         XCTAssertEqual(LiveSlots.constants(naming: ["Tone@Shapes.swift"], in: try XCTUnwrap(analysed?.declarations)), ["Tones\tcount"])

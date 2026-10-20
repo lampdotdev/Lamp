@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: v0 Button<Text>
+RELOAD 1: ok
+after1 (want v1 in place: the action's body is code, not the type): v1 Button<Text>
