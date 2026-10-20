@@ -198,6 +198,17 @@ final class SidebarServer {
         }
     }
 
+    /// The sidebar empties its box as Return is pressed, before Lamp has the words: when they weren't sent after all,
+    /// Lamp's draft (which still holds them) goes back to the box, as a draft changed here would.
+    private func giveBack(_ project: LampProject) {
+        draftVersions[project.id, default: 0] += 1
+        pushNow()
+    }
+
+    private func pushNow() {
+        connections.values.forEach { $0.push(force: false) }
+    }
+
     // MARK: What the sidebar shows
 
     /// Bumped when the draft is changed anywhere but the sidebar itself, which then takes it up.
@@ -607,10 +618,11 @@ final class SidebarServer {
         let submitted = store.draft(for: project)
         guard !submitted.isEmpty else { return }
         let replaced = submitted.replacing.flatMap { id in store.logs[project.id]?.first { $0.id == id } }
-        guard replaced == nil || !store.busy.contains(project.id), let token = store.beginSubmission(project) else { return }
+        guard replaced == nil || !store.busy.contains(project.id), let token = store.beginSubmission(project) else {
+            return giveBack(project)
+        }
         // The box's words are taken: a Send the sidebar made before it heard so isn't sent again.
         sends[project.id, default: 0] += 1
-        scheduleUpdate()
         dictations[project.id]?.cancel()
         store.endArrival(for: project.id)
         func finish(sent: Bool) {
@@ -618,6 +630,9 @@ final class SidebarServer {
                 store.updateDraft(store.draft(for: current).afterSubmission(submitted, sent: sent), for: current)
             }
             store.endSubmission(token)
+            if !sent { giveBack(project) }
+            // At once, not after the usual pause: the person is waiting to see their message go.
+            pushNow()
         }
         PhoneSetup.shared.perform(for: project, in: store, cancelled: { finish(sent: false) }) { current in
             let text = submitted.text.trimmed
@@ -892,6 +907,11 @@ final class SidebarServer {
         private var source: DispatchSourceRead?
         private var buffer = Data()
         private var last: Data?
+        /// The draft as last sent, and its version. The sidebar takes the draft only when its version changes, so a
+        /// draft that changed only by the person typing in the sidebar is sent as it last was: otherwise each pause in
+        /// typing sent the whole chat back, to be read and drawn again.
+        private var sentDraft = ""
+        private var sentDraftVersion = -1
         private let outbox: SidebarOutbox
         /// A state that came while the last one was still going out: only the latest is sent once it has.
         private var waiting = false
@@ -980,6 +1000,12 @@ final class SidebarServer {
             if version >= 8 {
                 let onCards = Set(state.lines.compactMap(\.takeBack))
                 state.queued = state.queued?.filter { !onCards.contains($0.id) }
+            }
+            if state.draftVersion == sentDraftVersion {
+                state.draft = sentDraft
+            } else {
+                sentDraft = state.draft
+                sentDraftVersion = state.draftVersion
             }
             guard let data = SidebarWire.encode(state), force || data != last else { return }
             last = data
