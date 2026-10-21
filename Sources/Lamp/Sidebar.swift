@@ -521,10 +521,13 @@ final class SidebarServer {
                     card.done = placed
                     out.append(card)
                 case .reload:
-                    var card = SidebarLine(id: line.id, kind: .action, text: ReloadLine.text(project.name), gap: gap)
+                    let queued = Store.shared.reloadWhenFree.contains(project.id)
+                    var card = SidebarLine(id: line.id, kind: .action,
+                                           text: queued ? ReloadLine.queued(project.name) : ReloadLine.text(project.name), gap: gap)
                     card.symbol = "arrow.clockwise"
                     card.button = "Reload"
                     card.prominent = true
+                    card.disabled = queued
                     out.append(card)
                 case .drawIcon:
                     var card = SidebarLine(id: line.id, kind: .action, text: DrawIconLine.text(project.name), gap: gap)
