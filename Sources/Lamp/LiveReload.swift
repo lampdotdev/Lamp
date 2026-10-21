@@ -2044,17 +2044,19 @@ enum LiveReload {
     /// holds no reference to anything. What a type like `Font.Design` holds isn't public, so Lamp can't tell from the
     /// code; it asks the system instead, with a small program naming each type, compiled with the app's SDK and run
     /// on this Mac, in the app's sandbox like any compile of Lamp's there. The runtime it asks is the one the open app
-    /// runs on. A name the program can't find (from a framework it doesn't import, too new for the app's macOS) isn't
+    /// runs on. A type the program can't find (from a framework it doesn't import, too new for the app's macOS) isn't
     /// said to be plain. Asked only when a changed constant is made of such a type, and each type once while Lamp runs.
     @MainActor private static var podKnown: [String: Bool] = [:]
-    @MainActor static func plainTypes(_ names: [String], in project: LampProject) async -> Set<String> {
+    /// Asked by the name the compiler resolved each to, with its module (`SwiftUICore.Font.Design`), so the program
+    /// can't take the name for anything else; answered by the name as the app's code writes it.
+    @MainActor static func plainTypes(_ names: [String: String], in project: LampProject) async -> Set<String> {
         // Only a type's name, part by part: it's written into the program.
-        let valid = Set(names.filter { $0.range(of: #"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$"#, options: .regularExpression) != nil })
-        let asking = valid.filter { podKnown[$0] == nil }.sorted()
+        let valid = names.filter { $0.value.range(of: #"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$"#, options: .regularExpression) != nil }
+        let asking = Set(valid.values).filter { podKnown[$0] == nil }.sorted()
         if !asking.isEmpty {
             for (name, isPOD) in await probePOD(asking, in: project) { podKnown[name] = isPOD }
         }
-        return valid.filter { podKnown[$0] == true }
+        return Set(valid.filter { podKnown[$0.value] == true }.keys)
     }
 
     /// The program's answer for each name it could compile. A name it can't is left out and the rest compiled again.
@@ -2436,13 +2438,15 @@ enum LiveSlots {
     }
 
     /// The system types to ask about before judging the constants a change gives a new value (`LiveReload.plainTypes`):
-    /// those a changed constant's value, or one made from it, is made of that Lamp can't judge from the code. Never
-    /// one of the app's own classes, which hold an object whatever else they hold, nor a name the app gives a type of
-    /// its own, which isn't the system's type of that name. None for most changes, which change no constant or only
+    /// those a changed constant's value, or one made from it, is made of that Lamp can't judge from the code, each
+    /// with the system declaration the compiler resolved its name to. Only a name the compiler resolved to one system
+    /// declaration and never to one of the app's (a typealias of the app's in the widget's shared code is the app's,
+    /// whatever system type has its name), so what's asked is what the field holds; never one of the app's own
+    /// classes, which hold an object whatever else they hold. None for most changes, which change no constant or only
     /// plain ones.
-    static func unsureTypes(_ project: LampProject, before: [String], after: [String], declarations: SwiftSource.Declarations) -> [String] {
+    static func unsureTypes(_ project: LampProject, before: [String], after: [String], declarations: SwiftSource.Declarations) -> [String: String] {
         let all = changedConstants(project, before: before, after: after, declarations: declarations, plain: [], judging: false)
-        guard !all.isEmpty else { return [] }
+        guard !all.isEmpty else { return [:] }
         let layout = LiveReload.byType(LiveReload.bared(after)), own = declarations.ownTypeNames
         var asked = Set<String>()
         for key in withDependents(all, in: declarations) {
@@ -2450,7 +2454,11 @@ enum LiveSlots {
             var seen = Set<String>()
             _ = objectHeld(in: variable.type, classes: declarations.classes, layout: layout, seen: &seen, unsure: { asked.insert($0) })
         }
-        return asked.filter { name in own.isDisjoint(with: name.split(separator: ".").map(String.init)) }.sorted()
+        var named: [String: String] = [:]
+        for name in asked where own.isDisjoint(with: name.split(separator: ".").map(String.init)) && !declarations.ownResolved.contains(name) {
+            if let system = declarations.systemResolved[name], !system.isEmpty { named[name] = system }
+        }
+        return named
     }
 
     /// When every way the new code's types differ from the open app's is a stored property added to a type with a

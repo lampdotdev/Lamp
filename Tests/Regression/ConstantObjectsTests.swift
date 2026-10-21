@@ -88,7 +88,44 @@ final class ConstantObjectsTests: XCTestCase {
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: root) }
         let project = try Template.scaffold(name: "Plain", in: root)
-        let plain = await LiveReload.plainTypes(["Font.Design", "Font.Width", "Font.Weight", "URLSession", "NoSuchTypeHere", "Bad(name)"], in: project)
+        let plain = await LiveReload.plainTypes(["Font.Design": "SwiftUICore.Font.Design", "Font.Width": "SwiftUICore.Font.Width",
+                                                 "Font.Weight": "SwiftUICore.Font.Weight", "URLSession": "Foundation.URLSession",
+                                                 "NoSuchTypeHere": "Foundation.NoSuchTypeHere", "Bad": "Foundation.Bad(name)"], in: project)
         XCTAssertEqual(plain, ["Font.Design", "Font.Width", "Font.Weight"])
+    }
+
+    /// What's asked about is the system type the compiler resolved a field's type to, by its module and name. A name
+    /// the app gives a type of its own isn't asked about as the system's type of that name, even when it's declared
+    /// in the widget's shared code, which the app's analysis reads only as context: here `ComparisonResult` is the
+    /// app's name for `URLSession`, and Foundation's `ComparisonResult` holding no object says nothing of it.
+    @MainActor func testOnlyWhatTheCompilerResolvedToASystemTypeIsAskedAbout() async throws {
+        let fm = FileManager.default
+        let root = fm.homeDirectoryForCurrentUser.appendingPathComponent(".lamp-plain-types-test-\(UUID().uuidString)")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let project = try Template.scaffold(name: "Resolved", in: root)
+        func copy(_ name: String, design: String) throws -> URL {
+            // In the app's folder, which is what the sandbox the compiler runs in opens.
+            let sources = project.dir.appendingPathComponent(name).appendingPathComponent("Sources")
+            let shared = project.dir.appendingPathComponent(name).appendingPathComponent("Widget/Shared")
+            try fm.createDirectory(at: sources, withIntermediateDirectories: true)
+            try fm.createDirectory(at: shared, withIntermediateDirectories: true)
+            try "import Foundation\ntypealias ComparisonResult = URLSession\n".write(to: shared.appendingPathComponent("Alias.swift"), atomically: true, encoding: .utf8)
+            try """
+                import SwiftUI
+                struct Holder { var design: Font.Design; var weight: Font.Weight?; var order: ComparisonResult }
+                enum Keep { static let current = Holder(design: .\(design), weight: .bold, order: URLSession(configuration: .ephemeral)) }
+                """.write(to: sources.appendingPathComponent("Model.swift"), atomically: true, encoding: .utf8)
+            return sources
+        }
+        let before = await LiveReload.analysis(of: try copy("before", design: "rounded"), in: project, module: project.exe, macOS: "14.0")
+        let after = await LiveReload.analysis(of: try copy("after", design: "serif"), in: project, module: project.exe, macOS: "14.0")
+        let open = try XCTUnwrap(before), changed = try XCTUnwrap(after)
+        let asked = LiveSlots.unsureTypes(project, before: open.layout, after: changed.layout, declarations: changed.declarations)
+        XCTAssertEqual(asked, ["Font.Design": "SwiftUICore.Font.Design", "Font.Weight": "SwiftUICore.Font.Weight"])
+        // With the font styles answered plain, the app's ComparisonResult still holds an object.
+        var seen = Set<String>()
+        XCTAssertTrue(LiveSlots.holdsObject("Holder", classes: changed.declarations.classes, layout: LiveReload.byType(LiveReload.bared(changed.layout)),
+                                            seen: &seen, plain: Set(asked.keys)))
     }
 }
