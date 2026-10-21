@@ -108,7 +108,7 @@ enum Icons {
     /// Apple's picture maker has no way in but its own sheet, so nothing can be drawn while they're away,
     /// which rules it out for pictures inside apps and makes it no route for `AppAI.resolve`.
     static let byHand = "playground"
-    static let byHandLabel = "Image Playground (you pick each icon)"
+    static let byHandLabel = "Image Playground (creates each icon, you pick)"
 
     /// Whether icons are drawn by hand: chosen, and Image Playground is still on this Mac. Where it has
     /// gone (Apple Intelligence turned off), the choice is kept for its return and Lamp carries on as if
