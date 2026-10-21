@@ -2465,8 +2465,13 @@ enum LiveSlots {
             for (start, last, type, name) in stateRanges[file] ?? [] {
                 let used = LiveReload.bare(type) + ".$" + name
                 for use in declarations.uses where use.name == used && SwiftSource.within(use.at, (start, last)) {
-                    guard let offset = original.offset(use.at), original.slice(offset, offset + name.utf8.count + 1) == "$" + name else { return .refused(nil) }
-                    places[offset] = name
+                    guard let offset = original.offset(use.at) else { return .refused(nil) }
+                    if original.slice(offset, offset + name.utf8.count + 1) == "$" + name { places[offset] = name; continue }
+                    // A key path's component: its token is somewhere in the key path.
+                    guard let path = declarations.keyPathUses.first(where: { $0.start == use.at && $0.name == used }),
+                          let end = original.tokenEnd(path.last), case let span = original.slice(offset, end),
+                          let found = SwiftText.offsets(of: "$" + name, in: span).first else { return .refused(nil) }
+                    places[offset + found] = name
                 }
             }
             // From the last, so each one's place in the original still finds it.
@@ -2976,6 +2981,18 @@ enum SwiftText {
     /// Whether `identifier` is used in the code (not in a string or comment, nor as part of a longer name).
     static func mentions(identifier: String, in text: String) -> Bool {
         replacing(identifier: identifier, with: identifier + "\u{1}", in: text) != text
+    }
+
+    /// Where each use of `identifier` in the code starts, in bytes (not in a string or comment, nor part of a longer
+    /// name).
+    static func offsets(of identifier: String, in text: String) -> [Int] {
+        let marked = replacing(identifier: identifier, with: "\u{0}", in: text)
+        var found: [Int] = [], shift = 0
+        for (index, byte) in marked.utf8.enumerated() where byte == 0 {
+            found.append(index + shift)
+            shift += identifier.utf8.count - 1
+        }
+        return found
     }
 
     /// `text` with each use of `identifier` in its code (not in a string or comment, nor part of a longer name)

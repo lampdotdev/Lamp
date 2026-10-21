@@ -83,6 +83,9 @@ enum SwiftSource {
         /// `Mood.allCases`, `[Mood]`), that type's name. What code names is read from here, never from its text, so a
         /// string, a comment or a local of the same name is no use of it.
         var uses: [(at: Position, name: String)] = []
+        /// The uses that are a key path's components (`\.$count`), which have no place of their own: in `uses` at the
+        /// key path's start, and here with the key path's whole span, where the token is.
+        var keyPathUses: [(start: Position, last: Position, name: String)] = []
         /// Where each enum's cases are declared, with their raw values: what a use of a case is made of.
         var cases: [(start: Position, last: Position)] = []
         /// Each type's own `hash(into:)`, by its qualified name: sets and dictionaries the open app keeps were laid out
@@ -215,6 +218,8 @@ enum SwiftSource {
         private var attribute: (start: Position, last: Position)?
         // Where the last node read with a place starts: a type annotation's line has none.
         private var lastAt: Position?
+        // The key path being read, whose components have no place of their own.
+        private var keyPath: (indent: Int, range: (start: Position, last: Position))?
 
         /// An attribute's quoted value on a line (`decl="…"`).
         static func attribute(_ name: String, in line: String) -> Substring? {
@@ -241,6 +246,18 @@ enum SwiftSource {
                 if let value = Self.attribute("decl", in: line.text), let name = SwiftSource.usedName(value) {
                     out.uses.append((SwiftSource.location(in: line.text) ?? at, name))
                 }
+            } else if opens("member"), line.has(" decl=\""), let path = keyPath, indent > path.indent {
+                // A key path's component (`\.$count`) has no place of its own: it's at the key path's, and its token
+                // is found within that.
+                if let to = SwiftSource.declared(in: line.text) { out.calls.append((path.range.start, to)) }
+                if let value = Self.attribute("decl", in: line.text), let name = SwiftSource.usedName(value) {
+                    out.uses.append((path.range.start, name))
+                    out.keyPathUses.append((path.range.start, path.range.last, name))
+                }
+            }
+            if let open = keyPath, indent <= open.indent, !opens("member") { keyPath = nil }
+            if line.has("keypath_expr type="), !line.has("keypath_application_expr"), let r = SwiftSource.range(in: line.text) {
+                keyPath = (indent, r)
             }
             // A type written out: as an expression (`Mood.allCases`), or in an annotation, whose line has no place of
             // its own and is taken to be where the declaration around it starts.
