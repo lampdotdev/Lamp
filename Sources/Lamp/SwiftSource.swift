@@ -78,6 +78,8 @@ enum SwiftSource {
         /// a constant's value is made by what it calls, as far down as that goes (`constantEntries`).
         var bodies: [(start: Position, last: Position)] = []
         var calls: [(at: Position, to: Position)] = []
+        /// Where each enum's cases are declared, with their raw values: what a use of a case is made of.
+        var cases: [(start: Position, last: Position)] = []
         /// Each type's own `hash(into:)`, by its qualified name: sets and dictionaries the open app keeps were laid out
         /// by it (`hashEntries`).
         var hashing: [String: (start: Position, last: Position)] = [:]
@@ -198,6 +200,8 @@ enum SwiftSource {
                let r = SwiftSource.range(in: line.text) {
                 out.bodies.append(r)
                 if opens("func_decl"), line.has(" \"hash(into:)\" "), let owner = line.owner { out.hashing[owner] = r }
+            } else if opens("enum_case_decl"), let r = SwiftSource.range(in: line.text) {
+                out.cases.append(r)
             } else if line.has(" decl=\""), let to = SwiftSource.declared(in: line.text), let at = SwiftSource.range(in: line.text)?.start {
                 out.calls.append((at, to))
             }
@@ -412,15 +416,80 @@ enum SwiftSource {
         }
     }
 
+    /// Whether code in `from` reads what's declared in `target`, directly or through the app's code it calls, as far
+    /// down as that goes.
+    static func reaches(from: [(start: Position, last: Position)], _ target: (start: Position, last: Position), in declarations: Declarations) -> Bool {
+        func within(_ p: Position, _ r: (start: Position, last: Position)) -> Bool { p.file == r.start.file && before(r.start, p) && before(p, r.last) }
+        var pending = from, seen = Set<Int>()
+        while let r = pending.popLast() {
+            for call in declarations.calls where within(call.at, r) {
+                if within(call.to, target) { return true }
+                guard let index = declarations.bodies.indices.filter({ within(call.to, declarations.bodies[$0]) })
+                        .min(by: { before(declarations.bodies[$1].start, declarations.bodies[$0].start) }), seen.insert(index).inserted else { continue }
+                pending.append(declarations.bodies[index])
+            }
+        }
+        return false
+    }
+
+    /// A type as Swift's short spellings write it (`Array<String>` is `[String]`, `Optional<Int>` is `Int?`,
+    /// `Dictionary<K, V>` is `[K: V]`): the compiler prints a type as the code spells it, and the two are one type.
+    static func sugared(_ type: String) -> String {
+        var text = type
+        let rules: [(String, (String, String) -> String)] = [
+            (#"\bArray<([^<>]*)>"#, { inner, _ in "[\(inner)]" }),
+            (#"\bOptional<([^<>]*)>"#, { inner, _ in inner.contains(where: { " -&,".contains($0) }) ? "(\(inner))?" : inner + "?" }),
+            (#"\bDictionary<([^<>,]*), ([^<>]*)>"#, { key, value in "[\(key): \(value)]" }),
+        ]
+        var changed = true
+        while changed {
+            changed = false
+            for (pattern, write) in rules {
+                guard let regex = try? NSRegularExpression(pattern: pattern), let m = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+                      let whole = Range(m.range, in: text) else { continue }
+                let first = String(text[Range(m.range(at: 1), in: text)!])
+                let second = m.numberOfRanges > 2 ? Range(m.range(at: 2), in: text).map { String(text[$0]) } ?? "" : ""
+                text.replaceSubrange(whole, with: write(first, second))
+                changed = true
+            }
+        }
+        return text
+    }
+
     static func before(_ a: Position, _ b: Position) -> Bool { a.line < b.line || (a.line == b.line && a.column <= b.column) }
 
     /// The text of every declaration of the app's that a stretch of code calls, and of what those call, as far down
     /// as it goes, in a steady order: a constant made by `build()` is another value once `build()` says otherwise.
-    static func calledText(from start: Position, to last: Position, in declarations: Declarations, files: inout [String: Text]) -> String {
+    /// `members` follows an initializer and a case into its type's stored properties' starting values and its cases,
+    /// for a constant, which Lamp makes again; a stored `var` is state, kept as any object keeps its values.
+    static func calledText(from start: Position, to last: Position, in declarations: Declarations, files: inout [String: Text],
+                           members followMembers: Bool = false) -> String {
         func within(_ p: Position, _ r: (start: Position, last: Position)) -> Bool { p.file == r.start.file && before(r.start, p) && before(p, r.last) }
-        var seen: Set<Int> = [], pending = [(start: start, last: last)], parts: [String] = []
+        var seen: Set<Int> = [], pending = [(start: start, last: last)], parts: [String] = [], typesSeen = Set<String>()
+        func text(_ r: (start: Position, last: Position)) -> String? {
+            guard let file = files[r.start.file] ?? Text(path: r.start.file) else { return nil }
+            files[r.start.file] = file
+            guard let from = file.offset(r.start), let end = file.tokenEnd(r.last), from < end else { return nil }
+            return file.slice(from, end)
+        }
+        // A type's own stored properties' starting values and its cases with their raw values: what an initializer
+        // the compiler wrote, one that leaves them as they start, and a case (or its `rawValue`) are made of.
+        func members(of type: (start: Position, last: Position)) -> [String] {
+            (declarations.bindings.map { ($0.start, $0.last) } + declarations.cases).filter { within($0.start, type) }.compactMap { text($0) }
+        }
+        let initializer = try! NSRegularExpression(pattern: #"^\s*(?:@\w+\s+|\w+\s+)*init\b"#)
         while let r = pending.popLast() {
             for call in declarations.calls where within(call.at, r) {
+                // What it names may be no body of its own (an initializer the compiler wrote, a case) or an
+                // initializer: the type around it, by its members.
+                let inner = declarations.bodies.indices.filter { within(call.to, declarations.bodies[$0]) }
+                    .min(by: { before(declarations.bodies[$1].start, declarations.bodies[$0].start) })
+                let bodyText = inner.flatMap { text(declarations.bodies[$0]) }
+                if followMembers, inner == nil || bodyText.map({ initializer.firstMatch(in: $0, range: NSRange($0.startIndex..., in: $0)) != nil }) == true,
+                   let type = declarations.types.filter({ within(call.to, $0.value) }).min(by: { before($1.value.start, $0.value.start) }),
+                   typesSeen.insert(type.key).inserted {
+                    parts.append(contentsOf: members(of: type.value))
+                }
                 // The innermost declaration holding the place it names.
                 guard let index = declarations.bodies.indices.filter({ within(call.to, declarations.bodies[$0]) })
                         .min(by: { before(declarations.bodies[$1].start, declarations.bodies[$0].start) }),
@@ -455,7 +524,7 @@ enum SwiftSource {
                 return group.entry(key + ": " + own)
             }
             let binding = declarations.bindings[variable.binding]
-            return group.entry(key + ": " + own + "+" + digest(calledText(from: binding.start, to: binding.last, in: declarations, files: &files)))
+            return group.entry(key + ": " + own + "+" + digest(calledText(from: binding.start, to: binding.last, in: declarations, files: &files, members: group == .constant)))
         }
     }
 

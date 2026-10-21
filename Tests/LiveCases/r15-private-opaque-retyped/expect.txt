@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: 42 VStack<Text>
+RELOAD 1: ok
+after1 (want 'a longer label than before' and HStack<Text>, the new code's own values): a longer label than before HStack<Text>

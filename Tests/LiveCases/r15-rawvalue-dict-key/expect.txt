@@ -1,0 +1,10 @@
+VERDICT 1: REOPEN (the raw value of Category.food changed ("Food" to "Food & Drink"), which the open app's values are kept, compared and hashed by)
+== run
+before: allFound=true count=1000
+RELOAD 1: REOPEN the raw value of Category.food changed ("Food" to "Food & Drink"), which the open app's values are kept, compared and hashed by
+after1 (want allFound=true, or a reopen: the dictionary was laid out by the old raw values): allFound=true count=1000
+after filling again (want count=1000): allFound=true count=1000
+before: allFound=true count=1000
+RELOAD 1: in the restart
+after1 (want allFound=true, or a reopen: the dictionary was laid out by the old raw values): allFound=true count=1000
+after filling again (want count=1000): allFound=true count=1000

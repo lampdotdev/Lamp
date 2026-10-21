@@ -849,7 +849,9 @@ layouts have one, so a layout an earlier Lamp kept says nothing of it. After a b
 `reloadInPlace` first, which decides the app is open and built live, takes the verdict and hands the changed files to
 `LiveReload.put`, the one pipeline from the layout check to the record of what the app now runs, acting on its
 `Outcome` (it went in, with what was done beyond the code; or why the app has to reopen): the change goes in when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.LaunchReader`, held to what the open app had as part of the layout; a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again, and one the change didn't touch is left out of a compile of every file when it names nothing newly declared, `LiveReload.addedNames`; a conformance, subscript or operator, which code reaches without naming it, or a declaration taken away keeps it in) or Lamp's own files, and leaves every type
-holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties and cases,
+holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties (their types in Swift's short
+spellings, so `Array<String>` is `[String]`) and cases (with their raw values, which an `@objc` enum's values are and
+a raw-value enum hashes by; a raw type given to an existing enum or taken from it reopens the app too),
 from `-dump-ast` of just the changed files, compared for the open app's sources and the new ones; no reading of the
 text; a typealias is printed as itself wherever it's used, so each is listed with what it names and one the open app has that now names something else reopens, `LiveReload.aliasGroup`, as does a name that was a
 typealias and is now a type of its own, or the other way round; a case is listed with whether it's `indirect`; an associated type the compiler inferred, such
@@ -862,10 +864,12 @@ one, by that type (`(some Equatable, Int)`, so a tuple's or array's plain parts 
 with the types it was given (`padding [with … Self -> Text]`), which together are the type: `.bold()` added before
 `.padding()` changes nothing, `.font()` after it does, and so does another overload (`padding()` to `padding(12)`),
 whose opaque result is another type even when it builds the same one: the open app's witness tables and callers were laid out for the type it had, and the
-compiler prints both as `some View`; a view's own body, wrapped by the live copy, and a private member that isn't stored are left out; a private type is listed with its file,
+compiler prints both as `some View`; a view's own body, wrapped by the live copy, and a private member that isn't stored are left out, though what a
+private one builds is part of the entry of any member whose body names it, since an internal member built from a
+private one returns its type to callers anywhere; a private type is listed with its file,
 `LiveReload.placeGroup`, since its mangled name carries it and one moved to another file is another type at run time (so is a type, a
-static or a global made private or no longer private, which reopens the app too, as does a conformance taken
-away, whose record the open app keeps),
+static or a global made private or no longer private, or a private static or global moved to another file, which
+reopens the app too, as does a conformance taken away, whose record the open app keeps),
 and keyed with its file throughout the layout and the declarations (`Row@A.swift`, each part of a nested one; `LiveReload.bare`
 gives the name back where the code names it, as a field's type or a use in old code does, and `readable` says "Row in
 A.swift"), since two files may each declare a private type of one name and the two are two types with their own fields;
@@ -879,9 +883,10 @@ for the copy that took the last change: one opened again since, by the person or
 so it's forgotten and the change reopens the app, `LiveReload.tookChanges`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
 linked into a library. Every file is compiled when what's declared changed (a function, an initializer, a computed
 property, a conformance, a member's `@objc` and its selector, a stored property, which may stand where a protocol extension's member of its
-name did, and its observers, which turn every write into a call: `LiveReload.declarationGroup`, `declarationsChanged`), since an unchanged caller may then mean
+name did, and its observers, which turn every write into a call, a typealias, and a private member made visible: `LiveReload.declarationGroup`, `declarationsChanged`), since an unchanged caller may then mean
 another one (a new overload, a method where a protocol's default stood in), and a file taken away while another
-arrives (one renamed) reopens the app, since what was private to it is named after its file and would start over.
+arrives (one renamed) is compiled like any other: what was private to it is named after its file and would start
+over, which the layout's check says for each type, static or global that moved.
 What's compiled is decided before anything is: the changed files are compiled alongside the layout's check, and that
 library is the one sent unless something widened it (spares rewriting the copy, what's declared changing, an enum
 growing, a constant remade), in which case every file the change needs is compiled once, at the end of `attempt`,
@@ -909,7 +914,8 @@ names and the records of conformances the change adds, which the library's data 
 descriptors as it loads (`LampLive.redirectDescriptors`, writing through the library's text, which a Mac app without
 the hardened runtime may). A class Swift makes as the app runs (a generic class at each type it's used at, a class under
 a generic superclass) gets its method table from the app's description of it, which holds the app's code: so the live
-copy starts the app through an entry of Lamp's (`__LampEntry`, added by the copy step before the App's own), which
+copy starts the app through an entry of Lamp's (`__LampEntry`, added by the copy step before the App's own, a comment
+after `@main` included), which
 first points the runtime's call that fills such tables in (`swift_initClassMetadata2`, through the same symbol pointer
 as any call) at `LampLive.classMade`, which records every class made and points its table at the newest code, and a
 change points every table made so far the same way. A key path to a computed property is told apart by its getter's address, and a change has a getter of its own, so a
@@ -1058,7 +1064,9 @@ its box's only within that view's own declaration (`SwiftSource.Declarations.typ
 file may have state of the same name. Which property is in which spare
 (`.lamp/live/slots.json`) is put back into each fresh copy (they come back as additions, and `LiveSlots.fit` puts
 them in the same places) until the app is installed again; a property taken out of the code has its place retired
-once the change is in (`LiveSlots.retire`), since the place still holds its value, and its name is sent with the change
+once the change is in (`LiveSlots.retire`), since the place still holds its value (a Hashable struct's reopens the
+app instead, `LiveSlots.retiredFromValue`: the spare counts what it holds in `==` and `hash`, so the open app's sets
+holding such values would lose them), and its name is sent with the change
 for the app to set aside (`LampSpare.retired`: what it left neither reads nor counts in `==` or `hash`), and a name
 brought back gets a place of its own (a class's under a new index, a struct's or view's under its key, the type and
 name numbered by `Slot.generation`, `LiveSlots.spareKey`); what `fit` planned (the places, the constants remade) is written down only once the change is in
@@ -1078,7 +1086,7 @@ A constant (a static or global `let`) whose value changes would otherwise not ch
 value once and keeps it in storage the new code goes on reading. So each constant's value is part of the kept layout
 as a digest (`SwiftSource.constantEntries`, not compared as what a type holds), and one that changed is rewritten in
 the live copy into a computed property that makes the new value once and keeps it (`nonisolated` in a type, as the
-`let` was, so readers outside a `@MainActor` type still compile) (`LampConstants`, by name and
+`let` was, so readers outside a `@MainActor` type still compile, unless it names an actor of its own) (`LampConstants`, by name and
 value; `LiveSlots.changedConstants`, `rewriteConstant`). The first time a constant is rewritten every file is
 compiled again, so every reader goes through it; it stays rewritten until the app is installed again. One that can
 hold an object needs the app reopened instead (it waits for Reload, as above), since a second object would split the
@@ -1088,12 +1096,16 @@ own spare places in a struct name no type of their own, so they don't count. A c
 constant's digest also takes in what its starting value calls: the text of every declaration of the app's it calls,
 as far down as that goes (`SwiftSource.calledText`), so one made by `build()` or from a computed `width` is given its
 new value when that code changes, and its kept value is named by that text too, so the next change to it is another
-value again. One that can hold an object isn't (`static let shared = Store()`): the object is the app's state, kept
-like every other.
+value again. It follows an initializer or a case into its type's stored properties' starting values and
+its cases (`calledText(members:)`), so a constant made by `Settings()` changes with a default. One that can hold an
+object isn't remade (`static let shared = Store()`): the object is the app's state, kept like every other. A constant
+read by what runs only at launch, there or through what it calls (`SwiftSource.reaches`), reopens the app, and so does
+a constant of the app's own option set or raw-value type, which the open app's values of it are made of.
 
 A stored static or global `var` is made once too, the first time it's read, so a new starting value for one can't
 show without reopening, and whether it seemed to would depend on whether it had been read: its starting value and its type are part of the layout as a digest as well (`LiveReload.Group.stored`), and one that changed reopens the app, as does one whose starting value calls code that changed, unless it holds one
-of the app's objects; a lazy property's is held the same way, since each object made it once. A static or global gone
+of the app's objects (an initializer's type isn't followed into its members: the value is state, kept as an object's
+fields are); a lazy property's is held the same way, since each object made it once. A static or global gone
 from `let` to `var` or back reopens it too. So does a type's own `hash(into:)` changing, being written or taken away,
 or what it reads changing (a constant, a helper, as far down as that goes), an app's own hash of a system type
 included (`LiveReload.Group.hash`): the sets and dictionaries the open app keeps put each value

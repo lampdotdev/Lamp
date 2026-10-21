@@ -185,11 +185,9 @@ enum LiveReload {
             // what the open app had by the layout check (`SwiftSource.LaunchReader`), wherever it's written.
             changed.append(path)
         }
-        // A file taken away while another arrives is most often one renamed: what was private to it (a type, a
-        // static, a global) is named after its file, so the new code would make all of it again, starting over.
-        if let went = gone.first, let came = built.keys.filter({ open[$0] == nil }).sorted().first {
-            return .reopen("\(went) was renamed or replaced by \(came), whose private state would start over")
-        }
+        // A file taken away while another arrives is most often one renamed. What was private to it (a type, a
+        // static, a global) is named after its file and would start over, which the layout's check says for each
+        // one that moved (`layoutProblem`); a file holding nothing private is just code, compiled with the rest.
         // A file taken away can change what an unchanged caller means: a method it declared may have stood in for
         // a protocol's default or another overload, which the caller now gets. So every file of the app's is
         // compiled again, the App's too (what else is in its file may call it, and the App itself, which ran once
@@ -284,8 +282,11 @@ enum LiveReload {
     /// Whether the new code declares other functions, initializers, subscripts, computed properties or
     /// conformances than the open app's: an unchanged caller may then mean another one (a new overload, a method
     /// where a protocol's default stood in, an extension's method over a system one), so every file is compiled again.
+    /// A typealias added, taken away or changed counts too: a name an unchanged file uses may now mean it, as an
+    /// alias inside a type stands before a type of the same name outside it.
     static func declarationsChanged(before: [String], after: [String]) -> Bool {
-        Set(before.filter { $0.hasPrefix(declarationGroup + "\t") }) != Set(after.filter { $0.hasPrefix(declarationGroup + "\t") })
+        func declared(_ entries: [String]) -> Set<String> { Set(entries.filter { $0.hasPrefix(declarationGroup + "\t") || $0.hasPrefix(aliasGroup + "\t") }) }
+        return declared(before) != declared(after)
     }
 
     /// The names a caller writes to reach what was newly declared, when nothing was taken away and every addition is
@@ -395,6 +396,17 @@ enum LiveReload {
                 return ("\(type) no longer conforms to \(lost), and the open app's record that it does stays", nil)
             }
         }
+        // A raw type given to an enum the open app has, or taken from it, changes what its values hash and compare by.
+        func rawTypes(_ entries: [String]) -> [String: String] {
+            Dictionary(aliases(entries).filter { $0.key.hasSuffix(".RawValue") }.map { (bare($0.key), $0.value) }, uniquingKeysWith: { first, _ in first })
+        }
+        let rawBefore = rawTypes(before), rawNow = rawTypes(now)
+        for type in typesBefore.intersection(typesNow).sorted() {
+            let was = rawBefore[type + ".RawValue"], is_ = rawNow[type + ".RawValue"]
+            if (was == nil) != (is_ == nil) {
+                return ("\(type) \(is_ == nil ? "no longer has" : "has") raw values (\(is_ ?? was ?? "")), which its values hash and compare by in the open app's sets and dictionaries", nil)
+            }
+        }
         // One written or taken away is the same: the hash Swift makes from the fields is another.
         func hashes(_ entries: [String]) -> [String: String] {
             Dictionary(Group.hash.parts(in: entries).compactMap { $0.first.map { (String($0.prefix { $0 != ":" }), $0) } }, uniquingKeysWith: { a, _ in a })
@@ -436,8 +448,14 @@ enum LiveReload {
         let keysNow = privacyKeys(now)
         for key in privacyKeys(before).subtracting(keysNow).sorted() {
             let plain = bare(key)
-            guard let other = keysNow.first(where: { bare($0) == plain && $0.contains("@") != key.contains("@") }) else { continue }
             let name = plain.hasPrefix("\t") ? String(plain.dropFirst()) : plain.replacingOccurrences(of: "\t", with: ".")
+            // Private on both sides, in another file: its name carries the file, so it's another variable, starting
+            // over (a type moved so is said below, by its place).
+            if key.contains("@"), key.contains("\t"), let moved = keysNow.first(where: { bare($0) == plain && $0.contains("@") }) {
+                func file(_ k: String) -> String { k.components(separatedBy: "@").last ?? k }
+                return ("\(name) is private and moved from \(file(key)) to \(file(moved)), which makes it another variable for the open app, starting over", nil)
+            }
+            guard let other = keysNow.first(where: { bare($0) == plain && $0.contains("@") != key.contains("@") }) else { continue }
             return ("\(name) is \(other.contains("@") ? "private now" : "no longer private"), which gives it another name at run time than the one the open app's values and storage go by", nil)
         }
         func shapes(_ entries: [String]) -> [String: String] {
@@ -494,6 +512,13 @@ enum LiveReload {
                 return ("what the app reads only at launch changed (\(what))", nil)
             }
             if current != members, !LiveSlots.casesAdded(type, members, current) {
+                // A case whose raw value alone changed, said as such.
+                func withoutRaw(_ entry: String) -> String { entry.contains("\tcase ") ? String(entry.components(separatedBy: " = ")[0]) : entry }
+                if current.map(withoutRaw) == members.map(withoutRaw), let changed = zip(members, current).first(where: { $0 != $1 }) {
+                    let name = changed.1.components(separatedBy: "\tcase ").last?.prefix { $0 != ":" && $0 != "(" } ?? ""
+                    let raw = { (entry: String) in entry.components(separatedBy: " = ").dropFirst().joined(separator: " = ") }
+                    return ("the raw value of \(type).\(name) changed (\(raw(changed.0).isEmpty ? "none" : raw(changed.0)) to \(raw(changed.1).isEmpty ? "none" : raw(changed.1))), which the open app's values are kept, compared and hashed by", nil)
+                }
                 let what = (current.first { !members.contains($0) } ?? members.first { !current.contains($0) }.map { "no longer " + $0 } ?? "the order of its fields")
                     .replacingOccurrences(of: "\t", with: ".")
                 return ("\(type) changed what it holds (\(what))", nil)
@@ -1111,7 +1136,9 @@ enum LiveReload {
         guard let dump = await dump(of: folder, in: project, module: module, macOS: macOS) else { return nil }
         // One pass over the printout for all of it.
         let names = SwiftSource.names(inDump: dump)
-        let plain = Members(rawValues: false, held: false, names: names), held = Members(rawValues: false, held: true, names: names)
+        // With each case's raw value: an `@objc` enum's values are its raw values, and a raw-value enum hashes and
+        // compares by them, so a changed one misreads what the open app holds or loses it from its sets.
+        let plain = Members(rawValues: true, held: false, names: names), held = Members(rawValues: false, held: true, names: names)
         let declared = SwiftSource.DeclarationsReader(), launch = SwiftSource.LaunchReader(), old = OldCode()
         SwiftSource.walk(dump) { line in plain.take(line); held.take(line); declared.take(line); launch.take(line); old.take(line) }
         let declarations = declared.finish()
@@ -1266,12 +1293,31 @@ enum LiveReload {
         private var bindingConverts: Int?, bindingBuilds: String?
 
         private func add(_ entry: String) { if seen.insert(entry).inserted { out.append(entry) } }
+        // A private `some` member isn't listed (its callers are in its file, compiled with it), but what it builds
+        // is kept by its owner and name ("Badge.text()"), since an internal member built from it (`label() { text() }`)
+        // returns the private one's type to callers anywhere. Entries are made at the end, once every private one is known.
+        private var opaqueIsPrivate = false
+        private var privateOpaque: [String: (builds: String?, names: [String])] = [:]
+        private var pendingOpaque: [(key: String, builds: String?, names: [String])] = []
         private func closeOpaque() {
             guard let open = opaque else { return }
-            // A literal may change (`1` to `1.5`) without a call or type changing, and a call may change
-            // (`.bold()`) without the type: the type decides, when the compiler can print it.
-            add(opaqueGroup + "\t" + open.key + "\t" + (open.builds ?? "~" + SwiftSource.digest(open.names.joined(separator: "\n"))))
+            if opaqueIsPrivate { privateOpaque[open.key] = (open.builds, open.names) } else { pendingOpaque.append((open.key, open.builds, open.names)) }
             opaque = nil
+        }
+        /// What an entry's value is: the type it builds when the compiler printed one, else a digest of what its body
+        /// names (`~…`), with what each private `some` member it names builds, as far down as that goes. A literal may
+        /// change (`1` to `1.5`) without a call or type changing, and a call may change (`.bold()`) without the type:
+        /// the type decides, when the compiler can print it.
+        private func opaqueValue(builds: String?, names: [String], seen: Set<String> = []) -> String {
+            if let builds { return builds }
+            var parts = names
+            for name in names {
+                guard let at = name.range(of: ".(file).") else { continue }
+                let key = bare(String(name[at.upperBound...]))
+                guard !seen.contains(key), let made = privateOpaque.first(where: { bare($0.key.components(separatedBy: ": ")[0]) == key })?.value else { continue }
+                parts.append("private " + key + " = " + opaqueValue(builds: made.builds, names: made.names, seen: seen.union([key])))
+            }
+            return "~" + SwiftSource.digest(parts.joined(separator: "\n"))
         }
 
         func take(_ line: SwiftSource.Walk.Line) {
@@ -1377,7 +1423,10 @@ enum LiveReload {
                 guard !line.has(" implicit") else { return }
                 let place: String
                 if let owner { place = owner + "." } else if line.isTopLevel { place = "" } else { return }
-                let entry = declarationGroup + "\t" + place + what
+                // With its access when it's private to its file: made visible, it can stand where another of its name
+                // did for code elsewhere.
+                let access = !what.contains(" inherits ") && (line.has("access=private") || line.has("access=fileprivate")) ? " private" : ""
+                let entry = declarationGroup + "\t" + place + what + access
                 if listed { add(entry) }
                 objcPending = (indent, entry)
             }
@@ -1438,8 +1487,8 @@ enum LiveReload {
                 let name = String(line.text[Range(m.range(at: 2), in: line.text)!]), type = String(line.text[Range(m.range(at: 3), in: line.text)!])
                 if !type.contains("some ") { add(aliasGroup + "\t" + owner + "." + name + " = " + type) }
             } else if opens("func_decl", "var_decl"), let m = opaqueMember.firstMatch(in: line.text, range: line.range),
-                      line.has("readImpl=stored") || !["private", "fileprivate"].contains(String(line.text[Range(m.range(at: 5), in: line.text)!])),
                       case let name = String(line.text[Range(m.range(at: 3), in: line.text)!]), name != "__lampBody", !name.hasPrefix("$") {
+                opaqueIsPrivate = !line.has("readImpl=stored") && ["private", "fileprivate"].contains(String(line.text[Range(m.range(at: 5), in: line.text)!]))
                 // A view's body is wrapped by the live copy (`__lampBody`, read only by `body` beside it), so its type
                 // may change; a private member's callers are all in its file, compiled with it. Keyed with its
                 // signature, since overloads share a name; and declared like any member, so one added recompiles
@@ -1469,7 +1518,7 @@ enum LiveReload {
                 let global = held && line.isTopLevel
                 let name = String(line.text[Range(m.range(at: 2), in: line.text)!]), type = String(line.text[Range(m.range(at: 3), in: line.text)!])
                 if let owner = owner ?? (global ? "" : nil), rest.contains("readImpl=stored"), held || !rest.contains(" static") {
-                    let entry = owner + "\t" + name + ": " + type
+                    let entry = owner + "\t" + name + ": " + SwiftSource.sugared(type)
                     if seen.insert(entry).inserted { out.append(entry); ownershipPending = (indent, out.count - 1) }
                 } else if !rest.contains("readImpl=stored") {
                     declared(name + ": " + type)
@@ -1505,6 +1554,8 @@ enum LiveReload {
 
         func finish() -> [String] {
             closeOpaque()
+            for entry in pendingOpaque { add(opaqueGroup + "\t" + entry.key + "\t" + opaqueValue(builds: entry.builds, names: entry.names)) }
+            pendingOpaque = []
             return out
         }
     }
@@ -1612,6 +1663,34 @@ enum LiveReload {
         let grownEarly = before.flatMap { before in after.map { grownEnums(before: before, after: $0) } } ?? []
         var constants = before.flatMap { before in after.map { LiveSlots.changedConstants(project, before: before, after: $0, declarations: declarations) } } ?? []
         constants = Array(Set(constants + LiveSlots.constants(naming: grownEarly, in: declarations))).sorted()
+        // A constant read by what runs only at launch (the App, its scenes, its menu commands), there or through the
+        // code they call: the new value would show only once the app opens again.
+        if !constants.isEmpty, let after {
+            let launchNames = Set(Group.launch.parts(in: after).compactMap { $0.first.map { String($0.prefix { $0 != ":" }).replacingOccurrences(of: "extension ", with: "") } })
+            let launch = declarations.types.filter { launchNames.contains(bare($0.key)) }.map(\.value)
+            if let read = constants.first(where: { key in
+                guard let variable = declarations.constants[key] else { return false }
+                let binding = declarations.bindings[variable.binding]
+                return SwiftSource.reaches(from: launch, (binding.start, binding.last), in: declarations)
+            }) {
+                let name = read.hasPrefix("\t") ? String(read.dropFirst()) : read.replacingOccurrences(of: "\t", with: ".")
+                return .reopen(why: "\(bare(name)) changed, and what the app reads only at launch reads it")
+            }
+        }
+        // A constant of the app's own option set or raw-value type (`static let bold = Style(rawValue: 1)`) is what the
+        // open app's values of that type are made of: given another value, the values it holds read as other options.
+        if let after {
+            let raw = Set(Group.declared.parts(in: after).compactMap { parts -> String? in
+                let entry = parts.joined(separator: "\t")
+                guard let at = entry.range(of: " inherits "),
+                      !Set(entry[at.upperBound...].components(separatedBy: ", ")).isDisjoint(with: ["OptionSet", "RawRepresentable"]) else { return nil }
+                return bare(String(entry[..<at.lowerBound]))
+            })
+            if let key = constants.first(where: { declarations.constants[$0].map { raw.contains(bare($0.type)) } ?? false }) {
+                let name = key.hasPrefix("\t") ? String(key.dropFirst()) : key.replacingOccurrences(of: "\t", with: ".")
+                return .reopen(why: "\(bare(name)) changed, and the open app's \(bare(declarations.constants[key]!.type)) values are made of it (an option set's bits, a raw value), so they'd read as something else")
+            }
+        }
         var plan: LiveSlots.Plan?
         // Awaited before the fit rewrites the live copy that compile reads.
         let first = await early
@@ -1684,6 +1763,9 @@ enum LiveReload {
             }, uniquingKeysWith: { first, _ in first })
             keep = grown.map { LiveObject.mangledType(bare($0), module: project.exe, kind: "O", kinds: kinds) }
         }
+        if let after, let gone = LiveSlots.retiredFromValue(project, keeping: after) {
+            return .reopen(why: "\(gone) was added while the app was open and is taken away now, which changes how the open app's values of it compare and hash")
+        }
         // The one compile: the early one stands when nothing widened it (no spares rewrote the copy, the same files,
         // nothing kept); else every file the change needs, once.
         var (library, problem) = first
@@ -1746,7 +1828,6 @@ enum LiveReload {
             || w.range(of: #"\bapp\.body\b"#, options: .regularExpression) != nil {
             return "leave the App, its scenes and menu commands as they are once the app is open, and put new views and logic in other files."
         }
-        if w.contains("renamed or replaced") { return "add a file rather than renaming one." }
         if w.contains("package") || w.contains("its icon") || w.contains("widget or share") {
             return "make such changes in a request of their own, or first, before the ones that can go in live."
         }
@@ -1801,8 +1882,13 @@ enum LiveReload {
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name(Edition.notificationPrefix + "reload"), object: project.bundleID,
             userInfo: ["path": library.path, "signature": signature, "whole": whole ? "1" : "0", "retired": retired.joined(separator: ","), "until": until], deliverImmediately: true)
+        // Once posted, the request is the app's to take, whatever becomes of this task: a wait cut short by a
+        // cancelled one would say the app didn't answer while it goes on to load the change, and nothing of it would
+        // be recorded. So each pause is a timer's, which cancellation doesn't end.
         for _ in 0..<120 {
-            try? await Task.sleep(for: .milliseconds(100))
+            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(100)) { done.resume() }
+            }
             if let text = try? String(contentsOf: answer, encoding: .utf8) {
                 // An answer naming another library is an earlier request's, come late: not this one's.
                 let lines = text.components(separatedBy: "\n")
@@ -1876,6 +1962,21 @@ enum LiveSlots {
     }
     /// The places about to be retired by `retire`, each as the key its struct's or view's spare keeps the value
     /// under (`spareKey`), for the app to set aside before the change goes in.
+    /// A struct's property kept in its spare that the new code no longer declares, if any: the spare counts what it
+    /// holds in `==` and `hash`, so taking one away changes how the open app's values compare and hash, and a set or
+    /// dictionary holding them loses them. ("Type.name")
+    /// Only a Hashable one: nothing else can be in a set or key a dictionary, and its `==` setting the name aside is
+    /// what's meant.
+    static func retiredFromValue(_ project: LampProject, keeping layout: [String]) -> String? {
+        let hashable = Set(LiveReload.Group.declared.parts(in: layout).compactMap { parts -> String? in
+            let entry = parts.joined(separator: "\t")
+            guard let at = entry.range(of: " inherits "), entry[at.upperBound...].components(separatedBy: ", ").contains("Hashable") else { return nil }
+            return LiveReload.bare(String(entry[..<at.lowerBound]))
+        })
+        return gone(in: whole(project), keeping: layout).filter { $0.slot.holder == .value && hashable.contains(LiveReload.bare($0.type)) }
+            .map { LiveReload.bare($0.type) + "." + $0.name }.sorted().first
+    }
+
     static func retiring(_ project: LampProject, keeping layout: [String]) -> [String] {
         gone(in: whole(project), keeping: layout).map { spareKey(type: $0.type, name: $0.name, generation: $0.slot.generation) }.sorted()
     }
@@ -2421,7 +2522,7 @@ enum LiveSlots {
         let called = sources.keys.sorted().compactMap { name -> String? in
             guard let made = declarations.constants[name] else { return nil }
             let binding = declarations.bindings[made.binding]
-            return SwiftSource.calledText(from: binding.start, to: binding.last, in: declarations, files: &files)
+            return SwiftSource.calledText(from: binding.start, to: binding.last, in: declarations, files: &files, members: true)
         }.joined(separator: "\n")
         if !called.isEmpty { sources["\u{1}calls"] = called }
         // And the cases of every enum those texts name, what they call included (`Mood.allCases.count`): the value is made again each time
@@ -2437,7 +2538,12 @@ enum LiveSlots {
         let quoted = name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         // A type's: `nonisolated`, as the stored `let` was, which a computed property would otherwise not be in a
         // `@MainActor` type, and its readers outside the actor would no longer compile.
-        let isolation = key.hasPrefix("\t") ? "" : "nonisolated "
+        // Unless it names an actor of its own (`@MainActor static let`), which the attribute left before it keeps.
+        // Its attributes come before what the compiler counts as the declaration, back to the line's start or the
+        // `{` or `;` before it.
+        let before = text.slice(max(0, from - 200), from)
+        let attributes = before.split(omittingEmptySubsequences: false, whereSeparator: { "\n{;".contains($0) }).last.map(String.init) ?? ""
+        let isolation = key.hasPrefix("\t") || (attributes + lead).range(of: #"@\w*Actor\b"#, options: .regularExpression) != nil ? "" : "nonisolated "
         return (start..<end, "\(isolation)var \(variable.name): \(variable.type) { LampConstants.value(\"\(quoted)\") { () -> \(variable.type) in \(initial) } }")
     }
 

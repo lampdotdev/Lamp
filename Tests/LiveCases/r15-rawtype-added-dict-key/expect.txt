@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Category has raw values (String), which its values hash and compare by in the open app's sets and dictionaries)
+== run
+before: allFound=true count=1000
+RELOAD 1: REOPEN Category has raw values (String), which its values hash and compare by in the open app's sets and dictionaries
+after1 (want allFound=true, or a reopen: the dictionary was laid out by the hash the enum had without a raw type): allFound=true count=1000
+before: allFound=true count=1000
+RELOAD 1: in the restart
+after1 (want allFound=true, or a reopen: the dictionary was laid out by the hash the enum had without a raw type): allFound=true count=1000

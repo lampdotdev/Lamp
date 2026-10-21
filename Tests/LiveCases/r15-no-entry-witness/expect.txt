@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: default
+RELOAD 1 (whole): ok
+after1 (want array: the Array now answers describe() itself): array

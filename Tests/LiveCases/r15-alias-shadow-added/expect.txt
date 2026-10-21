@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD
+VERDICT 2: RELOAD
+== run
+before: count=1
+RELOAD 1 (whole): ok
+after1 (want count=2, Item in Shop now names Special): count=2
+RELOAD 2 (whole): ok
+after2 (want count=1, the alias is gone again): count=1
