@@ -664,12 +664,53 @@ enum Emulator {
 
     /// Lamp's running emulator's serial, or nil when it isn't running. Another emulator adb lists isn't Lamp's to use.
     static func running() async -> String? {
+        let own = ownProcesses()
+        guard own.contains(where: \.onLampsPorts) else { return nil }
         func listed() async -> Bool { (await Adb.devices()).contains { $0.udid == serial && $0.adbState == "device" } }
         if await listed() { return serial }
         // Started under an earlier server of Lamp's (one that ended as Lamp quit): this one is told where it is.
-        guard isRunning, register() else { return nil }
+        guard register() else { return nil }
         try? await Task.sleep(for: .milliseconds(500))
         return await listed() ? serial : nil
+    }
+
+    /// The emulators this Lamp started. Every Lamp's runs the same tools and the same emulator's name, so they're told
+    /// apart by the folder of emulators each was started with (`ANDROID_AVD_HOME`, Lamp's own), read from the
+    /// process's environment, as `ps -E` does.
+    private static func ownProcesses() -> [(pid: pid_t, onLampsPorts: Bool)] {
+        let tools = AndroidTools.sdkFolder.appendingPathComponent("emulator").path + "/"
+        let home = "ANDROID_AVD_HOME=" + AndroidTools.avdHome.path
+        let ports = "\(Edition.androidPorts.console),\(Edition.androidPorts.bridge)"
+        var pids = [pid_t](repeating: 0, count: 4096)
+        let count = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
+        return pids.prefix(max(0, count)).compactMap { pid in
+            // The emulator itself, not the helpers it starts from the same folder with the same environment
+            // (its crash handler, its network simulator), which are never given the emulator's name.
+            guard pid > 0, let (path, arguments, environment) = commandLine(of: pid), path.hasPrefix(tools),
+                  arguments.contains("-avd"), environment.contains(home) else { return nil }
+            let onLampsPorts = arguments.firstIndex(of: "-ports").map { arguments.index(after: $0) < arguments.endIndex && arguments[arguments.index(after: $0)] == ports } ?? false
+            return (pid, onLampsPorts)
+        }
+    }
+
+    /// A process's program, arguments and environment, from the kernel (`KERN_PROCARGS2`): the argument count, the
+    /// program's path, then the arguments and the environment, each ending in a zero byte.
+    private static func commandLine(of pid: pid_t) -> (String, [String], [String])? {
+        var name = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&name, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&name, 3, &buffer, &size, nil, 0) == 0 else { return nil }
+        let argc = buffer.withUnsafeBytes { Int($0.loadUnaligned(as: Int32.self)) }
+        var strings: [String] = []
+        var start = MemoryLayout<Int32>.size
+        for index in start..<size where buffer[index] == 0 {
+            if index > start { strings.append(String(decoding: buffer[start..<index], as: UTF8.self)) }
+            start = index + 1
+        }
+        guard strings.count > argc, let path = strings.first else { return nil }
+        // The path, then the arguments (the first being the program again), then the environment.
+        return (path, Array(strings[1...argc]), Array(strings.dropFirst(argc + 1)))
     }
 
     /// Tells Lamp's adb server about the emulator on Lamp's ports, in the message an emulator sends it as it boots
@@ -695,6 +736,13 @@ enum Emulator {
     /// Starts Lamp's emulator when it isn't running, waits for Android to boot, and gives back its serial. The
     /// emulator is a window of its own on the Mac, which `show` says whether to bring forward.
     static func start(show: Bool) async throws -> String {
+        // One an earlier Lamp started, on adb's usual ports, holds the emulator Lamp made, so another can't start on
+        // Lamp's. Lamp doesn't end it: it doesn't close for a signal while it saves its state, and one started while
+        // the other still held the emulator's files crashed. The person closes its window, as they would any.
+        if ownProcesses().contains(where: { !$0.onLampsPorts }) {
+            await bringForward()
+            throw AndroidTools.Failure(message: "The Android emulator is still open from before Lamp was updated. Close its window, then try again.")
+        }
         if let serial = await running() {
             if show { await bringForward() }
             return serial
@@ -702,10 +750,11 @@ enum Emulator {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: AndroidTools.emulator)
         // On Lamp's own ports (`Edition.androidPorts`), where only Lamp's adb server looks for it and the agent's
-        // commands can't reach it.
+        // commands can't reach it. After a crash the emulator would otherwise open with a dialog asking to send
+        // Google a report, and start nothing until it's answered.
         let ports = Edition.androidPorts
         process.arguments = ["-avd", AndroidTools.avdName.replacingOccurrences(of: " ", with: "_"), "-ports", "\(ports.console),\(ports.bridge)", "-grpc", "\(ports.control)",
-                             "-no-boot-anim", "-netdelay", "none", "-netspeed", "full"]
+                             "-crash-report-mode", "never", "-no-boot-anim", "-netdelay", "none", "-netspeed", "full"]
         process.environment = ProcessInfo.processInfo.environment.merging(AndroidTools.environment) { $1 }
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
@@ -726,10 +775,11 @@ enum Emulator {
         throw AndroidTools.Failure(message: "The emulator didn't finish starting.")
     }
 
+    /// The window of Lamp's own emulator, not another Lamp's or the person's.
     private static func app() -> NSRunningApplication? {
-        NSWorkspace.shared.runningApplications.first { $0.executableURL?.path.hasPrefix(AndroidTools.sdkFolder.appendingPathComponent("emulator").path) == true }
+        ownProcesses().lazy.compactMap { NSRunningApplication(processIdentifier: $0.pid) }.first
     }
     static func bringForward() async { app()?.activate() }
     static func putBehind() async { app()?.hide() }
-    static var isRunning: Bool { app() != nil }
+    static var isRunning: Bool { !ownProcesses().isEmpty }
 }

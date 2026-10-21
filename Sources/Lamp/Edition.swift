@@ -81,11 +81,12 @@ enum Edition {
     static let androidPorts = androidPorts(isDev: isDev, instance: instance)
 
     static func androidPorts(isDev: Bool, instance: String) -> AndroidPorts {
-        guard isDev else { return AndroidPorts(server: 47815, console: 5680, control: 47816) }
-        guard !instance.isEmpty else { return AndroidPorts(server: 47825, console: 5600, control: 47826) }
+        guard isDev else { return AndroidPorts(server: 47815, console: 47818, control: 47816) }
+        guard !instance.isEmpty else { return AndroidPorts(server: 47825, console: 47828, control: 47826) }
+        // A range of each for the instances, a pair for the emulator's two: instances whose names land on different
+        // slots never share a port, so never an emulator.
         let slot = Int(slot(of: instance))
-        // An emulator's console port is even and at most 5680.
-        return AndroidPorts(server: 49000 + slot, console: 5602 + 2 * (slot % 39), control: 49300 + slot)
+        return AndroidPorts(server: 49000 + slot, console: 49600 + 2 * slot, control: 49300 + slot)
     }
 
     /// The same for the Lamp whose folder has this name (`lampFolderNames`), so each Lamp's sandbox closes every
