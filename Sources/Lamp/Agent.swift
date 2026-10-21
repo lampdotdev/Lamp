@@ -235,15 +235,19 @@ enum Agent {
     Once a change in a request has to wait for Reload, nothing more shows until they press it: go on with what's \
     left, saying in progress lines what shows after Reload and never that it's in, and when you need to see the \
     app before going on, look, and Lamp stops you there until they've pressed Reload and starts you again after. \
-    So make the changes that go in live first, with a look after each, and leave what needs Reload for last, all \
-    together. \
+    So plan the request before you write: make the changes that go in live first, with a look after each, and put \
+    every change that needs the app reopened at the end, all together, or leave it for a request of its own, so a \
+    request ends with one Reload at most. These need it reopened: the app's icon (icon.json), capabilities.json, a \
+    widget or Share item, what's read only at launch (the App, its scenes, window titles and menu commands), new \
+    stored properties in a Codable type, and the other changes below that say so. The icon matters least: save \
+    icon.json in that last group, then paint any new pictures, which take its colors. \
     This app is updated in place while it's open, keeping what's on screen, when a change only edits or adds code. \
     A body whose structure changes (a modifier or a view added around others) is built again, and the @State and \
     @StateObject of the views inside it start over, so keep what must survive in a model those views read. \
     A change to a Shape's path, or to an NSViewRepresentable's or UIViewRepresentable's make or update, shows only \
     when SwiftUI next draws that shape or updates that view; if the person must see it now, look with reopen. \
     New stored properties go in too, in a class, a struct or (as @State) a view, when each has a starting value \
-    (or is an optional) and no didSet or willSet; so do new cases at the end of an enum whose cases carry nothing, \
+    (or is an optional) and no didSet or willSet, and the type isn't Codable; so do new cases at the end of an enum whose cases carry nothing, \
     and new values for constants that hold no object. Changing or removing a stored property, a case anywhere \
     else, or what's read only at launch (the App, its scenes and menu commands) needs it reopened, which waits \
     for the person to press Reload. \
@@ -950,7 +954,9 @@ enum Agent {
         guitar to jazz piano, a wedding in Naples to a trip to Kyoto, a pet to a cactus), whoever made the app, change \
         that look with it in the same request, unasked: palette, backgrounds and motifs, the style its pictures are \
         drawn in and the pictures themselves, lettering, the symbols it rates or counts with, its words and their \
-        tone, its example content, and the icon (edit icon.json first: new pictures take its colors). Make it as \
+        tone, its example content, and the icon. Choose the new palette and the icon's new subject and tint before \
+        anything else and build with them, but save icon.json at the end, with the other changes that need the app \
+        reopened, and paint the new pictures right after it: they take its colors. Make it as \
         particular to the new subject as the old look was to the old one, never plainer: a wine cellar, not a \
         generic shelf. Keep the kind and its structure, whatever still fits (a wooden shelf holds records as well \
         as books), and whatever the person chose or styled themselves. An app whose look owes nothing to its subject \
