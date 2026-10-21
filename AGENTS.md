@@ -68,8 +68,9 @@ A capability given to one engine must be given to all of them that can take it, 
   `ChatLook.progressSymbol` are still drawn for a sidebar talking to one.) A change to much of what an app already shows is built in passes
   (`lookRules`: the layout with placeholders, then the parts working, then the detail), each begun with a
   `progress` line and ended with `look_at_app`, which puts it into the open app, so the person watches the app
-  take shape rather than waiting for the end; what's read only at launch is made right in the first pass, so later
-  ones go in without reopening the app. A new app is built in passes too, the window's layout first. A new Mac app's
+  take shape rather than waiting for the end; in a new app what's read only at launch is made right in the first pass,
+  so later ones go in without reopening it, and in an app the person already has open it goes in the last pass, with
+  the other changes that need a reopen. A new app is built in passes too, the window's layout first. A new Mac app's
   scaffold ("Lamp is making this app.") is built and opened as its first turn starts, with the chat beside it
   (`Store.showEarly`, `Store.present`), so the person watches every pass go in; an iPhone app's simulator comes
   forward at the agent's first look. When no chat comes back beside the app after a pass reopens it (the reopen
@@ -1097,7 +1098,11 @@ the Reload button reloads the app: a message typed meanwhile waits in the same l
 press Reload" under it, `ChatLook.waitingForReload`), since the chat is beside the app and a reopen takes the chat
 down with it, and nothing the agent did meanwhile could be seen. So the note asks for the changes that go in live
 first and the held ones last, naming what's held (the icon, capabilities.json, a widget or Share item, what's read at launch, a Codable
-type's new stored properties), so a request ends with one Reload at most. The turn's end tallies them in a detail line (`Store.outcomeTally`), which is how often changes go in live,
+type's new stored properties), so a request ends with one Reload at most. Changes saved close together go in together
+(`Store.autoApply` tries a state once it holds still), so one that can't go in live holds back everything saved with
+it, and the agent can't always tell which those are (an edit to code a launch-time constant reads is one): the note
+asks for the most visible piece (a theme's colors) to be saved alone and looked at before anything else, and for a
+look before the first change that needs a reopen, with those changes started only once it says the earlier ones are in. The turn's end tallies them in a detail line (`Store.outcomeTally`), which is how often changes go in live,
 and says how long the person waited to see the turn's first change and the longest wait between changes after it
 (`Store.paceTally`, from `Turn.shown`), which is what the rules for showing work early are judged by. While
 the agent works, Lamp also puts each change it saves into the open app by itself (`Store.autoApply`: the sources read
