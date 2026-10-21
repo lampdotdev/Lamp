@@ -706,8 +706,12 @@ actions run, the window in use glows, Lamp's cursor (a fingertip over the simula
 anything happens there with a word on what it's doing ("Lamp · clicking Add"), and a pill above the window says
 "Lamp is trying <app>" with Stop and esc (`ComputerOverlay`, the same signs an app's use of other apps shows). A
 Mac app says where each action is about to happen (`LampDriver.aimed`, a distributed notification whose object
-carries it, since a sandboxed app may send nothing else) and waits `Template.useAppLead` for the cursor to get
-there. The person takes the app back with Stop, with Esc while Lamp or the app is in front, or by clicking or
+carries it, since a sandboxed app may send nothing else) during the pause after the action before it, with the
+time until it happens, so the cursor is there when the action is due and nothing waits for it (`LampDriver.step`;
+Lamp paces the glide to that, `Handover.aim`). Only an action whose spot couldn't be sent ahead (the first of a
+batch, a target that wasn't on screen yet, a window that opened since) waits `Template.useAppLead` for it. The
+simulator's driver does the same: the fingertip goes to the next action's spot while the picture is taken
+(`Simulator.Driver.spot`). The person takes the app back with Stop, with Esc while Lamp or the app is in front, or by clicking or
 typing in it themselves. A Mac app sees their own presses as they reach its event queue (`LampDriver.Handover`):
 the driver's events go straight to the window and never pass through it, and the one kind that does (a key held
 down) is marked. Lamp's Stop reaches it as a stop signed with the app's token like the request
