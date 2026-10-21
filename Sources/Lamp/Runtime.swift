@@ -127,7 +127,9 @@ enum Runtime {
 
         /// `alive` is asked every tenth of a second; `died` says what's known once it's false, given whether it came
         /// `late` or while Lamp was closing the app (`retired`), and nil when the going doesn't count as a death after all.
-        init(opened: Date, alive: @escaping @MainActor () -> Bool,
+        /// `confirm`, when given, is asked once more as the window ends, for an app whose life is known only by asking
+        /// its device (Android's), so the verdict never rests on a reading taken before a death in the last moments.
+        init(opened: Date, alive: @escaping @MainActor () -> Bool, confirm: (@MainActor () async -> Bool)? = nil,
              died: @escaping @MainActor (_ late: Bool, _ retired: Bool) async -> String?) {
             self.opened = opened
             self.alive = alive
@@ -136,6 +138,7 @@ enum Runtime {
                 while alive(), clock.now - start < Runtime.launchWindow {
                     try? await Task.sleep(for: .milliseconds(100))
                 }
+                if alive(), let confirm { return !(await confirm()) }
                 return !alive()
             }
             self.window = window

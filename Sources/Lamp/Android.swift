@@ -421,6 +421,7 @@ enum Adb {
             let enabled: Bool
             let clickable: Bool
             let scrollable: Bool
+            let focused: Bool
             var id = ""
         }
         var items: [Item]
@@ -471,7 +472,8 @@ enum Adb {
                 let value = kind == "field" || !description.isEmpty ? text : ""
                 items.append(Item(kind: kind, name: name, value: value == name ? "" : value, frame: frame,
                                   checked: checkable ? attributes["checked"] == "true" : nil,
-                                  enabled: attributes["enabled"] != "false", clickable: clickable, scrollable: scrollable))
+                                  enabled: attributes["enabled"] != "false", clickable: clickable, scrollable: scrollable,
+                                  focused: attributes["focused"] == "true"))
             }
         }
 
@@ -533,18 +535,27 @@ enum Adb {
                 }
             case "type":
                 guard let text = action.text else { report.append("\(index + 1). type needs text."); continue }
+                // The field typed into: the target, else the one with the keyboard, read before anything is sent.
+                let field = action.target.flatMap { screen?.find($0) } ?? screen?.items.first { $0.kind == "field" && $0.focused }
                 if let (at, _) = point(action) {
                     let (x, y) = pixels(at)
                     _ = await run(["shell", "input", "tap", "\(x)", "\(y)"], on: serial, timeout: 30)
                     try? await Task.sleep(for: .milliseconds(300))
                 }
-                // In place of what the field held, as on the other devices: everything selected (Android 11 and
-                // later take a key combination) and deleted; on an older device, to the end and back over it,
-                // one delete per character up to what a field is likely to hold, all in one call.
+                // In place of what the field held, as on the other devices: everything selected and deleted where the
+                // device takes a key combination (Android 11 and later); on an older one, to the end and back over
+                // every character the field was seen to hold, in calls of a hundred keys.
                 _ = await run(["shell", "input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_A"], on: serial, timeout: 30)
                 _ = await run(["shell", "input", "keyevent", "KEYCODE_DEL"], on: serial, timeout: 30)
-                _ = await run(["shell", "input", "keyevent", "KEYCODE_MOVE_END"], on: serial, timeout: 30)
-                _ = await run(["shell", "input", "keyevent"] + Array(repeating: "KEYCODE_DEL", count: 120), on: serial, timeout: 60)
+                var remaining = (field?.value.count ?? 0) + 2
+                if let field, (await Self.screen(on: serial, density: density))?.find(field.id)?.value.isEmpty == false, remaining > 0 {
+                    _ = await run(["shell", "input", "keyevent", "KEYCODE_MOVE_END"], on: serial, timeout: 30)
+                    while remaining > 0 {
+                        let batch = min(remaining, 100)
+                        _ = await run(["shell", "input", "keyevent"] + Array(repeating: "KEYCODE_DEL", count: batch), on: serial, timeout: 60)
+                        remaining -= batch
+                    }
+                }
                 // `input text` takes no spaces and reads % and some punctuation its own way: each is escaped as adb's shell wants.
                 let escaped = text.map { character -> String in
                     switch character {

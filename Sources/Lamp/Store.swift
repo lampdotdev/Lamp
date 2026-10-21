@@ -5869,7 +5869,13 @@ final class Store: ObservableObject {
             }
             if inFront, project.device == nil { await Emulator.bringForward() }
             let opened = Date()
-            _ = watchLaunch(project, owner: owner, opened: opened, alive: { run.alive }, report: {
+            // The verdict asks the device once more as the window ends, since the watch's reading may be half a second old.
+            _ = watchLaunch(project, owner: owner, opened: opened, alive: { run.alive }, confirm: {
+                guard run.alive else { return false }
+                let there = await Adb.pid(of: package, on: serial) == pid
+                if !there { run.end() }
+                return there
+            }, report: {
                 Runtime.logTail(project, lines: 40) ?? "The app quit right after opening, and printed nothing."
             })
             refreshOpenApps()
@@ -5990,9 +5996,9 @@ final class Store: ObservableObject {
     /// closing the app, counts only with one, since the person or Lamp may have closed an app that works. Without
     /// one (the simulator), a going while Lamp closed the app is Lamp's doing.
     private func watchLaunch(_ project: LampProject, owner: Turn?, opened: Date, crashOnly: Bool = false,
-                             alive: @escaping @MainActor () -> Bool,
+                             alive: @escaping @MainActor () -> Bool, confirm: (@MainActor () async -> Bool)? = nil,
                              report: @escaping @MainActor () async -> String) -> Runtime.LaunchWatch {
-        let watch = Runtime.LaunchWatch(opened: opened, alive: alive) { [weak self] late, retired in
+        let watch = Runtime.LaunchWatch(opened: opened, alive: alive, confirm: confirm) { [weak self] late, retired in
             if retired, !crashOnly { return nil }
             if late || retired, crashOnly {
                 // macOS writes the report after the process is gone, sometimes ten seconds or more later.
