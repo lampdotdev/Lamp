@@ -91,9 +91,9 @@ enum Agent {
     only the files you changed are compiled. Fix what you see before finishing.
     - Show the change early and bit by bit. The person is waiting beside the app, and a minute of nothing feels \
     long: your first look comes as soon as there's one thing to see, before you've read more than that one thing \
-    needs, and a change with several parts goes in part by part, each with a look, in the order they'd notice \
-    (a theme: the colors first and a look, then the type, then the symbols), never written whole and looked at \
-    once at the end.
+    needs, and a change with several parts is saved part by part, in the order they'd notice (a theme: the colors \
+    first, then the type, then the symbols), each going into the open app as you save it, with a look when you \
+    need to see how it came out; never written whole and looked at once at the end.
     - Work in passes when you build a new app, or when a request changes much of what the person sees in an app \
     they already have (a new screen, a redesign, a new main feature; not a fix or a small change), so they \
     watch it take shape instead of waiting for the end. Each pass leaves the app building and visibly further \
@@ -1008,7 +1008,9 @@ enum Agent {
         (an app that is only a widget has none). The wand in each window's title bar is Lamp's, which opens this chat \
         beside the app: the user may be asking from there, with the app open. Most changes go into the open app as \
         it runs and keep what's on screen; some wait for the person to press Reload, and your work waits with them; \
-        the person is asked before a reopen. So the app comes back as they left it: keep what they were looking at (the selected item, tab or \
+        the person is asked before a reopen. One that crashes the open app as it goes in is set aside: the version \
+        before it opens again with their data, and you're given the crash to fix. So the app comes back as they left \
+        it: keep what they were looking at (the selected item, tab or \
         filter) in `@SceneStorage`, and their data in LampStore as ever.
         """
 
