@@ -541,6 +541,14 @@ extension Agent {
         return String(decoding: (try? JSONSerialization.data(withJSONObject: message)) ?? Data(), as: UTF8.self)
     }
 
+    /// The request Lamp sends when the person has pressed Reload after a change paused the agent (`Store.pause`): the
+    /// next request of the same conversation, on every engine, so the agent carries on where it stopped.
+    static let afterReload = """
+        Your change is in: the person pressed Reload and the app reopened with it, or they closed the app and the new \
+        version went in. Look at it now, then carry on with the request from where you stopped, unless a message \
+        below says otherwise. If nothing was left to do, say so in a sentence.
+        """
+
     /// Messages the person sent while Codex worked, as the run that resumes its conversation sends them. Codex
     /// tells the model the person interrupted it on purpose, which reads as "stop": they were only passed on.
     static func carryOn(_ text: String) -> String {

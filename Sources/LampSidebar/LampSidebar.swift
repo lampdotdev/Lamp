@@ -279,6 +279,7 @@ private struct Chat: View {
                         let places = ChatLook.QueuedPlace.places(sending: queued.map { $0.sendingNow == true })
                         ForEach(Array(queued.enumerated()), id: \.element.id) { index, message in
                             ChatLook.QueuedRow(text: message.text, waitingForSetup: state.waitingForSetup ?? false,
+                                               waitingForReload: state.waitingForReload ?? false,
                                                sending: message.sendingNow == true, place: places[index],
                                                onRemove: { link.send(.unqueue(message.id)) },
                                                sendNow: message.canSendNow == true ? { link.send(.sendNow(message.id)) } : nil) {

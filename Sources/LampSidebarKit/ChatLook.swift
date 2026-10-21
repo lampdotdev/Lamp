@@ -266,6 +266,10 @@ public enum ChatLook {
     /// says why the agent is at work with nobody having asked.
     public static let fixingCrash = "The app crashed, so Lamp is fixing it"
 
+    /// The line above the agent's return to a request Lamp paused for Reload: the request it sent isn't shown, so this
+    /// says why the agent is at work again.
+    public static let carryingOn = "The change is in. Lamp is carrying on with the request"
+
     /// One status line: a check, or a small spinner for a step still going.
     public struct StatusLine: View {
         let text: String

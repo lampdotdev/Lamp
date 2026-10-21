@@ -86,7 +86,7 @@ A capability given to one engine must be given to all of them that can take it, 
   panel at any size it opens at, in one row only on a wider card where each fits on a line (`TileRows`, and
   `ChipRow` the same way). A question left to Lamp is "Decide for me" (`TalkCard.youDecide`). Asking ends the turn: nothing is built or saved
   until the answer, and an agent that goes on to another step after `ask` is ended by Lamp, the way a
-  runaway one is (`Store.endOnQuestions`), whichever engine it is. Once the card is answered the chat
+  runaway one is (`Store.endIfOver`), whichever engine it is. Once the card is answered the chat
   follows its end again (`ChatFollow.followThroughSettling`). Only the card that waits is drawn as a card: answered, it folds to a line with what was chosen, and a notes receipt is a line too, so one thing in the chat asks for attention at a time. A new piece is a tool there, its view, and a line in `talkRules`. The agent still
   doesn't ask about layout, colours or names (`Agent.Rules.ask`).
 - **What Lamp remembers** (`Memory`): two short sets of notes, about the person (`about-you.md` in the
@@ -778,9 +778,9 @@ app has no way to speak to the agent that builds it: it only shows the chat, say
 moves the panel when the chat asks (`LampSidebarHost`, the one thing the chat asks of it). The draft
 is shared with Lamp's window (`Store.updateDraft`). A sidebar left open opens again with the app's first window when
 the app reopens (`LampSidebar.restore`). An app
-installed without the extension (by an earlier Lamp) shows its chat in Lamp's window instead. A change still reopens
-the app; the rule (`Agent.Rules.macGenerated`) asks the agent to keep what the person was looking at in
-`@SceneStorage`, so it comes back as they left it. As the app quits it leaves where its front window was in its
+installed without the extension (by an earlier Lamp) shows its chat in Lamp's window instead. Most changes go into
+the open app (below); for one that reopens it, the rule (`Agent.Rules.macGenerated`) tells the agent so and asks it to
+keep what the person was looking at in `@SceneStorage`, so it comes back as they left it. As the app quits it leaves where its front window was in its
 runtime folder (`LampMagic.leavePlace`), and the new copy opens its first window in the same place (`putBack`). Lamp
 puts no picture of the window in its place meanwhile: a copy that opens no window (a menu bar app) left one standing
 until it timed out.
@@ -982,14 +982,37 @@ keep the agent off the app). The libraries of earlier changes go once a later on
 app is installed (`LiveReload.forgetLibraries`): a loaded one stays mapped, and otherwise a long session leaves one
 for every change tried. Anything else needs the app reopened, with why in the chat's
 details (`LiveReload.Verdict`; what `LampLive` refused, and a change that didn't compile or load, say so there too,
-through `LiveReload.send`'s answer), so the rules can be tuned by what happens. The compiler's printout of a big app is tens of megabytes: it's kept whole off the main actor (`Sandbox.output`), each pattern is tried only on the nodes it could match (`SwiftSource.node`), and what's read from it is kept in memory by a digest of the code (`LiveReload.Analyses`), so the same code is never printed twice, the open app's layout after a reopen included. A change refused is refused again at the install after its build without that work, while nothing it was judged on has changed (`LiveReload.put`, `refusalKey`); a refusal by the open app itself is tried again. For a request's change, while the app is open, Lamp doesn't reopen it under the person: the build is held (`Store.awaitReload`, `Runtime.awaitReload`), the app shows a Reload button beside the wand in its title bar (`LampMagic.ReloadButton`, tinted glass in the accent colour whose tint brightens and settles again, shown with a `reloadReady` notification) and the chat a line with one too (`.reload`, under the agent's answer), and a click on either reopens it where it was (`Store.reloadWaiting`; the app asks with `reloadNow`, which puts in only a change Lamp holds). The agent is told the change waits for the person (`reloadNote`) and doesn't use the app until they press it; an agent working in passes goes on with the rest, which waits with it, and its progress lines say what's built shows after Reload, never that it's in, since the person reads them while nothing changes. Reload pressed while the agent works isn't kept for the request's end: the turn that owns the app reopens it as soon as the agent is between steps (`Store.reloadInTurn`, from the `autoApply` loop: no look, build, change going in or call into Lamp under way), and the agent's next look says the change is on screen (`Turn.reloadedByPerson`). Closing the app installs it too. A look with `reopen` asks the same way while the person has the app open (`Store.asksBeforeReopening`, the one check for both): it puts in what it can as the app runs, then holds the app for Reload and tells the agent so (`askedToReopenNote`). Both show the same Reload button and chat line, nothing of their own. Open App and Undo still reopen it, and so does every change and every look in a new app's first turn, which
+through `LiveReload.send`'s answer), so the rules can be tuned by what happens. The compiler's printout of a big app is tens of megabytes: it's kept whole off the main actor (`Sandbox.output`), each pattern is tried only on the nodes it could match (`SwiftSource.node`), and what's read from it is kept in memory by a digest of the code (`LiveReload.Analyses`), so the same code is never printed twice, the open app's layout after a reopen included. A change refused is refused again at the install after its build without that work, while nothing it was judged on has changed (`LiveReload.put`, `refusalKey`); a refusal by the open app itself is tried again. For a request's change, while the app is open, Lamp doesn't reopen it under the person: the build is held (`Store.awaitReload`, `Runtime.awaitReload`), the app shows a Reload button beside the wand in its title bar (`LampMagic.ReloadButton`, tinted glass in the accent colour whose tint brightens and settles again, shown with a `reloadReady` notification) and the chat a line with one too (`.reload`, under the agent's answer), and a click on either reopens it where it was (`Store.reloadWaiting`; the app asks with `reloadNow`, which puts in only a change Lamp holds). The agent is told the change waits for the person (`reloadNote`) and goes on with what's left, never saying the change is in; a look after that stops the turn until they press it (`Store.held`, below), so the agent never acts on an app it can't see. Reload pressed while the agent works isn't kept for the turn's end: the turn that owns the app reopens it as soon as the agent is between steps (`Store.reloadInTurn`, from the `autoApply` loop: no look, build, change going in or call into Lamp under way), the paused request goes on once the app is given back, and a look in that turn would say the change is on screen (`Turn.reloadedByPerson`). Closing the app installs it too. A look with `reopen` asks the same way while the person has the app open (`Store.asksBeforeReopening`, the one check for both): it puts in what it can as the app runs, then holds the app for Reload and tells the agent so (`askedToReopenNote`). Both show the same Reload button and chat line, nothing of their own. Open App and Undo still reopen it, and so does every change and every look in a new app's first turn, which
 nobody is using yet and whose passes the person is watching go in; when the person keeps the app open at its question (unsaved work), the build waits for Reload the same way. A live build reads the app's own files from its Assets folder rather than its bundle (`LampAssets`), so a new picture goes in live too (a change of those files alone has no code to load, so the app is asked to draw again, `LiveReload.redraw`); the package, the
 app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which tells the
 agent what goes in without reopening. The note opens by saying the person is watching the app beside the chat and
 sees a live change at once and a held one not until Reload, so the agent works in small shown steps. Each look then
 tells the agent which way its change went (`ChangeOutcome`): into the open app, waiting for Reload with LiveReload's
 reason and, where there's a known shape that would have gone in, that shape (`LiveReload.advice`), or reopened or
-opened. The turn's end tallies them in a detail line (`Store.outcomeTally`), which is how often changes go in live,
+opened; and how long the look took, since a look is how the agent sees what the person sees, and it puts looks off
+when it's only told they take a while. A change held for Reload doesn't stop the agent by itself: the look's
+answer (`reloadNote`, `askedToReopenNote`, `keptOpenNote`, through `Store.held`) says to go on with the passes left,
+that they're held with it and show after Reload, never to say a held change is in (a progress line says what was built
+and that it shows after Reload), and that looking again is how to ask to see. A look once the agent has been told, or
+any `use_app` while the change waits, is the agent asking to see or try an app that doesn't show its change, and
+stops the turn (`Store.stopsToSee`, `Store.pause`): the answer (`seeNote`) tells it to say in a sentence that it
+needs to see the change and ask for what puts it in (Reload, or closing the app where the person kept an earlier
+copy open and no Reload is offered), and end; an agent that calls another tool is ended by Lamp, as one is
+after `ask` (`Store.endIfOver`), Codex by its own interrupt so its conversation keeps the answer. Lamp's own request
+to carry on (`Agent.afterReload`, a `QueuedMessage` marked `afterReload`, hidden in the chat as a crash fix's request
+is, with `ChatLook.carryingOn` above it) waits in line until the held change is in (`Store.startsNow`): the person's
+Reload, or the app closing, puts it in and the agent goes on in the same conversation on every engine, looking first.
+A Reload pressed while the turn goes on puts the change in between the agent's steps (`reloadInTurn`) and the agent is
+told at its next look, which no longer stops it (`Turn.toldHeld` is cleared). The paused queue is
+kept across a relaunch like one waiting for setup (`Store.keptAcrossRelaunch`, `QueuedMessage.saved` with its flags and
+what each message points at, its files copied aside as a request waiting for setup has them, `Store.keptForLater`),
+since the held build outlives Lamp too; Undo, an earlier version and a request sent again drop it
+(`Store.dropPausedRequest`). A file the agent wrote in the moment before Lamp ended it that doesn't build is neither
+saved nor installed, as after any build that fails, and its errors ride with the carry-on request (`Store.carry`). Only
+the Reload button reloads the app: a message typed meanwhile waits in the same line (the chats say "Sent once you
+press Reload" under it, `ChatLook.waitingForReload`), since the chat is beside the app and a reopen takes the chat
+down with it, and nothing the agent did meanwhile could be seen. So the note asks for the changes that go in live
+first and the held ones last. The turn's end tallies them in a detail line (`Store.outcomeTally`), which is how often changes go in live,
 and says how long the person waited to see the turn's first change and the longest wait between changes after it
 (`Store.paceTally`, from `Turn.shown`), which is what the rules for showing work early are judged by. While
 the agent works, Lamp also puts each change it saves into the open app by itself (`Store.autoApply`: the sources read

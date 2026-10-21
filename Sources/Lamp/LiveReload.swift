@@ -1997,7 +1997,7 @@ enum LiveReload {
             return "leave the App, its scenes and menu commands as they are once the app is open, and put new views and logic in other files."
         }
         if w.contains("package") || w.contains("its icon") || w.contains("widget or share") {
-            return "make such changes in a request of their own, or first, before the ones that can go in live."
+            return "make such changes last, after the ones that can go in live have gone in, or in a request of their own."
         }
         if w.contains("initializer") || w.contains("method table") || w.contains("subclass") || w.contains("final") {
             return "add a method to a class nothing subclasses, or put the new behaviour in a free function or a struct."

@@ -305,6 +305,9 @@ struct QueuedMessage: Identifiable {
     var sendNow = false
     /// Lamp sent it on its own, to fix a crash (`Store.fixCrash`).
     var byLamp = false
+    /// Lamp's own, carrying a paused request on once the person has pressed Reload (`Store.pause`): it waits in line
+    /// until the held change is in, and so does everything sent behind it.
+    var afterReload = false
 }
 
 extension QueuedMessage {
@@ -314,14 +317,29 @@ extension QueuedMessage {
     var saved: [String: Any] {
         var saved: [String: Any] = ["text": text, "attachments": attachments.map(\.path)]
         if let card { saved["card"] = card.uuidString }
+        if byLamp { saved["byLamp"] = true }
+        if afterReload { saved["afterReload"] = true }
+        if let pointed, let picture = pointed.url {
+            var target: [String: Any] = ["title": pointed.title, "picture": picture.path]
+            if let detail = pointed.detail { target["detail"] = detail }
+            saved["pointed"] = target
+        }
         return saved
     }
 
     /// `ask` is what the card was called in a request kept by an earlier Lamp: read, so that an answer
     /// still waiting from then can be taken back and its card opens again.
+    /// What was pointed at comes back only with its picture still on disk: without the picture the agent would be told
+    /// of a part it can't see.
     init(saved: [String: Any], attachments: [URL]) {
+        var pointed: PointedAt?
+        if let target = saved["pointed"] as? [String: Any], let title = target["title"] as? String,
+           let picture = target["picture"] as? String, FileManager.default.fileExists(atPath: picture) {
+            pointed = PointedAt(title: title, detail: target["detail"] as? String, picture: picture)
+        }
         self.init(text: saved["text"] as? String ?? "", attachments: attachments,
-                  card: ((saved["card"] ?? saved["ask"]) as? String).flatMap(UUID.init(uuidString:)))
+                  card: ((saved["card"] ?? saved["ask"]) as? String).flatMap(UUID.init(uuidString:)),
+                  pointed: pointed, byLamp: saved["byLamp"] as? Bool ?? false, afterReload: saved["afterReload"] as? Bool ?? false)
     }
 }
 
@@ -546,7 +564,16 @@ final class Store: ObservableObject {
         var saysCommands = false
         /// The agent put its questions to the person this turn: the turn is over, whatever the agent does next.
         var asked = false
-        /// Lamp ended the agent because it went on working past its own questions. Not a stop and not a failure.
+        /// The agent asked to see or use the app while its change waits for the person (Reload, or an app they kept
+        /// open): the turn is over, whatever the agent does next, and the request goes on once the change is in
+        /// (`Store.pause`).
+        var paused = false
+        /// The agent has been told, this turn, that its change waits for the person and that it may go on with what's
+        /// left (`Store.held`); a look after that is it asking to see, which stops the turn. Cleared when the person's
+        /// Reload puts the change in while the turn goes on (`reloadInTurn`).
+        var toldHeld = false
+        /// Lamp ended the agent because it went on working past its own questions, or past a change the person
+        /// hasn't seen yet. Not a stop and not a failure.
         var endedOnQuestions = false
         var artCost = 0.0                   // what make_art's pictures cost, for the turn's summary
         var request: String?                // the user's words, for the command classifiers
@@ -2118,15 +2145,12 @@ final class Store: ObservableObject {
     /// Sends a message, or queues it while the app is busy. Everything queued goes out together
     /// as the next turn, so several quick follow-ups cost one agent run and one rebuild.
     func send(_ prompt: String, attachments: [URL] = [], pointed: PointedAt? = nil, answering card: UUID? = nil, to project: LampProject) {
-        // Waiting for setup can outlast this run, and the files may be temporary (a pasted screenshot):
-        // keep copies, so the request still has them after a relaunch. What was pointed at goes as a plain
-        // picture then, since waiting requests are kept as words and files.
-        var attachments = attachments, pointed = pointed
-        if !setup.ready, let picture = pointed?.url {
-            attachments.append(picture)
-            pointed = nil
-        }
-        let files = setup.ready ? attachments : keepForLater(attachments)
+        // Waiting for setup, or for the person's Reload (`pause`), can outlast this run, and the files may be
+        // temporary (a pasted screenshot, the picture of what was pointed at): copies are kept, so the request still
+        // has them after a relaunch.
+        var message = QueuedMessage(text: prompt, attachments: attachments, pointed: pointed)
+        if !setup.ready || queueWaitsForReload(in: project) { message = keptForLater(message) }
+        let files = message.attachments, pointed = message.pointed
         // Typed while a card waits, the message is its answer, even if it has to wait behind the agent's
         // turn: the card folds as it's sent, so it can't be answered a second time by a click meanwhile.
         var card = card
@@ -2148,6 +2172,18 @@ final class Store: ObservableObject {
     /// Where waiting requests' files are kept until their build starts.
     private var waitingFiles: URL { root.deletingLastPathComponent().appendingPathComponent("Waiting") }
 
+    /// A waiting message with copies of its files, the picture of what it points at included, where they aren't copies
+    /// already: one that was queued before its line turned out to wait across a relaunch (the pause came after it).
+    private func keptForLater(_ message: QueuedMessage) -> QueuedMessage {
+        var kept = message
+        let waiting = waitingFiles.standardizedFileURL.path
+        kept.attachments = message.attachments.map { $0.standardizedFileURL.path.hasPrefix(waiting) ? $0 : keepForLater([$0])[0] }
+        if let picture = message.pointed?.url, !picture.standardizedFileURL.path.hasPrefix(waiting) {
+            kept.pointed?.picture = keepForLater([picture])[0].path
+        }
+        return kept
+    }
+
     /// Each file gets a folder of its own, so two with the same name (two "Dropped image.png") both keep a copy.
     private func keepForLater(_ files: [URL]) -> [URL] {
         files.map { file in
@@ -2159,7 +2195,7 @@ final class Store: ObservableObject {
     }
 
     private func saveWaiting() {
-        let waiting = setup.ready ? [:] : queued.filter { !$0.value.isEmpty }.mapValues { messages in
+        let waiting = queued.filter { Self.keptAcrossRelaunch($0.value, setupReady: setup.ready) }.mapValues { messages in
             messages.map(\.saved)
         }
         if waiting.isEmpty {
@@ -2169,8 +2205,15 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Brings back requests that were waiting for setup when Lamp last quit. Kept files no waiting request
-    /// needs any more (its build has started, or it was taken back) are cleared out.
+    /// Which waiting messages are kept across a relaunch: every queue while setup isn't done, and a queue paused for
+    /// Reload (`pause`), whose held build outlives Lamp too, so the request carries on after the Reload whenever it
+    /// comes and nothing typed behind it is lost.
+    static func keptAcrossRelaunch(_ messages: [QueuedMessage], setupReady: Bool) -> Bool {
+        !messages.isEmpty && (!setupReady || messages.contains(where: \.afterReload))
+    }
+
+    /// Brings back requests that were waiting for setup, or for Reload, when Lamp last quit. Kept files no waiting
+    /// request needs any more (its build has started, or it was taken back) are cleared out.
     private func restoreWaiting() {
         var kept = Set<String>()
         if let waiting = UserDefaults.standard.dictionary(forKey: Self.waitingKey) as? [String: [[String: Any]]] {
@@ -2178,7 +2221,9 @@ final class Store: ObservableObject {
                 queued[id] = messages.map { message in
                     let files = (message["attachments"] as? [String] ?? []).filter { FileManager.default.fileExists(atPath: $0) }
                     kept.formUnion(files.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path })
-                    return QueuedMessage(saved: message, attachments: files.map(URL.init(fileURLWithPath:)))
+                    let restored = QueuedMessage(saved: message, attachments: files.map(URL.init(fileURLWithPath:)))
+                    if let picture = restored.pointed?.url { kept.insert(picture.deletingLastPathComponent().path) }
+                    return restored
                 }
             }
         }
@@ -2240,9 +2285,9 @@ final class Store: ObservableObject {
     /// asked its questions; then they all wait for the next turn.
     func canSendNow(in project: LampProject) -> Bool {
         let waiting = waitingToSend(in: project)
-        guard !waiting.isEmpty, let turn = turns[project.id], !turn.asked, !turn.stopped,
+        guard !waiting.isEmpty, let turn = turns[project.id], !turn.asked, !turn.paused, !turn.stopped,
               current(project)?.finding == false else { return false }
-        return waiting.allSatisfy { $0.card == nil && $0.replaces == nil && $0.tookBack.isEmpty }
+        return waiting.allSatisfy { $0.card == nil && $0.replaces == nil && $0.tookBack.isEmpty && !$0.afterReload }
     }
 
     /// Send Now: every waiting message goes to the agent at its next step, in the order they were sent, if it still
@@ -2272,8 +2317,13 @@ final class Store: ObservableObject {
 
     private func startQueued(_ project: LampProject) {
         guard setup.ready, let messages = queued[project.id], !messages.isEmpty,
+              Self.startsNow(messages, changeHeld: Runtime.holdsBuild(project)),
               let owner = begin(project) else { return }
         queued[project.id] = nil
+        saveWaiting()
+        // The request Lamp paused goes on: the chat says why the agent is back at work, since its own request is
+        // hidden, as a crash fix's is (`byLamp`).
+        if messages.first?.afterReload == true { log(project, .status, ChatLook.carryingOn) }
         owner.messages = messages.map(\.text)
         // A wish being found isn't named by its opening request or by answers to the agent's cards: the wish
         // the agent writes into the box (or one of the person's own) names it when it's sent.
@@ -2341,7 +2391,8 @@ final class Store: ObservableObject {
                 }
                 if selection != project.id || !NSApp.isActive { unread.insert(project.id) }
                 // Messages queued meanwhile start the next turn straight away; tell the user once it's all done.
-                if !owner.stopped, !result.watched, (queued[project.id] ?? []).isEmpty { notify(project, after: result.end) }
+                // Lamp's own request waiting for Reload starts nothing by itself: the person is told as after any turn.
+                if !owner.stopped, !result.watched, (queued[project.id] ?? []).allSatisfy(\.afterReload) { notify(project, after: result.end) }
                 finish(project)
             }
             // Named now, so the scaffold is written under its name. If it can't be, the turn ends here, failed.
@@ -2490,6 +2541,8 @@ final class Store: ObservableObject {
             }
         } catch {}
         if watching { await watchWidget(of: project) }
+        // The change is in: a request paused for it goes on (`pause`), once the app is given back.
+        startQueued(project)
         return true
     }
 
@@ -2639,7 +2692,16 @@ final class Store: ObservableObject {
         // look already built and opened exactly this code.
         try? await writeOwnFiles(project, all: false)
         let changed = Runtime.sourcesChanged(project)
-        if changed {
+        if changed, owner.paused {
+            // A file written in the moment before Lamp ended the agent: built once, with no run of the agent to fix it
+            // (nothing it did could be seen). One that doesn't build is neither saved nor installed, as after any
+            // build that fails, and its errors go to the agent with the request that carries on after Reload.
+            if let errors = await build(project) {
+                carry(errors, into: project)
+                log(project, .error, ErrorMessages.buildFailed)
+                return TurnResult(end: .failed, watched: isWatching(project.id))
+            }
+        } else if changed {
             guard await buildFixingErrors(project) else {
                 return TurnResult(end: owner.asked ? .replied : .failed, watched: isWatching(project.id))
             }
@@ -2894,7 +2956,7 @@ final class Store: ObservableObject {
                     // Between Codex's steps: a message waiting to be passed on can go now.
                     if engine == .codex { steer(project) }
                 case .step(let tool):
-                    if !tool.isEmpty { endOnQuestions(turn, before: tool) }
+                    if !tool.isEmpty { endIfOver(turn, before: tool) }
                     // The model has finished writing the file it was streaming. One that writes every file in a
                     // single reply has them all carried out only once the reply ends, so without this the
                     // checklist would sit still and then tick at once.
@@ -2934,7 +2996,7 @@ final class Store: ObservableObject {
                     let fileWork = [.read, .write, .edit, .search, .list, .delete].contains(call.action)
                     let named = said ?? (call.action == .run || fileWork ? turn.naming : nil)
                     log(project, .tool, text, said: named)
-                    endOnQuestions(turn, before: call.name)
+                    endIfOver(turn, before: call.name)
                     noteAgent(named ?? TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
                     if let file = TurnProgress.file(changedBy: call) { progress[project.id]?.wrote(file) }
                     toolCalls += 1
@@ -3076,9 +3138,9 @@ final class Store: ObservableObject {
     private func handOver(_ project: LampProject) -> String? {
         // Nothing more while a handover is unconfirmed: a receipt confirms everything handed over, so one that
         // never arrived could otherwise be counted by the next one's receipt instead of going back in line.
-        guard let turn = turns[project.id], turn.agent != nil, turn.steering != nil, !turn.asked, !turn.stopped,
+        guard let turn = turns[project.id], turn.agent != nil, turn.steering != nil, !turn.asked, !turn.paused, !turn.stopped,
               turn.handed.isEmpty, current(project)?.finding == false, let waiting = queued[project.id] else { return nil }
-        let taken = waiting.filter { $0.sendNow && $0.card == nil && $0.replaces == nil && $0.tookBack.isEmpty }
+        let taken = waiting.filter { $0.sendNow && $0.card == nil && $0.replaces == nil && $0.tookBack.isEmpty && !$0.afterReload }
         guard !taken.isEmpty else { return nil }
         let rest = waiting.filter { message in !taken.contains { $0.id == message.id } }
         queued[project.id] = rest.isEmpty ? nil : rest
@@ -3156,13 +3218,96 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Asking ends the turn. The tool says so, and an agent that goes on to another step anyway (it has been
-    /// seen to ask and then build the app without waiting) is ended here, the way a runaway one is: what it
-    /// would build is a guess at the answer, under a card the person hasn't answered yet.
-    private func endOnQuestions(_ turn: Turn, before tool: String) {
-        guard turn.asked, !turn.endedOnQuestions, ToolCall(tool).action != .ask, let process = turn.agent else { return }
+    /// Asking ends the turn, and so does asking to see a change the person hasn't seen yet (`pause`). The tool says
+    /// so, and an agent that goes on to another step anyway (it has been seen to ask and then build the app without
+    /// waiting, and to be told its change waits for Reload and then say the result was in, never having seen it) is
+    /// ended here, the way a runaway one is: what it would build is a guess at the answer, under a card the person
+    /// hasn't answered yet, or at an app it can't see until they press Reload.
+    private func endIfOver(_ turn: Turn, before tool: String) {
+        guard Self.endsAgent(asked: turn.asked, paused: turn.paused, before: tool), !turn.endedOnQuestions,
+              let process = turn.agent else { return }
         turn.endedOnQuestions = true
-        Subprocess.terminateTree(process)
+        // Codex is ended with its own interrupt, as `steer` does, so it records the turn it was in before it exits
+        // and resumes with the look's answer in its conversation; ended outright it loses what it hadn't saved.
+        if turn.steering == .codex, let codex = Subprocess.descendant(of: process, named: "codex") {
+            kill(codex, SIGINT)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
+                if turn.agent === process { Subprocess.terminateTree(process) }
+            }
+        } else {
+            Subprocess.terminateTree(process)
+        }
+    }
+
+    /// Whether a tool call ends the agent's turn: any after it asked, other than the ask itself, and any at all once
+    /// its change waits for the person. Said once, here, so the three engines are held to the same rule.
+    static func endsAgent(asked: Bool, paused: Bool, before tool: String) -> Bool {
+        paused || (asked && ToolCall(tool).action != .ask)
+    }
+
+    /// A look or `use_app` while the agent's change waits for the person (Reload, or an app they kept open; an app
+    /// they're using is never reopened under them). The first time in a turn the agent is told and goes on with what's
+    /// left, since a person who comes back later would rather find the work done than a turn that stopped at its
+    /// first held change (`Agent.lookRules`); a look after that, or any `use_app`, is the agent asking to see or try
+    /// an app that doesn't show its change, so the turn stops there (`pause`): the agent says it needs to see the
+    /// change, and goes on after Reload.
+    private func held(_ turn: Turn, in project: LampProject, note: String, using: Bool = false) -> (Int, [String: Any]) {
+        if Self.stopsToSee(told: turn.toldHeld, using: using) {
+            return pause(turn, in: project, saying: Self.seeNote(reloadOffered: Runtime.waitsForReload(project)), status: using ? 409 : 200)
+        }
+        turn.toldHeld = true
+        return (200, ["text": note])
+    }
+
+    /// Whether a look or `use_app` on a held change stops the turn: a look once the agent has been told the change
+    /// waits, and `use_app` always, since nothing can be tried in an app that doesn't show the change. Said once,
+    /// here, so the three engines are held to the same rule.
+    static func stopsToSee(told: Bool, using: Bool) -> Bool { told || using }
+
+    /// The agent asked to see its change and can't until the person has pressed Reload: the turn is over whatever it
+    /// does next (`endIfOver`), and Lamp's own request to carry on waits in line behind the Reload (`afterReload`),
+    /// so the agent looks at its change before more is done to it. The person's own messages typed meanwhile wait in
+    /// the same line: nothing reloads the app but the button, and nothing is changed that they can't see.
+    private func pause(_ turn: Turn, in project: LampProject, saying text: String, status: Int = 200) -> (Int, [String: Any]) {
+        turn.paused = true
+        if !(queued[project.id] ?? []).contains(where: \.afterReload) {
+            // Messages queued before the pause came keep copies of their files too, now that the line outlives a relaunch.
+            queued[project.id] = [QueuedMessage(text: Agent.afterReload, byLamp: true, afterReload: true)]
+                + (queued[project.id] ?? []).map(keptForLater)
+            saveWaiting()
+        }
+        return (status, [status == 200 ? "text" : "error": text])
+    }
+
+    /// The request paused for Reload is over: the person went another way (Undo, an earlier version, the request sent
+    /// again in other words), and carrying it on would do work on a change they just backed out of.
+    private func dropPausedRequest(_ project: LampProject) {
+        guard queued[project.id]?.contains(where: \.afterReload) == true else { return }
+        queued[project.id]?.removeAll(where: \.afterReload)
+        if queued[project.id]?.isEmpty == true { queued[project.id] = nil }
+        saveWaiting()
+    }
+
+    /// A file the agent wrote after the pause didn't build: its errors go with the request that carries on after
+    /// Reload, in place of "carry on", since nothing of it was saved or installed.
+    private func carry(_ errors: String, into project: LampProject) {
+        guard let index = queued[project.id]?.firstIndex(where: \.afterReload) else { return }
+        let text = Agent.afterReload + "\n\nA file you changed after your last look didn't build, so it wasn't saved or " +
+            "installed: the app has the change from that look, not this one. Fix these compiler errors first:\n\n" + errors
+        queued[project.id]?[index] = QueuedMessage(text: text, byLamp: true, afterReload: true)
+        saveWaiting()
+    }
+
+    /// Whether the waiting messages wait for the person's Reload (`pause`): the chats say so under them.
+    func queueWaitsForReload(in project: LampProject) -> Bool {
+        !Self.startsNow(queued[project.id] ?? [], changeHeld: Runtime.holdsBuild(project))
+    }
+
+    /// Whether the waiting messages may start a turn now: not while the first of them carries a paused request on
+    /// and the change it waits for is still held from the app (`pause`); the person's Reload, or the app closing,
+    /// puts the change in and lets them go.
+    static func startsNow(_ messages: [QueuedMessage], changeHeld: Bool) -> Bool {
+        !(messages.first?.afterReload == true && changeHeld)
     }
 
     /// Ends the engine's conversation for an app: the next request starts a new one, and is told what every
@@ -3610,7 +3755,7 @@ final class Store: ObservableObject {
             guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
             // The sidebar is the open copy's too, so it's kept from the agent on the same terms as its windows (below).
             if Runtime.holdsBuild(project), isRunning(project) {
-                return (409, ["error": Runtime.waitsForReload(project) ? reloadNote(for: project) : Self.keptOpenNote])
+                return held(turn, in: project, note: Runtime.waitsForReload(project) ? reloadNote(for: project) : Self.keptOpenNote, using: true)
             }
             guard !macCopies(of: project).isEmpty else {
                 return (200, ["text": "The app isn't open. Call look_at_app with sidebar first: it builds the app and opens it."])
@@ -3620,7 +3765,7 @@ final class Store: ObservableObject {
         if project.onIOS { return await useOnSimulator(project, actions: actions, json: json) }
         // Not in the copy the person kept open: what it holds is theirs, and it isn't the agent's change.
         if Runtime.holdsBuild(project), isRunning(project) {
-            return (409, ["error": Runtime.waitsForReload(project) ? reloadNote(for: project) : Self.keptOpenNote])
+            return held(turn, in: project, note: Runtime.waitsForReload(project) ? reloadNote(for: project) : Self.keptOpenNote, using: true)
         }
         guard let app = macCopies(of: project).first else {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
@@ -4528,6 +4673,7 @@ final class Store: ObservableObject {
     func undo(_ project: LampProject, change: String? = nil) async {
         guard begin(project) != nil else { return }
         defer { finish(project) }
+        dropPausedRequest(project)
         let versions = await Versions.list(project)
         let unsaved = await Versions.hasUnsavedChanges(project)
         if let change, unsaved || versions.first?.id != change || Versions.undoTarget(in: versions)?.undoing.id != change {
@@ -4558,6 +4704,7 @@ final class Store: ObservableObject {
     func restore(_ project: LampProject, to version: AppVersion) async {
         guard begin(project) != nil else { return }
         defer { finish(project) }
+        dropPausedRequest(project)
         guard await Versions.restore(project, to: version, message: Versions.restoredMessage(to: version)) else {
             log(project, .status, "The app is already like “\(version.label)”")
             return
@@ -4586,6 +4733,7 @@ final class Store: ObservableObject {
     func sendAgain(_ line: LogLine, as text: String, attachments: [URL], pointed: PointedAt? = nil, in project: LampProject) async -> Bool {
         guard busy.insert(project.id).inserted else { return false }
         defer { finish(project) }   // which starts the turn queued below
+        dropPausedRequest(project)
         let versions = await Versions.list(project)
         // Requests from before Lamp noted where they were sent from: the version one made follows that point.
         let start = line.before ?? line.version.flatMap { id in versions.first { $0.id == id }?.parent }
@@ -5043,8 +5191,12 @@ final class Store: ObservableObject {
             var mac = current
             mac.chosen = .mac
             _ = await install(mac, inFront: true, fresh: true, reload: true, saysReady: false)
+            // A request paused for this Reload (`pause`) goes on once the app is given back: here when the turn is
+            // already over, else when it ends (`finish`).
+            startQueued(current)
             guard turns[project.id] === turn, !Runtime.waitsForReload(current) else { return }
             turn.reloadedByPerson = true
+            turn.toldHeld = false
             log(current, .status, "Reopened \(current.name) with the change")
         }
         await turn.applying?.value
@@ -7495,10 +7647,10 @@ final class Store: ObservableObject {
 
     /// What a look says while a change waits for the person to press Reload (`awaitReload`).
     private static let reloadNoteStart = "The app built, but this change can't go into it while it runs"
-    /// What a look says while a change waits for the person to press Reload (`awaitReload`): with why it couldn't
-    /// go in, and where there's a known shape that would have, what that is, so the next change can take it. An
-    /// agent working in passes (`Agent.lookRules`) goes on with the rest rather than stopping, so the note says how
-    /// to go on without claiming what's held is on screen: the person reads its progress lines while nothing changes.
+    /// What a look says the first time a change waits for the person to press Reload (`awaitReload`, `held`): with why
+    /// it couldn't go in, and where there's a known shape that would have, what that is, so the next change can take
+    /// it. The agent goes on with the rest without claiming what's held is on screen, and is told that a look is how
+    /// it asks to see, which stops the turn until the Reload.
     private func reloadNote(for project: LampProject) -> String {
         var why = ""
         if let reason = turns[project.id]?.reloadWhy {
@@ -7507,13 +7659,36 @@ final class Store: ObservableObject {
         }
         return """
             \(Self.reloadNoteStart): it has to be reopened, and that's the person's to do.\(why) \
-            The app and the chat show them a Reload button, and Lamp doesn't reopen it for them; once they press it, \
-            your next look says so. Until then what's on screen isn't your change, and nothing you do after it shows \
-            either: don't use the app, and a look only builds your code and says whether it compiles. \
-            If passes of this request are left, go on with them; they're held with this one and show when the person \
-            presses Reload. Never say a held change is in or on screen: a progress line says what you built and that \
-            it shows after Reload ("Taproom look built, Reload to see it"). With nothing left, finish, and tell them \
-            in a sentence to press Reload to see it.
+            The app and the chat show them a Reload button, and Lamp doesn't reopen it for them. Until they press it \
+            what's on screen isn't your change, and nothing you do after it shows either. \(Self.goOnNote)
+            """
+    }
+
+    /// How the first note about a held change ends: the agent goes on with what's left, says so without claiming the
+    /// change is in, and knows that looking again is how it asks to see, which stops the turn (`seeNote`).
+    private static let goOnNote = """
+        If passes of this request are left, go on with them: they're held with this one and show when the person \
+        presses Reload. Never say a held change is in or on screen: a progress line says what you built and that it \
+        shows after Reload ("Taproom look built, Reload to see it"). When you need to see the app before going on, \
+        look again: Lamp then stops you until the person has pressed Reload, and starts you again after. With \
+        nothing left, finish, and tell them in a sentence to press Reload to see it.
+        """
+
+    /// What a look or `use_app` says once the agent has been told its change waits and asks to see it anyway
+    /// (`held`): the turn stops here, and Lamp holds it to that (`endIfOver`), whichever engine it is. What the agent
+    /// asks the person for is what puts the change in: Reload where a Reload is offered (`Runtime.awaitReload`), and
+    /// closing the app where the person kept an earlier copy open at its own question and no Reload is (the build
+    /// goes in when it closes, `installIcon`), so the agent never asks for a button that isn't there.
+    static func seeNote(reloadOffered: Bool) -> String {
+        let press = reloadOffered ? "press Reload" : "close the app, so the new version can open"
+        let once = reloadOffered ? "Once they've pressed Reload and the app has reopened with your change"
+            : "Once they've closed the app and the new version has gone in"
+        return """
+            Your change still waits for the person to \(press), so the app can't show it to you yet, and nothing \
+            you'd do after it would show either. Stop here: say in one sentence that you need to see the change \
+            before going on and ask them to \(press), and end your reply with no more tool calls. Lamp ends this \
+            turn at your next tool call. \(once), Lamp starts you again in this conversation with a message saying \
+            so, and you carry on from there.
             """
     }
 
@@ -7549,15 +7724,18 @@ final class Store: ObservableObject {
     /// What a look with `reopen` says when Lamp asked the person instead (`asksBeforeReopening`).
     private static let askedToReopenNote = """
         The person has the app open, so Lamp asked them before reopening it: the app and the chat show a Reload \
-        button, and it opens fresh when they press it. Any change you made is built and goes in with it. Don't look \
-        or use the app again in this request. Finish, and tell them in a sentence that Reload shows it starting fresh.
+        button, and it opens fresh when they press it. Any change you made is built and goes in with it, and nothing \
+        more you do shows until then. \(goOnNote)
         """
 
     /// What a look says when the person kept the earlier build open (`Turn.keptOpen`).
     private static let keptOpenNote = """
         The app built, but the person has the version from before open and chose to keep it open (it may hold \
-        work they haven't saved), so Lamp didn't replace it. What's on screen isn't your change, so don't look \
-        or use the app again in this request. Finish, and tell them in a sentence that the new version opens \
+        work they haven't saved), so Lamp didn't replace it. What's on screen isn't your change, and nothing more \
+        you do shows until the new version goes in, which it does when they close the app. If passes of this \
+        request are left, go on with them; they go in with it. Never say a held change is in or on screen. When you \
+        need to see the app before going on, look again: Lamp then stops you until the new version is in, and \
+        starts you again after. With nothing left, finish, and tell them in a sentence that the new version opens \
         once they close the app.
         """
 
@@ -7581,6 +7759,9 @@ final class Store: ObservableObject {
         guard !turn.look.inProgress else { return (200, ["text": "Lamp is already looking at the app. Wait for that result."]) }
         turn.look.inProgress = true
         progress[project.id]?.looking = true
+        // Told at the end how long the look took: the agent is asked to look after each part of a change, and
+        // a cost it has seen is one it allows for, where "takes a while" had it putting looks off.
+        let began = Date()
         await turn.early?.value
         // A fresh launch asked for while the person has the app open waits for them to say so, like a change that
         // needs one: the look puts in what it can as usual, then asks with Reload.
@@ -7670,7 +7851,7 @@ final class Store: ObservableObject {
         }
         // The copy on screen is an earlier build the person kept open: not shown as the agent's work, and not
         // asked to quit again at every look.
-        if turn.keptOpen, isRunning(project) { return (200, ["text": Self.keptOpenNote]) }
+        if turn.keptOpen, isRunning(project) { return held(turn, in: project, note: Self.keptOpenNote) }
         // Asked again after the build, which can take a minute: the person may have opened the app meanwhile.
         if wantsFresh, !asking, asksBeforeReopening(project, owner: turn) {
             asking = true
@@ -7679,14 +7860,14 @@ final class Store: ObservableObject {
         if asking {
             if !Runtime.waitsForReload(project) {
                 _ = await install(project, inFront: false, early: true)
-                if turn.keptOpen { return (200, ["text": Self.keptOpenNote]) }
+                if turn.keptOpen { return held(turn, in: project, note: Self.keptOpenNote) }
                 // Gone since (closed, or crashed with the change): nothing to ask about, and the next look opens it.
                 guard isRunning(project) else { return (200, ["text": "The app closed before Lamp could ask to reopen it. Look again to open it."]) }
                 if !Runtime.waitsForReload(project) { awaitReload(project, owner: turn) }
             }
-            return (200, ["text": Self.askedToReopenNote])
+            return held(turn, in: project, note: Self.askedToReopenNote)
         }
-        if Runtime.waitsForReload(project), isRunning(project), !reopen { return (200, ["text": reloadNote(for: project)]) }
+        if Runtime.waitsForReload(project), isRunning(project), !reopen { return held(turn, in: project, note: reloadNote(for: project)) }
         var since = Date()
         // A copy kept open in an earlier request is older than the build too: it's asked to quit, once.
         if !reopen, !changed, !Runtime.holdsBuild(project), macCopies(of: project).first != nil {
@@ -7705,8 +7886,8 @@ final class Store: ObservableObject {
             let launched = Date()
             // A look with `reopen` asks for the fresh launch itself, so it doesn't wait for Reload.
             let crash = await install(project, inFront: false, fresh: reopen, reload: reopen, early: true)
-            if turn.keptOpen { return (200, ["text": Self.keptOpenNote]) }
-            if Runtime.waitsForReload(project), isRunning(project) { return (200, ["text": reloadNote(for: project)]) }
+            if turn.keptOpen { return held(turn, in: project, note: Self.keptOpenNote) }
+            if Runtime.waitsForReload(project), isRunning(project) { return held(turn, in: project, note: reloadNote(for: project)) }
             turn.look.installed = true
             turn.look.crash = crash
             if let crash {
@@ -7772,6 +7953,7 @@ final class Store: ObservableObject {
             ? "It has no window open, so there's no picture. If it lives in the menu bar, use_app's bar_icon opens its panel."
             : Privacy.sharesPictures ? (lead.isEmpty ? "Pictures of its windows follow, frontmost first; x and y for use_app are pixels in the first." : "") : Privacy.picturesOff)
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
+        text += " This look took \(Int(Date().timeIntervalSince(began).rounded())) seconds."
         text += Self.handingHint(for: project)
         text += await Self.intentsHint(for: project)
         text += Self.shareHint(for: project)

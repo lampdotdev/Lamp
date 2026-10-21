@@ -80,6 +80,8 @@ extension ChatLook {
 
     /// Under what waits for setup before it's sent.
     public static let waitingForSetup = "Starts when Apple's app-building tools finish installing"
+    /// Under what waits for the person to press Reload before it's sent (`Store.pause`).
+    public static let waitingForReload = "Sent once you press Reload"
 
     /// A message waiting for the current change to finish. It can still be taken back. The latest of its group has
     /// the group's caption, and, where the agent can take them while it works, Send Now for the whole group
@@ -87,17 +89,19 @@ extension ChatLook {
     public struct QueuedRow<Chips: View>: View {
         let text: String
         let waitingForSetup: Bool
+        let waitingForReload: Bool
         let sending: Bool
         let place: QueuedPlace
         let onRemove: () -> Void
         let sendNow: (() -> Void)?
         let chips: Chips
 
-        public init(text: String, waitingForSetup: Bool, sending: Bool = false,
+        public init(text: String, waitingForSetup: Bool, waitingForReload: Bool = false, sending: Bool = false,
                     place: QueuedPlace = QueuedPlace(last: true, count: 1, first: true), onRemove: @escaping () -> Void,
                     sendNow: (() -> Void)? = nil, @ViewBuilder chips: () -> Chips) {
             self.text = text
             self.waitingForSetup = waitingForSetup
+            self.waitingForReload = waitingForReload
             self.sending = sending
             self.place = place
             self.onRemove = onRemove
@@ -130,8 +134,8 @@ extension ChatLook {
                     Label(several ? "Sending \(place.count) now" : "Sending now", systemImage: "arrow.up.circle")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
-                    if waitingForSetup {
-                        Label(ChatLook.waitingForSetup, systemImage: "clock")
+                    if waitingForSetup || waitingForReload {
+                        Label(waitingForSetup ? ChatLook.waitingForSetup : ChatLook.waitingForReload, systemImage: "clock")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
                         // Worded like a text the other side hasn't read yet, with no icon, as Messages shows it.

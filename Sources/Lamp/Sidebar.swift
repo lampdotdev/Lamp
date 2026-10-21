@@ -243,7 +243,8 @@ final class SidebarServer {
         state.pointed = draft.pointed.map { Self.pointed($0, canChooseAgain: store.canPoint(in: project)) }
         let canSendNow = store.canSendNow(in: project)
         let lastWaiting = store.waitingToSend(in: project).last?.id
-        state.queued = (store.queued[project.id] ?? []).map { message in
+        // Not Lamp's own request waiting for Reload (`Store.pause`): the Reload line stands for it.
+        state.queued = (store.queued[project.id] ?? []).filter { !$0.afterReload }.map { message in
             var queued = SidebarQueued(id: message.id, text: message.text,
                                        attachments: message.attachments.map { Self.attachment($0) })
             queued.pointed = message.pointed.map { Self.pointed($0) }
@@ -260,6 +261,7 @@ final class SidebarServer {
             state.lines[index].waitingForSetup = store.setup.ready ? nil : true
         }
         state.waitingForSetup = !store.setup.ready
+        state.waitingForReload = store.queueWaitsForReload(in: project) ? true : nil
         state.approval = store.approvals[project.id].map {
             SidebarApproval(id: $0.id, title: $0.title, command: $0.command, explanation: $0.explanation?.look, request: $0.request,
                             whyAsked: $0.whyAsked)
