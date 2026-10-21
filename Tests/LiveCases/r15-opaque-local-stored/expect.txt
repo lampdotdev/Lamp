@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Card.make().Value in Model.swift.value: some Equatable returns a String now, where the open app's returned a Int)
+== run
+before: value=1
+RELOAD 1: REOPEN Card.make().Value@Model.swift.value: some Equatable returns a String now, where the open app's returned a Int
+after1 (the kept value's local type keeps a some Equatable that is a String now: want a reopen, or value=one): value=1
+before: value=one
+RELOAD 1: in the restart
+after1 (the kept value's local type keeps a some Equatable that is a String now: want a reopen, or value=one): value=one

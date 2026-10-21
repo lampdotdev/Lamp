@@ -1489,9 +1489,12 @@ enum LiveReload {
             } else if opens("typealias"), let m = inferredAlias.firstMatch(in: line.text, range: line.range), let owner {
                 let name = String(line.text[Range(m.range(at: 2), in: line.text)!]), type = String(line.text[Range(m.range(at: 3), in: line.text)!])
                 if !type.contains("some ") { add(aliasGroup + "\t" + owner + "." + name + " = " + type) }
-            } else if opaque == nil, opens("func_decl", "var_decl"), let m = opaqueMember.firstMatch(in: line.text, range: line.range),
+            } else if opaque == nil || line.has("readImpl=stored"), opens("func_decl", "var_decl"), let m = opaqueMember.firstMatch(in: line.text, range: line.range),
                       case let name = String(line.text[Range(m.range(at: 3), in: line.text)!]), name != "__lampBody", !name.hasPrefix("$") {
-                opaqueIsPrivate = !line.has("readImpl=stored") && ["private", "fileprivate"].contains(String(line.text[Range(m.range(at: 5), in: line.text)!]))
+                // A stored one inside a member being read (a field of a type declared in a `some` helper) is listed
+                // too, by what its starting value builds, without taking the place of the member around it.
+                let nested = opaque != nil
+                if !nested { opaqueIsPrivate = !line.has("readImpl=stored") && ["private", "fileprivate"].contains(String(line.text[Range(m.range(at: 5), in: line.text)!])) }
                 // A view's body is wrapped by the live copy (`__lampBody`, read only by `body` beside it), so its type
                 // may change; a private member's callers are all in its file, compiled with it. Keyed with its
                 // signature, since overloads share a name; and declared like any member, so one added recompiles
@@ -1505,7 +1508,8 @@ enum LiveReload {
                     if seen.insert(entry).inserted { out.append(entry); ownershipPending = (indent, out.count - 1) }
                 }
                 let builds = line.has("readImpl=stored") ? bindingBuilds : nil
-                if let owner { opaque = (indent, owner + "." + signature, [], builds, nil, nil) }
+                if nested { if let owner { pendingOpaque.append((owner + "." + signature, builds, [])) } }
+                else if let owner { opaque = (indent, owner + "." + signature, [], builds, nil, nil) }
                 else if line.isTopLevel { opaque = (indent, signature, [], builds, nil, nil) }
             } else if opens("typealias"), let m = aliasDecl.firstMatch(in: line.text, range: line.range) {
                 var name = String(line.text[Range(m.range(at: 3), in: line.text)!])
