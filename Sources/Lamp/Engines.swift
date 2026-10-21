@@ -96,8 +96,16 @@ enum Builder {
         [("", "ChatGPT Codex's default")] + codexCatalog.map { ($0.slug, $0.name) }
     }
 
-    /// Codex's small, fast model, for quick judgments: the "Luna" line.
-    static var codexFastModel: String? { codexCatalog.first { $0.slug.contains("luna") }?.slug }
+    /// Claude Code's small, fast model, for quick judgments: Haiku 5.5 by its full id, since Claude Code's
+    /// own "haiku" alias still names Haiku 4.5.
+    static let claudeFastModel = "claude-haiku-5-5"
+
+    /// Codex's small, fast model, for quick judgments: Luna 6 when the account has it, else the Luna its
+    /// catalog ranks first.
+    static var codexFastModel: String? {
+        let lunas = codexCatalog.filter { $0.slug.contains("luna") }
+        return (lunas.first { $0.slug == "gpt-6-luna" } ?? lunas.first)?.slug
+    }
 
     private static var codexCatalog: [(slug: String, name: String)] {
         let url = EngineInstall.configFolder(.codex).appendingPathComponent("models_cache.json")
