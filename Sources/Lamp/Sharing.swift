@@ -20,16 +20,18 @@ enum Sharing {
     /// attachments the code named). 3: the file also carries a widget's code, in Widget/. 4: it also carries
     /// what the app declares in capabilities.json. 6: it may be an iPhone app or an app for both (`platform`),
     /// with an Apple Watch app's code in Watch/. 7: it also carries a share extension's code, in Share/. 8: its
-    /// code builds a 3D scene on LampScene.swift, which the Lamp that opens it writes.
-    static let formatVersion = 8
+    /// code builds a 3D scene on LampScene.swift, which the Lamp that opens it writes. 9: it's an Android app, its
+    /// Kotlin, manifest, resources and build file in app/.
+    static let formatVersion = 9
 
     /// What a file says it is: the oldest number a Lamp must know to open it whole. Only a file with a widget
     /// is a 3, only one that declares capabilities a 4, only an iPhone app, an app for both or one with a watch
     /// app a 6, only one with a share extension a 7 and only one with a 3D scene an 8, so an app with none of them still opens in an older
-    /// Lamp, and a Lamp that would build the app without one of them says to update instead.
+    /// Lamp, and a Lamp that would build the app without one of them says to update instead. An Android app is a 9
+    /// whatever it has: a Lamp from before would look for Swift and find none.
     static func format(withWidget: Bool, capabilities: Bool = false, platform: Platform = .mac, watch: Bool = false,
                        share: Bool = false, scene: Bool = false) -> Int {
-        scene ? 8 : share ? 7 : platform != .mac || watch ? 6 : capabilities ? 4 : withWidget ? 3 : 2
+        platform == .android ? 9 : scene ? 8 : share ? 7 : platform != .mac || watch ? 6 : capabilities ? 4 : withWidget ? 3 : 2
     }
 
     @MainActor private static var picker: NSSharingServicePicker?
@@ -158,10 +160,6 @@ enum Sharing {
     /// Writes `<Name>.lampapp` to a temporary folder and returns its URL. `icon` is the drawn icon to carry
     /// (`sharedIcon`); without one, Lamp's own drawing of the same design goes in.
     static func export(_ project: LampProject, icon: Data? = nil) throws -> URL {
-        // A shared file carries Swift code for Lamp's own build; an Android app's Gradle project isn't that yet.
-        guard project.platform != .android else {
-            throw ImportError("\(project.name) can't be shared yet.", detail: "Lamp doesn't share Android apps yet.")
-        }
         let fm = FileManager.default
         let work = workFolder.appendingPathComponent("forge-share-\(UUID().uuidString)")
         let stage = work.appendingPathComponent("app")
@@ -171,7 +169,17 @@ enum Sharing {
         var made = false
         defer { removeStaged(made ? stage : work) }
 
-        for file in swiftSources(in: project.dir.appendingPathComponent("Sources"))
+        // An Android app's code is app/ as Lamp would open it (`AndroidFiles`): never Lamp's Gradle files beside it.
+        let android = project.platform == .android
+        if android {
+            let files = AndroidFiles.list(in: project.dir)
+            for file in files.code + files.data {
+                let target = stage.appendingPathComponent(relativePath(of: file, in: project.dir))
+                try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try fm.copyItem(at: file, to: target)
+            }
+        }
+        for file in android ? [] : swiftSources(in: project.dir.appendingPathComponent("Sources"))
         where file.lastPathComponent != "LampSupport.swift" && file.lastPathComponent != Template.sceneSupportFile {
             let relative = relativePath(of: file, in: project.dir)
             let target = stage.appendingPathComponent(relative)
@@ -180,12 +188,12 @@ enum Sharing {
         }
         // The widget's code, when the app has one. Lamp's own file in that folder stays behind, like
         // LampSupport.swift: the Mac that opens the file writes its own.
-        let widgetCode = Template.hasWidget(project) ? swiftSources(in: project.dir.appendingPathComponent(Template.widgetFolder))
+        let widgetCode = !android && Template.hasWidget(project) ? swiftSources(in: project.dir.appendingPathComponent(Template.widgetFolder))
             .filter { $0.lastPathComponent != Template.widgetSupportFile } : []
         // The watch app's and the share extension's the same way, without Lamp's own files there.
-        let watchCode = Template.hasWatch(project) ? swiftSources(in: project.dir.appendingPathComponent(Template.watchFolder))
+        let watchCode = !android && Template.hasWatch(project) ? swiftSources(in: project.dir.appendingPathComponent(Template.watchFolder))
             .filter { !Template.watchSupportPaths.contains(relativePath(of: $0, in: project.dir)) } : []
-        let shareCode = Template.hasShare(project) ? swiftSources(in: project.dir.appendingPathComponent(Template.shareFolder))
+        let shareCode = !android && Template.hasShare(project) ? swiftSources(in: project.dir.appendingPathComponent(Template.shareFolder))
             .filter { $0.lastPathComponent != Template.shareSupportFile } : []
         for file in widgetCode + watchCode + shareCode {
             let target = stage.appendingPathComponent(relativePath(of: file, in: project.dir))
@@ -239,7 +247,7 @@ enum Sharing {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(Manifest(format: format(withWidget: !widgetCode.isEmpty, capabilities: !capabilities.isEmpty,
                                                     platform: project.platform, watch: !watchCode.isEmpty, share: !shareCode.isEmpty,
-                                                    scene: Template.usesScene(project)),
+                                                    scene: !android && Template.usesScene(project)),
                                     name: project.name, exportedAt: Date(),
                                     app: identity(of: project), description: AppDescription.description(of: project),
                                     platform: project.platform, family: project.platform.hasIOS ? project.family : nil))
@@ -356,6 +364,9 @@ enum Sharing {
         /// Whether the file brings an Apple Watch app.
         var hasWatch: Bool { sources.contains { path(of: $0).hasPrefix(Template.watchFolder + "/") } }
         let attachments: [URL]   // the app's own files (Assets/, or Attachments/ from an older Lamp); bundled as data, never run by Lamp
+        /// An Android app's pictures and files under app/ (its res/ and assets/ folders): data the build packs in,
+        /// never code. Its code, build file and manifest are in `sources`.
+        var androidData: [URL] = []
         /// Where each of them goes inside the app's Assets/ folder.
         func assetPath(of file: URL) -> String {
             let assets = folder.appendingPathComponent(Sharing.Assets.folder)
@@ -398,11 +409,13 @@ enum Sharing {
         guard manifest.format <= formatVersion else {
             throw ImportError("This app was shared from a newer version of Lamp. Update Lamp to open it.")
         }
-        let appCode = swiftSources(in: folder.appendingPathComponent("Sources"))
+        let platform = manifest.platform ?? .mac
+        let android = platform == .android ? AndroidFiles.list(in: folder) : nil
+        let appCode = android?.code ?? swiftSources(in: folder.appendingPathComponent("Sources"))
         guard !appCode.isEmpty else { throw ImportError("This Lamp app file has no code in it.") }
         // A widget's and a share extension's code is read whatever number the file gives itself: the number is
         // the sender's word. Lamp's own files there are never taken from a file; this Mac writes its own.
-        let sources = appCode + swiftSources(in: folder.appendingPathComponent(Template.widgetFolder))
+        let sources = android != nil ? appCode : appCode + swiftSources(in: folder.appendingPathComponent(Template.widgetFolder))
             .filter { $0.lastPathComponent != Template.widgetSupportFile }
             + swiftSources(in: folder.appendingPathComponent(Template.watchFolder))
             .filter { !Template.watchSupportPaths.contains(relativePath(of: $0, in: folder)) }
@@ -416,14 +429,21 @@ enum Sharing {
         // Assets/, or Attachments/ from a Lamp that bundled the chat's files: either way the app's own now.
         let attachments = filesUnder(folder.appendingPathComponent(Assets.folder))
             + filesUnder(folder.appendingPathComponent(Attachments.folder))
-        opened = true
-        return Package(name: name(from: manifest.name), identity: identity(from: manifest.app),
+        let package = Package(name: name(from: manifest.name), identity: identity(from: manifest.app),
                        description: manifest.description.flatMap(AppDescription.valid),
                        capabilities: Template.Capabilities.load(folder.appendingPathComponent(Template.Capabilities.file)).checked,
                        browser: BrowserCompanions.Declaration.load(folder.appendingPathComponent(BrowserCompanions.Declaration.file)),
-                       platform: manifest.platform ?? .mac, family: manifest.family ?? .iphone,
+                       platform: platform, family: manifest.family ?? .iphone,
                        folder: folder, sources: sources,
-                       attachments: attachments, fileCount: all)
+                       attachments: attachments, androidData: android?.data ?? [], fileCount: all)
+        // Lamp opens an Android app by its package, which it moves to this Mac's own on the way in: one whose build
+        // file doesn't name it plainly would build here and never open, so it's refused before anything is replaced.
+        if android != nil, AndroidFiles.senderPackage(in: package) == nil {
+            throw ImportError("Lamp can't open this Android app.",
+                              detail: "Its build file doesn't name the app's package in a way Lamp can read.")
+        }
+        opened = true
+        return package
     }
 
     /// A file's name on one line: a file can be edited by hand, and line breaks or runs of space in its
@@ -444,24 +464,28 @@ enum Sharing {
         // Swap the code there for the shared code; keep Lamp's own LampSupport.swift. The widget goes the
         // same way: whatever widget the app had is gone, and the file's, if it has one, takes its place
         // (Lamp's own file there is written again before the build).
-        let sources = project.dir.appendingPathComponent("Sources")
-        for item in try fm.contentsOfDirectory(at: sources, includingPropertiesForKeys: nil)
-        where item.lastPathComponent != "LampSupport.swift" {
-            try fm.removeItem(at: item)
-        }
-        try? fm.removeItem(at: project.dir.appendingPathComponent(Template.widgetFolder))
-        try? fm.removeItem(at: project.dir.appendingPathComponent(Template.watchFolder))
-        try? fm.removeItem(at: project.dir.appendingPathComponent(Template.shareFolder))
-        // Code comes from the one list the review read (`Package.sources`), and lands only in the code folders.
-        let codeFolders = ["Sources/", Template.widgetFolder + "/", Template.watchFolder + "/", Template.shareFolder + "/"]
-        let lampsOwn = ["LampSupport.swift", Template.sceneSupportFile, Template.widgetSupportFile, Template.shareSupportFile]
-        for file in package.sources where !lampsOwn.contains(file.lastPathComponent) {
-            let relative = package.path(of: file)
-            guard !relative.contains(".."), codeFolders.contains(where: { relative.hasPrefix($0) }),
-                  !Template.watchSupportPaths.contains(relative) else { continue }
-            let target = project.dir.appendingPathComponent(relative)
-            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.copyItem(at: file, to: target)
+        if package.platform == .android {
+            try AndroidFiles.install(package, into: project)
+        } else {
+            let sources = project.dir.appendingPathComponent("Sources")
+            for item in try fm.contentsOfDirectory(at: sources, includingPropertiesForKeys: nil)
+            where item.lastPathComponent != "LampSupport.swift" {
+                try fm.removeItem(at: item)
+            }
+            try? fm.removeItem(at: project.dir.appendingPathComponent(Template.widgetFolder))
+            try? fm.removeItem(at: project.dir.appendingPathComponent(Template.watchFolder))
+            try? fm.removeItem(at: project.dir.appendingPathComponent(Template.shareFolder))
+            // Code comes from the one list the review read (`Package.sources`), and lands only in the code folders.
+            let codeFolders = ["Sources/", Template.widgetFolder + "/", Template.watchFolder + "/", Template.shareFolder + "/"]
+            let lampsOwn = ["LampSupport.swift", Template.sceneSupportFile, Template.widgetSupportFile, Template.shareSupportFile]
+            for file in package.sources where !lampsOwn.contains(file.lastPathComponent) {
+                let relative = package.path(of: file)
+                guard !relative.contains(".."), codeFolders.contains(where: { relative.hasPrefix($0) }),
+                      !Template.watchSupportPaths.contains(relative) else { continue }
+                let target = project.dir.appendingPathComponent(relative)
+                try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try fm.copyItem(at: file, to: target)
+            }
         }
         // Its Assets folder from the start, files or none: nothing attached to its chat later is adopted.
         let folder = project.dir.appendingPathComponent(Assets.folder)
@@ -881,8 +905,20 @@ extension Sharing {
         let prompt: String
     }
 
+    /// What the reviewer is told of an Android app, which is built and run differently from everything above.
+    static let androidReview = """
+
+        This app is an Android app, in Kotlin under app/, and none of Lamp's building blocks above are in it. Lamp \
+        builds it with Gradle in a sandbox on this Mac and runs it in the Android emulator, or on the reader's own \
+        Android phone if they choose it. AndroidManifest.xml lists what it asks Android for (uses-permission: \
+        INTERNET to go online, the camera, location and the rest, each asked of the reader on the phone). \
+        app/build.gradle.kts is a program Gradle runs while building: judge it like the code, and name any library \
+        it brings in that isn't AndroidX, Jetpack Compose or Kotlin's own, and anything it does besides building.
+
+        """
+
     static func reviewRequest(name: String, description: String?, notes: String?, files: [(name: String, text: String)],
-                              boundary: String? = nil) -> ReviewRequest {
+                              boundary: String? = nil, android: Bool = false) -> ReviewRequest {
         let material = ([description ?? "", notes ?? ""] + files.map(\.text)).joined()
         var code = boundary ?? randomBoundary()
         // Sixteen random bytes won't be in the file by chance; this is for the test that passes one in.
@@ -951,7 +987,7 @@ extension Sharing {
         phone if they choose it, where it reaches what the phone has (location, Health, photos, contacts) with \
         the phone's permission. Judge both halves. Code under Watch/ is an Apple Watch app that goes with it, \
         installed on the reader's watch with the iPhone app, and judged the same way.
-
+        \(android ? Self.androidReview : "")
         Reply as one JSON object with exactly these four keys and nothing else: \
         {"summary": "<1-2 plain sentences: what the app does for the user>", \
         "capabilities": ["<one thing it reaches or does on the Mac or online>"], \
@@ -1074,8 +1110,14 @@ extension Sharing {
         if let browser = package.browser, let data = try? BrowserCompanions.Declaration.encoded(browser) {
             found.files.append((BrowserCompanions.Declaration.file, String(decoding: data, as: UTF8.self)))
         }
-        found.detected = checklist.filter { item in
-            item == encodedData ? hidesEncodedText(everything) : item.patterns.contains { everything.contains($0) }
+        if package.platform == .android {
+            // Kotlin's words aren't Swift's, and a manifest names a web address in every file: an Android app's
+            // reach is read off what it asks Android for and what its build brings in (`AndroidFiles.detected`).
+            found.detected = AndroidFiles.detected(in: package) + (hidesEncodedText(everything) ? [encodedData] : [])
+        } else {
+            found.detected = checklist.filter { item in
+                item == encodedData ? hidesEncodedText(everything) : item.patterns.contains { everything.contains($0) }
+            }
         }
         if package.capabilities.background == true, !found.detected.contains(where: { $0.label == startsAtLogin.label }) {
             found.detected.append(startsAtLogin)
@@ -1100,7 +1142,8 @@ extension Sharing {
         // OpenRouter's name for the model, if Lamp doesn't have it yet: asked for alongside the check, which
         // doesn't wait for it.
         if case .openRouter(let model) = route.kind { Task.detached(priority: .utility) { await ModelNames.refresh(for: model) } }
-        let request = reviewRequest(name: package.name, description: package.description, notes: found.about, files: found.files)
+        let request = reviewRequest(name: package.name, description: package.description, notes: found.about, files: found.files,
+                                    android: package.platform == .android)
         do {
             let (text, _) = try await AppAI.complete(prompt: request.prompt, images: [], system: request.system, json: true,
                                                      schema: answerSchema, via: route)
