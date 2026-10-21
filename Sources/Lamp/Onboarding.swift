@@ -109,9 +109,11 @@ struct OnboardingView: View {
             Analytics.capture(.welcomeStep, ["step": "\(step)"])
         }
         .onChange(of: store.arrivedWish) { arrive(animated: true) }
-        // Menus can be rebuilt at any moment, so keep Settings switched off for as long as the welcome is up.
+        // Menus can be rebuilt at any moment, so Settings is set again at each update while the welcome is up: off
+        // until it's finished. The welcome stays on screen a moment after that, fading out, and an update then must
+        // leave Settings on, or ⌘, stays dead until Lamp is opened again.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didUpdateNotification)) { _ in
-            SettingsMenu.enable(false)
+            SettingsMenu.enable(onboarded)
         }
     }
 
