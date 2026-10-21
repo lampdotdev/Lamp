@@ -2461,7 +2461,8 @@ final class Store: ObservableObject {
         // its icon, and goes back to waiting, so nobody is told to close an app they can't see.
         let watching = Template.isWidgetOnly(project) && isRunning(project)
         if watching { await quit(project) }
-        guard heldInstalls.mayInstall(project.id, running: isRunning(project)) else { return false }
+        // What's built may be a change that crashed the app (`setAside`): it waits until another change replaces it.
+        guard heldInstalls.mayInstall(project.id, running: isRunning(project) || setAsideChanges[project.id] != nil) else { return false }
         // A build that waited goes in now the app is closed: its data is copied first, as `install` does.
         let held = Runtime.holdsBuild(project)
         if held { await DataSnapshots.take(project) }
@@ -2492,7 +2493,7 @@ final class Store: ObservableObject {
             // Nor while a change that just went into it is watched: its going may be that change's crash, whose build
             // mustn't replace the version the person had (`setAside`).
             return !project.onIOS && !isRunning(project) && FileManager.default.fileExists(atPath: project.builtURL.path)
-                && reloadWatches[id] == nil
+                && reloadWatches[id] == nil && setAsideChanges[id] == nil
         }
         for project in projects where due.contains(project.id) {
             guard begin(project) != nil else { continue }
@@ -3447,6 +3448,7 @@ final class Store: ObservableObject {
         guard let turn = turns[project.id], !turn.stopped else { return }
         endApprovals(for: project)   // a command waiting for approval counts as denied
         turn.cancel()
+        setAsideChanges[project.id]?.told = true   // no fix starts by itself after Stop (`fixHeldCrash`)
     }
 
     /// Opens the installed app, or brings it to the front if it's running. Only builds when there's
@@ -5021,6 +5023,8 @@ final class Store: ObservableObject {
               await reloadInPlace(project, inFront: false, saysWhy: false) else { return false }
         reloadedBeforeBuild.insert(project.id)
         await DataSnapshots.wentIn(project)
+        // It crashed the app meanwhile (`setAside`): nothing of it is built for installing.
+        guard setAsideChanges[project.id] == nil else { reloadedBeforeBuild.remove(project.id); return false }
         // Nothing to install until the whole build is done: the copy in build/ is the one before this change. Only
         // then do these sources count as built, so a Lamp quit meanwhile builds them again (`recoverUnfinishedBuild`).
         LiveReload.installed(project)
@@ -5225,8 +5229,17 @@ final class Store: ObservableObject {
         LiveReload.installed(project)
         heldInstalls.installed(project.id)
         LiveReload.backToInstalled(project)
+        // A build held for Reload is older than the change, or is it: either way the version opened again is what
+        // the person has, and Reload would put the crash back in.
+        if Runtime.holdsBuild(project) {
+            Runtime.releaseBuild(project)
+            Self.tellReload(project, on: false)
+            reloadWhenFree.remove(project.id)
+        }
         setAsideChanges[project.id] = SetAside(fingerprint: fingerprint, crash: "It crashed as the change went into the open app, "
-            + "so Lamp set the change aside and opened the version before it again.\n\n" + crash)
+            + "so Lamp set the change aside and opened the version before it again.\n\n" + crash,
+            // After Stop, nothing more is done for the request, a fix included: the person says what's next.
+            told: turns[project.id]?.wasStopped == true)
         log(project, .error, ErrorMessages.setAside(project.name))
         log(project, .detail, crash)
         if !isRunning(project), FileManager.default.fileExists(atPath: project.installedURL.path) {
@@ -5291,6 +5304,9 @@ final class Store: ObservableObject {
         // In a new app's first turn its chat may already be beside it (`present`): whatever this install comes to (the
         // app open again, a crash, a failed install, a pass that took its window away), the chat is still somewhere.
         defer { if progress[project.id]?.newApp == true { Task { await MagicPanel.shared.keepChatInSight(project) } } }
+        // An app gone while a change that went into it is watched may have crashed with it, which macOS can take
+        // seconds to report: what the watch makes of it decides what's installed (`setAside`), so it's waited for.
+        while reloadWatches[project.id] != nil, !isRunning(project) { try? await Task.sleep(for: .milliseconds(250)) }
         // A change that can go into the open app goes in there, keeping what's on screen; the build waits to be
         // installed until the app closes (LiveReload).
         // The icon isn't part of such a change, so it doesn't wait for it: it's drawn meanwhile, ready for the next copy.
