@@ -563,11 +563,7 @@ struct LogRow: View, Equatable {
             WidgetCardView(dir: dir)
         case .reload:
             if let project = Store.shared.projects.first(where: { $0.dir == dir }) {
-                let queued = Store.shared.reloadWhenFree.contains(project.id)
-                ChatLook.ActionLine(symbol: "arrow.clockwise", text: queued ? ReloadLine.queued(project.name) : ReloadLine.text(project.name),
-                                    button: "Reload", disabled: queued, prominent: true) {
-                    Store.shared.reloadWaiting(project.id)
-                }
+                ReloadLine.Row(project: project)
             }
         case .iphoneSetup:
             if let project = Store.shared.projects.first(where: { $0.dir == dir }) {
@@ -707,6 +703,21 @@ enum ReloadLine {
     static func text(_ name: String) -> String { "Reload \(name) to see this change." }
     /// Reload was pressed while the agent was still at work on the app: it goes in once that's done.
     static func queued(_ name: String) -> String { "\(name) reloads when this request is done." }
+
+    /// Its own view, watching Lamp: the row it's in is drawn again only when its line changes, and a Reload waiting
+    /// for the request changes no line.
+    struct Row: View {
+        let project: LampProject
+        @ObservedObject private var store = Store.shared
+
+        var body: some View {
+            let queued = store.reloadWhenFree.contains(project.id)
+            ChatLook.ActionLine(symbol: "arrow.clockwise", text: queued ? ReloadLine.queued(project.name) : ReloadLine.text(project.name),
+                                button: "Reload", disabled: queued, prominent: true) {
+                store.reloadWaiting(project.id)
+            }
+        }
+    }
 }
 
 /// A turn's steps as its one line opens to them: "Worked for…" once it's over, and the live line while it goes on.
