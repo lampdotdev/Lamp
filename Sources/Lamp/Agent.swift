@@ -768,7 +768,7 @@ enum Agent {
         contacts and email come through the accounts already on the Mac (iCloud, Google, Exchange, Outlook), with no \
         sign-in or key, from LampSupport.swift: `LampCalendar.events(from:to:)` / `.add(...)`, \
         `LampReminders.open()` / `.add(...)` / `.complete(id)`, `LampContacts.search("name")` / `.find(email:)`, \
-        and `LampMail.inbox(limit:since:)` / `.search(text, since:)` / `.body(of:)` / `.draft(to:subject:body:)` (a draft opens in \
+        and `LampMail.inbox(limit:since:before:)` / `.search(text, since:)` / `.body(of:)` / `.draft(to:subject:body:)` (a draft opens in \
         Mail for the person to send; nothing is sent by the app). Their files in Google Drive, Dropbox, OneDrive or \
         iCloud Drive are folders on the Mac: `LampFolders.synced` lists them and `LampFolders.synced("Google Drive")` \
         gives one; read, write and watch them as files. So a wish that names a service ("my Google Calendar", "my \

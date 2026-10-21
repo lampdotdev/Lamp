@@ -17,10 +17,14 @@ final class Backpack: ObservableObject {
     private let saved = LampStore.collection("todos", of: Todo.self)
     let seen = LampStore.collection("emails", of: SeenEmail.self)
     private var schedule: LampSchedule?
+    /// Everything received before this has been read (or was never in the look-back): the next check reads on
+    /// from here. It stays at the first email that couldn't be read, so a failure is tried again however long ago.
+    private var readFrom: Date?
 
     private init() {
         settings = LampStore.load(BackpackSettings.self, from: "settings") ?? BackpackSettings()
         lastChecked = LampStore.load(Date?.self, from: "lastChecked") ?? nil
+        readFrom = LampStore.load(Date?.self, from: "readFrom") ?? nil
         Examples.addOnce(to: saved)
         todos = saved.all()
         LampNotifications.onAction { _, _ in LampWindows.show() }
@@ -127,7 +131,9 @@ final class Backpack: ObservableObject {
         seen.deleteAll()
         todos = []
         lastChecked = nil
+        readFrom = nil
         LampStore.save(lastChecked, to: "lastChecked")
+        LampStore.save(readFrom, to: "readFrom")
         await check()
     }
 
@@ -154,22 +160,31 @@ final class Backpack: ObservableObject {
         status = "Looking through Mail…"
         defer { status = nil }
         let firstLook = lastChecked == nil
-        // A day's overlap, so mail that arrived while the last check ran isn't missed; what's been read is skipped.
-        let since = lastChecked?.addingTimeInterval(-86400) ?? Date.now.addingTimeInterval(-Double(settings.lookBackDays) * 86400)
+        // A day's overlap, so mail that reached Mail late (an account that synced after the last check) isn't
+        // missed; what's been read is skipped.
+        let start = readFrom?.addingTimeInterval(-86400) ?? Date.now.addingTimeInterval(-Double(settings.lookBackDays) * 86400)
+        // The examples aren't the person's: a real email about a pajama day mustn't be taken for one already listed.
+        let listed = open.filter { $0.isExample != true }.map(\.title)
+        var found: [Todo] = []
         do {
-            let found = try await MailReader.read(since: since, settings: settings, seen: seen, onList: open.map(\.title)) { [weak self] status in
+            let through = try await MailReader.read(from: start, settings: settings, seen: seen, onList: listed) { [weak self] status in
                 self?.status = status
             } learned: { [weak self] sender in
                 guard let self, !Sender.matches(sender, any: settings.schoolSenders) else { return }
                 settings.schoolSenders.append(Sender.address(sender))
+            } keep: { [weak self] todos in
+                // Saved as each email is read, so what was found survives a failure or a quit later in the check.
+                for todo in todos { self?.put(todo) }
+                found += todos
             }
-            for todo in found { put(todo) }
+            readFrom = through
             lastChecked = .now
+            LampStore.save(readFrom, to: "readFrom")
             LampStore.save(lastChecked, to: "lastChecked")
-            if !firstLook, settings.notify, !found.isEmpty { announce(found) }
         } catch {
             self.error = error.localizedDescription
         }
+        if !firstLook, settings.notify, !found.isEmpty { announce(found) }
     }
 
     private func announce(_ found: [Todo]) {

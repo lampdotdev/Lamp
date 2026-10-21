@@ -40,12 +40,14 @@ and Start Over (forgets the list and every email read, and reads again).
   ticks off the reminder too), Reminders and Calendar, clearing examples, starting over, and `check()`, run every
   15 minutes by `LampSchedule` once `settings.readsMail` is on. After the first read, what it finds is announced
   with `LampNotifications`.
-- `Model/MailReader.swift`: reading Mail. New inbox emails since the last check (`LampMail.inbox(since:)`, with a
-  day's overlap; emails already in `emails` are skipped) are sorted into school or not: the person's lists first,
-  then the decision model (`LampAI.isTrue … each:`, on sender, subject and first lines), or the text AI forty at a
-  time when there's no decision model. Each school email's whole text (`LampMail.body`) goes to the text AI
-  (`LampAI.ask(as:)`) with the children's names and what's already on the list, and comes back as items. An email
-  that couldn't be read isn't marked, so the next check tries it again.
+- `Model/MailReader.swift`: reading Mail. Mail is read a week at a time, oldest first (a week with more than a
+  batch of mail in halves, `LampMail.inbox(since:before:)`), and emails already in `emails` are skipped. New ones
+  are sorted into school or not: the person's lists first, then the decision model (`LampAI.isTrue … each:`, on
+  sender, subject and first lines), or the text AI forty at a time when there's no decision model. Each school
+  email's whole text (`LampMail.body`) goes to the text AI (`LampAI.ask(as:)`) with the children's names and what's
+  already on the list (never the examples), and comes back as items. What an email asks for is saved before it's
+  marked read; one that couldn't be judged or read isn't marked, and `read` returns the first date with such an
+  email, which `Backpack` keeps as `readFrom`, so the next check starts there.
 - `Model/Examples.swift`: the example family (Maya and Leo at Oakwood Elementary), dated from the first launch.
 - `Format.swift`: how due dates read in a row, and the look-back in words.
 - `Views/PanelView.swift`: the panel: header, the Read My Mail card, the groups, Done, the examples line, footer.
@@ -55,8 +57,8 @@ and Start Over (forgets the list and every email read, and reads again).
 
 ## Data
 
-All in LampStore: the `todos` and `emails` collections, and the values `settings`, `lastChecked` and
-`examplesAdded`. Examples are marked `isExample` and go when the person first reads their Mail or clears them;
+All in LampStore: the `todos` and `emails` collections, and the values `settings`, `lastChecked`, `readFrom` (how
+far the inbox has been read without a gap) and `examplesAdded`. Examples are marked `isExample` and go when the person first reads their Mail or clears them;
 `examplesAdded` keeps them from coming back. Nothing from the emails is kept but each one's sender, subject and
 date, and the quote each thing to do came from.
 
