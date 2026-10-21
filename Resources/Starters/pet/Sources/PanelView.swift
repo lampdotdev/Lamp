@@ -9,7 +9,9 @@ struct PanelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Room on both sides for Lamp's wand at the top right, so a long name stays centred and never runs under it.
             header
+                .padding(.horizontal, 18)
                 .frame(maxWidth: .infinity)
                 .overlay(alignment: .topTrailing) { LampPanelWand().padding(.top, 10).padding(.trailing, 10) }
             picture
