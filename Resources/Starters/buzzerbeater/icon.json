@@ -1,6 +1,6 @@
 {
-  "background" : "orange",
-  "subject" : "a basketball with milky white frosted-glass panels and deep orange seams, tilted diagonally",
-  "symbol" : "basketball.fill",
-  "tint" : "#FFFFFF"
+  "subject": "an orange basketball with dark seams on a lighter blue disc",
+  "symbol": "basketball.fill",
+  "background": "blue",
+  "tint": "#FF7A1A"
 }
