@@ -271,7 +271,8 @@ enum SwiftSource {
                 if opens("func_decl"), line.has(" \"hash(into:)\" "), let owner = line.owner { out.hashing[owner] = r }
             } else if opens("enum_case_decl"), let r = SwiftSource.range(in: line.text) {
                 out.cases.append(r)
-            } else if opens("closure_expr"), line.has("-> ()\"") || line.has("-> Void\""), line.has(" escaping"), let r = SwiftSource.range(in: line.text) {
+            } else if opens("closure_expr", "autoclosure_expr"), line.has("-> ()\"") || line.has("-> Void\""), line.has(" escaping"), let r = SwiftSource.range(in: line.text) {
+                // (A method passed as a value, `Button("Refresh", action: refresh)`, is one the compiler writes.)
                 out.actions.append(r)
             } else if line.has(" decl=\""), let at = SwiftSource.range(in: line.text)?.start {
                 lastAt = at

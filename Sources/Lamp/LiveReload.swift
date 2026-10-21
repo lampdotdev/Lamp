@@ -319,7 +319,8 @@ enum LiveReload {
         let ranges = declarations.types.filter { names.contains(bare($0.key)) }.map(\.value) + names.flatMap { declarations.extensions[$0] ?? [] }
         guard !ranges.isEmpty else { return [] }
         var files: [String: SwiftSource.Text] = [:]
-        let called = ranges.flatMap { SwiftSource.called(from: $0.start, to: $0.last, in: declarations, files: &files, skipping: declarations.actions) }
+        // Into what an initializer makes as it starts (`let menu = makeMenu()`), the one the compiler wrote included.
+        let called = SwiftSource.called(fromAll: ranges, in: declarations, files: &files, members: true, skipping: declarations.actions)
             .filter { range in !ranges.contains { SwiftSource.within(range.start, $0) } }
             .compactMap { range -> String? in
                 guard let text = files[range.start.file] ?? SwiftSource.Text(path: range.start.file),
@@ -766,7 +767,20 @@ enum LiveReload {
     /// array, another type's field) would carry the old type into the new code.
     static func freeOpaque(_ changed: Set<String>, declarations: SwiftSource.Declarations, layout: [String]) -> Set<String> {
         let required = opaqueRequirements(layout)
-        let candidates = changed.filter { $0.hasSuffix("some View") && !required.contains(opaqueMember($0)) }
+        // A computed member of a view: a stored one (`let content: some View`) is laid out in whatever keeps its owner.
+        let views = Set(conformances(inLayout: layout).of.filter { $0.value.contains("View") }.map { bare($0.key) })
+        let fields = byType(bared(layout))
+        let candidates = changed.filter { key in
+            let head = bare(key.range(of: ": ").map { String(key[..<$0.lowerBound]) } ?? key)
+            guard key.hasSuffix("some View"), !required.contains(opaqueMember(key)), let dot = head.lastIndex(of: ".") else { return false }
+            let owner = String(head[..<dot]), member = opaqueMember(key)
+            // The layout lists what a type stores, wrappers' storage under `_name`.
+            let stored = (fields[owner] ?? []).contains { entry in
+                let field = entry.split(separator: "\t").last.map(String.init) ?? ""
+                return field.hasPrefix(member + ": ") || field.hasPrefix("_" + member + ": ")
+            }
+            return views.contains(owner) && !stored
+        }
         guard !candidates.isEmpty else { return [] }
         let bodies = madeInBodies(declarations: declarations, layout: layout), actions = declarations.actions
         return candidates.filter { key in
