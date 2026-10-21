@@ -912,7 +912,7 @@ written out), never a search of its text, so a string, a comment or another type
 it, and a case alone (`.a`) is no use of its enum as a whole (`LiveReload.reloadable`, comparing with the sources the open app runs, kept in `.lamp/live/running`, which holds only
 for the copy that took the last change: one opened again since, by the person or macOS, runs what was installed,
 which Lamp keeps beside it (`.lamp/live/installed`), so the change is judged against that, `LiveReload.tookChanges`,
-`reopenedOutside`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
+`backToInstalled`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
 linked into a library. Every file is compiled when what's declared changed (a function, an initializer, a computed
 property, a conformance, a member's `@objc` and its selector, a stored property, which may stand where a protocol extension's member of its
 name did, and its observers, which turn every write into a call, a typealias, and a private member made visible: `LiveReload.declarationGroup`, `declarationsChanged`), since an unchanged caller may then mean

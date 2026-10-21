@@ -42,13 +42,7 @@ enum LiveReload {
         if from != nil { forgetLibraries(project); AppFolder.remove(processURL(project), in: project.dir) }
         try? AppFolder.copy(from ?? sources(project), to: running(project), in: project.dir)
         // Installed from a build, what that build was made from; else what's there now.
-        let built = from == nil ? nil : from == installedURL(project) ? AppFile.text(installedInputs(project), in: project)
-            : AppFile.text(builtInputs(project), in: project)
-        // And kept as what's installed, for a copy opened later outside Lamp (`reopenedOutside`).
-        if let from, from != installedURL(project) {
-            try? AppFolder.copy(from, to: installedURL(project), in: project.dir)
-            try? AppFolder.write(built ?? inputs(project), to: installedInputs(project), in: project.dir)
-        }
+        let built = from == nil ? nil : AppFile.text(builtInputs(project), in: project)
         try? AppFolder.write(built ?? inputs(project), to: runningInputs(project), in: project.dir)
         // What it now runs was most often read already, as the live copy a change was tried with (`Analyses`): its
         // layout is kept, so the next change doesn't have the compiler print it again.
@@ -62,20 +56,6 @@ enum LiveReload {
     }
 
     private static func runningInputs(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-inputs.txt") }
-    /// What the installed app was built from, and what else went into it: a copy opened outside Lamp runs that.
-    private static func installedURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("installed") }
-    private static func installedInputs(_ project: LampProject) -> URL { folder(project).appendingPathComponent("installed-inputs.txt") }
-
-    /// The open copy was opened since the changes went in (by the Dock, at login, while Lamp was closed): it runs
-    /// what was installed, so that's what the next change is judged against, rather than nothing. Without a record
-    /// of what was installed, nothing is known of it, and the change reopens it.
-    static func reopenedOutside(_ project: LampProject) {
-        guard AppFile.text(installedInputs(project), in: project) != nil,
-              FileManager.default.fileExists(atPath: installedURL(project).path) else { forget(project); return }
-        AppFolder.remove(oldCodeURL(project), in: project.dir)
-        LiveSlots.clear(project)
-        markRunning(project, from: installedURL(project))
-    }
     private static func builtInputs(_ project: LampProject) -> URL { folder(project).appendingPathComponent("built-inputs.txt") }
 
     /// A live build has built: what else went into it (`inputs`, as it started), for when it's installed, since the
@@ -101,10 +81,34 @@ enum LiveReload {
         }.joined(separator: "\n")
     }
 
+    /// What the copy in the apps folder was built from, kept as it's installed: when a change put into the open app
+    /// crashes it, that copy is opened again (`Store.setAside`), and what it runs is this, so the next change can
+    /// still go into it as it runs.
+    private static func installedSources(_ project: LampProject) -> URL { folder(project).appendingPathComponent("installed") }
+    private static func installedInputs(_ project: LampProject) -> URL { folder(project).appendingPathComponent("installed-inputs.txt") }
+    static func keepInstalled(_ project: LampProject) {
+        guard FileManager.default.fileExists(atPath: running(project).path),
+              let inputs = AppFile.text(runningInputs(project), in: project) else {
+            AppFolder.remove(installedSources(project), in: project.dir)
+            return
+        }
+        try? AppFolder.copy(running(project), to: installedSources(project), in: project.dir)
+        try? AppFolder.write(inputs, to: installedInputs(project), in: project.dir)
+    }
+
+    /// The copy in the apps folder is what's opened next, none of the changes since it was installed in it.
+    /// Without a record of what it was built from (installed by an older Lamp), nothing is known of it, and the
+    /// next change reopens it.
+    static func backToInstalled(_ project: LampProject) {
+        guard FileManager.default.fileExists(atPath: installedSources(project).path),
+              let inputs = AppFile.text(installedInputs(project), in: project) else { return forget(project) }
+        markRunning(project, from: installedSources(project))
+        try? AppFolder.write(inputs, to: runningInputs(project), in: project.dir)
+        LiveSlots.clear(project)
+    }
+
     static func forget(_ project: LampProject) {
         AppFolder.remove(running(project), in: project.dir)
-        AppFolder.remove(installedURL(project), in: project.dir)
-        AppFolder.remove(installedInputs(project), in: project.dir)
         AppFolder.remove(oldCodeURL(project), in: project.dir)
         AppFolder.remove(processURL(project), in: project.dir)
         LiveSlots.clear(project)
@@ -236,8 +240,6 @@ enum LiveReload {
     /// and what's declared (`declarationGroup`). Each is compared its own way, never as a type's fields.
     static func isGroup(_ type: String) -> Bool { (type.first?.asciiValue ?? 32) < 32 }
 
-    /// A private type is keyed with its file (`Row@A.swift`, each part of a nested one), since two files may each
-    /// declare one of the name and the two are two types at run time; this is the key as Swift names the type.
     /// A type's key as the person reads it: a type declared inside a function by its name and the function
     /// (`Answer (inside Shelf.surprise())`), without its file or the closures between.
     static func spoken(_ key: String) -> String {
@@ -248,6 +250,8 @@ enum LiveReload {
         return "\(plain[end.upperBound...]) (inside \(owner))"
     }
 
+    /// A private type is keyed with its file (`Row@A.swift`, each part of a nested one), since two files may each
+    /// declare one of the name and the two are two types at run time; this is the key as Swift names the type.
     static func bare(_ key: String) -> String { key.replacingOccurrences(of: #"@[^\t]*?\.swift"#, with: "", options: .regularExpression) }
     /// Layout entries with every type named bare, the groups' (an alias's owner, a shape's type, a conformance's)
     /// included, for what compares them with types as the code names them (a field's type, a use in old code);
@@ -2371,8 +2375,8 @@ enum LiveSlots {
                         return .refused("\(type).\(name) isn't @State, and a view's spare keeps state")
                     }
                 }
-                // A property an explicit CodingKeys names has to be stored for Codable to be made: it stays a field.
-                // Written or made by the compiler: moved into a spare, it would drop out of what's encoded and decoded.
+                // A property in a Codable type's CodingKeys, written or made by the compiler, stays a field: moved into a
+                // spare, it would drop out of what's encoded and decoded.
                 if cases[type + ".CodingKeys"]?.contains(name) == true {
                     return .refused("\(LiveReload.spoken(type)) is Codable and gained \(name), which has to be stored to be encoded and decoded")
                 }

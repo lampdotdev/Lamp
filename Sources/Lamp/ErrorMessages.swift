@@ -15,6 +15,7 @@ enum ErrorMessages {
     static let crashAfterLaunchSuffix = " crashes when it opens. Ask me to fix the crash, or press Undo."
     static let crashedSuffix = " crashed again. Ask me to fix it, or press Undo."
     static let quitsAfterLaunchSuffix = " still quits right after opening. Try describing the change differently, or press Undo."
+    static let setAsideSuffix = " crashed with the last change, so it's back as it was before it, with your data. The change is set aside to be fixed."
 
     /// A turn's change that was made but couldn't be saved as a version.
     static let versionNotSaved = "Lamp couldn't save this change as a version. It's in your app, and your next change will save both."
@@ -32,4 +33,6 @@ enum ErrorMessages {
     static func crashAfterLaunch(_ app: String) -> String { app + crashAfterLaunchSuffix }
     static func quitsAfterLaunch(_ app: String) -> String { app + quitsAfterLaunchSuffix }
     static func crashed(_ app: String) -> String { app + crashedSuffix }
+    /// A change that crashed the open app as it went in: the version before it is open again.
+    static func setAside(_ app: String) -> String { app + setAsideSuffix }
 }

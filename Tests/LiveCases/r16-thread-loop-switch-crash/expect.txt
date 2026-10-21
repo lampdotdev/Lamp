@@ -2,6 +2,7 @@ VERDICT 1: REOPEN (run() switches over Mode in code that may still be running (a
 == run
 before: idle
 RELOAD 1: REOPEN run() switches over Mode in code that may still be running (a loop, a timer, a task, an observer), which doesn't know the new cases
+after1 (want the loop to see the new mode as itself, or a reopen: the loop is old code that switches over Mode): playing
 before: idle
 RELOAD 1: in the restart
 after1 (want the loop to see the new mode as itself, or a reopen: the loop is old code that switches over Mode): tied
