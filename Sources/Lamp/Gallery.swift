@@ -284,8 +284,6 @@ enum Gallery {
             AnyView(ChatLook.ActivityLine("Opening Countdowns…", started: Date().addingTimeInterval(-95),
                                           since: Date().addingTimeInterval(-4)))
         },
-        cover("Cover, building", "Building…", waited: 12),
-        cover("Cover, the turn over", nil, waited: 0),
         // The one line a turn has while it goes on, under the steps done so far (a click folds them): commands the agent
         // named, a few under one name, and one it didn't; the one running is the line. "Worked for…", folded, opens to
         // the same rows once it's over.
@@ -321,21 +319,6 @@ enum Gallery {
             })
         },
     ]
-
-    /// The cover while the app reopens, on a starter's picture of its window.
-    private static func cover(_ name: String, _ activity: String?, waited: TimeInterval) -> Entry {
-        Entry(group: "Activity", name: name) {
-            var progress = TurnProgress(newApp: false)
-            progress.started = Date().addingTimeInterval(-waited - 20)
-            if let activity { progress.activity = activity }
-            progress.activitySince = Date().addingTimeInterval(-waited)
-            if activity == nil { progress.finish(worked: true) }
-            let picture = Starters.folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("countdowns/preview.png")) }
-                ?? NSImage(size: NSSize(width: 340, height: 282))
-            return AnyView(CoverView(image: picture) { CoverNote(progress: progress) }
-                .aspectRatio(picture.size, contentMode: .fit))
-        }
-    }
 
     private static func activity(_ name: String, _ activity: String, waited: TimeInterval) -> Entry {
         Entry(group: "Activity", name: name) {

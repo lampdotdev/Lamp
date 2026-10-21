@@ -244,8 +244,7 @@ A capability given to one engine must be given to all of them that can take it, 
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items. A turn has one activity (`TurnProgress.activity`, and since when,
   `activitySince`), and every place that shows it draws it with `ChatLook.ActivityText`: the build card, the line
-  under a change, the chat beside the app (`SidebarState.workingActivitySince`) and the cover while the app reopens
-  (`CoverNote`). How it reads as the wait goes on is `Activity.words`, in one place: while the model thinks, its
+  under a change and the chat beside the app (`SidebarState.workingActivitySince`). How it reads as the wait goes on is `Activity.words`, in one place: while the model thinks, its
   phrases (never a bare "Thinking"; each think opens on one picked by when it began) turn over every 3.5
   seconds and grow more reassuring the longer it goes; a build says "Still building…"
   after 30 seconds and "Taking a little longer…" after 90, and putting a change into the open app "Still updating…"
@@ -267,7 +266,7 @@ A capability given to one engine must be given to all of them that can take it, 
   engine's output says (its tool call starting, a streamed reply) doesn't change the activity (`Store.noteAgent`):
   every engine reports the call a moment after the look began, and its fixed word would cover each stage after it
   (building, installing, opening, looking at the app, watching it move); when the look ends it's "Thinking". No clock
-  is shown beside the activity, in the chat, the build card or the cover: the turn's whole time is its "Worked for…".
+  is shown beside the activity, in the chat or the build card: the turn's whole time is its "Worked for…".
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
   Where an app's text AI goes is an `AppAI.TextRoute` (an OpenRouter model, the Claude Code or Codex sign-in,
   pi with its key provider, or a model on this Mac), listed by `AppAI.textRoutes` for the pickers in
@@ -753,15 +752,13 @@ is shared with Lamp's window (`Store.updateDraft`). A sidebar left open opens ag
 the app reopens (`LampSidebar.restore`). An app
 installed without the extension (by an earlier Lamp) shows its chat in Lamp's window instead. A change still reopens
 the app; the rule (`Agent.Rules.macGenerated`) asks the agent to keep what the person was looking at in
-`@SceneStorage`, so it comes back as they left it. To make that look like the window changing in place: as the app
-quits it leaves a picture of its front window and where it was in its runtime folder (`LampMagic.leaveCover`); while
-the app's turn is going, Lamp shows that picture where the window was (`MagicPanel.showCover`, a borderless window
-with the turn's activity in its middle, "Updating…" once the turn is over, and the chat's blank paper where a chat beside it was: `cover-chat-frame.txt`, `MagicPanel.chatCover`), the new
-copy opens its first window in the same place (`putBack`), and the picture fades out once the new copy reports its window
-(or goes when the turn ends without it).
+`@SceneStorage`, so it comes back as they left it. As the app quits it leaves where its front window was in its
+runtime folder (`LampMagic.leavePlace`), and the new copy opens its first window in the same place (`putBack`). Lamp
+puts no picture of the window in its place meanwhile: a copy that opens no window (a menu bar app) left one standing
+until it timed out.
 While Lamp builds a change for a Mac app that's open, the app's windows glow softly at their edges, blurred and
 going round blue, purple and orange, and a band of light crosses them as the change goes in (`AppTransition`, drawn by
-`LampTransition` in LampSupport.swift; Lamp's cover carries the same glow, `TransitionGlow`). It starts in `Store.build`,
+`LampTransition` in LampSupport.swift). It starts in `Store.build`,
 lands in `reloadInPlace` (or, after a reopen, once the new copy's window is on screen, `landWhenShown`), and fades after `install` otherwise (held for Reload,
 kept open, failed); Lamp renews it while the turn goes on and the app lets it go after 90 seconds unrenewed. The app
 draws it in clear child windows that let clicks through and are left out of its pictures (`windowsOnScreen`), so the
