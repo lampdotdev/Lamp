@@ -17,12 +17,16 @@ final class ComputerOverlay {
 
     private var cursorWindow: NSWindow?
     private var cursorLayer: CALayer?
+    /// What the cursor is now: an arrow over a Mac window, a fingertip over an iPhone's screen.
+    private var cursorFinger = false
     private var cursorPosition: CGPoint?   // in the cursor window's own coordinates
     private var glowWindow: NSWindow?
     private var glowTarget: CGWindowID?
     /// The stop control riding on the glow, and what it stops.
     private var stopPill: NSPanel?
     private var onStop: (() -> Void)?
+    /// The task was handed back to the person: the pill says so for a moment, in place of Stop.
+    private var handedBack = false
     /// The task showing now. Two apps' tasks can run at once; the latest to show takes the overlay, and an
     /// earlier one finishing leaves it alone.
     private var owner: ObjectIdentifier?
@@ -35,12 +39,14 @@ final class ComputerOverlay {
 
     /// Glows around a window and keeps following it, just above it in the stack: a window in front of it
     /// still covers the glow, so a window that's only being read doesn't seem to jump forward.
-    /// `label` says whose task it is, on the stop control above the window; `stop` is what it does.
-    func focus(window id: CGWindowID, label: String, owner: ObjectIdentifier, stop: @escaping () -> Void) {
+    /// `label` says whose task it is, on the stop control above the window; `stop` is what it does, and
+    /// `escape` shows that Esc does it too (the caller watches for the key).
+    func focus(window id: CGWindowID, label: String, owner: ObjectIdentifier, escape: Bool = false, stop: @escaping () -> Void) {
         cancelHide()
         self.owner = owner
         onStop = stop
-        defer { showStop(label) }   // once the window is known, so it opens in its place
+        handedBack = false
+        defer { showStop(label, escape: escape) }   // once the window is known, so it opens in its place
         guard glowTarget != id || glowWindow?.isVisible != true else { return }
         glowTarget = id
         guard let frame = Self.frame(of: id) else { glowWindow?.orderOut(nil); return }
@@ -69,14 +75,19 @@ final class ComputerOverlay {
 
     /// A small pill just above the window in use: whose task this is, and Stop. Above the window rather
     /// than on it so it covers none of the window's own controls; below it when there's no room above.
-    private func showStop(_ label: String) {
-        let view = StopPill(label: label) { [weak self] in
+    private func showStop(_ label: String, escape: Bool) {
+        let view = StopPill(label: label, escape: escape) { [weak self] in
             guard let self else { return }
             let stop = self.onStop
             self.onStop = nil
-            self.stopPill?.orderOut(nil)
             stop?()
+            // A task that hands back (`handBack`) keeps the pill to say so; any other goes with it.
+            if !self.handedBack { self.stopPill?.orderOut(nil) }
         }
+        show(pill: view)
+    }
+
+    private func show(pill view: some View) {
         let pill = stopPill ?? {
             let panel = NonKeyPanel(contentRect: .zero, styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
             panel.isOpaque = false
@@ -90,11 +101,14 @@ final class ComputerOverlay {
             return panel
         }()
         stopPill = pill
+        let middle = pill.isVisible ? pill.frame.midX : nil
         let host = FirstClickHost(rootView: view)
         host.frame.size = host.fittingSize
         pill.contentView = host
         pill.setContentSize(host.fittingSize)
         if let id = glowTarget, let frame = Self.frame(of: id) { placeStop(above: frame) }
+        // With no window to sit over any more (it was handed back), it stays centred where it was.
+        else if let middle { pill.setFrameOrigin(CGPoint(x: middle - pill.frame.width / 2, y: pill.frame.minY)) }
         if !pill.isVisible {
             pill.alphaValue = 0
             pill.orderFrontRegardless()
@@ -116,7 +130,10 @@ final class ComputerOverlay {
         if pill.frame.origin != origin { pill.setFrameOrigin(origin) }
     }
 
-    private static let glowMargin: CGFloat = 24
+    /// How far the glow reaches out from the window's edge before it has faded away.
+    private static let glowReach: CGFloat = 14
+    /// Room around the window for the glow to fade out in.
+    private static let glowMargin: CGFloat = glowReach + 10
 
     private func place(_ window: NSWindow, around frame: CGRect, above id: CGWindowID) {
         let cocoa = Self.cocoa(frame).insetBy(dx: -Self.glowMargin, dy: -Self.glowMargin)
@@ -124,59 +141,131 @@ final class ComputerOverlay {
         window.order(.above, relativeTo: Int(id))
     }
 
+    /// Lamplight around the window: a halo that is brightest at the window's edge and fades out over the room
+    /// around it, with a fine line along the edge itself. The halo is the window's own shape lit from behind (a
+    /// blurred fill of it), shown only outside the window: the glow sits above the window in the stack, so
+    /// anything drawn inside its edge would cover the app.
+    private final class Glow {
+        let halo = CAShapeLayer()
+        let near = CAShapeLayer()      // the brighter light close to the edge, under the wide halo
+        let line = CAShapeLayer()
+        let outside = CAShapeLayer()   // the mask: everything but the window
+        let holder = CALayer()
+
+        init() {
+            halo.fillColor = ComputerOverlay.tint.cgColor
+            halo.shadowColor = ComputerOverlay.tint.cgColor
+            halo.shadowOpacity = 1
+            halo.shadowRadius = ComputerOverlay.glowReach / 2
+            halo.shadowOffset = .zero
+            near.fillColor = ComputerOverlay.tint.cgColor
+            near.shadowColor = ComputerOverlay.tint.cgColor
+            near.shadowOpacity = 0.9
+            near.shadowRadius = ComputerOverlay.glowReach / 5
+            near.shadowOffset = .zero
+            outside.fillRule = .evenOdd
+            outside.fillColor = NSColor.black.cgColor
+            holder.mask = outside
+            holder.addSublayer(halo)
+            holder.addSublayer(near)
+            line.fillColor = nil
+            line.strokeColor = ComputerOverlay.tint.withAlphaComponent(0.95).cgColor
+            line.lineWidth = 2
+        }
+
+        func layout(in bounds: CGRect) {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            for layer in [holder, halo, near, outside, line] { layer.frame = bounds }
+            // Just outside the window's own edge, with the rounding macOS gives windows.
+            let edge = bounds.insetBy(dx: ComputerOverlay.glowMargin - 2, dy: ComputerOverlay.glowMargin - 2)
+            let window = CGPath(roundedRect: edge, cornerWidth: 14, cornerHeight: 14, transform: nil)
+            halo.path = window
+            near.path = window
+            line.path = window
+            let cut = CGMutablePath()
+            cut.addRect(bounds)
+            cut.addPath(window)
+            outside.path = cut
+            CATransaction.commit()
+        }
+    }
+
     private func makeGlowWindow() -> NSWindow {
         let window = Self.clearWindow(level: .normal)
         let view = NSView()
         view.wantsLayer = true
-        let ring = CAShapeLayer()
-        ring.fillColor = nil
-        ring.strokeColor = Self.tint.withAlphaComponent(0.95).cgColor
-        ring.lineWidth = 2.5
-        ring.shadowColor = Self.tint.cgColor
-        ring.shadowOpacity = 0.9
-        ring.shadowRadius = 12
-        ring.shadowOffset = .zero
-        view.layer?.addSublayer(ring)
+        let glow = Glow()
+        view.layer?.addSublayer(glow.holder)
+        view.layer?.addSublayer(glow.line)
         window.contentView = view
-        // Redraw the ring whenever the window is resized to follow its target.
+        // Drawn again whenever the window is resized to follow its target.
         NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { _ in
-            MainActor.assumeIsolated { Self.layout(ring, in: view.bounds) }
+            MainActor.assumeIsolated { glow.layout(in: view.bounds) }
         }
-        Self.layout(ring, in: view.bounds)
+        glow.layout(in: view.bounds)
         if !reduceMotion {
+            // The halo breathes: wider and brighter, then back, like a lamp's light wavering.
             let breathe = CABasicAnimation(keyPath: "shadowRadius")
-            breathe.fromValue = 8
-            breathe.toValue = 18
-            breathe.duration = 1.4
-            breathe.autoreverses = true
-            breathe.repeatCount = .infinity
-            breathe.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            ring.add(breathe, forKey: "breathe")
+            breathe.fromValue = Self.glowReach / 2
+            breathe.toValue = Self.glowReach / 2 * 1.2
+            let brighten = CABasicAnimation(keyPath: "opacity")
+            brighten.fromValue = 0.85
+            brighten.toValue = 1
+            let group = CAAnimationGroup()
+            group.animations = [breathe, brighten]
+            group.duration = 1.6
+            group.autoreverses = true
+            group.repeatCount = .infinity
+            group.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            glow.halo.add(group, forKey: "breathe")
         }
         return window
     }
 
-    private static func layout(_ ring: CAShapeLayer, in bounds: CGRect) {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        ring.frame = bounds
-        // Just outside the window's own edge, with the rounding macOS gives windows.
-        let rect = bounds.insetBy(dx: glowMargin - 3, dy: glowMargin - 3)
-        ring.path = CGPath(roundedRect: rect, cornerWidth: 14, cornerHeight: 14, transform: nil)
-        CATransaction.commit()
+    // MARK: The cursor
+
+    // MARK: Handing back
+
+    /// The person took the task back: the glow and the cursor go at once, and the pill says the app is theirs
+    /// for a moment before it fades too.
+    func handBack(owner: ObjectIdentifier, saying message: String) {
+        guard owner == self.owner else { return }
+        cancelHide()
+        handedBack = true
+        onStop = nil
+        tracker?.invalidate()
+        tracker = nil
+        glowTarget = nil
+        if let glow = glowWindow {
+            NSAnimationContext.runAnimationGroup({ $0.duration = 0.2; glow.animator().alphaValue = 0 },
+                                                 completionHandler: { glow.orderOut(nil) })
+        }
+        if let cursor = cursorLayer { fade(cursor, to: 0, duration: 0.2) }
+        cursorPosition = nil
+        show(pill: HandBackPill(message: message))
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.hideNow() }
+        }
+        hideWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
     }
 
     // MARK: The cursor
 
     /// Glides Lamp's cursor to a point and returns when it's there. The first move of a task starts from the
-    /// middle of the window in use, so the cursor never seems to come from nowhere.
-    func move(to point: CGPoint, app icon: NSImage?, owner: ObjectIdentifier) async {
+    /// middle of the window in use, so the cursor never seems to come from nowhere. `caption` rides beside it
+    /// ("Lamp · clicking Add"); `finger` draws a fingertip in place of the arrow, for an iPhone's screen;
+    /// `within` caps the glide, for an action that follows after a set time.
+    func move(to point: CGPoint, app icon: NSImage?, owner: ObjectIdentifier, caption: String? = nil, finger: Bool = false,
+              within: Double? = nil) async {
         // The window, its Stop and the cursor are one task's at a time, taken by `focus`: a task that has
         // been superseded since doesn't move the cursor over another task's window, or take its controls.
-        guard self.owner == nil || self.owner == owner else { return }
+        guard self.owner == nil || self.owner == owner, !handedBack else { return }
         cancelHide()
         self.owner = owner
-        let (window, layer) = ensureCursor(icon: icon)
+        let (window, layer) = ensureCursor(icon: icon, finger: finger)
+        setCaption(caption, on: layer)
         let target = window.convertPoint(fromScreen: Self.cocoa(point))
         guard let from = cursorPosition, !reduceMotion else {
             CATransaction.begin()
@@ -191,7 +280,7 @@ final class ComputerOverlay {
         let distance = hypot(target.x - from.x, target.y - from.y)
         guard distance > 1 else { return }
         // Quick for a hop, slower across the screen, never sluggish.
-        let duration = min(0.9, max(0.3, 0.25 + Double(distance) / 1800))
+        let duration = min(within ?? 0.9, 0.9, max(0.3, 0.25 + Double(distance) / 1800))
         // A gentle arc, bowed to one side like a hand's movement rather than a straight slide.
         let mid = CGPoint(x: (from.x + target.x) / 2, y: (from.y + target.y) / 2)
         let normal = CGPoint(x: -(target.y - from.y) / distance, y: (target.x - from.x) / distance)
@@ -307,6 +396,7 @@ final class ComputerOverlay {
         glowTarget = nil
         onStop = nil
         owner = nil
+        handedBack = false
         if let pill = stopPill {
             NSAnimationContext.runAnimationGroup({ $0.duration = 0.3; pill.animator().alphaValue = 0 },
                                                  completionHandler: { pill.orderOut(nil) })
@@ -330,7 +420,7 @@ final class ComputerOverlay {
         hideWork = nil
     }
 
-    private func ensureCursor(icon: NSImage?) -> (NSWindow, CALayer) {
+    private func ensureCursor(icon: NSImage?, finger: Bool) -> (NSWindow, CALayer) {
         // One window over every display, above other apps' windows, ignoring the mouse.
         let union = NSScreen.screens.reduce(CGRect.null) { $0.union($1.frame) }
         let window = cursorWindow ?? Self.clearWindow(level: .statusBar)
@@ -342,11 +432,18 @@ final class ComputerOverlay {
         }
         if window.frame != union { window.setFrame(union, display: false) }
         window.orderFrontRegardless()
-        if let layer = cursorLayer {
-            layer.sublayers?.last?.contents = icon
+        if let layer = cursorLayer, cursorFinger == finger {
+            layer.sublayers?.first { $0.name == "badge" }?.contents = icon
             return (window, layer)
         }
-        let layer = Self.cursorShape(icon: icon)
+        // A different kind of cursor from the last task's: drawn afresh, where the old one was.
+        let old = cursorLayer
+        let layer = finger ? Self.fingertip() : Self.cursorShape(icon: icon)
+        if let old {
+            layer.position = old.position
+            old.removeFromSuperlayer()
+        }
+        cursorFinger = finger
         layer.opacity = 0
         window.contentView?.layer?.addSublayer(layer)
         cursorLayer = layer
@@ -383,6 +480,7 @@ final class ComputerOverlay {
         arrow.shadowOffset = CGSize(width: 0, height: -1)
         container.addSublayer(arrow)
         let badge = CALayer()
+        badge.name = "badge"
         badge.frame = CGRect(x: 14, y: -40, width: 20, height: 20)
         badge.contents = icon
         badge.contentsGravity = .resizeAspect
@@ -392,6 +490,53 @@ final class ComputerOverlay {
         badge.shadowOffset = .zero
         container.addSublayer(badge)
         return container
+    }
+
+    /// A fingertip on glass: a disc in lamplight with a white rim, centred on the layer's position.
+    private static func fingertip() -> CALayer {
+        let container = CALayer()
+        container.bounds = CGRect(x: 0, y: 0, width: 1, height: 1)
+        container.anchorPoint = CGPoint(x: 0, y: 1)
+        let disc = CAShapeLayer()
+        disc.path = CGPath(ellipseIn: CGRect(x: -13, y: -13, width: 26, height: 26), transform: nil)
+        disc.fillColor = tint.withAlphaComponent(0.85).cgColor
+        disc.strokeColor = NSColor.white.cgColor
+        disc.lineWidth = 2.5
+        disc.shadowColor = NSColor.black.cgColor
+        disc.shadowOpacity = 0.35
+        disc.shadowRadius = 4
+        disc.shadowOffset = CGSize(width: 0, height: -1)
+        container.addSublayer(disc)
+        return container
+    }
+
+    /// What the cursor is doing, in a tag of lamplight beside it ("Lamp · clicking Add"), or none.
+    private func setCaption(_ caption: String?, on cursor: CALayer) {
+        let existing = cursor.sublayers?.first { $0.name == "caption" }
+        guard let caption, !caption.isEmpty else { existing?.removeFromSuperlayer(); return }
+        let scale = cursorWindow?.backingScaleFactor ?? 2
+        let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        let text = NSAttributedString(string: caption, attributes: [.font: font, .foregroundColor: NSColor.black.withAlphaComponent(0.85)])
+        let size = text.size()
+        let tag = existing ?? CALayer()
+        tag.name = "caption"
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        tag.backgroundColor = Self.tint.cgColor
+        tag.cornerRadius = 5
+        tag.shadowColor = NSColor.black.cgColor
+        tag.shadowOpacity = 0.25
+        tag.shadowRadius = 3
+        tag.shadowOffset = CGSize(width: 0, height: -1)
+        // Below and to the right of the arrow's tip or the fingertip, clear of what's being clicked.
+        tag.frame = CGRect(x: cursorFinger ? 16 : 18, y: cursorFinger ? -38 : -48, width: ceil(size.width) + 14, height: ceil(size.height) + 6)
+        let label = (tag.sublayers?.first as? CATextLayer) ?? CATextLayer()
+        label.string = text
+        label.contentsScale = scale
+        label.frame = CGRect(x: 7, y: 3, width: ceil(size.width), height: ceil(size.height))
+        if label.superlayer == nil { tag.addSublayer(label) }
+        if tag.superlayer == nil { cursor.addSublayer(tag) }
+        CATransaction.commit()
     }
 
     /// A four-pointed sparkle.
@@ -452,11 +597,19 @@ final class ComputerOverlay {
     static func cocoa(_ point: CGPoint) -> CGPoint {
         CGPoint(x: point.x, y: (NSScreen.screens.first?.frame.height ?? 0) - point.y)
     }
+
+    /// From AppKit's space back to the drivers' (the flip is its own inverse).
+    static func drivers(_ point: CGPoint) -> CGPoint { cocoa(point) }
 }
 
 /// The stop control: whose task is running, and the button that ends it.
+///
+/// The outline around it is drawn over the content, so it would take a click as well: a capsule's stroke counts a
+/// click on the line through its middle as its own, which is exactly where Stop's middle is, and a click the outline
+/// takes in a panel of its own never reaches the button under it. So the outlines here take no clicks.
 private struct StopPill: View {
     let label: String
+    var escape = false
     let stop: () -> Void
 
     var body: some View {
@@ -471,12 +624,42 @@ private struct StopPill: View {
             Button("Stop", action: stop)
                 .controlSize(.small)
                 .accessibilityHint("Ends the task. Nothing more is done.")
+            if escape {
+                Text("esc")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.secondary.opacity(0.5), lineWidth: 1).allowsHitTesting(false))
+                    .accessibilityLabel("or press Escape")
+            }
         }
         .padding(.leading, 12)
         .padding(.trailing, 6)
         .padding(.vertical, 5)
         .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(Color(nsColor: ComputerOverlay.tint).opacity(0.6), lineWidth: 1))
+        .overlay(Capsule().strokeBorder(Color(nsColor: ComputerOverlay.tint).opacity(0.6), lineWidth: 1).allowsHitTesting(false))
+        .fixedSize()
+    }
+}
+
+/// In place of the stop control once the person has taken the app back.
+private struct HandBackPill: View {
+    let message: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "hand.raised.fill")
+                .foregroundStyle(Color(nsColor: ComputerOverlay.tint))
+                .accessibilityHidden(true)
+            Text(message)
+                .font(.callout)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(Color(nsColor: ComputerOverlay.tint).opacity(0.6), lineWidth: 1).allowsHitTesting(false))
         .fixedSize()
     }
 }

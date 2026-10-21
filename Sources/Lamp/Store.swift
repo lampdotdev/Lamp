@@ -486,6 +486,9 @@ final class Store: ObservableObject {
         /// The person kept the app open when this turn's build asked it to quit: it isn't asked a second time
         /// in the turn, and the agent isn't shown the copy on screen as its work.
         var keptOpen = false
+        /// The person took the app back while the agent was trying it (`Handover`): use_app is refused until
+        /// their next message reaches the agent, so it doesn't reach for the app again under their hands.
+        var tookOver = false
         /// The turn's last install put the change into the open app without reopening it: its end says the app
         /// is updated, not ready, whether that install was the agent's look or the turn's own.
         var updatedInPlace = false
@@ -3079,6 +3082,7 @@ final class Store: ObservableObject {
         turn.midTurn += turn.handed
         turn.messages += turn.handed.compactMap { id in lines.first { $0.id == id }?.text }
         turn.handed = []
+        turn.tookOver = false   // they've had their say since: what they asked may be to try it again
     }
 
     /// Requests handed to an engine that ended without giving them to the model (it failed, was stopped, or Lamp's
@@ -3565,7 +3569,8 @@ final class Store: ObservableObject {
     }
 
     private func useNow(_ project: LampProject, request body: Data) async -> (Int, [String: Any]) {
-        guard turns[project.id]?.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        guard let turn = turns[project.id], turn.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        if turn.tookOver { return (200, ["text": Self.tookOverNote]) }
         guard let request = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let actions = request["actions"] as? [[String: Any]], !actions.isEmpty,
               let json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
@@ -3590,7 +3595,9 @@ final class Store: ObservableObject {
         guard let app = macCopies(of: project).first else {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
-        guard Self.binary(of: project, contains: "lampUseAppSignature") else {
+        // An app that can't be stopped part way (built before `LampDriver.Handover`) is rebuilt first: the person
+        // is shown Stop, and it has to work.
+        guard Self.binary(of: project, contains: "lampUseAppSignature"), Self.binary(of: project, contains: "lampUseAppStop") else {
             return (200, ["text": "The open app was built before use_app could do this. Call look_at_app to rebuild it, then try again."])
         }
         let readsScreen = Self.binary(of: project, contains: Self.screenTextMarker)
@@ -3600,14 +3607,35 @@ final class Store: ObservableObject {
         let id = UUID().uuidString
         let printed = Runtime.logSize(project)
         let asked = Date()
+        // In plain sight, with the person's Stop: Lamp's Stop and Esc reach the app as a signed stop; their own
+        // click or key in the app is seen by the app itself, which ends the batch and answers at once.
+        var stoppedAt: Date?
+        let trial = Handover(label: "\(Self.lampName) is trying \(project.name)") {
+            stoppedAt = Date()
+            Self.signal(project, "useAppStop", ["id": id], signedAs: "lampUseAppStop", over: "stop\n\(id)")
+        }
+        if let window = Handover.frontWindow(of: app.processIdentifier) { trial.show(window: window) }
+        // Where each action is about to happen, from the app (`LampDriver.aimed`), for Lamp's cursor to go first.
+        let steps = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name(Edition.notificationPrefix + "useAppStep.\(project.id)"), object: nil, queue: .main) { note in
+            guard let text = note.object as? String,
+                  let step = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any], step["id"] as? String == id else { return }
+            let window = (step["window"] as? Int).map { CGWindowID($0) }
+            let doing = step["doing"] as? String, press = step["press"] as? Bool ?? false
+            MainActor.assumeIsolated {
+                if let window { trial.show(window: window) }
+                guard let x = step["x"] as? Double, let y = step["y"] as? Double else { return }   // the window alone, at the start
+                Task { await trial.aim(at: CGPoint(x: x, y: y), doing: doing, press: press, within: Template.useAppLead - 0.05) }
+            }
+        }
+        defer {
+            DistributedNotificationCenter.default().removeObserver(steps)
+            trial.end()
+        }
         // Signed with the app's token rather than carrying it: distributed notifications reach every process.
-        let key = SymmetricKey(data: Data(Template.token(for: project).utf8))
-        let signature = HMAC<SHA256>.authenticationCode(for: Data("\(id)\n\(json)".utf8), using: key)
-            .map { String(format: "%02x", $0) }.joined()
-        DistributedNotificationCenter.default().postNotificationName(
-            Notification.Name(Edition.notificationPrefix + "useApp.\(project.id)"), object: nil,
-            userInfo: ["actions": json, "id": id, "lampUseAppSignature": signature], deliverImmediately: true)
-        // Waits, and keys held down (a Mac app's `key` with `amount`), each up to 10 seconds, as the app takes them.
+        Self.signal(project, "useApp", ["actions": json, "id": id], signedAs: "lampUseAppSignature", over: "\(id)\n\(json)")
+        // Waits, and keys held down (a Mac app's `key` with `amount`), each up to 10 seconds, as the app takes them;
+        // and the moment Lamp's cursor takes to reach each spot.
         let waits = actions.reduce(0.0) { total, action in
             switch action["action"] as? String {
             case "wait": total + min(action["amount"] as? Double ?? 1, 10)
@@ -3615,8 +3643,26 @@ final class Store: ObservableObject {
             default: total
             }
         }
-        let wait = Double(actions.count) * 0.4 + waits + 5
-        guard let report = await Runtime.useReport(of: project, id: id, waiting: wait, while: { !app.isTerminated }) else {
+        let wait = Double(actions.count) * (0.4 + Template.useAppLead) + waits + 5
+        // Once stopped, the app answers at once; one inside a dialog of its own can't until that closes, and isn't waited for.
+        let answer = await Runtime.useReport(of: project, id: id, waiting: wait) {
+            !app.isTerminated && (stoppedAt.map { Date().timeIntervalSince($0) < 2 } ?? true)
+        }
+        // Their own click or key in the app stopped it there: the pill says the app is theirs, as for Stop.
+        if answer?.stopped == true { trial.take() }
+        // Asked again after the reads below: they take a moment, and Stop may come during them.
+        func tookOver() -> Bool {
+            guard trial.tookOver else { return false }
+            if !turn.tookOver {
+                turn.tookOver = true
+                log(project, .status, Self.stoppedByYou)
+            }
+            return true
+        }
+        guard let report = answer?.report else {
+            if tookOver() {
+                return (200, ["text": "Stopped: the person took the app over before it answered.\n\n" + Self.tookOverNote])
+            }
             guard app.isTerminated else {
                 return (200, ["text": "The app didn't answer. It may have no window open, or it may be stuck."])
             }
@@ -3630,6 +3676,7 @@ final class Store: ObservableObject {
         }
         // The front window in words goes wherever its picture does: what's on it is the same thing either way.
         if Privacy.sharesPictures, readsScreen, let words = await Runtime.screenText(of: project, since: asked) { text += "\n\n" + words }
+        if tookOver() { text += "\n\n" + Self.tookOverNote }
         text += Privacy.sharesPictures
             ? "\n\nPictures of its windows follow, frontmost first. The screen as text is the first picture's, and x and y for the next use_app are pixels in it."
             : "\n\n" + Privacy.picturesOff
@@ -3658,6 +3705,28 @@ final class Store: ObservableObject {
     }
     private static let noSidebar = "Only a Mac app has a sidebar in Chrome, and only while Apps in Chrome is on in Lamp's Settings → Experimental."
 
+    /// What the agent hears once the person has taken the app back, and from then on when it calls use_app.
+    static let tookOverNote = "The person took the app over while you were trying it, so use_app is off until their next message. " +
+        "Don't try to use the app again. Finish what you were doing, and tell them in a sentence what's left for them to try."
+
+    /// The chat's line when the person took the app back from Lamp.
+    static let stoppedByYou = "Trying it: stopped by you"
+
+    /// The app's name as the person knows it, for "Lamp is trying …".
+    private static let lampName = "Lamp"
+
+    /// A request to the open app, signed with its token (`Template.token`): only Lamp knows it, and distributed
+    /// notifications reach every process, so the token itself never travels.
+    private static func signal(_ project: LampProject, _ name: String, _ info: [String: String], signedAs key: String, over text: String) {
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(Edition.notificationPrefix + "\(name).\(project.id)"), object: nil,
+            userInfo: info.merging([key: signature(over: text, token: Template.token(for: project))]) { $1 }, deliverImmediately: true)
+    }
+
+    static func signature(over text: String, token: String) -> String {
+        HMAC<SHA256>.authenticationCode(for: Data(text.utf8), using: SymmetricKey(data: Data(token.utf8))).map { String(format: "%02x", $0) }.joined()
+    }
+
     /// A line every app that writes its screen as text (`LampScreen` in LampSupport.swift) has in its binary.
     private static let screenTextMarker = "The screen as text, in reading order"
 
@@ -3669,6 +3738,7 @@ final class Store: ObservableObject {
         }
         // The owner, before any wait; and one Lamp app per simulator, so actions can't land on another's screen.
         guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        if owner.tookOver { return (200, ["text": Self.tookOverNote]) }
         guard simulatorLeases[running.udid] == project.id else {
             return (200, ["text": "Another of the user's apps has taken this simulator since. Call look_at_app to open this app again."])
         }
@@ -3692,8 +3762,16 @@ final class Store: ObservableObject {
         }
         let printed = Runtime.logSize(project)
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
-        let report = await Simulator.Driver.perform(decoded, on: screen, picture: picture) { [weak self] in
-            guard let self, exists(project), turns[project.id] === owner, !owner.stopped else { return false }
+        // In plain sight, with the person's Stop, Esc, or their own tap or key in the simulator ending it.
+        let trial = Handover(label: "\(Self.lampName) is trying it on \(project.family.name)", finger: true, simulator: screen.pid)
+        if let window = Handover.frontWindow(of: screen.pid, containing: CGPoint(x: screen.rect.midX, y: screen.rect.midY)) {
+            trial.show(window: window)
+        }
+        defer { trial.end() }
+        let report = await Simulator.Driver.perform(decoded, on: screen, picture: picture, aim: { point, doing, press in
+            await trial.aim(at: point, doing: doing, press: press)
+        }, tookOver: { trial.tookOver }) { [weak self] in
+            guard let self, exists(project), turns[project.id] === owner, !owner.stopped, !trial.tookOver else { return false }
             // Still this app's screen: it's running, the device is still leased to this project (a launch by
             // another project takes the lease before anything else), and no other app of Lamp's is running there.
             guard simulatorLeases[running.udid] == project.id, simulatorApps[project.id]?.pid == running.pid, Simulator.isRunning(pid: running.pid) else { return false }
@@ -3702,8 +3780,18 @@ final class Store: ObservableObject {
         if let data = try? JSONSerialization.data(withJSONObject: ["id": UUID().uuidString, "report": report]) {
             try? data.write(to: Runtime.folder(project).appendingPathComponent("use.json"))
         }
+        // Asked again after the reads below: they take a moment, and Stop may come during them.
+        func tookOver() -> Bool {
+            guard trial.tookOver else { return false }
+            if !owner.tookOver {
+                owner.tookOver = true
+                log(project, .status, Self.stoppedByYou)
+            }
+            return true
+        }
         guard Simulator.isRunning(pid: running.pid) else {
             var text = "What happened:\n\(report)\n\nThe app quit or crashed while doing that."
+            if tookOver() { text += "\n\n" + Self.tookOverNote }
             if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nLast lines it printed:\n" + tail }
             return (200, ["text": text])
         }
@@ -3716,6 +3804,7 @@ final class Store: ObservableObject {
         // Asked again after the read: it takes a moment, and the setting can be turned off meanwhile.
         let words = Privacy.sharesPictures ? await Simulator.Driver.screenText(on: screen) : nil
         if Privacy.sharesPictures, let words { text += "\n\n" + words }
+        if tookOver() { text += "\n\n" + Self.tookOverNote }
         text += Privacy.sharesPictures
             ? "\n\nA picture of the iPhone's screen follows. Points for the next use_app are pixels in it."
             : "\n\n" + Privacy.picturesOff

@@ -546,9 +546,14 @@ extension Simulator {
         }
 
         /// Carries out the actions in order and says what each one did, like the Mac apps' driver. `live` is
-        /// asked before every action: when the turn was stopped, the app deleted or the app gone, the rest of
-        /// the batch is dropped rather than carried out on whatever the simulator shows next.
-        static func perform(_ actions: [Action], on screen: Screen, picture: URL, live: @MainActor @Sendable () -> Bool) async -> String {
+        /// asked before every action: when the turn was stopped, the app deleted or the app gone, or the person
+        /// took the app back (`tookOver`, which then says so), the rest of the batch is dropped rather than
+        /// carried out on whatever the simulator shows next. `aim` shows where each tap or swipe is about to
+        /// happen (`Handover`), and returns once Lamp's fingertip is there.
+        static func perform(_ actions: [Action], on screen: Screen, picture: URL,
+                            aim: @MainActor @Sendable (CGPoint, String?, Bool) async -> Void = { _, _, _ in },
+                            tookOver: @MainActor @Sendable () -> Bool = { false },
+                            live: @MainActor @Sendable () -> Bool) async -> String {
             var lines: [String] = []
             var before = try? Data(contentsOf: picture)
             // Asked again after every wait inside an action too: the screen has to be this iPhone's each time.
@@ -557,16 +562,18 @@ extension Simulator {
                 guard shows(screen) else { return false }
                 return await live()
             }
-            for action in actions {
+            for (index, action) in actions.enumerated() {
                 guard await live() else {
-                    lines.append("stopped before the rest: the app was stopped, deleted or closed")
+                    lines.append(await tookOver()
+                        ? "Stopped after \(index) of \(actions.count) action\(actions.count == 1 ? "" : "s"): the person took the app over. Nothing after that was done."
+                        : "stopped before the rest: the app was stopped, deleted or closed")
                     break
                 }
                 if let reason = lost(screen) {
                     lines.append("stopped before the rest: " + reason)
                     break
                 }
-                lines.append(await carryOut(action, on: screen, live: here))
+                lines.append(await carryOut(action, on: screen, aim: aim, live: here))
                 // An action that ran into a stuck app found nothing where there was something: say which it was.
                 if notAnswering {
                     lines[lines.count - 1] += " (\(screen.viewer) stopped answering Lamp during this, so it may not have happened; look at the picture)"
@@ -583,7 +590,8 @@ extension Simulator {
         /// The app was relaunched: whatever field was remembered for the project is gone.
         static func forget(_ projectID: String) { lastFields = lastFields.filter { !$0.key.hasPrefix(projectID + ":") } }
 
-        private static func carryOut(_ action: Action, on screen: Screen, live: () async -> Bool) async -> String {
+        private static func carryOut(_ action: Action, on screen: Screen, aim: @MainActor @Sendable (CGPoint, String?, Bool) async -> Void,
+                                     live: () async -> Bool) async -> String {
             // What the action names is found in the screen as text, and acted on at its middle: on an iPhone
             // everything takes a tap, so the point is the action.
             var action = action
@@ -609,6 +617,8 @@ extension Simulator {
                 let element = isInteractive(hit) ? hit : (nearestInteractive(to: point, in: screen) ?? hit)
                 lastFields[screen.owner] = isTextInput(element) ? element : nil
                 let name = describe(element) + (element == hit ? "" : " (the nearest thing to tap; the point itself was \(describe(hit)))")
+                let verb = action.action == "right_click" ? "pressing" : action.action == "double_click" ? "double-tapping" : "tapping"
+                await aim(point, shortName(element).map { verb + " " + $0 } ?? verb, true)
                 // Finding the target took a moment off the main thread, and Stop may have come meanwhile.
                 guard await live() else { return "stopped before the \(action.action == "right_click" ? "long press" : "tap") at \(at)" }
                 if action.action == "right_click" {
@@ -650,6 +660,8 @@ extension Simulator {
                 }
                 // The text replaces what the field holds: a tapped field on an iPhone shows its old value
                 // formatted ("0.00"), and typing after it would make nonsense of a number.
+                let spot = frame(of: field)
+                await aim(CGPoint(x: spot.midX, y: spot.midY), shortName(field).map { "typing into " + $0 } ?? "typing", true)
                 guard await live() else { return "stopped before typing" }
                 let result = call { AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, text as CFTypeRef) }
                 return result == .success ? "typed \"\(text)\" into \(describe(field)); it now holds that" : "couldn't type into \(describe(field))"
@@ -700,13 +712,18 @@ extension Simulator {
                     }
                     return press(returnKey) ? "pressed return (the keyboard's \(describe(returnKey)))" : "key return: the keyboard's key didn't take the press"
                 }
-                // Keys reach the simulated iPhone only while the Simulator is the active app.
+                // Keys reach the simulated iPhone only while the Simulator is the active app. Not once the person has
+                // taken it back: then it isn't brought forward again.
+                guard await live() else { return "stopped before pressing \(key)" }
                 NSRunningApplication(processIdentifier: screen.pid)?.activate()
                 try? await Task.sleep(for: .milliseconds(300))
                 guard await live() else { return "stopped before pressing \(key)" }
                 let code: CGKeyCode = key.hasPrefix("ret") || key == "enter" ? 36 : 53
-                CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true)?.postToPid(screen.pid)
-                CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false)?.postToPid(screen.pid)
+                for down in [true, false] {
+                    let event = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)
+                    event?.setIntegerValueField(.eventSourceUserData, value: Handover.mark)
+                    event?.postToPid(screen.pid)
+                }
                 return "pressed \(key.hasPrefix("ret") || key == "enter" ? "return" : "escape")"
             case "scroll":
                 let amount = action.amount ?? 300
@@ -716,6 +733,7 @@ extension Simulator {
                     return scroller.map(turnPage) == true ? "scrolled \(amount >= 0 ? "down" : "up") a page at \(at) (Device Hub scrolls a page at a time)"
                         : "scroll at \(at): nothing there scrolls \(amount >= 0 ? "down" : "up")"
                 }
+                await aim(point, "scrolling", false)
                 guard await live() else { return "stopped before scrolling at \(at)" }
                 swipe(from: point, by: CGVector(dx: 0, dy: -amount * screen.zoom), pid: screen.pid)
                 return "scrolled \(amount >= 0 ? "down" : "up") at \(at)"
@@ -752,6 +770,7 @@ extension Simulator {
                 }
                 // A button of that name already there (the keyboard has a "delete") isn't what the swipe uncovers.
                 let already = action.item.map { buttons(named: $0, in: screen).map(frame) } ?? []
+                await aim(point, "swiping", false)
                 guard await live() else { return "stopped before swiping at \(at)" }
                 swipe(from: point, by: delta, pid: screen.pid)
                 if let item = action.item {
@@ -1054,6 +1073,14 @@ extension Simulator {
             }
         }
 
+        /// What a thing is called, short enough to ride beside Lamp's fingertip; nil when it has no name.
+        private static func shortName(_ element: AXUIElement) -> String? {
+            let label = ((attribute(element, kAXDescriptionAttribute) as? String)?.nilIfEmpty
+                ?? (attribute(element, kAXTitleAttribute) as? String)?.nilIfEmpty ?? "").trimmed
+            guard !label.isEmpty else { return nil }
+            return label.count > 30 ? String(label.prefix(29)) + "…" : label
+        }
+
         private static func describe(_ element: AXUIElement) -> String {
             let role = attribute(element, kAXRoleAttribute) as? String ?? ""
             let kind: String = switch role {
@@ -1196,8 +1223,11 @@ extension Simulator {
 
         // MARK: Touches
 
+        /// Marked as Lamp's own, so it isn't taken for the person's (`Handover`).
         private static func mouse(_ type: CGEventType, at point: CGPoint, pid: pid_t) {
-            CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.postToPid(pid)
+            let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)
+            event?.setIntegerValueField(.eventSourceUserData, value: Handover.mark)
+            event?.postToPid(pid)
         }
 
         /// A finger dragged across the screen: down, a dozen moves, up.

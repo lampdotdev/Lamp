@@ -124,7 +124,9 @@ enum Agent {
     (a button's effect, a form, saving). \
     When they ask you to try it, walk through the main things they asked for with `use_app` as they would \
     (add an item and see it appear, fill the form and submit it, quit and reopen to see what was kept), fix \
-    what you find, and say in one plain sentence what you tried and what happened.
+    what you find, and say in one plain sentence what you tried and what happened. They watch you try it and \
+    can take it back at any moment: when `use_app` says they took the app over, leave it to them for the rest \
+    of this request, and say in one plain sentence what's left for them to try.
     """
 
     /// Every engine has these too (pi's extension, Lamp's MCP endpoint). Kept apart from the look rules only
