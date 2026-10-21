@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: true true true true
+RELOAD 1: ok
+after1 (want true true true true, a key path to the same property is the same): true true true true

@@ -1,5 +1,5 @@
 VERDICT 1: RELOAD (Added Doc.pages)
 == run
 before: a
-RELOAD 1: ok
+RELOAD 1 (whole): ok
 after1 (want "a 0" then "b 1"): a 0 b 1

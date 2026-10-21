@@ -8,7 +8,7 @@ old dict: 1
 old set: 1 true set(happy): 1 array==: true
 old anyhash: true base: true anyhash(happy): true
 old casts: true true true
-old mirror: 2 0
+old mirror: 1 0
 old json: {"mood":"happy"}
 old decode: happy
 old allCases: 2 init(rawValue): happy
@@ -22,7 +22,7 @@ old dict: 1
 old set: 1 true set(happy): 1 array==: true
 old anyhash: true base: true anyhash(happy): true
 old casts: true true true
-old mirror: 2 0
+old mirror: 1 0
 old json: {"mood":"sad"}
 old decode: sad
 old allCases: 2 init(rawValue): sad

@@ -2,5 +2,5 @@ VERDICT 1: RELOAD (Added Game.extra)
 == run
 before: volume=1
 (control: after2 alone)
-RELOAD 1: ok
+RELOAD 1 (whole): ok
 after1 (want extra=0.0): volume=1 extra=0.0

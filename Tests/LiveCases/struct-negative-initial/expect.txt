@@ -1,6 +1,6 @@
 VERDICT 1: RELOAD (Added Item.offset)
 == run
 before: 1
-RELOAD 1: ok
+RELOAD 1 (whole): ok
 after1 (want "1 -1"): 1 -1
 after1 set (want "1 3"): 1 3

@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Box.label, Item.label)
+== run
+before: default default
+RELOAD 1 (whole): ok
+after1 (want "stored stored", what the new code means): stored stored

@@ -1,5 +1,5 @@
 VERDICT 1: RELOAD (Added Row@A.swift.c, Row@B.swift.c)
 == run
 before: 4 4
-RELOAD 1: ok
+RELOAD 1 (whole): ok
 after1 (want "4 c=5" and "4 c=6"): 4 c=5 4 c=6

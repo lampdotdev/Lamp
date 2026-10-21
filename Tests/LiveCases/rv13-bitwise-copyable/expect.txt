@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Game.lives)
+== run
+before: level=1
+RELOAD 1 (whole): ok
+after1 (want "level=1 lives=3", the new property in its spare): level=1 lives=3

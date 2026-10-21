@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Item.badge)
+== run
+before (want Item(n: 1) and Pair<Int>(a: 5, b: Item(n: 1)), no field of Lamp's): Item(n: 1) Pair<Int>(a: 5, b: Case.Item(n: 1))
+RELOAD 1 (whole): ok
+after1 (want badge: 3 shown where it was set, and no field of Lamp's): Item(n: 1, badge: 3) Pair<Int>(a: 5, b: Case.Item(n: 1, badge: 3))

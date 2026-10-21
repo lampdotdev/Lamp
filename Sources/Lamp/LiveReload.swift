@@ -339,6 +339,9 @@ enum LiveReload {
         // say: one kept by an earlier Lamp says nothing of shapes.
         for (name, was) in shapes(before).sorted(by: { $0.key < $1.key }) {
             guard let is_ = shapes(now)[name], is_ != was else { continue }
+            if name.hasPrefix("protocol "), was.hasSuffix(" @objc") != is_.hasSuffix(" @objc") {
+                return ("the protocol \(name.dropFirst(9)) is \(is_.hasSuffix(" @objc") ? "" : "no longer ")@objc now, which keeps the values the open app holds of it in \(is_.hasSuffix(" @objc") ? "one word where they took two" : "two words where they took one")", nil)
+            }
             if name.hasPrefix("protocol ") { return ("the protocol \(name.dropFirst(9))'s requirements changed in kind (\(was) to \(is_)), and the open app's witness tables were laid out for what they were", nil) }
             return ("\(name) is \(described(is_)) now, where the open app's is \(described(was))", nil)
         }
@@ -354,15 +357,50 @@ enum LiveReload {
         for (key, was) in startingValues(before).sorted(by: { $0.key < $1.key }) {
             guard let is_ = startingValues(now)[key], is_ != was else { continue }
             let name = key.hasPrefix("\t") ? String(key.dropFirst()) : key.replacingOccurrences(of: "\t", with: ".")
-            return ("the starting value of \(name) changed, and the open app made it once and keeps it", nil)
+            // Its own text's digest, then after a `+` what it calls (`SwiftSource.constantEntries`).
+            let own = was.prefix { $0 != "+" } != is_.prefix { $0 != "+" }
+            return ("\(own ? "the starting value of \(name)" : "what makes the starting value of \(name)") changed, and the open app made it once and keeps it", nil)
         }
         // A type's own hash: the sets and dictionaries the open app keeps put each value where the old one said, and
         // a lookup by the new one would look elsewhere and not find it.
-        let hashes = Dictionary(Group.hash.parts(in: before).compactMap { $0.first.map { ($0.prefix { $0 != ":" }, $0) } }, uniquingKeysWith: { a, _ in a })
-        for part in Group.hash.parts(in: now).compactMap(\.first) {
-            let type = part.prefix { $0 != ":" }
-            if let was = hashes[type], was != part {
+        // A static or global gone from `let` to `var` or back: a constant given its new value in place is read through
+        // Lamp's own storage, which a `var` isn't, and a `var` keeps what the open app made, which a `let` would be
+        // read from; either way it would go back to a value the open app made.
+        func subjects(_ group: Group, _ entries: [String]) -> Set<String> { Set(group.parts(in: entries).compactMap { group.subject(of: group.entry($0.joined(separator: "\t"))) }) }
+        for key in subjects(.constant, before).intersection(subjects(.stored, now)).union(subjects(.stored, before).intersection(subjects(.constant, now))).sorted() {
+            let name = key.hasPrefix("\t") ? String(key.dropFirst()) : key.replacingOccurrences(of: "\t", with: ".")
+            return ("\(bare(name)) changed between let and var, and the open app keeps the value it made", nil)
+        }
+        // A conformance taken away: the open app's record of it stays registered, so a cast (`as? Named`) and a
+        // protocol's default (`description`) go on finding it, answered by old code.
+        func conformed(_ entries: [String]) -> [String: Set<String>] {
+            Dictionary(Group.declared.parts(in: entries).compactMap { parts -> (String, Set<String>)? in
+                let entry = parts.joined(separator: "\t")
+                guard let at = entry.range(of: " inherits ") else { return nil }
+                return (bare(String(entry[..<at.lowerBound])), Set(entry[at.upperBound...].components(separatedBy: ", ")))
+            }, uniquingKeysWith: { $0.union($1) })
+        }
+        let conformedNow = conformed(now)
+        for (type, was) in conformed(before).sorted(by: { $0.key < $1.key }) where typesNow.contains(type) {
+            if let lost = was.subtracting(conformedNow[type] ?? []).sorted().first {
+                return ("\(type) no longer conforms to \(lost), and the open app's record that it does stays", nil)
+            }
+        }
+        // One written or taken away is the same: the hash Swift makes from the fields is another.
+        func hashes(_ entries: [String]) -> [String: String] {
+            Dictionary(Group.hash.parts(in: entries).compactMap { $0.first.map { (String($0.prefix { $0 != ":" }), $0) } }, uniquingKeysWith: { a, _ in a })
+        }
+        let hashedBefore = hashes(before), hashedNow = hashes(now)
+        // A changed one counts wherever it's written, an extension of a system type's included
+        // (`CLLocationCoordinate2D: Hashable`); one written or taken away, for a type of the app's on both sides.
+        for type in Set(hashedBefore.keys).union(hashedNow.keys).sorted() {
+            switch (hashedBefore[type], hashedNow[type]) {
+            case let (was?, is_?) where was != is_:
                 return ("\(type)'s hash(into:) or what it reads changed, and the sets and dictionaries the open app keeps were laid out by the old one", nil)
+            case (nil, _?), (_?, nil):
+                guard typesBefore.contains(bare(type)), typesNow.contains(bare(type)) else { continue }
+                return ("\(type) \(hashedNow[type] == nil ? "no longer has" : "has") a hash(into:) of its own, and the sets and dictionaries the open app keeps were laid out by the old hash", nil)
+            default: continue
             }
         }
         // A private type's name carries its file: moved to another, it's a new type to the runtime, so a value the
@@ -375,6 +413,23 @@ enum LiveReload {
         for (name, was) in places(before).sorted(by: { $0.key < $1.key }) {
             guard let is_ = places(now)[name], let from = was.subtracting(is_).sorted().first, let to = is_.subtracting(was).sorted().first else { continue }
             return ("\(name) is private and moved from \(from) to \(to), which makes it another type for the values the open app holds", nil)
+        }
+        // A type, a static or a global made private, or no longer private, takes or drops its file in its name at run
+        // time: to the values the open app holds it's another type (`as? Tag` fails), and to its storage another
+        // variable, starting over.
+        func privacyKeys(_ entries: [String]) -> Set<String> {
+            Set(entries.compactMap { entry in
+                guard !isGroup(entry), !entry.hasPrefix("protocol "), entry.hasSuffix("\t") else { return nil }
+                return String(entry.dropLast())
+            }).union(Group.stored.parts(in: entries).compactMap { Group.stored.subject(of: Group.stored.entry($0.joined(separator: "\t"))) })
+              .union(Group.constant.parts(in: entries).compactMap { Group.constant.subject(of: Group.constant.entry($0.joined(separator: "\t"))) })
+        }
+        let keysNow = privacyKeys(now)
+        for key in privacyKeys(before).subtracting(keysNow).sorted() {
+            let plain = bare(key)
+            guard let other = keysNow.first(where: { bare($0) == plain && $0.contains("@") != key.contains("@") }) else { continue }
+            let name = plain.hasPrefix("\t") ? String(plain.dropFirst()) : plain.replacingOccurrences(of: "\t", with: ".")
+            return ("\(name) is \(other.contains("@") ? "private now" : "no longer private"), which gives it another name at run time than the one the open app's values and storage go by", nil)
         }
         func shapes(_ entries: [String]) -> [String: String] {
             Dictionary(Group.shape.parts(in: entries).compactMap { $0.count == 2 ? ($0[0], $0[1]) : nil }, uniquingKeysWith: { first, _ in first })
@@ -589,10 +644,11 @@ enum LiveReload {
                         return "\(owner.isEmpty ? "a global" : owner) holds \(what) as \(kind), which a new case would change"
                     }
                 }
-                // A spare keeps its value as any value, under the metadata the app's code had: after the growth the
-                // enum's is the change's own, so the value no longer reads as one and the property starts over.
-                for (owner, property, kind) in inSpares where { let k = expanded(kind, in: owner); return mention.firstMatch(in: k, range: NSRange(k.startIndex..., in: k)) != nil }() {
-                    return "\(owner) keeps \(property), added while the app was open, in a place that holds it as any value, which the grown \(type) no longer reads from"
+                // A spare keeps its value as any value, under the enum's metadata, which stays the app's and reads the
+                // new cases: as itself or in a plain collection it reads back as it was. An optional of it, or a value
+                // carrying it, is laid out with the numbers after its last case, which a new case takes over.
+                for (owner, property, kind) in inSpares where { let k = expanded(kind, in: owner); return mention.firstMatch(in: k, range: NSRange(k.startIndex..., in: k)) != nil && !plain(k) }() {
+                    return "\(owner) keeps \(property), added while the app was open, as \(kind), which a new case of \(type) would change"
                 }
             }
         }
@@ -1298,8 +1354,10 @@ enum LiveReload {
                 let type = "protocol " + name
                 conformances(name)
                 add(type + "\t")
+                // With `@objc`: such a protocol's values are one word, where a Swift protocol's take two, so every stored
+                // `any P` changes size while every type is printed the same.
                 if let m = signature.firstMatch(in: line.text, range: line.range) {
-                    add(shapeGroup + "\t" + type + "\t" + String(line.text[Range(m.range(at: 1), in: line.text)!]))
+                    add(shapeGroup + "\t" + type + "\t" + String(line.text[Range(m.range(at: 1), in: line.text)!]) + (line.has(" @objc ") ? " @objc" : ""))
                 }
             } else if let owner, owner.hasPrefix("protocol "), opens("func_decl", "var_decl", "subscript_decl", "constructor_decl", "associated_type_decl"),
                       let m = requirement.firstMatch(in: line.text, range: line.range) {
@@ -1382,19 +1440,22 @@ enum LiveReload {
                 } else if !rest.contains("readImpl=stored") {
                     declared(name + ": " + type)
                 }
-                // A stored property's `@objc` (a static's too) is its accessors' from Objective-C: declared, not listed.
-                // Its observers (`didSet`) make every write a call to its setter, which a caller compiled without
-                // them doesn't make: declared and listed, so adding or removing them compiles every file.
+                // A stored property's `@objc` (a static's too) is its accessors' from Objective-C, and its observers
+                // (`didSet`) make every write a call to its setter, which a caller compiled without them doesn't make:
+                // both part of its entry, so adding or removing them compiles every file.
                 let observed = rest.contains("with_observers")
-                if rest.contains("readImpl=stored") { declared(name + ": " + type + (observed ? " observed" : ""), listed: observed) }
+                // Listed whether or not: one added can stand where a protocol extension's member of the same name did
+                // (`var label` over a default `label`), which an unchanged caller compiled before would go on calling.
+                if rest.contains("readImpl=stored") { declared(name + ": " + type + (observed ? " observed" : "")) }
             } else if opens("func_decl", "constructor_decl", "subscript_decl"), let m = memberDecl.firstMatch(in: line.text, range: line.range) {
                 let signature = String(line.text[Range(m.range(at: 3), in: line.text)!]) + ": " + String(line.text[Range(m.range(at: 4), in: line.text)!])
                 declared(signature)
-                // A class's initializers, the compiler's own included: each has a method descriptor; one in an
-                // extension is a convenience initializer, in no table.
+                // A class's initializers, the compiler's own included: each has a method descriptor; a convenience one
+                // (any in an extension is) is in no table, unless it's required.
                 var inExtension = false
                 if case .extensionOf = line.scopes.last?.scope { inExtension = true }
-                if line.text[Range(m.range(at: 2), in: line.text)!] == "constructor_decl", let owner, classTypes.contains(owner), !inExtension {
+                let convenience = line.has(" convenience") && !line.has(" required")
+                if line.text[Range(m.range(at: 2), in: line.text)!] == "constructor_decl", let owner, classTypes.contains(owner), !inExtension, !convenience {
                     add(initsGroup + "\t" + owner + "." + signature)
                 }
             } else if opens("enum_element_decl"), let m = caseDecl.firstMatch(in: line.text, range: line.range), let owner {
@@ -2072,7 +2133,7 @@ enum LiveSlots {
                 if variable.attributes.contains(where: { $0.name == "ObservationIgnored" }) { return .refused("\(type).\(name) is @ObservationIgnored, and a property kept in a spare is observed") }
                 // A @Published property's `$name` publisher has no spare to come from.
                 if holder == .object, variable.attributes.contains(where: { $0.name == "Published" }),
-                   LiveReload.swiftFiles(in: LiveReload.sources(project)).values.contains(where: { url in
+                   LiveReload.swiftFiles(in: LiveReload.sources(project)).filter({ !LiveReload.ownFiles.contains(($0.key as NSString).lastPathComponent) }).values.contains(where: { url in
                        SwiftSource.Text(path: url.path).map { SwiftText.mentions(identifier: "$" + name, in: String(decoding: $0.bytes, as: UTF8.self)) } == true }) {
                     return .refused("\(type).\(name)'s publisher ($\(name)) is used, and a property kept in a spare has none")
                 }

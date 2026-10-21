@@ -1,5 +1,5 @@
 VERDICT 1: RELOAD (Added Item.badge)
 == run
 before: x
-RELOAD 1: ok
+RELOAD 1 (whole): ok
 after1 (want "x 0" then "y 2"): x 0 y 2

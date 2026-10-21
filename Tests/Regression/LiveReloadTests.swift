@@ -210,8 +210,9 @@ final class LiveReloadTests: XCTestCase {
                         LiveReload.aliasGroup + "\tFeeling = Outer.Mood", LiveReload.aliasGroup + "\tChoice = Picky", LiveReload.aliasGroup + "\tLevel.RawValue = Int",
                         LiveReload.aliasGroup + "\tTone@Shapes.swift.Pair = (Tone, Tone)", LiveReload.aliasGroup + "\tTone@Shapes.swift.AllCases = [Tone]"])
         let declared = layout?.filter { $0.hasPrefix(LiveReload.declarationGroup) }.map { String($0.dropFirst(LiveReload.declarationGroup.count + 1)) } ?? []
-        XCTAssertEqual(Array(declared.prefix(5)), ["Square inherits Shape", "Square.area(): (Square) -> () -> Int", "Square inherits Hashable",
-                                                   "Square.key: Square.Key", "Square.grow(_:): (Square) -> (Int) -> Square"], "\(declared)")
+        // Stored properties too: one added can stand where a protocol extension's member of its name did.
+        XCTAssertEqual(Array(declared.prefix(5)), ["Square inherits Shape", "Square.side: Side", "Square.name: String",
+                                                   "Square.area(): (Square) -> () -> Int", "Square inherits Hashable"], "\(declared)")
         XCTAssertTrue(declared.contains("Optional inherits Boxed") && declared.contains("Outer.Mood inherits Shape"), "\(declared)")
         // A type's shape: its kind, an enum's @objc and indirect, a class's superclass (the first name it inherits
         // when that's a class, the app's own or a system one), a protocol's requirement signature; and a stored
@@ -487,7 +488,8 @@ final class LiveReloadTests: XCTestCase {
         _ = try run("/usr/bin/perl", [perl.path, "4", "-nospare:Zone", "s", plain.path])
         let spared = try String(contentsOf: plain, encoding: .utf8)
         XCTAssertTrue(spared.contains("var __lampSpare_Plain = LampSpare(nil)"), spared)
-        XCTAssertTrue(spared.contains("struct Sub { var __lampSpare_Sub = LampSpare(nil); var b = 0 }"), spared)
+        // Each made CustomReflectable in its own header, so its description leaves the spare out.
+        XCTAssertTrue(spared.contains("struct Sub: CustomReflectable { var __lampSpare_Sub = LampSpare(nil); var customMirror: Mirror { LampSpare.mirror(of: self) }; var b = 0 }"), spared)
         // The memberwise initializers written again beside the spares, from the plain sources, for the structs the
         // live copy gave one: a reference to one as a value (`.map(Item.init)`) then still matches.
         try "struct Item { var name: String; var count = 1 }\nstruct Keyed { let rawValue: Int }\nprivate struct Own { var n: Int }\n".write(to: project.dir.appendingPathComponent("Sources/Items.swift"), atomically: true, encoding: .utf8)
