@@ -3934,6 +3934,8 @@ enum Template {
         static let shared = LampLive()
         var generation = 0
         static var generation: Int { shared.generation }
+        /// Read by what SwiftUI keeps besides a body (the copy step adds it), on the main thread where SwiftUI asks.
+        nonisolated static func touch() { if Thread.isMainThread { MainActor.assumeIsolated { _ = shared.generation } } }
 
         static let start: Void = {
             DistributedNotificationCenter.default().addObserver(
@@ -16589,6 +16591,11 @@ enum Template {
         my $raw = $rawAll || $s =~ /MemoryLayout|withUnsafe|unsafeBitCast|makeBuffer|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
         @skip = spans($s);
         $s =~ s{var\s+body\s*:\s*some\s+(?:SwiftUI\.)?View\s*\{}~ inside($-[0]) ? $& : "var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\n    \@ViewBuilder var __lampBody: some View {" ~ge;
+        @skip = spans($s);
+        # What else SwiftUI keeps until something it reads changes: a modifier's and a style's body, a layout, a
+        # representable's update. Each reads the generation too, so a change draws it again with the new code. Only a
+        # declaration with a body (`[^{}]*` stops at a protocol's requirement, which has none).
+        $s =~ s{\bfunc\s+(?:body\s*\(\s*content|makeBody\s*\(\s*configuration|sizeThatFits\s*\(\s*proposal|placeSubviews\s*\(\s*in|update(?:NS|UI)View(?:Controller)?\s*\()[^{}]*\{}~ inside($-[0]) ? $& : "$&let _ = LampLive.touch(); " ~ge;
         @skip = spans($s);
         my $main;
         $s =~ s{^([ \t]*(?:(?:\@\w+(?:\([^)]*\))?|public|internal|fileprivate|private|open|final)\s+)*)\@main((?:(?:\s|//[^\n]*|/\*[\s\S]*?\*/)+(?:\@\w+(?:\([^)]*\))?|public|internal|fileprivate|private|open|final))*(?:\s|//[^\n]*|/\*[\s\S]*?\*/)+(?:struct|class|enum|actor)\s+(\w+))}{ if (inside($-[0])) { $& } else { $main = $3; "$1$2" } }me;

@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: v1
+RELOAD 1: ok
+after1 (want it in with the changed file alone: a line added above a #Preview declares nothing new): v2

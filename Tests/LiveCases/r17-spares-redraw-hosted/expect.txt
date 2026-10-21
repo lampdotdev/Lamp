@@ -1,0 +1,6 @@
+VERDICT 1: RELOAD (Added Legacy.stars, Model.stars, Panel.taps)
+== run
+before: count=0 legacy=0
+RELOAD 1 (whole): ok
+after1 drawn: stars=0 legacy=0 taps=0
+after1 poked (want stars=3 legacy=4 taps=1: what the new properties were set to, drawn by SwiftUI): stars=3 legacy=4 taps=1

@@ -227,6 +227,8 @@ enum Agent {
     What you save goes into the open app by itself a few seconds after you save it, whenever it can, so the person \
     sees each piece as you write it: save the most visible piece first, and don't wait for a look to show it. \
     This app is updated in place while it's open, keeping what's on screen, when a change only edits or adds code. \
+    A body whose structure changes (a modifier or a view added around others) is built again, and the @State and \
+    @StateObject of the views inside it start over, so keep what must survive in a model those views read. \
     New stored properties go in too, in a class, a struct or (as @State) a view, when each has a starting value \
     (or is an optional) and no didSet or willSet; so do new cases at the end of an enum whose cases carry nothing, \
     and new values for constants that hold no object. Changing or removing a stored property, a case anywhere \

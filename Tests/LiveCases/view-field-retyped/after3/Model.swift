@@ -6,4 +6,6 @@ struct RailText: View {
     var body: some View { Text(reading) }
     var reading: String { "\(label) heat=\(heat ?? "none")" }
 }
-@MainActor func probe() -> String { RailText(label: "IPA").reading }
+// The rail is made where an app makes its views: by a view's body, here through a helper it calls.
+struct Shelf: View { var body: some View { Self.rail() }; static func rail() -> RailText { RailText(label: "IPA") } }
+@MainActor func probe() -> String { Shelf.rail().reading }

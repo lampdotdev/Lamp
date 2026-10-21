@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Meter changed what a field holds, and something other than a view's body makes one, which SwiftUI keeps as the open app laid it out)
+== run
+before: IPA level=3 / Stout level=4
+RELOAD 1: REOPEN Meter changed what a field holds, and something other than a view's body makes one, which SwiftUI keeps as the open app laid it out
+after1 (want level=3.0 and level=4.0, or a reopen: the views a static and a global keep were made the old way): IPA level=3 / Stout level=4
+before: IPA level=3.0 / Stout level=4.0
+RELOAD 1: in the restart
+after1 (want level=3.0 and level=4.0, or a reopen: the views a static and a global keep were made the old way): IPA level=3.0 / Stout level=4.0
