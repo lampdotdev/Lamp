@@ -263,9 +263,6 @@ private struct KeyUpgrade: View {
         case ("openrouter", true): "One key for the best text, pictures and decisions. Pay as you go."
         case ("openrouter", false):
             "OpenRouter is one account for many AI models. Create a key on its website and paste it here; you pay only for what your apps use, usually cents."
-        case ("typesafe", true): "Jev, made for fast, reliable judgments."
-        case ("typesafe", false): "TypeSafe makes Jev, a model built for quick, reliable judgments. Create a key on its website and paste it here."
-        case ("openai", _): "OpenAI's Decisions API, with a key from your OpenAI account."
         default: "Use your \(provider.name) account."
         }
     }

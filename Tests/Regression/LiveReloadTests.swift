@@ -594,17 +594,8 @@ final class LiveReloadTests: XCTestCase {
     }
 
     private func run(_ executable: String, _ arguments: [String]) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let output = String(decoding: data, as: UTF8.self)
-        guard process.terminationStatus == 0 else { throw NSError(domain: "LiveReloadTests", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: output]) }
+        let (status, output) = TestShell.run(executable, arguments)
+        guard status == 0 else { throw NSError(domain: "LiveReloadTests", code: Int(status), userInfo: [NSLocalizedDescriptionKey: output]) }
         return output.split(separator: "\n").filter { !$0.hasPrefix("objc[") }.joined(separator: "\n")
     }
 }

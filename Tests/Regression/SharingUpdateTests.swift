@@ -30,11 +30,7 @@ final class SharingUpdateTests: XCTestCase {
             try "{\"format\":2,\"name\":\"Tally\",\"exportedAt\":\"2026-10-01T00:00:00Z\"\(app)}"
                 .write(to: stage.appendingPathComponent("lamp-app.json"), atomically: true, encoding: .utf8)
             let file = try XCTUnwrap(root).appendingPathComponent("\(UUID().uuidString).lampapp")
-            let zip = Process()
-            zip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-            zip.arguments = ["-c", "-k", "--norsrc", stage.path, file.path]
-            try zip.run()
-            zip.waitUntilExit()
+            TestShell.run("/usr/bin/ditto", ["-c", "-k", "--norsrc", stage.path, file.path])
             let package = try opened(file)
             XCTAssertEqual(package.name, "Tally")
             XCTAssertNil(package.identity)

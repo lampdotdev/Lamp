@@ -9,8 +9,8 @@ enum Engine: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .pi: "Lamp's built-in agent"
-        case .claude: "Claude Code"
-        case .codex: "ChatGPT Codex"
+        case .claude: "Claude"
+        case .codex: "ChatGPT"
         }
     }
 }
@@ -54,20 +54,20 @@ enum CommandApproval: String, CaseIterable, Identifiable {
     }
 }
 
-/// The user's builder choice (Settings → AI). Stored in UserDefaults.
+/// The user's builder choice (Settings → Building). Stored in UserDefaults.
 enum Builder {
-    /// pi providers that aren't API keys.
+    /// pi's provider for a model on this Mac (Native Mac AI); the other is OpenRouter.
     static let localProvider = "forge-local"
-    static let myPiProvider = "my-pi"
 
     static var engine: Engine {
         get { Engine(rawValue: UserDefaults.standard.string(forKey: "engine") ?? "") ?? .pi }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "engine") }
     }
 
+    /// What pi builds through: OpenRouter, or a model on this Mac. Anything else saved reads as OpenRouter.
     static var piProvider: String {
-        get { UserDefaults.standard.string(forKey: "piProvider") ?? "openrouter" }
-        set { UserDefaults.standard.set(newValue, forKey: "piProvider") }
+        get { UserDefaults.standard.string(forKey: "piProvider") == localProvider ? localProvider : "openrouter" }
+        set { UserDefaults.standard.set(newValue == localProvider ? localProvider : "openrouter", forKey: "piProvider") }
     }
 
     /// The model Claude Code or Codex builds with; "" leaves it to the tool's own default (for Claude Code,
@@ -83,7 +83,7 @@ enum Builder {
 
     /// Claude Code's choices: its own short names, and the full ID for models without one.
     static let claudeModels: [(id: String, label: String)] = [
-        ("", "Claude Code's default"),
+        ("", "Claude's default"),
         ("claude-fable-5-1", "Fable"),
         ("opus", "Opus"),
         ("sonnet", "Sonnet"),
@@ -93,7 +93,7 @@ enum Builder {
     /// Codex's choices: the models its account can use, from the list Codex itself caches
     /// (models_cache.json in the folder of the copy Lamp runs), best first. Just the default when the cache isn't there.
     static var codexModels: [(id: String, label: String)] {
-        [("", "ChatGPT Codex's default")] + codexCatalog.map { ($0.slug, $0.name) }
+        [("", "ChatGPT's default")] + codexCatalog.map { ($0.slug, $0.name) }
     }
 
     /// Codex's small, fast model, for quick judgments: the "Luna" line.
@@ -122,12 +122,8 @@ enum Builder {
     /// The model saved for one of pi's providers, chosen or not.
     static func piModel(for provider: String) -> String {
         if let saved = UserDefaults.standard.string(forKey: "piModel.\(provider)"), !saved.isEmpty { return saved }
-        if provider == "openrouter" {   // from before the provider picker
-            let old = UserDefaults.standard.string(forKey: "model") ?? ""
-            return old.contains("/") ? old : Provider.defaultModel
-        }
         if provider == localProvider { return LocalModels.installedIDs().first ?? "" }
-        return ""
+        return Provider.defaultModel
     }
 
     /// Whether the current choice can build right now, and if not, why.
@@ -142,14 +138,8 @@ enum Builder {
                 if let model = installed.first(where: { $0.id == piModel }), model.format == .mlx, LocalModels.mlxServerPath == nil {
                     return "\(model.name) needs a one-time install before it can run: click Install beside it in Settings → AI Providers → Native Mac AI."
                 }
-            case myPiProvider:
-                if !FileManager.default.fileExists(atPath: Agent.userConfigDir) { return "No pi setup found in ~/.pi/agent." }
-            case let id where id.hasPrefix("ext-"):
-                break   // a detected Ollama / LM Studio server
             default:
-                if KeyStore.key(for: piProvider) == nil {
-                    return "Add your \(Provider.apiProvider(piProvider)?.name ?? piProvider) key."
-                }
+                if KeyStore.openRouterKey == nil { return "Add your OpenRouter key." }
             }
             if piModel.isEmpty { return "Choose a model." }
         default:
@@ -163,13 +153,8 @@ enum Builder {
     static var summary: String {
         switch engine {
         case .pi:
-            let provider: String = switch piProvider {
-            case localProvider: "Native Mac AI"
-            case myPiProvider: "your pi setup"
-            case let id where id.hasPrefix("ext-"): LocalModels.externalName(id)
-            default: Provider.apiProvider(piProvider)?.name ?? piProvider
-            }
-            return "\(piModel.isEmpty ? "No model" : piModel) via \(provider)"
+            if piProvider == localProvider { return "\(piModel.isEmpty ? "No model" : piModel) via Native Mac AI" }
+            return "\(Provider.models.first { $0.id == piModel }?.name ?? piModel) via OpenRouter"
         default:
             let model = engineModel(engine)
             guard !model.isEmpty else { return engine.title }
@@ -268,9 +253,6 @@ extension Agent {
         guard !project.finding, Template.isScaffold(project) else { return "" }
         return "\n\n---\nThis is a new app (from Lamp, not part of the request above): its code is still Lamp's placeholder. Unless you ask first, call `plan` before writing any code."
     }
-
-    /// The user's own pi config (logins, subscriptions, settings).
-    static let userConfigDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".pi/agent").path
 
     /// Builds the command for one turn with the chosen engine. `files` are attachment paths
     /// relative to the app folder; `session` is the engine's saved conversation id, if any; `token` is the
@@ -482,7 +464,7 @@ extension Agent {
             let folder = project.realDir.path
             let linked = (try? FileManager.default.destinationOfSymbolicLink(atPath: folder)) != nil
             let command = !linked && Sandbox.prepareShims() ? launch
-                : "echo 'Lamp could not set up the sandbox that keeps ChatGPT Codex inside the app.' >&2; exit 1"
+                : "echo 'Lamp could not set up the sandbox that keeps ChatGPT inside the app.' >&2; exit 1"
             return AgentRun(command: command, env: env, saysCommands: approval != .always)
         }
     }
@@ -622,7 +604,7 @@ extension Agent {
         case "result":
             var events: [AgentEvent] = []
             if let cost = obj["total_cost_usd"] as? Double, cost > 0 { events.append(.cost(cost)) }
-            if obj["is_error"] as? Bool == true { events.append(.failed(obj["result"] as? String ?? "Claude Code failed.")) }
+            if obj["is_error"] as? Bool == true { events.append(.failed(obj["result"] as? String ?? "Claude failed.")) }
             return events + [.finished]
         default: break
         }
@@ -707,7 +689,7 @@ extension Agent {
             return [.tool("Edit \(paths.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))",
                           call: item["id"] as? String ?? UUID().uuidString)]
         case ("error", _), ("turn.failed", _):
-            let raw = obj["message"] as? String ?? ((obj["error"] as? [String: Any])?["message"] as? String) ?? "ChatGPT Codex failed."
+            let raw = obj["message"] as? String ?? ((obj["error"] as? [String: Any])?["message"] as? String) ?? "ChatGPT failed."
             // Codex nests the API error as JSON text; surface its message.
             let nested = json(raw).flatMap { ($0["error"] as? [String: Any])?["message"] as? String }
             return [.failed(nested ?? raw)]

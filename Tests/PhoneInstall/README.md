@@ -34,12 +34,12 @@ push those fictional app folders into the VM's `Library/Application Support/Lamp
 ad-hoc build and launch with:
 
 ```
-lampvm launch 'Lamp Dev' -onboarded YES -engine pi -piProvider ext-ui-replay \
-  -piModel.ext-ui-replay ui-replay
+lampvm launch 'Lamp Dev' -onboarded YES -engine pi
 ```
 
-Those are temporary made-up provider/model preferences to let the signed-out VM show the main window;
-there is no server, API key or signed-in builder. Clicking Retry runs the real Store phone path and
+after putting a made-up OpenRouter key in the VM's `Library/Application Support/Lamp Dev/keys.json`
+(`{"openrouter": "sk-or-ui-replay"}`, readable only by its user). That lets the signed-out VM show the main
+window; the key works nowhere and there is no signed-in builder. Clicking Retry runs the real Store phone path and
 reports that the fictional phone is absent. This checks the button and its route, not successful
 installation. The fixtures do not include generated-app sources or an installed phone bundle.
 

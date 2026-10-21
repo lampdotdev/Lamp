@@ -155,11 +155,7 @@ final class SharedAppReviewTests: XCTestCase {
         let folder = try appFolder(sources: ["App.swift": Data("let a = 1\n".utf8), "Hidden.swift": notText])
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-review-\(UUID().uuidString).lampapp")
         folders.append(file)
-        let zip = Process()
-        zip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        zip.arguments = ["-c", "-k", folder.path, file.path]
-        try zip.run()
-        zip.waitUntilExit()
+        TestShell.run("/usr/bin/ditto", ["-c", "-k", folder.path, file.path])
         XCTAssertThrowsError(try Sharing.open(file)) { error in
             XCTAssertEqual(error.localizedDescription, "This Lamp app file has code that isn't plain text, so Lamp can't check it.")
         }
@@ -326,11 +322,7 @@ final class SharedAppReviewTests: XCTestCase {
             let folder = try appFolder(name: name, sources: ["App.swift": Data("let a = 1\n".utf8)])
             let file = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-review-\(UUID().uuidString).lampapp")
             folders.append(file)
-            let zip = Process()
-            zip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-            zip.arguments = ["-c", "-k", folder.path, file.path]
-            try zip.run()
-            zip.waitUntilExit()
+            TestShell.run("/usr/bin/ditto", ["-c", "-k", folder.path, file.path])
             return try self.opened(file)
         }
         XCTAssertEqual(try opened(named: "Tally").name, "Tally")

@@ -141,12 +141,6 @@ final class DeployOwnIDTests: XCTestCase {
 
     @discardableResult
     private func shell(_ command: String, _ env: [String: String]) throws -> Int32 {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", command]
-        process.environment = ProcessInfo.processInfo.environment.merging(env) { $1 }
-        try process.run()
-        process.waitUntilExit()
-        return process.terminationStatus
+        TestShell.run(command, env: env).status
     }
 }

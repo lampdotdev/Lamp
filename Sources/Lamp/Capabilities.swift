@@ -35,7 +35,7 @@ enum AIContext: Equatable { case mac, phoneAway, icon }
 
 /// Something the person can do to make a capability better, shown the same way in the chat and in Settings.
 enum Upgrade: Hashable, Identifiable {
-    /// A key for a provider that takes one ("openrouter", "typesafe", "openai").
+    /// A key for a provider that takes one: OpenRouter's.
     case key(String)
     /// The picture model on this Mac (the first of `ImageModels.catalog`), with mflux if it's missing.
     case pictureModel
@@ -244,8 +244,7 @@ extension AppAI {
                           upgrades: pictures.upgrades + [.drawIcons])
     }
 
-    /// Away from the Mac a phone answers with what it carries: the OpenRouter key, and a TypeSafe key for
-    /// decisions when they go there.
+    /// Away from the Mac a phone answers with what it carries: the OpenRouter key.
     @MainActor private static func resolveAway(_ capability: Capability, models: AppModels) -> Resolution {
         guard Provider.hasKey else {
             return Resolution(capability: capability, tier: .none, answer: nil, provider: nil,
@@ -262,17 +261,12 @@ extension AppAI {
                               provider: "openrouter", note: nil, upgrades: [])
         case .decisions:
             let decision = awayDecisionModel(for: models.awayDecision)
-            if decision.provider != "text", decision.provider != "openrouter", KeyStore.key(for: decision.provider) == nil {
-                return Resolution(capability: .decisions, tier: .works, answer: "By text, through OpenRouter", provider: "openrouter",
-                                  note: "\(decision.label) needs \(keyPhrase(decision.provider)).",
-                                  upgrades: [.key(decision.provider)])
-            }
             return Resolution(capability: .decisions, tier: .best, answer: decision.label,
                               provider: decision.provider == "text" ? "openrouter" : decision.provider, note: nil, upgrades: [])
         }
     }
 
-    /// "an OpenRouter key", "a TypeSafe key".
+    /// "an OpenRouter key".
     @MainActor static func keyPhrase(_ provider: String) -> String {
         let name = Provider.keyProvider(provider)?.name ?? provider
         return "\("AEIOU".contains(name.prefix(1)) ? "an" : "a") \(name) key"

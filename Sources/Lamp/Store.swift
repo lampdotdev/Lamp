@@ -783,7 +783,6 @@ final class Store: ObservableObject {
         EngineDownloads.shared.startKeepingCurrent()
         Task {
             LocalModels.shared.refresh()
-            await LocalModels.shared.detectExternal()
             await recheckSetup()
         }
     }
@@ -3027,7 +3026,7 @@ final class Store: ObservableObject {
         if engine == .claude, CommandApproval.current.isAutomatic, !CommandApproval.claudeAutoUnavailable,
            lower.contains("auto"), lower.contains("mode") || lower.contains("permission") {
             CommandApproval.claudeAutoUnavailable = true
-            log(project, .status, "Claude Code's auto mode isn't available, so Lamp will ask before every command.")
+            log(project, .status, "Claude's auto mode isn't available, so Lamp will ask before every command.")
             return await runAgent(prompt, files: files, on: project)
         }
         // A request too big to send, which the engine couldn't shrink (Claude Code and Codex don't in Lamp's
@@ -6946,7 +6945,7 @@ final class Store: ObservableObject {
                 if let known { confinedCommands[wrapped] = nil }
                 let why = (body["reason"] as? String ?? body["message"] as? String)?.trimmed.nilIfEmpty
                 log(project, .status, ChatLook.notRun + command, said: known?.said)
-                if let why { log(project, .detail, "Claude Code's check stopped it: \(why)") }
+                if let why { log(project, .detail, "Claude's check stopped it: \(why)") }
                 return (200, [:])
             }
             if request.path.contains("format=claude-ran") {
@@ -7092,7 +7091,7 @@ final class Store: ObservableObject {
     }
 
     /// What an app on the person's own phone keeps so its AI works away from the Mac:
-    /// the OpenRouter key, the TypeSafe key when decisions go there, and the models the app is set to, as
+    /// the OpenRouter key and the models the app is set to, as
     /// `AppAI.resolve` has them for `.phoneAway`. Only for iPhone apps; a Mac app
     /// or the simulator never needs it, and the key stays in the phone's Keychain, put there by the app itself.
     private func keysForPhone(_ project: LampProject) -> (Int, [String: Any]) {
@@ -7101,15 +7100,11 @@ final class Store: ObservableObject {
             return (404, ["error": "There's no OpenRouter key to keep."])
         }
         let models = AppModels.load(project)
-        var decision = AppAI.awayDecisionModel(for: models.awayDecision)
+        let decision = AppAI.awayDecisionModel(for: models.awayDecision)
         var keys: [String: Any] = [
             "openrouter": key,
             "text_model": AppAI.awayModel(for: models.away).openRouter,
         ]
-        if decision.provider == "typesafe" {
-            if let typesafe = KeyStore.key(for: "typesafe") { keys["typesafe"] = typesafe }
-            else { decision = AppAI.awayDecisionModels.first { $0.provider == "text" }! }   // what `resolve` says stands in
-        }
         keys["decision_model"] = decision.model
         keys["decision_provider"] = decision.provider
         // The cloud image model chosen for away from the Mac (the Mac's own model can't travel).

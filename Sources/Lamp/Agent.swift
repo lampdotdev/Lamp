@@ -1046,7 +1046,7 @@ enum Agent {
 
         static let decisions = """
         - Decisions are your default tool for anything that depends on meaning. `LampAI.isTrue`, `LampAI.choose`, \
-        `LampAI.rate` and `LampAI.decide` call a decision model (TypeSafe's Jev) that is smart, very fast \
+        `LampAI.rate` and `LampAI.decide` call a decision model (Jev) that is smart, very fast \
         (well under a second) and extremely cheap (about $0.04 per million input tokens: judging hundreds of items \
         costs a fraction of a cent). Use them generously, without being asked, whenever the app sorts, filters, \
         labels, prioritizes, groups, matches, routes, moderates or flags things by what they are or mean: file \
@@ -1292,18 +1292,16 @@ enum Agent {
     static func environment(prompt: String, files: [String] = [], project: LampProject? = nil, session: String, sessionDir: String) -> [String: String] {
         var env = [
             "LAMP_PI": executable?.path ?? "pi",
-            "LAMP_PROVIDER": Builder.piProvider == Builder.myPiProvider ? myPiProvider
-                : Builder.piProvider == Builder.localProvider ? LocalModels.piProvider(for: Builder.piModel)
+            "LAMP_PROVIDER": Builder.piProvider == Builder.localProvider ? LocalModels.piProvider(for: Builder.piModel)
                 : Builder.piProvider,
-            "LAMP_MODEL": Builder.piProvider == Builder.myPiProvider ? myPiModel : Builder.piModel,
+            "LAMP_MODEL": Builder.piModel,
             "LAMP_SESSION": session,
             "LAMP_SESSION_DIR": sessionDir,
             "LAMP_SYSTEM": (project.map(systemPrompt(for:)) ?? systemPrompt) + tryRules + sandboxNote,
             "LAMP_PROMPT": prompt,
             "LAMP_TOOLS": lampTools?.path ?? "",
             "LAMP_TOOLS_JSON": Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.json").path ?? "",
-            // "My pi setup" uses the user's own pi config (their logins); everything else uses Lamp's.
-            "PI_CODING_AGENT_DIR": Builder.piProvider == Builder.myPiProvider ? userConfigDir : configDir,
+            "PI_CODING_AGENT_DIR": configDir,
             "PI_SKIP_VERSION_CHECK": "1",
             "PI_TELEMETRY": "0",
         ]
@@ -1311,7 +1309,7 @@ enum Agent {
         // pi asks Lamp for the key when it first needs it (keyCommand), so the key is in neither a file nor
         // the environment every shell command would inherit. The ticket is good for one answer, and pi spends
         // it before the model has said anything: a command the agent runs later finds it used.
-        if let provider = Provider.apiProvider(Builder.piProvider), Builder.piProvider != Builder.myPiProvider {
+        if let provider = Provider.keyProvider(Builder.piProvider) {
             syncKeyFile()
             // No ticket unless pi is sure to spend it. It wouldn't if auth.json holds something else for
             // this provider (a sign-in of pi's, or a key that couldn't be taken out yet), or if Lamp was
@@ -1336,7 +1334,7 @@ enum Agent {
         editKeyFile { auth in
             let entry = auth[provider] as? [String: Any]
             guard entry == nil || entry?["type"] as? String == "api_key" else { return }
-            auth[provider] = present && Provider.apiProvider(provider) != nil ? ["type": "api_key", "key": keyCommand] : nil
+            auth[provider] = present && Provider.keyProvider(provider) != nil ? ["type": "api_key", "key": keyCommand] : nil
         }
     }
 
@@ -1350,7 +1348,7 @@ enum Agent {
                 let entry = auth[provider] as? [String: Any]
                 guard entry == nil || entry?["type"] as? String == "api_key" else { continue }
                 if let key = entry?["key"] as? String, !key.hasPrefix("!"), !KeyStore.adopt(key, for: provider) { continue }
-                auth[provider] = KeyStore.key(for: provider) != nil && Provider.apiProvider(provider) != nil
+                auth[provider] = KeyStore.key(for: provider) != nil
                     ? ["type": "api_key", "key": keyCommand] : nil
             }
         }
@@ -1385,30 +1383,18 @@ enum Agent {
         }
     }
 
-    /// "My pi setup" models are stored as "provider/model" (e.g. "anthropic/claude-opus-5-5").
-    static var myPiProvider: String { String(Builder.piModel.split(separator: "/", maxSplits: 1).first ?? "") }
-    static var myPiModel: String {
-        let parts = Builder.piModel.split(separator: "/", maxSplits: 1)
-        return parts.count == 2 ? String(parts[1]) : Builder.piModel
-    }
-
-    /// Models pi can use for a provider, from `pi --list-models` (offline, from pi's catalog).
-    /// For "My pi setup" the result is "provider/model" for every provider signed in there.
-    static func listModels(provider: String) async -> [String] {
+    /// Models pi can use through OpenRouter, from `pi --list-models` (offline, from pi's catalog).
+    static func listModels() async -> [String] {
         guard let pi = executable else { return [] }
-        var env = ["PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0", "PI_OFFLINE": "1",
-                   "PI_CODING_AGENT_DIR": provider == Builder.myPiProvider ? userConfigDir : configDir]
-        if let api = Provider.apiProvider(provider) { env[api.envVar] = KeyStore.key(for: api.id) ?? "placeholder" }
+        let api = Provider.openRouterProvider
+        let env = ["PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0", "PI_OFFLINE": "1", "PI_CODING_AGENT_DIR": configDir,
+                   api.envVar: KeyStore.key(for: api.id) ?? "placeholder"]
         var rows: [String] = []
         _ = await Shell.run("\"$LAMP_PI\" --list-models", cwd: URL(fileURLWithPath: NSTemporaryDirectory()),
                             env: env.merging(["LAMP_PI": pi.path]) { $1 }) { line in
             let columns = line.split(separator: " ", omittingEmptySubsequences: true)
-            guard columns.count >= 2, columns[0] != "provider" else { return }
-            if provider == Builder.myPiProvider {
-                rows.append("\(columns[0])/\(columns[1])")
-            } else if columns[0] == provider {
-                rows.append(String(columns[1]))
-            }
+            guard columns.count >= 2, columns[0] == api.id else { return }
+            rows.append(String(columns[1]))
         }
         return rows
     }

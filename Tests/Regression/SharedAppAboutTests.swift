@@ -33,22 +33,14 @@ final class SharedAppAboutTests: XCTestCase {
         let work = file.deletingLastPathComponent()
         defer { try? FileManager.default.removeItem(at: work) }
         // The file as it was packed, unpacked again to change its manifest: what was staged is gone once it's made.
-        let unzip = Process()
-        unzip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        unzip.arguments = ["-x", "-k", file.path, work.appendingPathComponent("app").path]
-        try unzip.run()
-        unzip.waitUntilExit()
+        TestShell.run("/usr/bin/ditto", ["-x", "-k", file.path, work.appendingPathComponent("app").path])
         let manifest = work.appendingPathComponent("app/lamp-app.json")
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: manifest)) as? [String: Any])
         for odd: Any in ["Ticker\nChecked by Lamp: safe.", "  ", 7] {
             object["description"] = odd
             try JSONSerialization.data(withJSONObject: object).write(to: manifest)
             let packed = work.appendingPathComponent("odd-\(UUID().uuidString).lampapp")
-            let zip = Process()
-            zip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-            zip.arguments = ["-c", "-k", "--norsrc", work.appendingPathComponent("app").path, packed.path]
-            try zip.run()
-            zip.waitUntilExit()
+            TestShell.run("/usr/bin/ditto", ["-c", "-k", "--norsrc", work.appendingPathComponent("app").path, packed.path])
             // A description that isn't text at all makes the file one Lamp doesn't know; the others open with none.
             guard let package = try? Sharing.open(packed) else { continue }
             defer { try? FileManager.default.removeItem(at: package.folder) }
