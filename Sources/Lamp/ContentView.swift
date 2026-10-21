@@ -564,7 +564,8 @@ struct ProjectView: View {
         let canSendNow = store.canSendNow(in: project)
         ForEach(Array(queued.enumerated()), id: \.element.id) { index, message in
             let place = places[index]
-            ChatLook.QueuedRow(text: message.text, waitingForSetup: !store.setup.ready, sending: message.sendNow, place: place,
+            ChatLook.QueuedRow(text: message.text, waitingForSetup: !store.setup.ready,
+                               waitingForReload: store.queueWaitsForReload(in: project), sending: message.sendNow, place: place,
                                onRemove: { store.unqueue(message, from: project) },
                                sendNow: !message.sendNow && place.last && canSendNow ? { store.sendNow(in: project, latest: message.id) } : nil) {
                 if let pointed = message.pointed {

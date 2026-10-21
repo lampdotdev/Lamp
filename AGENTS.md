@@ -86,7 +86,7 @@ A capability given to one engine must be given to all of them that can take it, 
   panel at any size it opens at, in one row only on a wider card where each fits on a line (`TileRows`, and
   `ChipRow` the same way). A question left to Lamp is "Decide for me" (`TalkCard.youDecide`). Asking ends the turn: nothing is built or saved
   until the answer, and an agent that goes on to another step after `ask` is ended by Lamp, the way a
-  runaway one is (`Store.endOnQuestions`), whichever engine it is. Once the card is answered the chat
+  runaway one is (`Store.endIfOver`), whichever engine it is. Once the card is answered the chat
   follows its end again (`ChatFollow.followThroughSettling`). Only the card that waits is drawn as a card: answered, it folds to a line with what was chosen, and a notes receipt is a line too, so one thing in the chat asks for attention at a time. A new piece is a tool there, its view, and a line in `talkRules`. The agent still
   doesn't ask about layout, colours or names (`Agent.Rules.ask`).
 - **What Lamp remembers** (`Memory`): two short sets of notes, about the person (`about-you.md` in the
@@ -990,8 +990,17 @@ sees a live change at once and a held one not until Reload, so the agent works i
 tells the agent which way its change went (`ChangeOutcome`): into the open app, waiting for Reload with LiveReload's
 reason and, where there's a known shape that would have gone in, that shape (`LiveReload.advice`), or reopened or
 opened; and how long the look took, since a look is how the agent sees what the person sees, and it puts looks off
-when it's only told they take a while. A change held for Reload holds every
-look after it in the request, so the note asks for the changes that go in live first and the held ones last. The turn's end tallies them in a detail line (`Store.outcomeTally`), which is how often changes go in live,
+when it's only told they take a while. A change held for Reload pauses the request (`Store.pause`): the look's
+answer (`reloadNote`, `askedToReopenNote`, `keptOpenNote`) tells the agent to say in a sentence what Reload will show
+and end, the turn is over whatever it does next (an agent that calls another tool is ended by Lamp, as one is after
+`ask`, Codex by its own interrupt so its conversation keeps the look's answer), and Lamp's own request to carry on
+(`Agent.afterReload`, a `QueuedMessage` marked `afterReload`, hidden in the chat as a crash fix's request is, with
+`ChatLook.carryingOn` above it) waits in line until the held change is in (`Store.startsNow`): the person's Reload,
+or the app closing, puts it in and the agent goes on in the same conversation on every engine; Undo drops it. Only
+the Reload button reloads the app: a message typed meanwhile waits in the same line (the chats say "Sent once you
+press Reload" under it, `ChatLook.waitingForReload`), since the chat is beside the app and a reopen takes the chat
+down with it, and nothing the agent did meanwhile could be seen. So the note asks for the changes that go in live
+first and the held ones last. The turn's end tallies them in a detail line (`Store.outcomeTally`), which is how often changes go in live,
 and says how long the person waited to see the turn's first change and the longest wait between changes after it
 (`Store.paceTally`, from `Turn.shown`), which is what the rules for showing work early are judged by. While
 the agent works, Lamp also puts each change it saves into the open app by itself (`Store.autoApply`: the sources read
