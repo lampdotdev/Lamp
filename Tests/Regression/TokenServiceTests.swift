@@ -126,6 +126,7 @@ final class TokenServiceTests: XCTestCase {
         import Foundation
         import SwiftUI
         import Security
+        enum LampInstall { static let token = "made-up-app-token" }
         var lampGateway = "http://127.0.0.1:1"
         \(support[secretsStart.upperBound..<secretsEnd.lowerBound])
         \(support[start.lowerBound..<end.lowerBound])
