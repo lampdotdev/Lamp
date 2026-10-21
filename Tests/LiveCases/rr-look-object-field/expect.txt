@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Look changed what it holds (Look.softShade: Bool); Look.taproom would be made again for its new value, and its Look can hold an object, which there would then be two of)
+== run
+before: accent=2
+RELOAD 1: REOPEN Look changed what it holds (Look.softShade: Bool); Look.taproom would be made again for its new value, and its Look can hold an object, which there would then be two of
+after1 (want "accent=2 soft=true" in place, or a reopen saying why: Look holds an object, a formatter): accent=2
+before: accent=2 soft=true
+RELOAD 1: in the restart
+after1 (want "accent=2 soft=true" in place, or a reopen saying why: Look holds an object, a formatter): accent=2 soft=true

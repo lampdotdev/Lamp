@@ -240,6 +240,16 @@ enum LiveReload {
     /// and what's declared (`declarationGroup`). Each is compared its own way, never as a type's fields.
     static func isGroup(_ type: String) -> Bool { (type.first?.asciiValue ?? 32) < 32 }
 
+    /// A type's key as the person reads it: a type declared inside a function by its name and the function
+    /// (`Answer (inside Shelf.surprise())`), without its file or the closures between.
+    static func spoken(_ key: String) -> String {
+        let plain = bare(key)
+        guard let end = plain.range(of: ").", options: .backwards) else { return plain }
+        let scope = String(plain[..<end.lowerBound]) + ")"
+        let owner = scope.replacingOccurrences(of: #"\.\([^()]*\)(?: async)?(?: throws)? -> [^.]*"#, with: "", options: .regularExpression)
+        return "\(plain[end.upperBound...]) (inside \(owner))"
+    }
+
     /// A private type is keyed with its file (`Row@A.swift`, each part of a nested one), since two files may each
     /// declare one of the name and the two are two types at run time; this is the key as Swift names the type.
     static func bare(_ key: String) -> String { key.replacingOccurrences(of: #"@[^\t]*?\.swift"#, with: "", options: .regularExpression) }
@@ -2444,8 +2454,11 @@ enum LiveSlots {
                         return .refused("\(type).\(name) isn't @State, and a view's spare keeps state")
                     }
                 }
-                // A property an explicit CodingKeys names has to be stored for Codable to be made: it stays a field.
-                if cases[type + ".CodingKeys"]?.contains(name) == true { return .refused("\(type).\(name) is one of \(type)'s coding keys, so Codable needs it stored") }
+                // A property in a Codable type's CodingKeys, written or made by the compiler, stays a field: moved into a
+                // spare, it would drop out of what's encoded and decoded.
+                if cases[type + ".CodingKeys"]?.contains(name) == true {
+                    return .refused("\(LiveReload.spoken(type)) is Codable and gained \(name), which has to be stored to be encoded and decoded")
+                }
                 // What a computed property kept in a spare can't do: observers, `lazy`, a weak or unowned reference,
                 // or being set in an initializer the type writes, before the stored properties are all set.
                 guard let variable = declarations.variables[type + "\t" + name] else { return .refused(nil) }
@@ -2558,6 +2571,13 @@ enum LiveSlots {
                 let made = edit.constant.map { rewriteConstant($0, in: original, declarations: declarations, rewritten: Set(constants), layout: bareLayout) }
                     ?? rewrite(declarations.bindings[edit.binding], items: edit.items, in: original, declarations: declarations, cases: cases)
                 guard let (range, text) = made else {
+                    // A constant that can hold an object isn't made again: a second object would split the app's state.
+                    if let key = edit.constant, let variable = declarations.constants[key] {
+                        var seen = Set<String>()
+                        if holdsObject(variable.type, classes: declarations.classes, layout: bareLayout, seen: &seen) {
+                            return .refused("\(displayName(key)) would be made again for its new value, and its \(variable.type) can hold an object, which there would then be two of")
+                        }
+                    }
                     // A class's spare places take the class's actor, which a property written `nonisolated` can't read.
                     if edit.constant == nil, let item = edit.items.first, item.slot.holder ?? .object == .object,
                        let start = original.offset(declarations.bindings[edit.binding].start), isNonisolated(before: start, in: original) {

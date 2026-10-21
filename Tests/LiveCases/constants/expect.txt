@@ -1,10 +1,10 @@
 VERDICT 1: RELOAD (Gave Config.double, Config.label, Config.speed their new value)
-VERDICT 2: REOPEN (an initializer of Engine was added, taken away or changed, and a class's initializers are in its method table)
+VERDICT 2: REOPEN (an initializer of Engine was added, taken away or changed, and a class's initializers are in its method table; engine would be made again for its new value, and its Engine can hold an object, which there would then be two of)
 == run
 before: 2.0 / 4.0 / small / 1.0 / e
 RELOAD 1 (whole): ok
 after1 (want 3.0 / 6.0 / big): 3.0 / 6.0 / big / 1.0 / e
-RELOAD 2: REOPEN an initializer of Engine was added, taken away or changed, and a class's initializers are in its method table
+RELOAD 2: REOPEN an initializer of Engine was added, taken away or changed, and a class's initializers are in its method table; engine would be made again for its new value, and its Engine can hold an object, which there would then be two of
 after2 (reopen expected: Settings holds an object): 3.0 / 6.0 / big / 1.0 / e
 before: 3.0 / 6.0 / big / 5.0 / f
 RELOAD 1: in the restart

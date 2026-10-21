@@ -910,8 +910,9 @@ be keyed two ways by two readers); what a stretch of code names (a constant, a t
 compiler's own resolution of it (`Declarations.uses`, from each reference's `decl`, each annotation's `bind` and each type
 written out), never a search of its text, so a string, a comment or another type's member of the same name is no use of
 it, and a case alone (`.a`) is no use of its enum as a whole (`LiveReload.reloadable`, comparing with the sources the open app runs, kept in `.lamp/live/running`, which holds only
-for the copy that took the last change: one opened again since, by the person or macOS, starts from what was installed,
-so it's forgotten and the change reopens the app, `LiveReload.tookChanges`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
+for the copy that took the last change: one opened again since, by the person or macOS, runs what was installed,
+which Lamp keeps beside it (`.lamp/live/installed`), so the change is judged against that, `LiveReload.tookChanges`,
+`backToInstalled`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
 linked into a library. Every file is compiled when what's declared changed (a function, an initializer, a computed
 property, a conformance, a member's `@objc` and its selector, a stored property, which may stand where a protocol extension's member of its
 name did, and its observers, which turn every write into a call, a typealias, and a private member made visible: `LiveReload.declarationGroup`, `declarationsChanged`), since an unchanged caller may then mean
@@ -930,7 +931,9 @@ pointer reaches: a value would then carry one copy's identity or the other's, so
 a conformance added in it isn't found, and SwiftUI, seeing a new type for a view's body, remakes the whole subtree
 and loses every state in it. So between compiling and linking, `LiveObject` rewrites each object: every type's
 metadata, descriptor and protocol descriptor it defines is renamed (`$lampcopy`), and the code's references become
-loads through the global offset table of a weak undefined symbol with the original name, which `LampLive` binds to the
+loads through the global offset table of a weak undefined symbol with the original name (a reference to a type's full
+metadata at its address point's offset, `…VMf + 16`, names the type's own symbol, `…VN`, there, since a load through the
+table carries no offset), which `LampLive` binds to the
 app's copy, or to the library's own for a type the app doesn't have (a new one, kept for the changes after it, and an
 enum it brings stays that change's when a later change grows it, so its values made before are the same type). A
 conformance's descriptor and witness table are treated the same, since the runtime tells generic types apart by them
@@ -1084,7 +1087,8 @@ metadata to point at the change's; a private enum's symbols carry the compiler's
 compiler writes a word of the name by its place (`Pet` and `PetMood` are `3Pet0A4MoodO`) the enum's own descriptor
 gives its spelling, found by demangling (`LiveObject.demangledType`). What a grown enum is checked against (the layout with statics and globals, `held`)
 and what old code does come from the analyses already made (`Analyses.Entry`), not a further run of the compiler.
-A property an explicit `CodingKeys` names stays a field (Codable needs it stored),
+A property in a type's `CodingKeys`, written or made by the compiler for a Codable type, stays a field (moved into
+a spare, it would drop out of what's encoded and decoded),
 so it reopens the app, as does one set in an initializer the type writes itself (`SwiftSource.Declarations.assigned`:
 a computed property can't be set before the stored ones are; a convenience initializer sets them after `self.init`
 and doesn't count), one with observers, `lazy`, or held weakly or
