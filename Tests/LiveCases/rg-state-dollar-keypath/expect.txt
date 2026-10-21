@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Row.count)
+== run
+before: t
+RELOAD 1 (whole): ok
+after1 (want "t bindings=1" in place: a key path's \.$count is the view's state's binding too): t bindings=1

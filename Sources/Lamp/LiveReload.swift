@@ -1769,10 +1769,14 @@ enum LiveReload {
                 let models = Set(modelFiles(inLayout: after).map(\.file)).subtracting(files)
                 changed.removeAll { file in
                     guard models.contains(file) else { return false }
-                    guard let text = SwiftSource.Text(path: sources(project).appendingPathComponent(file).path) else { return false }
-                    let code = String(decoding: text.bytes, as: UTF8.self)
-                    // A string's interpolations are code too (`"\(shout(title))"`).
-                    return !names.contains { SwiftText.mentions($0, in: code) }
+                    // What the file's code names, as the compiler resolved it with the new declarations: a call that
+                    // now goes to a new overload names it here.
+                    return !declarations.uses.contains { use in
+                        guard use.at.file.hasSuffix("/" + file) else { return false }
+                        let path = use.name.split(separator: ".").map { String($0.prefix { $0 != "(" }) }
+                        guard let last = path.last else { return false }
+                        return names.contains(last) || last == "init" && path.dropLast().last.map(names.contains) == true
+                    }
                 }
             }
         }
@@ -2066,15 +2070,16 @@ enum LiveSlots {
                              layout: [String]) -> [String] {
         guard !types.isEmpty else { return [] }
         let byType = LiveReload.byType(LiveReload.bared(layout))
-        let names = types.map { String(LiveReload.bare($0).split(separator: ".").last ?? "") }
+        func cases(of type: String) -> Set<String> { caseNames(byType[type] ?? []) }
+        let names = types.map { LiveReload.bare($0) }
         var files: [String: SwiftSource.Text] = [:]
         return variables.keys.sorted().filter { key in
-            guard let variable = variables[key], let text = initialText(of: variable, in: declarations) else { return false }
+            guard let variable = variables[key], let initial = initialRange(of: variable, in: declarations) else { return false }
             var seen = Set<String>()
             if holdsObject(variable.type, classes: declarations.classes, layout: byType, seen: &seen) { return false }
             let binding = declarations.bindings[variable.binding]
-            let called = SwiftSource.calledText(from: binding.start, to: binding.last, in: declarations, files: &files, members: true)
-            return names.contains { SwiftText.mentions($0, in: text) || SwiftText.mentions($0, in: called) }
+            let ranges = [initial] + SwiftSource.called(from: binding.start, to: binding.last, in: declarations, files: &files, members: true)
+            return names.contains { declarations.names(type: $0, within: ranges, except: cases(of: $0)) }
         }
     }
 
@@ -2344,8 +2349,7 @@ enum LiveSlots {
                 if variable.attributes.contains(where: { $0.name == "ObservationIgnored" }) { return .refused("\(type).\(name) is @ObservationIgnored, and a property kept in a spare is observed") }
                 // A @Published property's `$name` publisher has no spare to come from.
                 if holder == .object, variable.attributes.contains(where: { $0.name == "Published" }),
-                   LiveReload.swiftFiles(in: LiveReload.sources(project)).filter({ !LiveReload.ownFiles.contains(($0.key as NSString).lastPathComponent) }).values.contains(where: { url in
-                       SwiftSource.Text(path: url.path).map { SwiftText.mentions(identifier: "$" + name, in: String(decoding: $0.bytes, as: UTF8.self)) } == true }) {
+                   declarations.uses.contains(where: { $0.name == LiveReload.bare(type) + ".$" + name }) {
                     return .refused("\(type).\(name)'s publisher ($\(name)) is used, and a property kept in a spare has none")
                 }
                 let optional = kind.hasSuffix("?") || kind.hasPrefix("Optional<")
@@ -2414,9 +2418,9 @@ enum LiveSlots {
         // Where each view's moved state's `$name` is its own, by file: the view's declaration and its extensions (a
         // private view's only in its file), since another view may have state of the same name. There the state's
         // binding becomes its box's.
-        var stateRanges: [String: [(start: SwiftSource.Position, last: SwiftSource.Position, name: String)]] = [:]
+        var stateRanges: [String: [(start: SwiftSource.Position, last: SwiftSource.Position, type: String, name: String)]] = [:]
         for item in planned where item.slot.holder == .view {
-            if let declared = declarations.types[item.type] { stateRanges[declared.start.file, default: []].append((declared.start, declared.last, item.name)) }
+            if let declared = declarations.types[item.type] { stateRanges[declared.start.file, default: []].append((declared.start, declared.last, item.type, item.name)) }
             // An extension is written at file scope with the type's qualified name (`extension Outer.Panel`), so that
             // name is the view's; a private view's only in its own file, and a view no private one of the same name
             // shadows in a file.
@@ -2425,7 +2429,7 @@ enum LiveSlots {
             let shadowed = Set(declarations.types.filter { $0.key != item.type && $0.key.contains("@") && LiveReload.bare($0.key) == plain }.map(\.value.start.file))
             for (extended, ranges) in declarations.extensions where extended == plain {
                 for range in ranges where ownFile.map({ range.start.file == $0 }) ?? !shadowed.contains(range.start.file) {
-                    stateRanges[range.start.file, default: []].append((range.start, range.last, item.name))
+                    stateRanges[range.start.file, default: []].append((range.start, range.last, item.type, item.name))
                 }
             }
         }
@@ -2454,24 +2458,26 @@ enum LiveSlots {
                 bytes.replaceSubrange(range, with: Array(text.utf8))
                 shifts.append((range.lowerBound, text.utf8.count - range.count))
             }
-            for (start, end, name) in stateRanges[file] ?? [] {
-                guard let from = original.offset(start), let to = original.offset(end) else { return .refused(nil) }
-                func shifted(_ offset: Int) -> Int { offset + shifts.filter { $0.at < offset }.map(\.by).reduce(0, +) }
-                // Not inside a type declared within it: a nested view's `$name` is its own state's.
-                let holes = declarations.types.values.filter { $0.start.file == file }.compactMap { r -> (Int, Int)? in
-                    guard let a = original.offset(r.start), let b = original.offset(r.last), a > from, b < to else { return nil }
-                    return (a, b + 1)
-                }.sorted { $0.0 < $1.0 }
-                var pieces: [(Int, Int)] = [], at = from
-                for (a, b) in holes where a >= at { pieces.append((at, a)); at = b }
-                pieces.append((at, to + 1))
-                // From the last, so each piece's place in the original still finds it.
-                for (a, b) in pieces.reversed() where a < b {
-                    let (first, last) = (shifted(a), min(shifted(b), bytes.count))
-                    let inside = SwiftText.replacing(identifier: "$" + name, with: "__lampBinding_" + name, in: String(decoding: bytes[first..<last], as: UTF8.self))
-                    bytes.replaceSubrange(first..<last, with: Array(inside.utf8))
-                    shifts.append((a, inside.utf8.count - (last - first)))
+            // Each use of the view's `$name`, where the compiler says it is: a nested view's `$name` is its own
+            // state's, and a string or comment saying it is no use.
+            func shifted(_ offset: Int) -> Int { offset + shifts.filter { $0.at < offset }.map(\.by).reduce(0, +) }
+            var places: [Int: String] = [:]
+            for (start, last, type, name) in stateRanges[file] ?? [] {
+                let used = LiveReload.bare(type) + ".$" + name
+                for use in declarations.uses where use.name == used && SwiftSource.within(use.at, (start, last)) {
+                    guard let offset = original.offset(use.at) else { return .refused(nil) }
+                    if original.slice(offset, offset + name.utf8.count + 1) == "$" + name { places[offset] = name; continue }
+                    // A key path's component: its token is somewhere in the key path.
+                    guard let path = declarations.keyPathUses.first(where: { $0.start == use.at && $0.name == used }),
+                          let end = original.tokenEnd(path.last), case let span = original.slice(offset, end),
+                          let found = SwiftText.offsets(of: "$" + name, in: span).first else { return .refused(nil) }
+                    places[offset + found] = name
                 }
+            }
+            // From the last, so each one's place in the original still finds it.
+            for (offset, name) in places.sorted(by: { $0.key > $1.key }) {
+                let at = shifted(offset)
+                bytes.replaceSubrange(at..<(at + name.utf8.count + 1), with: Array(("__lampBinding_" + name).utf8))
             }
             var text = String(decoding: bytes, as: UTF8.self)
             text += initializers[file] ?? ""
@@ -2568,19 +2574,23 @@ enum LiveSlots {
         guard !holdsObject(variable.type, classes: declarations.classes, layout: layout, seen: &seen) else { return nil }
         // Its own text, and those of the rewritten constants it's made from, however far back.
         // Walked and hashed in name order, each with its name, so the same inputs always give the same name.
-        var sources: [String: String] = [key: initial], queue = [initial]
+        var sources: [String: String] = [key: initial], queue = [key]
         while let next = queue.popLast() {
-            for other in rewritten.sorted() where sources[other] == nil && SwiftText.mentions(constantName(other), in: next) {
-                guard let made = declarations.constants[other].flatMap({ initialText(of: $0, in: declarations) }) else { continue }
-                sources[other] = made
-                queue.append(made)
+            guard let range = declarations.constants[next].flatMap({ initialRange(of: $0, in: declarations) }) else { continue }
+            for other in rewritten.sorted() where sources[other] == nil {
+                guard let made = declarations.constants[other], declarations.uses(made.position, within: [range]),
+                      let text = initialText(of: made, in: declarations) else { continue }
+                sources[other] = text
+                queue.append(other)
             }
         }
         // And what they call (`build()`, a computed `width`): made by other code, it's another value.
-        var files: [String: SwiftSource.Text] = [:]
+        var files: [String: SwiftSource.Text] = [:], ranges: [(start: SwiftSource.Position, last: SwiftSource.Position)] = []
         let called = sources.keys.sorted().compactMap { name -> String? in
             guard let made = declarations.constants[name] else { return nil }
             let binding = declarations.bindings[made.binding]
+            ranges += initialRange(of: made, in: declarations).map { [$0] } ?? []
+            ranges += SwiftSource.called(from: binding.start, to: binding.last, in: declarations, files: &files, members: true)
             return SwiftSource.calledText(from: binding.start, to: binding.last, in: declarations, files: &files, members: true)
         }.joined(separator: "\n")
         if !called.isEmpty { sources["\u{1}calls"] = called }
@@ -2588,8 +2598,7 @@ enum LiveSlots {
         // the enum grows, not only the first.
         for (type, entries) in layout {
             let cases = entries.filter { $0.contains("\tcase ") }
-            guard !cases.isEmpty, case let short = String(type.split(separator: ".").last ?? ""),
-                  sources.values.contains(where: { SwiftText.mentions(short, in: $0) }) else { continue }
+            guard !cases.isEmpty, declarations.names(type: LiveReload.bare(type), within: ranges, except: caseNames(entries)) else { continue }
             sources["\u{0}" + type] = cases.sorted().joined(separator: "\n")
         }
         // Named by its key, the file of a private one included: two files' `private let spacing` are two values.
@@ -2612,8 +2621,8 @@ enum LiveSlots {
         while grew {
             grew = false
             for (key, variable) in declarations.constants where !set.contains(key) {
-                guard let made = initialText(of: variable, in: declarations) else { continue }
-                if set.contains(where: { SwiftText.mentions(constantName($0), in: made) }) { set.insert(key); grew = true }
+                guard let made = initialRange(of: variable, in: declarations) else { continue }
+                if set.contains(where: { declarations.constants[$0].map { declarations.uses($0.position, within: [made]) } == true }) { set.insert(key); grew = true }
             }
         }
         return set.sorted()
@@ -2688,6 +2697,19 @@ enum LiveSlots {
     ]
 
     /// The text of a property's starting value, when it has one.
+    /// An enum's case names, from its entries in a layout ("Mood<tab>case happy: …").
+    private static func caseNames(_ entries: [String]) -> Set<String> {
+        Set(entries.compactMap { entry -> String? in
+            guard let at = entry.range(of: "\tcase ") else { return nil }
+            return String(entry[at.upperBound...].prefix { $0 != ":" && $0 != "(" })
+        })
+    }
+
+    /// Where its starting value is written.
+    private static func initialRange(of variable: SwiftSource.Variable, in declarations: SwiftSource.Declarations) -> (start: SwiftSource.Position, last: SwiftSource.Position)? {
+        declarations.bindings[variable.binding].entries.first(where: { $0.name == variable.name })?.initial
+    }
+
     private static func initialText(of variable: SwiftSource.Variable, in declarations: SwiftSource.Declarations) -> String? {
         let binding = declarations.bindings[variable.binding]
         guard let entry = binding.entries.first(where: { $0.name == variable.name }), let initial = entry.initial,
@@ -2959,6 +2981,18 @@ enum SwiftText {
     /// Whether `identifier` is used in the code (not in a string or comment, nor as part of a longer name).
     static func mentions(identifier: String, in text: String) -> Bool {
         replacing(identifier: identifier, with: identifier + "\u{1}", in: text) != text
+    }
+
+    /// Where each use of `identifier` in the code starts, in bytes (not in a string or comment, nor part of a longer
+    /// name).
+    static func offsets(of identifier: String, in text: String) -> [Int] {
+        let marked = replacing(identifier: identifier, with: "\u{0}", in: text)
+        var found: [Int] = [], shift = 0
+        for (index, byte) in marked.utf8.enumerated() where byte == 0 {
+            found.append(index + shift)
+            shift += identifier.utf8.count - 1
+        }
+        return found
     }
 
     /// `text` with each use of `identifier` in its code (not in a string or comment, nor part of a longer name)

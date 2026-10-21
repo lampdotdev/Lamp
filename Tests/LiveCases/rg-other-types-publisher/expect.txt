@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Search.query)
+== run
+before: r=0
+RELOAD 1 (whole): ok
+after1 (want q=x in place: the $query used is Filter's, not Search's): q=x r=0
