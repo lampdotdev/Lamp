@@ -357,10 +357,11 @@ enum Gallery {
 
     // MARK: Transition
 
-    /// The glow and the light are drawn by the app itself (`LampTransition` in LampSupport.swift), so they're tried
-    /// on a real one: the same signed requests a build sends, to an app open now. The cover's copy of the glow,
-    /// which is Lamp's, is in Activity.
+    /// The glow and the light are drawn by the app itself (`LampTransition` in LampSupport.swift). Their layers
+    /// (`LampTransition.Look`) are compiled into Lamp too, so they're tried here over pictures of apps, and on a
+    /// real one with the same signed requests a build sends, to an app open now.
     private static let transitionEntries: [Entry] = [
+        Entry(group: "Transition", name: "On pictures of apps") { AnyView(TransitionPlayground()) },
         Entry(group: "Transition", name: "On an open app") { AnyView(TransitionTrial()) },
     ]
 
