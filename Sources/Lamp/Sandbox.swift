@@ -94,6 +94,10 @@ enum Sandbox {
     /// allows by default, it lists what is open, so the person's files, Lamp's folders and the apps Lamp installs
     /// (which can't be run without being read) stay closed by not being named. What the app shows and prints is
     /// closed as in the profile above when the settings say so. A command that needs more asks Codex's reviewer.
+    /// Codex's profile has no rule for a port on this Mac (its network settings only steer a proxy of its own that
+    /// is off), nor for running a program it can read, so Lamp's adb server and emulator aren't refused here as
+    /// they are above: a Codex command that names their ports reaches them. What keeps an ordinary `adb` from
+    /// coming across them is only that they're on ports of their own (`Edition.androidPorts`).
     static func codexPermissions(for project: LampProject, env: [String: String] = ProcessInfo.processInfo.environment) -> String {
         let home = real(FileManager.default.homeDirectoryForCurrentUser.path)
         var paths: [(String, String)] = [(":root", "deny"), (":minimal", "read")]
@@ -227,11 +231,25 @@ enum Sandbox {
             // Nor what Xcode makes there for the phone (`Devices.buildsFolder`), for the same reason: closed to
             // reading, but a program in it could still be started.
             lines.append("(deny process-exec* (subpath \(quotedPath(support + "/" + name + "/Phone Builds"))))")
+            // Each Lamp's adb server and emulator (`Edition.androidPorts`): through them a command could install,
+            // remove or drive apps on the emulator and on the person's phone, which only Lamp does. At any address,
+            // since the emulator's control interface listens on the network too. Nor may a command listen there in
+            // their place, for Lamp to take it for its own server or emulator.
+            if let ports = Edition.androidPorts(folder: name) {
+                let numbers = [ports.server, ports.console, ports.bridge, ports.control]
+                lines.append("(deny network-outbound " + numbers.map { "(remote tcp \"*:\($0)\")" }.joined(separator: " ") + ")")
+                lines.append("(deny network-bind " + numbers.map { "(local tcp \"*:\($0)\")" }.joined(separator: " ") + ")")
+            }
             // The caller check (PeerProcess.isApp) would also accept a whole bundle replaced at the installed
             // path, signature valid by that copy's own requirement. That's safe only while this folder stays
             // unwritable from the command's sandbox (the file denies above), so nothing the builder makes can
             // be put there: keep it that way, or the check needs the replacement refused too.
         }
+        // Nor may a command run adb or the emulator from the tools Lamp downloaded, which a build never needs: an adb
+        // of its own would start a server that reaches the person's phone. One fetched from elsewhere still could,
+        // with the person's say-so on the phone, since that server would have a key the phone has never allowed.
+        lines.append("(deny process-exec* (subpath \(quotedPath(real(AndroidTools.sdkFolder.appendingPathComponent("platform-tools").path)))) "
+            + "(subpath \(quotedPath(real(AndroidTools.sdkFolder.appendingPathComponent("emulator").path)))))")
         // Xcode's interface and asset compilers hand their work to helpers that stay running and are found through
         // shared memory named "ib…", whoever started them. A helper started outside the sandbox (by Lamp drawing an
         // icon, or by the person's own Xcode) would read and write for a command wherever it asked; one started in

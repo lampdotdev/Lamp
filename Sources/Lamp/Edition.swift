@@ -54,12 +54,48 @@ enum Edition {
 
     /// An instance's four ports come from its name, in a range of their own above the two fixed sets, so two
     /// worktrees' builds seldom collide; the apps learn them at install (`Template.installValues`).
-    private static let firstPort: UInt16 = {
-        guard !instance.isEmpty else { return isDev ? 47821 : 47811 }
+    private static let firstPort: UInt16 = instance.isEmpty ? (isDev ? 47821 : 47811) : 48000 + slot(of: instance) * 4
+
+    /// Where an instance's ports go among the others', from its name.
+    private static func slot(of instance: String) -> UInt16 {
         var hash: UInt32 = 2166136261
         for byte in instance.utf8 { hash = (hash ^ UInt32(byte)) &* 16777619 }
-        return 48000 + UInt16(hash % 240) * 4
-    }()
+        return UInt16(hash % 240)
+    }
+
+    /// The ports of Lamp's own adb server and of the emulator it starts (`AndroidTools.environment`, `Emulator.start`).
+    /// Neither is adb's usual: the server on 5037 takes any program on this Mac as its client, and an emulator on
+    /// 5554–5585 is found by every adb server, so with them a command of the agent's could reach the emulator, or
+    /// the person's phone through Lamp's server, by running `adb`. On ports of each Lamp's own the agent's sandbox
+    /// refuses them by number (`Sandbox.profile`), and an adb started anywhere else doesn't come across the
+    /// emulator.
+    struct AndroidPorts: Equatable {
+        let server: Int
+        let console: Int
+        /// The emulator's adb port, which Android has as the one after its console's.
+        var bridge: Int { console + 1 }
+        /// The emulator's control interface (gRPC), which it always starts: it drives the screen for whoever holds
+        /// the token the emulator leaves in the caches folder, which the sandbox opens, so it's refused by port too.
+        let control: Int
+    }
+    static let androidPorts = androidPorts(isDev: isDev, instance: instance)
+
+    static func androidPorts(isDev: Bool, instance: String) -> AndroidPorts {
+        guard isDev else { return AndroidPorts(server: 47815, console: 5680, control: 47816) }
+        guard !instance.isEmpty else { return AndroidPorts(server: 47825, console: 5600, control: 47826) }
+        let slot = Int(slot(of: instance))
+        // An emulator's console port is even and at most 5680.
+        return AndroidPorts(server: 49000 + slot, console: 5602 + 2 * (slot % 39), control: 49300 + slot)
+    }
+
+    /// The same for the Lamp whose folder has this name (`lampFolderNames`), so each Lamp's sandbox closes every
+    /// Lamp's; nil for a folder that isn't a Lamp's.
+    static func androidPorts(folder name: String) -> AndroidPorts? {
+        if name == "Lamp" { return androidPorts(isDev: false, instance: "") }
+        if name == "Lamp Dev" { return androidPorts(isDev: true, instance: "") }
+        guard name.hasPrefix("Lamp Dev ") else { return nil }
+        return androidPorts(isDev: true, instance: String(name.dropFirst("Lamp Dev ".count)))
+    }
     static let gatewayPort: UInt16 = firstPort
     static let localModelPort = Int(firstPort) + 1
     static let mlxPort = Int(firstPort) + 2
