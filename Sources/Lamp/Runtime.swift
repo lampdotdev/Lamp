@@ -67,6 +67,7 @@ enum Runtime {
         if project.platform == .mac, Store.usesAppIntents(project) || Template.hasShare(project) { hasher.update(data: Data(Devices.team.utf8)) }
         // An Android app's code is its `app` module, whose `build` folder is what the build makes, not what it's made from.
         let names = project.platform == .android ? [Template.androidAppFolder, "icon.json"]
+            : project.platform == .tv ? [TVTemplate.webFolder, "icon.json"]
             : ["Sources", Template.widgetFolder, Template.shareFolder, Template.watchFolder, "Package.swift", "icon.json", "capabilities.json"]
         let roots = names.map { project.dir.appendingPathComponent($0) }
         for root in roots {

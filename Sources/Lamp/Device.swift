@@ -8,7 +8,7 @@ import AppKit
 /// Building) and the agent's note read nothing but it.
 struct Device: Identifiable, Hashable {
     enum Kind: String, Hashable {
-        case mac, iphone, ipad, watch, android, androidEmulator
+        case mac, iphone, ipad, watch, android, androidEmulator, samsungTV, lgTV
         var name: String {
             switch self {
             case .mac: return "Mac"
@@ -17,6 +17,8 @@ struct Device: Identifiable, Hashable {
             case .watch: return "Apple Watch"
             case .android: return "Android device"
             case .androidEmulator: return "Android emulator"
+            case .samsungTV: return "Samsung TV"
+            case .lgTV: return "LG TV"
             }
         }
         var symbol: String {
@@ -26,12 +28,15 @@ struct Device: Identifiable, Hashable {
             case .ipad: return "ipad"
             case .watch: return "applewatch"
             case .android, .androidEmulator: return "smartphone"
+            case .samsungTV, .lgTV: return "tv"
             }
         }
         /// An iPhone or iPad: where Play can put an app directly.
         var isPhone: Bool { self == .iphone || self == .ipad }
         /// An Android phone or tablet of the person's, or the emulator on this Mac.
         var isAndroid: Bool { self == .android || self == .androidEmulator }
+        /// A TV a web app goes on (`TVs`).
+        var isTV: Bool { self == .samsungTV || self == .lgTV }
     }
 
     /// A screen, in pixels and in the points an app lays out in.
@@ -110,6 +115,9 @@ struct Device: Identifiable, Hashable {
     var adbState = "device"
     /// An Android device's pixels per inch, for turning its pictures' pixels into points.
     var density: Int?
+    /// A TV's address on the network, and a Samsung TV's device id, which its certificate names.
+    var address: String?
+    var duid: String?
 
     static let macID = "this-mac"
 
@@ -140,15 +148,24 @@ struct Device: Identifiable, Hashable {
             case "offline": return .needs("Reconnect it")
             default: return .needs("Turn on USB debugging on it")
             }
+        case .samsungTV:
+            // `paired` is kept (a setup step worked); `developerMode`, pointed at this Mac.
+            if !developerMode { return .needs("Turn on developer mode on it") }
+            if !paired || duid == nil { return .needs("Connect to it") }
+            if !TizenSigning.hasCertificates(for: duid ?? "") { return .needs("Sign in to Samsung") }
+            return .ready
+        case .lgTV:
+            return developerMode ? .ready : .needs("Turn on Developer Mode on it")
         }
     }
 
     /// The model and software, in one line for a list: "iPhone 16 Pro Max · iOS 27".
-    var line: String { "\(model) · \(os) \(osMajor)" }
+    var line: String { "\(model) · \(os) \(kind.isTV ? osVersion : osMajor)" }
 
     /// The device as the agent is told it: "iPhone 16 Pro Max, iOS 27, Dynamic Island".
     var forAgent: String {
-        var parts = ["\(model), \(os) \(osMajor)"]
+        // A TV's software version is told whole (Tizen 6.5): its apps differ by the point release.
+        var parts = ["\(kind.isTV ? maker + " " + model : model), \(os) \(kind.isTV ? osVersion : osMajor)"]
         parts += features
         for screen in screens { parts.append("screen \(screen.words)") }
         return parts.joined(separator: ", ")
@@ -251,7 +268,7 @@ struct Device: Identifiable, Hashable {
             }
             return features + ["NFC", "HealthKit"]
         case .watch: return ["HealthKit"]
-        case .ipad, .mac, .android, .androidEmulator: return []
+        case .ipad, .mac, .android, .androidEmulator, .samsungTV, .lgTV: return []
         }
     }
 }
@@ -265,6 +282,20 @@ struct Device: Identifiable, Hashable {
 enum DeviceNote {
     @MainActor static func line(for project: LampProject, store: Store) -> String {
         let phones = store.devices.filter { $0.kind.isPhone }
+        if project.onTV {
+            let tvs = store.devices.filter { $0.kind.isTV }
+            var line = "Your looks are in the TV preview on this Mac, 1920×1080 with a remote's keys."
+            if let id = project.device {
+                line += tvs.first(where: { $0.udid == id }).map { " Play puts the app on the person's \($0.name): \($0.forAgent)." }
+                    ?? " Try On points at one of the person's TVs, which isn't on the network now."
+            }
+            for tv in tvs where tv.udid != project.device {
+                let state = tv.setup() == .ready ? "set up for the app to go on it" : "not set up yet (next: \(tv.setup().words.lowercased()))"
+                line += " The person's \(tv.name) (\(tv.forAgent)) is \(state)."
+            }
+            if tvs.isEmpty { line += " No TV of the person's has been found on the network yet." }
+            return line
+        }
         if project.onAndroid {
             let androids = store.devices.filter { $0.kind == .android }
             var line: String

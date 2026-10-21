@@ -920,6 +920,8 @@ struct DevicesSection: View {
                 .controlSize(.small).disabled(store.pairing.contains(device.udid))
         } else if device.kind.isPhone, !device.developerMode {
             Button("How…") { PhoneSetup.shared.show(family: device.family ?? .iphone, phone: device.udid) }.controlSize(.small)
+        } else if device.kind.isTV {
+            Button("Set Up…") { TVSetup.shared.show(device.udid) }.controlSize(.small)
         }
     }
 }

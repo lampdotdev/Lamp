@@ -20,6 +20,9 @@ final class Handover {
     private let finger: Bool
     /// The Simulator's process, whose window the person's own clicks and keys are watched in. Nil for a Mac app.
     private let simulator: pid_t?
+    /// A window of Lamp's own the app is shown in (the TV preview): every click and key in it is the person's, since
+    /// Lamp acts on the page inside without posting events.
+    private weak var lampWindow: NSWindow?
     /// What else taking over does: a Mac app is told to drop the rest of its actions.
     private let halt: () -> Void
     private var window: CGWindowID?
@@ -29,10 +32,11 @@ final class Handover {
 
     /// From now on the person's Esc, or their own press in the simulator, takes the app back: even before any
     /// window is known (a batch that waits before opening a menu bar icon's panel), so that Esc isn't ignored.
-    init(label: String, finger: Bool = false, simulator: pid_t? = nil, halt: @escaping () -> Void = {}) {
+    init(label: String, finger: Bool = false, simulator: pid_t? = nil, lampWindow: NSWindow? = nil, halt: @escaping () -> Void = {}) {
         self.label = label
         self.finger = finger
         self.simulator = simulator
+        self.lampWindow = lampWindow
         self.halt = halt
         listen()
     }
@@ -85,6 +89,13 @@ final class Handover {
             }
             return taken ? nil : event
         }) { monitors.append(local) }
+        if lampWindow != nil, let own = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown], handler: { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self, let window = self.lampWindow, event.window === window, !self.tookOver else { return }
+                self.take()
+            }
+            return event
+        }) { monitors.append(own) }
         guard let simulator else { return }
         // A click or a key of the person's own in the simulator's window. Seeing other apps' events takes the
         // permission to control the computer, which driving the simulator needs anyway.

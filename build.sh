@@ -162,6 +162,7 @@ cp scripts/signing-identity.sh "$APP/Contents/Resources/"   # gives the apps Lam
 cp -R Resources/ProviderLogos "$APP/Contents/Resources/"
 cp -R Resources/Onboarding "$APP/Contents/Resources/"
 cp -R Resources/Starters "$APP/Contents/Resources/"   # the wishes Lamp comes with (Starters.swift)
+cp -R Resources/TVCertificates "$APP/Contents/Resources/"   # Samsung's public certificate authorities a TV app's signatures end in (TizenSigning)
 tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'
 # Only the server and its libraries (symlinks kept), not llama.cpp's other tools.
 mkdir -p "$APP/Contents/Resources/llama"
@@ -207,6 +208,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSItemContentTypes</key><array><string>dev.lamp.lampapp</string></array>
   </dict></array>
   <key>NSMicrophoneUsageDescription</key><string>Lamp listens to your microphone when you dictate a change.</string>
+  <key>NSLocalNetworkUsageDescription</key><string>Lamp finds your TVs and phones on your network and puts your apps on them.</string>
   <key>NSSpeechRecognitionUsageDescription</key><string>Lamp turns your dictation into text for the prompt box.</string>
   <key>NSAppleEventsUsageDescription</key><string>Lamp lists and switches your browser tabs when one of your apps reads a web page you have open.</string>
   $SIDEBAR_ATS

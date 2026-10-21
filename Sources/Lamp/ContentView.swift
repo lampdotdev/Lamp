@@ -246,7 +246,7 @@ struct AppMenu: View {
             .disabled(busy)
         Button("Quit") { Task { await store.quitApp(project) } }
             .disabled(!store.isOpen(project))
-        if project.platform.hasIOS || project.platform == .android {
+        if project.platform.hasIOS || project.platform == .android || project.platform == .tv {
             // Which simulator the app opens in (it's built for both), or which of the person's own phones.
             Menu("Try On") { TryOnChoices(project: project) }
                 .disabled(busy)
@@ -853,17 +853,18 @@ struct ProjectView: View {
                 .help(made ? "Use \(project.name) (right-click it on the desk to rebuild)" : "Lamp opens it once it's made")
             }
         }
-        if project.platform.hasIOS || project.platform == .android {
+        if project.platform.hasIOS || project.platform == .android || project.platform == .tv {
             ToolbarItem {
                 // Which simulator the app opens in, beside the Play button where Xcode keeps its destination.
                 Menu {
                     TryOnChoices(project: project)
                 } label: {
                     let device = store.devices.first { $0.udid == project.device }
-                    Label(store.tryOnName(project), systemImage: project.onAndroid ? "smartphone" : !project.onIOS ? "laptopcomputer" : (device?.family ?? project.family) == .ipad ? "ipad" : "iphone")
+                    Label(store.tryOnName(project), systemImage: project.onTV ? "tv" : project.onAndroid ? "smartphone" : !project.onIOS ? "laptopcomputer" : (device?.family ?? project.family) == .ipad ? "ipad" : "iphone")
                 }
                 .disabled(busy)
-                .help(project.platform == .android ? "Where it opens: the emulator, or your own Android phone or tablet"
+                .help(project.platform == .tv ? "Where it opens: the TV preview on this Mac, or one of your TVs"
+                      : project.platform == .android ? "Where it opens: the emulator, or your own Android phone or tablet"
                       : project.platform == .universal ? "Where it opens: this Mac, a simulator, or your own iPhone or iPad"
                       : "Where it opens: a simulator, or your own iPhone or iPad")
             }
@@ -1725,11 +1726,44 @@ private struct TryOnChoices: View {
     @State private var olderPhones: [PhoneTools.OlderPhone] = []
 
     var body: some View {
-        if project.platform == .android {
+        if project.platform == .tv {
+            tvChoices
+        } else if project.platform == .android {
             androidChoices
         } else {
             appleChoices
         }
+    }
+
+    /// A TV app's places: the preview on this Mac, where it's tried, and the person's TVs, each by its model and what it
+    /// still needs. A TV that isn't set up is set up when it's chosen.
+    @ViewBuilder private var tvChoices: some View {
+        let tvs = store.devices.filter { $0.kind.isTV }
+        Picker("Preview", selection: Binding(get: { project.device == nil ? "preview" : nil }, set: { if $0 != nil { store.setTVDevice(project, nil) } })) {
+            Label("TV Preview", systemImage: "tv").tag(Optional("preview"))
+        }
+        .pickerStyle(.inline)
+        Picker("Your TVs", selection: Binding(get: { project.device }, set: { if let id = $0 { store.setTVDevice(project, id) } })) {
+            ForEach(tvs) { tv in
+                let step = tv.setup() == .ready ? "" : " (\(tv.setup().words))"
+                let model = "\(tv.maker) \(tv.model)"
+                Label((tv.name == model ? tv.name : "\(tv.name) · \(model)") + step, systemImage: "tv").tag(Optional(tv.udid))
+            }
+            if let chosen = project.device, !tvs.contains(where: { $0.udid == chosen }) {
+                Label("Chosen TV (not on the network)", systemImage: "tv").tag(Optional(chosen))
+            }
+        }
+        .pickerStyle(.inline)
+        if tvs.isEmpty {
+            Text("No Samsung or LG TV found on this network. Turn one on, then look again.")
+        }
+        Divider()
+        ForEach(tvs.filter { $0.setup() != .ready }) { tv in
+            Button("Set Up \(tv.name)…") { TVSetup.shared.show(tv.udid) }
+        }
+        Button("All Your Devices…") { settingsTab = "building"; openSettings() }
+        Button("Look for Devices Again") { store.refreshDevices() }
+            .onAppear { store.refreshDevices() }
     }
 
     /// An Android app's places: the emulator Lamp made, and the person's Android devices adb can see.

@@ -85,6 +85,12 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
     func perform(for project: LampProject, in store: Store, building: Bool = false, cancelled: @escaping () -> Void = {},
                  then: @escaping (LampProject) -> Void) {
         guard let current = store.current(project) else { cancelled(); return }
+        // A TV app's preview needs nothing set up; Play with a TV chosen needs that TV set up.
+        if current.platform == .tv {
+            guard building, let id = current.device else { then(current); return }
+            TVSetup.shared.perform(id) { if let now = store.current(project) { then(now) } else { cancelled() } }
+            return
+        }
         // An Android app's checks are Android's: the tools, the emulator, and the person's device when one is chosen.
         if current.platform == .android {
             AndroidSetup.shared.perform(device: current.device, cancelled: cancelled) {
