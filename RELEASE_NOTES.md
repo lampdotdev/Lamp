@@ -5,6 +5,22 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.17.0
+
+- Each change the agent makes goes into the open app as soon as it's saved, so you watch the app change while it
+  works. While a change is built, a soft smoke rises along the app's edges, and it whooshes away as the change goes in.
+- When the agent tries your app, you see it: its cursor moves to each spot with a word on what it's doing, and Stop
+  hands the app straight back to you.
+- Setup and Settings offer four ways to build and to answer inside apps: Claude, ChatGPT, OpenRouter, and AI that runs
+  on your Mac.
+- New starters: Buzzer Beater tells you when a live game gets close, wild or historic, and opens it where you can
+  watch; Fireside and Local Crossings, a daily crossword made from the map around you, join them. Wedding Words is
+  dressed like the invitations. Wishes you already have stay as they are.
+- The chat beside an app answers at once when you press Return, a menu bar app's panel keeps Lamp's wand beside its
+  own buttons, and a Reload pressed while the agent works says it'll go in when the request is done.
+- Far more changes go into an open app without restarting it, and the review before opening a shared wish puts what
+  to weigh first.
+
 ## 0.16.0
 
 - A new app opens beside its chat as soon as it's started and takes shape there in passes, the layout first, so
