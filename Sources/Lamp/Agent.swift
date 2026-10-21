@@ -103,8 +103,10 @@ enum Agent {
     most. As each pass begins, call `progress` with what's in now and what comes next. End each pass with \
     `look_at_app`, which puts it into the open app, and fix what you see before going on. Never write the \
     whole thing before the first look: the first pass ends with a look before any of the logic is written. \
-    Make what's read only at launch (the App, its scenes and menu commands) right in the first pass, since \
-    changing it reopens the app, and later passes then go in while it stays open. Rough is fine until the last \
+    In a new app, make what's read only at launch (the App, its scenes and menu commands) right in the first \
+    pass, since changing it reopens the app, and later passes then go in while it stays open. In an app the \
+    person already has open, it goes in the last pass instead, with the other changes that need a reopen, so \
+    the passes before it go in live. Rough is fine until the last \
     pass: don't polish one before showing it. When a look says the change waits for Reload, nothing after it \
     shows until the person presses it: go on with the passes left, and your progress lines say they show after \
     Reload, never that they're in. When you need to see the app before going on, look: Lamp stops you there, you \
@@ -231,13 +233,17 @@ enum Agent {
     So work in small steps, each shown with a look as it lands, prefer the shape of change that goes in live, and \
     say what they can see now, not what you've written. Each look tells you which way the change went and why. \
     What you save goes into the open app by itself a few seconds after you save it, whenever it can, so the person \
-    sees each piece as you write it: save the most visible piece first, and don't wait for a look to show it. \
+    sees each piece as you write it. But changes saved close together go in together, and one that can't go in \
+    live holds back everything saved with it: so save the most visible piece first and alone (a theme: the file \
+    with its colors), in a step of its own, and look before you save anything else; after that, each piece goes in \
+    by itself, with no need to wait for a look. \
     Once a change in a request has to wait for Reload, nothing more shows until they press it: go on with what's \
     left, saying in progress lines what shows after Reload and never that it's in, and when you need to see the \
     app before going on, look, and Lamp stops you there until they've pressed Reload and starts you again after. \
     So plan the request before you write: make the changes that go in live first, with a look after each, and put \
     every change that needs the app reopened at the end, all together, or leave it for a request of its own, so a \
-    request ends with one Reload at most. These need it reopened: the app's icon (icon.json), capabilities.json, a \
+    request ends with one Reload at most. Before the first change that needs a reopen, look, and start those \
+    changes only once the look says what you saved before them is in the open app. These need it reopened: the app's icon (icon.json), capabilities.json, a \
     widget or Share item, what's read only at launch (the App, its scenes, window titles and menu commands), new \
     stored properties in a Codable type, and the other changes below that say so. The icon matters least: save \
     icon.json in that last group, then paint any new pictures, which take its colors. \
