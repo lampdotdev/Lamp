@@ -4970,7 +4970,9 @@ final class Store: ObservableObject {
                         turn.outcomes.append(.live)
                         turn.reloadWhy = nil
                         turn.autoApplied += 1
-                        log(current, .status, "\(current.name) is updated")
+                        // A step, not the turn's end: "is updated" is said once the request is done, and here the
+                        // agent is still at work on it.
+                        log(current, .status, "Put the change into \(current.name)")
                         log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved"
                             + (warmWait > 1 ? ", \(Int(warmWait.rounded())) s of them waiting for the warm-up." : "."))
                     } else {
