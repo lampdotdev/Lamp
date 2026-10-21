@@ -351,7 +351,7 @@ send. Until that message, nothing is named, scaffolded, built or saved (`startQu
 becomes may be an iPhone app, which a scaffold already written as a Mac app would rule out. The message that
 isn't an answer to a card names it like any first request and ends `finding`.
 
-A new person's desk isn't empty: Lamp comes with nine wishes (`Starters`, from `Resources/Starters`), working
+A new person's desk isn't empty: Lamp comes with ten wishes (`Starters`, from `Resources/Starters`), working
 apps to use as they are and to change into their own, which shows what Lamp does better than a question about
 what to make. So the welcome is the hello and setup, and ends on the desk (a wish from the site is still made
 once setup is done). They're copied once, on the first launch, each saved as its first version ("From Lamp"),

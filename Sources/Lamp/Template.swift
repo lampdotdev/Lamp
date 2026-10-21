@@ -14322,6 +14322,7 @@ enum Template {
     ///
     ///     let recent = try await LampMail.inbox(limit: 20)
     ///     let about = try await LampMail.search("invoice", limit: 10)
+    ///     let lately = try await LampMail.inbox(limit: 300, since: .now.addingTimeInterval(-60 * 86400))
     ///     try await LampMail.draft(to: ["sam@example.com"], subject: "Recap", body: "…")
     enum LampMail {
         struct Message: Identifiable {
@@ -14334,22 +14335,29 @@ enum Template {
             let isRead: Bool
         }
 
-        /// Newest messages across every account's inbox, newest first.
-        static func inbox(limit: Int = 20) async throws -> [Message] {
-            try await messages(limit: limit, filter: "")
+        /// Newest messages across every account's inbox, newest first. `since` leaves out anything received
+        /// before it, which also keeps a look back over weeks from reading every message in a big inbox.
+        static func inbox(limit: Int = 20, since: Date? = nil) async throws -> [Message] {
+            try await messages(limit: limit, conditions: [], since: since)
         }
 
         /// Messages whose subject or sender contains the text, newest first.
-        static func search(_ query: String, limit: Int = 20) async throws -> [Message] {
+        static func search(_ query: String, limit: Int = 20, since: Date? = nil) async throws -> [Message] {
             let q = literal(query)
-            return try await messages(limit: limit, filter: " whose subject contains \(q) or sender contains \(q)")
+            return try await messages(limit: limit, conditions: ["(subject contains \(q) or sender contains \(q))"], since: since)
         }
 
         /// Takes up to `limit` newest from each account's inbox (Mail lists them newest first), then merges
         /// and sorts by date before applying the limit, so one busy account can't crowd out the others.
-        private static func messages(limit: Int, filter: String) async throws -> [Message] {
+        private static func messages(limit: Int, conditions: [String], since: Date?) async throws -> [Message] {
+            // The cutoff goes to Mail as seconds since 1970, made a date there, for the same reason rows come
+            // back that way: AppleScript's date text has no time zone.
+            let cutoff = since.map { "set cutoff to (my epochDate()) + \(Int($0.timeIntervalSince1970))" } ?? ""
+            let all = conditions + (since == nil ? [] : ["date received > cutoff"])
+            let filter = all.isEmpty ? "" : " whose " + all.joined(separator: " and ")
             let found = try await messages(script: """
             set out to ""
+            \(cutoff)
             tell application "Mail"
               repeat with acct in accounts
                 try
@@ -14373,10 +14381,17 @@ enum Template {
             "\"" + text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
         }
 
-        /// The full text of one message.
+        /// The full text of one message. Inboxes are looked in first, where `inbox` and `search` found it, since
+        /// going through every mailbox of an account with many folders takes seconds per message.
         static func body(of id: String) async throws -> String {
             try await run("""
             tell application "Mail"
+              repeat with acct in accounts
+                try
+                  set m to first message of (my inboxOf(acct)) whose id is \(Int(id) ?? 0)
+                  return content of m
+                end try
+              end repeat
               repeat with acct in accounts
                 repeat with mb in mailboxes of acct
                   try
@@ -14387,7 +14402,7 @@ enum Template {
               end repeat
             end tell
             return ""
-            """)
+            """ + "\n" + rowHandler)
         }
 
         /// Opens a new draft in Mail, filled in, for the person to look over and send.
