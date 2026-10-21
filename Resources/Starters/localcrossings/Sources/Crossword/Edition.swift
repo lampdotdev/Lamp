@@ -75,23 +75,35 @@ struct Edition: Codable, Equatable {
 
     // MARK: Making an edition
 
+    /// Counts deliveries begun, so one overtaken by a newer one (the person chose another place while the map
+    /// was still answering) changes nothing when it finishes.
+    private var deliveries = 0
+
     @MainActor private func deliver(again: Bool = false) async {
+        deliveries += 1
+        let this = deliveries
+        let wanted = choice
         status = .making
         do {
-            let spot = try await whereToMake()
+            let spot = try await whereToMake(wanted)
+            guard this == deliveries else { return }
             backdrop = (spot.latitude, spot.longitude)
             var place: Neighborhood
             if let kept = LampStore.load(Neighborhood.self, from: "neighborhood"), kept.covers(spot.latitude, spot.longitude) {
                 place = kept
             } else {
                 place = try await Survey.gather(latitude: spot.latitude, longitude: spot.longitude)
+                guard this == deliveries else { return }
                 LampStore.save(place, to: "neighborhood")
             }
             // A place the person named is called what they called it: the map often knows only the borough.
-            if case .named(let name, _, _) = choice { place.area = name }
+            if case .named(let name, _, _) = wanted { place.area = name }
             let plain = Answers.candidates(for: place)
             let curated = Answers.curated(place, from: plain)
-            guard let puzzle = Layout.make(from: fresh(curated.count >= 12 ? curated : plain), seed: seed(for: place)) else {
+            let pool = curated.count >= 12 ? curated : plain
+            // Leaving out the last few days' answers can leave a small place too few to cross: then they come back.
+            guard let puzzle = Layout.make(from: fresh(pool), seed: seed(for: place))
+                    ?? Layout.make(from: pool, seed: seed(for: place)) else {
                 throw Survey.TooQuiet()
             }
             // A new day counts as a new edition; a puzzle made again the same day (another place) keeps its number.
@@ -103,16 +115,16 @@ struct Edition: Codable, Equatable {
             keep(made)
             if place.curated.isEmpty { Task { await polish(place, plain) } }
         } catch is LocationRefused {
-            status = .needsLocation
+            if this == deliveries { status = .needsLocation }
         } catch {
-            status = .failed(error.localizedDescription)
+            if this == deliveries { status = .failed(error.localizedDescription) }
         }
     }
 
     private struct LocationRefused: Error {}
 
     /// The spot to make today's paper for.
-    @MainActor private func whereToMake() async throws -> (latitude: Double, longitude: Double) {
+    @MainActor private func whereToMake(_ choice: PlaceChoice) async throws -> (latitude: Double, longitude: Double) {
         switch choice {
         case .here:
             guard await LampLocation.authorize() else { throw LocationRefused() }
@@ -159,10 +171,16 @@ struct Edition: Codable, Equatable {
     /// started, since a clue changing under someone halfway through is worse than a plain one.
     @MainActor private func polish(_ place: Neighborhood, _ candidates: [Candidate]) async {
         guard let picks = await Polish.curate(candidates, in: place) else { return }
+        // Only for the place it was asked about: the person may have moved on while the AI was answering, and
+        // its clues were checked against this place's facts alone.
+        guard let kept = LampStore.load(Neighborhood.self, from: "neighborhood"),
+              kept.latitude == place.latitude, kept.longitude == place.longitude,
+              abs(kept.gathered.timeIntervalSince(place.gathered)) < 1 else { return }
         var place = place
         place.curated = picks
         LampStore.save(place, to: "neighborhood")
-        guard var today = edition, today.day == .today, canReword?() == true else { return }
+        guard var today = edition, today.day == .today, today.latitude == place.latitude, today.longitude == place.longitude,
+              canReword?() == true else { return }
         let clues = Dictionary(picks.map { ($0.answer, $0.clue) }, uniquingKeysWith: { a, _ in a })
         for index in today.puzzle.entries.indices {
             if let clue = clues[today.puzzle.entries[index].answer] { today.puzzle.entries[index].clue = clue }
