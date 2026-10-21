@@ -3953,63 +3953,7 @@ enum Template {
                 let at = note.userInfo?["at"] as? String, signature = note.userInfo?["signature"] as? String
                 MainActor.assumeIsolated { shared.redraw(at: at, signature: signature) }
             }
-            // Lamp asking which of the app's fields hold no object at all, for a constant it would otherwise not remake.
-            DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name(LampInstall.note + "plainFields"), object: Bundle.main.bundleIdentifier, queue: .main
-            ) { note in
-                let fields = note.userInfo?["fields"] as? String, id = note.userInfo?["id"] as? String
-                let signature = note.userInfo?["lampPlainFieldsSignature"] as? String
-                MainActor.assumeIsolated { answerPlainFields(fields, id: id, signature: signature) }
-            }
         }()
-
-        /// Which of the asked fields ("Look.Typeface<tab>design", by the type's name in the app's code) hold no object
-        /// at all, by the runtime's own word for the type the open app has there: a value of it is copied as its bytes
-        /// (`_isPOD`), so it holds no reference to anything. Lamp can't tell that of a type of the system's from its
-        /// code (`Font.Design`'s insides aren't public), and remakes a constant only when no second object could
-        /// come of it. The type is found by its metadata accessor, named after it; a field the app doesn't have, or a
-        /// type it can't find (a private one, one inside a generic type), isn't said to be plain.
-        private static func answerPlainFields(_ fields: String?, id: String?, signature: String?) {
-            guard let fields, let id, let signature else { return }
-            let key = SymmetricKey(data: Data(LampInstall.token.utf8))
-            let expected = HMAC<SHA256>.authenticationCode(for: Data(("plainFields\n\(id)\n" + fields).utf8), using: key).map { String(format: "%02x", $0) }.joined()
-            guard signature == expected else { return }
-            let asked = fields.split(separator: "\n").map(String.init)
-            var types: [String: Any.Type] = [:]
-            let wanted = Set(asked.map { String($0.prefix { $0 != "\t" }) })
-            let rtld = UnsafeMutableRawPointer(bitPattern: -2)
-            if let header = _dyld_get_image_header(0) {
-                for (name, _) in definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(0), local: true) where name.hasPrefix("_$s") && name.hasSuffix("Ma") {
-                    let said = readable(name)
-                    guard said.hasPrefix("type metadata accessor for "), let dot = said.firstIndex(of: ".") else { continue }
-                    let type = String(said[said.index(after: dot)...])
-                    guard wanted.contains(type), types[type] == nil else { continue }
-                    types[type] = _typeByName(String(name.dropFirst(3).dropLast(2)))
-                }
-            }
-            typealias Count = @convention(thin) (UnsafeRawPointer) -> Int
-            typealias Child = @convention(thin) (UnsafeRawPointer, Int, UnsafeMutablePointer<UnsafePointer<CChar>?>, UnsafeMutablePointer<UnsafeRawPointer?>) -> UnsafeRawPointer
-            var plain: [String] = []
-            if let countAt = dlsym(rtld, "swift_reflectionMirror_recursiveCount"), let childAt = dlsym(rtld, "swift_reflectionMirror_recursiveChildMetadata") {
-                let count = unsafeBitCast(countAt, to: Count.self), child = unsafeBitCast(childAt, to: Child.self)
-                func isPOD<T>(_ type: T.Type) -> Bool { _isPOD(type) }
-                for (name, type) in types {
-                    // Only a struct's fields: an enum's payloads and a class's objects aren't asked about.
-                    let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
-                    guard metadata.load(as: Int.self) == 0x200 else { continue }
-                    for index in 0..<count(metadata) {
-                        var label: UnsafePointer<CChar>?, free: UnsafeRawPointer?
-                        let field = unsafeBitCast(child(metadata, index, &label, &free), to: Any.Type.self)
-                        guard let label else { continue }
-                        let entry = name + "\t" + String(cString: label)
-                        // The runtime may have made the name for this call, and says how it's let go.
-                        if let free { unsafeBitCast(free, to: (@convention(c) (UnsafePointer<CChar>?) -> Void).self)(label) }
-                        if asked.contains(entry), _openExistential(field, do: isPOD) { plain.append(entry) }
-                    }
-                }
-            }
-            try? ([id] + plain).joined(separator: "\n").write(to: LampRuntime.folder.appendingPathComponent("plain-fields.txt"), atomically: true, encoding: .utf8)
-        }
 
         private func redraw(at: String?, signature: String?) {
             guard let at, let signature, let time = Double(at), abs(Date().timeIntervalSince1970 - time) < 30 else { return }

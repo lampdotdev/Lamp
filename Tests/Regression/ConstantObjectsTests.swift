@@ -33,24 +33,37 @@ final class ConstantObjectsTests: XCTestCase {
         XCTAssertTrue(holds("any Named"))
     }
 
-    /// A theme held in one constant: its typeface's font fields are system types Lamp can't judge from the code, so
-    /// they're the fields the open app is asked about, and once it says they're plain the theme holds no object. The
-    /// layout is the one a theme change was refused with.
-    func testAThemesFontFieldsAreAskedAboutAndThenGoInLive() {
+    /// A theme held in one constant: its typeface's font types are system types Lamp can't judge from the code, so
+    /// they're the ones asked about, and once the system says they hold no object the theme holds none. The layout is
+    /// the one a theme change was refused with.
+    func testAThemesFontTypesAreAskedAboutAndThenGoInLive() {
         let layout = ["Look.Typeface\t", "Look.Typeface\t__lampSpare_Typeface: LampSpare", "Look.Typeface\tdesign: Font.Design",
-                      "Look.Typeface\twidth: Font.Width", "Look.Typeface\tweight: Font.Weight", "Look.Typeface\ttracking: CGFloat",
+                      "Look.Typeface\twidth: Font.Width", "Look.Typeface\tweight: Font.Weight?", "Look.Typeface\ttracking: CGFloat",
                       "Look.Typeface\tuppercase: Bool", "Look\t", "Look\twall: Color", "Look\tdisplay: Look.Typeface",
                       "Look\tscheme: ColorScheme"]
         let byType = Dictionary(grouping: layout, by: { String($0.prefix { $0 != "\t" }) })
         var seen = Set<String>(), asked = Set<String>()
         XCTAssertNil(LiveSlots.objectHeld(in: "Look", classes: [], layout: byType, seen: &seen, unsure: { asked.insert($0) }))
-        XCTAssertEqual(asked, ["Look.Typeface\tdesign", "Look.Typeface\twidth", "Look.Typeface\tweight"])
-        XCTAssertTrue(holds("Look", layout: layout), "unanswered, a field Lamp can't judge may hold an object")
+        XCTAssertEqual(asked, ["Font.Design", "Font.Width", "Font.Weight"])
+        XCTAssertTrue(holds("Look", layout: layout), "unanswered, a type Lamp can't judge may hold an object")
         seen = []
         XCTAssertFalse(LiveSlots.holdsObject("Look", classes: [], layout: byType, seen: &seen, plain: asked))
     }
 
-    /// One of the app's classes is never asked about: it holds an object whatever the app says of other fields.
+    /// Two files' private types of one name are one type to the layout as the code names it (`bared`), so an answer
+    /// can't be about a type and field: it's about the system type a field holds. The private twin's field of the
+    /// same name, holding something else, still holds an object.
+    func testAnAnswerIsAboutATypeNotAFieldOfATwin() {
+        let layout = LiveReload.bared(["Look\t", "Look\tfield: Font.Design", "Look@Other.swift\t", "Look@Other.swift\tfield: NSCache<NSString, NSString>"])
+        let byType = Dictionary(grouping: layout, by: { String($0.prefix { $0 != "\t" }) })
+        var seen = Set<String>(), asked = Set<String>()
+        _ = LiveSlots.objectHeld(in: "Look", classes: [], layout: byType, seen: &seen, unsure: { asked.insert($0) })
+        XCTAssertEqual(asked, ["Font.Design", "NSCache", "NSString"])
+        seen = []
+        XCTAssertEqual(LiveSlots.objectHeld(in: "Look", classes: [], layout: byType, seen: &seen, plain: ["Font.Design"]), "Look.field (a NSCache)")
+    }
+
+    /// One of the app's classes is never asked about: it holds an object whatever else is answered.
     func testAClassIsntAskedAbout() {
         let layout = ["Look\t", "Look\tdesign: Font.Design", "Look\tstore: Store"]
         let byType = Dictionary(grouping: layout, by: { String($0.prefix { $0 != "\t" }) })
@@ -66,16 +79,16 @@ final class ConstantObjectsTests: XCTestCase {
         XCTAssertEqual(LiveSlots.objectHeld(in: "Look", classes: [], layout: byType, seen: &seen), "Look.Typeface.client (a LampAPI)")
     }
 
-    /// An app built before it could answer (no request key in its binary, here no binary at all) is asked nothing and
-    /// not waited for: its constant waits for Reload, saying why, as it did.
-    @MainActor func testAnAppThatCantAnswerIsAskedNothing() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("plain-fields-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let project = try Template.scaffold(name: "Older", in: root)
-        let start = ContinuousClock.now
-        let plain = await LiveReload.plainFields(["Look.Typeface\tdesign"], of: project, token: "x")
-        XCTAssertEqual(plain, [])
-        XCTAssertLessThan(ContinuousClock.now - start, .milliseconds(100))
+    /// The system's own answer, from the program Lamp compiles and runs in the app's sandbox: the font styles hold no
+    /// object, a class does, and a name the program can't find isn't said to be plain while the rest are still answered.
+    @MainActor func testTheSystemSaysWhichTypesHoldNoObject() async throws {
+        let fm = FileManager.default
+        // Under the home folder, where the app's sandbox (which the program runs in) opens an app's folder.
+        let root = fm.homeDirectoryForCurrentUser.appendingPathComponent(".lamp-plain-types-test-\(UUID().uuidString)")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let project = try Template.scaffold(name: "Plain", in: root)
+        let plain = await LiveReload.plainTypes(["Font.Design", "Font.Width", "Font.Weight", "URLSession", "NoSuchTypeHere", "Bad(name)"], in: project)
+        XCTAssertEqual(plain, ["Font.Design", "Font.Width", "Font.Weight"])
     }
 }

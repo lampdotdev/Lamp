@@ -33,12 +33,7 @@ final class LiveCasesTests: XCTestCase {
             guard let deliver = Self.deliveries[project.dir.path] else { return "no process for the case" }
             return await deliver(library, whole, retired)
         }
-        // Lamp's question about plain fields reaches the case's process as a file, which it answers while it waits.
-        LiveReload.postPlain = { project, request in
-            let ask = [request["id"] ?? "", request[LiveReload.plainFieldsMarker] ?? "", request["fields"] ?? ""].joined(separator: "\n")
-            try? ask.write(to: LiveReload.folder(project).appendingPathComponent("plain-ask.txt"), atomically: true, encoding: .utf8)
-        }
-        defer { LiveReload.deliver = nil; LiveReload.postPlain = nil }
+        defer { LiveReload.deliver = nil }
         var results: [String: String] = [:]
         let width = max(2, ProcessInfo.processInfo.activeProcessorCount / 2)
         try await withThrowingTaskGroup(of: (String, String).self) { group in
@@ -260,8 +255,6 @@ final class LiveCasesTests: XCTestCase {
             .replacingOccurrences(of: "LampInstall.app + \"/.lamp/live/\"", with: "\"\(project.dir.path)/.lamp/live/\"")
             .replacingOccurrences(of: "LampRuntime.folder.appendingPathComponent(\"reloaded.txt\")", with: "URL(fileURLWithPath: \"\(Runtime.macFolder(project).path)/reloaded.txt\")")
             .replacingOccurrences(of: "private func load(", with: "func load(")
-            .replacingOccurrences(of: "private static func answerPlainFields(", with: "static func answerPlainFields(")
-            .replacingOccurrences(of: "LampRuntime.folder.appendingPathComponent(\"plain-fields.txt\")", with: "URL(fileURLWithPath: \"\(Runtime.macFolder(project).path)/plain-fields.txt\")")
     }
 
     /// What a case's `Main.swift` calls to take the n-th change: it waits for Lamp to deliver the library or a
@@ -276,15 +269,7 @@ final class LiveCasesTests: XCTestCase {
             let builtWith = Int(CommandLine.arguments.dropFirst(2).first ?? "0") ?? 0
             if n <= builtWith { print("RELOAD \\(n): in the restart"); return }
             let fm = FileManager.default, verdict = live + "verdict\\(n).txt", deadline = Date().addingTimeInterval(240)
-            while !fm.fileExists(atPath: path), !fm.fileExists(atPath: verdict), Date() < deadline {
-                // Lamp asking which fields hold no object, answered as the app answers it.
-                if let ask = try? String(contentsOf: URL(fileURLWithPath: live + "plain-ask.txt"), encoding: .utf8) {
-                    try? fm.removeItem(atPath: live + "plain-ask.txt")
-                    let parts = ask.components(separatedBy: "\\n")
-                    if parts.count > 2 { LampLive.answerPlainFields(parts[2...].joined(separator: "\\n"), id: parts[0], signature: parts[1]) }
-                }
-                usleep(50_000)
-            }
+            while !fm.fileExists(atPath: path), !fm.fileExists(atPath: verdict), Date() < deadline { usleep(50_000) }
             if !fm.fileExists(atPath: path) {
                 let why = ((try? String(contentsOf: URL(fileURLWithPath: verdict), encoding: .utf8)) ?? "(no answer from Lamp)").trimmingCharacters(in: .whitespacesAndNewlines)
                 print("RELOAD \\(n): " + (why == "unchanged" ? "UNCHANGED" : "REOPEN " + why))
