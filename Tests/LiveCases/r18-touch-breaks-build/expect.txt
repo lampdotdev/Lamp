@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: <body>milk</body>
+RELOAD 1: ok
+after1 (want <body>milk</body> before and after: the app's own code, valid Swift, must build live): <body>eggs</body>

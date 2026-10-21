@@ -83,6 +83,9 @@ enum SwiftSource {
         /// `Mood.allCases`, `[Mood]`), that type's name. What code names is read from here, never from its text, so a
         /// string, a comment or a local of the same name is no use of it.
         var uses: [(at: Position, name: String)] = []
+        /// Where each closure that returns nothing runs (an action, a handler: `.onAppear { … }`, a Button's): code in
+        /// one runs when it's called, not each time a body is drawn.
+        var actions: [(start: Position, last: Position)] = []
         /// The uses that are a key path's components (`\.$count`), which have no place of their own: in `uses` at the
         /// key path's start, and here with the key path's whole span, where the token is.
         var keyPathUses: [(start: Position, last: Position, name: String)] = []
@@ -234,6 +237,8 @@ enum SwiftSource {
         private var entryOpen = false
         private var variable: (indent: Int, key: String)?
         private var attribute: (start: Position, last: Position)?
+        // The indent of a freestanding macro being read (`#Preview`), whose code is skipped.
+        private var preview: Int?
         // Where the last node read with a place starts: a type annotation's line has none.
         private var lastAt: Position?
         // The key path being read, whose components have no place of their own.
@@ -248,6 +253,10 @@ enum SwiftSource {
 
         func take(_ line: Walk.Line) {
             let indent = line.indent, opens = line.opens
+            // A freestanding macro's code (`#Preview { … }`) never runs in the app: nothing in it is a use of anything.
+            if let open = preview, indent > open { return }
+            // And the type such a macro writes for it, named by its mangled name (`$s…PreviewRegistryfMu_`).
+            preview = opens("macro_expansion_decl") || opens("struct_decl") && line.has(" \"$s") ? indent : nil
             if opens("typealias"), let m = aliasName.firstMatch(in: line.text, range: line.range) {
                 out.aliases.insert(String(line.text[Range(m.range(at: 1), in: line.text)!]))
             }
@@ -258,6 +267,8 @@ enum SwiftSource {
                 if opens("func_decl"), line.has(" \"hash(into:)\" "), let owner = line.owner { out.hashing[owner] = r }
             } else if opens("enum_case_decl"), let r = SwiftSource.range(in: line.text) {
                 out.cases.append(r)
+            } else if opens("closure_expr"), line.has("-> ()\"") || line.has("-> Void\""), let r = SwiftSource.range(in: line.text) {
+                out.actions.append(r)
             } else if line.has(" decl=\""), let at = SwiftSource.range(in: line.text)?.start {
                 lastAt = at
                 if let to = SwiftSource.declared(in: line.text) { out.calls.append((at, to)) }
@@ -333,7 +344,9 @@ enum SwiftSource {
             }
             if let open = binding {
                 // Inside a binding: its entries, each with its name and its starting value.
-                if opens("pattern_entry") { out.bindings[open.index].entries.append(Entry(name: "", initial: nil)); entryOpen = true; return }
+                // Only the binding's own entries: a closure in a starting value declares locals of its own
+                // (`{ let formatter = NumberFormatter(); …; return formatter }()`), which are none of its names.
+                if opens("pattern_entry"), indent == open.indent + 2 { out.bindings[open.index].entries.append(Entry(name: "", initial: nil)); entryOpen = true; return }
                 if entryOpen, var entry = out.bindings[open.index].entries.last {
                     if entry.name.isEmpty, line.has("(pattern_named"), let m = named.firstMatch(in: line.text, range: line.range) {
                         entry.name = String(line.text[Range(m.range(at: 1), in: line.text)!])
@@ -485,6 +498,11 @@ enum SwiftSource {
     static func constantEntries(_ declarations: Declarations) -> [String] {
         startingValues(declarations.constants, declarations, group: .constant, withCalls: true)
             + startingValues(declarations.stored, declarations, group: .stored, withCalls: true) + hashEntries(declarations)
+            // An instance's plain properties (and what reads a stored default, `@AppStorage`), whose starting value
+            // shows only in an instance made again; not state SwiftUI keeps (`@State`), which keeps its own anyway.
+            + startingValues(declarations.variables.filter { $0.value.attributes.allSatisfy { ["AppStorage", "SceneStorage", "Entry"].contains($0.name) } },
+                             declarations, group: .defaults)
+            + computedDefaults(declarations)
     }
 
     /// Each type's own `hash(into:)`, as "\u{11}hash<tab>Type: <digest of its text>": a set or dictionary the open app
@@ -600,7 +618,8 @@ enum SwiftSource {
     /// The same declarations, by where each runs: what's asked of them (which types and constants they name) is
     /// asked of the compiler's uses there (`Declarations.names`, `uses`), never of their text.
     static func called(from start: Position, to last: Position, in declarations: Declarations, files: inout [String: Text],
-                       members followMembers: Bool = false) -> [(start: Position, last: Position)] {
+                       members followMembers: Bool = false,
+                       skipping: [(start: Position, last: Position)] = []) -> [(start: Position, last: Position)] {
         func within(_ p: Position, _ r: (start: Position, last: Position)) -> Bool { p.file == r.start.file && before(r.start, p) && before(p, r.last) }
         var seen: Set<Int> = [], pending = [(start: start, last: last)], parts: [(start: Position, last: Position)] = [], typesSeen = Set<String>()
         func text(_ r: (start: Position, last: Position)) -> String? {
@@ -620,7 +639,7 @@ enum SwiftSource {
         }
         let initializer = try! NSRegularExpression(pattern: #"^\s*(?:@\w+\s+|\w+\s+)*init\b"#)
         while let r = pending.popLast() {
-            for call in declarations.calls where within(call.at, r) {
+            for call in declarations.calls where within(call.at, r) && !skipping.contains(where: { within(call.at, $0) }) {
                 // What it names may be no body of its own (an initializer the compiler wrote, a case) or an
                 // initializer: the type around it, by its members.
                 let inner = declarations.bodies.indices.filter { within(call.to, declarations.bodies[$0]) }
@@ -648,6 +667,20 @@ enum SwiftSource {
     }
 
     /// Each one's starting value's digest, as an entry of `group`.
+    /// A key's `defaultValue` written as a computed property (`static var defaultValue: String { "light" }`), by its
+    /// text: SwiftUI reads it once and keeps it, so a change to it is a starting value changing.
+    private static func computedDefaults(_ declarations: Declarations) -> [String] {
+        var files: [String: Text] = [:]
+        return declarations.bindings.compactMap { binding in
+            guard binding.entries.count == 1, binding.entries[0].name == "defaultValue", binding.entries[0].initial == nil,
+                  let owner = declarations.types.filter({ within(binding.start, $0.value) }).min(by: { before($1.value.start, $0.value.start) })?.key,
+                  let text = files[binding.start.file] ?? Text(path: binding.start.file) else { return nil }
+            files[binding.start.file] = text
+            guard let from = text.offset(binding.start), let end = text.tokenEnd(binding.last), from < end else { return nil }
+            return LiveReload.Group.defaults.entry(owner + "\tdefaultValue: " + digest(text.slice(from, end)))
+        }
+    }
+
     private static func startingValues(_ variables: [String: Variable], _ declarations: Declarations, group: LiveReload.Group,
                                        withCalls: Bool = false) -> [String] {
         var files: [String: Text] = [:]

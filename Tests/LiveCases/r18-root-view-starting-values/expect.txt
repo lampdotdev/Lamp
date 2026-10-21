@@ -1,0 +1,7 @@
+VERDICT 1: REOPEN (ContentView.columns starts as something else now, and the open app made ContentView once (at launch, or outside a view's body), which keeps what it started as)
+== run
+before: child columns=2 title=Groceries, root columns=2 title=Groceries size=10
+RELOAD 1: REOPEN ContentView.columns starts as something else now, and the open app made ContentView once (at launch, or outside a view's body), which keeps what it started as
+before: child columns=3 title=Pantry, root columns=3 title=Pantry size=20
+RELOAD 1: in the restart
+after1 (want columns=3 title=Pantry in both and the root's size=20, or a reopen: the root view's own constants and an unset @AppStorage's default changed, which its body reads): 

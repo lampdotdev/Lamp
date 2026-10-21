@@ -1,10 +1,10 @@
 VERDICT 1: RELOAD
-VERDICT 2: REOPEN (Status changed what it holds (Status.case cancelled: (Status.Type) -> Status); Status has no spare place of Lamp's (a model, a Sendable class, an Equatable view, a wrapper or a struct in a file that lays memory out by hand gets none))
+VERDICT 2: REOPEN (Status changed what it holds (Status.case cancelled: (Status.Type) -> Status); Status gained a case that carries values or isn't at the end, which lays out its values anew)
 == run
 before: v0
 RELOAD 1: ok
 after1 (want v1): v1
-RELOAD 2: REOPEN Status changed what it holds (Status.case cancelled: (Status.Type) -> Status); Status has no spare place of Lamp's (a model, a Sendable class, an Equatable view, a wrapper or a struct in a file that lays memory out by hand gets none)
+RELOAD 2: REOPEN Status changed what it holds (Status.case cancelled: (Status.Type) -> Status); Status gained a case that carries values or isn't at the end, which lays out its values anew
 after2 (want reopen, v1): v1
 before: v2
 RELOAD 1: in the restart

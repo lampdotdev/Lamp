@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: flow v1, made flow v1, made wave v1, wave v1
+RELOAD 1: ok
+after1 (want every shape and layout run by v2: a shape's path and a layout's placement changed; the 'made' ones carry a field set from the generation when made): flow v2, made flow v2, made wave v2
