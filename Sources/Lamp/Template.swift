@@ -2664,6 +2664,13 @@ enum Template {
     import AppKit
     #endif
 
+    /// Never runs: the system starts the extension through `_NSExtensionMain`, the entry point it's linked with. It's
+    /// here because a build for testing (the live build) renames each program's `main` and looks for it, and an
+    /// extension with no `main` of its own then fails to link.
+    @main enum LampShareEntry {
+        static func main() {}
+    }
+
     /// What someone is sharing to the app, and the way to hand it over. Share/ShareView.swift is the sheet:
     ///
     ///     struct ShareView: View {
