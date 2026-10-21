@@ -3,8 +3,8 @@ import Foundation
 /// The scaffold of an Android app, and the rules its agent is given. An Android app is a Gradle project in the
 /// app's folder: Lamp owns what the build runs before any of the agent's code does (build.sh, the settings and
 /// top-level build files, gradle.properties and the versions catalogue, written afresh before every build like a
-/// Mac app's Package.swift), and the agent owns `app/`: its build file, manifest, Kotlin and resources. There is
-/// no support library of Lamp's for Android yet: the app is plain Kotlin and Jetpack Compose.
+/// Mac app's Package.swift) and its building blocks (`LampSupport.kt`, AndroidSupport.swift), and the agent owns the
+/// rest of `app/`: its build file, manifest, Kotlin and resources.
 extension Template {
     static let androidAppFolder = "app"
     static let androidSources = "app/src/main/kotlin"
@@ -31,6 +31,7 @@ extension Template {
         try write(androidRootBuildGradle, to: "build.gradle.kts", for: project)
         try write(androidGradleProperties, to: "gradle.properties", for: project)
         try write(androidVersionsCatalogue, to: "gradle/libs.versions.toml", for: project)
+        try writeAndroidSupport(for: project)
     }
 
     /// The agent's starting files for a new Android app.
@@ -382,16 +383,17 @@ extension Template {
     - `app/src/main/kotlin/…/Theme.kt`: the Material 3 theme.
     - `app/src/main/AndroidManifest.xml`, `app/src/main/res/`: the manifest and resources.
     - `app/build.gradle.kts`: the app's dependencies.
-    - `build.sh`, `settings.gradle.kts`, `build.gradle.kts`, `gradle.properties`, `gradle/libs.versions.toml`: Lamp's; don't edit.
+    - `app/src/main/kotlin/…/LampSupport.kt`: Lamp's building blocks (LampAI, LampStore, LampAssets); Lamp's, don't edit.
+    - `build.sh`, `settings.gradle.kts`, `build.gradle.kts`, `gradle.properties`, `gradle/libs.versions.toml`, `app/src/debug/AndroidManifest.xml`: Lamp's; don't edit.
 
     """
 }
 
 extension Agent {
-    /// The rules for an Android app: the same shape as the Mac's and the iPhone's, said for Kotlin and Compose. No
-    /// building block of Lamp's is in it yet, so the rules say so, and the agent builds on Android's own.
+    /// The rules for an Android app: the same shape as the Mac's and the iPhone's, said for Kotlin and Compose, with
+    /// Lamp's building blocks (LampAI, LampStore, LampAssets) under the names they have in Swift.
     static func androidPrompt() -> String {
-        let rules = [Rules.androidEdit, Rules.ask, Rules.shell, Rules.androidFrameworks, Rules.androidData, Rules.androidPermissions,
+        let rules = [Rules.androidEdit, Rules.ask, Rules.shell, Rules.androidFrameworks, Rules.androidAI, Rules.androidData, Rules.androidPermissions,
                      Rules.androidKinds, Rules.androidDesign, Rules.androidGenerated, Rules.icon, Rules.about, Rules.androidAttachments,
                      Rules.androidLogs, Rules.androidTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
         return (Rules.androidHeader + "\n\nRules:\n" + rules.joined())
@@ -421,18 +423,32 @@ extension Agent.Rules {
     ViewModel, Navigation 3, DataStore, coroutines, serialization). Another library goes in app/build.gradle.kts \
     with its full name and version; nothing from Google Play services or Firebase, which need accounts, and nothing \
     that needs an API key you don't have. build.sh, settings.gradle.kts, build.gradle.kts at the root, \
-    gradle.properties and gradle/libs.versions.toml belong to Lamp and are rewritten before every build: never \
-    edit them. There is no library of Lamp's in this app: no LampStore, no LampAI, no connectors. Build on \
-    Android's own instead, and when the user asks for AI or an account the app can't have yet, say so plainly \
-    and build the rest.
+    gradle.properties, gradle/libs.versions.toml, LampSupport.kt beside the app's code and \
+    app/src/debug/AndroidManifest.xml belong to Lamp and are rewritten before every build: never edit them, and \
+    keep the Compose, coroutines and serialization libraries and the serialization plugin in app/build.gradle.kts, \
+    which LampSupport.kt needs. LampSupport.kt is Lamp's building blocks: LampAI, LampStore and LampAssets, with \
+    the names and calls they have in Lamp's Swift apps; read its comments before using one. There are no \
+    connectors or other blocks yet: when the user asks for an account the app can't reach, say so plainly and \
+    build the rest.
+    """
+
+    static let androidAI = """
+    - For AI in the app, use LampAI: `ask` for text (pass text from outside the app as `data`, never in the \
+    prompt; `ask(prompt, Type.serializer())` for JSON into a @Serializable class), `makeImage` and `editImage` for \
+    pictures (Bitmaps), and for judgments code acts on, the decision calls: `isTrue`, `choose`, `rate`, `decide`, \
+    and with `each` for many items at once, never a loop of your own. Every call is a suspend function: call it \
+    from `rememberCoroutineScope().launch` or a ViewModel's scope, show progress while it runs and \
+    `error.message` when it fails. Lamp on the user's Mac answers: the emulator reaches it there, and their own \
+    device over the same Wi‑Fi. Check `LampAI.isAvailable` where a feature depends on it and say what it needs \
+    when it can't answer. Never ask for an API key or call an AI provider directly.
     """
 
     static let androidData = """
-    - Keep the user's data with DataStore for settings and small state, and for lists of things a Room database \
-    (add androidx.room with its KSP compiler to app/build.gradle.kts when you need it) or a JSON file in \
-    `filesDir` written with kotlinx.serialization, whichever fits. People rely on their data through every change \
-    you make, so once a type is saved, only ever add to it: new properties get defaults, and never rename, remove \
-    or retype a saved property.
+    - Keep the user's data with LampStore: `LampStore.load<Prefs>("prefs")` and `LampStore.save(prefs, "prefs")` \
+    for settings and small state, `LampStore.collection<Note>("notes") { it.id }` with put, get, delete and all \
+    for lists of things, each a @Serializable class. People rely on their data through every change you make, so \
+    once a type is saved, only ever add to it: new properties get defaults, and never rename, remove or retype a \
+    saved property. Files the app ships with go in app/src/main/assets and are read with LampAssets.
     """
 
     static let androidPermissions = """
@@ -467,7 +483,7 @@ extension Agent.Rules {
     static let androidAttachments = """
     - Files the user attaches are saved in Attachments/, for you to look at; they stay on this Mac and never \
     ship with the app. When the app should use one (a logo, a data file, a sound), copy it into \
-    app/src/main/assets/ (make the folder if needed) and read it with `context.assets.open("name")`, or into \
+    app/src/main/assets/ (make the folder if needed) and read it with `LampAssets` (`text`, `image`, `bytes`), or into \
     app/src/main/res/ as a resource. Screenshots and mockups are usually just references for you: leave them \
     in Attachments/.
     """

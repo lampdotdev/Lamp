@@ -339,6 +339,18 @@ enum Adb {
         guard result.ok else { throw AndroidTools.Failure(message: "Couldn't put the app on the device: \((result.output + result.errors).trimmed)") }
     }
 
+    /// Writes what the app is told about itself and Lamp (`Template.androidInstallValues`: its token among them) into
+    /// its own storage on the device, as Lamp writes a Mac app's into its installed copy. It goes on adb's input, never
+    /// in a command's arguments, which any process on the Mac can list, and through `run-as`, which only a debuggable
+    /// app (every build of Lamp's) allows, so it lands in a folder only the app reads. A failure is logged, not thrown:
+    /// the app opens, and its first call to Lamp says it can't reach it.
+    static func tellApp(_ values: [String: Any], package: String, on serial: String) async {
+        guard let data = try? JSONSerialization.data(withJSONObject: values) else { return }
+        let result = await Subprocess.run(AndroidTools.adb, ["-s", serial, "shell", "run-as \(package) sh -c 'mkdir -p files && cat > files/lamp-install.json'"],
+                                          env: AndroidTools.environment, timeout: 30, input: data)
+        if !result.ok { NSLog("Lamp couldn't tell \(package) where Lamp is: \((result.output + result.errors).trimmed)") }
+    }
+
     /// Starts the app's main activity afresh, and gives back its process id once it's running.
     static func launch(_ package: String, on serial: String) async throws -> Int32 {
         _ = await run(["shell", "am", "force-stop", package], on: serial, timeout: 30)
