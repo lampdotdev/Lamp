@@ -81,6 +81,14 @@ enum SwiftSource {
         /// Each type's own `hash(into:)`, by its qualified name: sets and dictionaries the open app keeps were laid out
         /// by it (`hashEntries`).
         var hashing: [String: (start: Position, last: Position)] = [:]
+        /// The names of the app's own typealiases, which may stand for a system type's name (`typealias Color = Paint`).
+        var aliases: Set<String> = []
+
+        /// Every name the app gives a type of its own, by its last part: the system's type of that name isn't what
+        /// the app's code means by it.
+        var ownTypeNames: Set<String> {
+            Set(types.keys.map { String(LiveReload.bare($0).split(separator: ".").last ?? "") }).union(aliases)
+        }
     }
 
     /// A printout's line that opens a node: its indent and the node's name, the run of letters, digits, `_` and `=`
@@ -170,6 +178,7 @@ enum SwiftSource {
         private let observer = try! NSRegularExpression(pattern: #"^\s*\(accessor_decl\b.*? (?:didSet|willSet) for="(\w+)""#)
         // An assignment in an initializer the type writes: the node under it says what's set.
         private let assigned = try! NSRegularExpression(pattern: #"^(\s*)\(member_ref_expr\b.*? decl="[^"]*?\.(\w+)@"#)
+        private let aliasName = try! NSRegularExpression(pattern: #"^\s*\(typealias\b[^"]*"(\w+)""#)
         private var observed = Set<String>()
         private var out = Declarations()
         // The initializer being read, and an assignment in it whose target is the next node.
@@ -182,6 +191,9 @@ enum SwiftSource {
 
         func take(_ line: Walk.Line) {
             let indent = line.indent, opens = line.opens
+            if opens("typealias"), let m = aliasName.firstMatch(in: line.text, range: line.range) {
+                out.aliases.insert(String(line.text[Range(m.range(at: 1), in: line.text)!]))
+            }
             if opens("func_decl", "constructor_decl", "subscript_decl", "pattern_binding_decl"), !line.has(" implicit"),
                let r = SwiftSource.range(in: line.text) {
                 out.bodies.append(r)

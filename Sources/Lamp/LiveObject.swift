@@ -40,6 +40,20 @@ enum LiveObject {
         return false
     }
 
+    /// The type a descriptor's symbol names, demangled by Swift's own runtime, with a private type's discriminator
+    /// left out (`(Mood in _3F…)` is `Mood`): "nominal type descriptor for Pet.PetMood" is "Pet.PetMood".
+    static func demangledType(_ symbol: String) -> String? {
+        typealias Demangle = @convention(c) (UnsafePointer<CChar>?, Int, UnsafeMutablePointer<CChar>?, UnsafeMutablePointer<Int>?, UInt32) -> UnsafeMutablePointer<CChar>?
+        guard let found = demangler else { return nil }
+        let call = unsafeBitCast(found, to: Demangle.self)
+        guard let out = symbol.withCString({ call($0, strlen($0), nil, nil, 0) }) else { return nil }
+        defer { free(out) }
+        let text = String(cString: out)
+        guard let at = text.range(of: "nominal type descriptor for ") else { return nil }
+        return text[at.upperBound...].replacingOccurrences(of: #"\((\w+) in _[0-9A-F]+\)"#, with: "$1", options: .regularExpression)
+    }
+    nonisolated(unsafe) private static let demangler = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "swift_demangle")
+
     /// Rewrites the object at `path` in place. `kept` names the types whose copies the library keeps for itself, by
     /// their mangled name with the module ("3App4MoodO"), as `mangledType` gives it; those found among the object's
     /// types are added to `matched`. Nil when done, else why not.
@@ -137,6 +151,27 @@ enum LiveObject {
             let strx = Int(u32(symtab.symoff + index * 16))
             return String(decoding: bytes[(symtab.stroff + strx)...].prefix { $0 != 0 }, as: UTF8.self)
         }
+        // Each kept type as the compiler spelt it here: where an identifier shares a word with one before it, the
+        // compiler writes the word by its place (`Pet` and `PetMood` are `3Pet0A4MoodO`), which a name built from the
+        // parts doesn't follow. The type's descriptor names it as the built name does once both are demangled, and
+        // every symbol of the type begins with the descriptor's spelling.
+        var spelt: [String: String] = [:]
+        if !kept.isEmpty {
+            let wanted = Dictionary(kept.compactMap { k in demangledType("$s" + k + "Mn").map { ($0, k) } }, uniquingKeysWith: { a, _ in a })
+            for index in 0..<symtab.nsyms {
+                let type = bytes[symtab.symoff + index * 16 + 4]
+                guard type & UInt8(N_STAB) == 0, type & UInt8(N_TYPE) == UInt8(N_SECT) else { continue }
+                let name = symbolName(index)
+                guard name.hasPrefix("_$s"), name.hasSuffix("OMn"), let type_ = demangledType(String(name.dropFirst())),
+                      let k = wanted[type_] else { continue }
+                spelt[k] = String(name.dropFirst(3).dropLast(2))
+            }
+        }
+        func keeps(_ name: String, _ k: String) -> Bool {
+            if isKept(name, as: k) { return true }
+            guard let prefix = spelt[k], name.hasPrefix("_$s" + prefix) else { return false }
+            return name.dropFirst(3 + prefix.count).first.map { !$0.isNumber } ?? true
+        }
         // The definitions to rename, by symbol index, each with the index of the undefined symbol that takes its name.
         var renamed: [Int: Int] = [:]
         var added: [(name: String, type: UInt8, desc: UInt16)] = []
@@ -155,7 +190,7 @@ enum LiveObject {
                 continue
             }
             guard type & UInt8(N_TYPE) == UInt8(N_SECT), isIdentity(name) else { continue }
-            if let keep = kept.first(where: { isKept(name, as: $0) }) { matched.insert(keep); own.insert(index) }
+            if let keep = kept.first(where: { keeps(name, $0) }) { matched.insert(keep); own.insert(index) }
             renamed[index] = symtab.nsyms + added.count
             added.append((name, UInt8(N_UNDF) | UInt8(N_EXT), UInt16(N_WEAK_REF)))
             names.append(name)

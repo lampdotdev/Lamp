@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Catalog.choices is made from Mood, which gained cases, and the open app made it once and keeps it)
+== run
+before: choices=2
+RELOAD 1: REOPEN Catalog.choices is made from Mood, which gained cases, and the open app made it once and keeps it
+after1 (want 3 choices, or a reopen, as for any starting value that changed; and the same for both): choices=2 later=2
+before: choices=3
+RELOAD 1: in the restart
+after1 (want 3 choices, or a reopen, as for any starting value that changed; and the same for both): choices=3 later=3
