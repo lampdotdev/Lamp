@@ -1128,10 +1128,12 @@ since the held build outlives Lamp too; Undo, an earlier version and a request s
 (`Store.dropPausedRequest`). A file the agent wrote in the moment before Lamp ended it that doesn't build is neither
 saved nor installed, as after any build that fails, and its errors ride with the carry-on request (`Store.carry`). Only
 the Reload button reloads the app, or Lamp for the person once they've stepped away: with no input on the Mac for
-three minutes (`Store.awayAfter`, the window server's own count, so no permission is asked for) while a request's change
-waits for it, Lamp presses it and says so in the chat (`Store.reloadIfAway`). A turn still at work puts it in between
-its steps; one that ended on it, paused or with the agent asking for Reload in its reply, gets the same carry-on
-request as a pause (`Store.queueCarryOn`), so the agent looks and finishes what was left. A message typed meanwhile waits in the same line (the chats say "Sent once you
+three minutes (`AwayReloads.after`, the window server's own count, so no permission is asked for) while a request's
+change waits for it, Lamp presses it and says so in the chat (`Store.reloadIfAway`). A turn still at work puts it in
+between its steps; once the turn is over (paused, the agent asking for Reload in its reply, or the Reload put off until
+its end) the agent gets the same carry-on request as after a pause (`Store.queueCarryOn`), decided when the change is
+actually in, so it looks and finishes what was left. After the person's Stop, Lamp neither reloads for the agent nor
+carries it on until they send a request (`AwayReloads`). A message typed meanwhile waits in the same line (the chats say "Sent once you
 press Reload" under it, `ChatLook.waitingForReload`), since the chat is beside the app and a reopen takes the chat
 down with it, and nothing the agent did meanwhile could be seen. So the note asks for the changes that go in live
 first and the held ones last, naming what's held (the icon, capabilities.json, a widget or Share item, what's read at launch, a Codable

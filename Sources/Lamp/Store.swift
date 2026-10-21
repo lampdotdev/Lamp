@@ -559,6 +559,9 @@ final class Store: ObservableObject {
         /// The person pressed Reload while the agent worked, and the app reopened with the change that waited
         /// (`reloadInTurn`): the agent is told at its next look, since it was told the change waits for Reload.
         var reloadedByPerson = false
+        /// That Reload was Lamp's, while the person was away: when the agent ends without having looked (so without
+        /// hearing the change is in), it's carried on (`finish`).
+        var reloadedWhileAway = false
         /// That reopen is under way, as `applying`: a build waits for it rather than ending it, since it's no compile
         /// of sources the agent has moved on from.
         var reloading = false
@@ -732,6 +735,7 @@ final class Store: ObservableObject {
     func reloadWaiting(_ id: String) {
         guard let project = projects.first(where: { $0.id == id }), Runtime.waitsForReload(project) else {
             reloadWhenFree.remove(id)
+            _ = away.landed(id, stillWaits: false)   // put in meanwhile, by the app closing: nothing of Lamp's to carry on
             return
         }
         // Taken now, before anything queued can start: otherwise kept until the turn that has the app ends.
@@ -742,40 +746,26 @@ final class Store: ObservableObject {
         mac.chosen = .mac
         Task {
             _ = await install(mac, inFront: true, fresh: true, reload: true)
+            // Lamp pressed it while the person was away, and the turn that left it is over (it ended asking for Reload,
+            // paused, or the Reload was put off until its end): the agent goes on, as after a pause.
+            if away.landed(id, stillWaits: Runtime.waitsForReload(project)), away.carriesOn(id) { queueCarryOn(project) }
             finish(project)
         }
     }
-    /// How long the Mac has had no keyboard, mouse or trackpad input before Lamp takes it that the person has stepped
-    /// away. Long enough that someone reading the chat or watching the app isn't reloaded under, short enough that an
-    /// agent waiting on Reload doesn't sit there all afternoon.
-    static let awayAfter: TimeInterval = 180
-
-    /// Seconds since the person last typed, clicked or moved the pointer anywhere on this Mac, from the window server's
-    /// own count: no permission is needed, and a locked screen or a sleeping display counts as no input.
-    static var secondsSinceInput: TimeInterval {
-        CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
-    }
-
     /// The person stepped away while a request's change waits for Reload: Lamp presses it for them, so the agent can
     /// go on. While they're at the Mac it stays theirs to press. A turn still at work puts the change in between its
-    /// steps; a turn that ended on it (paused, or the agent ended its reply asking for Reload, as models often do
-    /// rather than look again) is carried on the way a pause is, so the agent looks and finishes what was left.
+    /// steps; once the turn is over (paused, the agent ending its reply asking for Reload, as models often do rather
+    /// than look again, or the Reload put off until its end) the agent is carried on the way a pause is, decided
+    /// when the change is in (`reloadWaiting`, `finish`), never after the person pressed Stop (`AwayReloads`).
     private func reloadIfAway() {
-        guard Self.secondsSinceInput >= Self.awayAfter else { reloadedWhileAway = []; return }
-        // One that went in may wait again for a later change the agent made, and that one is reloaded too.
-        reloadedWhileAway = reloadedWhileAway.filter { id in projects.first { $0.id == id }.map(Runtime.waitsForReload) == true }
-        for project in projects where !reloadWhenFree.contains(project.id) && !reloadedWhileAway.contains(project.id)
-            && Runtime.waitsForReload(project) {
-            reloadedWhileAway.insert(project.id)
-            if turns[project.id] == nil { queueCarryOn(project) }
+        let waiting = projects.filter(Runtime.waitsForReload).map(\.id)
+        for id in away.toPress(waiting: waiting, idle: AwayReloads.secondsSinceInput) {
+            guard let project = projects.first(where: { $0.id == id }) else { continue }
             log(project, .status, "Reloaded \(project.name) while you were away")
-            reloadWaiting(project.id)
+            reloadWaiting(id)
         }
     }
-
-    /// Apps Lamp reloaded while the person has been away: a Reload that didn't go in isn't tried again every few
-    /// seconds, only once they've been back.
-    private var reloadedWhileAway: Set<String> = []
+    private var away = AwayReloads()
 
     /// Reloads pressed while something else had the app: the agent's turn puts each in between its steps
     /// (`reloadInTurn`), other work when it's done, and the chat says so meanwhile (`ReloadLine.queued`), since
@@ -2599,6 +2589,9 @@ final class Store: ObservableObject {
 
     /// Marks the app idle again, then starts anything queued while it was busy.
     private func finish(_ project: LampProject) {
+        if let turn = turns[project.id], turn.reloadedWhileAway, turn.reloadedByPerson, away.carriesOn(project.id) {
+            queueCarryOn(project)
+        }
         endApprovals(for: project)   // a card nobody can answer any more, from a request that raced the agent's end
         // Artwork that arrived during the turn, for an icon that was installed without it: applied now, still
         // owning the app, so nothing else builds or installs meanwhile. With more work queued, the next
@@ -2788,6 +2781,8 @@ final class Store: ObservableObject {
         // the rest of the turn goes on with the app as Lamp now has it, so its build is for the new kind.
         var project = started
         guard let owner = turns[project.id] else { return TurnResult(end: .failed, watched: true) }
+        // A request of the person's own: a Stop they pressed earlier no longer keeps Lamp from carrying on.
+        if messages.contains(where: { !$0.byLamp }) { away.personAsked(project.id) }
         // Once, when the turn is over: its own build and install, and any run that fixes a crash, come after the agent's.
         owner.began = Date()
         defer {
@@ -3777,6 +3772,7 @@ final class Store: ObservableObject {
         // A turn still owns the app while awaiting a device check, even without a running subprocess.
         guard let turn = turns[project.id], !turn.stopped else { return }
         endApprovals(for: project)   // a command waiting for approval counts as denied
+        if away.personStopped(project.id) { reloadWhenFree.remove(project.id) }
         turn.cancel()
         setAsideChanges[project.id]?.afterStop = true   // no fix starts by itself after Stop (`fixHeldCrash`)
     }
@@ -5417,11 +5413,15 @@ final class Store: ObservableObject {
             var mac = current
             mac.chosen = .mac
             _ = await install(mac, inFront: true, fresh: true, reload: true, saysReady: false)
+            // Lamp's, while the person was away, with the turn over meanwhile: the agent never heard the change is in.
+            let lamps = away.landed(project.id, stillWaits: Runtime.waitsForReload(current))
+            if lamps, turns[project.id] !== turn, away.carriesOn(project.id) { queueCarryOn(current) }
             // A request paused for this Reload (`pause`) goes on once the app is given back: here when the turn is
             // already over, else when it ends (`finish`).
             startQueued(current)
             guard turns[project.id] === turn, !Runtime.waitsForReload(current) else { return }
             turn.reloadedByPerson = true
+            turn.reloadedWhileAway = lamps
             turn.toldHeld = false
             log(current, .status, "Reopened \(current.name) with the change")
         }
