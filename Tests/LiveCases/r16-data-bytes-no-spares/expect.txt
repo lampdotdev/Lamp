@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Note.starred)
+== run
+before: a 294
+RELOAD 1 (whole): ok
+after1 (want starred=true in place: no struct is read as bytes, only a Data's bytes are summed): a starred=true

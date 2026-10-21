@@ -869,7 +869,9 @@ that's one of the app's classes, or a system name the class's initializers show 
 overriding, the compiler's own included, or a `super` call; a system protocol such as `ObservableObject` is no superclass), and a protocol's requirement signature (`: AnyObject`, what it inherits, its associated types' constraints) and its
 `@objc` (whose values are one word where a Swift protocol's take two), each of which lays values, objects,
 method tables or witness tables out differently while the type holds the same fields; a stored reference's `weak`
-or `unowned` is part of its field's entry (`Owner<tab>weak helper: Helper?`). A shape is compared only where both
+or `unowned` is part of its field's entry (`Owner<tab>weak helper: Helper?`). A new class under one the open app has
+reopens it too: the library's copy of it would be laid out from, and cast against, the change's copy of its superclass,
+not the app's. A shape is compared only where both
 layouts have one, so a layout an earlier Lamp kept says nothing of it. After a build, `Store.install` tries
 `reloadInPlace` first, which decides the app is open and built live, takes the verdict and hands the changed files to
 `LiveReload.put`, the one pipeline from the layout check to the record of what the app now runs, acting on its
@@ -894,7 +896,8 @@ private one builds is part of the entry of any member whose body names it, since
 private one returns its type to callers anywhere; a private type is listed with its file,
 `LiveReload.placeGroup`, since its mangled name carries it and one moved to another file is another type at run time (so is a type, a
 static or a global made private or no longer private, or a private static or global moved to another file, which
-reopens the app too, as does a conformance taken away, whose record the open app keeps),
+reopens the app too, as does a conformance taken away, whose record the open app keeps, unless what it still conforms
+to brings it, as Hashable brings Equatable),
 and keyed with its file throughout the layout and the declarations (`Row@A.swift`, each part of a nested one; `LiveReload.bare`
 gives the name back where the code names it, as a field's type or a use in old code does, and `readable` says "Row in
 A.swift"), since two files may each declare a private type of one name and the two are two types with their own fields;
@@ -925,7 +928,8 @@ a conformance added in it isn't found, and SwiftUI, seeing a new type for a view
 and loses every state in it. So between compiling and linking, `LiveObject` rewrites each object: every type's
 metadata, descriptor and protocol descriptor it defines is renamed (`$lampcopy`), and the code's references become
 loads through the global offset table of a weak undefined symbol with the original name, which `LampLive` binds to the
-app's copy, or to the library's own for a type the app doesn't have (a new one, kept for the changes after it). A
+app's copy, or to the library's own for a type the app doesn't have (a new one, kept for the changes after it, and an
+enum it brings stays that change's when a later change grows it, so its values made before are the same type). A
 conformance's descriptor and witness table are treated the same, since the runtime tells generic types apart by them
 too (`[AnyHashable: …]` keys), which is why a protocol's requirements, their accessors included, are part of the
 layout a change is held to (`LiveReload.members`): the app's witness tables must fit. What the library's data names
@@ -994,7 +998,8 @@ read of a session is over before the agent's first save rather than in front of 
 New stored properties go in live too (`LiveSlots`, in LiveReload.swift). The copy step (`Template.livePerl`) gives
 each type of the app's spare room the open app's values already have: every class a few places,
 `__lampSpare_<Class>_0`… of `LampSpare?` (named after the class, so a subclass's don't clash with what it inherits;
-`@Published` when the header says `ObservableObject`), every view one `@State` box (`__lampState_<View>`, a
+plain in an `ObservableObject` too, so only a moved `@Published` property announces its changes, its setter calling
+`LampSpare.announce`), every view one `@State` box (`__lampState_<View>`, a
 `LampStateBox`), and every other struct one place holding any number of properties by name (`__lampSpare_<Struct>`, not optional,
 so its own `==` and hash run: they take a property never set as its starting value; saved data leaves it out
 through two overloads of the keyed coding containers, which the compiler's Codable code takes over the general ones). A struct's moved properties drop out of the initializer Swift makes for it, which the new code may call with them,
@@ -1015,8 +1020,9 @@ Left out is what a spare would break: SwiftData and Core Data models, `Sendable`
 so, or made so in an extension, which the scan reports), a class under a class of the same simple name (whose spare
 places would clash), the App
 and its scenes, property wrappers, App Intents, OptionSets and RawRepresentable structs (declared so, or made so in an extension, which the copy step's scan reports), whose `init(rawValue:)` is the memberwise one, BitwiseCopyable structs, which can hold no spare, and every struct in an
-app any of whose own files lays memory out by hand (vertex data; the struct read as bytes may be declared in another;
-Lamp's own files always do and are told apart by name, `-own=`). When
+app any of whose own files lays memory out by hand (vertex data, a value's own bytes; the struct read as bytes may be
+declared in another; a Data's bytes read in a closure are no struct's; Lamp's own files always do and are told apart
+by name, `-own=`). When
 the only difference in layout is new stored properties in such types, `LiveSlots.fit` rewrites each one-line
 declaration in the live copy into a computed property kept in a spare, found by the compiler's own
 source ranges (`SwiftSource.declarations`, from the same `-dump-ast` as the layout), so however it's written (with
@@ -1032,8 +1038,8 @@ literal (by the compiler's word, however it's spelt: `"a\nb"`, `0xFF`), an empty
 enum's cases, or a constant of the system's named one by one (`.zero`, `.blue`: `LiveSlots.steadyMembers`, never where the app
 names a type or an alias the same, `Declarations.ownTypeNames`), judged again each time the property is put back;
 anything else, or a different one later, reopens the app, since the spare compares a value that never set the
-property by the starting value it was taken in with); a `@Published` property in a class whose places aren't published (conforming
-in an extension) reopens it too. `@State` is read in both forms the compiler has given it: `_name: State<T>`, and
+property by the starting value it was taken in with); a class's property written `nonisolated` reopens it too, since
+the spare places take the class's actor. `@State` is read in both forms the compiler has given it: `_name: State<T>`, and
 `__name: LazyState<T>` where it is a macro. Cases added at the end of an enum whose cases carry nothing need no
 spare: its values keep their size (`LiveSlots.casesAdded`). Only while nothing the app keeps holds it but as itself or
 in a plain collection (an array, set or dictionary through any depth) or a view's state or binding: Swift uses the numbers after the last case for `nil` in an optional of it and for other enums'
@@ -1052,7 +1058,7 @@ grew, every file of the app's is compiled again, so no code of the open app's me
 it, or printing it, reads past what its metadata describes); code already running keeps the version it started with,
 so the sources the open app runs, and those of every change that went in since it opened (`.lamp/live/old-code.txt`,
 `LiveReload.recordOldCode`: what an earlier change's code started may still be running), are read for a switch over the
-enum, or an interpolation of it, in an escaping closure that outlives a draw (one made outside a view's body or a
+enum, or an interpolation of it, in a loop (one that may never end), or in an escaping closure that outlives a draw (one made outside a view's body or a
 member returning a view, or one a body hands to anything but SwiftUI, a Timer's, a dispatch queue's, the app's own, or
 sets into a property or gives as a property's value; a Button's action is made again at the next draw; one handed to a view of the app's own counts as kept,
 since its initializer may keep it anywhere), an async
@@ -1062,7 +1068,7 @@ don't know the new cases; its metadata stays the app's, so a value boxed before 
 same type to a cast, and the app's metadata is pointed at the change's description and value witnesses (`LampLive.load`,
 two pointers), so the app's field records, the runtime's asks (printing, Codable, hashing, a cast) and code compiled
 before still read the new cases. A constant made from the enum (`Mood.allCases`), or by code that names it (`countMoods()`), is remade like one whose
-text changed (`LiveSlots.constants(naming:)`); a stored static, global or lazy property made so reopens the app, since
+text changed (`LiveSlots.constants(naming:)`; one holding an object isn't, the object being state like any other); a stored static, global or lazy property made so reopens the app, since
 the open app made it once (`LiveSlots.stored(naming:)`). SwiftUI keeps the last value a few of its modifiers were given
 (`onChange(of:)`, `task(id:)`, `animation(_:value:)`, `id`, `tag`), made by the open app's code: an optional of the
 enum given to one reopens the app, since its nil would read as the new case. What old code may still be doing is read more widely than a
@@ -1111,7 +1117,8 @@ A constant (a static or global `let`) whose value changes would otherwise not ch
 value once and keeps it in storage the new code goes on reading. So each constant's value is part of the kept layout
 as a digest (`SwiftSource.constantEntries`, not compared as what a type holds), and one that changed is rewritten in
 the live copy into a computed property that makes the new value once and keeps it (`nonisolated` in a type, as the
-`let` was, so readers outside a `@MainActor` type still compile, unless it names an actor of its own) (`LampConstants`, by name and
+`let` was, so readers outside a `@MainActor` type still compile, unless it names an actor of its own; one whose value
+then can't be made there, from the type's own main-actor code, reopens the app with that reason) (`LampConstants`, by name and
 value; `LiveSlots.changedConstants`, `rewriteConstant`). The first time a constant is rewritten every file is
 compiled again, so every reader goes through it; it stays rewritten until the app is installed again. One that can
 hold an object needs the app reopened instead (it waits for Reload, as above), since a second object would split the

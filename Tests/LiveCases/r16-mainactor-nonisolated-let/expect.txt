@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Model changed what it holds (Model.id: Int); Model.id is nonisolated, and a property kept in a spare takes its class's actor)
+== run
+before: a
+RELOAD 1: REOPEN Model changed what it holds (Model.id: Int); Model.id is nonisolated, and a property kept in a spare takes its class's actor
+after1 (want an id, in place, or a reopen with a plain reason): a
+before: a id=42
+RELOAD 1: in the restart
+after1 (want an id, in place, or a reopen with a plain reason): a id=42

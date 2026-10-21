@@ -363,7 +363,7 @@ final class LiveReloadTests: XCTestCase {
         XCTAssertTrue(layout!.contains(LiveReload.shapeGroup + "\tShell.Core\tclass : NSObject"), "\(layout!.filter { $0.contains("Core") })")
         // A constant made from a private enum is found by the enum's bare name, and the bared layout names every
         // type bare, an alias's owner included.
-        XCTAssertEqual(LiveSlots.constants(naming: ["Tone@Shapes.swift"], in: try XCTUnwrap(analysed?.declarations)), ["Tones\tcount"])
+        XCTAssertEqual(LiveSlots.constants(naming: ["Tone@Shapes.swift"], in: try XCTUnwrap(analysed?.declarations), layout: layout!), ["Tones\tcount"])
         XCTAssertTrue(LiveReload.bared(layout!).contains(LiveReload.aliasGroup + "\tTone.Pair = (Tone, Tone)"), "\(LiveReload.bared(layout!).filter { $0.contains("Tone") })")
         XCTAssertEqual(analysed?.declarations.types["Dated"]?.start.file.hasSuffix("Shapes.swift"), true)
         XCTAssertTrue(notes.contains { $0.hasPrefix("\u{1}launch\tmodel Note@Notes.swift: ") }, "\(notes.filter { $0.hasPrefix("\u{1}launch") })")
@@ -552,7 +552,7 @@ final class LiveReloadTests: XCTestCase {
         let dumped = await LiveReload.dump(of: sources, in: project, module: project.exe, macOS: "14.0")
         let dump = try XCTUnwrap(dumped)
         XCTAssertEqual(LiveReload.oldCode(meeting: ["Mood"], inDump: dump),
-                       "Model switches over Mood in code that may still be running (a timer, a task, an observer), which doesn't know the new cases")
+                       "Model switches over Mood in code that may still be running (a loop, a timer, a task, an observer), which doesn't know the new cases")
         XCTAssertNil(LiveReload.oldCode(meeting: ["Other"], inDump: dump))
         // A closure a body hands to Foundation (a Timer's, in onAppear) is kept by it, unlike a Button's action.
         // A closure set into a property or given as a property's value is kept too, inside a body or not; what a
@@ -588,7 +588,7 @@ final class LiveReloadTests: XCTestCase {
         let end = try XCTUnwrap(text.range(of: "\n    }\n", range: live.upperBound..<text.endIndex))
         // What an installed app reads from its Info.plist, given here.
         let install = "enum LampInstall { static let token = \"x\", note = \"t\" }\n"
-        return "import Foundation\nimport CryptoKit\nimport MachO\nimport Observation\n" + install + text[start.lowerBound..<end.upperBound]
+        return "import Combine\nimport Foundation\nimport CryptoKit\nimport MachO\nimport Observation\n" + install + text[start.lowerBound..<end.upperBound]
             .replacingOccurrences(of: "LampInstall.app + \"/.lamp/live/\"", with: "\"\(folder.path)/live/\"")
             .replacingOccurrences(of: "LampRuntime.folder.appendingPathComponent(\"reloaded.txt\")", with: "URL(fileURLWithPath: \"\(folder.path)/reloaded.txt\")")
             .replacingOccurrences(of: "private func load(", with: "func load(")

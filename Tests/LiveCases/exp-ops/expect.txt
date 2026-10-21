@@ -1,4 +1,4 @@
-VERDICT 1: REOPEN (start() uses Mood in code that may still be running (a timer, a task, an observer), which doesn't know the new cases)
+VERDICT 1: REOPEN (start() uses Mood in code that may still be running (a loop, a timer, a task, an observer), which doesn't know the new cases)
 == run
 --- before
 old raw: happy
@@ -13,7 +13,7 @@ old json: {"mood":"happy"}
 old decode: happy
 old allCases: 2 init(rawValue): happy
 new raw: happy reflecting: Case.Mood.happy ==: true dict: 1 set: 1 true anyhash: true casts: true allCases: 2 json: {"mood":"happy"}
-RELOAD 1: REOPEN start() uses Mood in code that may still be running (a timer, a task, an observer), which doesn't know the new cases
+RELOAD 1: REOPEN start() uses Mood in code that may still be running (a loop, a timer, a task, an observer), which doesn't know the new cases
 --- after (want angry/3/true everywhere, no crash)
 old raw: sad
 old describing: sad

@@ -3763,6 +3763,7 @@ enum Template {
     }
 
     #if LAMP_LIVE
+    import Combine
     /// A spare place for a stored property added while the app is open (LiveSlots): live builds give every class of
     /// the app's a few, and every struct one that holds any number by name, empty, so a new property kept in one
     /// leaves the type's layout as the open app has it. Saved data never holds one (it encodes as nothing and
@@ -3775,6 +3776,13 @@ enum Template {
         func encode(to encoder: Encoder) throws {
             var container = encoder.singleValueContainer()
             try container.encodeNil()
+        }
+        /// Tells an ObservableObject's watchers that a @Published property kept in a spare is changing: a class's
+        /// spare places are plain, so a property added without @Published doesn't announce. Asked at run time, so a
+        /// @Published property in a class that isn't one still compiles.
+        static func announce(_ object: AnyObject) {
+            func send<O: ObservableObject>(_ object: O) { (object.objectWillChange as Any as? ObservableObjectPublisher)?.send() }
+            if let object = object as? any ObservableObject { send(object) }
         }
         /// The names of properties taken out of the code while the app was open (`LiveSlots.retire`): what they left
         /// in a spare neither reads nor counts.
@@ -4122,8 +4130,10 @@ enum Template {
             // metadata stays the app's, made to describe the new cases below: one identity, so a value boxed before the
             // change (in `Any`, an `AnyHashable`, SwiftUI's tags) still casts to it.
             func isMetadata(_ name: String) -> Bool { name.hasSuffix("ON") || name.hasSuffix("OMf") }
+            // The metadata an enum already has is the app's, or that of the earlier change that first brought it.
             for copy in all where kept[copy.name] == nil || copy.own {
-                kept[copy.name] = copy.own && !(isMetadata(copy.name) && original[copy.name] != nil) ? copy.address : original[copy.name] ?? copy.address
+                let first = keptBefore[copy.name] ?? original[copy.name]
+                kept[copy.name] = copy.own && !(isMetadata(copy.name) && first != nil) ? copy.address : first ?? copy.address
             }
             // A kept class's method table is the app's, so the new code's has to have the same shape: a method added,
             // taken away or moved would put a call in another method's place. Such a change reopens the app.
@@ -4221,7 +4231,7 @@ enum Template {
             // change's value witness table (the word before it), which knows how many there are, so a tag past the old
             // last case is read as the case it is.
             for copy in all where copy.own && copy.name.hasSuffix("ON") {
-                guard let old = original[copy.name], old != copy.address else { continue }
+                guard let old = keptBefore[copy.name] ?? original[copy.name], old != copy.address else { continue }
                 let description = copy.address.load(fromByteOffset: 8, as: UnsafeRawPointer.self)
                 let witnesses = copy.address.load(fromByteOffset: -8, as: UnsafeRawPointer.self)
                 if DescriptorWrite(field: old.advanced(by: 8), pointer: description).apply() { rebound += 1 }
@@ -16490,9 +16500,10 @@ enum Template {
         my (%names, %alias, %nospare, %equatable, %reflects, $raw, $mirrors);
         for my $file (@ARGV) {
             open(my $in, '<', $file) or next; my $s = <$in>; close($in);
-            # A struct read as bytes anywhere (MemoryLayout, a buffer handed to Metal) must stay the size it's written
-            # with, and the one read may be declared in another file: so no struct gets a spare in such an app.
-            $raw = 1 if !$own{(split m#/#, $file)[-1]} && $s =~ /MemoryLayout|withUnsafe|unsafeBitCast|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
+            # A struct read as bytes anywhere (MemoryLayout, a buffer handed to Metal, a value's own bytes; a Data's
+            # bytes read in a closure are no struct's) must stay the size it's written with, and the one read may be
+            # declared in another file: so no struct gets a spare in such an app.
+            $raw = 1 if !$own{(split m#/#, $file)[-1]} && $s =~ /MemoryLayout|withUnsafe(?:Mutable)?Bytes\s*\(\s*of:|withUnsafe(?:Mutable)?Pointer\s*\(\s*to:|withUnsafe(?:Mutable)?BufferPointer|unsafeBitCast|makeBuffer|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
             $s =~ s#/\*[\s\S]*?\*/# #g; $s =~ s#//[^\n]*##g;
             # A struct made an OptionSet or RawRepresentable in an extension: its memberwise initializer is the
             # protocol's `init(rawValue:)`, which a spare's parameter would unfit. One made BitwiseCopyable can hold
@@ -16554,8 +16565,7 @@ enum Template {
         my $pad = $i =~ /^[ \t]*$/ ? "\n$i    " : " ";
         if ($kind eq 'class') {
             return $whole if $nospare{$name} || $header =~ /\@Model\b|NSManagedObject|(?<!unchecked )\bSendable\b/;
-            my $published = $header =~ /ObservableObject/ ? '@Published ' : '';
-            return $whole . join('', map { "${pad}${published}var __lampSpare_${name}_$_: LampSpare? = nil;" } 0 .. $count - 1);
+            return $whole . join('', map { "${pad}var __lampSpare_${name}_$_: LampSpare? = nil;" } 0 .. $count - 1);
         }
         return $whole if $header =~ /\@propertyWrapper|\@frozen|\b(?:App|Scene|Commands|DynamicProperty|AppIntent|\w*Intent|AppEntity|\w*Query|TimelineProvider|TimelineEntry|Widget\w*)\b/;
         if ($header =~ /\bView\b/) {
@@ -16569,7 +16579,7 @@ enum Template {
     }
     for my $file (@files) {
         open(my $in, '<', $file) or die "$file: $!"; my $s = <$in>; close($in);
-        my $raw = $rawAll || $s =~ /MemoryLayout|withUnsafe|unsafeBitCast|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
+        my $raw = $rawAll || $s =~ /MemoryLayout|withUnsafe(?:Mutable)?Bytes\s*\(\s*of:|withUnsafe(?:Mutable)?Pointer\s*\(\s*to:|withUnsafe(?:Mutable)?BufferPointer|unsafeBitCast|makeBuffer|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
         @skip = spans($s);
         $s =~ s{var\s+body\s*:\s*some\s+(?:SwiftUI\.)?View\s*\{}~ inside($-[0]) ? $& : "var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\n    \@ViewBuilder var __lampBody: some View {" ~ge;
         @skip = spans($s);
