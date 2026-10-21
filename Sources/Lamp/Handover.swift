@@ -27,19 +27,21 @@ final class Handover {
     private var overlay: ComputerOverlay { .shared }
     private var owner: ObjectIdentifier { ObjectIdentifier(self) }
 
+    /// From now on the person's Esc, or their own press in the simulator, takes the app back: even before any
+    /// window is known (a batch that waits before opening a menu bar icon's panel), so that Esc isn't ignored.
     init(label: String, finger: Bool = false, simulator: pid_t? = nil, halt: @escaping () -> Void = {}) {
         self.label = label
         self.finger = finger
         self.simulator = simulator
         self.halt = halt
+        listen()
     }
 
-    /// The glow and the pill on the window being used, and from now on the person's Stop, Esc or own press.
+    /// The glow and the pill on the window being used, with Stop on it.
     func show(window id: CGWindowID) {
         guard !tookOver, !ended, id != window else { return }
         window = id
         overlay.focus(window: id, label: label, owner: owner, escape: true) { [weak self] in self?.take() }
-        listen()
     }
 
     /// Lamp's cursor goes to where the next action happens, and presses there when it's a click or a tap.
