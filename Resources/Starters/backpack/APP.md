@@ -41,7 +41,8 @@ and Start Over (forgets the list and every email read, and reads again).
   15 minutes by `LampSchedule` once `settings.readsMail` is on. After the first read, what it finds is announced
   with `LampNotifications`.
 - `Model/MailReader.swift`: reading Mail. Mail is read a week at a time, oldest first (a week with more than a
-  batch of mail in halves, `LampMail.inbox(since:before:)`), and emails already in `emails` are skipped. New ones
+  batch of mail in halves down to an hour, and an hour still fuller read back a batch at a time from its newest
+  end, `LampMail.inbox(since:before:)`), and emails already in `emails` are skipped. New ones
   are sorted into school or not: the person's lists first, then the decision model (`LampAI.isTrue … each:`, on
   sender, subject and first lines), or the text AI forty at a time when there's no decision model. Each school
   email's whole text (`LampMail.body`) goes to the text AI (`LampAI.ask(as:)`) with the children's names and what's

@@ -42,10 +42,25 @@ enum MailReader {
                 windows.insert(contentsOf: [(window.from, middle), (middle, window.to)], at: 0)
                 continue
             }
-            let whole = try await process(messages, settings: settings, seen: seen, list: &list, tally: &tally,
-                                          status: status, learned: learned, keep: keep)
-            // An hour with more mail than one batch can't be read whole: it's read again next time from there.
-            if !whole || full { gap = gap ?? window.from }
+            // An hour with more mail than one batch is drained from its newest end: each batch is followed by the
+            // one before its oldest email, until a batch is short. Only a second holding a whole batch of mail
+            // can't be got past, and is left to try again from there.
+            var batchOfMail = messages
+            var before = window.to
+            while true {
+                let whole = try await process(batchOfMail, settings: settings, seen: seen, list: &list, tally: &tally,
+                                              status: status, learned: learned, keep: keep)
+                if !whole { gap = gap ?? window.from }
+                guard batchOfMail.count >= batch else { break }
+                // Up to and including the oldest one's second, so mail in that second isn't skipped; what's been
+                // read in it is passed over.
+                guard let oldest = batchOfMail.map(\.date).min(), oldest.addingTimeInterval(1) < before else {
+                    gap = gap ?? window.from
+                    break
+                }
+                before = oldest.addingTimeInterval(1)
+                batchOfMail = try await LampMail.inbox(limit: batch, since: window.from, before: before)
+            }
         }
         // Nothing judged or read at all is a check that didn't happen (the AI unreachable, say), not an inbox
         // with nothing in it: it says so, and a first read keeps its examples.
@@ -198,7 +213,7 @@ enum MailReader {
     private static func todos(in message: LampMail.Message, settings: BackpackSettings, onList: [String]) async throws -> [Todo] {
         // The whole email or nothing: what it asks for may be past its first lines, so an email whose text Mail
         // can't give now is tried again later rather than read from its start.
-        let body = try await LampMail.body(of: message.id)
+        let body = try await LampMail.body(of: message.id).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { throw LampAI.Failure(message: "Mail didn't give the email's text.") }
         let email: [String: Any] = [
             "from": message.sender,
