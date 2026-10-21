@@ -140,9 +140,14 @@ enum LiveReload {
     static func startedBuilding(_ project: LampProject) { try? AppFolder.write(Data(), to: buildingURL(project), in: project.dir) }
     static func finishedBuilding(_ project: LampProject) { AppFolder.remove(buildingURL(project), in: project.dir) }
     /// At launch: a build that was still going when Lamp quit.
+    /// A folder in the marker's place is no marker: an earlier build.sh kept the sources it compiled there, and left
+    /// them, so taking it for one dropped what Lamp knew of the open app at every launch, and no marker could be
+    /// written over it. It goes, and the marker can be written again.
     static func recoverUnfinishedBuild(_ project: LampProject) {
-        guard FileManager.default.fileExists(atPath: buildingURL(project).path) else { return }
+        var isFolder: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: buildingURL(project).path, isDirectory: &isFolder) else { return }
         finishedBuilding(project)
+        if isFolder.boolValue { return }
         forget(project)
         Runtime.forgetBuilt(project)
     }

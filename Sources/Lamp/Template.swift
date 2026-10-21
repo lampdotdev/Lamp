@@ -550,7 +550,7 @@ enum Template {
           [[ "${LAMP_LIVE_COPY:-}" == 1 ]] && exit 0
           # What this build compiles, which is what the app runs once it's installed (LiveReload.markRunning): kept
           # aside, and the record only once the build has worked, or a failed one would name code no app runs.
-          rsync -a --delete "$LIVE/Sources/" "$LIVE/building/"
+          rsync -a --delete "$LIVE/Sources/" "$LIVE/compiling/"
           mkdir -p "$LIVE/xcode"
           rsync -a --delete --exclude DerivedData .lamp/device/ "$LIVE/xcode/device/"
           ln -sfn ../../Assets "$LIVE/Assets"
@@ -563,7 +563,7 @@ enum Template {
         xcodebuild -project "$PROJECT/{{EXE}}.xcodeproj" -scheme "{{EXE}}" -configuration Release -destination "platform=macOS" \\
           -derivedDataPath "$PROJECT/DerivedData" CODE_SIGNING_ALLOWED=NO \\
           DEVELOPMENT_TEAM="$LAMP_TEAM" "OTHER_LDFLAGS=$RESTRICT_FLAGS" "${LIVE_SETTINGS[@]}" build 2>&1
-        if [[ "${LAMP_LIVE:-}" == 1 ]]; then rsync -a --delete "$LIVE/building/" "$LIVE/built/"; fi
+        if [[ "${LAMP_LIVE:-}" == 1 ]]; then rsync -a --delete "$LIVE/compiling/" "$LIVE/built/"; fi
         APP="build/{{EXE}}.app"
         rm -rf "$APP"
         mkdir -p build
@@ -16663,7 +16663,7 @@ enum Template {
       [[ "${LAMP_LIVE_COPY:-}" == 1 ]] && exit 0
       # What this build compiles, which is what the app runs once it's installed (LiveReload.markRunning): kept
       # aside, and the record only once the build has worked, or a failed one would name code no app runs.
-      rsync -a --delete "$LIVE/Sources/" "$LIVE/building/"
+      rsync -a --delete "$LIVE/Sources/" "$LIVE/compiling/"
       FLAGS=(-c debug --package-path "$LIVE" --scratch-path "$LIVE/.build" -Xswiftc -DLAMP_LIVE -Xswiftc -enable-testing -Xlinker -interposable "${RESTRICT[@]}")
     fi
     \(appIntentsSetup(ios: false))
@@ -16672,7 +16672,7 @@ enum Template {
     # binary until the link runs again. Take that binary away once, and it links again with the segment.
     if [ -f "$BIN" ] && ! otool -l "$BIN" 2>/dev/null | grep -qs __RESTRICT; then rm -f "$BIN"; fi
     swift build "${FLAGS[@]}" 2>&1
-    if [[ "${LAMP_LIVE:-}" == 1 ]]; then rsync -a --delete "$LIVE/building/" "$LIVE/built/"; fi
+    if [[ "${LAMP_LIVE:-}" == 1 ]]; then rsync -a --delete "$LIVE/compiling/" "$LIVE/built/"; fi
     APP="build/{{EXE}}.app"
     rm -rf "$APP"
     mkdir -p "$APP/Contents/MacOS"
