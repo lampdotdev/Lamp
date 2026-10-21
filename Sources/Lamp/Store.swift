@@ -1882,8 +1882,6 @@ final class Store: ObservableObject {
         let id = UUID()
         let package: Sharing.Package
         var review: ImportReview?
-        /// Opened during setup and kept until now: the review says so, since it arrives unasked.
-        var waited = false
         /// The app already here that this file is another version of, if any: the choice is then Update or Keep Both.
         var existing: LampProject?
     }
@@ -1927,8 +1925,8 @@ final class Store: ObservableObject {
         WaitingImport.reviewsCanOpen(setupReady: setupLook.isDone && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
     }
 
-    /// Unpacks a shared app and shows its review. `waited`: it was kept from before setup was done.
-    private func review(_ file: URL, waited: Bool = false) {
+    /// Unpacks a shared app and shows its review.
+    private func review(_ file: URL) {
         // The newest request wins: a file opened while an earlier one is still unpacking, or a Cancel
         // meanwhile, makes the earlier result unwanted when it arrives.
         let request = UUID()
@@ -1948,7 +1946,7 @@ final class Store: ObservableObject {
                 return
             }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
-            let pending = PendingImport(package: package, waited: waited, existing: existingCopy(of: package))
+            let pending = PendingImport(package: package, existing: existingCopy(of: package))
             pendingImport = pending
             let review = await Sharing.review(package)
             if pendingImport?.id == pending.id { pendingImport?.review = review }
@@ -1966,7 +1964,7 @@ final class Store: ObservableObject {
     @discardableResult func openWaitingImport() -> Bool {
         guard pendingImport == nil, importRequest == nil else { return true }
         let file = waitingImport.take(setupReady: setupLook.isDone && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
-        if let file { review(file, waited: true) }
+        if let file { review(file) }
         return file != nil
     }
 
