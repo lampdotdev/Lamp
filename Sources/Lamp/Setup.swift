@@ -735,7 +735,10 @@ struct BuildingSettings: View {
                     }
                 }
             }
-            PhoneSigningSection(phoneApps: hasPhoneApps)
+            // A phone in the list needs a team before an app can go on it, so the team is chosen here even
+            // before there is an iPhone app.
+            PhoneSigningSection(phoneApps: hasPhoneApps || store.devices.contains { $0.kind.isPhone })
+            DevicesSection()
         }
         .settingsPane()
         .onChange(of: notify) { Notifier.shared.setBadge(store.unread.count) }
@@ -861,6 +864,60 @@ struct PhoneSigningSection: View {
             let signedIn = Devices.xcodeTeams()
             if let first = signedIn.first, !signedIn.contains(where: { $0.id == team }) { team = first.id }
             else if team.isEmpty, let first = teams.first { team = first.id }
+        }
+    }
+}
+
+/// Every device Lamp knows about, in Building: this Mac, and the iPhones, iPads and Apple Watches it can see,
+/// each by its exact model and software, with where its setup stands and the one thing that takes it further.
+/// Nothing is set up in advance: a device is set up when the person asks, here or when a wish needs it. Where
+/// an app opens is chosen per app under Try On, which lists the same phones.
+struct DevicesSection: View {
+    @EnvironmentObject private var store: Store
+    @AppStorage("appleTeam") private var team = ""
+
+    var body: some View {
+        Section("Your Devices") {
+            ForEach([store.thisMac].compactMap { $0 } + store.devices) { device in
+                row(device)
+            }
+            HStack {
+                Spacer()
+                Button("Look for Devices Again") { store.refreshDevices() }.controlSize(.small)
+            }
+        }
+        .onAppear { store.refreshDevices() }
+    }
+
+    private func row(_ device: Device) -> some View {
+        let setup = device.setup(team: team)
+        return HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: device.kind.symbol).foregroundStyle(.secondary).frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(device.name)
+                Text(device.line).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            switch setup {
+            case .ready:
+                Label("Ready", systemImage: "checkmark.circle.fill").foregroundStyle(.green).labelStyle(.titleAndIcon)
+            case .needs(let step):
+                Label(step, systemImage: "exclamationmark.circle.fill").foregroundStyle(.orange).labelStyle(.titleAndIcon)
+                next(for: device)
+            case .talkOnly:
+                Text(setup.words).foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The one button that takes the device to its next step, where Lamp can do it from here.
+    @ViewBuilder private func next(for device: Device) -> some View {
+        if device.kind.isPhone, !device.paired {
+            Button(store.pairing.contains(device.udid) ? "Pairing…" : "Pair…") { store.pairDevice(device, for: nil) }
+                .controlSize(.small).disabled(store.pairing.contains(device.udid))
+        } else if device.kind.isPhone, !device.developerMode {
+            Button("How…") { PhoneSetup.shared.show(family: device.family ?? .iphone, phone: device.udid) }.controlSize(.small)
         }
     }
 }

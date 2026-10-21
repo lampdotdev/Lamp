@@ -516,6 +516,20 @@ are refused with the reason rather than reported as done. Its list holds the dev
 booted one, and it loses a device's display when the simulator restarts: both are told to the agent as they
 are. `SimulatorLiveTests` runs the driver against a real window when `LAMP_LIVE_UDID` is set.
 
+**The devices Lamp knows** (`Device`, Device.swift): one record for every
+device the person owns, read from the device itself and never guessed by a model: maker and exact model, model id,
+the person's name for it, OS and version, screens, input, the features that change what's built (a Dynamic Island,
+HealthKit), how Lamp reaches it, and where its setup stands (`Device.setup`: ready, or the one next step). This Mac
+fills it from its own hardware and displays (`Device.thisMac`), iPhones, iPads and Apple Watches from Xcode's device
+list (`Devices.list`, `Device.from(devicectl:)`; watches are kept, since their app goes with an iPhone's, and ready
+once an iPhone is). The one list is Settings → Building's Your Devices (`DevicesSection`), each with its model and
+state and the button for its next step; Try On lists the same phones, by model and state, and links there. Nothing
+is set up in advance. The exact device a request is for goes to the agent at the end of the request (`DeviceNote`,
+sent like `AIStatus.brief`: once per conversation and again when it changes) in the shape "iPhone 16 Pro Max, iOS
+27, Dynamic Island" (`Device.forAgent`). A new kind of device is a `Device.Kind`, a reader that fills the record,
+and its own setup steps; the lists and the note read nothing else. Xcode 27 keeps simctl and devicectl in the
+frameworks beside it rather than in its developer folder, which `DeveloperTools.path` allows for.
+
 **On the person's own phone**: Try On also lists the iPhones and iPads the Mac can see (`Devices.list`, through
 `devicectl`): paired ones to choose, and plugged-in ones that haven't trusted the Mac yet, which it offers
 to pair (`Devices.pair`, `devicectl manage pair`, which puts the Trust prompt on the phone) before telling

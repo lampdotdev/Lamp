@@ -6,8 +6,8 @@ import XCTest
 /// device lookup.
 @MainActor
 final class PhoneTryOnNoteTests: XCTestCase {
-    private let phone = Devices.Device(udid: "00008110-TEST", name: "Test iPhone", model: "iPhone 16",
-                                       connected: true, paired: true, developerMode: true)
+    private let phone = Device(id: "00008110-TEST", kind: .iphone, maker: "Apple", model: "iPhone 16", modelID: "iPhone17,3",
+                               name: "Test iPhone", os: "iOS", osVersion: "18.6", reach: .cable)
 
     func testThePromptsSayTheAppCanGoOnTheChosenPhone() {
         for prompt in [Agent.iPhonePrompt(for: .iphone), Agent.universalPrompt(for: .iphone)] {

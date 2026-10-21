@@ -188,8 +188,21 @@ enum DeveloperTools {
         return selected.isEmpty ? "/Library/Developer/CommandLineTools" : selected
     }
 
-    /// The real `tool` (`simctl`, `devicectl`, `xcodebuild`, `git`) in that folder.
-    static func path(_ tool: String, env: [String: String] = [:]) -> String {
-        folder(env: env) + "/usr/bin/" + tool
+    /// The real `tool` (`simctl`, `devicectl`, `xcodebuild`, `git`) in that folder, or in `developer` when given.
+    /// Xcode 27 no longer keeps simctl and devicectl in its own developer folder: they come with the CoreSimulator
+    /// and CoreDevice frameworks it installs beside itself in /Library/Developer, so when a developer folder that
+    /// exists has no copy of one, the framework's is taken.
+    static func path(_ tool: String, in developer: String? = nil, env: [String: String] = [:]) -> String {
+        let folder = developer ?? self.folder(env: env)
+        let own = folder + "/usr/bin/" + tool
+        let fm = FileManager.default
+        guard let framework = frameworkTools[tool], !fm.fileExists(atPath: own), fm.fileExists(atPath: folder + "/usr/bin"),
+              fm.fileExists(atPath: framework) else { return own }
+        return framework
     }
+
+    private static let frameworkTools = [
+        "simctl": "/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Resources/bin/simctl",
+        "devicectl": "/Library/Developer/PrivateFrameworks/CoreDevice.framework/Resources/bin/devicectl",
+    ]
 }

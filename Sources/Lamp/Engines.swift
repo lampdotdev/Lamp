@@ -259,11 +259,12 @@ extension Agent {
     /// agent's own token for this turn (Store.agentTokens), never the app's.
     @MainActor static func run(prompt: String, files: [String], project: LampProject, offered: Set<SetupOffer>,
                                session: String?, token: String) -> AgentRun {
-        // A line on what Lamp remembers, one on what AI the app has and one on the skills that apply to it go
-        // with the request when the conversation needs telling, the same for each engine.
+        // A line on what Lamp remembers, one on what AI the app has, one on the skills that apply to it and one
+        // on the device it's for go with the request when the conversation needs telling, the same for each engine.
         let prompt = prompt + Memory.brief(for: project, engine: Builder.engine, session: session)
             + AIStatus.brief(for: project, engine: Builder.engine, session: session, offered: offered)
             + Skills.brief(for: project, engine: Builder.engine, session: session)
+            + DeviceNote.brief(for: project, engine: Builder.engine, session: session)
             + Agent.undescribed(project)
             + Agent.newApp(project)
             + (LiveReload.eligible(project) ? Agent.liveNote : "")
