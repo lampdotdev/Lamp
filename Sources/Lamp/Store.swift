@@ -4323,6 +4323,7 @@ final class Store: ObservableObject {
                 // the turn ends a little later: once there's something to click, nothing above it moves.
                 if progress[project.id]?.newApp == true { progress[project.id]?.asking = true }
                 turn.asked = true
+                away.questionAsked(project.id)   // no carry-on of Lamp's over a card waiting for its answer
                 saveChat(project)
                 return (200, ["text": Talk.asked])
             }
@@ -5404,7 +5405,7 @@ final class Store: ObservableObject {
         guard !turn.stopped, turn.agent != nil, !turn.look.inProgress, !turn.building, !turn.keptOpen, turn.applying == nil,
               turn.answering == 0, let current = current(project) else { return }
         reloadWhenFree.remove(project.id)
-        guard Runtime.waitsForReload(current) else { return }
+        guard Runtime.waitsForReload(current) else { away.dropped(project.id); return }   // a live change put it in
         turn.reloading = true
         turn.applying = Task { [weak self] in
             defer { turn.applying = nil; turn.reloading = false }
@@ -5668,6 +5669,7 @@ final class Store: ObservableObject {
             Runtime.releaseBuild(project)
             Self.tellReload(project, on: false)
             reloadWhenFree.remove(project.id)
+            away.dropped(project.id)
         }
         setAsideChanges[project.id] = SetAside(fingerprint: fingerprint, crash: "It crashed as the change went into the open app, "
             + "so Lamp set the change aside and opened the version before it again.\n\n" + crash,

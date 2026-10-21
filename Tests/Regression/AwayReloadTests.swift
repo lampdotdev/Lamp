@@ -3,8 +3,8 @@ import XCTest
 
 /// While the person is away Lamp presses a waiting Reload for them and, once the change is in and the agent's turn is
 /// over, carries the agent on. These are the cases a review found going wrong: a Stop undone by a later Reload, a
-/// Reload put off until the turn's end that lost its carry-on, and a later held change never reloaded because the
-/// first one's mark stayed.
+/// carry-on over a question still waiting for its answer, a Reload put off until the turn's end that lost its
+/// carry-on, and a later held change never reloaded because an earlier press's mark stayed.
 final class AwayReloadTests: XCTestCase {
     private let away = AwayReloads.after + 1
 
@@ -60,6 +60,28 @@ final class AwayReloadTests: XCTestCase {
         XCTAssertEqual(reloads.toPress(waiting: ["app"], idle: away + 15), [])
         XCTAssertEqual(reloads.toPress(waiting: ["app"], idle: 5), [])
         XCTAssertEqual(reloads.toPress(waiting: ["app"], idle: away), ["app"])
+    }
+
+    /// The agent asked the person something and the Reload landed before they answered: the card waits for them,
+    /// so the agent isn't carried on over it, and nothing more is pressed for it, until their answer comes.
+    func testAnUnansweredQuestionHoldsTheCarryOn() {
+        var reloads = AwayReloads()
+        XCTAssertEqual(reloads.toPress(waiting: ["app"], idle: away), ["app"])
+        reloads.questionAsked("app")
+        XCTAssertTrue(reloads.landed("app", stillWaits: false))
+        XCTAssertFalse(reloads.carriesOn("app"))
+        XCTAssertEqual(reloads.toPress(waiting: ["app"], idle: away + 15), [])
+        reloads.personAsked("app")
+        XCTAssertTrue(reloads.carriesOn("app"))
+    }
+
+    /// A press whose wait went another way before it ran (a live change put the change in) never lands: once the
+    /// app no longer waits it's let go, so the app's next held change is pressed in the same away stretch.
+    func testAPressWhoseWaitWentAnotherWayIsLetGo() {
+        var reloads = AwayReloads()
+        XCTAssertEqual(reloads.toPress(waiting: ["app"], idle: away), ["app"])
+        XCTAssertEqual(reloads.toPress(waiting: [], idle: away + 15), [])
+        XCTAssertEqual(reloads.toPress(waiting: ["app"], idle: away + 30), ["app"])
     }
 
     /// While the person is at the Mac nothing is pressed.
