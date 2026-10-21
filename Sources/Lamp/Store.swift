@@ -2461,8 +2461,11 @@ final class Store: ObservableObject {
         // its icon, and goes back to waiting, so nobody is told to close an app they can't see.
         let watching = Template.isWidgetOnly(project) && isRunning(project)
         if watching { await quit(project) }
-        // What's built may be a change that crashed the app (`setAside`): it waits until another change replaces it.
-        guard heldInstalls.mayInstall(project.id, running: isRunning(project) || setAsideChanges[project.id] != nil) else { return false }
+        // What's built may be a change that crashed the app (`setAside`), or one whose crash macOS hasn't reported yet
+        // (a watch still on it, `watchAfterReload`): it waits, and goes in when the watch ends with nothing set aside
+        // (`endWatch`) or another change replaces the one that was.
+        guard heldInstalls.mayInstall(project.id, running: isRunning(project) || setAsideChanges[project.id] != nil
+                                      || reloadWatches[project.id] != nil) else { return false }
         // A build that waited goes in now the app is closed: its data is copied first, as `install` does.
         let held = Runtime.holdsBuild(project)
         if held { await DataSnapshots.take(project) }
@@ -2588,6 +2591,7 @@ final class Store: ObservableObject {
         let pointed = asked.compactMap { id in logs[project.id]?.first { $0.id == id }?.pointed }
         let notes = Attachments.note(for: saved) + PointedAt.note(for: pointed) + Versions.note(for: project)
             + (sentAgain ? "" : Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project))
+            + (untoldSetAside(project).map { "\n\nNote from Lamp: a change saved earlier crashed the open app. \($0)\nFix the cause as part of this request." } ?? "")
         turns[project.id]?.request = prompt
         let ran = await runAgent(prompt + notes, files: files, on: project)
         project = current(project) ?? project
@@ -3448,7 +3452,7 @@ final class Store: ObservableObject {
         guard let turn = turns[project.id], !turn.stopped else { return }
         endApprovals(for: project)   // a command waiting for approval counts as denied
         turn.cancel()
-        setAsideChanges[project.id]?.told = true   // no fix starts by itself after Stop (`fixHeldCrash`)
+        setAsideChanges[project.id]?.afterStop = true   // no fix starts by itself after Stop (`fixHeldCrash`)
     }
 
     /// Opens the installed app, or brings it to the front if it's running. Only builds when there's
@@ -5163,6 +5167,9 @@ final class Store: ObservableObject {
     private func watchAfterReload(_ project: LampProject, app: NSRunningApplication, fingerprint: String) -> (token: UUID, task: Task<Void, Never>) {
         let since = Date(), token = UUID()
         reloadWatches[project.id] = (token, nil)
+        // The turn the change went in under: a Stop pressed in it holds however late the report comes, after the
+        // turn has ended or another has begun.
+        let origin = turns[project.id]
         let task = Task { [weak self] in
             while let watch = self?.reloadWatches[project.id], watch.token == token, (watch.until ?? .distantFuture) > Date() {
                 guard app.isTerminated else {
@@ -5176,7 +5183,7 @@ final class Store: ObservableObject {
                     crash = Runtime.crash(of: project, since: since)
                     if crash == nil { try? await Task.sleep(for: .milliseconds(500)) }
                 }
-                if let crash { await self?.setAside(project, crash: crash, fingerprint: fingerprint) }
+                if let crash { await self?.setAside(project, crash: crash, fingerprint: fingerprint, afterStop: origin?.wasStopped == true) }
                 break
             }
             self?.endWatch(project, token)
@@ -5203,8 +5210,11 @@ final class Store: ObservableObject {
     struct SetAside {
         let fingerprint: String
         let crash: String
-        /// The agent has heard of it: from its look, use_app or the turn's end, or Lamp asked for a fix.
+        /// The agent has heard of it: from its look, use_app or the turn's end, a fix Lamp started, or the note on
+        /// the next request (`turn`). Set only once one of those has it.
         var told = false
+        /// Stop was pressed in the turn it crashed under: no fix starts by itself; the next request carries it.
+        var afterStop = false
     }
     private var setAsideChanges: [String: SetAside] = [:]
 
@@ -5218,7 +5228,7 @@ final class Store: ObservableObject {
     /// is installed, and the person is told. The agent hears of it with its next look or use_app, or at the turn's end,
     /// which tries its fix as a crash on launch is (`installNow`); after a turn that never told it, a fix starts
     /// (`fixHeldCrash`). Until it has heard, no save of its is put into the app by itself (`autoApply`).
-    private func setAside(_ project: LampProject, crash: String, fingerprint: String) async {
+    private func setAside(_ project: LampProject, crash: String, fingerprint: String, afterStop: Bool) async {
         guard let project = current(project) else { return }
         // Its whole build, finished or not, isn't what the app is: ended, and nothing of it counts as built or waits to
         // be installed.
@@ -5239,7 +5249,7 @@ final class Store: ObservableObject {
         setAsideChanges[project.id] = SetAside(fingerprint: fingerprint, crash: "It crashed as the change went into the open app, "
             + "so Lamp set the change aside and opened the version before it again.\n\n" + crash,
             // After Stop, nothing more is done for the request, a fix included: the person says what's next.
-            told: turns[project.id]?.wasStopped == true)
+            afterStop: afterStop || turns[project.id]?.wasStopped == true)
         log(project, .error, ErrorMessages.setAside(project.name))
         log(project, .detail, crash)
         if !isRunning(project), FileManager.default.fileExists(atPath: project.installedURL.path) {
@@ -5840,8 +5850,15 @@ final class Store: ObservableObject {
     /// Called as the hold ends, before anything waiting starts: with a request already in line the agent hears of
     /// the crash with that, and the chat only says it crashed.
     private func fixHeldCrash(_ project: LampProject) {
-        // A change set aside that the turn's agent never heard of is fixed the same way.
-        if crashesAfterRelease[project.id] == nil, let aside = untoldSetAside(project) { crashesAfterRelease[project.id] = aside }
+        // A change set aside that the turn's agent never heard of starts a fix, unless Stop was pressed. It counts as
+        // told only when the fix is sent: kept from it (a request in line, Lamp's own fix already tried), it goes with
+        // the next request instead (`turn`), and nothing is put into the app by itself until then (`autoApply`).
+        if crashesAfterRelease[project.id] == nil, let aside = setAsideChanges[project.id], !aside.told {
+            guard !aside.afterStop else { return }
+            setAsideChanges[project.id]?.told = true
+            if !fixCrash(project, detail: aside.crash) { setAsideChanges[project.id]?.told = false }
+            return
+        }
         guard let crash = crashesAfterRelease.removeValue(forKey: project.id) else { return }
         if !fixCrash(project, detail: crash) { log(project, .error, ErrorMessages.crashAfterLaunch(project.name)) }
     }
