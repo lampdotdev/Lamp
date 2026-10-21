@@ -47,7 +47,7 @@ enum Provider {
 
     /// The OpenRouter model used to review shared apps and as the default builder.
     static var model: String {
-        if Builder.engine == .pi, !Builder.piModel.isEmpty { return Builder.piModel }
+        if Builder.engine == .pi, Builder.piProvider == "openrouter", !Builder.piModel.isEmpty { return Builder.piModel }
         return defaultModel
     }
 
