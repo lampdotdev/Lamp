@@ -504,6 +504,12 @@ final class Store: ObservableObject {
         var reloadWhy: String?
         /// A live change took in the one that was waiting for Reload: the agent is told, since it was told to wait.
         var endedReloadWait = false
+        /// The person pressed Reload while the agent worked, and the app reopened with the change that waited
+        /// (`reloadInTurn`): the agent is told at its next look, since it was told the change waits for Reload.
+        var reloadedByPerson = false
+        /// That reopen is under way, as `applying`: a build waits for it rather than ending it, since it's no compile
+        /// of sources the agent has moved on from.
+        var reloading = false
         /// The turn's own looks at the agent's saved files (`autoApply`): the loop that watches for a save, the one
         /// change going in at the moment, which a build waits for, and how many went in since the agent last looked.
         var autoApply: Task<Void, Never>?
@@ -657,7 +663,8 @@ final class Store: ObservableObject {
     }
 
     /// The person pressed Reload, in the app or the chat: the waiting change goes in, by closing the app the usual way
-    /// and opening it again where it was. Pressed while a turn has the app, it's done when the turn ends.
+    /// and opening it again where it was. Pressed while a request's agent works, it's done by that turn as soon as the
+    /// agent is between steps (`reloadInTurn`); while any other work has the app, when that's done.
     func reloadWaiting(_ id: String) {
         guard let project = projects.first(where: { $0.id == id }), Runtime.waitsForReload(project) else {
             reloadWhenFree.remove(id)
@@ -674,8 +681,9 @@ final class Store: ObservableObject {
             finish(project)
         }
     }
-    /// Reloads pressed while something else had the app (the agent's turn): each goes in when it's done, and the chat
-    /// says so meanwhile (`ReloadLine.queued`), since nothing else would seem to happen.
+    /// Reloads pressed while something else had the app: the agent's turn puts each in between its steps
+    /// (`reloadInTurn`), other work when it's done, and the chat says so meanwhile (`ReloadLine.queued`), since
+    /// nothing else would seem to happen.
     @Published private(set) var reloadWhenFree: Set<String> = []
 
     /// Whether reopening the app now would close it under the person: a request's turn, the Mac app open, and not a
@@ -4764,7 +4772,7 @@ final class Store: ObservableObject {
         let owner = turns[project.id]
         owner?.building = true
         defer { owner?.building = false }
-        if let owner, let applying = owner.applying, owner.applyingSources != Runtime.fingerprint(project) { applying.cancel() }
+        if let owner, let applying = owner.applying, !owner.reloading, owner.applyingSources != Runtime.fingerprint(project) { applying.cancel() }
         await owner?.applying?.value
         await owner?.warming?.value
         log(project, .status, "Building…")
@@ -4935,6 +4943,11 @@ final class Store: ObservableObject {
             var seen = "", tried = "", seenAt = Date()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
+                // Reload pressed while the agent works goes in here, between its steps, inside this turn.
+                if let self, !Task.isCancelled, reloadWhenFree.contains(project.id), turns[project.id] === turn {
+                    await reloadInTurn(project, turn)
+                    continue
+                }
                 guard let self, !Task.isCancelled, turns[project.id] === turn, !turn.stopped, turn.agent != nil,
                       !turn.look.inProgress, !turn.building, !turn.keptOpen, turn.applying == nil,
                       let current = current(project), LiveReload.eligible(current),
@@ -4983,6 +4996,30 @@ final class Store: ObservableObject {
                 await turn.applying?.value
             }
         }
+    }
+
+    /// Reload pressed while a request's agent works on the app (`reloadWaiting`): the change held for it goes in as soon
+    /// as the agent is between steps (no look, build, change going in or call into Lamp under way), by the turn that
+    /// owns the app, so the person sees the held pass within seconds rather than when the request is done. The agent
+    /// hears it with its next look (`Turn.reloadedByPerson`), since it was told the change waits for Reload.
+    private func reloadInTurn(_ project: LampProject, _ turn: Turn) async {
+        guard !turn.stopped, turn.agent != nil, !turn.look.inProgress, !turn.building, !turn.keptOpen, turn.applying == nil,
+              turn.answering == 0, let current = current(project) else { return }
+        reloadWhenFree.remove(project.id)
+        guard Runtime.waitsForReload(current) else { return }
+        turn.reloading = true
+        turn.applying = Task { [weak self] in
+            defer { turn.applying = nil; turn.reloading = false }
+            guard let self else { return }
+            // The Mac copy's change, wherever Try On points now (an app for both may have moved it to a phone since).
+            var mac = current
+            mac.chosen = .mac
+            _ = await install(mac, inFront: true, fresh: true, reload: true, saysReady: false)
+            guard turns[project.id] === turn, !Runtime.waitsForReload(current) else { return }
+            turn.reloadedByPerson = true
+            log(current, .status, "Reopened \(current.name) with the change")
+        }
+        await turn.applying?.value
     }
 
     /// The quick path: refresh the live copy only (build.sh with LAMP_LIVE_COPY), and when the change can go in,
@@ -5171,16 +5208,18 @@ final class Store: ObservableObject {
     /// `fresh` closes an open Mac app and opens it again even when the change could go into it as it runs.
     /// `early` returns as soon as the app has shown itself rather than once its first seconds have passed: for a look,
     /// which tells of a death after that with its next answer (`lateCrash`).
+    /// `saysReady` false keeps "… is ready" out of the chat, for a reopen in the middle of a request (`reloadInTurn`),
+    /// whose end says what the request came to.
     private func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false, reload: Bool = false,
-                         early: Bool = false) async -> String? {
-        let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early)
+                         early: Bool = false, saysReady: Bool = true) async -> String? {
+        let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early, saysReady: saysReady)
         // Whatever didn't put the change into the open app (it waits for Reload, was kept open, reopened, failed)
         // lets the glow go; a reopened copy gets the light once its window is up (`AppTransition.landWhenShown`).
         AppTransition.end(project)
         return crash
     }
 
-    private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool, early: Bool) async -> String? {
+    private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool, early: Bool, saysReady: Bool) async -> String? {
         guard exists(project) else { return nil }
         // The turn this install belongs to, taken before the icon wait: a Stop during it can end the turn
         // and start the next one's, which must not inherit this launch.
@@ -5323,7 +5362,7 @@ final class Store: ObservableObject {
                 noteOpened(true, for: project)
                 owner?.outcomes.append(wasOpen ? .reopened : .opened)
                 owner?.shown.append(Date())
-                if inFront { log(project, .status, "\(project.name) is ready") }
+                if inFront, saysReady { log(project, .status, "\(project.name) is ready") }
                 if glowed { AppTransition.landWhenShown(project, app: app) }
             }
         } catch {
@@ -7320,7 +7359,9 @@ final class Store: ObservableObject {
     /// What a look says while a change waits for the person to press Reload (`awaitReload`).
     private static let reloadNoteStart = "The app built, but this change can't go into it while it runs"
     /// What a look says while a change waits for the person to press Reload (`awaitReload`): with why it couldn't
-    /// go in, and where there's a known shape that would have, what that is, so the next change can take it.
+    /// go in, and where there's a known shape that would have, what that is, so the next change can take it. An
+    /// agent working in passes (`Agent.lookRules`) goes on with the rest rather than stopping, so the note says how
+    /// to go on without claiming what's held is on screen: the person reads its progress lines while nothing changes.
     private func reloadNote(for project: LampProject) -> String {
         var why = ""
         if let reason = turns[project.id]?.reloadWhy {
@@ -7329,9 +7370,13 @@ final class Store: ObservableObject {
         }
         return """
             \(Self.reloadNoteStart): it has to be reopened, and that's the person's to do.\(why) \
-            The app and the chat show them a Reload button, and Lamp doesn't reopen it for them. What's on screen \
-            isn't your change yet, so don't look or use the app again in this request. Finish, and tell them in a \
-            sentence to press Reload to see it.
+            The app and the chat show them a Reload button, and Lamp doesn't reopen it for them; once they press it, \
+            your next look says so. Until then what's on screen isn't your change, and nothing you do after it shows \
+            either: don't use the app, and a look only builds your code and says whether it compiles. \
+            If passes of this request are left, go on with them; they're held with this one and show when the person \
+            presses Reload. Never say a held change is in or on screen: a progress line says what you built and that \
+            it shows after Reload ("Taproom look built, Reload to see it"). With nothing left, finish, and tell them \
+            in a sentence to press Reload to see it.
             """
     }
 
@@ -7555,6 +7600,10 @@ final class Store: ObservableObject {
             // Since this copy was asked to open, not since the look began: the copy it replaced pictures its window as it quits.
             since = max(launched, turn.launch?.opened ?? launched)
             screenshots = await Runtime.screenshots(of: project, since: since)
+        }
+        if turn.reloadedByPerson {
+            turn.reloadedByPerson = false
+            note += " The person pressed Reload while you worked, so the change that waited for it is on screen now; nothing waits for Reload."
         }
         var lead = ""
         if let prop, !prop.isEmpty, !screenshots.isEmpty {

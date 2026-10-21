@@ -711,8 +711,8 @@ struct StatusGroup: View {
 /// one in the app's title bar does.
 enum ReloadLine {
     static func text(_ name: String) -> String { "Reload \(name) to see this change." }
-    /// Reload was pressed while the agent was still at work on the app: it goes in once that's done.
-    static func queued(_ name: String) -> String { "\(name) reloads when this request is done." }
+    /// Reload was pressed while the agent was at work on the app: it goes in as soon as the agent is between steps.
+    static func queued(_ name: String) -> String { "\(name) reloads in a moment." }
 
     /// Its own view, watching Lamp: the row it's in is drawn again only when its line changes, and a Reload waiting
     /// for the request changes no line.
