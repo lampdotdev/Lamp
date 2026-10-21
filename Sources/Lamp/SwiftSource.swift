@@ -566,10 +566,13 @@ extension SwiftSource {
         /// asks the class's initializers about anything else).
         struct Names {
             var classes = Set<String>(), protocols = Set<String>()
+            /// The app's own views, by their simple name: what's handed one lives in its value, made again at each draw.
+            var views = Set<String>()
         }
     }
 
     private static let walkTypeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|actor)_decl\b[^"]*"([^"]+)".*? access=(\w+)"#)
+    private static let walkViewDecl = try! NSRegularExpression(pattern: #"^\s*\(struct_decl\b[^"]*"(\w+)".*? inherits="([^"]*)""#)
     private static let walkGenericDecl = try! NSRegularExpression(pattern: #"^\s*\(\w+_decl\b[^"]*"[^"]+" "<([^"]*)>""#)
     private static let walkInherits = try! NSRegularExpression(pattern: #" inherits="([^"]*)""#)
     private static let walkExtensionDecl = try! NSRegularExpression(pattern: #"^(\s*)\(extension_decl\b[^"]*"([^"]+)""#)
@@ -580,10 +583,14 @@ extension SwiftSource {
     static func names(inDump dump: String) -> Walk.Names {
         var names = Walk.Names()
         for raw in lines(dump) {
-            guard let node = node(raw), node.opens("class_decl", "protocol") else { continue }
+            guard let node = node(raw), node.opens("class_decl", "protocol", "struct_decl") else { continue }
             let line = String(raw), range = NSRange(line.startIndex..., in: line)
             if node.opens("class_decl"), let m = walkClassName.firstMatch(in: line, range: range) { names.classes.insert(String(line[Range(m.range(at: 1), in: line)!])) }
             if node.opens("protocol"), let m = walkProtocolDecl.firstMatch(in: line, range: range) { names.protocols.insert(String(line[Range(m.range(at: 3), in: line)!])) }
+            if node.opens("struct_decl"), let m = walkViewDecl.firstMatch(in: line, range: range),
+               line[Range(m.range(at: 2), in: line)!].split(separator: ",").contains(where: { ["View", "SwiftUI.View"].contains($0.trimmingCharacters(in: .whitespaces)) }) {
+                names.views.insert(String(line[Range(m.range(at: 1), in: line)!]))
+            }
         }
         return names
     }

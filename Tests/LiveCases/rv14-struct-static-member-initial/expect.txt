@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Style.offset, Style.tint)
+== run
+before: Card
+RELOAD 1 (whole): ok
+after1 (want in: .zero and .blue are the same every time, as a literal is): Card (0.0, 0.0) true

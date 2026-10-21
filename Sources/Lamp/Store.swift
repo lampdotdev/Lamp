@@ -4711,11 +4711,14 @@ final class Store: ObservableObject {
         await awaitLiveBuild(of: project)
         liveBuildFailed.remove(project.id)
         if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1"; LiveSlots.expireGiveUps(project, appOpen: !macCopies(of: project).isEmpty) }   // a change can go into the open app (LiveReload)
+        // What else goes into the app as this build starts, kept with what it compiled once it has built.
+        let inputs = env["LAMP_LIVE"] == "1" ? LiveReload.inputs(project) : nil
         let status = await Self.buildSparing(command, for: project, env: env,
                                              started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output = $0 }
         turns[project.id]?.build = nil
         guard exists(project) else { return "The app was deleted." }
         guard status != 0 else {
+            if let inputs { LiveReload.noteBuilt(project, inputs: inputs) }
             Runtime.markBuilt(project, from: fingerprint)
             BuildStamp.write(for: project)   // deploy signs the app afterwards
             return nil

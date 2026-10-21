@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Gave Store.pageSize its new value)
+== run
+before: 100
+RELOAD 1 (whole): ok
+after1 (want 400, the constant's new value read where it was read before): 400

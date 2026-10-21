@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: a cases=2
+RELOAD 1 (whole): ok
+after1 (want the new case in: the chip's closure is made again at the next draw, as a Button's is): c cases=3

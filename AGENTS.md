@@ -990,19 +990,20 @@ declaration in the live copy into a computed property kept in a spare, found by 
 source ranges (`SwiftSource.declarations`, from the same `-dump-ast` as the layout), so however it's written (with
 attributes on lines above, in a `var a = 1, b = 2` list, in a type written on one line) it's replaced exactly, with
 no reading of the text (a view's `$name` becomes a binding to its box, in the view
-and in every extension of it), and the change is compiled again and checked as usual. Being stored, a spare is observed like any property, so
+and in every extension of it, but not in a type declared inside it, whose `$name` is its own); a view's `let` with a
+literal becomes a computed property returning it, since it never changes and is no parameter of the initializer, and the change is compiled again and checked as usual. Being stored, a spare is observed like any property, so
 views redraw. A value set is read back as set, nil included: a spare tells "set to nil" from "never set" by holding an entry at
 all (`LampSpare.has`, a class's non-nil `LampSpare?`, the state box's stored entry), since a nil boxed as `Any`
 doesn't cast back. A class's starting value that isn't a literal (`.now`, a call) is worked out on the first read and kept;
 a struct can't keep one from a read, so its new property needs a starting value that comes out the same every time (a
-literal (by the compiler's word, however it's spelt: `"a\nb"`, `0xFF`), an empty collection, or one of the app's own
-enum's cases, judged again each time the property is put back;
+literal (by the compiler's word, however it's spelt: `"a\nb"`, `0xFF`), an empty collection, one of the app's own
+enum's cases, or a constant of the system's named one by one (`.zero`, `.blue`: `LiveSlots.steadyMembers`), judged again each time the property is put back;
 anything else, or a different one later, reopens the app, since the spare compares a value that never set the
 property by the starting value it was taken in with); a `@Published` property in a class whose places aren't published (conforming
 in an extension) reopens it too. `@State` is read in both forms the compiler has given it: `_name: State<T>`, and
 `__name: LazyState<T>` where it is a macro. Cases added at the end of an enum whose cases carry nothing need no
 spare: its values keep their size (`LiveSlots.casesAdded`). Only while nothing the app keeps holds it but as itself or
-in a plain collection (an array, set or dictionary through any depth): Swift uses the numbers after the last case for `nil` in an optional of it and for other enums'
+in a plain collection (an array, set or dictionary through any depth) or a view's state or binding: Swift uses the numbers after the last case for `nil` in an optional of it and for other enums'
 cases that carry it, which a new case would take over. That's looked for in every stored field, static and global of
 the new code (`LiveReload.enumsHeld`), before the change goes in; a property added while the app was open keeps its value in a spare as any value, under the enum's metadata, which
 stays the app's, so it's held to the same plain forms as a field; and a value type
@@ -1020,22 +1021,27 @@ so the sources the open app runs, and those of every change that went in since i
 `LiveReload.recordOldCode`: what an earlier change's code started may still be running), are read for a switch over the
 enum, or an interpolation of it, in an escaping closure that outlives a draw (one made outside a view's body or a
 member returning a view, or one a body hands to anything but SwiftUI, a Timer's, a dispatch queue's, the app's own, or
-sets into a property or gives as a property's value; a Button's action is made again at the next draw), an async
+sets into a property or gives as a property's value; a Button's action is made again at the next draw, and so is
+one handed to a view of the app's own, which lives in that view's value), an async
 closure or an async function (`LiveReload.enumsMetByOldCode`), and the app reopens when there is one. The enum's description and value witnesses stay the change's
 own (`LiveReload.compile(keep:)`, renamed `$lampown` so `LampLive` binds every later change to them), since the app's
 don't know the new cases; its metadata stays the app's, so a value boxed before the change and one boxed after are the
 same type to a cast, and the app's metadata is pointed at the change's description and value witnesses (`LampLive.load`,
 two pointers), so the app's field records, the runtime's asks (printing, Codable, hashing, a cast) and code compiled
-before still read the new cases. A constant made from the enum (`Mood.allCases`) is remade like one
-whose text changed (`LiveSlots.constants(naming:)`). What old code may still be doing is read more widely than a
+before still read the new cases. A constant made from the enum (`Mood.allCases`), or by code that names it (`countMoods()`), is remade like one whose
+text changed (`LiveSlots.constants(naming:)`); a stored static, global or lazy property made so reopens the app, since
+the open app made it once (`LiveSlots.stored(naming:)`). SwiftUI keeps the last value a few of its modifiers were given
+(`onChange(of:)`, `task(id:)`, `animation(_:value:)`, `id`, `tag`), made by the open app's code: an optional of the
+enum given to one reopens the app, since its nil would read as the new case. What old code may still be doing is read more widely than a
 switch or an interpolation: any value of the enum's type, or of a type holding it by value (`LiveReload.holders`),
 that running code has in hand reopens the app, since an old frame reads it by the layout it was compiled with (an
 optional of it, a comparison, a hash, a cast); a class is no such holder (its field keeps its layout, and old code
 reading it is caught as a use of the enum itself), nor a view, whose value lives in SwiftUI's graph, nor a key path
 passed as a function (`.map(\.name)`), an escaping closure the compiler makes for that call alone. A generic enum
 reopens the app when it grows: the runtime lays its values out for each type it's used at, and there is no one
-metadata to point at the change's; a private enum's symbols carry the compiler's discriminator, which
-`LiveObject.isKept` allows for. What a grown enum is checked against (the layout with statics and globals, `held`)
+metadata to point at the change's; a private enum's symbols carry the compiler's discriminator, which `LiveObject.isKept` allows for, and where the
+compiler writes a word of the name by its place (`Pet` and `PetMood` are `3Pet0A4MoodO`) the enum's own descriptor
+gives its spelling, found by demangling (`LiveObject.demangledType`). What a grown enum is checked against (the layout with statics and globals, `held`)
 and what old code does come from the analyses already made (`Analyses.Entry`), not a further run of the compiler.
 A property an explicit `CodingKeys` names stays a field (Codable needs it stored),
 so it reopens the app, as does one set in an initializer the type writes itself (`SwiftSource.Declarations.assigned`:
@@ -1055,7 +1061,7 @@ for the app to set aside (`LampSpare.retired`: what it left neither reads nor co
 brought back gets a place of its own (a class's under a new index, a struct's or view's under its key, the type and
 name numbered by `Slot.generation`, `LiveSlots.spareKey`); what `fit` planned (the places, the constants remade) is written down only once the change is in
 (`LiveSlots.commit`), so a change refused leaves no record of places it never took: the whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built` once it has built (a failed
-build's sources would name code no app runs), and that's what the open app runs
+build's sources would name code no app runs), and what else went into it as it started (`LiveReload.noteBuilt`), and that's what the open app runs
 once it's installed (`LiveReload.markRunning(from:)`). A spare never reaches saved data: `LampSpare` encodes as nothing, and a computed property isn't encoded. Nor
 a description: a struct given a spare is made CustomReflectable in its own header (`LampSpare.mirror`, from the
 runtime's own reading of its fields), so `"\(item)"` and `dump` leave the spare out and show what it keeps after the
@@ -1069,7 +1075,8 @@ again now and then at the cost of one failed build when it still breaks.
 A constant (a static or global `let`) whose value changes would otherwise not change at all: the open app made its
 value once and keeps it in storage the new code goes on reading. So each constant's value is part of the kept layout
 as a digest (`SwiftSource.constantEntries`, not compared as what a type holds), and one that changed is rewritten in
-the live copy into a computed property that makes the new value once and keeps it (`LampConstants`, by name and
+the live copy into a computed property that makes the new value once and keeps it (`nonisolated` in a type, as the
+`let` was, so readers outside a `@MainActor` type still compile) (`LampConstants`, by name and
 value; `LiveSlots.changedConstants`, `rewriteConstant`). The first time a constant is rewritten every file is
 compiled again, so every reader goes through it; it stays rewritten until the app is installed again. One that can
 hold an object needs the app reopened instead (it waits for Reload, as above), since a second object would split the

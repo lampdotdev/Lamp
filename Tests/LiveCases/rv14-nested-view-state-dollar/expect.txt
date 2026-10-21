@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Outer.text)
+== run
+before: v0
+RELOAD 1 (whole): ok
+after1 (want in: Outer gains its own text state, the nested view keeps its own): v1
