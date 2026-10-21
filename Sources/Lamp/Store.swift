@@ -4963,6 +4963,10 @@ final class Store: ObservableObject {
         // The change went in before the build (`reloadBeforeBuilding`): only the word that it did is left to say.
         // Closed since, the app is installed the usual way, from the whole build once it's done.
         if reloadedBeforeBuild.remove(project.id) != nil {
+            // The glow this build began has nothing more to show: the change went in before it (by itself, as the
+            // agent saved it, when this is a look's build of the same code), and the light crossed then. Without
+            // this it was renewed until the turn ended.
+            AppTransition.end(project)
             if let app = macCopies(of: project).first {
                 if inFront {
                     app.activate()
