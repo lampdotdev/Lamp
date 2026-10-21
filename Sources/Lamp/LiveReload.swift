@@ -403,10 +403,16 @@ enum LiveReload {
         let conformedNow = conformed(now)
         // What a conformance brings with it: the compiler records a protocol a conformance needs (Hashable's Equatable,
         // an app's protocol's own) as conformed to whether it's written or not.
+        // The system's implications only for the system's protocol: an app's own `Hashable` brings what it inherits.
+        let ownProtocols = Set(now.compactMap { entry -> String? in
+            guard entry.hasPrefix("protocol "), let tab = entry.firstIndex(of: "\t") else { return nil }
+            return bare(String(entry[entry.index(entry.startIndex, offsetBy: 9)..<tab]))
+        })
         func implied(_ written: Set<String>) -> Set<String> {
             var all = written, pending = Array(written)
             while let next = pending.popLast() {
-                for more in (LiveSlots.impliedConformances[next] ?? Set<String>()).union(conformedNow[next] ?? Set<String>()) where all.insert(more).inserted { pending.append(more) }
+                let system = ownProtocols.contains(next) ? Set<String>() : LiveSlots.impliedConformances[next] ?? []
+                for more in system.union(conformedNow[next] ?? []) where all.insert(more).inserted { pending.append(more) }
             }
             return all
         }

@@ -897,7 +897,7 @@ private one returns its type to callers anywhere; a private type is listed with 
 `LiveReload.placeGroup`, since its mangled name carries it and one moved to another file is another type at run time (so is a type, a
 static or a global made private or no longer private, or a private static or global moved to another file, which
 reopens the app too, as does a conformance taken away, whose record the open app keeps, unless what it still conforms
-to brings it, as Hashable brings Equatable),
+to brings it, as the system's Hashable brings Equatable),
 and keyed with its file throughout the layout and the declarations (`Row@A.swift`, each part of a nested one; `LiveReload.bare`
 gives the name back where the code names it, as a field's type or a use in old code does, and `readable` says "Row in
 A.swift"), since two files may each declare a private type of one name and the two are two types with their own fields;
@@ -1020,9 +1020,8 @@ Left out is what a spare would break: SwiftData and Core Data models, `Sendable`
 so, or made so in an extension, which the scan reports), a class under a class of the same simple name (whose spare
 places would clash), the App
 and its scenes, property wrappers, App Intents, OptionSets and RawRepresentable structs (declared so, or made so in an extension, which the copy step's scan reports), whose `init(rawValue:)` is the memberwise one, BitwiseCopyable structs, which can hold no spare, and every struct in an
-app any of whose own files lays memory out by hand (vertex data, a value's own bytes; the struct read as bytes may be
-declared in another; a Data's bytes read in a closure are no struct's; Lamp's own files always do and are told apart
-by name, `-own=`). When
+app any of whose own files lays memory out by hand (vertex data, a value's or an array's own bytes; the struct read as
+bytes may be declared in another; Lamp's own files always do and are told apart by name, `-own=`). When
 the only difference in layout is new stored properties in such types, `LiveSlots.fit` rewrites each one-line
 declaration in the live copy into a computed property kept in a spare, found by the compiler's own
 source ranges (`SwiftSource.declarations`, from the same `-dump-ast` as the layout), so however it's written (with

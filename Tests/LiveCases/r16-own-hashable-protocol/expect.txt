@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Tag no longer conforms to Equatable, and the open app's record that it does stays)
+== run
+before: shown x equatable=true
+RELOAD 1: REOPEN Tag no longer conforms to Equatable, and the open app's record that it does stays
+after1 (want a reopen, or SHOWN x equatable=false: the app's own Hashable brings no Equatable): shown x equatable=true
+before: SHOWN x equatable=false
+RELOAD 1: in the restart
+after1 (want a reopen, or SHOWN x equatable=false: the app's own Hashable brings no Equatable): SHOWN x equatable=false
