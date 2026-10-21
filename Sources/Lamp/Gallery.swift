@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + transitionEntries
+    static let entries: [Entry] = chatEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + transitionEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -354,6 +354,60 @@ enum Gallery {
             LogLine(kind: .summary, text: "Worked for 2m 40s · $0.21"),
         ], group: "Progress"),
     ]
+
+    // MARK: Shared wish
+
+    /// The review a shared wish opens with (`ImportReviewCard`), as the sheet draws it: its own width whichever
+    /// width is picked, since it's only ever a sheet over Lamp's window, never in the wand's panel.
+    private static let importEntries: [Entry] = [
+        review("Checking", nil),
+        review("Looks safe", ImportReview(summary: "Keeps a list of the plants on your balcony and reminds you when each needs water.",
+                                          capabilities: ["Saves your plants and when you last watered them"], concerns: [],
+                                          risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true,
+                                          detected: found("Connects to the internet")),
+               app: "Plant Care", description: "Never forget to water the basil again."),
+        review("Partly checked", ImportReview(
+            summary: "A 3D driving game that builds real streets and buildings from map data for any place you search, starting in San Francisco, with cars, people, trains and street furniture.",
+            capabilities: ["Downloads maps of the places you drive", "Remembers the places you searched"],
+            concerns: [ImportReview.tooLarge], risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false),
+            asked: true, detected: found("Uses the camera or microphone", "Connects to the internet"), partial: true),
+               description: "A driving game through real streets anywhere in the world, starting in San Francisco."),
+        review("Looks risky", ImportReview(
+            summary: "Shows a daily quote, and also reads your browser's saved data and sends it to a website.",
+            capabilities: ["Sends what it reads to a website"],
+            concerns: ["Reads your browser's saved logins", "Sends them to a website it doesn't name", "Its description leaves this out"],
+            risk: .high, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true,
+            detected: found("Touches sensitive files (SSH keys, browser data, keychains)", "Connects to the internet")),
+               app: "Morning Quote", description: "A quote to start each day."),
+        review("Not checked by AI", ImportReview(summary: "", capabilities: [], concerns: [], asked: true,
+                                                 detected: found("Runs other programs or shell commands", "Deletes files"),
+                                                 note: "The check didn't run: OpenRouter said the key has no credit left.")),
+        review("Checked on this Mac", ImportReview(summary: "Tracks how long you spend on each project and totals it by week.",
+                                                   capabilities: [], concerns: [], risk: .low,
+                                                   reviewer: ImportReview.Reviewer(name: "Qwen 3", onThisMac: true), asked: true,
+                                                   detected: found("Listens for keyboard shortcuts in every app")),
+               app: "Project Hours"),
+        review("Already here", ImportReview(summary: "Keeps a list of the plants on your balcony and reminds you when each needs water.",
+                                            capabilities: [], concerns: [], risk: .low,
+                                            reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true, detected: []),
+               app: "Plant Care", existing: "Balcony Plants"),
+    ]
+
+    private static func found(_ labels: String...) -> [Sharing.Capability] {
+        labels.compactMap { label in Sharing.checklist.first { $0.label == label } }
+    }
+
+    private static func review(_ name: String, _ review: ImportReview?, app: String = "Drive Anywhere", description: String? = nil,
+                               existing: String? = nil) -> Entry {
+        Entry(group: "Shared wish", name: name) {
+            AnyView(ImportReviewCard(name: app, description: description,
+                                     icon: nil, review: review, existing: existing, cancel: {}, open: {}, update: {})
+                .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+                .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+                .fixedSize())
+        }
+    }
 
     // MARK: Transition
 

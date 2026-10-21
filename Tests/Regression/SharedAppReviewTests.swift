@@ -331,4 +331,17 @@ final class SharedAppReviewTests: XCTestCase {
         let kept = "می\u{200C}خواهم 🏴\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F} “Notes” «x» co\u{00AD}op"
         XCTAssertEqual(try opened(named: kept).name, kept)
     }
+    /// Things to consider: nothing when Lamp vouches for the app, red only for what should stop someone (a
+    /// check that never answered among it), said even when what the code does outranks it in the verdict.
+    func testThingsToConsider() {
+        XCTAssertEqual(ImportReviewCard.considerations(review(.low, by: cloud)), [])
+        var risky = review(.high, by: cloud)
+        risky.concerns = ["Sends your notes to a website"]
+        XCTAssertEqual(ImportReviewCard.considerations(risky).map(\.weight), [.warning, .warning])
+        var unanswered = review(nil, detected: [.powerful])
+        unanswered.note = "No credit left."
+        let said = ImportReviewCard.considerations(unanswered)
+        XCTAssertEqual(said.map(\.weight), [.caution, .warning])
+        XCTAssertEqual(said.last?.detail, "No credit left.")
+    }
 }
