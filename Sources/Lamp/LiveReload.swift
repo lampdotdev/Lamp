@@ -42,7 +42,13 @@ enum LiveReload {
         if from != nil { forgetLibraries(project); AppFolder.remove(processURL(project), in: project.dir) }
         try? AppFolder.copy(from ?? sources(project), to: running(project), in: project.dir)
         // Installed from a build, what that build was made from; else what's there now.
-        let built = from == nil ? nil : AppFile.text(builtInputs(project), in: project)
+        let built = from == nil ? nil : from == installedURL(project) ? AppFile.text(installedInputs(project), in: project)
+            : AppFile.text(builtInputs(project), in: project)
+        // And kept as what's installed, for a copy opened later outside Lamp (`reopenedOutside`).
+        if let from, from != installedURL(project) {
+            try? AppFolder.copy(from, to: installedURL(project), in: project.dir)
+            try? AppFolder.write(built ?? inputs(project), to: installedInputs(project), in: project.dir)
+        }
         try? AppFolder.write(built ?? inputs(project), to: runningInputs(project), in: project.dir)
         // What it now runs was most often read already, as the live copy a change was tried with (`Analyses`): its
         // layout is kept, so the next change doesn't have the compiler print it again.
@@ -56,6 +62,20 @@ enum LiveReload {
     }
 
     private static func runningInputs(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-inputs.txt") }
+    /// What the installed app was built from, and what else went into it: a copy opened outside Lamp runs that.
+    private static func installedURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("installed") }
+    private static func installedInputs(_ project: LampProject) -> URL { folder(project).appendingPathComponent("installed-inputs.txt") }
+
+    /// The open copy was opened since the changes went in (by the Dock, at login, while Lamp was closed): it runs
+    /// what was installed, so that's what the next change is judged against, rather than nothing. Without a record
+    /// of what was installed, nothing is known of it, and the change reopens it.
+    static func reopenedOutside(_ project: LampProject) {
+        guard AppFile.text(installedInputs(project), in: project) != nil,
+              FileManager.default.fileExists(atPath: installedURL(project).path) else { forget(project); return }
+        AppFolder.remove(oldCodeURL(project), in: project.dir)
+        LiveSlots.clear(project)
+        markRunning(project, from: installedURL(project))
+    }
     private static func builtInputs(_ project: LampProject) -> URL { folder(project).appendingPathComponent("built-inputs.txt") }
 
     /// A live build has built: what else went into it (`inputs`, as it started), for when it's installed, since the
@@ -83,6 +103,8 @@ enum LiveReload {
 
     static func forget(_ project: LampProject) {
         AppFolder.remove(running(project), in: project.dir)
+        AppFolder.remove(installedURL(project), in: project.dir)
+        AppFolder.remove(installedInputs(project), in: project.dir)
         AppFolder.remove(oldCodeURL(project), in: project.dir)
         AppFolder.remove(processURL(project), in: project.dir)
         LiveSlots.clear(project)
@@ -216,6 +238,16 @@ enum LiveReload {
 
     /// A private type is keyed with its file (`Row@A.swift`, each part of a nested one), since two files may each
     /// declare one of the name and the two are two types at run time; this is the key as Swift names the type.
+    /// A type's key as the person reads it: a type declared inside a function by its name and the function
+    /// (`Answer (inside Shelf.surprise())`), without its file or the closures between.
+    static func spoken(_ key: String) -> String {
+        let plain = bare(key)
+        guard let end = plain.range(of: ").", options: .backwards) else { return plain }
+        let scope = String(plain[..<end.lowerBound]) + ")"
+        let owner = scope.replacingOccurrences(of: #"\.\([^()]*\)(?: async)?(?: throws)? -> [^.]*"#, with: "", options: .regularExpression)
+        return "\(plain[end.upperBound...]) (inside \(owner))"
+    }
+
     static func bare(_ key: String) -> String { key.replacingOccurrences(of: #"@[^\t]*?\.swift"#, with: "", options: .regularExpression) }
     /// Layout entries with every type named bare, the groups' (an alias's owner, a shape's type, a conformance's)
     /// included, for what compares them with types as the code names them (a field's type, a use in old code);
@@ -2340,7 +2372,10 @@ enum LiveSlots {
                     }
                 }
                 // A property an explicit CodingKeys names has to be stored for Codable to be made: it stays a field.
-                if cases[type + ".CodingKeys"]?.contains(name) == true { return .refused("\(type).\(name) is one of \(type)'s coding keys, so Codable needs it stored") }
+                // Written or made by the compiler: moved into a spare, it would drop out of what's encoded and decoded.
+                if cases[type + ".CodingKeys"]?.contains(name) == true {
+                    return .refused("\(LiveReload.spoken(type)) is Codable and gained \(name), which has to be stored to be encoded and decoded")
+                }
                 // What a computed property kept in a spare can't do: observers, `lazy`, a weak or unowned reference,
                 // or being set in an initializer the type writes, before the stored properties are all set.
                 guard let variable = declarations.variables[type + "\t" + name] else { return .refused(nil) }
@@ -2453,6 +2488,13 @@ enum LiveSlots {
                 let made = edit.constant.map { rewriteConstant($0, in: original, declarations: declarations, rewritten: Set(constants), layout: bareLayout) }
                     ?? rewrite(declarations.bindings[edit.binding], items: edit.items, in: original, declarations: declarations, cases: cases)
                 guard let (range, text) = made else {
+                    // A constant that can hold an object isn't made again: a second object would split the app's state.
+                    if let key = edit.constant, let variable = declarations.constants[key] {
+                        var seen = Set<String>()
+                        if holdsObject(variable.type, classes: declarations.classes, layout: bareLayout, seen: &seen) {
+                            return .refused("\(displayName(key)) would be made again for its new value, and its \(variable.type) can hold an object, which there would then be two of")
+                        }
+                    }
                     // A class's spare places take the class's actor, which a property written `nonisolated` can't read.
                     if edit.constant == nil, let item = edit.items.first, item.slot.holder ?? .object == .object,
                        let start = original.offset(declarations.bindings[edit.binding].start), isNonisolated(before: start, in: original) {

@@ -104,7 +104,7 @@ enum LiveObject {
         return out
     }
 
-    private struct Section { var name: String; var offset: Int; var size: Int; var reloff: Int; var nreloc: Int; var index: Int }
+    private struct Section { var name: String; var offset: Int; var size: Int; var reloff: Int; var nreloc: Int; var index: Int; var header: Int }
 
     static func rewrite(_ bytes: inout [UInt8], kept: [String], matched: inout Set<String>) -> String? {
         func u32(_ at: Int) -> UInt32 { bytes.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: at, as: UInt32.self) } }
@@ -131,7 +131,7 @@ enum LiveObject {
                     // is kept as data the linker leaves alone, and `LampLive` attaches them once the change fits.
                     if name == "__objc_catlist" { bytes.replaceSubrange(section..<(section + 16), with: Array("__lamp_catlist".utf8) + [0, 0]) }
                     sections.append(Section(name: segment + "," + name, offset: Int(u32(section + 48)), size: Int(u64(section + 40)),
-                                            reloff: Int(u32(section + 56)), nreloc: Int(u32(section + 60)), index: sections.count + 1))
+                                            reloff: Int(u32(section + 56)), nreloc: Int(u32(section + 60)), index: sections.count + 1, header: section))
                     section += MemoryLayout<section_64>.size
                 }
             case UInt32(LC_SYMTAB):
@@ -196,6 +196,37 @@ enum LiveObject {
             names.append(name)
         }
         guard !renamed.isEmpty else { return nil }
+        // A type's metadata is sometimes referred to as its full metadata plus the offset of its address point
+        // (`PreferencesVMf + 16`, passed to a generic call), where the type's own symbol (`PreferencesVN`) is: a load
+        // through the table can't carry an offset, so such a reference names that symbol instead, with none.
+        func value(_ index: Int) -> (section: UInt8, value: UInt64) { (bytes[symtab.symoff + index * 16 + 5], u64(symtab.symoff + index * 16 + 8)) }
+        var defined: [String: Int] = [:]
+        for index in renamed.keys { let (section, at) = value(index); defined["\(section):\(at)"] = index }
+        for s in sections.indices where sections[s].nreloc > 1 {
+            var entries: [(UInt32, UInt32)] = (0..<sections[s].nreloc).map { (u32(sections[s].reloff + $0 * 8), u32(sections[s].reloff + $0 * 8 + 4)) }
+            var r = 0, changed = false
+            while r + 1 < entries.count {
+                let (addend, next) = (entries[r].1, entries[r + 1].1)
+                let kind = Int(next >> 28), symbol = Int(next & 0xFFFFFF)
+                if Int(addend >> 28) == Int(ARM64_RELOC_ADDEND.rawValue), next & (1 << 27) != 0, renamed[symbol] != nil,
+                   kind == Int(ARM64_RELOC_PAGE21.rawValue) || kind == Int(ARM64_RELOC_PAGEOFF12.rawValue) {
+                    // The offset is a signed 24-bit number.
+                    let offset = Int64(Int32(bitPattern: (addend & 0xFFFFFF) << 8) >> 8)
+                    let (section, at) = value(symbol)
+                    if let point = defined["\(section):\(UInt64(Int64(at) + offset))"] {
+                        entries[r + 1].1 = UInt32(point) | (next & 0xFF00_0000)
+                        entries.remove(at: r)
+                        changed = true
+                        continue
+                    }
+                }
+                r += 1
+            }
+            guard changed else { continue }
+            for (n, entry) in entries.enumerated() { put32(entry.0, sections[s].reloff + n * 8); put32(entry.1, sections[s].reloff + n * 8 + 4) }
+            sections[s].nreloc = entries.count
+            put32(UInt32(entries.count), sections[s].header + 60)
+        }
         // Every reference from code becomes a load through the table. Each pair is an `adrp` and an `add` to the
         // same symbol; the `add` becomes `ldr`, and the linker fills in the table's entry.
         for section in sections where section.nreloc > 0 {

@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Look.softShade; Gave Look.current, Look.taproom their new value)
+== run
+before: accent=2
+RELOAD 1 (whole): ok
+after1 (want "accent=2 soft=true" in place, or a reopen saying why): accent=2 soft=true
