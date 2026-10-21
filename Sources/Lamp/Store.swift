@@ -7349,8 +7349,8 @@ final class Store: ObservableObject {
         let gateway = Gateway { request in await Store.shared.handleAI(request) }
         do {
             try gateway.start()
-            gateway.setLocalNetwork(projects.contains { $0.platform.hasIOS && $0.device != nil })
             self.gateway = gateway
+            syncLocalNetwork()
         } catch {
             NSLog("Lamp AI gateway failed to start: \(error)")
         }
@@ -7359,7 +7359,7 @@ final class Store: ObservableObject {
     /// The gateway answers on the local network only while an app is set to open on the person's own phone or
     /// tablet, Apple's or Android's: kept in step with the list of apps (Try On, deletion, rename, reload).
     func syncLocalNetwork() {
-        gateway?.setLocalNetwork(projects.contains { ($0.platform.hasIOS || $0.platform == .android) && $0.device != nil })
+        gateway?.setLocalNetwork(projects.contains { ($0.platform.hasIOS || $0.platform.hasAndroid) && $0.device != nil })
     }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {

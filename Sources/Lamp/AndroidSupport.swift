@@ -87,6 +87,10 @@ extension Template {
     import android.util.Base64
     import android.util.Log
     import kotlinx.coroutines.CancellationException
+    import kotlinx.coroutines.CoroutineStart
+    import kotlinx.coroutines.awaitCancellation
+    import kotlinx.coroutines.ensureActive
+    import kotlinx.coroutines.launch
     import kotlinx.coroutines.Dispatchers
     import kotlinx.coroutines.async
     import kotlinx.coroutines.awaitAll
@@ -580,7 +584,7 @@ extension Template {
             else -> try {
                 @Suppress("UNCHECKED_CAST")
                 val serializer = serializer(state.javaClass) as KSerializer<Any>
-                JSONTokener(Json.encodeToString(serializer, state)).nextValue()
+                JSONTokener(stateJson.encodeToString(serializer, state)).nextValue()
             } catch (e: Exception) {
                 throw Failure("Pass text, a map or list, or a @Serializable value to a decision.")
             }
@@ -605,6 +609,8 @@ extension Template {
         // Reaching Lamp
 
         private val lenient = Json { ignoreUnknownKeys = true; isLenient = true; coerceInputValues = true }
+        /** What a decision is about, every property included: one left at its default still means something. */
+        private val stateJson = Json { encodeDefaults = true }
 
         /**
          * One request to Lamp's gateway. It's plain HTTP on the Mac's own network, which Android's HTTP clients refuse
@@ -624,6 +630,7 @@ extension Template {
                     val (status, reply) = try {
                         exchange(route, path, token, bytes, timeoutMillis)
                     } catch (e: IOException) {
+                        ensureActive()   // a socket closed by cancelling the call isn't a way to the Mac that failed
                         continue
                     }
                     preferred = route.address
@@ -642,8 +649,19 @@ extension Template {
         /** The way to the Mac that answered last, tried first. */
         @Volatile private var preferred: String? = null
 
-        private fun exchange(route: LampInstall.Route, path: String, token: String, body: ByteArray, timeoutMillis: Int): Pair<Int, JSONObject> {
-            Socket().use { socket ->
+        /** A read on a socket doesn't stop when its coroutine is cancelled, so cancelling closes the socket, which ends it. */
+        private suspend fun exchange(route: LampInstall.Route, path: String, token: String, body: ByteArray, timeoutMillis: Int): Pair<Int, JSONObject> = coroutineScope {
+            val socket = Socket()
+            val closer = launch(start = CoroutineStart.UNDISPATCHED) { try { awaitCancellation() } finally { socket.close() } }
+            try {
+                withContext(Dispatchers.IO) { exchange(socket, route, path, token, body, timeoutMillis) }
+            } finally {
+                closer.cancel()
+            }
+        }
+
+        private fun exchange(socket: Socket, route: LampInstall.Route, path: String, token: String, body: ByteArray, timeoutMillis: Int): Pair<Int, JSONObject> {
+            socket.use {
                 socket.connect(InetSocketAddress(route.address, route.port), 4000)
                 socket.soTimeout = timeoutMillis
                 val head = "POST $path HTTP/1.1\r\nHost: ${route.host}\r\nAuthorization: Bearer $token\r\n" +
@@ -751,6 +769,8 @@ extension Template {
 
         private val lock = ReentrantLock()
         private val unreadable = HashSet<String>()
+        /** Statements that failed so far, so a transaction holding one rolls back rather than keep half its work. */
+        private var failures = 0
         private var backedUp = false
 
         @PublishedApi internal val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; coerceInputValues = true }
@@ -892,6 +912,7 @@ extension Template {
                 db.execSQL(sql, args.map(::bindable).toTypedArray())
                 true
             } catch (e: Exception) {
+                failures += 1
                 problem("couldn't run \"$sql\": ${e.message}")
                 false
             }
@@ -937,12 +958,13 @@ extension Template {
             }
         }
 
-        /** Runs the block in one transaction: all of it is saved, or none of it. */
+        /** Runs the block in one transaction: all of it is saved, or none of it, as when a statement in it fails. */
         fun <R> transaction(block: () -> R): R = lock.withLock {
             backUpOnce()
+            val before = failures
             db.beginTransaction()
             try {
-                block().also { db.setTransactionSuccessful() }
+                block().also { if (failures == before) db.setTransactionSuccessful() }
             } finally {
                 db.endTransaction()
             }
