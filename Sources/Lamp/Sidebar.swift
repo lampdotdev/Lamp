@@ -238,7 +238,7 @@ final class SidebarServer {
                                  draft: draft.text, draftVersion: draftVersions[project.id] ?? 0,
                                  attachments: draft.attachments.map { Self.attachment($0) })
         state.workingActivitySince = progress?.activitySince
-        state.workingSteps = progress == nil ? nil : Self.liveSteps(log, details: details, doing: progress?.activity,
+        state.workingSteps = progress == nil ? nil : Self.liveSteps(log, project: project, details: details, doing: progress?.activity,
                                                                                  looking: progress?.looking == true)
         state.pointed = draft.pointed.map { Self.pointed($0, canChooseAgain: store.canPoint(in: project)) }
         let canSendNow = store.canSendNow(in: project)
@@ -429,9 +429,9 @@ final class SidebarServer {
     }
 
     /// The steps of the turn still going, for the line that says what it's doing, as Lamp's window shows them.
-    static func liveSteps(_ log: [LogLine], details: Bool, doing: String? = nil, looking: Bool = false) -> [SidebarLine]? {
+    static func liveSteps(_ log: [LogLine], project: LampProject, details: Bool, doing: String? = nil, looking: Bool = false) -> [SidebarLine]? {
         guard !details else { return nil }
-        let steps = ChatItem.live(LogLine.visible(log, details: false), doing: doing, looking: looking).steps
+        let steps = ChatItem.live(LogLine.visible(log, details: false), dir: project.dir, doing: doing, looking: looking).steps
         return steps.isEmpty ? nil : stepLines(steps)
     }
 
@@ -447,7 +447,7 @@ final class SidebarServer {
         let latestRequest = lines.last { $0.kind == .user }?.id
         let shown = Array(lines[start...])
         // While the turn goes on, its steps since it last said something are in the line that says what it's doing (`liveSteps`).
-        let items = ChatItem.items(progressShown ? (details ? Transcript.withoutStepInProgress(shown) : ChatItem.live(shown).shown) : shown,
+        let items = ChatItem.items(progressShown ? (details ? Transcript.withoutStepInProgress(shown) : ChatItem.live(shown, dir: dir).shown) : shown,
                                    gather: !details)
         var out: [SidebarLine] = []
         for (index, item) in items.enumerated() {

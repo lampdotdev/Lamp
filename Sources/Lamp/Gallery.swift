@@ -128,7 +128,7 @@ enum Gallery {
                         progress.activitySince = progress.started
                         return progress
                     }()
-                    ActivityRow(progress: progress, lines: lines).padding(.top, 12)
+                    ActivityRow(progress: progress, lines: lines, dir: URL(fileURLWithPath: "/nonexistent")).padding(.top, 12)
                 }
                 if undo { ChatLook.UndoChange {}.padding(.top, 12) }
             })

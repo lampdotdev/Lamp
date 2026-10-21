@@ -226,4 +226,21 @@ final class WorkedForTests: XCTestCase {
         XCTAssertEqual(shape, ["go", "2 steps:Looking around,Reading the shelf", "First, the look.", "statuses:Painting",
                                "Reload", "Worked for 9 s:Checking it builds", "Done."])
     }
+
+    /// A Reload line that's spent (the change went in) isn't shown, so it can't split the turn: the steps on either side
+    /// of it are one stretch, and every step is in exactly one place, in the chat or in the live line. Each chat's two
+    /// halves once read the turn with and without that line, and a step before it went missing from both.
+    @MainActor func testASpentReloadDoesntHideTheStepsBeforeIt() {
+        let project = LampProject(id: "spent-reload", name: "Shelf", exe: "Shelf", dir: URL(fileURLWithPath: "/tmp/spent-reload"))
+        let log = [LogLine(kind: .user, text: "go"), LogLine(kind: .agent, text: "First, the look."),
+                   LogLine(kind: .status, text: "Ran: ls", said: "Step A"), LogLine(kind: .reload, text: ""),
+                   LogLine(kind: .status, text: "Ran: pwd", said: "Step B")]
+        let chat = SidebarServer.lines(log, project: project, busy: true, progressShown: true).compactMap(\.said)
+        let live = (SidebarServer.liveSteps(log, project: project, details: false, doing: Activity.thinking) ?? []).compactMap(\.said)
+        XCTAssertEqual((chat + live).sorted(), ["Step A", "Step B"])
+        // Lamp's window splits it the same way: what its live line opens to and what its transcript leaves out agree.
+        let partition = ChatItem.live(log, dir: project.dir, doing: Activity.thinking)
+        XCTAssertEqual(partition.steps.compactMap(\.said), live)
+        XCTAssertFalse(partition.shown.contains { $0.said != nil })
+    }
 }

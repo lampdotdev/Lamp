@@ -292,6 +292,14 @@ enum ChatItem: Identifiable {
         return (Array(lines[..<latest]), steps)
     }
 
+    /// The same split of the chat as it's shown: without the lines that aren't (a spent Reload, an offer with nothing
+    /// left to offer). Every place that draws a turn going on takes both halves from here: the transcript its `shown`,
+    /// the live line its `steps`. Split over different lines, a line one half drops and the other keeps would divide
+    /// the turn in two places, and the steps between them would be in neither.
+    @MainActor static func live(_ lines: [LogLine], dir: URL, doing: String? = nil, looking: Bool = false) -> (shown: [LogLine], steps: [LogLine]) {
+        live(Transcript.withoutSpentOffers(lines, dir: dir), doing: doing, looking: looking)
+    }
+
     /// Whether `step` is the one the turn is still on: nothing came after it but Lamp's own stages of it, and the line
     /// says its words, or Lamp is still looking at the app for the agent (the line then says the look's stages:
     /// "Building…", "Opening…", and the last step is the look, in whatever words it was given). Any other words are
@@ -439,7 +447,7 @@ struct Transcript: View {
         // Answers clicked on a card are shown by the card, folded where it was: not again as a message.
         let shown = lines
         // While the turn goes on, its steps since it last said something are in the one line that says what it's doing.
-        let items = ChatItem.items(progressShown ? (details ? Self.withoutStepInProgress(shown) : ChatItem.live(shown).shown) : shown,
+        let items = ChatItem.items(progressShown ? (details ? Self.withoutStepInProgress(shown) : ChatItem.live(shown, dir: dir).shown) : shown,
                                    gather: !details)
         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
             let isLast = index == items.count - 1
