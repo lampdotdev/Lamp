@@ -2,8 +2,8 @@ import AppKit
 import CryptoKit
 import SwiftUI
 
-/// The open app's windows glow at their edges while Lamp builds a change for it, and a band of light crosses them
-/// as it goes in (`LampTransition` in LampSupport.swift, which draws it). Lamp is the only one who asks: each
+/// Smoke curls up from the bottom of the open app's windows while Lamp builds a change for it, and a band of white
+/// whooshes up across them as it goes in (`LampTransition` in LampSupport.swift, which draws it). Lamp is the only one who asks: each
 /// request is signed with the app's token, over its phase, an id and the time, so no other process can start it
 /// or play one again, and the app's own code has no way to.
 ///
