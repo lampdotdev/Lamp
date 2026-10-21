@@ -9,7 +9,8 @@ final class CodexSandboxTests: XCTestCase {
 
     private var codex: String? {
         let given = ProcessInfo.processInfo.environment["LAMP_TEST_CODEX"]
-        return [given, "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex", "/opt/homebrew/bin/codex"]
+        return [given, "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+                "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex", "/opt/homebrew/bin/codex"]
             .compactMap { $0 }.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 

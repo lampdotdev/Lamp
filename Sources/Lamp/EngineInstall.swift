@@ -109,7 +109,9 @@ enum EngineInstall {
     }
 
     /// Copies that come with the desktop apps: the Claude app keeps Claude Code in its support folder (one
-    /// folder per version), and the ChatGPT app ships Codex inside its bundle.
+    /// folder per version), and the ChatGPT app ships Codex inside its bundle: at first as `codex-cli/bin/codex`,
+    /// and since October 2026 as an app of its own there, `codex-cli/CodexCLI.app`. Both are listed, since
+    /// `ToolLocator` takes whichever is there (the newest when both are).
     private static func desktopCopies(of engine: Engine) -> [String] {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser.path
@@ -124,8 +126,10 @@ enum EngineInstall {
                 }
             }
         case .codex:
-            return ["/Applications/ChatGPT.app", home + "/Applications/ChatGPT.app"]
-                .map { $0 + "/Contents/Resources/codex-cli/bin/codex" }
+            return ["/Applications/ChatGPT.app", home + "/Applications/ChatGPT.app"].flatMap {
+                [$0 + "/Contents/Resources/codex-cli/bin/codex",
+                 $0 + "/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"]
+            }
         }
     }
 
