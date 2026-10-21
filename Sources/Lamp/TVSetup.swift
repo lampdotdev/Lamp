@@ -6,7 +6,7 @@ import SwiftUI
 /// connection, and Samsung's permission for this Mac's apps (a sign-in, once). LG: Developer Mode with its key server
 /// on, and the passphrase it shows. What asked for the setup (Play) goes on once it's done.
 @MainActor
-final class TVSetup: ObservableObject {
+final class TVSetup: NSObject, ObservableObject, NSWindowDelegate {
     static let shared = TVSetup()
 
     @Published private(set) var record: TVs.Record?
@@ -15,6 +15,9 @@ final class TVSetup: ObservableObject {
     @Published var passphrase = ""
     private var window: NSWindow?
     private var waiting: (() -> Void)?
+    /// Which TV the window is for now: work started for another (a check, a connection, a sign-in) that ends after
+    /// the person moved on is dropped, so its result can't stand for this TV or resume its Play.
+    private var selection = UUID()
 
     enum Step: CaseIterable { case developerMode, connected, permission }
 
@@ -37,6 +40,7 @@ final class TVSetup: ObservableObject {
     var ready: Bool { next == nil && record != nil }
 
     func show(_ id: String, then: (() -> Void)? = nil) {
+        if record?.id != id || working == nil { selection = UUID() }
         record = TVs.record(id)
         waiting = then
         problem = nil
@@ -55,7 +59,9 @@ final class TVSetup: ObservableObject {
     /// Asks the TV again where it stands (its developer mode is read off its own API).
     func refresh() async {
         guard let current = record else { return }
+        let ticket = selection
         let found = current.isSamsung ? await TVs.samsung(at: current.address) : current
+        guard ticket == selection else { return }
         guard var updated = found else { problem = "\(current.name) isn't answering on the network. Turn it on, then Check Again."; return }
         updated.id = current.id
         updated.duid = current.duid ?? TVs.kept().first { $0.id == current.id }?.duid
@@ -72,25 +78,34 @@ final class TVSetup: ObservableObject {
         case (true, .developerMode):
             Task { await refresh() }
         case (true, .connected):
-            run("Connecting to \(record.name)…") { self.record = try await TVs.connectSamsung(record) }
+            run("Connecting to \(record.name)…") { try await TVs.connectSamsung(record) }
         case (true, .permission):
             guard let duid = record.duid else { return }
-            run("Waiting for you to sign in to Samsung in your browser…") { try await TizenSigning.signInAndCertify(duid: duid) }
+            run("Waiting for you to sign in to Samsung in your browser…") { try await TizenSigning.signInAndCertify(duid: duid); return nil }
         case (false, _):
             let code = passphrase.trimmingCharacters(in: .whitespaces)
             guard code.count >= 4 else { problem = "Enter the passphrase the Developer Mode app shows on the TV."; return }
-            run("Connecting to \(record.name)…") { self.record = try await WebOS.connect(record, passphrase: code) }
+            run("Connecting to \(record.name)…") { try await WebOS.connect(record, passphrase: code) }
         }
     }
 
-    private func run(_ doing: String, _ work: @escaping () async throws -> Void) {
+    /// Runs a step's work; what it comes back with stands for the TV only while the window is still on that TV.
+    private func run(_ doing: String, _ work: @escaping () async throws -> TVs.Record?) {
         working = doing
+        let ticket = selection
         Task {
-            do { try await work() } catch { problem = error.localizedDescription }
+            var failed = false
+            do {
+                let updated = try await work()
+                if ticket == selection, let updated { record = updated }
+            } catch {
+                failed = true
+                if ticket == selection { problem = error.localizedDescription }
+            }
             working = nil
             objectWillChange.send()
             Store.shared.refreshDevices()
-            if ready { finish() }
+            if ticket == selection, !failed, ready { finish() }
         }
     }
 
@@ -105,6 +120,12 @@ final class TVSetup: ObservableObject {
         window?.close()
     }
 
+    /// Closed with its own button or the title bar's: what was waiting for this TV (Play) doesn't go ahead later.
+    func windowWillClose(_ notification: Notification) {
+        waiting = nil
+        selection = UUID()
+    }
+
     private func present() {
         if window == nil {
             let content = NSHostingController(rootView: TVSetupView(model: self))
@@ -112,6 +133,7 @@ final class TVSetup: ObservableObject {
             let window = NSWindow(contentViewController: content)
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false
+            window.delegate = self
             window.center()
             self.window = window
         }

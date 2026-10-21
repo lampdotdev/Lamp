@@ -17,6 +17,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKNavigationDelegate, N
 
     static func isOpen(_ project: LampProject) -> Bool { open[project.id]?.window.isVisible == true }
     static var openIDs: [String] { open.filter { $0.value.window.isVisible }.map(\.key) }
+    static func window(_ project: LampProject) -> NSWindow? { open[project.id]?.window }
 
     static func close(_ project: LampProject) {
         open[project.id]?.window.close()

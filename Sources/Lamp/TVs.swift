@@ -457,15 +457,19 @@ enum WebOS {
               String(decoding: data, as: UTF8.self).contains("PRIVATE KEY") else {
             throw TVs.Failure(message: "\(record.name) didn't hand out its key. In the Developer Mode app on the TV, turn Key Server on, then try again.")
         }
-        try data.write(to: key, options: .atomic)
-        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: key.path)
-        let unlock = await Subprocess.run("/usr/bin/ssh-keygen", ["-p", "-P", passphrase, "-N", "", "-f", key.path], timeout: 30)
+        // The key is tried before it's kept: one that doesn't let Lamp in mustn't stand for a TV that's set up.
+        let staged = key.deletingLastPathComponent().appendingPathComponent(".staging-\(UUID().uuidString).key")
+        defer { try? fm.removeItem(at: staged) }
+        try data.write(to: staged, options: .atomic)
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: staged.path)
+        let unlock = await Subprocess.run("/usr/bin/ssh-keygen", ["-p", "-P", passphrase, "-N", "", "-f", staged.path], timeout: 30)
         guard unlock.ok else {
-            try? fm.removeItem(at: key)
             throw TVs.Failure(message: "That passphrase didn't open the TV's key. It's the six letters and digits the Developer Mode app shows.")
         }
         var updated = record
-        let version = try await ssh(record, "cat /var/run/nyx/os_info.json 2>/dev/null || echo '{}'")
+        let version = try await ssh(record, "cat /var/run/nyx/os_info.json 2>/dev/null || echo '{}'", key: staged)
+        if fm.fileExists(atPath: key.path) { try fm.removeItem(at: key) }
+        try fm.moveItem(at: staged, to: key)
         if let json = try? JSONSerialization.jsonObject(with: Data(version.utf8)) as? [String: Any] {
             updated.osVersion = (json["webos_release"] as? String) ?? (json["core_os_release"] as? String) ?? ""
         }
@@ -474,15 +478,15 @@ enum WebOS {
         return updated
     }
 
-    private static func sshOptions(_ record: TVs.Record) -> [String] {
-        ["-i", keyURL(record.id).path, "-p", "9922", "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+    private static func sshOptions(_ record: TVs.Record, key: URL? = nil) -> [String] {
+        ["-i", (key ?? keyURL(record.id)).path, "-p", "9922", "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
          "-o", "UserKnownHostsFile=\(knownHosts.path)", "-o", "StrictHostKeyChecking=accept-new",
          "-o", "HostKeyAlgorithms=+ssh-rsa", "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa"]
     }
 
     @discardableResult
-    static func ssh(_ record: TVs.Record, _ command: String, timeout: TimeInterval = 60) async throws -> String {
-        let result = await Subprocess.run("/usr/bin/ssh", sshOptions(record) + ["prisoner@\(record.address)", command], mergeErrors: false, timeout: timeout)
+    static func ssh(_ record: TVs.Record, _ command: String, key: URL? = nil, timeout: TimeInterval = 60) async throws -> String {
+        let result = await Subprocess.run("/usr/bin/ssh", sshOptions(record, key: key) + ["prisoner@\(record.address)", command], mergeErrors: false, timeout: timeout)
         guard result.ok else { throw TVs.Failure(message: "\(record.name) didn't answer: \(result.errors.trimmed.isEmpty ? "it may have left developer mode" : result.errors.trimmed)") }
         return result.output
     }

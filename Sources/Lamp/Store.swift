@@ -4438,8 +4438,11 @@ final class Store: ObservableObject {
         if ownLanguage(kind) != ownLanguage(current.platform), changed.scaffolded {
             try? Template.fill(changed)
         }
+        // Lamp's own script is what marks a folder as a TV app (a version restored later reads its kind off it), so it
+        // goes with the kind, before the next version is saved.
+        if current.platform == .tv, kind != .tv { AppFolder.remove(changed.dir.appendingPathComponent(TVTemplate.supportFile), in: changed.dir) }
         let from = current.platform == .android ? "the Kotlin in app/" : current.platform == .tv ? "the web code in Web/" : "the Swift in Sources/"
-        let leftover = current.platform == .android ? "app/ and the Gradle files" : current.platform == .tv ? "Web/ (but Web/lamp.js, which Lamp removes)" : "Sources/, Package.swift and the other Swift-only files"
+        let leftover = current.platform == .android ? "app/ and the Gradle files" : current.platform == .tv ? "the rest of Web/" : "Sources/, Package.swift and the other Swift-only files"
         let rewrite = ownLanguage(kind) == ownLanguage(current.platform) ? ""
             : kind == .android ? "Write the app again in Kotlin and Jetpack Compose under app/ (the scaffold is there), reading \(from) for what it does, then delete \(leftover) with delete_file. "
             : kind == .tv ? "Write the app again as a TV app in Web/ (the scaffold is there), reading \(from) for what it does, then delete \(leftover) with delete_file. "
@@ -5911,14 +5914,26 @@ final class Store: ObservableObject {
     private func useOnTV(_ project: LampProject, actions: [[String: Any]], json: String) async -> (Int, [String: Any]) {
         guard TVPreview.isOpen(project) else { return (200, ["text": "The app isn't open. Call look_at_app first: it opens the app in the TV preview."]) }
         guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        if owner.tookOver { return (200, ["text": Self.tookOverNote]) }
         guard let data = json.data(using: .utf8), let decoded = try? JSONDecoder().decode([Simulator.Driver.Action].self, from: data) else {
             return (400, ["error": "use_app needs a list of actions."])
         }
+        // In plain sight, with Stop and Esc, and the person's own click or key in the preview taking it back.
+        let trial = Handover(label: "\(Self.lampName) is trying it on the TV", lampWindow: TVPreview.window(project))
+        if let window = TVPreview.window(project) { trial.show(window: CGWindowID(window.windowNumber)) }
+        defer { trial.end() }
         let report = await TVPreview.perform(decoded, on: project) { [weak self] in
             guard let self else { return false }
-            return exists(project) && turns[project.id] === owner && !owner.stopped && TVPreview.isOpen(project)
+            return exists(project) && turns[project.id] === owner && !owner.stopped && !trial.tookOver && TVPreview.isOpen(project)
         }
         var text = "What happened:\n\(report)"
+        if trial.tookOver {
+            if !owner.tookOver {
+                owner.tookOver = true
+                log(project, .status, Self.stoppedByYou)
+            }
+            return (200, ["text": text + "\n\n" + Self.tookOverNote])
+        }
         if Runtime.sourcesChanged(project) {
             text += "\n\nThis is the app as last opened: it doesn't have the changes you've made to the code since. Call look_at_app to open them."
         }
