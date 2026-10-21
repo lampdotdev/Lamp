@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (MoodRow uses Mood in code that may still be running (a timer, a task, an observer), which doesn't know the new cases)
+== run
+before: a cases=2
+RELOAD 1: REOPEN MoodRow uses Mood in code that may still be running (a timer, a task, an observer), which doesn't know the new cases
+after1 (want a reopen: the chip's initializer may keep its closure anywhere, a model's handler or a timer): a cases=2
+before: a cases=3
+RELOAD 1: in the restart
+after1 (want a reopen: the chip's initializer may keep its closure anywhere, a model's handler or a timer): c cases=3

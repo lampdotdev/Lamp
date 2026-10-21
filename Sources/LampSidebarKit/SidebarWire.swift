@@ -6,7 +6,7 @@ import Foundation
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
     /// What this side reads and writes; see `SidebarCommand.hello`.
-    public static let version = 7
+    public static let version = 9
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -43,6 +43,11 @@ public struct SidebarState: Codable, Equatable {
     public var attachments: [SidebarAttachment]
     // Optional, like everything added since the first sidebar: a sidebar talking to a Lamp from before these
     // were sent still reads its chat.
+    /// When `working` began, for how its words change as the wait goes on (`Activity.words`).
+    public var workingActivitySince: Date?
+    /// The steps of the turn still going, which the line saying what it's doing opens to: they aren't lines of
+    /// their own while it goes on.
+    public var workingSteps: [SidebarLine]?
     /// Messages waiting for the current change to finish.
     public var queued: [SidebarQueued]?
     /// The first request is waiting for Apple's tools to install, not for a turn.
@@ -107,6 +112,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var gap: Double
     /// A status step still going, with its spinner.
     public var running: Bool
+    /// For a command the agent ran: what it said the command was for, its name in the chat (`RanCommand`).
+    public var said: String?
     /// A request's pictures and files.
     public var attachments: [SidebarAttachment]?
     /// An agent's message that may still be growing.
@@ -121,6 +128,10 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     /// Goes up when the progress changed in Lamp's window, so the sidebar takes it up; its own edits come back
     /// with the same number and are left alone, so an echo of an older one never undoes a newer one.
     public var progressVersion: Int?
+    /// Answers clicked on it that wait in line (`AskWaiting`): the waiting message, to take back, and whether it
+    /// waits for setup.
+    public var takeBack: UUID?
+    public var waitingForSetup: Bool?
     /// What a request made as Lamp's window draws it.
     public var result: TalkCard.Result?
     /// A receipt for a save of Lamp's notes (its title is `text`): the lines added and removed, whether it was
@@ -137,6 +148,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var done: Bool?
     public var button: String?
     public var disabled: Bool?
+    /// An action line's button is the one thing to do next (Reload): drawn in the accent colour.
+    public var prominent: Bool?
     /// A request's buttons: going back to how the app was around it, and taking it back to change it.
     public var canGoBack: Bool?
     public var canSendAgain: Bool?
@@ -296,12 +309,19 @@ public struct SidebarApproval: Codable, Equatable {
     public var title: String
     public var command: String
     public var explanation: ChatLook.Explanation?
+    /// What the person asked for in this turn, to weigh the step against.
+    public var request: String?
+    /// Why Lamp is asking, in plain words.
+    public var whyAsked: String?
 
-    public init(id: UUID, title: String, command: String, explanation: ChatLook.Explanation?) {
+    public init(id: UUID, title: String, command: String, explanation: ChatLook.Explanation?, request: String? = nil,
+                whyAsked: String? = nil) {
         self.id = id
         self.title = title
         self.command = command
         self.explanation = explanation
+        self.request = request
+        self.whyAsked = whyAsked
     }
 }
 

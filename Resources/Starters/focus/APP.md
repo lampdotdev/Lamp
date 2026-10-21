@@ -1,4 +1,6 @@
 Kind: companion
+Look: a Pomodoro, so tomato red for focus and sage for breaks (`Palette.swift`), a cup for breaks and the tomato
+timer icon. A timer for something else (workouts, practice) gets its own colours, symbols and icon.
 
 # Focus
 

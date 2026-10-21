@@ -5,13 +5,11 @@ import SwiftUI
 struct ShelfView: View {
     @EnvironmentObject var shelf: Shelf
     @ObservedObject private var labels = LabelFinder.shared
-    @ObservedObject private var artist = Illustrator.shared
 
     private struct Plank: Identifiable {
         var id: String
         var title: String?
         var bottles: [Bottle]
-        var gap: Gap?
         var retired = false
         var dim = false
     }
@@ -22,21 +20,18 @@ struct ShelfView: View {
         let groups = Dictionary(grouping: shelf.active, by: \.flavor)
         for family in FlavorFamily.allCases {
             let bottles = (groups[family] ?? []).sorted { $0.heat < $1.heat }
-            let gap = shelf.taste.gaps.first { $0.family == family.rawValue }
-            guard !bottles.isEmpty || gap != nil else { continue }
-            // The ghost takes a spot on the family's last plank.
-            let slots = bottles.count + (gap == nil ? 0 : 1)
+            guard !bottles.isEmpty else { continue }
+            let slots = bottles.count
             let count = max(1, Int((Double(slots) / Double(perPlank)).rounded(.up)))
             for i in 0..<count {
                 let chunk = Array(bottles.dropFirst(i * perPlank).prefix(perPlank))
-                result.append(Plank(id: "\(family.rawValue)-\(i)", title: i == 0 ? family.title : nil, bottles: chunk,
-                                    gap: i == count - 1 ? gap : nil, dim: bottles.isEmpty))
+                result.append(Plank(id: "\(family.rawValue)-\(i)", title: i == 0 ? family.title : nil, bottles: chunk))
             }
         }
         let retired = shelf.retired
         // Retired bottles are shorter but just as wide, so they fit as many to a plank as the others.
         for i in stride(from: 0, to: retired.count, by: perPlank) {
-            result.append(Plank(id: "retired-\(i)", title: i == 0 ? "retired" : nil,
+            result.append(Plank(id: "retired-\(i)", title: i == 0 ? Look.current.finished : nil,
                                 bottles: Array(retired.dropFirst(i).prefix(perPlank)), retired: true))
         }
         return result
@@ -44,39 +39,41 @@ struct ShelfView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let perPlank = Cabinet.perPlank(width: geo.size.width)
-            ScrollView(.vertical) {
-                VStack(spacing: 0) {
-                    titleHeader
-                    if shelf.bottles.isEmpty {
-                        emptyShelf
-                    } else {
-                        ForEach(planks(perPlank: perPlank)) { plank in
-                            PlankBay(title: plank.title, height: plank.retired ? 100 : 150, dim: plank.dim) {
-                                ForEach(plank.bottles) { b in
-                                    column(BottleView(bottle: b, height: plank.retired ? 100 : 150),
-                                           tag: plank.retired ? (b.verdict?.isEmpty == false ? b.verdict! : "retired") : nil,
-                                           seed: b.id, faded: plank.retired, peppers: plank.retired ? nil : b.intensity, stars: b.score)
-                                }
-                                if let gap = plank.gap {
-                                    column(GhostBottle(gap: gap), tag: gap.line, seed: gap.id, ghost: true)
+            let perPlank = Studio.perPlank(width: geo.size.width)
+            ZStack {
+                StudioWall()
+                ScrollView(.vertical) {
+                    VStack(spacing: 0) {
+                        titleHeader
+                        if shelf.bottles.isEmpty {
+                            emptyShelf
+                        } else {
+                            ForEach(planks(perPlank: perPlank)) { plank in
+                                let height = plank.retired ? Look.current.finishedHeight : Look.current.bottleHeight
+                                ShelfRow(title: plank.title, height: height, dim: plank.dim) {
+                                    ForEach(plank.bottles) { b in
+                                        column(BottleView(bottle: b, height: height), height: height) {
+                                            if plank.retired { RailText(verdict: b.verdict) } else { RailText(heat: b.intensity, stars: b.score) }
+                                        }
+                                    }
                                 }
                             }
                         }
+                        Color.clear.frame(height: shelf.pick != nil ? 250 : 140)
                     }
-                    Color.clear.frame(height: shelf.pick != nil ? 250 : 140)
+                    .frame(width: geo.size.width)
                 }
-                .frame(width: geo.size.width)
-                .background(ZineWall())
+                .scrollContentBackground(.hidden)
+                // The light over the whole set, bottles and shelves included, so they sit in one room.
+                StudioLighting()
             }
-            .scrollContentBackground(.hidden)
-            .background(Zine.pink)
         }
-        .overlay(alignment: .bottom) { TonightBar() }
+        .background(Look.current.shelfUnder)
+        .overlay(alignment: .bottomTrailing) { TonightBar() }
         .overlay {
             if let id = shelf.openID {
                 ZStack {
-                    Zine.navy.opacity(0.35)
+                    Color.black.opacity(0.45)
                         .ignoresSafeArea()
                         .onTapGesture { shelf.close() }
                         .transition(.opacity)
@@ -91,18 +88,17 @@ struct ShelfView: View {
                 if let id = shelf.confirmDeleteID { shelf.delete(id) }
             }
         } message: {
-            Text("Its tag and ratings go too. To keep its verdict, retire it instead.")
+            Text("Its ratings go too. To keep its verdict, mark it finished instead.")
         }
         .overlay(alignment: .topLeading) {
-            if labels.remaining > 0 || artist.remaining > 0 {
-                Label(labels.remaining > 0 ? "Finding real labels… \(labels.remaining) to go" : "Drawing labels… \(artist.remaining) to go",
-                      systemImage: labels.remaining > 0 ? "camera.viewfinder" : "paintbrush.pointed")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Zine.navy)
+            if labels.remaining > 0 {
+                Label("Finding real labels… \(labels.remaining) to go", systemImage: "camera.viewfinder")
+                    .font(Look.current.label(10.5))
+                    .tracking(0.6)
+                    .foregroundStyle(Look.current.ink.opacity(0.85))
                     .padding(.horizontal, 12).padding(.vertical, 6)
-                    .background(Capsule().fill(Zine.cream))
-                    .overlay(Capsule().strokeBorder(Zine.navy, lineWidth: 1.2))
-                    .padding(.leading, 84).padding(.top, 8)
+                    .background(Capsule().fill(.black.opacity(0.28)))
+                    .padding(.leading, 84).padding(.top, 10)
                     .transition(.opacity)
             }
         }
@@ -110,206 +106,286 @@ struct ShelfView: View {
         .onAppear {
             shelf.seedIfNeeded()
             labels.findMissing()
-            artist.illustrateMissing()
         }
         .lampDropFiles { urls in
             AddBottle.dropped = urls
             shelf.showAdd = true
         }
         .sheet(isPresented: $shelf.showAdd) { AddBottleView().environmentObject(shelf) }
-        .sheet(isPresented: $shelf.showMap) { TasteMapView().environmentObject(shelf) }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Button { shelf.showMap = true } label: { Label("Taste Map", systemImage: "map") }
-                    .help("Your taste map and the gaps on your shelf")
                 Button { shelf.showAdd = true } label: { Label("Add Bottle", systemImage: "plus") }
                     .help("Photograph or scan a new bottle")
             }
         }
         .toolbarBackground(.hidden, for: .windowToolbar)
         .navigationTitle("")
-        .preferredColorScheme(.light)
-        .tint(Zine.red)
+        .preferredColorScheme(Look.current.scheme)
+        .tint(Look.current.accent)
         .frame(minWidth: 760, minHeight: 600)
     }
 
-    private func column(_ bottle: some View, tag: String?, seed: String, faded: Bool = false, ghost: Bool = false,
-                        peppers: Int? = nil, stars: Int? = nil) -> some View {
+    /// A bottle standing on the shelf, with its line on the shelf's edge right under it.
+    private func column(_ bottle: some View, height: CGFloat, @ViewBuilder rail: () -> some View) -> some View {
         VStack(spacing: 0) {
             bottle
-            Color.clear.frame(height: Cabinet.plankHeight)
-            HangingTag(text: tag, seed: seed, faded: faded, ghost: ghost, peppers: peppers, stars: stars)
+            Color.clear.frame(height: Studio.top - Studio.sink)
+            rail().frame(height: Studio.front)
         }
-        .frame(width: Cabinet.columnWidth)
+        .frame(width: Studio.columnWidth)
     }
 
-    /// The shelf's name, lettered on the wall like the top of a print.
+    /// The shelf's name, big and white on the wall, with a line of what's on it.
     private var titleHeader: some View {
-        HStack(spacing: 10) {
-            chili(rotation: -30)
-            Text("the hot shelf")
-                .font(Hand.font(40))
-                .foregroundStyle(Zine.red)
-                .shadow(color: Zine.navy.opacity(0.9), radius: 0, x: 2, y: 2)
-            chili(rotation: 150)
+        VStack(alignment: .leading, spacing: 12) {
+            Text(Look.current.display.text(Look.current.title))
+                .font(Look.current.display(Look.current.titleSize))
+                .tracking(Look.current.display.tracking)
+                .foregroundStyle(Look.current.ink)
+                .shadow(color: .black.opacity(0.35 * Look.current.contrast), radius: 14, x: 8, y: 10)
+            Text(summary)
+                .font(Look.current.label(10.5))
+                .tracking(Look.current.label.tracking)
+                .foregroundStyle(Look.current.ink.opacity(0.72))
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: 130)
-        .padding(.top, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, Studio.margin)
+        .padding(.top, 78)
+        .padding(.bottom, 18)
+        .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
     }
 
-    @ViewBuilder private func chili(rotation: Double) -> some View {
-        if let image = LampAssets.image("chili.png") {
-            Image(nsImage: image).resizable().aspectRatio(contentMode: .fit).frame(width: 34)
-                .rotationEffect(.degrees(rotation))
-                .accessibilityHidden(true)
+    private var summary: String {
+        var parts = ["\(shelf.active.count) on the shelf"]
+        if !shelf.retired.isEmpty { parts.append("\(shelf.retired.count) \(Look.current.finished.lowercased())") }
+        if let line = Look.current.mostLine, let most = shelf.active.max(by: { $0.heat < $1.heat }) {
+            parts.append("\(line): \(most.name)")
         }
+        return Look.current.label.text(parts.joined(separator: "  ·  "))
     }
 
     private var emptyShelf: some View {
-        VStack(spacing: 0) {
-            PlankBay(title: "start here") {
+        VStack(alignment: .leading, spacing: 0) {
+            ShelfRow(title: "Start here", height: 160) {
                 ForEach(["fruity", "fermented", "smoky"], id: \.self) { f in
-                    column(GhostBottle(gap: Gap(family: f, line: f)), tag: "something \(f)?", seed: f, ghost: true)
+                    column(GhostBottle(line: "something \(f)?", height: 160), height: 160) { RailText(gap: "something \(f)?") }
                 }
             }
-            VStack(spacing: 10) {
-                Text("An empty shelf. Tragic.")
-                    .font(Hand.font(26))
-                    .foregroundStyle(Zine.red)
-                Text("Snap a bottle or drop a photo here, and I'll read the label and find it a spot.")
-                    .foregroundStyle(Zine.navy)
+            VStack(alignment: .leading, spacing: 10) {
+                Text(Look.current.display.text(Look.current.emptyTitle))
+                    .font(Look.current.display(26))
+                    .foregroundStyle(Look.current.ink)
+                Text(Look.current.emptyLine)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Look.current.ink.opacity(0.8))
                 Button { shelf.showAdd = true } label: { Label("Add a Bottle", systemImage: "camera") }
                     .controlSize(.large)
                     .buttonStyle(.borderedProminent)
-                    .tint(Zine.red)
+                    .tint(.white)
+                    .foregroundStyle(Look.current.wall)
                     .padding(.top, 6)
             }
-            .padding(.top, 40)
+            .padding(.leading, Studio.margin)
+            .padding(.top, 30)
         }
     }
 }
 
-/// Measurements of the cabinet, shared so everything lines up at any width.
-enum Cabinet {
-    static let plankHeight: CGFloat = 26
-    static let stileWidth: CGFloat = 26
-    static let gutter: CGFloat = 150
-    static let columnWidth: CGFloat = 100
+/// Measurements of the set, shared so everything lines up at any width.
+enum Studio {
+    /// How deep the shelf's top looks, how tall its front edge is, and how far into the top a bottle stands.
+    static let top: CGFloat = 16
+    static let front: CGFloat = 26
+    static let sink: CGFloat = 8
+    static let margin: CGFloat = 56
+    static let columnWidth: CGFloat = 104
     static let spacing: CGFloat = 14
 
     static func perPlank(width: CGFloat) -> Int {
-        let usable = width - stileWidth * 2 - gutter - 30
+        let usable = width - margin * 2 + 28
         return max(2, Int((usable + spacing) / (columnWidth + spacing)))
     }
 }
 
-/// The wall: flat pink with a soft crayon grain and chili peppers tumbling across it, drawn at fixed sizes so
-/// resizing shows more wall instead of stretching it, and scrolling moves it with the shelves.
-struct ZineWall: View {
-    private static let chili = LampAssets.image("chili.png")
+/// The wall: one flat colour with a fine grain like painted board. The light is laid over the whole picture
+/// afterwards (`StudioLighting`), so the wall, the shelves and the bottles are lit by the same light.
+struct StudioWall: View {
+    var body: some View {
+        ZStack {
+            Look.current.wall
+            StudioGrain().opacity(Look.current.grain)
+        }
+        .ignoresSafeArea()
+        .accessibilityHidden(true)
+    }
+}
 
+/// A fine grain of light and dark specks, the same every time.
+struct StudioGrain: View {
     var body: some View {
         Canvas(rendersAsynchronously: true) { context, size in
-            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Zine.pink))
-            // Crayon grain: short soft strokes, the same every time.
-            var seed: UInt64 = 7
+            var seed: UInt64 = 11
             func next() -> Double {
                 seed = seed &* 6364136223846793005 &+ 1442695040888963407
                 return Double(seed >> 33) / Double(UInt64(1) << 31)
             }
-            let strokes = Int(size.width * size.height / 900)
-            for _ in 0..<strokes {
-                let x = next() * size.width, y = next() * size.height
-                let len = 4 + next() * 9, angle = next() * .pi
-                var p = Path()
-                p.move(to: CGPoint(x: x, y: y))
-                p.addLine(to: CGPoint(x: x + cos(angle) * len, y: y + sin(angle) * len))
-                let light = next() > 0.5
-                context.stroke(p, with: .color(light ? .white.opacity(0.12) : Zine.pinkShadow.opacity(0.18)), lineWidth: 1.2)
-            }
-            // Chilies scattered on a loose grid, mostly in the open wall to the right.
-            guard let chili = Self.chili else { return }
-            let image = context.resolve(Image(nsImage: chili))
-            let cell: CGFloat = 230
-            let tints: [Double] = [0, 18, -14, 26]
-            var row = 0
-            var y: CGFloat = 170
-            while y < size.height {
-                var x: CGFloat = Cabinet.stileWidth + Cabinet.gutter + CGFloat(row % 2) * cell / 2
-                while x < size.width - 40 {
-                    let jx = (next() - 0.5) * cell * 0.6, jy = (next() - 0.5) * cell * 0.5
-                    if next() < 0.38 {
-                        var c = context
-                        c.translateBy(x: x + jx, y: y + jy)
-                        c.rotate(by: .degrees(next() * 360))
-                        c.addFilter(.hueRotation(.degrees(tints[Int(next() * 4) % 4])))
-                        c.opacity = 0.9
-                        let w: CGFloat = 34 + next() * 22
-                        c.draw(image, in: CGRect(x: -w / 2, y: -w / 2, width: w, height: w * 0.96))
-                    }
-                    x += cell
-                }
-                y += cell * 0.8
-                row += 1
+            for _ in 0..<Int(size.width * size.height / 140) {
+                let rect = CGRect(x: next() * size.width, y: next() * size.height, width: 1, height: 1)
+                context.fill(Path(rect), with: .color(next() > 0.5 ? .white.opacity(0.035) : .black.opacity(0.06)))
             }
         }
     }
 }
 
-/// One plank with bottles standing on it, tags hanging off its front edge, and a warm strip light underneath
-/// that lights the plank below.
-struct PlankBay<Content: View>: View {
+/// The one light, over everything on the set: dodged bright where it falls, with a beam coming down from it, and
+/// burned dark where it doesn't reach. It stays put while the shelves scroll under it, as a studio light would.
+struct StudioLighting: View {
+    var body: some View {
+        GeometryReader { geo in
+            let size = geo.size
+            let reach = max(size.width, size.height) * Look.current.reach
+            let k = Look.current.lightStrength
+            ZStack {
+                // Burn: the far side of the room falls into shadow.
+                RadialGradient(stops: [.init(color: .white, location: 0),
+                                       .init(color: .white, location: 0.3),
+                                       .init(color: Color(white: 1 - 0.3 * k), location: 0.7),
+                                       .init(color: Color(white: 1 - 0.5 * k), location: 1)],
+                               center: Look.current.light, startRadius: 0, endRadius: reach * 1.6)
+                    .blendMode(.colorBurn)
+                // Dodge: a hot spot under the light, in the light's colour...
+                RadialGradient(stops: [.init(color: Look.current.glow(0.36 * k), location: 0),
+                                       .init(color: Look.current.glow(0.1 * k), location: 0.4),
+                                       .init(color: .black, location: 1)],
+                               center: Look.current.light, startRadius: 0, endRadius: reach)
+                    .blendMode(.colorDodge)
+                // ...and the beam it throws down across the wall, when it throws one.
+                if Look.current.beam > 0 {
+                    LinearGradient(stops: [.init(color: .black, location: 0),
+                                           .init(color: Look.current.glow(0.36 * k * Look.current.beam), location: 0.5),
+                                           .init(color: .black, location: 1)],
+                                   startPoint: .leading, endPoint: .trailing)
+                        .frame(width: size.width * 0.34, height: reach * 2.4)
+                        .rotationEffect(.degrees(-36))
+                        .offset(x: -size.width * 0.14, y: -size.height * 0.08)
+                        .blur(radius: 18)
+                        .blendMode(.colorDodge)
+                }
+            }
+            .frame(width: size.width, height: size.height)
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// One shelf running the width of the wall, its bottles standing on it and its name on its front edge.
+struct ShelfRow<Content: View>: View {
     var title: String?
-    var height: CGFloat = 150
+    var height: CGFloat = 160
     var dim = false
     @ViewBuilder var content: Content
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            plank
-                .padding(.top, 30 + height)
-                .padding(.horizontal, Cabinet.stileWidth)
-            HStack(alignment: .top, spacing: Cabinet.spacing) { content }
-                .padding(.leading, Cabinet.stileWidth + Cabinet.gutter)
-                .padding(.top, 30)
-            if let title {
-                Text(title)
-                    .font(Hand.font(14))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .foregroundStyle(Zine.cream.opacity(dim ? 0.6 : 1))
-                    .frame(width: Cabinet.gutter - 24, alignment: .trailing)
-                    .padding(.leading, Cabinet.stileWidth + 8)
-                    .padding(.top, 30 + height + 9)
-                    .allowsHitTesting(false)
-            }
+            if let title { name(title) }
+            StudioShelf()
+                .padding(.top, top + height - Studio.sink)
+                .opacity(dim ? 0.7 : 1)
+            HStack(alignment: .top, spacing: Studio.spacing) { content }
+                .padding(.leading, Studio.margin - 14)
+                .padding(.top, top)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.bottom, 26)
+        .padding(.bottom, 4)
+    }
+}
+
+extension ShelfRow {
+    /// Room over the bottles: a caption needs a line of its own.
+    private var top: CGFloat {
+        if case .caption = Look.current.shelfNames, title != nil { return 40 }
+        return 14
     }
 
-    /// A chunky flat plank with a navy pencil edge, a white highlight streak and a flat shadow on the wall.
-    private var plank: some View {
-        ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 4)
-                .fill(Zine.woodDark)
-            RoundedRectangle(cornerRadius: 4)
-                .fill(Zine.wood)
-                .frame(height: 9)
-            Capsule().fill(.white.opacity(0.55))
-                .frame(width: 120, height: 2.5)
-                .offset(x: 40, y: 3)
-            Capsule().fill(.white.opacity(0.35))
-                .frame(width: 40, height: 2)
-                .offset(x: 175, y: 3.5)
+    /// The shelf's name: painted big on the wall behind it, standing on the shelf with the bottles in front, or a
+    /// small caption over its left end.
+    @ViewBuilder private func name(_ title: String) -> some View {
+        let look = Look.current
+        switch look.shelfNames {
+        case .painted(let size, let color, let opacity):
+            Text(look.display.text(title))
+                .font(look.display(size))
+                .tracking(look.display.tracking - 0.5)
+                .lineLimit(1)
+                .minimumScaleFactor(0.4)
+                .foregroundStyle(color.opacity(dim ? opacity * 0.6 : opacity))
+                .frame(height: top + height - Studio.sink + 6, alignment: .bottomLeading)
+                .padding(.leading, Studio.margin - 4)
+                .padding(.trailing, Studio.margin)
+                .allowsHitTesting(false)
+                .accessibilityAddTraits(.isHeader)
+        case .caption:
+            Text(look.label.text(title))
+                .font(look.label(11))
+                .tracking(look.label.tracking)
+                .lineLimit(1)
+                .foregroundStyle(look.ink.opacity(dim ? 0.45 : 0.75))
+                .padding(.leading, Studio.margin)
+                .padding(.top, 12)
+                .allowsHitTesting(false)
+                .accessibilityAddTraits(.isHeader)
         }
-        .frame(height: Cabinet.plankHeight)
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Zine.navy, lineWidth: 1.6))
-        .background(
-            RoundedRectangle(cornerRadius: 4).fill(Zine.pinkShadow.opacity(0.8)).offset(x: 4, y: 7)
-        )
-        .opacity(dim ? 0.55 : 1)
+    }
+}
+
+/// The shelf: a top lit from above that darkens towards the wall, a bright edge where the light catches it, a
+/// front in shade, and its shadow on the wall underneath.
+struct StudioShelf: View {
+    var body: some View {
+        VStack(spacing: 0) {
+            LinearGradient(colors: [Look.current.shelfBack, Look.current.shelfTop], startPoint: .top, endPoint: .bottom)
+                .frame(height: Studio.top)
+            Rectangle().fill(.white.opacity(0.28 * Look.current.contrast)).frame(height: 1)
+            LinearGradient(colors: [Look.current.shelfFront, Look.current.shelfUnder],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: Studio.front - 1)
+            LinearGradient(colors: [.black.opacity(0.36 * Look.current.contrast), .black.opacity(0.08 * Look.current.contrast), .clear],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: 60)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// What's on the shelf's edge under a bottle: its heat and stars, a finished bottle's verdict, or a gap's line.
+struct RailText: View {
+    var heat: Int? = nil
+    var stars: Int? = nil
+    var verdict: String? = nil
+    var gap: String? = nil
+
+    var body: some View {
+        Group {
+            if let heat {
+                HStack(spacing: 10) {
+                    HStack(spacing: 3) { Image(systemName: Look.current.measureSymbol).foregroundStyle(Look.current.accent); Text("\(heat)") }
+                    if let stars { HStack(spacing: 3) { Image(systemName: "star.fill").foregroundStyle(Look.current.ink.opacity(0.7)); Text("\(stars)") } }
+                }
+                .font(Look.current.label(10.5, weight: .bold))
+                .foregroundStyle(Look.current.ink.opacity(0.92))
+            } else {
+                Text(Look.current.label.text(verdict?.isEmpty == false ? verdict! : gap ?? Look.current.finished))
+                    .font(Look.current.label(8.5))
+                    .tracking(0.8)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(Look.current.ink.opacity(gap == nil ? 0.6 : 0.5))
+                    .padding(.horizontal, 2)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

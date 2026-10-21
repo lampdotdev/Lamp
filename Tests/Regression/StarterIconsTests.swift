@@ -68,6 +68,8 @@ final class StarterIconsTests: XCTestCase {
                 let png = try XCTUnwrap(painting.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:))?
                     .representation(using: .png, properties: [:]))
                 try png.write(to: icon.appendingPathComponent(Starters.artFile))
+            case .waiting:
+                XCTFail("\(folder.lastPathComponent) was drawn with no artwork")
             }
             for made in Starters.iconFiles(of: project) where fm.fileExists(atPath: made.path) {
                 try fm.copyItem(at: made, to: icon.appendingPathComponent(made.lastPathComponent))

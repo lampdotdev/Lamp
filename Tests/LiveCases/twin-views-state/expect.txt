@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Row@B.swift.open)
+== run
+before: A B
+RELOAD 1 (whole): ok
+after1 (want in place: "A B open=false"): A B open=false

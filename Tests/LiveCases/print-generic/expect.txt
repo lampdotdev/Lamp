@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: generic=Wrapper(mood: Case.Mood.happy) any=Wrapper(mood: Case.Mood.happy) direct=happy
+RELOAD 1 (whole): ok
+after (want angry in all): generic=Wrapper(mood: Case.Mood.angry) any=Wrapper(mood: Case.Mood.angry) direct=angry

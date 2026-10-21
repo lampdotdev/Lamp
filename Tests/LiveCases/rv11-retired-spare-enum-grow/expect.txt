@@ -1,0 +1,11 @@
+VERDICT 1: RELOAD (Added Game.pick)
+VERDICT 2: RELOAD
+VERDICT 3: RELOAD
+== run
+before: volume=1 cases=2
+RELOAD 1 (whole): ok
+after1: volume=1 cases=2 pick=b
+RELOAD 2 (whole): ok
+after2: volume=1 cases=2
+RELOAD 3 (whole): ok
+after3 (want in place: nothing reads the retired place): volume=1 cases=3

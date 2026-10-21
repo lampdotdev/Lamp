@@ -2,7 +2,7 @@
   {
     "name": "look_at_app",
     "label": "Look at the app",
-    "description": "Builds the app with your changes, opens it, and shows you the result: a picture of its windows, what it printed, and any build errors or crash. For an iPhone app it also lists the screen as text: each control and piece of text with its name, what it holds and the point to tap it. Takes up to a minute. Use it after a change to the interface, or to check a fix you can't verify by reading the code. Each look that has to rebuild takes a while, so make your edits first and don't use it for small changes you're sure of. With `sidebar`, it shows a Mac app's sidebar in Chrome instead of its windows, drawn by Lamp as Chrome draws it, as text and a picture, and says whether `page` fits the app's browser.json. For a Mac app, `motion` watches the window for a couple of seconds instead and says what changed from frame to frame and whether anything flickers; `prop` shows one of a 3D scene's props on its own, from four sides. A change goes into the open app as it runs, so `reopen` is for what only a fresh launch shows (how long it takes to open, code run once at the start): it closes the app the usual way and opens it again. Never end the app's process yourself.",
+    "description": "Builds the app with your changes, opens it, and shows you the result: a picture of its windows, what it printed, and any build errors or crash. For an iPhone app it also lists the screen as text: each control and piece of text with its name, what it holds and the point to tap it. Takes up to a minute. Use it after a change to the interface, or to check a fix you can't verify by reading the code. Each look that has to rebuild takes a while, so make your edits first and don't use it for small changes you're sure of. With `sidebar`, it shows a Mac app's sidebar in Chrome instead of its windows, drawn by Lamp as Chrome draws it, as text and a picture, and says whether `page` fits the app's browser.json. For a Mac app, `motion` watches the window for a couple of seconds instead and says what changed from frame to frame and whether anything flickers; `prop` shows one of a 3D scene's props on its own, from four sides. A change goes into the open app as it runs, so `reopen` is for what only a fresh launch shows (how long it takes to open, code run once at the start): it closes the app the usual way and opens it again, or, while the person has the app open, asks them first with a Reload button. Never end the app's process yourself.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -25,6 +25,10 @@
         "prop": {
           "type": "string",
           "description": "The name of a prop in the LampSceneView's props, to see it on its own from four sides."
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "type": "object"
@@ -33,7 +37,7 @@
   {
     "name": "use_app",
     "label": "Use the app",
-    "description": "Only when the person asks you to try the app. Uses the open app the way a person would: clicks, types, presses keys, scrolls and picks from menus in its front window, then shows you what each action did, whether anything changed, a fresh picture with the screen as text, and what the app printed meanwhile. The screen as text (from look_at_app or use_app) lists every control and piece of text in the front window with an id (b2, f1, s3…), its name, what it holds and where it is. Say what to act on with `target`: an id or the exact name from that list. A click presses a button, switch, link or choice itself, so it can't miss; `type` with a target puts the text into that field in place of what it held, or sets a slider; `key` with a target goes to that thing (up and down step a slider or stepper). Prefer targets. Use x and y (pixels in the latest picture of the front window; aim at the middle) only for what the list doesn't have: a drawing, a canvas, a chart, a game board. In a Mac app, `key` with `amount` holds the key down that many seconds, as a game's controls need (hold W, then look); `drag` presses, moves to to_x and to_y and lets go: a slider's knob, something dragged on a canvas, a drawer or a lever in a 3D scene. Use it to check that something works, not just how it looks: click a column header and see whether the list re-sorts, fill in a form and submit it. Clicking a row of a list, table or sidebar selects it; double-clicking opens it. Keys and typing without a target go to whatever has keyboard focus. Menus are read out to you, never opened: click a pop-up or pull-down button, or right_click something, and you get its items; repeat the same action with `item` set to pick one (\"Sub > Deep\" for a submenu). `menu` does the same for the menu bar: without `item` it lists every command, with `item` like \"File > Export…\" it picks one. `bar_icon` is for an app that lives in the menu bar: it opens the panel behind the app's icon there, which becomes the first picture and takes clicks and keys like a window (escape closes it); if the icon shows a menu instead, it lists it, and `item` picks from it; if a click on the icon switches something on and off, it says so and lists the right-click menu, and `item` set to \"click\" clicks the icon. When a dialog or sheet opens it becomes the first picture and takes the clicks and keys: click one of its buttons, or press escape to cancel. The system's save panel can only be answered with return (save where it says) or escape. It can't drag. It uses the app as last built: after editing code, call look_at_app first so your changes are built and open. If it says nothing changed, a click by point most likely missed: use a target from the screen as text, or look at the picture and aim again, before changing any code. In an iPhone app the actions tap, type, scroll and swipe on the simulator's screen, by target or at x and y in the picture; `type` replaces what the tapped field holds; a swipe on a row uncovers its actions, which `item` then taps; `right_click` is a long press; there are no menus, and the keys are return, escape, home and lock (to see widgets and Live Activities). With `sidebar`, the actions are on the app's sidebar in Chrome as Lamp draws it (see look_at_app): click a button or type into a field by target, or wait; a button that reads the page gets the text of `page`, and one that reads a selection gets `selection`. `menu` chooses the app's right-click item on `page`, as the person would in Chrome: the page's `lamp.onMenu` handler runs and may read the page once.",
+    "description": "Only when the person asks you to try the app. Uses the open app the way a person would: clicks, types, presses keys, scrolls and picks from menus in its front window, then shows you what each action did, whether anything changed, a fresh picture with the screen as text, and what the app printed meanwhile. The screen as text (from look_at_app or use_app) lists every control and piece of text in the front window with an id (b2, f1, s3…), its name, what it holds and where it is. Say what to act on with `target`: an id or the exact name from that list. A click presses a button, switch, link or choice itself, so it can't miss; `type` with a target puts the text into that field in place of what it held, or sets a slider; `key` with a target goes to that thing (up and down step a slider or stepper). Prefer targets. Use x and y (pixels in the latest picture of the front window; aim at the middle) only for what the list doesn't have: a drawing, a canvas, a chart, a game board. In a Mac app, `key` with `amount` holds the key down that many seconds, as a game's controls need (hold W, then look); `drag` presses, moves to to_x and to_y and lets go: a slider's knob, something dragged on a canvas, a drawer or a lever in a 3D scene. Use it to check that something works, not just how it looks: click a column header and see whether the list re-sorts, fill in a form and submit it. Clicking a row of a list, table or sidebar selects it; double-clicking opens it. Keys and typing without a target go to whatever has keyboard focus. Menus are read out to you, never opened: click a pop-up or pull-down button, or right_click something, and you get its items; repeat the same action with `item` set to pick one (\"Sub > Deep\" for a submenu). `menu` does the same for the menu bar: without `item` it lists every command, with `item` like \"File > Export…\" it picks one. `bar_icon` is for an app that lives in the menu bar: it opens the panel behind the app's icon there, which becomes the first picture and takes clicks and keys like a window (escape closes it); if the icon shows a menu instead, it lists it, and `item` picks from it; if a click on the icon switches something on and off, it says so and lists the right-click menu, and `item` set to \"click\" clicks the icon. When a dialog or sheet opens it becomes the first picture and takes the clicks and keys: click one of its buttons, or press escape to cancel. The system's save panel can only be answered with return (save where it says) or escape. It can't drag. The person sees each action happen and can take the app back at any moment: then the rest are dropped, it says how far it got, and use_app is off until their next message. It uses the app as last built: after editing code, call look_at_app first so your changes are built and open. If it says nothing changed, a click by point most likely missed: use a target from the screen as text, or look at the picture and aim again, before changing any code. In an iPhone app the actions tap, type, scroll and swipe on the simulator's screen, by target or at x and y in the picture; `type` replaces what the tapped field holds; a swipe on a row uncovers its actions, which `item` then taps; `right_click` is a long press; there are no menus, and the keys are return, escape, home and lock (to see widgets and Live Activities). With `sidebar`, the actions are on the app's sidebar in Chrome as Lamp draws it (see look_at_app): click a button or type into a field by target, or wait; a button that reads the page gets the text of `page`, and one that reads a selection gets `selection`. `menu` chooses the app's right-click item on `page`, as the person would in Chrome: the page's `lamp.onMenu` handler runs and may read the page once.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -124,6 +128,10 @@
         "selection": {
           "description": "With sidebar: the passage selected on that page, for a button that reads a selection",
           "type": "string"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "required": [
@@ -135,7 +143,7 @@
   {
     "name": "plan",
     "label": "Plan",
-    "description": "Shows the user what you're building, as a short checklist in Lamp while they wait. For a new app, call it once before writing any code with the 3 to 5 main parts, each in plain words the user would use (what they'll be able to do, not file or type names), and the files you'll write for each part. Lamp ticks a part off when all of its files are written, so there's no need to call it again. Call it again only if the plan changes; every call replaces the whole list.",
+    "description": "Shows the user what you're building, as a short checklist in Lamp while they wait. For a new app, call it once before writing any code with the 3 to 5 main parts in the order you'll build them, each in plain words the user would use (what they'll be able to do, not file or type names), and the files you'll write for each part. Lamp ticks a part off when all of its files are written, so there's no need to call it again. Write the files part by part in the list's order, so it fills in from the top; what later parts rely on (the app's saved data, a connection to a service) belongs to the first part that uses it. Call it again only if the plan changes; every call replaces the whole list.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -184,6 +192,10 @@
         "path": {
           "description": "Path of the file, relative to the app's folder, e.g. Sources/CardsView.swift",
           "type": "string"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "required": [
@@ -198,7 +210,12 @@
     "description": "Lists the app's saved versions, newest first: an id, when it was made, its name if it has one, and the request that made it. Lamp saves one after every request.",
     "inputSchema": {
       "additionalProperties": false,
-      "properties": {},
+      "properties": {
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
+        }
+      },
       "type": "object"
     }
   },
@@ -216,6 +233,10 @@
         "version": {
           "description": "A version id from list_versions",
           "type": "string"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "required": [
@@ -234,6 +255,10 @@
         "version": {
           "description": "A version id from list_versions",
           "type": "string"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "required": [
@@ -256,6 +281,10 @@
             "app"
           ],
           "type": "string"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "type": "object"
@@ -283,6 +312,10 @@
         "summary": {
           "description": "One plain line on what the notes cover, as you'd say it to the person: “How my apps should look and sound, and how I write dates”",
           "type": "string"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "required": [
@@ -322,6 +355,10 @@
             "9:16"
           ],
           "type": "string"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "required": [
@@ -355,6 +392,10 @@
         "away": {
           "description": "iPhone apps only: the app needs it on the phone away from this Mac",
           "type": "boolean"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "required": [
@@ -388,6 +429,10 @@
             ]
           },
           "description": "Every device the app runs on from now on"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       }
     }
@@ -403,6 +448,10 @@
         "service": {
           "type": "string",
           "description": "A connector's id from the list"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       }
     }
@@ -473,6 +522,24 @@
     }
   },
   {
+    "name": "progress",
+    "label": "Progress",
+    "description": "Tells the person in one short line how the work is going, while they wait: what's now in the app and what's next, e.g. “The layout's in. Now the timer itself.” Shown in the chat at once as a message that stays, so it never repeats another line or your last message. Call it as each pass of a longer piece of work begins and before a step that takes a while (painting pictures, a big build). Never for each file, and never for the end: that's your last message.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "One or two short sentences, 12 words at most, in everyday words: what they can see now or what you're doing next. No file, type or tool names."
+        }
+      }
+    }
+  },
+  {
     "name": "write_wish",
     "label": "Write wish",
     "description": "Writes the wish you found together into the person's message box, in their own words, for them to change and send: the end of helping them find something to wish for. Only then, never for a wish they told you themselves. After it, end your reply with one short sentence at most.",
@@ -500,6 +567,10 @@
         "name": {
           "description": "The skill's name, as listed",
           "type": "string"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
         }
       },
       "required": [

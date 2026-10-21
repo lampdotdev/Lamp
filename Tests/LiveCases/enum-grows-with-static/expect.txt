@@ -1,0 +1,6 @@
+VERDICT 1: RELOAD
+== run
+before: 2 same
+RELOAD 1 (whole): ok
+after1 (want "2 c same"): 2 c same
+after1 bumped (want "3 c same"): 3 c same

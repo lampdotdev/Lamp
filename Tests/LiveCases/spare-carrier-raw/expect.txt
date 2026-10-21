@@ -1,0 +1,13 @@
+VERDICT 1: RELOAD (Added Game.w)
+VERDICT 2: REOPEN (Game keeps w, added while the app was open, as Wrapper?, which a new case of Mood would change)
+== run
+before: level=1
+RELOAD 1 (whole): ok
+after1 (want w=sad): level=1 w=Optional(Case.Mood.sad) whole=Optional(Case.Wrapper(mood: Case.Mood.sad))
+RELOAD 2: REOPEN Game keeps w, added while the app was open, as Wrapper?, which a new case of Mood would change
+after2: level=1 w=Optional(Case.Mood.sad) whole=Optional(Case.Wrapper(mood: Case.Mood.sad))
+before: level=1 w=nil whole=nil isNil=true
+RELOAD 1: in the restart
+after1 (want w=sad): level=1 w=Optional(Case.Mood.angry) whole=Optional(Case.Wrapper(mood: Case.Mood.angry)) isNil=false
+RELOAD 2: in the restart
+after2: level=1 w=Optional(Case.Mood.angry) whole=Optional(Case.Wrapper(mood: Case.Mood.angry)) isNil=false

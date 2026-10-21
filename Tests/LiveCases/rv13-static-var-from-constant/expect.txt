@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (what makes the starting value of Board.area changed, and the open app made it once and keeps it)
+== run
+before: 10 100
+RELOAD 1: REOPEN what makes the starting value of Board.area changed, and the open app made it once and keeps it
+after1 (want "20 400" as a fresh launch, or a reopen as for a new starting value): 10 100
+before: 20 400
+RELOAD 1: in the restart
+after1 (want "20 400" as a fresh launch, or a reopen as for a new starting value): 20 400

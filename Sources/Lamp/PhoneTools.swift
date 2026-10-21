@@ -312,11 +312,24 @@ enum PhoneTools {
             }
         }
         report.passed.append(.platform)
-        let runtimes = probe.run(developer + "/usr/bin/simctl", ["list", "runtimes", "-j"], env)
-        guard runtimes.ok, let data = runtimes.output.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let list = json["runtimes"] as? [[String: Any]] else {
-            return stop(.runtime, "The simulator isn't responding", "The simulator is the iPhone or iPad that appears on your Mac's screen, and Lamp got no answer from it. Click Open Xcode and wait for its window to appear. If the Simulator app is open, quit it. Then come back to Lamp.", .openXcode)
+        func listRuntimes() -> (result: Subprocess.Result, list: [[String: Any]]?) {
+            let result = probe.run(developer + "/usr/bin/simctl", ["list", "runtimes", "-j"], env)
+            guard result.ok, let data = result.output.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return (result, nil) }
+            return (result, json["runtimes"] as? [[String: Any]])
+        }
+        var runtimes = listRuntimes()
+        // The simulators are run by a service of the person's own that macOS starts when it's first asked. One
+        // that has hung, or was started by an Xcode since updated, answers nothing until it's started again,
+        // which quitting Simulator or opening Xcode doesn't do. Ended, macOS starts a fresh one at the next
+        // question. Only when it failed or didn't answer: one that answered with something unexpected is
+        // working and is left alone.
+        if runtimes.list == nil, !runtimes.result.ok {
+            _ = probe.run("/usr/bin/killall", ["-9", "com.apple.CoreSimulator.CoreSimulatorService"], env)
+            runtimes = listRuntimes()
+        }
+        guard let list = runtimes.list else {
+            return stop(.runtime, "The simulator isn't responding", "The simulator is the iPhone or iPad that appears on your Mac's screen. Lamp started it again and still got no answer. Restart your Mac, then come back to Lamp and click Check Again.", .retry)
         }
         guard list.contains(where: { runtime in
             (runtime["identifier"] as? String ?? "").contains("SimRuntime.iOS-")

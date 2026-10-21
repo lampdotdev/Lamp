@@ -170,10 +170,15 @@ struct StoreDialogs: ViewModifier {
 }
 
 extension Store {
+    /// The color a stand-in icon is drawn in: the design's, or the one chosen with the app's name before it.
+    func standInColor(for project: LampProject) -> String? {
+        Icons.load(project)?.background ?? iconColors[project.id]
+    }
+
     /// The app's own icon, or its blueprint stand-in if it doesn't have one yet.
     func iconImage(for project: LampProject) -> NSImage {
         if let icon = icons[project.id] { return icon }
-        let renderer = ImageRenderer(content: StandInIcon(project: project, size: 128))
+        let renderer = ImageRenderer(content: StandInIcon(project: project, size: 128, color: standInColor(for: project)))
         renderer.scale = 2
         return renderer.nsImage ?? NSApp.applicationIconImage
     }

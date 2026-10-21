@@ -169,7 +169,9 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// made. Their text is the same in plain words.
     /// `iphoneSetup` says a first request that read as an iPhone app was made for the Mac, since this Mac can't
     /// build one yet, and offers the setup (`IPhoneSetupLine`); its text is the kind that was wanted.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup }
+    /// `progress` is the agent's line on how the work is going (`Talk`'s `progress`), folded with the turn's
+    /// steps once it ends.
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -186,6 +188,8 @@ struct LogLine: Identifiable, Codable, Equatable {
     var noted: NoteReceipt? = nil     // what a save of Lamp's notes changed, with Undo
     var pointed: PointedAt? = nil     // for a request: what was pointed at in the app, one of its attachments
     var midTurn: Bool? = nil          // for a request: the agent took it while working on the one before (Store.handOver)
+    var byLamp: Bool? = nil           // for a request: Lamp sent it, not the person (`Store.fixCrash`); the line before says so
+    var said: String? = nil           // for a command Lamp let run ("Ran: …"): what the agent said it was for (`AgentEvent.naming`)
 
     /// The offer a setup card is about, for this line and for the older key card.
     var setupOffer: SetupOffer? {
@@ -245,6 +249,40 @@ struct LogLine: Identifiable, Codable, Equatable {
         if ToolCall(text).isKnown { return LogLine(id: id, kind: .tool, text: text) }
         return self
     }
+
+    /// Reads an app's chat file a line at a time, so a line this Lamp can't read (a kind written by a newer Lamp,
+    /// or a Lamp Dev built from another branch, sharing the same folder) costs that line and not the whole chat.
+    /// The next save writes the chat without what was skipped, so the file as it was is kept beside it first, under
+    /// a name nothing else uses (`chat.json.unreadable`, then `-2`…). When that copy can't be made (a full disk),
+    /// `unkept` holds the file as it was, and nothing may write over it until `keepAside` has kept it.
+    /// Nil when there is no file.
+    static func readChat(_ file: URL) -> (lines: [LogLine], unkept: Data?)? {
+        guard let data = try? Data(contentsOf: file) else { return nil }
+        let read = try? JSONDecoder().decode([Readable].self, from: data)
+        let lines = read?.compactMap(\.line) ?? []
+        let skipped = read == nil || lines.count < read!.count
+        return (lines.map(\.upgraded), skipped && !keepAside(data, of: file) ? data : nil)
+    }
+
+    private struct Readable: Decodable {
+        let line: LogLine?
+        init(from decoder: Decoder) throws { line = try? LogLine(from: decoder) }
+    }
+
+    /// Keeps a chat file's bytes beside it, without overwriting any copy already there. True once they're kept.
+    static func keepAside(_ data: Data, of file: URL) -> Bool {
+        for n in 1... {
+            let copy = file.deletingLastPathComponent()
+                .appendingPathComponent(file.lastPathComponent + ".unreadable" + (n == 1 ? "" : "-\(n)"))
+            // Without overwriting, which also refuses a link left where the copy goes.
+            do { try data.write(to: copy, options: .withoutOverwriting); return true } catch {}
+            if (try? Data(contentsOf: copy)) == data { return true }
+            // Only a name already taken is worth trying the next one for; anything else (a full disk) fails them all.
+            // (Looked at without following a link: a link there takes the name too.)
+            if (try? FileManager.default.attributesOfItem(atPath: copy.path)) == nil { return false }
+        }
+        return false
+    }
 }
 
 /// A message typed while the app was busy. It waits in the chat until the current work finishes.
@@ -265,6 +303,8 @@ struct QueuedMessage: Identifiable {
     var pointed: PointedAt? = nil
     /// The person pressed Send Now: it goes to the agent in the turn that's running (`Store.handOver`).
     var sendNow = false
+    /// Lamp sent it on its own, to fix a crash (`Store.fixCrash`).
+    var byLamp = false
 }
 
 extension QueuedMessage {
@@ -285,11 +325,26 @@ extension QueuedMessage {
     }
 }
 
+/// Whichever of two answers comes first (`Store.answer(of:within:)`): the other is dropped.
+@MainActor
+final class FirstAnswer<T> {
+    var continuation: CheckedContinuation<T?, Never>?
+    func give(_ answer: T?) {
+        continuation?.resume(returning: answer)
+        continuation = nil
+    }
+}
+
 @MainActor
 final class Store: ObservableObject {
     static let shared = Store()
 
-    @Published var projects: [LampProject] = [] { didSet { syncLocalNetwork() } }   // the network listener follows which apps open on a phone
+    @Published var projects: [LampProject] = [] {
+        didSet {
+            syncLocalNetwork()   // the network listener follows which apps open on a phone
+            DeskArrangement.shared.adopt(projects)
+        }
+    }
     /// The wish whose chat window is in front; nil while the desk is (`LampWindows`).
     @Published var selection: String? {
         didSet { if selection != oldValue { markRead() } }
@@ -354,6 +409,8 @@ final class Store: ObservableObject {
     @Published var welcomeFinished = false
     @Published var usage: [String: AppUsage] = [:]
     @Published var icons: [String: NSImage] = [:]
+    /// The icon's background chosen with the app's name, before its icon is designed: the blueprint shows it.
+    @Published var iconColors: [String: String] = [:]
     /// The shared app whose review is up. When it goes, the next one kept from before setup gets its turn.
     @Published var pendingImport: PendingImport? {
         didSet { if pendingImport == nil, oldValue != nil { openWaitingImport() } }
@@ -367,8 +424,14 @@ final class Store: ObservableObject {
         /// A file request sets its own title; a command keeps this one.
         static let commandTitle = "Can the agent do this?"
         var title = commandTitle
+        /// What the agent said the command is for, which goes on naming what it's doing once it's allowed.
+        var said: String?
         let answer: CheckedContinuation<Bool, Never>
         var explanation: CommandExplanation?
+        /// What the person asked for in this turn, which the card puts beside the step to weigh it against.
+        var request: String?
+        /// Why Lamp is asking rather than letting the step run, in the person's words (`Store.whyAsked`).
+        var whyAsked: String?
     }
 
     /// What a command does and how risky it is, in plain words for people who don't read shell commands.
@@ -403,6 +466,10 @@ final class Store: ObservableObject {
     /// belongs to that span lives here and goes with it, so Stop, Delete and quit have one thing to cancel,
     /// and nothing has to be kept in step across a dozen dictionaries. `busy` is the set of apps that have
     /// one, for the interface.
+    /// What became of one change: it went into the open app as it ran, it waits for the person's Reload, the app
+    /// was closed and opened again for it, or it was opened with it (nobody had it open).
+    enum ChangeOutcome { case live, held, reopened, opened }
+
     @MainActor final class Turn {
         var agent: Process?                 // the engine, while it runs
         var build: Process?                 // the app's build.sh, while it runs
@@ -413,20 +480,61 @@ final class Store: ObservableObject {
         /// The Mac app built but the last install couldn't put it in place or open it: logged, not a crash, so
         /// the turn still counts as a change. Kept so a new app's first run isn't counted when it never opened.
         var didNotOpen = false
+        /// The app was opened and died straight away: a crash, as opposed to an open that never happened (a
+        /// simulator missing, a Stop while it waited), which `install` reports in words too.
+        var diedOnLaunch = false
         /// The person kept the app open when this turn's build asked it to quit: it isn't asked a second time
         /// in the turn, and the agent isn't shown the copy on screen as its work.
         var keptOpen = false
-        /// The chat has said this turn closed the open app and opened it again (`ChatLook.reloaded`).
-        var saidReloaded = false
+        /// The person took the app back while the agent was trying it (`Handover`): use_app is refused until
+        /// their next message reaches the agent, so it doesn't reach for the app again under their hands.
+        var tookOver = false
         /// The turn's last install put the change into the open app without reopening it: its end says the app
         /// is updated, not ready, whether that install was the agent's look or the turn's own.
         var updatedInPlace = false
+        /// How each of the turn's changes reached the app, in order: told to the agent with its look and tallied at
+        /// the turn's end, so what went in live and what waited can be seen and learned from.
+        var outcomes: [ChangeOutcome] = []
+        /// When the request began to be worked on, and when each of its changes reached the screen (went into the open
+        /// app, or the app opened with it; not one waiting for Reload): the pace the person watching sees, tallied at
+        /// the turn's end (`paceTally`) so the rule asking for it (`Agent.liveNote`) can be judged by what happens.
+        var began = Date()
+        var shown: [Date] = []
+        /// Why the latest change couldn't go into the open app (LiveReload's reason, in words), for the agent's look.
+        var reloadWhy: String?
+        /// A live change took in the one that was waiting for Reload: the agent is told, since it was told to wait.
+        var endedReloadWait = false
+        /// The turn's own looks at the agent's saved files (`autoApply`): the loop that watches for a save, the one
+        /// change going in at the moment, which a build waits for, and how many went in since the agent last looked.
+        var autoApply: Task<Void, Never>?
+        var applying: Task<Void, Never>?
+        var applyingSources = ""
+        var autoApplied = 0
+        /// The open app's layout being worked out ahead of the first change (`LiveReload.warm`).
+        var warming: Task<Void, Never>?
+        /// A build of Lamp's is under way (a look's, or the turn's end's): no change of the agent's is put in meanwhile.
+        var building = false
         /// Nil for a simulator/Mac turn; false until the chosen phone acknowledges opening the app.
         var phoneReady: Bool?
         var allowAll = false                // "Allow all for this turn"
+        /// What the checks made of each command this turn (`commandJudgment`): an agent runs the same build or
+        /// look at a file again and again, and the answer can't differ while the request is the same.
+        var judgments: [String: CommandRisk.Judgment] = [:]
         var approving = false               // between the queue check and the approval card
         var look = Look()                   // what the agent's look_at_app has done
+        /// The watch on the turn's last launch: a look goes on once the app shows, so a death in its first seconds can
+        /// come after the look's answer, and is told with the next look or use_app (`lateCrash`) or at the turn's end.
+        var launches: [Runtime.LaunchWatch] = []
+        var launch: Runtime.LaunchWatch? { launches.last }
+        /// A new app's scaffold being built and opened as the turn starts (`showEarly`): a look and the turn's own
+        /// build wait for it, since a turn has one build at a time.
+        var early: Task<Void, Never>?
         var pendingName: String?            // a name the agent gave the version this request makes
+        /// What the agent last said it's doing, in its own words (`AgentEvent.naming`): the name of the commands
+        /// that follow, until it says something else.
+        var naming: String?
+        /// Whether the chat says each command from the engine's own output (`AgentRun.saysCommands`), for the run going now.
+        var saysCommands = false
         /// The agent put its questions to the person this turn: the turn is over, whatever the agent does next.
         var asked = false
         /// Lamp ended the agent because it went on working past its own questions. Not a stop and not a failure.
@@ -441,12 +549,22 @@ final class Store: ObservableObject {
         var midTurn: [UUID] = []
         /// Requests handed to the engine that its output hasn't yet shown reaching the model (`received`).
         var handed: [UUID] = []
-        /// The engine running now, when it takes messages while it works (pi, Claude Code); nil otherwise.
+        /// The engine running now, which takes messages while it works; nil between runs.
         var steering: Engine?
         /// Claude Code's input, from its start until it has answered.
         var input: AgentInput?
         /// The engine is running a tool: a message written to it now reaches the model with the tool's result.
         var toolRunning = false
+        /// Codex's model has been heard from in this run, so it has the run's request and an interrupt now is one
+        /// Codex ends cleanly (`steer`). Its `turn.started` comes before the request is saved.
+        var codexStarted = false
+        /// Calls into Lamp being answered for this turn (an MCP tool, an approval): one may be under way before
+        /// the engine's output says so.
+        var answering = 0
+        /// What Codex is in the middle of (commands, tool calls, edits, searches), by its ids.
+        var codexActing: Set<String> = []
+        /// The messages Codex's run was interrupted to pass on: they start its next run, in the same conversation.
+        var codexCut: String?
         var claudeSession: String?          // Claude Code's conversation, as its own output says (Privacy.isOwnOutput)
         var writing: (line: UUID, unshown: String)?   // the message the agent is writing right now
         var showingWritten = false
@@ -463,6 +581,10 @@ final class Store: ObservableObject {
             var pids: [pid_t] = []
             if let agent { pids += Subprocess.terminateTree(agent) }
             if let build { pids += Subprocess.terminateTree(build) }
+            // A save being put in by itself stops too: before its compile it ends at once, and one already past
+            // it finishes without a word (the app has the change, and nothing is said of it after Stop).
+            autoApply?.cancel()
+            applying?.cancel()
             return pids
         }
     }
@@ -497,6 +619,73 @@ final class Store: ObservableObject {
     }
 
     /// Gives the app back, without starting anything queued (see `finish`).
+    /// A request's change the open app can't take as it runs: built and held (`Runtime.awaitReload`), with a Reload
+    /// button in the app's title bar and a line in the chat that has one too. Closing the app installs it as well.
+    private func awaitReload(_ project: LampProject, owner: Turn?) {
+        let already = Runtime.waitsForReload(project)
+        Runtime.awaitReload(project)
+        _ = heldInstalls.mayInstall(project.id, running: true)
+        Self.tellReload(project, on: true)
+        dropUnderWay(project)
+        let lines = logs[project.id] ?? []
+        if !already || !lines.contains(where: { $0.kind == .reload }) { log(project, .reload, "") }
+        refreshOpenApps()
+    }
+
+    /// The lines at the chat's end that said what was under way ("Building…", "Waiting for … to close…"): with the change
+    /// waiting for Reload, nothing is, so they go. The details among them (why the app has to reopen) are only shown
+    /// with Agent Details, and stay.
+    private func dropUnderWay(_ project: LampProject) {
+        guard var lines = logs[project.id] else { return }
+        var index = lines.endIndex
+        var removed = false
+        while index > lines.startIndex, case let line = lines[index - 1],
+              line.kind == .detail || (line.kind == .status && line.text.hasSuffix("…")) {
+            index -= 1
+            if line.kind != .detail { lines.remove(at: index); removed = true }
+        }
+        guard removed else { return }
+        logs[project.id] = lines
+        saveChat(project)
+    }
+
+    /// Shows or takes away the app's Reload button (`LampMagic.setReload`).
+    static func tellReload(_ project: LampProject, on: Bool) {
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(Edition.notificationPrefix + "reloadReady." + project.id), object: nil,
+            userInfo: ["on": on ? "1" : "0"], deliverImmediately: true)
+    }
+
+    /// The person pressed Reload, in the app or the chat: the waiting change goes in, by closing the app the usual way
+    /// and opening it again where it was. Pressed while a turn has the app, it's done when the turn ends.
+    func reloadWaiting(_ id: String) {
+        guard let project = projects.first(where: { $0.id == id }), Runtime.waitsForReload(project) else {
+            reloadWhenFree.remove(id)
+            return
+        }
+        // Taken now, before anything queued can start: otherwise kept until the turn that has the app ends.
+        guard begin(project) != nil else { reloadWhenFree.insert(id); return }
+        reloadWhenFree.remove(id)
+        // The Mac copy's change, wherever Try On points now (an app for both may have moved it to a phone since).
+        var mac = project
+        mac.chosen = .mac
+        Task {
+            _ = await install(mac, inFront: true, fresh: true, reload: true)
+            finish(project)
+        }
+    }
+    /// Reloads pressed while something else had the app (the agent's turn): each goes in when it's done, and the chat
+    /// says so meanwhile (`ReloadLine.queued`), since nothing else would seem to happen.
+    @Published private(set) var reloadWhenFree: Set<String> = []
+
+    /// Whether reopening the app now would close it under the person: a request's turn, the Mac app open, and not a
+    /// new app's first turn (nobody is using it yet, and its passes are built for the person to watch go in). Then
+    /// Lamp asks with Reload rather than reopening it, for a change it can't put in as the app runs and for a look
+    /// with `reopen` alike.
+    private func asksBeforeReopening(_ project: LampProject, owner: Turn?) -> Bool {
+        owner?.request != nil && isRunning(project) && !Template.isWidgetOnly(project) && progress[project.id]?.newApp != true
+    }
+
     private func release(_ project: LampProject) {
         if let turn = turns.removeValue(forKey: project.id) { agentTokens[turn.agentToken] = nil }
         busy.remove(project.id)
@@ -528,13 +717,26 @@ final class Store: ObservableObject {
         /// The app was built and opened by the last look, and this is how that launch went.
         var installed = false
         var crash: String?
+        /// A new app was shown to the person at this turn's first look that opened it: built in passes, it's watched
+        /// as it takes shape rather than seen only at the end (`present`).
+        var presented = false
+        /// A look this turn has said what Try On is set to and what the device list returned (`Devices.tryOnNote`).
+        var toldPhone = false
     }
     private var artInProgress: Set<String> = []
+    /// Designs whose artwork couldn't be drawn, by `Icons.artKey`: their icons show the symbol, not the blueprint.
+    private var artFailed: Set<String> = []
+    /// Apps whose blueprint gives way to the symbol once the turn that has them ends (`artworkWontCome`).
+    private var iconFallbackWhenFree: Set<String> = []
     private var pendingIconArt: Set<String> = []     // artwork finished during a turn, to apply after it
     private var heldInstalls = HeldInstalls()        // new icons waiting for their app to close
     private var heldDrawingOffers: Set<String> = []  // "Draw Icon…" wanted during a turn, to offer after it
     private var artApplied: [String: IconSpec] = [:] // the spec whose artwork the rendered icon includes
     private var iconDesigns: [String: Task<Void, Never>] = [:]   // icons designed from the first message
+    /// Icons being prepared while the app goes on (after a change went into the open app): a copy waits for its icon.
+    private var iconPreparations: [String: Task<Void, Never>] = [:]
+    /// The last icon render asked for, by app: each waits for the one before, so two never write the same files.
+    private var iconRenders: [String: Task<Void, Never>] = [:]
     private var tokens: [String: String] = [:]   // app token → project id, for the app's own routes (/ai…)
     /// The agent's token for the turn in progress → project id. Minted per turn and gone with it, so the agent's
     /// routes (/agent/…, /mcp) can't be reached with the app's token, which the app itself holds, nor after the
@@ -603,7 +805,8 @@ final class Store: ObservableObject {
         }
         // During the welcome, Apple's installer waits for the step that explains it.
         if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone { requestBuildTools() }
-        if !setup.hasBuildTools { pollSetup() } else { prepareStarters() }
+        if !setup.hasBuildTools { pollSetup() }
+        prepareStarters()   // the prebuilt ones need no build tools
         if setup.ready && !wasReady { await becameReady() }
     }
 
@@ -636,6 +839,7 @@ final class Store: ObservableObject {
         saveWaiting()
         openWaitingImport()
         await backfillIcons()
+        resumeWaitingIcons()
     }
 
     private func pollSetup() {
@@ -686,9 +890,9 @@ final class Store: ObservableObject {
         for project in projects { stamps[project.id] = BuildStamp.read(project.installedURL) }
         for project in projects where logs[project.id] == nil {
             let lamp = project.dir.appendingPathComponent(".lamp")
-            if let data = try? Data(contentsOf: lamp.appendingPathComponent("chat.json")),
-               let saved = try? JSONDecoder().decode([LogLine].self, from: data) {
-                logs[project.id] = saved.map(\.upgraded)
+            if let saved = LogLine.readChat(lamp.appendingPathComponent("chat.json")) {
+                logs[project.id] = saved.lines
+                if let unkept = saved.unkept { unkeptChats[project.id] = unkept }
             }
             if let data = try? Data(contentsOf: lamp.appendingPathComponent("usage.json")),
                let saved = try? JSONDecoder().decode(AppUsage.self, from: data) {
@@ -698,9 +902,9 @@ final class Store: ObservableObject {
     }
 
     func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil, retryPhone: String? = nil,
-             offer: SetupOffer? = nil, noted: NoteReceipt? = nil) {
+             offer: SetupOffer? = nil, noted: NoteReceipt? = nil, said: String? = nil) {
         logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone,
-                                                    offer: offer, noted: noted))
+                                                    offer: offer, noted: noted, said: said))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
         saveChat(project)
     }
@@ -722,6 +926,9 @@ final class Store: ObservableObject {
     /// One queue for every chat's file, so a later write of a chat never lands before an earlier one.
     private static let chatWrites = DispatchQueue(label: "dev.lamp.chat-writes", qos: .utility)
     private var chatsToSave: Set<String> = []
+    /// Chat files holding lines this Lamp couldn't read, whose copy couldn't be made when they were read: each save
+    /// tries the copy again and writes nothing until it's made (`LogLine.readChat`).
+    private var unkeptChats: [String: Data] = [:]
     private var chatSaveScheduled = false
 
     private func writeChats() {
@@ -736,6 +943,10 @@ final class Store: ObservableObject {
         guard let project = projects.first(where: { $0.id == id }) else { return }
         let lines = logs[id] ?? []
         let file = project.dir.appendingPathComponent(".lamp/chat.json")
+        if let unkept = unkeptChats[id] {
+            guard LogLine.keepAside(unkept, of: file) else { return }
+            unkeptChats[id] = nil
+        }
         Self.chatWrites.async {
             guard let data = try? JSONEncoder().encode(lines) else { return }
             try? data.write(to: file, options: .atomic)
@@ -770,7 +981,7 @@ final class Store: ObservableObject {
             let line = LogLine(kind: .agent, text: String(piece.drop(while: \.isWhitespace)))
             logs[project.id, default: []].append(line)
             turn.writing = (line.id, "")
-            note("Replying", for: project)
+            noteAgent("Replying", for: project)
             return
         }
         turn.writing?.unshown += piece
@@ -794,9 +1005,19 @@ final class Store: ObservableObject {
     /// Updates what the app's turn is doing right now, for the build card and the activity line.
     /// `file` is the file being written or edited, when that's the step.
     private func note(_ activity: String, file: String? = nil, for project: LampProject) {
+        // A step that changes nothing about what's being done (the agent's progress line).
+        guard !activity.isEmpty else { return }
         guard let current = progress[project.id], current.activity != activity || current.currentFile != file else { return }
         progress[project.id]?.activity = activity
         progress[project.id]?.currentFile = file
+    }
+
+    /// The same, from what the agent's own output says it's doing. While Lamp looks at the app for it, the look's
+    /// stages are what's going on ("Building…", "Opening…"): the engine reports the call a moment after the look has
+    /// begun, and its one fixed word for it would stay over every stage of a look that can take minutes.
+    private func noteAgent(_ activity: String, file: String? = nil, for project: LampProject) {
+        guard turns[project.id]?.look.inProgress != true else { return }
+        note(activity, file: file, for: project)
     }
 
     /// The installed app was built by an older Lamp and hasn't been rebuilt since.
@@ -949,6 +1170,8 @@ final class Store: ObservableObject {
                 .queryItems?.first(where: { $0.name == "app" })?.value else { return }
         // An app's sidebar, started while Lamp wasn't open: Lamp listens for it, and its own window stays put.
         if url.host == "sidebar" { return MagicPanel.shared.opening(slug) }
+        // The app's Reload button, pressed while Lamp wasn't running (`LampMagic.Opener.reload`).
+        if url.host == "reload" { return reloadWaiting(slug) }
         showChat(slug)
     }
 
@@ -1526,6 +1749,8 @@ final class Store: ObservableObject {
         draftWrites.removeValue(forKey: old.id)?.cancel()
         logs[project.id] = logs.removeValue(forKey: old.id)
         if chatsToSave.remove(old.id) != nil { chatsToSave.insert(project.id) }
+        // The chat file moved with the folder, still holding what wasn't copied: its saves stay held back.
+        unkeptChats[project.id] = unkeptChats.removeValue(forKey: old.id)
         usage[project.id] = usage.removeValue(forKey: old.id)
         queued[project.id] = queued.removeValue(forKey: old.id)
         if let turn = turns.removeValue(forKey: old.id) {   // the rename itself is a turn: it moves with the app
@@ -1976,11 +2201,13 @@ final class Store: ObservableObject {
                 project = await chooseKind(project, kind, said: suggestion.kindSaid, watch: suggestion.watch)
             }
             if project.untitled, let name = suggestion?.name { project = await performRename(project, to: name) }
+            if let color = suggestion?.color, Icons.load(project) == nil { iconColors[project.id] = color }
         }
         if Icons.load(project) == nil {
             let designing = project
+            let color = iconColors[project.id]
             iconDesigns[project.id] = Task {
-                let spec = await Icons.design(for: designing, brief: brief)
+                let spec = await Icons.design(for: designing, brief: brief, background: color)
                 if Icons.load(designing) == nil {
                     Icons.save(spec, for: designing)
                     await renderIcon(designing, spec: spec)
@@ -2000,12 +2227,12 @@ final class Store: ObservableObject {
     }
 
     /// Whether the waiting messages can be sent to the agent in the turn that's running (Send Now). They go as one
-    /// group, so every one of them must be able to: the engine takes messages while it works (not Codex), and each is
-    /// a plain request. An answer to a card or a request sent again changes what the turn is for, and so does anything
-    /// while a wish is being found or once the agent has asked its questions; then they all wait for the next turn.
+    /// group, so every one of them must be able to: each is a plain request. An answer to a card or a request sent
+    /// again changes what the turn is for, and so does anything while a wish is being found or once the agent has
+    /// asked its questions; then they all wait for the next turn.
     func canSendNow(in project: LampProject) -> Bool {
         let waiting = waitingToSend(in: project)
-        guard !waiting.isEmpty, let turn = turns[project.id], Builder.engine != .codex, !turn.asked, !turn.stopped,
+        guard !waiting.isEmpty, let turn = turns[project.id], !turn.asked, !turn.stopped,
               current(project)?.finding == false else { return false }
         return waiting.allSatisfy { $0.card == nil && $0.replaces == nil && $0.tookBack.isEmpty }
     }
@@ -2115,6 +2342,7 @@ final class Store: ObservableObject {
             if !stillFinding {
                 guard let ready = await materialize(project) else { return }
                 project = ready
+                if newApp { showEarly(project, in: owner) }
             }
             // Where the app is as the turn starts, so the request can be changed and sent again from here.
             if let head = await Versions.head(project) {
@@ -2122,6 +2350,9 @@ final class Store: ObservableObject {
                 owner.sentFrom = head
             }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
+            // The scaffold's early build is the turn's until it's settled, whichever way the turn ended (a question, a
+            // failure, a Stop): released before it, the next turn's build could run beside it on the same files.
+            await owner.early?.value
             worked = result.end != .failed
         }
     }
@@ -2169,6 +2400,8 @@ final class Store: ObservableObject {
             Task {
                 await applyIconArt(project, spec: spec)
                 release(project)
+                if reloadWhenFree.contains(project.id) { reloadWaiting(project.id) }
+                fixHeldCrash(project)
                 offerHeldDrawing(project)
                 startQueued(project)
                 installHeldIcons(for: [project.id])
@@ -2176,6 +2409,11 @@ final class Store: ObservableObject {
             return
         }
         release(project)
+        if reloadWhenFree.contains(project.id) { reloadWaiting(project.id) }
+        if iconFallbackWhenFree.remove(project.id) != nil, let spec = Icons.load(project) {
+            Task { await artworkWontCome(project, spec: spec, failed: false) }
+        }
+        fixHeldCrash(project)
         offerHeldDrawing(project)
         startQueued(project)
         refreshUndoOffer(project)
@@ -2227,8 +2465,12 @@ final class Store: ObservableObject {
         let watching = Template.isWidgetOnly(project) && isRunning(project)
         if watching { await quit(project) }
         guard heldInstalls.mayInstall(project.id, running: isRunning(project)) else { return false }
+        // A build that waited goes in now the app is closed: its data is copied first, as `install` does.
+        let held = Runtime.holdsBuild(project)
+        if held { await DataSnapshots.take(project) }
         do {
             try await deploy(project)
+            if held { await DataSnapshots.wentIn(project) }
             // A build that waited for the app to close goes in the same way, and is the app's stamp from now on.
             if Runtime.holdsBuild(project) {
                 Runtime.releaseBuild(project)
@@ -2285,6 +2527,10 @@ final class Store: ObservableObject {
                 logs[project.id]?[last].fromCard = true
                 saveChat(project)
             }
+            if message.byLamp, let last = logs[project.id]?.indices.last {
+                logs[project.id]?[last].byLamp = true
+                saveChat(project)
+            }
             if message.replaces != nil || !message.tookBack.isEmpty, let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].replaced = message.replaces
                 logs[project.id]?[last].tookBack = message.tookBack.isEmpty ? nil : message.tookBack
@@ -2324,6 +2570,12 @@ final class Store: ObservableObject {
         // the rest of the turn goes on with the app as Lamp now has it, so its build is for the new kind.
         var project = started
         guard let owner = turns[project.id] else { return TurnResult(end: .failed, watched: true) }
+        // Once, when the turn is over: its own build and install, and any run that fixes a crash, come after the agent's.
+        owner.began = Date()
+        defer {
+            if let tally = Self.outcomeTally(owner.outcomes, name: project.name) { log(project, .detail, tally) }
+            if let pace = Self.paceTally(began: owner.began, shown: owner.shown, outcomes: owner.outcomes) { log(project, .detail, pace) }
+        }
         var prompt = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
         // Attachments with no words: usually a screenshot or mockup meaning "like this", or a file to use.
         if prompt.isEmpty { prompt = Self.onlyFiles(saved.count) }
@@ -2382,17 +2634,26 @@ final class Store: ObservableObject {
         var crash: String?
         if changed {
             crash = await install(project)
-        } else if let look = turns[project.id]?.look, look.installed {
-            crash = look.crash
+        } else if let turn = turns[project.id], turn.look.installed {
+            // The look went on once the app showed: a death in its first seconds is known by now, or in a moment. One the
+            // agent was never told of is a crash on launch even when a later launch came through: it may come again.
+            // A launch Lamp itself closed and replaced isn't waited for: only a crash report would make its going a
+            // death, and the wait for one that never comes would hold up the turn for nothing.
+            for watch in turn.launches where !watch.told {
+                if await watch.wentAway(), !watch.retired { _ = await watch.verdict() }
+            }
+            let untold = lateCrash(of: turn)
+            crash = turn.look.crash ?? untold
             if crash == nil {
-                if let app = macCopies(of: project).first {
+                // An app for both pointed at the iPhone goes to the simulator or the phone, even with its Mac copy open.
+                if !project.onIOS, let app = macCopies(of: project).first {
                     // The look opened it behind the user's windows. Now it's theirs: it shows itself, as when it's
                     // opened again. An app that lives in the menu bar opens its panel (see LampWindows).
                     DistributedNotificationCenter.default().postNotificationName(
                         Notification.Name(Edition.notificationPrefix + "showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
                     app.activate()
                     log(project, .status, "\(project.name) is \(owner.updatedInPlace ? "updated" : "ready")")
-                } else {
+                } else if !isOnChosenPhone(project) {
                     crash = await install(project)
                 }
             }
@@ -2467,6 +2728,7 @@ final class Store: ObservableObject {
     /// Builds the app, sending compiler errors back to the agent up to three times. False when it still doesn't
     /// build, or when the agent asked the person something instead (`Turn.asked`).
     private func buildFixingErrors(_ started: LampProject) async -> Bool {
+        await turns[started.id]?.early?.value
         var project = current(started) ?? started
         var errors = await build(project)
         // The person's Apple account, not the code: build has said so, and the agent has nothing to fix.
@@ -2555,25 +2817,27 @@ final class Store: ObservableObject {
             try? FileManager.default.removeItem(at: sessionFile)
             session = nil
         }
-        let run = Agent.run(prompt: prompt, files: files, project: project, offered: offers(in: project),
+        var run = Agent.run(prompt: prompt, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
-        let input = run.opening.map { opening in
-            let input = AgentInput()
-            input.write(opening)
-            return input
-        }
-        turn.input = input
-        // Codex's `exec` reads nothing once it has started, so with Codex a message waits for the next turn.
-        turn.steering = engine == .codex ? nil : engine
-        let status = await Shell.run(run.command, cwd: project.dir, env: run.env, input: input,
-                                     started: { turn.agent = $0 }) { [weak self] line in
-            guard let self else { return }
+        turn.saysCommands = run.saysCommands
+        // Held strongly: it lives only while the engine runs. (A weak capture here, in a closure kept in a
+        // variable rather than passed straight to `Shell.run`, came back nil and dropped every line.)
+        let onLine: @MainActor (String) -> Void = { [self] line in
             for event in Agent.parseLine(line) {
                 // A tool is running from the call until the model is heard from again.
                 switch event {
                 case .tool: turn.toolRunning = true
                 case .text, .textPiece, .step, .finished: turn.toolRunning = false
                 default: break
+                }
+                // The model has been heard from, so Codex has saved the request (the run's own, or messages passed on).
+                if engine == .codex, !turn.codexStarted {
+                    switch event {
+                    case .acting, .text:
+                        turn.codexStarted = true
+                        received(project)
+                    default: break
+                    }
                 }
                 // Not the engine saying it passed a message of the person's on: that isn't the model answering.
                 if case .raw = event {} else if case .failed = event {} else if case .received = event {} else { answered = true }
@@ -2593,6 +2857,8 @@ final class Store: ObservableObject {
                     write(piece, for: project)
                 case .text(let text):
                     // The whole message. It takes the place of what was shown of it while it was written.
+                    // What the agent last said it was doing is over: the steps after this message are the message's.
+                    turn.naming = nil
                     let written = turn.writing?.line
                     turn.writing = nil
                     if let line = written, let index = logs[project.id]?.lastIndex(where: { $0.id == line }) {
@@ -2601,17 +2867,32 @@ final class Store: ObservableObject {
                     } else {
                         log(project, .agent, text)
                     }
+                    // Between Codex's steps: a message waiting to be passed on can go now.
+                    if engine == .codex { steer(project) }
                 case .step(let tool):
                     if !tool.isEmpty { endOnQuestions(turn, before: tool) }
+                    // The model has finished writing the file it was streaming. One that writes every file in a
+                    // single reply has them all carried out only once the reply ends, so without this the
+                    // checklist would sit still and then tick at once.
+                    let streamed = TurnProgress.call(tool: streamingTool, partialArguments: streamingArguments)
+                    if let file = TurnProgress.file(changedBy: streamed) { progress[project.id]?.wrote(file) }
+                    // Likewise the plan, which a model may send in the same reply as every file: shown once it's
+                    // written rather than once the reply ends, so the list is there to tick as the files come.
+                    if streamingTool == "plan",
+                       let arguments = try? JSONSerialization.jsonObject(with: Data(streamingArguments.utf8)) as? [String: Any],
+                       arguments["parts"] != nil {
+                        progress[project.id]?.plan = PlanPart.parts(from: arguments)
+                        progress[project.id]?.tickWrittenParts()
+                    }
                     streamingTool = tool
                     streamingArguments = ""
-                    note(TurnProgress.activity(tool: tool, partialArguments: ""), for: project)
+                    noteAgent(TurnProgress.activity(tool: tool, partialArguments: ""), for: project)
                 case .stepArgs(let piece):
                     // The file name is among the first arguments; the rest is the file itself.
-                    guard streamingArguments.count < 600 else { break }
+                    guard streamingArguments.count < 600 || streamingTool == "plan" else { break }
                     streamingArguments += piece
                     let call = TurnProgress.call(tool: streamingTool, partialArguments: streamingArguments)
-                    note(TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
+                    noteAgent(TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
                 case .plan(let parts):
                     progress[project.id]?.plan = parts
                     progress[project.id]?.tickWrittenParts()
@@ -2619,11 +2900,18 @@ final class Store: ObservableObject {
                     Memory.compacted(project)
                     AIStatus.compacted(project)
                     Skills.compacted(project)
-                case .tool(let text, let fullCall):
-                    log(project, .tool, text)
+                case .naming(let words):
+                    turn.naming = words.nilIfEmpty
+                    if let words = turn.naming { noteAgent(words, for: project) }
+                case .tool(let text, let fullCall, let said):
                     let call = ToolCall(text)
+                    // The step in the agent's own words: what it gave this call, else what it last said it's doing (a
+                    // command's name, a heading), which names the file work that follows until it says something else.
+                    let fileWork = [.read, .write, .edit, .search, .list, .delete].contains(call.action)
+                    let named = said ?? (call.action == .run || fileWork ? turn.naming : nil)
+                    log(project, .tool, text, said: named)
                     endOnQuestions(turn, before: call.name)
-                    note(TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
+                    noteAgent(named ?? TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
                     if let file = TurnProgress.file(changedBy: call) { progress[project.id]?.wrote(file) }
                     toolCalls += 1
                     // Compared in full: six different searches of one file all read "grep cache.json".
@@ -2638,6 +2926,8 @@ final class Store: ObservableObject {
                     steer(project)
                 case .cost(let amount): cost += amount
                 case .failed(let text):
+                    // Codex saying the turn Lamp interrupted didn't finish: it goes on in the next run.
+                    if turn.codexCut != nil { break }
                     if engine == .pi, Agent.isRequestTooLarge(text), failure.map(Agent.isRequestTooLarge) != true {
                         log(project, .status, Agent.droppingPictures)
                     }
@@ -2645,6 +2935,14 @@ final class Store: ObservableObject {
                 case .raw(let text): log(project, .detail, text)
                 case .received:
                     received(project)
+                case .acting(let id, let started):
+                    if started { turn.codexActing.insert(id) } else { turn.codexActing.remove(id); steer(project) }
+                case .ran(let command, let refused):
+                    // A command Codex ran is said in the chat as a command Lamp let run is, by the name the agent gave
+                    // it; one its reviewer refused is the same step, marked only when it's opened (`ChatLook.ranCommand`).
+                    // A run whose commands each come to Lamp's card says nothing here: the others' don't either.
+                    guard turn.saysCommands else { break }
+                    log(project, .status, (refused ? ChatLook.notRun : "Ran: ") + command, said: turn.naming)
                 case .finished:
                     // Claude Code has answered. A message sent from now on is the next request.
                     turn.input?.close()
@@ -2660,7 +2958,43 @@ final class Store: ObservableObject {
                 }
             }
         }
+        var status: Int32
+        while true {
+            let input = run.opening.map { opening in
+                let input = AgentInput()
+                input.write(opening)
+                return input
+            }
+            turn.input = input
+            turn.steering = engine
+            turn.autoApply?.cancel()
+            if turn.warming == nil, let current = current(project), isRunning(current) { turn.warming = warmLive(current) }
+            turn.autoApply = autoApply(project, in: turn)
+            status = await Shell.run(run.command, cwd: project.dir, env: run.env, input: input,
+                                     started: { turn.agent = $0 }, onLine: onLine)
+            turn.autoApply?.cancel()
+            turn.autoApply = nil
+            await turn.applying?.value
+            // Codex was interrupted to be given the person's messages (`steer`): it goes on in the same
+            // conversation with them, unless the turn was stopped or ended meanwhile, or Lamp stopped the model.
+            guard let message = turn.codexCut else { break }
+            turn.codexCut = nil
+            turn.agent = nil
+            turn.codexStarted = false
+            turn.codexActing = []
+            // Codex exits with an error on a turn it was asked to end; that's not this turn's failure.
+            if failure?.hasPrefix("The model ") != true { (status, failure) = (0, nil) }
+            // Not when the engine was changed in Settings meanwhile: this conversation is Codex's.
+            guard !turn.stopped, !turn.endedOnQuestions, failure == nil, Builder.engine == engine,
+                  let id = Self.savedSession(sessionFile), exists(project) else { break }
+            run = Agent.run(prompt: Agent.carryOn(message), files: [], project: current(project) ?? project,
+                            offered: offers(in: project), session: id, token: turn.agentToken)
+            // The setting may have changed since the turn began, and with it whether Lamp's hook says each command.
+            turn.saysCommands = run.saysCommands
+        }
         turn.agent = nil
+        turn.codexStarted = false
+        turn.codexActing = []
         turn.input = nil
         turn.steering = nil
         turn.toolRunning = false
@@ -2738,6 +3072,7 @@ final class Store: ObservableObject {
         let words = taken.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
         return (words.isEmpty ? Self.onlyFiles(saved.count) : words)
             + Attachments.note(for: saved, inlined: false) + PointedAt.note(for: lines.compactMap { chat[$0].pointed })
+            + Agent.midTurnNote
     }
 
     /// The engine's output shows the model has the requests handed to it: from now on they're the turn's.
@@ -2747,6 +3082,7 @@ final class Store: ObservableObject {
         turn.midTurn += turn.handed
         turn.messages += turn.handed.compactMap { id in lines.first { $0.id == id }?.text }
         turn.handed = []
+        turn.tookOver = false   // they've had their say since: what they asked may be to try it again
     }
 
     /// Requests handed to an engine that ended without giving them to the model (it failed, was stopped, or Lamp's
@@ -2766,10 +3102,34 @@ final class Store: ObservableObject {
 
     /// Claude Code takes the person's messages on its input: written while a tool runs, a message is there when
     /// the tool's result is, and the model reads both before it goes on.
+    ///
+    /// Codex's `exec` reads nothing once it has started, so its run is interrupted and the next one resumes the
+    /// conversation with the messages (`runAgent`). The interrupt is Codex's own (SIGINT, as Ctrl-C would be):
+    /// it ends the turn, records that in the conversation and exits, so the next run has everything the model
+    /// did up to then. It comes only between the things Codex does, never during a command, an edit, a tool call
+    /// or a search, nor while Lamp answers a call from it (a tool, an approval), so nothing is left half done;
+    /// what the model was thinking or writing then is lost, and it answers again in the next run.
     private func steer(_ project: LampProject) {
-        guard let turn = turns[project.id], turn.steering == .claude, turn.toolRunning, let input = turn.input,
-              let message = handOver(project) else { return }
-        input.write(Agent.claudeMessage(message))
+        guard let turn = turns[project.id] else { return }
+        switch turn.steering {
+        case .claude:
+            guard turn.toolRunning, let input = turn.input, let message = handOver(project) else { return }
+            input.write(Agent.claudeMessage(message))
+        case .codex:
+            guard turn.codexStarted, turn.codexActing.isEmpty, turn.answering == 0, turn.codexCut == nil, !turn.approving,
+                  approvals[project.id] == nil, let process = turn.agent,
+                  let codex = Subprocess.descendant(of: process, named: "codex"),
+                  let message = handOver(project) else { return }
+            turn.codexCut = message
+            kill(codex, SIGINT)
+            note("Reading your message", for: project)
+            // Codex ends a turn within a moment. One that hasn't gone after a while is ended as Stop would end it.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
+                if turn.agent === process { Subprocess.terminateTree(process) }
+            }
+        default:
+            return
+        }
     }
 
     /// Asking ends the turn. The tool says so, and an agent that goes on to another step anyway (it has been
@@ -2843,9 +3203,11 @@ final class Store: ObservableObject {
         AppSecrets.forget(app: project.instance)
         projects.removeAll { $0.id == project.id }
         logs[project.id] = nil
+        unkeptChats[project.id] = nil
         usage[project.id] = nil
         queued[project.id] = nil
         icons[project.id] = nil
+        crashesAfterRelease[project.id] = nil
         release(project)
         unread.remove(project.id)
         tokens = tokens.filter { $0.value != project.id }
@@ -2885,40 +3247,66 @@ final class Store: ObservableObject {
 
     // MARK: - Approvals
 
+    /// Commands confined for Claude Code's classifier to judge (`format=claude-confine`), by what they became, with
+    /// what the agent wrote and said they were for, so its card and the chat show the agent's words.
+    private var confinedCommands: [String: (original: String, said: String?)] = [:]
+
     /// The latest request per app, so the decision model can judge commands against what the user asked for.
 
     /// Applies Settings → Building → "Ask before running commands" to one command.
     /// `sandboxed`: the command will run confined to the app (Sandbox), so where it looks isn't in question.
-    private func approveCommand(_ command: String, for project: LampProject, escalated: Bool, shell: Bool = true, sandboxed: Bool) async -> Bool {
+    /// `said` is what the agent said the command is for, which names it in the chat (`LogLine.said`).
+    private func approveCommand(_ command: String, for project: LampProject, escalated: Bool, shell: Bool = true, sandboxed: Bool,
+                                said: String? = nil) async -> Bool {
         switch CommandApproval.current {
         case .never:
-            log(project, .status, "Ran: \(command)")
+            log(project, .status, "Ran: \(command)", said: said)
             return true
         case .risky where !escalated:
-            let judgment = await commandJudgment(command, for: project)
+            let judgment = await commandJudgment(command, for: project, aboutRequest: !sandboxed)
             // A command the sandbox confines can only change the app's own folder (Sandbox), so only one the
             // checks find risky asks: one they're merely unsure of, or that doesn't seem to match the request
             // (looking for the app's process while fixing it), runs. Asking about those was most of the cards,
-            // nearly all of them allowed. A check that couldn't be made at all still asks: the sandbox leaves the
-            // network open, so it isn't the only guard.
+            // nearly all of them allowed. A check that couldn't be made at all goes to the in-app model's rating:
+            // the sandbox leaves the network open, so it isn't the only guard, but a "low" there runs it.
             if judgment.verdict == .run || (sandboxed && judgment.verdict == .unsure && judgment.judged) {
-                log(project, .status, "Ran: \(command)")
+                log(project, .status, "Ran: \(command)", said: said)
                 return true
             }
             // A risky verdict always has its reason; if one were ever missing, the card still comes up as flagged.
             let flagged = judgment.verdict == .risky ? judgment.reason ?? .reachesBeyond : nil
-            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged)
+            let allowed = await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged,
+                                                said: said)
+            if allowed, shell { log(project, .status, "Ran: \(command)", said: said) }
+            return allowed
+        case .risky where shell:
+            // Claude Code's own classifier judged it and asked: the person decides, with no second check of
+            // Lamp's and no rating that runs it on a "low".
+            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, said: said,
+                                         mayRunOnRating: false)
         default:
-            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed)
+            // A command allowed on the card is a step like any other, by the name the agent gave it, whichever engine
+            // asked, as one that needed no card is.
+            let allowed = await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, said: said)
+            if allowed, shell { log(project, .status, "Ran: \(command)", said: said) }
+            return allowed
         }
     }
 
     /// Whether a command is plainly fine, for every engine: the decision model's answers (CommandRisk),
-    /// against the user's request. No decision model available → not plainly fine.
-    private func commandJudgment(_ command: String, for project: LampProject) async -> CommandRisk.Judgment {
-        await CommandRisk.judge(command: command, request: turns[project.id]?.request ?? "", folder: project.dir.path) { state, questions in
+    /// against the user's request when `aboutRequest`. No decision model available → not plainly fine.
+    /// A command judged once in a turn isn't sent again for the same request; one the model couldn't judge is.
+    private func commandJudgment(_ command: String, for project: LampProject, aboutRequest: Bool) async -> CommandRisk.Judgment {
+        let turn = turns[project.id]
+        let request = turn?.request ?? ""
+        let key = [aboutRequest ? request : "", project.dir.path, command].joined(separator: "\u{0}")
+        if let known = turn?.judgments[key] { return known }
+        let judgment = await CommandRisk.judge(command: command, request: request, folder: project.dir.path,
+                                               aboutRequest: aboutRequest) { state, questions in
             try await AppAI.decide(state: state, questions: questions).0
         }
+        if judgment.judged { turn?.judgments[key] = judgment }
+        return judgment
     }
 
     /// Applies Settings → Building → Permissions and Privacy to one of the agent's file tools, about to touch `path`: pi's own
@@ -2948,10 +3336,11 @@ final class Store: ObservableObject {
     /// Waits for the user to allow or deny a shell command. One request per app at a time; others queue.
     /// There's no timeout: commands wait until the user answers, stops the turn, or the turn ends.
     /// `flagged`: the check that found the command risky; the card gives that check's reason rather than
-    /// call it low risk. The in-app model's rating is words for the card and never runs a command.
+    /// call it low risk. Under "Only when risky", a shell command nothing flagged that the in-app model rates
+    /// low runs without the card (`CommandRisk.runsOnRating`).
     func requestApproval(for project: LampProject, command: String, title: String? = nil,
                          explanation given: CommandExplanation? = nil, shell: Bool = true, sandboxed: Bool = false,
-                         flagged: CommandRisk.Reason? = nil) async -> Bool {
+                         flagged: CommandRisk.Reason? = nil, said: String? = nil, mayRunOnRating: Bool = true) async -> Bool {
         guard !command.trimmed.isEmpty else { return false }
         if turns[project.id]?.allowAll == true {
             log(project, .detail, "Ran (allowed for this turn): \(command)")
@@ -2963,25 +3352,86 @@ final class Store: ObservableObject {
         guard let turn = turns[project.id], turn.agent != nil else { return false }   // the agent is gone: nobody to answer for
         turn.approving = true
         defer { turn.approving = false }
+        // The rating comes first when it could spare the card: a command the checks left to it, or that Claude
+        // Code asked about itself, runs on a "low". It gets a few seconds (`ratingWait`); a slower one comes to
+        // the card, which offers Allow and Deny at once and still runs the command if the "low" arrives after.
+        let ratingDecides = shell && title == nil && flagged == nil && CommandApproval.current == .risky && mayRunOnRating
+        var given = given
+        var asked = false   // the in-app model's answer is in, or none came
+        var late: Task<CommandExplanation?, Never>?
+        if ratingDecides, given == nil {
+            note("Checking a command", for: project)
+            let rating = Task { await explain(command, for: project, sandboxed: sandboxed) }
+            if let answer = await Self.answer(of: rating, within: Self.ratingWait) { (given, asked) = (answer, true) } else { late = rating }
+            guard turn.agent != nil else { return false }
+        }
+        // The setting is read again: it may have changed while the rating was worked out.
+        if ratingDecides, CommandApproval.current == .risky, CommandRisk.runsOnRating(given, flagged: flagged) {
+            // The caller says it ran, as for an Allow.
+            log(project, .detail, "Ran without asking (\(given?.risk ?? "") risk): \(given?.summary ?? "")")
+            note(said ?? "Running a command", for: project)   // as after an Allow, so "Checking a command" doesn't stay
+            return true
+        }
         NSApp.requestUserAttention(.informationalRequest)
         note(title == nil ? "Waiting for your OK to run a command" : "Waiting for your OK", for: project)
+        let lateRating = late
         return await withCheckedContinuation { continuation in
-            var pending = PendingApproval(command: command, answer: continuation, explanation: given?.raised(for: flagged))
+            // Asked already and nothing came back: the card says so rather than wait for an answer that isn't coming.
+            var pending = PendingApproval(command: command, answer: continuation,
+                                          explanation: given?.raised(for: flagged) ?? (asked ? .unexplained(flagged: flagged) : nil))
             if let title { pending.title = title }
+            pending.request = turn.request
+            pending.whyAsked = Self.whyAsked(file: title != nil, flagged: flagged)
+            pending.said = said
             approvals[project.id] = pending
             // Explain it while the card is up; until this arrives the card says it's working it out.
-            if given == nil { Task {
-                let explanation = await explain(command, for: project, sandboxed: sandboxed)?.raised(for: flagged) ?? .unexplained(flagged: flagged)
-                if approvals[project.id]?.id == pending.id { approvals[project.id]?.explanation = explanation }
+            if given == nil, !asked { Task {
+                let rating: CommandExplanation?
+                if let lateRating { rating = await lateRating.value } else { rating = await explain(command, for: project, sandboxed: sandboxed) }
+                guard approvals[project.id]?.id == pending.id else { return }
+                if ratingDecides, CommandApproval.current == .risky, CommandRisk.runsOnRating(rating, flagged: flagged) {
+                    log(project, .detail, "Ran without asking (\(rating?.risk ?? "") risk): \(rating?.summary ?? "")")
+                    answerApproval(for: project, allow: true)
+                    return
+                }
+                approvals[project.id]?.explanation = rating?.raised(for: flagged) ?? .unexplained(flagged: flagged)
             } }
         }
+    }
+
+    /// How long a command waits for the in-app model's rating before its card comes up without it.
+    static let ratingWait: Duration = .seconds(10)
+
+    /// The task's answer, or nil when it isn't in within `limit`; the task carries on either way.
+    static func answer<T>(of task: Task<T, Never>, within limit: Duration) async -> T? {
+        let first = FirstAnswer<T>()
+        return await withCheckedContinuation { continuation in
+            first.continuation = continuation
+            Task { @MainActor in first.give(await task.value) }
+            Task { @MainActor in try? await Task.sleep(for: limit); first.give(nil) }
+        }
+    }
+
+    /// Why the card is up, for How to Decide: a file outside the app, a check that flagged the step, the setting that
+    /// asks about every command, or a step the checks couldn't be sure stays inside the app. Each is said as it is,
+    /// so a low-risk command asked about because of the setting isn't described as reaching past the app.
+    nonisolated static func whyAsked(file: Bool, flagged: CommandRisk.Reason?, always: Bool = CommandApproval.current == .always) -> String {
+        if file { return "The agent works inside this app's folder by itself. A file outside it is yours to share or not." }
+        if flagged != nil {
+            return "The agent works on this app by itself, and stops for your OK when a step could reach past it. Lamp's check found that this one could."
+        }
+        if always {
+            return "You chose to be asked before every command the agent runs. You can change that in Settings → Building."
+        }
+        return "The agent works on this app by itself, and stops for your OK when Lamp can't be sure a step stays inside it. This is one of those."
     }
 
     func answerApproval(for project: LampProject, allow: Bool, allowAll: Bool = false) {
         guard let pending = approvals.removeValue(forKey: project.id) else { return }
         if allowAll { turns[project.id]?.allowAll = true }
         log(project, .detail, (allow ? "Allowed: " : "Denied: ") + pending.command)
-        note(allow && pending.title == PendingApproval.commandTitle ? "Running a command" : "Thinking", for: project)
+        let command = allow && pending.title == PendingApproval.commandTitle
+        note(command ? pending.said ?? "Running a command" : "Thinking", for: project)
         pending.answer.resume(returning: allow)
     }
 
@@ -3093,7 +3543,34 @@ final class Store: ObservableObject {
     /// The agent's `use_app` tool: hands its clicks, typing and keys to the open app, which performs them on its
     /// own front window (LampDriver in LampSupport), then reports what happened with a fresh picture.
     private func use(_ project: LampProject, request body: Data) async -> (Int, [String: Any]) {
-        guard turns[project.id]?.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        withLateCrash(await useNow(project, request: body), of: project)
+    }
+
+    /// A death in the first seconds of a launch a look went on from (`Runtime.LaunchWatch`), said once, ahead of the
+    /// agent's next look or use_app; the turn's end takes it as a crash on launch too (`turn.look.crash`).
+    private func withLateCrash(_ result: (Int, [String: Any]), of project: LampProject) -> (Int, [String: Any]) {
+        guard let turn = turns[project.id], let crash = lateCrash(of: turn) else { return result }
+        var (status, answer) = result
+        let note = "Note from Lamp: the app quit a few seconds after it was last opened, so it isn't running.\n\n\(crash)"
+        if status == 200 { answer["text"] = note + "\n\n" + (answer["text"] as? String ?? "") }
+        else { answer["error"] = note + "\n\n" + (answer["error"] as? String ?? "") }
+        return (status, answer)
+    }
+
+    /// What's known of the deaths the turn's launches saw and nobody has been told of yet; they're told from here on.
+    /// A look may have opened the app again since one of them (seeing it gone), so each launch is asked, not just
+    /// the last; only the last one's is what the app does now (`turn.look.crash`).
+    private func lateCrash(of turn: Turn) -> String? {
+        let untold = turn.launches.filter { $0.ended && $0.crash != nil && !$0.told }
+        guard !untold.isEmpty else { return nil }
+        for watch in untold { watch.told = true }
+        if let last = turn.launch, untold.contains(where: { $0 === last }) { turn.look.crash = last.crash }
+        return untold.compactMap(\.crash).joined(separator: "\n\n")
+    }
+
+    private func useNow(_ project: LampProject, request body: Data) async -> (Int, [String: Any]) {
+        guard let turn = turns[project.id], turn.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        if turn.tookOver { return (200, ["text": Self.tookOverNote]) }
         guard let request = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let actions = request["actions"] as? [[String: Any]], !actions.isEmpty,
               let json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
@@ -3101,6 +3578,10 @@ final class Store: ObservableObject {
         }
         if request["sidebar"] as? Bool == true {
             guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
+            // The sidebar is the open copy's too, so it's kept from the agent on the same terms as its windows (below).
+            if Runtime.holdsBuild(project), isRunning(project) {
+                return (409, ["error": Runtime.waitsForReload(project) ? reloadNote(for: project) : Self.keptOpenNote])
+            }
             guard !macCopies(of: project).isEmpty else {
                 return (200, ["text": "The app isn't open. Call look_at_app with sidebar first: it builds the app and opens it."])
             }
@@ -3108,11 +3589,15 @@ final class Store: ObservableObject {
         }
         if project.onIOS { return await useOnSimulator(project, actions: actions, json: json) }
         // Not in the copy the person kept open: what it holds is theirs, and it isn't the agent's change.
-        if Runtime.holdsBuild(project), isRunning(project) { return (409, ["error": Self.keptOpenNote]) }
+        if Runtime.holdsBuild(project), isRunning(project) {
+            return (409, ["error": Runtime.waitsForReload(project) ? reloadNote(for: project) : Self.keptOpenNote])
+        }
         guard let app = macCopies(of: project).first else {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
-        guard Self.binary(of: project, contains: "lampUseAppSignature") else {
+        // An app that can't be stopped part way (built before `LampDriver.Handover`) is rebuilt first: the person
+        // is shown Stop, and it has to work.
+        guard Self.binary(of: project, contains: "lampUseAppSignature"), Self.binary(of: project, contains: "lampUseAppStop") else {
             return (200, ["text": "The open app was built before use_app could do this. Call look_at_app to rebuild it, then try again."])
         }
         let readsScreen = Self.binary(of: project, contains: Self.screenTextMarker)
@@ -3122,14 +3607,38 @@ final class Store: ObservableObject {
         let id = UUID().uuidString
         let printed = Runtime.logSize(project)
         let asked = Date()
+        // In plain sight, with the person's Stop: Lamp's Stop and Esc reach the app as a signed stop; their own
+        // click or key in the app is seen by the app itself, which ends the batch and answers at once.
+        var stoppedAt: Date?
+        let trial = Handover(label: "\(Self.lampName) is trying \(project.name)") {
+            stoppedAt = Date()
+            Self.signal(project, "useAppStop", ["id": id], signedAs: "lampUseAppStop", over: "stop\n\(id)")
+        }
+        if let window = Handover.frontWindow(of: app.processIdentifier) { trial.show(window: window) }
+        // Where each action is about to happen and how long until it does, from the app (`LampDriver.aimed`), for
+        // Lamp's cursor to be there first: sent during the pause before the action, so nothing waits for the cursor.
+        let steps = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name(Edition.notificationPrefix + "useAppStep.\(project.id)"), object: nil, queue: .main) { note in
+            guard let text = note.object as? String,
+                  let step = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any], step["id"] as? String == id else { return }
+            let window = (step["window"] as? Int).map { CGWindowID($0) }
+            let doing = step["doing"] as? String, press = step["press"] as? Bool ?? false
+            let due = step["in"] as? Double ?? Template.useAppLead   // an app built before it said: it waits the lead
+            MainActor.assumeIsolated {
+                if let window { trial.show(window: window) }
+                guard let x = step["x"] as? Double, let y = step["y"] as? Double else { return }   // the window alone, at the start
+                Task { await trial.aim(at: CGPoint(x: x, y: y), doing: doing, press: press, due: due) }
+            }
+        }
+        defer {
+            DistributedNotificationCenter.default().removeObserver(steps)
+            trial.end()
+        }
         // Signed with the app's token rather than carrying it: distributed notifications reach every process.
-        let key = SymmetricKey(data: Data(Template.token(for: project).utf8))
-        let signature = HMAC<SHA256>.authenticationCode(for: Data("\(id)\n\(json)".utf8), using: key)
-            .map { String(format: "%02x", $0) }.joined()
-        DistributedNotificationCenter.default().postNotificationName(
-            Notification.Name(Edition.notificationPrefix + "useApp.\(project.id)"), object: nil,
-            userInfo: ["actions": json, "id": id, "lampUseAppSignature": signature], deliverImmediately: true)
-        // Waits, and keys held down (a Mac app's `key` with `amount`), each up to 10 seconds, as the app takes them.
+        Self.signal(project, "useApp", ["actions": json, "id": id], signedAs: "lampUseAppSignature", over: "\(id)\n\(json)")
+        // Waits, and keys held down (a Mac app's `key` with `amount`), each up to 10 seconds, as the app takes them;
+        // and, per action, the pause after it and the lead apps built before the spot was sent ahead give the
+        // cursor before every one (0.45 s): such an app isn't rebuilt while it's open, and still has to answer.
         let waits = actions.reduce(0.0) { total, action in
             switch action["action"] as? String {
             case "wait": total + min(action["amount"] as? Double ?? 1, 10)
@@ -3137,8 +3646,26 @@ final class Store: ObservableObject {
             default: total
             }
         }
-        let wait = Double(actions.count) * 0.4 + waits + 5
-        guard let report = await Runtime.useReport(of: project, id: id, waiting: wait, while: { !app.isTerminated }) else {
+        let wait = Double(actions.count) * (0.4 + 0.45) + waits + 5
+        // Once stopped, the app answers at once; one inside a dialog of its own can't until that closes, and isn't waited for.
+        let answer = await Runtime.useReport(of: project, id: id, waiting: wait) {
+            !app.isTerminated && (stoppedAt.map { Date().timeIntervalSince($0) < 2 } ?? true)
+        }
+        // Their own click or key in the app stopped it there: the pill says the app is theirs, as for Stop.
+        if answer?.stopped == true { trial.take() }
+        // Asked again after the reads below: they take a moment, and Stop may come during them.
+        func tookOver() -> Bool {
+            guard trial.tookOver else { return false }
+            if !turn.tookOver {
+                turn.tookOver = true
+                log(project, .status, Self.stoppedByYou)
+            }
+            return true
+        }
+        guard let report = answer?.report else {
+            if tookOver() {
+                return (200, ["text": "Stopped: the person took the app over before it answered.\n\n" + Self.tookOverNote])
+            }
             guard app.isTerminated else {
                 return (200, ["text": "The app didn't answer. It may have no window open, or it may be stuck."])
             }
@@ -3152,6 +3679,7 @@ final class Store: ObservableObject {
         }
         // The front window in words goes wherever its picture does: what's on it is the same thing either way.
         if Privacy.sharesPictures, readsScreen, let words = await Runtime.screenText(of: project, since: asked) { text += "\n\n" + words }
+        if tookOver() { text += "\n\n" + Self.tookOverNote }
         text += Privacy.sharesPictures
             ? "\n\nPictures of its windows follow, frontmost first. The screen as text is the first picture's, and x and y for the next use_app are pixels in it."
             : "\n\n" + Privacy.picturesOff
@@ -3166,6 +3694,9 @@ final class Store: ObservableObject {
         guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
         let window = await look(at: project, reopen: reopen)
         guard window.0 == 200, !macCopies(of: project).isEmpty else { return window }
+        // What's open isn't the agent's change (or not the fresh launch it asked for) while it waits for the person:
+        // that's what the agent must hear, not a report of the old copy's sidebar.
+        if let text = window.1["text"] as? String, [Self.askedToReopenNote, Self.keptOpenNote].contains(text) || text.hasPrefix(Self.reloadNoteStart) { return window }
         var (status, sidebar) = await BrowserPreview.look(project, page: page)
         // The window beside it, so the sidebar's items are judged against the app's, not on their own.
         if Privacy.sharesPictures, let pictures = window.1["screenshots"] as? [String], let front = pictures.first {
@@ -3176,6 +3707,28 @@ final class Store: ObservableObject {
         return (status, sidebar)
     }
     private static let noSidebar = "Only a Mac app has a sidebar in Chrome, and only while Apps in Chrome is on in Lamp's Settings → Experimental."
+
+    /// What the agent hears once the person has taken the app back, and from then on when it calls use_app.
+    static let tookOverNote = "The person took the app over while you were trying it, so use_app is off until their next message. " +
+        "Don't try to use the app again. Finish what you were doing, and tell them in a sentence what's left for them to try."
+
+    /// The chat's line when the person took the app back from Lamp.
+    static let stoppedByYou = "Trying it: stopped by you"
+
+    /// The app's name as the person knows it, for "Lamp is trying …".
+    private static let lampName = "Lamp"
+
+    /// A request to the open app, signed with its token (`Template.token`): only Lamp knows it, and distributed
+    /// notifications reach every process, so the token itself never travels.
+    private static func signal(_ project: LampProject, _ name: String, _ info: [String: String], signedAs key: String, over text: String) {
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(Edition.notificationPrefix + "\(name).\(project.id)"), object: nil,
+            userInfo: info.merging([key: signature(over: text, token: Template.token(for: project))]) { $1 }, deliverImmediately: true)
+    }
+
+    static func signature(over text: String, token: String) -> String {
+        HMAC<SHA256>.authenticationCode(for: Data(text.utf8), using: SymmetricKey(data: Data(token.utf8))).map { String(format: "%02x", $0) }.joined()
+    }
 
     /// A line every app that writes its screen as text (`LampScreen` in LampSupport.swift) has in its binary.
     private static let screenTextMarker = "The screen as text, in reading order"
@@ -3188,6 +3741,7 @@ final class Store: ObservableObject {
         }
         // The owner, before any wait; and one Lamp app per simulator, so actions can't land on another's screen.
         guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        if owner.tookOver { return (200, ["text": Self.tookOverNote]) }
         guard simulatorLeases[running.udid] == project.id else {
             return (200, ["text": "Another of the user's apps has taken this simulator since. Call look_at_app to open this app again."])
         }
@@ -3211,8 +3765,16 @@ final class Store: ObservableObject {
         }
         let printed = Runtime.logSize(project)
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
-        let report = await Simulator.Driver.perform(decoded, on: screen, picture: picture) { [weak self] in
-            guard let self, exists(project), turns[project.id] === owner, !owner.stopped else { return false }
+        // In plain sight, with the person's Stop, Esc, or their own tap or key in the simulator ending it.
+        let trial = Handover(label: "\(Self.lampName) is trying it on \(project.family.name)", finger: true, simulator: screen.pid)
+        if let window = Handover.frontWindow(of: screen.pid, containing: CGPoint(x: screen.rect.midX, y: screen.rect.midY)) {
+            trial.show(window: window)
+        }
+        defer { trial.end() }
+        let report = await Simulator.Driver.perform(decoded, on: screen, picture: picture, aim: { point, doing, press in
+            await trial.aim(at: point, doing: doing, press: press)
+        }, tookOver: { trial.tookOver }) { [weak self] in
+            guard let self, exists(project), turns[project.id] === owner, !owner.stopped, !trial.tookOver else { return false }
             // Still this app's screen: it's running, the device is still leased to this project (a launch by
             // another project takes the lease before anything else), and no other app of Lamp's is running there.
             guard simulatorLeases[running.udid] == project.id, simulatorApps[project.id]?.pid == running.pid, Simulator.isRunning(pid: running.pid) else { return false }
@@ -3221,8 +3783,18 @@ final class Store: ObservableObject {
         if let data = try? JSONSerialization.data(withJSONObject: ["id": UUID().uuidString, "report": report]) {
             try? data.write(to: Runtime.folder(project).appendingPathComponent("use.json"))
         }
+        // Asked again after the reads below: they take a moment, and Stop may come during them.
+        func tookOver() -> Bool {
+            guard trial.tookOver else { return false }
+            if !owner.tookOver {
+                owner.tookOver = true
+                log(project, .status, Self.stoppedByYou)
+            }
+            return true
+        }
         guard Simulator.isRunning(pid: running.pid) else {
             var text = "What happened:\n\(report)\n\nThe app quit or crashed while doing that."
+            if tookOver() { text += "\n\n" + Self.tookOverNote }
             if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nLast lines it printed:\n" + tail }
             return (200, ["text": text])
         }
@@ -3235,6 +3807,7 @@ final class Store: ObservableObject {
         // Asked again after the read: it takes a moment, and the setting can be turned off meanwhile.
         let words = Privacy.sharesPictures ? await Simulator.Driver.screenText(on: screen) : nil
         if Privacy.sharesPictures, let words { text += "\n\n" + words }
+        if tookOver() { text += "\n\n" + Self.tookOverNote }
         text += Privacy.sharesPictures
             ? "\n\nA picture of the iPhone's screen follows. Points for the next use_app are pixels in it."
             : "\n\n" + Privacy.picturesOff
@@ -3281,13 +3854,7 @@ final class Store: ObservableObject {
                 (status, answer) = await use(project, request: actions)
             case "plan":
                 // pi's plan reaches the build card through its event stream (Agent.parseLine); here it's set directly.
-                let parts = (arguments["parts"] as? [[String: Any]] ?? []).enumerated().compactMap { index, part in
-                    (part["title"] as? String).map {
-                        PlanPart(id: index, title: $0, done: part["done"] as? Bool ?? false,
-                                 files: (part["files"] as? [String] ?? []).map { ($0 as NSString).lastPathComponent })
-                    }
-                }
-                progress[project.id]?.plan = parts
+                progress[project.id]?.plan = PlanPart.parts(from: arguments)
                 progress[project.id]?.tickWrittenParts()
                 (status, answer) = (200, ["text": "The user can see the plan."])
             case "delete_file":
@@ -3301,7 +3868,7 @@ final class Store: ObservableObject {
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             case "make_app_for": (status, answer) = await agentKind(arguments, for: project)
             case "connectors": (status, answer) = Connectors.answer(arguments, for: project)
-            case "ask", "write_wish": (status, answer) = talk(name, arguments, for: project)
+            case "ask", "progress", "write_wish": (status, answer) = talk(name, arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
@@ -3379,8 +3946,8 @@ final class Store: ObservableObject {
         return (200, ["text": "Deleted \(relative)."])
     }
 
-    /// `ask` and `write_wish`, for every engine: pi's extension posts them to `/agent/talk`, Claude Code and
-    /// Codex call them over MCP.
+    /// `ask`, `progress` and `write_wish`, for every engine: pi's extension posts them to `/agent/talk`, Claude
+    /// Code and Codex call them over MCP.
     func talk(_ tool: String, _ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
         guard let turn = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         switch tool {
@@ -3401,6 +3968,17 @@ final class Store: ObservableObject {
                 turn.asked = true
                 saveChat(project)
                 return (200, ["text": Talk.asked])
+            }
+        case "progress":
+            switch Talk.progress(from: arguments, after: logs[project.id] ?? []) {
+            case .failure(let trouble): return (400, ["error": trouble.text])
+            case .success(nil): return (200, ["text": Talk.saidAlready])
+            case .success(let text?):
+                logs[project.id, default: []].append(LogLine(kind: .progress, text: text))
+                // A new phase: the file work after it isn't what the last command or heading was for.
+                turns[project.id]?.naming = nil
+                saveChat(project)
+                return (200, ["text": Talk.told])
             }
         case "write_wish":
             // Only for a wish being found: one the person told is already theirs, and a box they're typing in
@@ -3671,7 +4249,7 @@ final class Store: ObservableObject {
     }()
 
     /// Whether the installed app's binary contains a string, which says which Lamp features it was built with.
-    private static func binary(of project: LampProject, contains marker: String) -> Bool {
+    static func binary(of project: LampProject, contains marker: String) -> Bool {
         let binary = project.installedURL.appendingPathComponent("Contents/MacOS/\(project.exe)")
         guard let data = try? Data(contentsOf: binary, options: .alwaysMapped) else { return false }
         return data.range(of: Data(marker.utf8)) != nil
@@ -3766,7 +4344,7 @@ final class Store: ObservableObject {
         }
     }
 
-    /// A starter put back on the desk after the first launch (More from Lamp's Add): added, shown on the desk, and
+    /// A starter put back on the desk after the first launch (Starter wishes' Add): added, shown on the desk, and
     /// saved and built out of sight like the first launch's (`prepareStarters`).
     @discardableResult func put(starter: Starters.Starter) -> LampProject? {
         guard let added = add(starter: starter) else { return nil }
@@ -3781,20 +4359,28 @@ final class Store: ObservableObject {
 
     /// A starter's chat begins with what it offers to change first (`Starters.card`), added a moment after the chat
     /// is first shown, beside the app or in Lamp's window, so it arrives there rather than being there already.
-    /// Once: a chat with anything in it is left as it is.
+    /// Once: a chat in which anything has been said is left as it is. Lamp's own lines about building the app (one
+    /// built again for a newer Lamp before its chat was ever opened: "Updating … for this version of Lamp…", "… is
+    /// ready") aren't a conversation, so the card still comes, under them.
     func offerStarterChanges(_ id: String, after delay: Double) {
-        guard (logs[id] ?? []).isEmpty, let project = projects.first(where: { $0.id == id }), Starters.isStarter(project),
+        guard Self.nothingSaid(in: logs[id] ?? []), let project = projects.first(where: { $0.id == id }), Starters.isStarter(project),
               let starter = Starters.starter(of: project), let card = Starters.card(for: starter),
               offeringStarter.insert(id).inserted else { return }
         Task {
             try? await Task.sleep(for: .seconds(delay))
             offeringStarter.remove(id)
-            guard let current = current(project), (logs[id] ?? []).isEmpty else { return }
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { logs[id] = [card] }
+            guard let current = current(project), Self.nothingSaid(in: logs[id] ?? []) else { return }
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { logs[id, default: []].append(card) }
             saveChat(current)
         }
     }
     private var offeringStarter: Set<String> = []
+
+    /// Whether a chat holds nothing but Lamp's own lines about building and opening the app: no request, no word
+    /// from the agent, no card.
+    private static func nothingSaid(in lines: [LogLine]) -> Bool {
+        lines.allSatisfy { [.status, .detail, .error].contains($0.kind) }
+    }
 
     /// Starters being built for the first time, out of sight: their icons spin on the desk.
     @Published private(set) var preparing: Set<String> = []
@@ -3808,15 +4394,20 @@ final class Store: ObservableObject {
     /// Builds the starters nobody has opened yet, one at a time, as soon as Apple's tools are there, so each
     /// opens at once when used. One that's being waited for goes first.
     func prepareStarters() {
-        guard setup.hasBuildTools, !preparingStarters else { return }
+        guard canPrepare(), !preparingStarters else { return }
         preparingStarters = true
         Task {
             defer { preparingStarters = false }
             await startersInstall?.value
-            await saveStartersFirstVersions()
-            while let next = nextStarterToPrepare() {
+            // Their first versions need git, one of Apple's tools; a prebuilt starter made ready before them gets
+            // its first version when they arrive.
+            if setup.hasBuildTools { await saveStartersFirstVersions() }
+            // Each once: one that couldn't be made ready without the tools waits for them, not for this loop.
+            var tried: Set<String> = []
+            while let next = nextStarterToPrepare(excluding: tried) {
+                tried.insert(next.id)
                 // Again for each: one put back on the desk meanwhile gets its first version before its build.
-                await saveStartersFirstVersions()
+                if setup.hasBuildTools { await saveStartersFirstVersions() }
                 await prepare(next)
             }
         }
@@ -3840,8 +4431,16 @@ final class Store: ObservableObject {
             && !FileManager.default.fileExists(atPath: project.installedURL.path)
     }
 
-    private func nextStarterToPrepare() -> LampProject? {
-        let waiting = projects.filter(needsPreparing)
+    /// Whether some starter can be made ready now: any, once Apple's build tools are there, and before then the
+    /// ones Lamp came with already built (`PrebuiltStarters`).
+    func canPrepare(_ project: LampProject? = nil) -> Bool {
+        if setup.hasBuildTools { return true }
+        if let project { return PrebuiltStarters.has(project) }
+        return projects.contains { needsPreparing($0) && PrebuiltStarters.has($0) }
+    }
+
+    private func nextStarterToPrepare(excluding tried: Set<String> = []) -> LampProject? {
+        let waiting = projects.filter { needsPreparing($0) && canPrepare($0) && !tried.contains($0.id) }
         return waiting.first { openWhenReady.contains($0.id) } ?? waiting.first
     }
 
@@ -3852,7 +4451,12 @@ final class Store: ObservableObject {
         preparing.insert(project.id)
         let before = Set((logs[project.id] ?? []).map(\.id))
         var made = false
-        if await build(project) == nil {
+        // The copy Lamp came with when it's what this build would make, so the starter is ready at once.
+        var ready = PrebuiltStarters.install(into: project)
+        // Without Apple's tools there's no build: a starter whose prebuilt copy couldn't be used waits for them.
+        let canBuild = setup.hasBuildTools
+        if !ready, canBuild { ready = await build(project) == nil }
+        if ready {
             await prepareIcon(project)
             do {
                 try await deploy(project)
@@ -3869,7 +4473,7 @@ final class Store: ObservableObject {
             logs[project.id] = lines.filter { before.contains($0.id) || $0.kind == .ask }
             saveChat(project)
         }
-        if !made { unpreparedStarters.insert(project.id) }
+        if !made, canBuild { unpreparedStarters.insert(project.id) }
         preparing.remove(project.id)
         finish(project)
         guard openWhenReady.remove(project.id) != nil, let current = current(project) else { return }
@@ -4145,11 +4749,29 @@ final class Store: ObservableObject {
         }
     }
 
-    private func build(_ project: LampProject) async -> String? {
+    /// `inPlace` false builds the whole app without first putting the change into the open one: a look that reopens
+    /// the app installs the whole build anyway.
+    private func build(_ project: LampProject, inPlace: Bool = true) async -> String? {
+        // The open app glows while its change is built, until it goes in (`reloadInPlace`) or the install that
+        // follows settles otherwise; a build that fails lets it go here.
+        let glowing = exists(project) && AppTransition.begin(project)
+        let problem = await buildNow(project, inPlace: inPlace)
+        if glowing, problem != nil { AppTransition.end(project) }
+        return problem
+    }
+
+    private func buildNow(_ project: LampProject, inPlace: Bool) async -> String? {
         guard exists(project) else { return "The app was deleted." }
+        // A save of the agent's being put in finishes first: both write the live copy. One that hasn't reached the
+        // compiler yet, for sources the agent has moved on from, gives way to this build, which takes the newer ones.
+        let owner = turns[project.id]
+        owner?.building = true
+        defer { owner?.building = false }
+        if let owner, let applying = owner.applying, owner.applyingSources != Runtime.fingerprint(project) { applying.cancel() }
+        await owner?.applying?.value
+        await owner?.warming?.value
         log(project, .status, "Building…")
         // Lamp's own files first, and no build without them: the build runs build.sh and Package.swift.
-        let owner = turns[project.id]
         do {
             try await writeOwnFiles(project, all: true)
         } catch {
@@ -4181,22 +4803,20 @@ final class Store: ObservableObject {
         var env: [String: String] = universal ? ["LAMP_TEAM": Devices.team] : [:]
         // The open app takes the change first, when it can (LiveReload): a few seconds, where the whole build
         // takes several more. That build goes on afterwards, for the app to be installed from when it closes.
-        if await reloadBeforeBuilding(project, command: command, env: env, fingerprint: fingerprint) { return nil }
-        await liveBuilds[project.id]?.value
+        if inPlace, await reloadBeforeBuilding(project, command: command, env: env, fingerprint: fingerprint) { return nil }
+        // Said again: a change that couldn't go into the open app left the line on putting it in, through the whole build.
+        note("Building…", for: project)
+        await awaitLiveBuild(of: project)
         liveBuildFailed.remove(project.id)
-        if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1" }   // a change can go into the open app (LiveReload)
-        var status = await Self.runBuild(command, for: project, env: env,
-                                         started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
-        // The live copy's spare places must never be what keeps an app from building: if they are, it's built
-        // without them from now on, and the agent only ever sees errors in its own code.
-        if status != 0, env["LAMP_LIVE"] == "1", LiveSlots.brokeBuild(output.joined(separator: "\n")), LiveSlots.giveUp(project) {
-            output = []
-            status = await Self.runBuild(command, for: project, env: env,
-                                         started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
-        }
+        if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1"; LiveSlots.expireGiveUps(project, appOpen: !macCopies(of: project).isEmpty) }   // a change can go into the open app (LiveReload)
+        // What else goes into the app as this build starts, kept with what it compiled once it has built.
+        let inputs = env["LAMP_LIVE"] == "1" ? LiveReload.inputs(project) : nil
+        let status = await Self.buildSparing(command, for: project, env: env,
+                                             started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output = $0 }
         turns[project.id]?.build = nil
         guard exists(project) else { return "The app was deleted." }
         guard status != 0 else {
+            if let inputs { LiveReload.noteBuilt(project, inputs: inputs) }
             Runtime.markBuilt(project, from: fingerprint)
             BuildStamp.write(for: project)   // deploy signs the app afterwards
             return nil
@@ -4204,6 +4824,37 @@ final class Store: ObservableObject {
         let tail = output.suffix(40).joined(separator: "\n")
         log(project, .detail, "Build failed:\n" + tail)
         return tail
+    }
+
+    /// Builds the app, and for a live build makes sure the live copy's spare places and final classes are never what
+    /// keeps it from building: if they are, the structs' initializers are written again without the spares and the
+    /// build tried once more; if that doesn't do, it's built without them from now on, so the agent only ever sees
+    /// errors in its own code. Both are judged, since one output may hold both kinds of error; the build is tried
+    /// again if either gave up. `done` gets the last build's output.
+    static func buildSparing(_ command: String, for project: LampProject, env: [String: String],
+                             started: (@MainActor (Process) -> Void)? = nil,
+                             done: ([String]) -> Void) async -> Int32 {
+        var output: [String] = []
+        defer { done(output) }
+        var status = await runBuild(command, for: project, env: env, started: started) { output.append($0) }
+        if status != 0, env["LAMP_LIVE"] == "1", LiveSlots.brokeBuild(output.joined(separator: "\n")), await LiveSlots.addMemberwise(project) {
+            output = []
+            status = await runBuild(command, for: project, env: env, started: started) { output.append($0) }
+        }
+        if status != 0, env["LAMP_LIVE"] == "1", case let text = output.joined(separator: "\n"),
+           case let spares = LiveSlots.brokeBuild(text) && LiveSlots.giveUp(project),
+           case let finals = LiveSlots.brokeFinal(text, project: project) && LiveSlots.giveUpFinal(project), spares || finals {
+            output = []
+            status = await runBuild(command, for: project, env: env, started: started) { output.append($0) }
+            // Failing without them too, the errors were the agent's own code: the compiler prints the lines around
+            // an error, spares included, so its words alone can't tell. A give-up kept then would hold every later
+            // change for Reload, since the open app has the spares the copy no longer does.
+            if status != 0 {
+                if spares { LiveSlots.takeBack("no-spares", for: project) }
+                if finals { LiveSlots.takeBack("no-final", for: project) }
+            }
+        }
+        return status
     }
 
     /// Runs the app's build.sh. It's Lamp's file, written just before, but in the agent's folder: a command the agent
@@ -4221,6 +4872,26 @@ final class Store: ObservableObject {
     /// the app didn't open beside one that has, or the reverse.
     private func noteOpened(_ opened: Bool, for project: LampProject) {
         if progress[project.id]?.finished != nil { progress[project.id]?.unopened = !opened }
+        if opened { warmLive(project) }
+    }
+
+    /// What the open app's types hold, worked out as soon as the app is open (`LiveReload.warm`), so the compiler's
+    /// slow first read of a session is over before the agent's first save rather than in front of it. One at a time
+    /// per app; each goes when it's done, and a later open starts another only when there's something to work out.
+    private var warmings: [String: Task<Void, Never>] = [:]
+    @discardableResult private func warmLive(_ project: LampProject) -> Task<Void, Never>? {
+        guard LiveReload.eligible(project) else { return nil }
+        if let warming = warmings[project.id] { return warming }
+        let warming = Task { [weak self] in
+            let began = Date()
+            await LiveReload.warm(project)
+            guard let self else { return }
+            warmings[project.id] = nil
+            let took = Date().timeIntervalSince(began)
+            if took > 2 { log(project, .detail, "Worked out what the open app holds, ahead of the next change, in \(Int(took.rounded())) s.") }
+        }
+        warmings[project.id] = warming
+        return warming
     }
 
     /// The whole builds running after a change went into the open app, by app: a build waits for the one before.
@@ -4230,6 +4901,90 @@ final class Store: ObservableObject {
     private var liveBuildFailed: Set<String> = []
     /// Apps whose change went in before their build: the install that follows the build has nothing to do.
     private var reloadedBeforeBuild: Set<String> = []
+    /// What each running whole build after an early change was started from: its process, to end it when a newer
+    /// change makes it stale, and the fingerprint of the sources it builds, to tell when nothing changed since.
+    private var liveBuildRuns: [String: (process: Process?, fingerprint: String)] = [:]
+    /// Whole builds ended because a newer change replaced them: what they leave in build/ isn't installed.
+    private var liveBuildsSuperseded: Set<String> = []
+
+    /// Waits for the whole build after an early change, which can take a minute: meanwhile the turn says it's
+    /// building, not that the change is going in, which was said seconds before and is done.
+    private func awaitLiveBuild(of project: LampProject) async {
+        guard let whole = liveBuilds[project.id] else { return }
+        note("Building…", for: project)
+        await whole.value
+    }
+
+    /// Ends the whole build after an earlier change, and waits for it to be gone, since the next build writes the
+    /// same folders. What it left in build/ is the version before the change, or half of it, so until another
+    /// whole build is done the app is treated as one whose whole build failed: never installed from it.
+    private func supersedeLiveBuild(of project: LampProject) async {
+        guard let whole = liveBuilds[project.id] else { return }
+        liveBuildsSuperseded.insert(project.id)
+        liveBuildFailed.insert(project.id)
+        // Not started yet (the process is handed over as it starts): it runs, briefly, and ends at its first check.
+        if let process = liveBuildRuns[project.id]?.process { Subprocess.terminateTree(process) }
+        await whole.value
+    }
+
+    /// While the agent works on an open Mac app, each change it saves is put into the app by itself a moment after
+    /// the saving pauses, by the quick path a look takes (`reloadBeforeBuilding`): the person watches the app take
+    /// each piece as it's written, rather than when the agent chooses to look, or all at once at the end. Only a
+    /// change that can go in live goes in this way; one that needs a reopen is left alone, for the turn's end to
+    /// build and hold for Reload once, with everything else. The sources are read every two seconds and a state is
+    /// tried once it has held still for a reading, and only once: what didn't go in isn't tried again until it changes.
+    private func autoApply(_ project: LampProject, in turn: Turn) -> Task<Void, Never> {
+        Task { [weak self] in
+            var seen = "", tried = "", seenAt = Date()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard let self, !Task.isCancelled, turns[project.id] === turn, !turn.stopped, turn.agent != nil,
+                      !turn.look.inProgress, !turn.building, !turn.keptOpen, turn.applying == nil,
+                      let current = current(project), LiveReload.eligible(current),
+                      isRunning(current), !Runtime.waitsForReload(current) else { continue }
+                let now = Runtime.fingerprint(current)
+                // Still being written: wait for a reading with nothing new in it.
+                if now != seen { seen = now; seenAt = Date(); continue }
+                guard now != tried, Runtime.sourcesChanged(current) else { continue }
+                tried = now
+                let saved = seenAt
+                turn.applyingSources = now
+                turn.applying = Task { [weak self] in
+                    guard let self else { return }
+                    defer { turn.applying = nil }
+                    let waited = Date()
+                    await turn.warming?.value
+                    let warmWait = Date().timeIntervalSince(waited)
+                    try? await writeOwnFiles(current, all: false)
+                    guard turns[project.id] === turn, !turn.stopped, exists(current) else { return }
+                    let universal = current.platform == .universal
+                    let command = universal ? "./build.sh mac" : "./build.sh"
+                    let env: [String: String] = universal ? ["LAMP_TEAM": Devices.team] : [:]
+                    let glowing = AppTransition.begin(current)
+                    let went = await reloadBeforeBuilding(current, command: command, env: env, fingerprint: now)
+                    // Stopped meanwhile: whatever went in stays in, and the turn that's over says nothing of it.
+                    guard turns[project.id] === turn, !turn.stopped else { reloadedBeforeBuild.remove(current.id); return }
+                    if went {
+                        // What a look's install would note of a change that went in; the look reads it from here.
+                        reloadedBeforeBuild.remove(current.id)
+                        turn.updatedInPlace = true
+                        turn.outcomes.append(.live)
+                        turn.reloadWhy = nil
+                        turn.autoApplied += 1
+                        log(current, .status, "\(current.name) is updated")
+                        log(current, .detail, "The change went in \(Int(Date().timeIntervalSince(saved).rounded())) s after it was saved"
+                            + (warmWait > 1 ? ", \(Int(warmWait.rounded())) s of them waiting for the warm-up." : "."))
+                    } else {
+                        // Nothing went in, and the whole build of an earlier change may have been ended for this
+                        // one: until the next build nothing is installed from build/.
+                        liveBuildFailed.insert(current.id)
+                        if glowing { AppTransition.end(current) }
+                    }
+                }
+                await turn.applying?.value
+            }
+        }
+    }
 
     /// The quick path: refresh the live copy only (build.sh with LAMP_LIVE_COPY), and when the change can go in,
     /// compile just its files and put them into the open app; then build the whole app in the background, for
@@ -4238,14 +4993,24 @@ final class Store: ObservableObject {
     private func reloadBeforeBuilding(_ project: LampProject, command: String, env: [String: String], fingerprint: String) async -> Bool {
         reloadedBeforeBuild.remove(project.id)
         guard LiveReload.eligible(project), !macCopies(of: project).isEmpty, Self.binary(of: project, contains: "reloaded.txt") else { return false }
-        await liveBuilds[project.id]?.value
+        // The open app already runs these sources, and their whole build is on its way: nothing more to do.
+        if liveBuilds[project.id] != nil, liveBuildRuns[project.id]?.fingerprint == fingerprint {
+            reloadedBeforeBuild.insert(project.id)
+            return true
+        }
+        // A whole build of earlier sources is stale: only the newest change's build is ever installed, and waiting for
+        // it held this change back by as long as it had left. It's ended, and whatever comes next builds the whole app.
+        await supersedeLiveBuild(of: project)
         liveBuildFailed.remove(project.id)
         var copy = env
         copy["LAMP_LIVE"] = "1"
         copy["LAMP_LIVE_COPY"] = "1"
         guard await Self.runBuild(command, for: project, env: copy) { _ in } == 0,
-              await reloadInPlace(project, inFront: false) else { return false }
+              // A save being put in by itself gives way here to a build of Lamp's for newer sources (`buildNow`).
+              !Task.isCancelled,
+              await reloadInPlace(project, inFront: false, saysWhy: false) else { return false }
         reloadedBeforeBuild.insert(project.id)
+        await DataSnapshots.wentIn(project)
         // Nothing to install until the whole build is done: the copy in build/ is the one before this change. Only
         // then do these sources count as built, so a Lamp quit meanwhile builds them again (`recoverUnfinishedBuild`).
         LiveReload.installed(project)
@@ -4253,12 +5018,17 @@ final class Store: ObservableObject {
         LiveReload.startedBuilding(project)
         var full = env
         full["LAMP_LIVE"] = "1"
+        liveBuildRuns[project.id] = (nil, fingerprint)
         liveBuilds[project.id] = Task { [weak self] in
             var output: [String] = []
-            let status = await Self.runBuild(command, for: project, env: full) { output.append($0) }
+            let status = await Self.runBuild(command, for: project, env: full,
+                                             started: { [weak self] in self?.liveBuildRuns[project.id]?.process = $0 }) { output.append($0) }
             guard let self else { return }
             self.liveBuilds[project.id] = nil
+            self.liveBuildRuns[project.id] = nil
             LiveReload.finishedBuilding(project)
+            // Ended for a newer change, whose own build follows: not a failure, and nothing of it counts as built.
+            if self.liveBuildsSuperseded.remove(project.id) != nil { return }
             guard let current = self.current(project) else { return }
             if status == 0 {
                 Runtime.markBuilt(current, from: fingerprint)
@@ -4281,11 +5051,17 @@ final class Store: ObservableObject {
 
     /// Puts the change just built into the open Mac app, when it was built live and the change can go in that
     /// way (`LiveReload.reloadable`). True when it went in: the app is updated where it is, and the build is held,
-    /// to be installed when the app closes. False sends the change the usual way, by reopening the app.
-    private func reloadInPlace(_ project: LampProject, inFront: Bool) async -> Bool {
+    /// to be installed when the app closes. False sends the change the usual way, by reopening the app. `saysWhy`
+    /// false keeps why it couldn't go in out of the chat: the try before the build is followed by the install's,
+    /// which asks again and says it, so the chat said it twice.
+    private func reloadInPlace(_ project: LampProject, inFront: Bool, saysWhy: Bool = true) async -> Bool {
         // The change went in before the build (`reloadBeforeBuilding`): only the word that it did is left to say.
         // Closed since, the app is installed the usual way, from the whole build once it's done.
         if reloadedBeforeBuild.remove(project.id) != nil {
+            // The glow this build began has nothing more to show: the change went in before it (by itself, as the
+            // agent saved it, when this is a look's build of the same code), and the light crossed then. Without
+            // this it was renewed until the turn ended.
+            AppTransition.end(project)
             if let app = macCopies(of: project).first {
                 if inFront {
                     app.activate()
@@ -4293,70 +5069,58 @@ final class Store: ObservableObject {
                 }
                 return true
             }
-            await liveBuilds[project.id]?.value
+            await awaitLiveBuild(of: project)
             return false
         }
         guard LiveReload.eligible(project), let app = macCopies(of: project).first,
               Self.binary(of: project, contains: "reloaded.txt") else { return false }
+        // The open copy isn't the one earlier changes went into (opened again since, outside Lamp): what Lamp knows
+        // it runs isn't true of it, so the change reopens it, and the whole build is what it runs then.
+        guard LiveReload.tookChanges(project, pid: app.processIdentifier, launched: app.launchDate) else {
+            LiveReload.forget(project)
+            let why = "the open copy was opened again since the last change went into it"
+            turns[project.id]?.reloadWhy = why
+            if saysWhy { log(project, .detail, "\(project.name) has to reopen for this change: \(why).") }
+            return false
+        }
         var changed: [String]
         switch await LiveReload.verdict(project) {
         case .reload(let files): changed = files
-        // The open app already runs these sources (a change that went in before its build): nothing to do.
-        case .unchanged: return true
+        // The open app already runs these sources (a change that went in before its build, or one only of its files,
+        // which a live build reads from the app's folder): it draws again, so a new picture shows.
+        case .unchanged:
+            LiveReload.redraw(project, token: Template.token(for: project))
+            return true
         case .reopen(let why):
-            log(project, .detail, "Reopening \(project.name) for this change: \(why).")
+            turns[project.id]?.reloadWhy = LiveReload.readable(why)
+            if saysWhy { log(project, .detail, "\(project.name) has to reopen for this change: \(LiveReload.readable(why)).") }
             return false
         }
+        // The open app's data as its old code left it, before the new code can touch it.
+        await DataSnapshots.take(project)
         note("Updating \(project.name) in place…", for: project)
-        // The changed files' compile and the whole code's check go side by side; the check decides. With properties
-        // already in spares, the live copy is rewritten before anything is compiled (`LiveSlots.fit`).
-        let spared = !LiveSlots.mapping(project).isEmpty || LiveSlots.hasConstants(project)
-        async let early: (url: URL?, problem: String?) = spared ? (nil, nil) : await LiveReload.compile(project, changed: changed)
-        let (before, after, declarations) = await LiveReload.layouts(project)
-        var check = LiveReload.layoutProblem(before: before, after: after)
-        let constants = before.flatMap { before in after.map { LiveSlots.changedConstants(project, before: before, after: $0) } } ?? []
-        var (library, problem) = await early
-        // Stored properties added to existing types go into their spares, constants whose value changed give the new
-        // one, and the change is compiled with them.
-        if check.problem != nil || !constants.isEmpty, let before, let after,
-           let plan = LiveSlots.fit(project, before: before, after: after, declarations: declarations, constants: constants) {
-            changed = Array(Set(changed).union(plan.files)).sorted()
-            // A constant newly read through its new code is read so everywhere: the open app's own reads go to storage
-            // that keeps the first value. Afterwards every caller reads through it, so later changes need no more.
-            if !plan.constants.isEmpty { changed = LiveReload.appFiles(project) }
-            check = LiveReload.layoutProblem(before: before, after: plan.layout)
-            (library, problem) = await LiveReload.compile(project, changed: changed)
-            if check.problem == nil, !plan.added.isEmpty {
-                log(project, .detail, "Added \(plan.added.joined(separator: ", ")) without reopening \(project.name).")
-            }
-            if check.problem == nil, !plan.constants.isEmpty {
-                log(project, .detail, "Gave \(plan.constants.joined(separator: ", ")) \(plan.constants.count == 1 ? "its" : "their") new value without reopening \(project.name).")
-            }
-        } else if !constants.isEmpty, check.problem == nil {
-            log(project, .detail, "Reopening \(project.name) for this change: a constant's new value can't be given in place.")
+        switch await LiveReload.put(project, changed: changed, token: Template.token(for: project)) {
+        case .reopen(let why):
+            turns[project.id]?.reloadWhy = why
+            if saysWhy { log(project, .detail, "\(project.name) has to reopen for this change: \(why).") }
             return false
-        } else if spared, check.problem == nil {
-            (library, problem) = await LiveReload.compile(project, changed: changed)
+        case .went(let said):
+            for line in said { log(project, .detail, line + " without reopening \(project.name).") }
+            LiveReload.noteProcess(project, pid: app.processIdentifier, launched: app.launchDate)
         }
-        if let why = check.problem {
-            log(project, .detail, "Reopening \(project.name) for this change: \(why).")
-            return false
-        }
-        // An enum that only gained cases goes in when nothing holds it where a new case would change what's there.
-        if let before, let layout = check.layout, case let grown = LiveReload.grownEnums(before: before, after: layout), !grown.isEmpty,
-           let why = await LiveReload.enumsHeld(project, grown: grown) {
-            log(project, .detail, "Reopening \(project.name) for this change: \(why).")
-            return false
-        }
-        guard let layout = check.layout, library != nil || changed.isEmpty else {
-            print("Live reload of \(project.name) didn't compile:\n\(problem ?? "")")
-            return false
-        }
-        // Files only taken away leave nothing to load: the open app already has what's left.
-        if let library { guard await LiveReload.send(library, to: project, token: Template.token(for: project)) else { return false } }
-        LiveReload.markRunning(project)
-        LiveReload.keepLayout(layout, for: project)
+        AppTransition.land(project)
         watchAfterReload(project, app: app)
+        turns[project.id]?.shown.append(Date())
+        // The live library was made from the same sources as a build waiting for Reload, so that change is in too:
+        // nothing is held from the app any more (the app's Reload button and the chat's line go, and `use_app` is
+        // allowed again), and the agent hears it, since `reloadNote` told it to wait. Here, not at the install: a
+        // look's change goes in before its build (`reloadBeforeBuilding`), and the look would otherwise still find
+        // the wait and say to press Reload. The build still goes in when the app closes (`awaitInstall`).
+        if Runtime.waitsForReload(project) || Runtime.holdsBuild(project) {
+            Runtime.releaseBuild(project)
+            Self.tellReload(project, on: false)
+            turns[project.id]?.endedReloadWait = true
+        }
         LiveReload.awaitInstall(project)
         _ = heldInstalls.mayInstall(project.id, running: true)
         noteOpened(true, for: project)
@@ -4374,15 +5138,18 @@ final class Store: ObservableObject {
     /// an app quit on purpose (its Quit, Lamp's Stop) stays closed.
     private func watchAfterReload(_ project: LampProject, app: NSRunningApplication) {
         let since = Date()
+        reloadsWatched.insert(project.id)
         Task { [weak self] in
+            defer { self?.reloadsWatched.remove(project.id) }
             for _ in 0..<16 {
                 try? await Task.sleep(for: .milliseconds(500))
                 guard app.isTerminated else { continue }
-                // macOS writes the report a moment after the process is gone.
+                // macOS writes the report after the process is gone, sometimes ten seconds or more later, and the
+                // crash is this watch's alone to answer (`appEnded` leaves it), so it waits as long as that does.
                 var crashed = false
-                for _ in 0..<10 where !crashed {
+                for _ in 0..<60 where !crashed {
                     crashed = Runtime.crashed(project, since: since)
-                    if !crashed { try? await Task.sleep(for: .milliseconds(300)) }
+                    if !crashed { try? await Task.sleep(for: .milliseconds(500)) }
                 }
                 guard crashed, let self, let current = self.current(project) else { return }
                 self.log(current, .detail, "\(current.name) stopped right after a change went in without reopening it. Opening it again with the full build.")
@@ -4395,23 +5162,37 @@ final class Store: ObservableObject {
         }
     }
 
+    /// Apps whose live change is being watched for a crash, which that watch answers by opening the full build.
+    private var reloadsWatched: Set<String> = []
+
     /// Installs and opens the app. Returns what's known about the failure if it died straight away.
     /// `inFront` is false for the agent's looks, which shouldn't pull the app in front of the user mid-turn.
     /// `fresh` closes an open Mac app and opens it again even when the change could go into it as it runs.
-    private func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false) async -> String? {
+    /// `early` returns as soon as the app has shown itself rather than once its first seconds have passed: for a look,
+    /// which tells of a death after that with its next answer (`lateCrash`).
+    private func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false, reload: Bool = false,
+                         early: Bool = false) async -> String? {
+        let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early)
+        // Whatever didn't put the change into the open app (it waits for Reload, was kept open, reopened, failed)
+        // lets the glow go; a reopened copy gets the light once its window is up (`AppTransition.landWhenShown`).
+        AppTransition.end(project)
+        return crash
+    }
+
+    private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool, early: Bool) async -> String? {
         guard exists(project) else { return nil }
         // The turn this install belongs to, taken before the icon wait: a Stop during it can end the turn
         // and start the next one's, which must not inherit this launch.
         let owner = turns[project.id]
-        await prepareIcon(project)
         if project.onIOS {
+            await prepareIcon(project)
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
             // The person's own phone gets the app when they press Play or a change is finished; the agent's
             // looks (not in front) stay on the simulator, which is the only screen Lamp can see.
             let problem = if inFront, let udid = project.device {
                 await installOnDevice(project, owner: owner, udid: udid)
             } else {
-                await installOnSimulator(project, owner: owner, inFront: inFront)
+                await installOnSimulator(project, owner: owner, inFront: inFront, early: early)
             }
             // As for a Mac app below: the artwork asked for while the icon was designed, before there was
             // an app, is asked for again now there is one (an icon drawn by hand is only offered then).
@@ -4421,28 +5202,62 @@ final class Store: ObservableObject {
             if problem == nil, Template.hasHomeScreenWidget(project), WidgetCard.isNeeded(after: logs[project.id] ?? []) { log(project, .widget, "") }
             return problem
         }
+        // In a new app's first turn its chat may already be beside it (`present`): whatever this install comes to (the
+        // app open again, a crash, a failed install, a pass that took its window away), the chat is still somewhere.
+        defer { if progress[project.id]?.newApp == true { Task { await MagicPanel.shared.keepChatInSight(project) } } }
         // A change that can go into the open app goes in there, keeping what's on screen; the build waits to be
         // installed until the app closes (LiveReload).
+        // The icon isn't part of such a change, so it doesn't wait for it: it's drawn meanwhile, ready for the next copy.
         if !fresh, await reloadInPlace(project, inFront: inFront) {
             owner?.updatedInPlace = true
+            owner?.outcomes.append(.live)
+            owner?.reloadWhy = nil
+            await DataSnapshots.wentIn(project)
+            prepareIconMeanwhile(project)
             return nil
         }
+        await prepareIcon(project)
         // A whole build after an early change may still be writing build/: what's installed is what it makes,
         // and nothing when it failed (build/ is the version before the change).
-        await liveBuilds[project.id]?.value
+        await awaitLiveBuild(of: project)
         if liveBuildFailed.contains(project.id) {
             let problem = "\(project.name) couldn't be built as a whole after its last change, so it wasn't installed. It's built again with the next request."
             log(project, .error, problem)
             return problem
         }
-        // A request's change that closes the open app and opens it again says so in the chat, once in the turn:
-        // otherwise the window just goes away and comes back. Not for Open App or Undo, which ask for that.
-        let reloading = owner?.request != nil && owner?.saidReloaded == false && isRunning(project)
+        // A request's change the open app can't take as it runs doesn't close it under the person: it waits for
+        // them to press Reload, in the app's title bar or the chat (`awaitReload`). Open App, Undo and Reload itself
+        // ask for the reopen, and an app that's closed just gets the build. Not in a new app's first turn: nobody is
+        // using it yet, and it's built in passes for the person to watch each one go in (`present`), so it reopens.
+        if !reload, asksBeforeReopening(project, owner: owner) {
+            awaitReload(project, owner: owner)
+            owner?.outcomes.append(.held)
+            return nil
+        }
         // Asked once in a turn: a second build in it leaves the app the person kept open alone.
         let asked = owner?.keptOpen == true && isRunning(project)
-        guard !asked, await quit(project, for: owner, only: .mac) else {
+        let wasOpen = isRunning(project)
+        // The new copy is put together and signed in Lamp's own folder while the old one is still open, so the app is
+        // closed only for the swap. Nothing of the installed copy is touched until it has closed.
+        var staged: SignedCopy?
+        if !asked {
+            note("Installing \(project.name)…", for: project)
+            do {
+                staged = try await stageSigned(project)
+            } catch {
+                log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
+                owner?.didNotOpen = true
+                noteOpened(false, for: project)
+                return nil
+            }
+        }
+        guard !asked, let copy = staged, await quit(project, for: owner, only: .mac) else {
+            staged?.discard()
             // The person kept the app open, with whatever it holds. It isn't replaced under them (HeldInstalls
             // says what that breaks, too): the build waits, and goes in when the app closes.
+            // Kept open after Reload was pressed, or when Undo, a restore or Rebuild & Open asked it to close: the
+            // Reload button is there for when they're ready, as after a request's change.
+            if reload || (owner?.request == nil && !Template.isWidgetOnly(project)) { awaitReload(project, owner: owner); return nil }
             Runtime.holdBuild(project)
             _ = heldInstalls.mayInstall(project.id, running: true)
             if !asked { log(project, .status, ErrorMessages.stayedOpen(project.name)) }
@@ -4452,12 +5267,18 @@ final class Store: ObservableObject {
             refreshOpenApps()
             return nil
         }
-        guard exists(project) else { return nil }   // deleted while its old copy was quitting
+        guard exists(project) else { copy.discard(); return nil }   // deleted while its old copy was quitting
+        // The old copy glowed while this was built, or this is the change it held for Reload (its glow let go when
+        // the change was held): the new copy, with the change, shows it going in.
+        let glowed = AppTransition.isGlowing(project.id) || reload
         owner?.didNotOpen = false
         owner?.updatedInPlace = false
         do {
             WidgetCard.forget(project)
-            try await deploy(project)
+            // With the old copy closed, its data is quiet: copied before the new one opens on it.
+            await DataSnapshots.take(project)
+            try await swapIn(copy, for: project)
+            await DataSnapshots.wentIn(project)
             heldInstalls.installed(project.id)
             Runtime.releaseBuild(project)
         } catch {
@@ -4487,18 +5308,22 @@ final class Store: ObservableObject {
         note("Opening \(project.name)…", for: project)
         var crash: String?
         do {
+            let opened = Date()
             let app = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
-            if await Runtime.diedOnLaunch(app) {
-                log(project, .status, "\(project.name) quit right after opening. Looking at why…")
-                crash = await Runtime.launchReport(project)
-                log(project, .detail, crash!)
+            let watch = watchLaunch(project, owner: owner, opened: opened, crashOnly: true, alive: { !app.isTerminated }) {
+                await Runtime.launchReport(project)
+            }
+            // A look goes on once the app has pictured its window; anything else waits its first seconds out, since what
+            // it does next (a fix at the turn's end, the chat's "ready") depends on how they went.
+            if early ? await watch.untilShown(project) : await watch.verdict() != nil {
+                watch.told = true
+                crash = watch.crash
             } else {
                 noteOpened(true, for: project)
-                if reloading, let owner {
-                    owner.saidReloaded = true
-                    log(project, .status, ChatLook.reloaded)
-                }
+                owner?.outcomes.append(wasOpen ? .reopened : .opened)
+                owner?.shown.append(Date())
                 if inFront { log(project, .status, "\(project.name) is ready") }
+                if glowed { AppTransition.landWhenShown(project, app: app) }
             }
         } catch {
             log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
@@ -4513,7 +5338,7 @@ final class Store: ObservableObject {
 
     /// The iPhone counterpart of `install`: the built app goes into the booted simulator and is launched there,
     /// with what it prints going to the same log the Mac apps use. Returns what's known if it died at once.
-    private func installOnSimulator(_ project: LampProject, owner: Turn, inFront: Bool) async -> String? {
+    private func installOnSimulator(_ project: LampProject, owner: Turn, inFront: Bool, early: Bool) async -> String? {
         guard let udid = Simulator.device(project.family, preferring: project.simulator) else {
             let problem = "No \(project.family.name) simulator with iOS \(Simulator.minimumIOS) or later is installed. Open Xcode once and add one in Settings → Components."
             log(project, .error, problem)
@@ -4528,16 +5353,48 @@ final class Store: ObservableObject {
         let mine = Task<String?, Never> { [self] in
             await previous?.value
             guard turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
-            return await launchOnSimulator(project, owner: owner, udid: udid, inFront: inFront)
+            return await launchOnSimulator(project, owner: owner, udid: udid, inFront: inFront, early: early)
         }
         simulatorWork[udid] = Task { _ = await mine.value }
         return await mine.value
     }
 
+    /// How long a look gives an app it just opened in the simulator to draw its first screen before picturing it.
+    private static let simulatorFirstScreen: Duration = .milliseconds(1500)
+
+    /// Watches a launch's first seconds (`Runtime.LaunchWatch`) as the turn's last launch, and says in the chat when the
+    /// app dies in them, `report` giving what's known of it.
+    /// `crashOnly` is for a Mac app, which leaves a crash report: a going after the opener went on, or while Lamp was
+    /// closing the app, counts only with one, since the person or Lamp may have closed an app that works. Without
+    /// one (the simulator), a going while Lamp closed the app is Lamp's doing.
+    private func watchLaunch(_ project: LampProject, owner: Turn?, opened: Date, crashOnly: Bool = false,
+                             alive: @escaping @MainActor () -> Bool,
+                             report: @escaping @MainActor () async -> String) -> Runtime.LaunchWatch {
+        let watch = Runtime.LaunchWatch(opened: opened, alive: alive) { [weak self] late, retired in
+            if retired, !crashOnly { return nil }
+            if late || retired, crashOnly {
+                // macOS writes the report after the process is gone, sometimes ten seconds or more later.
+                var crashed = false
+                for _ in 0..<40 where !crashed {
+                    crashed = Runtime.crashed(project, since: opened)
+                    if !crashed { try? await Task.sleep(for: .milliseconds(500)) }
+                }
+                guard crashed else { return nil }
+            }
+            owner?.diedOnLaunch = true
+            self?.log(project, .status, "\(project.name) quit right after opening. Looking at why…")
+            let crash = await report()
+            self?.log(project, .detail, crash)
+            return crash
+        }
+        owner?.launches.append(watch)
+        return watch
+    }
+
     /// The launch in progress on each simulator, for the next one to wait for.
     private var simulatorWork: [String: Task<Void, Never>] = [:]
 
-    private func launchOnSimulator(_ project: LampProject, owner: Turn, udid: String, inFront: Bool) async -> String? {
+    private func launchOnSimulator(_ project: LampProject, owner: Turn, udid: String, inFront: Bool, early: Bool) async -> String? {
         // The device is this project's from here: the driver acts only while the lease is held.
         let before = simulatorLeases[udid]
         simulatorLeases[udid] = project.id
@@ -4553,13 +5410,17 @@ final class Store: ObservableObject {
         await finishSimulatorBundle(project)
         do {
             try await Simulator.boot(udid, show: inFront)
+            retireLaunches(of: project)
             await Simulator.terminate(project.bundleID, on: udid)
             try await Simulator.install(project.builtURL, on: udid)
             guard stillOwns() else { return giveBack("The app was deleted or stopped before it opened.") }
             // One Lamp app per simulator: another project's app on this device is closed first, so what the
             // simulator shows is always the app being worked on (and that app's use_app batch, if any, stops).
             for (other, launched) in simulatorApps where other != project.id && launched.udid == udid {
-                if let theirs = projects.first(where: { $0.id == other }) { await Simulator.terminate(theirs.bundleID, on: udid) }
+                if let theirs = projects.first(where: { $0.id == other }) {
+                    retireLaunches(of: theirs)
+                    await Simulator.terminate(theirs.bundleID, on: udid)
+                }
                 simulatorApps[other] = nil
             }
             guard stillOwns() else { return giveBack("The app was deleted or stopped before it opened.") }
@@ -4573,15 +5434,18 @@ final class Store: ObservableObject {
                 return giveBack("The app was deleted or stopped before it opened.")
             }
             simulatorApps[project.id] = (udid, pid)
-            try? await Task.sleep(for: .seconds(3))
-            if !Simulator.isRunning(pid: pid) {
-                simulatorApps[project.id] = nil
-                log(project, .status, "\(project.name) quit right after opening. Looking at why…")
+            let watch = watchLaunch(project, owner: owner, opened: Date(), alive: { Simulator.isRunning(pid: pid) }) { [weak self] in
+                if self?.simulatorApps[project.id]?.pid == pid { self?.simulatorApps[project.id] = nil }
+                self?.refreshOpenApps()
                 var crash = "The app quit right after launching."
                 if Privacy.sharesLog, let tail = Runtime.logTail(project) { crash += "\n\nLast lines it printed:\n" + tail }
-                log(project, .detail, crash)
-                refreshOpenApps()
                 return crash
+            }
+            // Nothing in the simulator says when the app has drawn its first screen: a look goes on after a moment for
+            // that, and hears of a death after it from the watch; anything else waits the first seconds out.
+            if early ? await watch.settle(Self.simulatorFirstScreen) : await watch.verdict() != nil {
+                watch.told = true
+                return watch.crash
             }
             // The desk's picture of it, as a Mac app takes its own once its window settles.
             Task { _ = await Simulator.screenshot(on: udid, to: Runtime.previewURL(project)) }
@@ -4666,6 +5530,8 @@ final class Store: ObservableObject {
         if progress[project.id]?.finished != nil { progress[project.id]?.failed = true }
         clearPhoneRetry(project)
         let team = Devices.team
+        // The code as it's staged, kept once it's on the phone, so a turn that changes nothing doesn't put it there again.
+        let build = Runtime.fingerprint(project)
         // Recheck after the person unlocks, trusts or restarts the phone; the menu's snapshot may be stale.
         devices = await Devices.list()
         guard stillOwns() else { return nil }
@@ -4714,6 +5580,8 @@ final class Store: ObservableObject {
         log(project, .status, "Putting \(project.name) on \(name)…")
         defer { try? FileManager.default.removeItem(at: app.deletingLastPathComponent()) }
         do {
+            // What's on the phone is about to change, whether or not the launch after it works.
+            onPhone[project.id] = nil
             try await Devices.install(app, on: udid)
             guard stillOwns() else { return nil }
             deviceApps[project.id]?.terminate()
@@ -4725,6 +5593,7 @@ final class Store: ObservableObject {
             owner.build = nil
             guard stillOwns() else { Subprocess.terminateTree(attached); return nil }
             deviceApps[project.id] = attached
+            onPhone[project.id] = PhoneBuild(udid: udid, build: build)
             owner.phoneReady = true
             if progress[project.id]?.finished != nil { progress[project.id]?.failed = false }
             attached.terminationHandler = { _ in Task { @MainActor in Store.shared.refreshOpenApps() } }
@@ -4745,6 +5614,16 @@ final class Store: ObservableObject {
     /// For each app on a phone, the devicectl process attached to it: ending the process ends the app.
     private var deviceApps: [String: Process] = [:]
 
+    /// For each app, the phone Lamp last put it on and the code it put there (`Runtime.fingerprint`).
+    private struct PhoneBuild: Equatable { let udid: String; let build: String }
+    private var onPhone: [String: PhoneBuild] = [:]
+
+    /// The code as it is now is on the phone chosen under Try On.
+    private func isOnChosenPhone(_ project: LampProject) -> Bool {
+        guard project.onIOS, let udid = project.device else { return false }
+        return onPhone[project.id] == PhoneBuild(udid: udid, build: Runtime.fingerprint(project))
+    }
+
     /// Finishes the bundle build.sh made, the way `deploy` finishes a Mac app's: the reasons iOS shows when
     /// the app first asks for the microphone, photos or calendar (without which it's killed on the spot), the
     /// icon, and the files attached in Lamp's chat, which LampAssets finds next to the executable. Then the
@@ -4752,6 +5631,7 @@ final class Store: ObservableObject {
     private func finishSimulatorBundle(_ project: LampProject) async {
         let fm = FileManager.default
         let app = project.builtURL
+        Self.setInstallValues(for: project, in: app.appendingPathComponent("Info.plist"), root: project.dir)
         var script = """
             P="$LAMP_APP/Info.plist"
             plutil -replace CFBundleName -string "$LAMP_NAME" "$P" && \\
@@ -4836,10 +5716,81 @@ final class Store: ObservableObject {
     /// on one device can't both go ahead, and checked before every action the driver takes.
     private var simulatorLeases: [String: String] = [:]
 
-    /// For Open App and Undo, where no agent is running to fix a crash.
+    /// For Open App, Undo, a restore and a rebuild, where no agent is running to fix a crash. Each of them holds the
+    /// app while it installs, so the fix waits for it to let go (`fixHeldCrash`, from `finish`).
     private func installReportingCrash(_ project: LampProject) async {
-        if await install(project) != nil {
-            log(project, .error, ErrorMessages.crashAfterLaunch(project.name))
+        let owner = turns[project.id]
+        guard let crash = await install(project), owner?.stopped != true else { return }
+        // Only an app that opened and died is worth a fix; one that never opened says why in the chat already.
+        if owner?.diedOnLaunch == true { crashesAfterRelease[project.id] = crash }
+        else { log(project, .error, ErrorMessages.crashAfterLaunch(project.name)) }
+    }
+
+    /// Crashes on opening seen while something held the app, to be fixed once it's free.
+    private var crashesAfterRelease: [String: String] = [:]
+
+    /// Called as the hold ends, before anything waiting starts: with a request already in line the agent hears of
+    /// the crash with that, and the chat only says it crashed.
+    private func fixHeldCrash(_ project: LampProject) {
+        guard let crash = crashesAfterRelease.removeValue(forKey: project.id) else { return }
+        if !fixCrash(project, detail: crash) { log(project, .error, ErrorMessages.crashAfterLaunch(project.name)) }
+    }
+
+    /// The crash report each app's last automatic fix answered, so the same crash seen twice (on opening, and as
+    /// the app goes) starts one fix.
+    private var crashesAnswered: [String: Date] = [:]
+
+    /// A crash of an app the person isn't changing starts a fix at once, as if they'd asked for one: Lamp sends the
+    /// request itself, and the crash report goes with it (`Runtime.crashNote`). It does so once in a row: when the
+    /// latest request in the chat is Lamp's own, a fix already had its chance (and its own launch crashes were
+    /// retried within it), so the next crash is the person's to decide on and nothing more is spent until they say
+    /// something. True when the crash is taken care of (a fix started, or one is already under way for it).
+    @discardableResult
+    private func fixCrash(_ project: LampProject, detail: String) -> Bool {
+        guard let project = current(project) else { return true }
+        let report = Runtime.newestCrash(of: project)?.date
+        if let report, crashesAnswered[project.id] == report { return true }
+        // While a turn runs or a request waits, the agent hears of the crash with it.
+        guard setup.ready, !busy.contains(project.id), turns[project.id] == nil,
+              queued[project.id]?.isEmpty ?? true else { return false }
+        guard !lastRequestByLamp(project) else { return false }
+        if let report { crashesAnswered[project.id] = report }
+        log(project, .status, ChatLook.fixingCrash)
+        // The report itself goes with the request when macOS wrote one; otherwise what Lamp saw is all there is.
+        let request = "Fix the crash."
+        queued[project.id, default: []].append(QueuedMessage(text: report == nil ? request + "\n\n" + detail : request, byLamp: true))
+        startQueued(project)
+        return true
+    }
+
+    private func lastRequestByLamp(_ project: LampProject) -> Bool {
+        (logs[project.id] ?? []).last { $0.kind == .user }?.byLamp == true
+    }
+
+    /// An app crashing while it's used, with no turn of Lamp's under way: what the person sees go is fixed the way
+    /// a crash on opening is. Only a crash, which leaves macOS's report: a quit leaves none. A crash just after a
+    /// change went into the open app is the live change's to answer (`watchAfterReload`).
+    private func appEnded(_ app: NSRunningApplication) {
+        guard let project = projects.first(where: { app.bundleIdentifier == $0.bundleID
+                  || app.bundleURL?.standardizedFileURL == $0.installedURL.standardizedFileURL }),
+              !busy.contains(project.id), !reloadsWatched.contains(project.id) else { return }
+        let since = app.launchDate ?? Date().addingTimeInterval(-5)
+        Task { [weak self] in
+            // macOS writes the report after the process is gone, sometimes ten seconds or more later (the time
+            // it shows its own crash dialog).
+            for _ in 0..<60 {
+                guard let self, let current = self.current(project) else { return }
+                if let crash = Runtime.newestCrash(of: current), crash.date > since {
+                    // After Lamp's own fix it's said once, and left to the person.
+                    if !self.fixCrash(current, detail: crash.summary), self.lastRequestByLamp(current),
+                       self.crashesAnswered[current.id] != crash.date {
+                        self.crashesAnswered[current.id] = crash.date
+                        self.log(current, .error, ErrorMessages.crashed(current.name))
+                    }
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
         }
     }
 
@@ -4928,17 +5879,44 @@ final class Store: ObservableObject {
         return signed
     }
 
+    /// A signed copy of the app's build in Lamp's own folder (`stageSigned`), waiting to take the installed copy's
+    /// place (`swapIn`).
+    private struct SignedCopy {
+        let app: URL
+        let signed: Bool
+        /// What the installed copy it replaces was signed as, and what this one is: a change clears the app's permissions.
+        let replaced: String?
+        let requirement: String?
+        /// The icon it carries is the one that replaces the blueprint (`iconReachedApp`), as it was when the copy was
+        /// made: artwork drawn after that isn't in it.
+        var iconReady = false
+        /// Deletes a copy that won't go in (the person kept the app open).
+        func discard() { try? FileManager.default.removeItem(at: app) }
+    }
+
     /// Copies the freshly built bundle into the apps folder, puts the icon in, signs it and swaps it in place of
     /// the installed copy. The swap is atomic, so it's safe even while the app is running.
     private func deploy(_ project: LampProject) async throws {
+        try await swapIn(try await stageSigned(project), for: project)
+    }
+
+    /// Everything `deploy` does before the swap: a copy of the build in the apps folder, finished and signed there.
+    /// It touches nothing of the installed copy, so it's done while that copy is still open, before it's asked to quit:
+    /// only the swap waits for the app to close.
+    private func stageSigned(_ project: LampProject) async throws -> SignedCopy {
         let fm = FileManager.default
+        // An icon still being drawn (after a change that went into the open app, New Icon, new artwork) is finished
+        // before it's copied in.
+        await iconPreparations[project.id]?.value
+        await iconRenders[project.id]?.value
+        let iconReady = (try? String(contentsOf: Icons.waitingURL(project), encoding: .utf8)) == Self.iconReady
         // Everything from here to the swap is done to a copy in the apps folder, which the agent's commands can't
         // write: the build folder is theirs, and a bundle there could be changed between Lamp's look at it and its
         // signature.
         let app = try Self.stage(project, in: Self.installDir)
         AppsLink.ensure()
-        var swapped = false
-        defer { if !swapped { try? fm.removeItem(at: app) } }
+        var finished = false
+        defer { if !finished { try? fm.removeItem(at: app) } }
         // The entitlements it's signed with are written beside it, for the same reason: in the app's folder they
         // could be changed between Lamp writing them and codesign reading them.
         let signing = app.deletingPathExtension().appendingPathExtension("signing")
@@ -4946,6 +5924,7 @@ final class Store: ObservableObject {
         defer { try? fm.removeItem(at: signing) }
         let resources = app.appendingPathComponent("Contents/Resources")
         try fm.createDirectory(at: resources, withIntermediateDirectories: true)
+        Self.setInstallValues(for: project, in: app.appendingPathComponent("Contents/Info.plist"), root: Self.installDir)
         // Every usage description, from the one list: without its reason macOS kills the app the moment it
         // asks for the microphone, photos and the rest. Added here as well as in build.sh so apps made before
         // a reason was added get it too.
@@ -5011,6 +5990,10 @@ final class Store: ObservableObject {
         // writes beside the copy rather than takes from the build folder, where anything could have changed them.
         let widget = Template.widgetURL(in: app, of: project)
         let hasWidget = fm.fileExists(atPath: widget.path)
+        if hasWidget, project.platform == .mac {
+            Self.setInstallValues(for: project, in: widget.appendingPathComponent("Contents/Info.plist"), root: Self.installDir,
+                                  values: Template.widgetInstallValues(for: project))
+        }
         let entitlements = signing.appendingPathComponent("widget-entitlements.plist")
         if hasWidget { try Template.widgetEntitlementsPlist.write(to: entitlements, atomically: true, encoding: .utf8) }
         // A share extension the same way. It hands what it's given to the app through a folder they share,
@@ -5103,12 +6086,10 @@ final class Store: ObservableObject {
             }
         }
 
-        // Read once more from what was signed, last thing before the swap: the copy, its ids and its signatures.
+        // Read once more from what was signed: the copy, its ids and its signatures. Only Lamp writes the copy, so
+        // what's read here is what's swapped in.
         try Self.checkContained(app)
         try Self.checkOwnIDs(in: app, for: project, signed: true)
-
-        // What Lamp signed as the app's sidebar, the one program it will talk to there.
-        Sidebar.remember(project, signed: app)
 
         // What the copy being replaced was signed as, to notice when this build is signed differently. Only a copy
         // of this app, by its id: one of another id at the same place (an app of the same name since deleted, or
@@ -5116,6 +6097,18 @@ final class Store: ObservableObject {
         // Read from the file, not `Bundle`, which keeps what it read of a path for as long as Lamp runs.
         let previousID = NSDictionary(contentsOf: project.installedURL.appendingPathComponent("Contents/Info.plist"))?["CFBundleIdentifier"] as? String
         let replaced = previousID == project.bundleID ? await AppSigning.requirement(of: project.installedURL) : nil
+        let requirement = replaced == nil ? nil : await AppSigning.requirement(of: app)
+        finished = true
+        return SignedCopy(app: app, signed: signed, replaced: replaced, requirement: requirement, iconReady: iconReady)
+    }
+
+    /// The rest of `deploy`, once the app is closed: the signed copy takes the installed one's place.
+    private func swapIn(_ copy: SignedCopy, for project: LampProject) async throws {
+        let fm = FileManager.default, app = copy.app
+        var swapped = false
+        defer { if !swapped { copy.discard() } }
+        // What Lamp signed as the app's sidebar, the one program it will talk to there.
+        Sidebar.remember(project, signed: app)
 
         // The app isn't running by now (a build quits it, an icon waits for it to close), but its widget's
         // process may be: ended here, last thing before the swap, so no program outlives the copy it came from.
@@ -5126,6 +6119,7 @@ final class Store: ObservableObject {
             try fm.moveItem(at: app, to: project.installedURL)
         }
         swapped = true
+        if copy.iconReady { Self.iconReachedApp(project) }
         // What the app now runs when it opens is this build's sources (LiveReload compares a change with them).
         LiveReload.installed(project)
         // The installed app's classes hold every property it was built with, and its spare places are empty.
@@ -5136,19 +6130,25 @@ final class Store: ObservableObject {
         } else {
             LiveReload.forget(project)
         }
-        // Nudge Finder, the Dock and Launchpad to pick up the new icon.
+        // Nudge Finder, the Dock and Launchpad to pick up the new icon. Opening the app doesn't wait for it (macOS
+        // registers an app it's asked to open), unless its permissions are to be cleared, which needs it registered.
         try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: project.installedURL.path)
-        _ = await Shell.run(
-            Self.lsregister + " -f \"$LAMP_APP\"",
-            cwd: project.dir, env: ["LAMP_APP": project.installedURL.path]) { _ in }
+        let register = Task {
+            _ = await Shell.run(
+                Self.lsregister + " -f \"$LAMP_APP\"",
+                cwd: project.dir, env: ["LAMP_APP": project.installedURL.path]) { _ in }
+        }
         // macOS keeps a permission with the signature it was given to. Signed differently, the app has lost
         // what it had, but System Settings still shows the old entries switched on, and they do nothing.
-        if let replaced, let requirement = await AppSigning.requirement(of: project.installedURL), replaced != requirement,
+        if let replaced = copy.replaced, let requirement = copy.requirement, replaced != requirement {
+            await register.value
+        }
+        if let replaced = copy.replaced, let requirement = copy.requirement, replaced != requirement,
            await AppSigning.forgetPermissions(of: project.bundleID) {
             print("\(project.name) is signed differently from the copy it replaced, so its macOS permissions were cleared:\n"
                   + "  was: \(replaced)\n  now: \(requirement)")
             // An app signed ad hoc is signed differently every time: that was said when it was signed.
-            if signed {
+            if copy.signed {
                 log(project, .status, "If you gave \(project.name) a permission in System Settings (such as Full Disk Access or Screen Recording), macOS needs it once more: Lamp signs apps with a new certificate. After that it stays on.")
             }
         }
@@ -5158,6 +6158,22 @@ final class Store: ObservableObject {
 
     /// Makes sure icon.json exists, then renders it (with cached artwork if there is any).
     private func prepareIcon(_ project: LampProject) async {
+        // One prepared while the app went on goes first.
+        await iconPreparations[project.id]?.value
+        await drawIcon(project)
+    }
+
+    /// `prepareIcon` without waiting for it, for a change that went into the open app: whatever puts a copy together
+    /// next waits for it (`stageSigned`).
+    private func prepareIconMeanwhile(_ project: LampProject) {
+        let before = iconPreparations[project.id]
+        iconPreparations[project.id] = Task { [weak self] in
+            await before?.value
+            await self?.drawIcon(project)
+        }
+    }
+
+    private func drawIcon(_ project: LampProject) async {
         await iconDesigns[project.id]?.value
         var spec = Icons.load(project)
         if spec == nil && project.untitled { return }   // keeps its placeholder until the first message
@@ -5171,13 +6187,93 @@ final class Store: ObservableObject {
         await renderIcon(project, spec: spec!)
     }
 
+    /// Every render of an app's icon goes through here, one after another: New Icon, new artwork and an install
+    /// can ask at once, and two at a time would write the same files.
     private func renderIcon(_ project: LampProject, spec: IconSpec) async {
+        let before = iconRenders[project.id]
+        let mine = Task { [weak self] in
+            await before?.value
+            await self?.renderIconNow(project, spec: spec)
+        }
+        iconRenders[project.id] = mine
+        await mine.value
+    }
+
+    private func renderIconNow(_ project: LampProject, spec: IconSpec) async {
         do {
             let art = Icons.artwork(project, spec: spec)
             if art != nil { artApplied[project.id] = spec }
-            icons[project.id] = try await Icons.write(spec, art: art, for: project)
+            let waiting = art == nil && awaitsArtwork(project, spec: spec)
+            icons[project.id] = try await Icons.write(spec, art: art ?? (waiting ? .waiting : nil), for: project)
+            // The app keeps the blueprint until an install takes it what's drawn now (`iconReachedApp`).
+            let marker = Icons.waitingURL(project)
+            if waiting || FileManager.default.fileExists(atPath: marker.path) {
+                try? Data((waiting ? Self.iconWaiting : Self.iconReady).utf8).write(to: marker)
+            }
         } catch {
             log(project, .detail, "Icon render failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Whether this design's artwork is on its way, drawn by Lamp: the icon is the blueprint until it comes. Not for a
+    /// starter (it never gets any), nor while the person draws icons themselves, nor once drawing it failed.
+    private func awaitsArtwork(_ project: LampProject, spec: IconSpec) -> Bool {
+        !Starters.isStarter(project) && !AppAI.iconsByHand && !spec.subject.trimmed.isEmpty
+            && !artFailed.contains(Icons.artKey(project, spec: spec)) && (GlassIcons.canDraw || AppAI.imageRoute != nil)
+    }
+
+    /// Artwork that won't come after all (`failed`: drawing it didn't work; otherwise the person now draws icons
+    /// themselves): the icon goes from the blueprint to its symbol, in Lamp and on the app. While a turn has the app,
+    /// it's put on the app when the turn ends (`finish`).
+    private func artworkWontCome(_ project: LampProject, spec: IconSpec, failed: Bool = true) async {
+        if failed { artFailed.insert(Icons.artKey(project, spec: spec)) }
+        guard exists(project), Icons.load(project) == spec, Icons.artwork(project, spec: spec) == nil else { return }
+        guard begin(project) != nil else {
+            // Queued before rendering, which waits on Icon Composer: the turn may end meanwhile, and its `finish`
+            // must find this.
+            iconFallbackWhenFree.insert(project.id)
+            await renderIcon(project, spec: spec)
+            return
+        }
+        await renderIcon(project, spec: spec)
+        if FileManager.default.fileExists(atPath: project.builtURL.path) { await installIcon(project) }
+        finish(project)
+    }
+
+    /// What `Icons.waitingURL` says: the icon drawn is the blueprint, or the icon that replaces it, drawn but not yet
+    /// on the app (an install held while it was open, or one a quit of Lamp cut short).
+    private static let iconWaiting = "waiting", iconReady = "ready"
+
+    /// An install put the icon drawn now on the app: once that's the one that replaces the blueprint, nothing is left
+    /// to pick up.
+    private static func iconReachedApp(_ project: LampProject) {
+        let marker = Icons.waitingURL(project)
+        if (try? String(contentsOf: marker, encoding: .utf8)) == iconReady { try? FileManager.default.removeItem(at: marker) }
+    }
+
+    /// Icons left waiting for artwork when Lamp last quit: drawn now, or put on the app if they came meanwhile, or
+    /// given their symbol when nothing can draw them any more.
+    private func resumeWaitingIcons() {
+        for project in projects where FileManager.default.fileExists(atPath: Icons.waitingURL(project).path) {
+            guard let spec = Icons.load(project) else { continue }
+            if (try? String(contentsOf: Icons.waitingURL(project), encoding: .utf8)) == Self.iconReady {
+                // Drawn already, and only the install is missing: the app takes it now, or when it next closes.
+                Task {
+                    guard begin(project) != nil else { return }
+                    if FileManager.default.fileExists(atPath: project.builtURL.path) { await installIcon(project) }
+                    finish(project)
+                }
+            } else if Icons.artwork(project, spec: spec) != nil {
+                Task {
+                    guard begin(project) != nil else { return }
+                    await applyIconArt(project, spec: spec)
+                    finish(project)
+                }
+            } else if awaitsArtwork(project, spec: spec) {
+                upgradeIconArt(project)
+            } else {
+                Task { await artworkWontCome(project, spec: spec, failed: false) }
+            }
         }
     }
 
@@ -5254,11 +6350,14 @@ final class Store: ObservableObject {
             guard await AppAI.imageRoute() != nil else {
                 offerSetup(project, SetupOffer(capability: .pictures, icon: true),
                            because: "Nothing on this Mac can draw pictures yet. Set up one of the ways below and Lamp will paint \(project.name) a proper icon, and your apps will be able to make pictures too.")
-                return
+                return await artworkWontCome(project, spec: spec)
             }
             // The person may choose to draw icons themselves during either wait here: from then on nothing
-            // Lamp drew is used, and the drawing is theirs to do.
-            guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
+            // Lamp drew is used, and the drawing is theirs to do; the icon is its symbol until then.
+            guard !AppAI.iconsByHand else {
+                offerDrawing(project, spec: spec)
+                return await artworkWontCome(project, spec: spec, failed: false)
+            }
             do {
                 let log: @MainActor (String) -> Void = { [weak self] in self?.log(project, .detail, $0) }
                 let art: Icons.Artwork
@@ -5268,12 +6367,16 @@ final class Store: ObservableObject {
                 } else {
                     art = .picture(try await Icons.generateBestArt(spec, appName: project.name, log: log))
                 }
-                guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
+                guard !AppAI.iconsByHand else {
+                    offerDrawing(project, spec: spec)
+                    return await artworkWontCome(project, spec: spec, failed: false)
+                }
                 // A picture picked in Image Playground while these were being drawn is the person's choice: it stays.
                 guard Icons.artwork(project, spec: spec) == nil else { return }
                 switch art {
                 case .glass(let glass):
                     try Icons.save(glass, for: project, spec: spec)
+                case .waiting: return
                 case .picture(let image):
                     let url = Icons.artURL(project, spec: spec)
                     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -5301,8 +6404,10 @@ final class Store: ObservableObject {
                 // Codex signed out between the check and the pictures: the key card is still the right answer.
                 offerSetup(project, SetupOffer(capability: .pictures, icon: true),
                            because: "Nothing on this Mac can draw pictures yet. Set up one of the ways below and Lamp will paint \(project.name) a proper icon, and your apps will be able to make pictures too.")
+                await artworkWontCome(project, spec: spec)
             } catch {
                 log(project, .detail, "Couldn't draw the icon's artwork. \(error.localizedDescription)")
+                await artworkWontCome(project, spec: spec)
             }
         }
     }
@@ -5464,6 +6569,7 @@ final class Store: ObservableObject {
                 let installer = app?.bundleIdentifier == SetupCheck.installerID
                 MainActor.assumeIsolated {
                     Store.shared.refreshOpenApps()
+                    if name == NSWorkspace.didTerminateApplicationNotification, let app { Store.shared.appEnded(app) }
                     if installer { Store.shared.installerChanged(open: name == NSWorkspace.didLaunchApplicationNotification) }
                 }
             }
@@ -5519,7 +6625,14 @@ final class Store: ObservableObject {
 
     /// The person's click on Force Quit: ends the copy that isn't responding, and whatever was waiting for
     /// it to close (a build, Lamp's Quit, Delete) goes on.
+    /// Before Lamp itself ends an app: a launch still being watched takes its going for a death only when it's
+    /// surely a crash (`watchLaunch`).
+    private func retireLaunches(of project: LampProject) {
+        for watch in turns[project.id]?.launches ?? [] { watch.retire() }
+    }
+
     func forceQuit(_ project: LampProject) {
+        retireLaunches(of: project)
         guard let pid = notResponding.removeValue(forKey: project.id),
               let app = macCopies(of: project).first(where: { $0.processIdentifier == pid }) else { return }
         app.forceTerminate()
@@ -5531,6 +6644,8 @@ final class Store: ObservableObject {
     /// `only` quits the copy in one place (an app for both can be open on this Mac and in a simulator at once);
     /// without it every copy is quit, as deleting or renaming the app needs.
     private func quit(_ project: LampProject, for owner: Turn? = nil, only place: Destination? = nil) async -> Bool {
+        // Lamp closing it isn't the app dying on launch.
+        retireLaunches(of: project)
         if project.platform.hasIOS, place != .mac {
             if let attached = deviceApps[project.id] {
                 if attached.isRunning { attached.terminate() }
@@ -5567,6 +6682,8 @@ final class Store: ObservableObject {
             })
             if !gone { closed = false }
         }
+        // Kept open: its launch is watched again for what's left of its first seconds.
+        if !closed { for watch in turns[project.id]?.launches ?? [] { watch.resume() } }
         return closed
     }
 
@@ -5731,6 +6848,15 @@ final class Store: ObservableObject {
 
     /// The routes the agent uses mid-turn: build and try the app, approvals, versions, and the MCP tools.
     private func agentRequest(_ request: Gateway.Request, route: String, for project: LampProject) async -> (Int, [String: Any]) {
+        // Codex is cut to pass a message on only while Lamp isn't answering it (`steer`).
+        let turn = route == "/mcp" || route == "/agent/approve" ? turns[project.id] : nil
+        turn?.answering += 1
+        defer {
+            if let turn {
+                turn.answering -= 1
+                if turns[project.id] === turn, turn.steering == .codex { steer(project) }
+            }
+        }
         if route == "/mcp" { return await mcp(request.body, for: project, fileTools: request.path.contains("files=1")) }
         if request.path == "/agent/look" {
             let arguments = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
@@ -5778,7 +6904,7 @@ final class Store: ObservableObject {
                 let (allowed, reason) = await fileAccess(tool: tool, path: path, for: project)
                 return (200, reason.map { ["allow": allowed, "reason": $0] } ?? ["allow": allowed])
             }
-            // pi's extension sends {"command"}; Claude Code's hook sends {"tool_input": {"command"}}.
+            // pi's extension sends {"command", "description"}; Claude Code's hook sends {"tool_input": {"command", "description"}}.
             let input = body["tool_input"] as? [String: Any] ?? [:]
             let tool = body["tool_name"] as? String ?? "Bash"
             if request.path.contains("format=claude-file") {
@@ -5809,7 +6935,27 @@ final class Store: ObservableObject {
             // Whose command: Claude Code's and pi's come back wrapped (Sandbox); Codex runs inside the sandbox
             // whole, so its commands are confined already and go back as they are.
             let engine: Engine = request.path.contains("format=codex") ? .codex : request.path.contains("format=claude") ? .claude : .pi
-            let confined = shell && engine != .codex ? Sandbox.wrap(command, for: project) : nil
+            // A command Lamp confined already (below, for Claude Code's classifier) comes back wrapped: it's shown
+            // and logged as the agent wrote it, and stays as it was confined.
+            let wrapped = command
+            let known = engine == .claude ? confinedCommands[wrapped] : nil
+            if let known { command = known.original }
+            let confined = known != nil ? wrapped : shell && engine != .codex ? Sandbox.wrap(command, for: project) : nil
+            // It ran: what Claude Code's classifier let through is said in the chat as a command Lamp let run is.
+            if request.path.contains("format=claude-refused") {
+                if let known { confinedCommands[wrapped] = nil }
+                let why = (body["reason"] as? String ?? body["message"] as? String)?.trimmed.nilIfEmpty
+                log(project, .status, ChatLook.notRun + command, said: known?.said)
+                if let why { log(project, .detail, "Claude Code's check stopped it: \(why)") }
+                return (200, [:])
+            }
+            if request.path.contains("format=claude-ran") {
+                if let known {
+                    confinedCommands[wrapped] = nil
+                    log(project, .status, "Ran: \(command)", said: known.said)
+                }
+                return (200, [:])
+            }
             let sandboxed = shell
             // No sandbox, no shell: a command that can't be confined isn't run rather than run loose.
             if shell && engine != .codex && confined == nil {
@@ -5823,14 +6969,30 @@ final class Store: ObservableObject {
                 }
                 return (200, ["allow": false, "reason": reason])
             }
+            // Under "Only when risky", Claude Code's own classifier decides (auto mode): Lamp only confines the
+            // command, with no decision of its own, and what the classifier asks about comes back as a
+            // "claude-permission" request for the card.
+            if request.path.contains("format=claude-confine"), let confined {
+                if known == nil {
+                    let said = (input["description"] as? String ?? body["description"] as? String)?.trimmed.nilIfEmpty
+                    if confinedCommands.count > 500 { confinedCommands.removeAll() }   // ones refused never come back
+                    confinedCommands[confined] = (command, said)
+                }
+                return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "updatedInput": ["command": confined]]])
+            }
             if request.path.contains("format=codex") {
                 // Codex's PreToolUse hook can only block: an empty answer lets the command run.
-                let allowed = await approveCommand(command, for: project, escalated: false, sandboxed: sandboxed)
+                // Codex says what its commands are for in its reasoning, which comes before them (`AgentEvent.naming`).
+                let allowed = await approveCommand(command, for: project, escalated: false, sandboxed: sandboxed,
+                                                   said: turns[project.id]?.naming)
                 return (200, allowed ? [:] : ["hookSpecificOutput": ["hookEventName": "PreToolUse",
                                                                      "permissionDecision": "deny",
                                                                      "permissionDecisionReason": "The user denied this command in Lamp."]])
             }
-            let allowed = await approveCommand(command, for: project, escalated: escalated, shell: shell, sandboxed: sandboxed)
+            // Claude Code's hook and pi's extension carry the command's own description, so each command keeps its
+            // own words whichever of the approval and the engine's output reaches Lamp first.
+            let said = (input["description"] as? String ?? body["description"] as? String)?.trimmed.nilIfEmpty
+            let allowed = await approveCommand(command, for: project, escalated: escalated, shell: shell, sandboxed: sandboxed, said: said)
             let reason = allowed ? "Approved in Lamp." : "The user denied this command in Lamp."
             // An allowed command goes back confined: the hooks run what Lamp hands them.
             if escalated {
@@ -6158,6 +7320,60 @@ final class Store: ObservableObject {
         return (result.0, answer)
     }
 
+    /// What a look says while a change waits for the person to press Reload (`awaitReload`).
+    private static let reloadNoteStart = "The app built, but this change can't go into it while it runs"
+    /// What a look says while a change waits for the person to press Reload (`awaitReload`): with why it couldn't
+    /// go in, and where there's a known shape that would have, what that is, so the next change can take it.
+    private func reloadNote(for project: LampProject) -> String {
+        var why = ""
+        if let reason = turns[project.id]?.reloadWhy {
+            why = " Why: \(reason)."
+            if let advice = LiveReload.advice(for: reason) { why += " Next time, \(advice)" }
+        }
+        return """
+            \(Self.reloadNoteStart): it has to be reopened, and that's the person's to do.\(why) \
+            The app and the chat show them a Reload button, and Lamp doesn't reopen it for them. What's on screen \
+            isn't your change yet, so don't look or use the app again in this request. Finish, and tell them in a \
+            sentence to press Reload to see it.
+            """
+    }
+
+    /// How the turn's changes reached the app, as one line in the details ("2 went into the open app, 1 waits for
+    /// Reload"): how often a change goes in live is what the live rules are tuned by.
+    static func outcomeTally(_ outcomes: [ChangeOutcome], name: String) -> String? {
+        guard !outcomes.isEmpty else { return nil }
+        func count(_ kind: ChangeOutcome, _ words: String) -> String? {
+            let n = outcomes.filter { $0 == kind }.count
+            return n == 0 ? nil : "\(n) \(words)"
+        }
+        let parts = [count(.live, "went into the open app"), count(.held, "waited for Reload"),
+                     count(.reopened, "reopened \(name)"), count(.opened, "opened \(name)")].compactMap { $0 }
+        return "Changes this request: " + parts.joined(separator: ", ") + "."
+    }
+
+    /// How long the person watching waited to see the turn's work, as one line in the details ("First change on
+    /// screen after 1 min 12 s; longest wait between changes 2 min 40 s"): what the rule to show work early and
+    /// often is tuned by. Nothing for a turn that changed nothing.
+    static func paceTally(began: Date, shown: [Date], outcomes: [ChangeOutcome]) -> String? {
+        guard !outcomes.isEmpty else { return nil }
+        guard let first = shown.first else { return "Nothing reached the screen this request." }
+        func spoken(_ interval: TimeInterval) -> String {
+            let total = max(0, Int(interval.rounded()))
+            return total < 60 ? "\(total) s" : total % 60 == 0 ? "\(total / 60) min" : "\(total / 60) min \(total % 60) s"
+        }
+        // Between changes only: the wait for the first is its own measure, and its own part of the rule.
+        let longest = zip(shown, shown.dropFirst()).map { $1.timeIntervalSince($0) }.max() ?? 0
+        let firstPart = "First change on screen after \(spoken(first.timeIntervalSince(began)))"
+        return shown.count < 2 ? firstPart + "." : firstPart + "; longest wait between changes \(spoken(longest))."
+    }
+
+    /// What a look with `reopen` says when Lamp asked the person instead (`asksBeforeReopening`).
+    private static let askedToReopenNote = """
+        The person has the app open, so Lamp asked them before reopening it: the app and the chat show a Reload \
+        button, and it opens fresh when they press it. Any change you made is built and goes in with it. Don't look \
+        or use the app again in this request. Finish, and tell them in a sentence that Reload shows it starting fresh.
+        """
+
     /// What a look says when the person kept the earlier build open (`Turn.keptOpen`).
     private static let keptOpenNote = """
         The app built, but the person has the version from before open and chose to keep it open (it may hold \
@@ -6174,6 +7390,10 @@ final class Store: ObservableObject {
     /// open, code run once at the start), where otherwise a change goes into the open app. The agent ending the
     /// app's process itself skipped that question, and Lamp rightly asked the person about every such command.
     private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false) async -> (Int, [String: Any]) {
+        withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen), of: project)
+    }
+
+    private func lookNow(at project: LampProject, prop: String?, motion: Bool, reopen: Bool) async -> (Int, [String: Any]) {
         // Only for the agent Lamp is running right now. The app knows the same token and must not
         // be able to rebuild itself.
         guard let turn = turns[project.id], turn.agent != nil else {
@@ -6181,12 +7401,30 @@ final class Store: ObservableObject {
         }
         guard !turn.look.inProgress else { return (200, ["text": "Lamp is already looking at the app. Wait for that result."]) }
         turn.look.inProgress = true
+        progress[project.id]?.looking = true
+        await turn.early?.value
+        // A fresh launch asked for while the person has the app open waits for them to say so, like a change that
+        // needs one: the look puts in what it can as usual, then asks with Reload.
+        let wantsFresh = reopen
+        var asking = reopen && !project.onIOS && asksBeforeReopening(project, owner: turn)
+        var reopen = reopen && !asking
         turn.look.installed = false
-        defer { turn.look.inProgress = false }
+        // Each stage says itself from here; once the look is over the model is reading what it found. Only while this
+        // look's turn is the one on screen: after Stop, a look still waiting on the app can end after the next turn began.
+        func say(_ activity: String) {
+            guard turns[project.id] === turn, !turn.stopped else { return }
+            self.note(activity, for: project)
+        }
+        say(TurnProgress.activity(for: ToolCall("look_at_app")))
+        defer {
+            turn.look.inProgress = false
+            if turns[project.id] === turn { progress[project.id]?.looking = false }
+            say(Activity.thinking)
+        }
 
         try? await writeOwnFiles(project, all: false)
         let changed = Runtime.sourcesChanged(project)
-        if changed, let errors = await build(project) {
+        if changed, let errors = await build(project, inPlace: !reopen) {
             if errors == macMembershipProblem(project) {
                 return (200, ["text": "The app can't be built for this Mac, and Lamp has told the person why: \(errors)\n\nThis isn't a mistake in the code. Don't take iCloud out unless the person asked for that; finish what was asked without a look."])
             }
@@ -6194,12 +7432,16 @@ final class Store: ObservableObject {
         }
         var note = "The app built and is running."
         var screenshots: [URL] = []
+        let looking = "Looking at \(project.name)"
+        // What went into the open app as the agent saved, since its last look.
+        let saved = turn.autoApplied
+        turn.autoApplied = 0
         if project.onIOS {
             // The simulator photographs the screen; nothing in the app has to cooperate.
             // Open, and the device still this app's: otherwise it's opened again (which takes the device back).
             let running = simulatorApps[project.id].map { Simulator.isRunning(pid: $0.pid) && simulatorLeases[$0.udid] == project.id } ?? false
             if changed || !running || reopen {
-                let crash = await install(project, inFront: false)
+                let crash = await install(project, inFront: false, early: true)
                 turn.look.installed = true
                 turn.look.crash = crash
                 if let crash { return (200, ["text": "The app \(changed ? "built" : "is built"), but it didn't stay open.\n\n\(crash)"]) }
@@ -6207,13 +7449,26 @@ final class Store: ObservableObject {
                 if reopen { note = "The app was closed and opened again, so it started fresh." }
             } else {
                 note = "The app is running your latest code; nothing needed rebuilding."
+                // With a phone chosen under Try On, what's open in the simulator is this code, as after a launch: the
+                // turn's end puts it on the phone, as it does after a look that opened it. Without one the simulator is
+                // left as the agent found it, its state kept.
+                if project.device != nil {
+                    turn.look.installed = true
+                    turn.look.crash = nil
+                }
             }
-            try? await Task.sleep(for: .seconds(1))
+            say(looking)
             let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
             if let udid = simulatorApps[project.id]?.udid, await Simulator.screenshot(on: udid, to: picture) { screenshots = [picture] }
+            if turn.look.crash == nil { await present(project, in: turn) }
             // Which simulator: what it can show depends on it (a Dynamic Island is only on some iPhones).
             var on = ""
             if let udid = simulatorApps[project.id]?.udid, let name = await Simulator.name(of: udid) { on = " It's open on the \(name) simulator." }
+            if !turn.look.toldPhone {
+                turn.look.toldPhone = true
+                devices = await Devices.list()
+                on += " " + Devices.tryOnNote(chosen: project.device, among: devices)
+            }
             var text = note + on + " " + (screenshots.isEmpty ? "No picture of the iPhone could be taken."
                 : Privacy.sharesPictures ? "A picture of the iPhone's screen follows. Points for use_app are pixels in it." : Privacy.picturesOff)
             if !Privacy.sharesLog { text += " " + Privacy.logOff }
@@ -6237,23 +7492,42 @@ final class Store: ObservableObject {
         // The copy on screen is an earlier build the person kept open: not shown as the agent's work, and not
         // asked to quit again at every look.
         if turn.keptOpen, isRunning(project) { return (200, ["text": Self.keptOpenNote]) }
+        // Asked again after the build, which can take a minute: the person may have opened the app meanwhile.
+        if wantsFresh, !asking, asksBeforeReopening(project, owner: turn) {
+            asking = true
+            reopen = false
+        }
+        if asking {
+            if !Runtime.waitsForReload(project) {
+                _ = await install(project, inFront: false, early: true)
+                if turn.keptOpen { return (200, ["text": Self.keptOpenNote]) }
+                // Gone since (closed, or crashed with the change): nothing to ask about, and the next look opens it.
+                guard isRunning(project) else { return (200, ["text": "The app closed before Lamp could ask to reopen it. Look again to open it."]) }
+                if !Runtime.waitsForReload(project) { awaitReload(project, owner: turn) }
+            }
+            return (200, ["text": Self.askedToReopenNote])
+        }
+        if Runtime.waitsForReload(project), isRunning(project), !reopen { return (200, ["text": reloadNote(for: project)]) }
         var since = Date()
         // A copy kept open in an earlier request is older than the build too: it's asked to quit, once.
         if !reopen, !changed, !Runtime.holdsBuild(project), macCopies(of: project).first != nil {
             // Nothing to rebuild and the app is open: ask it for fresh pictures instead of relaunching it.
             let asked = Date()
             since = asked
+            say(looking)
             Runtime.requestScreenshots(of: project)
             screenshots = await Runtime.screenshots(of: project, since: asked, waiting: 2)
-            note = "The app is running your latest code; nothing needed rebuilding."
+            note = saved > 0 ? "What you saved went into the open app by itself as you saved it (\(saved) \(saved == 1 ? "time" : "times")): the person is seeing it now, with the window as they left it."
+                : "The app is running your latest code; nothing needed rebuilding."
             turn.look.installed = !screenshots.isEmpty
             turn.look.crash = nil
         }
         if screenshots.isEmpty {
             let launched = Date()
-            since = launched
-            let crash = await install(project, inFront: false, fresh: reopen)
+            // A look with `reopen` asks for the fresh launch itself, so it doesn't wait for Reload.
+            let crash = await install(project, inFront: false, fresh: reopen, reload: reopen, early: true)
             if turn.keptOpen { return (200, ["text": Self.keptOpenNote]) }
+            if Runtime.waitsForReload(project), isRunning(project) { return (200, ["text": reloadNote(for: project)]) }
             turn.look.installed = true
             turn.look.crash = crash
             if let crash {
@@ -6261,12 +7535,35 @@ final class Store: ObservableObject {
             }
             if !changed { note = "The app is running your latest code; it was reopened without rebuilding." }
             if reopen { note = "The app was closed and opened again, so it started fresh." }
-            screenshots = await Runtime.screenshots(of: project, since: launched)
+            // Which way the change reached the app: the person sees a live change at once, as they left the window.
+            switch turn.outcomes.last {
+            case .live?:
+                note = saved > 0 ? "What you saved went into the open app by itself as you saved it (\(saved) \(saved == 1 ? "time" : "times")), without reopening it: the person is seeing it now, with the window as they left it."
+                    : "The change went into the open app without reopening it: the person is seeing it now, with the window as they left it."
+                if turn.endedReloadWait {
+                    note += " The change that was waiting for Reload went in with it, so nothing waits for Reload now; don't tell the person to press it."
+                    turn.endedReloadWait = false
+                }
+            case .opened?: note = "The app wasn't open, so it was opened" + (changed ? " with the change." : ".")
+            case .reopened?: note = "The app was closed and opened again with the change" + (turn.reloadWhy.map { ": \($0)." } ?? ".")
+            default: break
+            }
+            say(looking)
+            // A change that went into the open app didn't launch it, so nothing takes the pictures a launch does:
+            // they're asked for, once the new code has had a moment to draw.
+            if turn.updatedInPlace {
+                try? await Task.sleep(for: .milliseconds(300))
+                Runtime.requestScreenshots(of: project)
+            }
+            // Since this copy was asked to open, not since the look began: the copy it replaced pictures its window as it quits.
+            since = max(launched, turn.launch?.opened ?? launched)
+            screenshots = await Runtime.screenshots(of: project, since: since)
         }
         var lead = ""
         if let prop, !prop.isEmpty, !screenshots.isEmpty {
             // One prop on its own: the app shows it from four sides over its scene, pictures it, and goes back.
             let asked = Date()
+            say("Looking at it from all sides")
             Runtime.requestProp(prop, of: project)
             switch await Runtime.propAnswer(of: project) {
             case "shown"?:
@@ -6280,6 +7577,7 @@ final class Store: ObservableObject {
             }
         }
         if motion, !screenshots.isEmpty {
+            say("Watching it move")
             if Privacy.sharesPictures, let watched = await Runtime.motion(of: project) {
                 lead += watched.text + " "
                 if !watched.pictures.isEmpty { screenshots = watched.pictures }
@@ -6298,7 +7596,38 @@ final class Store: ObservableObject {
         if Privacy.sharesPictures, !screenshots.isEmpty, Self.binary(of: project, contains: Self.screenTextMarker),
            let words = await Runtime.screenText(of: project, since: since) { text += "\n\n" + words }
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
+        if !screenshots.isEmpty { await present(project, in: turn) }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
+    }
+
+    /// A new Mac app is shown to the person as soon as there's something to show: its scaffold (a window with its
+    /// name, which says Lamp is making it) is built and opened while the agent starts work, and the chat moves beside
+    /// it (`present`), so the passes that follow go in where the person is already looking rather than after the
+    /// agent's first look, minutes in. Quietly: a build that fails (the agent may be writing files as it runs) just
+    /// leaves it to that first look. An iPhone app waits for that look, which opens the simulator.
+    private func showEarly(_ project: LampProject, in turn: Turn) {
+        guard project.platform == .mac, Template.isScaffold(project), !isRunning(project) else { return }
+        turn.early = Task { [weak self] in
+            guard let self, turns[project.id] === turn, !turn.stopped else { return }
+            guard await build(project) == nil, turns[project.id] === turn, !turn.stopped, !turn.asked else { return }
+            guard await install(project, inFront: false) == nil, !turn.didNotOpen else { return }
+            await present(project, in: turn)
+        }
+    }
+
+    /// A new app is built in passes, and the first look that opens it shows it to the person, so they watch it take
+    /// shape instead of waiting for the end: a Mac app comes forward with its chat beside it (`MagicPanel.handOff`, which
+    /// otherwise happens once the turn is over), an iPhone app's simulator comes forward. Once a turn, after the agent's
+    /// pictures are taken, and only for the first turn of a new app: later turns change an app that's open already.
+    private func present(_ project: LampProject, in turn: Turn) async {
+        guard progress[project.id]?.newApp == true, !turn.look.presented, turns[project.id] === turn, !turn.stopped,
+              !turn.keptOpen else { return }
+        turn.look.presented = true
+        if project.onIOS {
+            if let udid = simulatorApps[project.id]?.udid { await Simulator.show(udid) }
+        } else {
+            Task { await MagicPanel.shared.handOff(project) }
+        }
     }
 
     /// For an app that declares what it opens (`opens` in capabilities.json): the command that hands this
@@ -6366,6 +7695,20 @@ final class Store: ObservableObject {
               !FileManager.default.fileExists(atPath: Template.shareURL(in: project.installedURL, of: project).path),
               (try? String(contentsOf: teamSigningFailure(project), encoding: .utf8)) != Devices.team else { return false }
         return await Devices.signingIdentity(for: Devices.team) != nil
+    }
+
+    /// Writes what the app is told about itself and Lamp (`Template.installValues`) into a bundle's Info.plist,
+    /// before it's signed: LampSupport reads it there at launch rather than having it compiled in. `root` is the
+    /// folder the bundle is in, read and written without following links out of it: the simulator's bundle is in
+    /// the app's build folder, which the agent's commands can write.
+    nonisolated static func setInstallValues(for project: LampProject, in plistURL: URL, root: URL,
+                                             values: [String: String]? = nil) {
+        guard let data = AppFile.read(plistURL, inFolder: root),
+              var plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return }
+        plist["LampInstall"] = values ?? Template.installValues(for: project)
+        if let out = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) {
+            try? AppFolder.write(out, to: plistURL, in: root)
+        }
     }
 
     /// Writes, or takes out, the name of the folder a Mac app shares with its widget, in each bundle's Info.plist,

@@ -36,7 +36,20 @@ enum Runtime {
     static func holdBuild(_ project: LampProject) {
         try? AppFolder.write(Data(), to: heldURL(project), in: project.dir)
     }
-    static func releaseBuild(_ project: LampProject) { AppFolder.remove(heldURL(project), in: project.dir) }
+    static func releaseBuild(_ project: LampProject) {
+        AppFolder.remove(heldURL(project), in: project.dir)
+        AppFolder.remove(reloadURL(project), in: project.dir)
+    }
+
+    /// A held build that waits for the person to press Reload (`Store.awaitReload`): a request's change that the
+    /// open app can't take as it runs, which Lamp doesn't reopen the app for by itself.
+    private static func reloadURL(_ project: LampProject) -> URL { macFolder(project).appendingPathComponent("reload-waiting") }
+    static func awaitReload(_ project: LampProject) {
+        holdBuild(project)
+        try? AppFolder.write(Data(), to: reloadURL(project), in: project.dir)
+    }
+    static func waitsForReload(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: reloadURL(project).path) }
+
     static func holdsBuild(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: heldURL(project).path) }
 
     /// What the app is built from, as one hash: the contents of Sources, its widget's folder, Package.swift and the icon design,
@@ -83,13 +96,95 @@ enum Runtime {
 
     // MARK: - Launch
 
-    /// Waits a few seconds after launch. True when the app is already gone: it crashed or quit by itself.
-    @MainActor
-    static func diedOnLaunch(_ app: NSRunningApplication) async -> Bool {
-        for _ in 0..<12 where !app.isTerminated {
-            try? await Task.sleep(for: .milliseconds(250))
+    /// How long after a launch an app that goes away counts as having died on launch: it crashed or quit by itself.
+    static let launchWindow: Duration = .seconds(3)
+
+    /// Watches a launch for those first seconds, without anyone having to wait them out: a look goes on once the app
+    /// has pictured its window (`shown`), and hears of a death that comes later from the watch (`Store.watchLaunch`).
+    @MainActor final class LaunchWatch {
+        /// When the app was asked to open: its pictures from before are an earlier copy's.
+        let opened: Date
+        /// The launch window passed with the app alive, or it died and `crash` says what's known.
+        private(set) var ended = false
+        private(set) var crash: String?
+        /// The death was told to the agent: in a look's answer, or as a note with a later one.
+        var told = false
+        /// Lamp is closing the app itself (a rebuild, Stop, another app taking the simulator): its going is a death only
+        /// when it's surely a crash. Taken back when the app stays open (`resume`).
+        private(set) var retired = false
+        /// Whoever opened the app went on before the window was over (`untilShown`, `settle`), so a death from here
+        /// is told later, and only one that is surely a crash counts: the person may close an app that works.
+        private(set) var late = false
+        private var task: Task<Void, Never>?
+        /// The first seconds themselves: true when the app went in them.
+        private var window: Task<Bool, Never>?
+        private let alive: @MainActor () -> Bool
+
+        /// `alive` is asked every tenth of a second; `died` says what's known once it's false, given whether it came
+        /// `late` or while Lamp was closing the app (`retired`), and nil when the going doesn't count as a death after all.
+        init(opened: Date, alive: @escaping @MainActor () -> Bool,
+             died: @escaping @MainActor (_ late: Bool, _ retired: Bool) async -> String?) {
+            self.opened = opened
+            self.alive = alive
+            let window = Task {
+                let clock = ContinuousClock(), start = clock.now
+                while alive(), clock.now - start < Runtime.launchWindow {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                return !alive()
+            }
+            self.window = window
+            task = Task { [weak self] in
+                let gone = await window.value
+                let crash = gone ? await died(self?.late ?? true, self?.retired ?? true) : nil
+                self?.crash = crash
+                self?.ended = true
+            }
         }
-        return app.isTerminated
+
+        /// Called before Lamp itself ends the app. An app already gone had died before Lamp asked, which still counts.
+        func retire() { if alive() { retired = true } }
+        /// The app stayed open after all (the person kept it, at its question about unsaved work).
+        func resume() { retired = false }
+
+        /// Whether the app went in its first seconds, as soon as that's known: without waiting for what's known of why,
+        /// which for a Mac app Lamp was closing can mean waiting for a crash report that never comes.
+        func wentAway() async -> Bool {
+            await window?.value ?? false
+        }
+
+        /// What's known if the app died in its first seconds; nil once they passed with it open.
+        func verdict() async -> String? {
+            await task?.value
+            return crash
+        }
+
+        /// Waits until the app has pictured a window since it was asked to open, or the watch has ended (a menu bar
+        /// app's launch, which pictures nothing, waits the whole window). True when it died.
+        func untilShown(_ project: LampProject) async -> Bool {
+            while !ended, !Runtime.pictured(project, since: opened) {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            late = !ended
+            return ended && crash != nil
+        }
+
+        /// Waits `duration`, or less when the watch ends first: for a launch nothing reports the first picture of
+        /// (the simulator's). True when it died.
+        func settle(_ duration: Duration) async -> Bool {
+            let clock = ContinuousClock(), start = clock.now
+            while !ended, clock.now - start < duration {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            late = !ended
+            return ended && crash != nil
+        }
+    }
+
+    /// Whether the app has written a picture of a window since `date`.
+    static func pictured(_ project: LampProject, since date: Date) -> Bool {
+        let url = folder(project).appendingPathComponent("screenshot.png")
+        return (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast > date
     }
 
     /// What's known about an app that died on launch: the crash report and the last lines it printed.
@@ -227,17 +322,18 @@ enum Runtime {
         return fresh()
     }
 
-    /// What the app says happened when it carried out a `use_app` request (see `LampDriver` in the app). It
-    /// writes this after its fresh pictures, so once it's here they're ready too. nil if it never answers,
-    /// or `running` turns false: the app is gone.
+    /// What the app says happened when it carried out a `use_app` request (see `LampDriver` in the app), and
+    /// whether the person stopped it part way (`LampDriver.Handover`). It writes this after its fresh pictures,
+    /// so once it's here they're ready too. nil if it never answers, or `running` turns false: the app is gone.
     @MainActor
     static func useReport(of project: LampProject, id: String, waiting seconds: Double,
-                          while running: () -> Bool) async -> String? {
+                          while running: () -> Bool) async -> (report: String, stopped: Bool)? {
         let url = folder(project).appendingPathComponent("use.json")
         for _ in 0..<Int(seconds * 4) where running() {
             if let data = AppFile.read(url, in: project),
-               let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: String], answer["id"] == id {
-                return answer["report"]
+               let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: String], answer["id"] == id,
+               let report = answer["report"] {
+                return (report, answer["stopped"] != nil)
             }
             try? await Task.sleep(for: .milliseconds(250))
         }
@@ -304,7 +400,10 @@ enum Runtime {
         .appendingPathComponent("Library/Logs/DiagnosticReports")
 
     /// The newest crash of the current build, summarized: what killed the app and the calls that led there.
-    static func crash(of project: LampProject) -> String? {
+    static func crash(of project: LampProject) -> String? { newestCrash(of: project)?.summary }
+
+    /// The newest crash of the current build with when it happened, which tells one crash from the next.
+    static func newestCrash(of project: LampProject) -> (date: Date, summary: String)? {
         guard let built = (try? builtURL(project).resourceValues(forKeys: [.contentModificationDateKey]))?
             .contentModificationDate else { return nil }
         let files = (try? FileManager.default.contentsOfDirectory(at: reports, includingPropertiesForKeys: nil)) ?? []
@@ -312,7 +411,7 @@ enum Runtime {
             .filter { $0.pathExtension == "ips" && $0.lastPathComponent.hasPrefix(project.exe + "-") }
             .compactMap { report($0, bundleID: project.bundleID) }
             .filter { $0.date > built }
-            .max { $0.date < $1.date }?.summary
+            .max { $0.date < $1.date }
     }
 
     /// Whether the app crashed since `date`: macOS wrote a report for it. Not a quit, which leaves none.

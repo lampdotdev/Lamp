@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: mood=happy mirror=["happy"]
+RELOAD 1 (whole): ok
+after (want angry, no crash): mood=angry mirror=["angry"]

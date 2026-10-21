@@ -345,6 +345,25 @@ enum Devices {
         return "\(project.name) keeps its data in iCloud, which Apple allows only with a paid Apple Developer membership. Your Apple account is a free one, so Lamp can't put the app on \(place). Choose a simulator under Try On to keep working, or ask Lamp to keep the data on the device instead."
     }
 
+    /// What Try On is set to and what Lamp's device lookup returned, for an iPhone preview result once per turn. The
+    /// lookup holds paired phones that are away too, and one that fails returns nothing, so this says what it holds.
+    static func tryOnNote(chosen udid: String?, among devices: [Device]) -> String {
+        let simulator = "Try On is set to the simulator."
+        if let udid {
+            guard let device = devices.first(where: { $0.udid == udid }) else {
+                return "Try On is set to one of the person's phones, which Lamp's device list didn't return. To open the app there, they connect and unlock it, then press Play."
+            }
+            return "Try On is set to the person's \(device.name). Play builds, signs and installs the app there."
+        }
+        if let device = devices.first(where: \.paired) {
+            return simulator + " Lamp's device list has their \(device.name), paired with this Mac. To open the app on it, they connect it, choose it under Try On and press Play."
+        }
+        if let device = devices.first {
+            return simulator + " Lamp's device list has their \(device.name), which hasn't trusted this Mac yet. They choose Pair under Try On and tap Trust on it, then choose it and press Play."
+        }
+        return simulator + " Lamp's device list returned no iPhone or iPad. To open the app on one, they connect and unlock it, choose it under Try On and press Play."
+    }
+
     /// What's wrong before anything is tried, in plain words, or nil when the phone is ready.
     static func problem(_ device: Device?, team: String) -> String? {
         guard let device else { return "Lamp can't see that phone. Plug it in with a data cable and unlock it, then Retry. If it still doesn't appear, choose it again under Try On." }

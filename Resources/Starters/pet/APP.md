@@ -1,4 +1,7 @@
 Kind: companion
+Look: a round pink cat. Its figure and face (`PetFigure`, `PetFaceGlyph`), its colours (`PetLook`, also behind the
+panel), the food it eats, its accessories, the words in `PetMood` and the cat icon. Another creature gets all of
+these.
 
 # Pet
 

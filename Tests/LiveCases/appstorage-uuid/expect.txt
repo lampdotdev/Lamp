@@ -1,0 +1,16 @@
+VERDICT 1: REOPEN (Settings changed what it holds (Settings._size: AppStorage<Int>); Settings._size isn't @State, and a view's spare keeps state)
+VERDICT 2: REOPEN (Item changed what it holds (Item.id: UUID); Item.id is one of Item's coding keys, so Codable needs it stored)
+== run
+before: Settings a
+RELOAD 1: REOPEN Settings changed what it holds (Settings._size: AppStorage<Int>); Settings._size isn't @State, and a view's spare keeps state
+after1: a
+before: Settings a
+RELOAD 1: in the restart
+after1: a
+RELOAD 2: REOPEN Item changed what it holds (Item.id: UUID); Item.id is one of Item's coding keys, so Codable needs it stored
+after2: a
+before: Settings a
+RELOAD 1: in the restart
+after1: a
+RELOAD 2: in the restart
+after2: a

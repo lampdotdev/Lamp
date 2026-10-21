@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: count=5
+RELOAD 1: ok
+after1 (want the same store, count 5, in live): count 5 same

@@ -3,7 +3,7 @@ import AppKit
 @testable import Lamp
 
 /// Draws layered glass icons for starters and keeps every candidate, to look at them side by side while tuning
-/// `GlassIcons`. `LAMP_GLASS_ICONS=focus,countdowns LAMP_GLASS_OUT=<folder> OPENROUTER_API_KEY=… swift test
+/// `GlassIcons`. `LAMP_GLASS_ICONS=focus,countdowns LAMP_GLASS_OUT=<folder> OPENROUTER_API_KEY=… (LAMP_GLASS_ROUNDS, LAMP_GLASS_MODEL) swift test
 /// --filter GlassIconsExperimentTests`.
 final class GlassIconsExperimentTests: XCTestCase {
     func testDrawCandidates() async throws {
@@ -16,6 +16,8 @@ final class GlassIconsExperimentTests: XCTestCase {
         let folder = URL(fileURLWithPath: out)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let variants = (env["LAMP_GLASS_VARIANTS"] ?? "0,1,2").split(separator: ",").compactMap { Int($0) }
+        let rounds = env["LAMP_GLASS_ROUNDS"].flatMap(Int.init) ?? GlassIcons.rounds
+        let model = env["LAMP_GLASS_MODEL"] ?? GlassIcons.drawModel
         await withTaskGroup(of: Void.self) { group in
             for name in names.split(separator: ",").map(String.init) {
                 let starter = repo.appendingPathComponent("Resources/Starters/\(name)")
@@ -25,8 +27,11 @@ final class GlassIconsExperimentTests: XCTestCase {
                 for variant in variants {
                     group.addTask {
                         do {
+                            let start = Date()
                             let (design, _, picture) = try await GlassIcons.drawCandidate(spec, appName: name, about: about,
-                                                                                         variant: variant, canPaint: true)
+                                                                                         variant: variant, canPaint: true,
+                                                                                         rounds: rounds, model: model)
+                            print("\(name)-\(variant): \(Int(Date().timeIntervalSince(start)))s")
                             let png = picture.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:))?
                                 .representation(using: .png, properties: [:])
                             try png?.write(to: folder.appendingPathComponent("\(name)-\(variant).png"))

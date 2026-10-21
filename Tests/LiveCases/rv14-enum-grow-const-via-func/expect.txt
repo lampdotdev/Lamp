@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD (Gave Catalog.direct, Catalog.viaFunc their new value)
+VERDICT 2: RELOAD
+== run
+before: direct=2 viaFunc=2
+RELOAD 1 (whole): ok
+after1 (want direct=3 viaFunc=3, both constants made from the grown enum): direct=3 viaFunc=3
+RELOAD 2 (whole): ok
+after2 (want direct=4 viaFunc=4, grown again): direct=4 viaFunc=4

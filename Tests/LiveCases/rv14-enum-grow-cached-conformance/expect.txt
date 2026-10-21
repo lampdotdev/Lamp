@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: equal=[true, true] distinctHashes=2
+RELOAD 1 (whole): ok
+after1 (want the new case equal to itself and hashed apart from the others, no crash): equal=[true, true, true] distinctHashes=3 awayEqualsCalm=false

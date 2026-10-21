@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Where a shell command may go, enforced by macOS rather than guessed from the command's text: the
@@ -8,8 +9,7 @@ import Foundation
 /// command to know what it touches, and the approval card is about what a command does, not where it looks.
 ///
 /// Claude Code's and pi's commands are wrapped one by one (their hooks can hand back a changed command).
-/// Codex's hook can't, and a sandbox can't be nested, so Codex itself runs inside the profile (with its own
-/// sandbox off, and its own folder opened), and its commands with it.
+/// Codex's commands run in Codex's own sandbox instead (`codexPermissions`), which its reviewer works with.
 enum Sandbox {
     static let executable = "/usr/bin/sandbox-exec"
 
@@ -35,7 +35,14 @@ enum Sandbox {
             await onLine("Lamp couldn't set up the sandbox for \(project.name), so nothing was run.")
             return unconfined
         }
-        return await Shell.run(confined, cwd: cwd ?? project.dir, env: env, started: started, onLine: onLine)
+        return await Shell.run(confined, cwd: cwd ?? project.dir, env: env, login: false, started: started, onLine: onLine)
+    }
+
+    /// `run` for a command whose standard output is read as a whole (`Shell.output`): kept in one buffer off the
+    /// main actor, its standard error dropped. Confined the same way.
+    static func output(_ command: String, for project: LampProject, cwd: URL? = nil) async -> (status: Int32, output: Data) {
+        guard let confined = wrap("/bin/zsh -c " + quoted(command), for: project) else { return (unconfined, Data()) }
+        return await Shell.output(confined, cwd: cwd ?? project.dir, login: false)
     }
 
     /// The shell line that runs `command` under `profile`, with Lamp's `swift` first on the path (below). A
@@ -79,52 +86,105 @@ enum Sandbox {
         return true
     }
 
-    /// A whole engine run, confined to the app with what the engine itself needs opened as well: `opening`
-    /// for reading and writing, `reading` for reading, `writing` the files directly inside a folder only
-    /// read (Codex keeps its databases and sign-in beside its settings), and `keeping` single files that
-    /// stay read-only whatever else was opened. Nil when the profile can't
-    /// be written.
-    static func wrapEngine(_ command: String, for project: LampProject, opening folders: [String], reading: [String] = [],
-                           writing: [String] = [], keeping: [String] = []) -> String? {
-        guard let file = writeProfile(for: project, opening: folders, reading: reading, writing: writing, keeping: keeping) else { return nil }
+    /// Codex's own sandbox for its commands, as one of Codex's permission profiles (`-c permissions.lamp=…` with
+    /// `default_permissions="lamp"`): Codex can't run inside Lamp's profile and keep its own reviewer, since its
+    /// commands' sandbox can't be started inside another. The profile closes everything (`:root`), then opens what
+    /// the profile above opens for a build: the app's folder (whose `.git` Codex keeps read-only), the platform's runtime (`:minimal`), the developer tools, Homebrew's and the applications for
+    /// reading, caches and temporary folders for writing, Lamp's shims, and the network. Unlike Lamp's, which
+    /// allows by default, it lists what is open, so the person's files, Lamp's folders and the apps Lamp installs
+    /// (which can't be run without being read) stay closed by not being named. What the app shows and prints is
+    /// closed as in the profile above when the settings say so. A command that needs more asks Codex's reviewer.
+    static func codexPermissions(for project: LampProject, env: [String: String] = ProcessInfo.processInfo.environment) -> String {
+        let home = real(FileManager.default.homeDirectoryForCurrentUser.path)
+        var paths: [(String, String)] = [(":root", "deny"), (":minimal", "read")]
+        for path in ["/Volumes", "/Network", "/private/var/root", "/Library/Application Support", "/Library/Keychains"] {
+            paths.append((path, "deny"))
+        }
+        let reading = [home + "/Library/Developer", home + "/.swiftpm", home + "/.gitconfig", home + "/.config/git",
+                       "/Library/Developer", "/System/Library/Sandbox/Profiles", "/Applications", "/opt/homebrew", "/usr/local",
+                       bin.path, zdot.path] + developerFolders(env: env)
+        for path in reading where !paths.contains(where: { $0.0 == real(path) }) { paths.append((real(path), "read")) }
+        // The per-user cache and temporary folders (the compiler's module cache is in the first), and the shared ones.
+        let user = [confstr(_CS_DARWIN_USER_CACHE_DIR), confstr(_CS_DARWIN_USER_TEMP_DIR), env["TMPDIR"]].compactMap { $0 }
+        for path in [home + "/Library/Caches", home + "/Library/org.swift.swiftpm", "/private/tmp"] + user where !path.isEmpty {
+            let folder = kernelPath(path)
+            if !paths.contains(where: { $0.0 == folder }) { paths.append((folder, "write")) }
+        }
+        // The app's folder by its own name, not Codex's workspace: Codex makes that of wherever the folder it starts
+        // in leads, which a command could change between Lamp's look and Codex's start. A folder named here that is a
+        // link, or leads through one, Codex refuses to start with or to run a command in.
+        paths.append((project.realDir.path, "write"))
+        if !Privacy.sharesPictures || !Privacy.sharesLog {
+            paths.append((project.realDir.path + "/.lamp/runtime", "deny"))
+        }
+        let filesystem = paths.map { "\(Agent.tomlString($0.0))=\(Agent.tomlString($0.1))" }
+        return "permissions.lamp={filesystem={" + filesystem.joined(separator: ",") + "},network={enabled=true}}"
+    }
+
+    /// One of the system's configuration strings (`getconf`), without its trailing slash; nil when it has none.
+    private static func confstr(_ name: Int32) -> String? {
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        guard Darwin.confstr(name, &buffer, buffer.count) > 0 else { return nil }
+        let path = String(cString: buffer)
+        return path.hasSuffix("/") ? String(path.dropLast()) : path
+    }
+
+    /// Lamp's `swift` and shell startup files (above), written for an engine whose commands run in a sandbox of
+    /// its own (Codex): false when they can't be.
+    static func prepareShims() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        return writeShims()
+    }
+
+    /// The environment that puts Lamp's programs first on the path of the commands an engine runs itself, as
+    /// `launch` does for a confined one.
+    static var shimEnvironment: String {
+        "PATH=\(quoted(bin.path))':'\"$PATH\" ZDOTDIR=\(quoted(zdot.path))"
+    }
+
+    /// A whole run of a program, confined to the app with what it needs opened as well: `opening` for reading
+    /// and writing, `reading` for reading. Nil when the profile can't be written.
+    static func wrapEngine(_ command: String, for project: LampProject, opening folders: [String], reading: [String] = []) -> String? {
+        guard let file = writeProfile(for: project, opening: folders, reading: reading) else { return nil }
         return launch(command, profile: file)
     }
 
-    /// Where an engine's program lives when that's under the home folder (a Node install, say): the install
-    /// it belongs to (the parent of its `bin`), as given and as the link resolves (a package under
-    /// node_modules), must be readable for it to start.
-    static func installFolders(of tool: String) -> [String] {
-        let home = real(FileManager.default.homeDirectoryForCurrentUser.path)
-        func root(_ path: String) -> String? {
-            guard path.hasPrefix(home + "/") else { return nil }
-            let bin = (path as NSString).deletingLastPathComponent
-            return (bin as NSString).lastPathComponent == "bin" ? (bin as NSString).deletingLastPathComponent : bin
-        }
-        var folders: [String] = []
-        for candidate in [URL(fileURLWithPath: tool).standardizedFileURL.path, real(tool)] {
-            if let folder = root(candidate), !folders.contains(folder) { folders.append(folder) }
-        }
-        return folders
-    }
-
     /// Where the profiles live: in Lamp's own folder, which every profile closes, so what sandbox-exec reads
-    /// is what Lamp wrote and not something the agent could change. One file per command, kept for an hour
-    /// (a command may wait that long for the user), then cleared.
+    /// is what Lamp wrote and not something the agent could change. One file for each profile's text, named by
+    /// it, so the commands of a turn share one; each use renews it, and one unused for an hour (a command may
+    /// wait that long for the user) is cleared.
     static let folder = Edition.supportFolder.appendingPathComponent("Sandbox")
 
-    private static func writeProfile(for project: LampProject, opening folders: [String] = [], reading: [String] = [],
-                                     writing: [String] = [], keeping: [String] = []) -> URL? {
+    /// When old profiles were last cleared: listing the folder for every command cost more than the command.
+    nonisolated(unsafe) private static var cleared = Date.distantPast
+    private static let lock = NSLock()
+
+    private static func writeProfile(for project: LampProject, opening folders: [String] = [], reading: [String] = []) -> URL? {
         let fm = FileManager.default
+        let text = profile(for: project, opening: folders, reading: reading)
+        let digest = SHA256.hash(data: Data(text.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
+        let file = folder.appendingPathComponent("\(project.id)-\(digest).sb")
+        lock.lock()
+        defer { lock.unlock() }
         try? fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         guard writeShims() else { return nil }
-        let cutoff = Date().addingTimeInterval(-3600)
-        for old in (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        where old.pathExtension == "sb"
-            && ((try? old.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantFuture) < cutoff {
-            try? fm.removeItem(at: old)
+        if Date().timeIntervalSince(cleared) > 60 {
+            cleared = Date()
+            let cutoff = Date().addingTimeInterval(-3600)
+            for old in (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+            where old.pathExtension == "sb"
+                && ((try? old.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantFuture) < cutoff {
+                try? fm.removeItem(at: old)
+            }
         }
-        let file = folder.appendingPathComponent("\(project.id)-\(UUID().uuidString).sb")
-        let text = profile(for: project, opening: folders, reading: reading, writing: writing, keeping: keeping)
+        // Read back rather than trusted by name: the file is used only when it holds exactly this text.
+        if (try? String(contentsOf: file, encoding: .utf8)) == text {
+            try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
+            return file
+        }
+        try? fm.removeItem(at: file)
         guard fm.createFile(atPath: file.path, contents: Data(text.utf8),
                             attributes: [.posixPermissions: 0o600]) else { return nil }
         return file
@@ -134,8 +194,7 @@ enum Sandbox {
     /// included, and anything mounted), then the places under this home a build needs opened again, Lamp's
     /// own folders closed, and the app's folder opened last (it sits inside Lamp's). Later rules win, so the
     /// order is the meaning. `folders` are opened too, for reading and writing; `reading` for reading.
-    static func profile(for project: LampProject, opening folders: [String] = [], reading: [String] = [], writing: [String] = [],
-                        keeping: [String] = []) -> String {
+    static func profile(for project: LampProject, opening folders: [String] = [], reading: [String] = []) -> String {
         let fm = FileManager.default
         let home = real(fm.homeDirectoryForCurrentUser.path)
         // The app's folder by its own name, never where it leads: a command may have swapped it for a link.
@@ -157,7 +216,7 @@ enum Sandbox {
             lines.append("(allow file-read* file-write* (subpath \(quotedPath(real(tmp)))))")
         }
         // Both Lamps' folders (keys, sign-ins, every other app) stay closed; the app's own folder opens.
-        for name in ["Lamp", "Lamp Dev"] {
+        for name in Edition.lampFolderNames {
             lines.append("(deny file-read* file-write* (subpath \(quotedPath(support + "/" + name))))")
             // And the apps Lamp installs are for the person to run, not the command: running one needs no
             // read the profile closes (exec maps it), so it's refused by name. A command could otherwise
@@ -187,13 +246,6 @@ enum Sandbox {
         }
         for folder in reading {
             lines.append("(allow file-read* (subpath \(quotedPath(real(folder)))))")
-        }
-        // The files directly in a folder, not what's in its subfolders.
-        for folder in writing {
-            lines.append("(allow file-write* (regex #\"^\(NSRegularExpression.escapedPattern(for: real(folder)))/[^/]*$\"))")
-        }
-        for path in keeping {
-            lines.append("(deny file-write* (literal \(quotedPath(real(path)))))")
         }
         // Homebrew's folders belong to the person, so without this a command could put a program there (a
         // `codesign`, a `git`) that something running outside the sandbox later finds on its path and runs

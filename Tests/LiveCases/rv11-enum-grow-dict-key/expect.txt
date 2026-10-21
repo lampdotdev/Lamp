@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: a:1 b:1 a=1 b=1
+RELOAD 1 (whole): ok
+after1 (want a:1 b:1 c:1 and lookups right): a:1 b:1 c:1 a=1 b=1 c=1

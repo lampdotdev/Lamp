@@ -46,7 +46,7 @@ enum Versions {
     static func git(_ command: String, cwd: URL, env: [String: String] = [:],
                     onLine: @escaping @MainActor (String) -> Void = { _ in }) async -> Int32 {
         guard let confined = confined(command, in: cwd) else { return unconfined }
-        return await Shell.run(confined, cwd: cwd, env: env.merging(environment) { $1 }, onLine: onLine)
+        return await Shell.run(confined, cwd: cwd, env: env.merging(environment) { $1 }, login: false, onLine: onLine)
     }
 
     /// The same, for the one caller that can't await (the migration, at launch).
@@ -101,7 +101,7 @@ enum Versions {
     /// (keys, sign-ins, every other app): a setting that names a folder, the home folder say, would
     /// otherwise open all of it, Lamp's included.
     private static func personalFiles() -> [String] {
-        let lamps = ["Lamp", "Lamp Dev"].map {
+        let lamps = Edition.lampFolderNames.map {
             FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/\($0)")
                 .resolvingSymlinksInPath().standardizedFileURL.path
         }

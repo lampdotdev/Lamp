@@ -53,6 +53,15 @@ struct BuildStamp: Equatable {
         try? AppFolder.write(out, to: url, in: project.dir)
     }
 
+    /// Stamps an app outside any app's folder (a starter's prebuilt copy in Lamp's own bundle, as it's being built).
+    static func stamp(_ app: URL) {
+        let url = infoPlist(of: app)
+        guard let info = NSMutableDictionary(contentsOf: url) else { return }
+        info[lampKey] = current.lamp
+        info[supportKey] = current.support
+        info.write(to: url, atomically: true)
+    }
+
     /// Built by a Lamp whose app code differs from this one's.
     var isOutdated: Bool { support != Self.current.support }
 

@@ -1,0 +1,9 @@
+VERDICT 1: REOPEN (Game changed what it holds (Game._score: Int); Game.score has observers, is lazy, or is a weak or unowned reference, which a property kept in a spare can't be)
+== run
+before: level=1
+RELOAD 1: REOPEN Game changed what it holds (Game._score: Int); Game.score has observers, is lazy, or is a weak or unowned reference, which a property kept in a spare can't be
+after: level=2
+before: level=1 score=0
+RELOAD 1: in the restart
+will set score to 3
+after: level=2 score=3

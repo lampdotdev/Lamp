@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Style changed what it holds (Style.tint: Color); Style.tint starts as .blue, which may differ from one value to the next; a struct's property kept in a spare starts from a literal, an empty collection or one of the app's enum's cases)
+== run
+before: Card
+RELOAD 1: REOPEN Style changed what it holds (Style.tint: Color); Style.tint starts as .blue, which may differ from one value to the next; a struct's property kept in a spare starts from a literal, an empty collection or one of the app's enum's cases
+after1 (the app's own Color makes a new value at each .blue: want a reopen, or the same tint read twice): Card
+before: Card same=true
+RELOAD 1: in the restart
+after1 (the app's own Color makes a new value at each .blue: want a reopen, or the same tint read twice): Card same=true

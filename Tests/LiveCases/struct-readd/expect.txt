@@ -1,0 +1,11 @@
+VERDICT 1: RELOAD (Added Settings.bass)
+VERDICT 2: RELOAD
+VERDICT 3: RELOAD (Added Settings.bass)
+== run
+before: volume=1
+RELOAD 1 (whole): ok
+after1 (want bass=9): volume=2 bass=9
+RELOAD 2 (whole): ok
+after2: volume=2
+RELOAD 3 (whole): ok
+after3 (want bass=5, fresh): volume=2 bass=5 fresh: volume=1 bass=5

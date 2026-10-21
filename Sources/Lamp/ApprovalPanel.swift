@@ -191,7 +191,8 @@ private struct ApprovalView: View {
         .accessibilityLabel(request.title)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(Color(nsColor: ComputerOverlay.tint).opacity(0.6), lineWidth: 1))
+            .strokeBorder(Color(nsColor: ComputerOverlay.tint).opacity(0.6), lineWidth: 1)
+            .allowsHitTesting(false))   // decoration, never a click's target (see StopPill)
         .task {
             try? await Task.sleep(for: .milliseconds(600))
             ready = true

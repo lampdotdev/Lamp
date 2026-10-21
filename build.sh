@@ -73,7 +73,11 @@ FLAVOR="${FLAVOR:-dev}"
 if [ "$FLAVOR" = release ]; then
   NAME="Lamp"; BUNDLE_ID="dev.lamp.host"; SCHEME="lamp"; HANDLER_RANK="Owner"
 else
-  NAME="Lamp Dev"; BUNDLE_ID="dev.lamp.host.dev"; SCHEME="lamp-dev"; HANDLER_RANK="Alternate"
+  # A worktree's build is an instance of its own (scripts/instance.sh): "Lamp Dev <name>", with its own bundle
+  # id, folders, ports and scheme, so builds from two worktrees run side by side (Edition.instance).
+  INSTANCE="$(scripts/instance.sh)"
+  NAME="Lamp Dev${INSTANCE:+ $INSTANCE}"; BUNDLE_ID="dev.lamp.host.dev${INSTANCE:+.$INSTANCE}"
+  SCHEME="lamp-dev${INSTANCE:+-$INSTANCE}"; HANDLER_RANK="Alternate"
 fi
 
 swift build -c release
@@ -258,6 +262,50 @@ sign "$APP/Contents/Frameworks/Sparkle.framework"
 if [ "$FLAVOR" = dev ]; then sign "$APP/Contents/Helpers/BrowserNativeHost"; fi
 sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/LampThumbnail.appex"
 sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/LampPreview.appex"
+# Lamp ships the starters already built (PrebuiltStarters.swift): Lamp builds each one as a person's Mac would, with
+# this checkout's LampSupport, once Lamp's own parts are signed and before Lamp is: the stamp on what Lamp builds
+# (BuildStamp) covers the signed chat sidebar. Each built app is signed like the rest of Lamp and zipped beside its
+# starter's files, so the system never takes it for an app of its own.
+# A release does it, afresh. Building them takes minutes and what they're made from (the code Lamp writes into every
+# app, above all) changes with most work on Lamp, so a development build leaves them out unless asked
+# (PREBUILD_STARTERS=1): a Lamp Dev without them builds the starters on first launch, out of sight, as before they
+# shipped built. Asked, it keeps them in .build/prebuilt-starters under a key of what they're made from: the starters,
+# that code, the edition and the compiler; a build that finds them there only stamps them for itself
+# (--restamp-starters).
+DEFAULT_PREBUILD=0; [ "$FLAVOR" = release ] && DEFAULT_PREBUILD=1
+if [[ "${PREBUILD_STARTERS:-$DEFAULT_PREBUILD}" != 0 ]]; then
+  STARTERS="$APP/Contents/Resources/Starters"
+  KEY=$( {
+    echo "$FLAVOR"; xcrun swiftc --version 2>&1; xcrun --show-sdk-version
+    find Resources/Starters Sources/Lamp/Template*.swift Sources/Lamp/Connectors.swift Sources/Lamp/Starters.swift \
+      Sources/Lamp/PrebuiltStarters.swift Sources/Lamp/Edition.swift -type f ! -name '.DS_Store' ! -name Prebuilt.zip ! -path '*/Prebuilt/*' | LC_ALL=C sort | xargs shasum
+  } | shasum | cut -c1-16 )
+  CACHE=".build/prebuilt-starters/$KEY"
+  if [ "$FLAVOR" != release ] && [ -d "$CACHE" ]; then
+    echo "Using the starters built before ($KEY)…"
+    for cached in "$CACHE"/*(N/); do
+      rm -rf "$STARTERS/${cached:t}/Prebuilt"
+      cp -R "$cached" "$STARTERS/${cached:t}/Prebuilt"
+    done
+    PREBUILD_STARTERS=1 "$APP/Contents/MacOS/$NAME" --restamp-starters
+  else
+    echo "Building the starters Lamp ships…"
+    PREBUILD_STARTERS=1 "$APP/Contents/MacOS/$NAME" --prebuild-starters
+    if [ "$FLAVOR" != release ]; then
+      rm -rf .build/prebuilt-starters
+      mkdir -p "$CACHE.partial"
+      for prebuilt in "$STARTERS"/*/Prebuilt(N/); do cp -R "$prebuilt" "$CACHE.partial/${prebuilt:h:t}"; done
+      mv "$CACHE.partial" "$CACHE"
+    fi
+  fi
+  for prebuilt in "$STARTERS"/*/Prebuilt(N/); do
+    for built in "$prebuilt"/*.app; do
+      for extension in "$built"/Contents/PlugIns/*.appex(N); do sign "$extension"; done
+      sign "$built"
+    done
+    (cd "$prebuilt:h" && rm -f Prebuilt.zip && ditto -c -k --norsrc --keepParent Prebuilt Prebuilt.zip && rm -rf Prebuilt)
+  done
+fi
 sign "${APP_ENTITLEMENTS[@]}" "$APP"
 [ "$SIGN_ID" = "-" ] && echo "Signed ad-hoc (macOS may ask for Keychain access after each rebuild)"
 echo "Built $APP"

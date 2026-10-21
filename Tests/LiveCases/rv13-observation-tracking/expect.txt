@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: 1 2
+RELOAD 1: ok
+after1 (want 2 saves: the tracking set up before the change still hears volume change): 2 12

@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added VM.b)
+== run
+before: fired=1
+RELOAD 1 (whole): ok
+after (want fired=2, b=5): fired=2 a=1 b=5

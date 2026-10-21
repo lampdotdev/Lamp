@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Row changed what it holds (no longer Lamp's state box for Row))
+== run
+before: v0
+RELOAD 1: REOPEN Row changed what it holds (no longer Row.____lampState_Row: LazyState<LampStateBox>)
+after1 (want v1, in place): v0
+before: v1
+RELOAD 1: in the restart
+after1 (want v1, in place): v1

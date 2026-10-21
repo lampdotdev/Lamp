@@ -199,26 +199,49 @@ enum Template {
         try put(contents, at: url, for: project, executable: executable)
     }
 
+    /// What an app is told about itself and Lamp, read by LampSupport's `LampInstall` from its Info.plist. Lamp
+    /// writes it into every copy it installs (`Store.setInstallValues`), and into the phone project's Info.plist,
+    /// so the compiled app is the same for every install and every app.
+    static func installValues(for project: LampProject) -> [String: String] {
+        [
+            "slug": project.id,
+            "dataID": Edition.appBundlePrefix + project.id,
+            "token": token(for: project),
+            "port": String(Gateway.port),
+            "scheme": Edition.urlScheme,
+            "note": Edition.notificationPrefix,
+            "host": Edition.bundleID,
+            "apps": Edition.supportFolder.appendingPathComponent("Apps").path,
+            "macHost": Devices.macHost,
+            "widgetPort": String(widgetPort(for: project)),
+            "widgetToken": project.platform == .mac ? widgetToken(for: project) : "",
+            "sidebarPort": String(sidebarPort(for: project)),
+            "sidebarTries": String(sidebarPortTries),
+            "sidebarHost": sidebarHost(for: project),
+            "sidebarKey": project.platform.hasMac ? sidebarKey(for: project) : "",
+            "sidebarFramer": sidebarFramer,
+        ]
+    }
+
+    /// What a Mac widget is told (`LampWidget.value`): only what it uses.
+    static func widgetInstallValues(for project: LampProject) -> [String: String] {
+        installValues(for: project).filter { ["slug", "scheme", "widgetPort", "widgetToken"].contains($0.key) }
+    }
+
+    /// The same, as lines of an Info.plist.
+    static func installPlistLines(for project: LampProject) -> String {
+        func escaped(_ text: String) -> String {
+            text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
+        }
+        let pairs = installValues(for: project).sorted { $0.key < $1.key }
+            .map { "<key>\($0.key)</key><string>\(escaped($0.value))</string>" }.joined()
+        return "<key>LampInstall</key><dict>\(pairs)</dict>"
+    }
+
     /// Lamp owns LampSupport.swift and rewrites it before every agent turn and build,
     /// so existing apps pick up helper improvements automatically.
     static func writeSupport(for project: LampProject) throws {
         let contents = lampSupportSwift
-            .replacingOccurrences(of: "{{SLUG}}", with: project.id)
-            .replacingOccurrences(of: "{{DATAID}}", with: Edition.appBundlePrefix + project.id)
-            .replacingOccurrences(of: "{{TOKEN}}", with: token(for: project))
-            .replacingOccurrences(of: "{{PORT}}", with: String(Gateway.port))
-            .replacingOccurrences(of: "{{SCHEME}}", with: Edition.urlScheme)
-            .replacingOccurrences(of: "{{NOTE}}", with: Edition.notificationPrefix)
-            .replacingOccurrences(of: "{{HOST}}", with: Edition.bundleID)
-            .replacingOccurrences(of: "{{APPS}}", with: Edition.supportFolder.appendingPathComponent("Apps").path)
-            .replacingOccurrences(of: "{{MACHOST}}", with: Devices.macHost)
-            .replacingOccurrences(of: "{{WIDGET_PORT}}", with: String(widgetPort(for: project)))
-            .replacingOccurrences(of: "{{WIDGET_TOKEN}}", with: project.platform == .mac ? widgetToken(for: project) : "")
-            .replacingOccurrences(of: "{{SIDEBAR_PORT}}", with: String(sidebarPort(for: project)))
-            .replacingOccurrences(of: "{{SIDEBAR_TRIES}}", with: String(sidebarPortTries))
-            .replacingOccurrences(of: "{{SIDEBAR_HOST}}", with: sidebarHost(for: project))
-            .replacingOccurrences(of: "{{SIDEBAR_KEY}}", with: project.platform.hasMac ? sidebarKey(for: project) : "")
-            .replacingOccurrences(of: "{{SIDEBAR_FRAMER}}", with: sidebarFramer)
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
         try put(contents, at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
         try writeWidgetSupport(for: project)
@@ -525,8 +548,9 @@ enum Template {
         \(liveCopySteps)
           # Lamp only wants the live copy, to put a change into the open app before building the whole of it.
           [[ "${LAMP_LIVE_COPY:-}" == 1 ]] && exit 0
-          # What this build compiles, which is what the app runs once it's installed (LiveReload.markRunning).
-          rsync -a --delete "$LIVE/Sources/" "$LIVE/built/"
+          # What this build compiles, which is what the app runs once it's installed (LiveReload.markRunning): kept
+          # aside, and the record only once the build has worked, or a failed one would name code no app runs.
+          rsync -a --delete "$LIVE/Sources/" "$LIVE/building/"
           mkdir -p "$LIVE/xcode"
           rsync -a --delete --exclude DerivedData .lamp/device/ "$LIVE/xcode/device/"
           ln -sfn ../../Assets "$LIVE/Assets"
@@ -539,6 +563,7 @@ enum Template {
         xcodebuild -project "$PROJECT/{{EXE}}.xcodeproj" -scheme "{{EXE}}" -configuration Release -destination "platform=macOS" \\
           -derivedDataPath "$PROJECT/DerivedData" CODE_SIGNING_ALLOWED=NO \\
           DEVELOPMENT_TEAM="$LAMP_TEAM" "OTHER_LDFLAGS=$RESTRICT_FLAGS" "${LIVE_SETTINGS[@]}" build 2>&1
+        if [[ "${LAMP_LIVE:-}" == 1 ]]; then rsync -a --delete "$LIVE/building/" "$LIVE/built/"; fi
         APP="build/{{EXE}}.app"
         rm -rf "$APP"
         mkdir -p build
@@ -556,7 +581,9 @@ enum Template {
     set -euo pipefail
     cd "$(dirname "$0")"
     SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
-    FLAGS=(-c release --triple arm64-apple-ios17.0-simulator --sdk "$SDK" -Xswiftc -g)
+    # Debug, as Xcode builds for the simulator: a release build optimizes the whole module at once, so every change
+    # compiled all of it again, Lamp's own library included, and went through dsymutil too. The phone's is Xcode's.
+    FLAGS=(-c debug --triple arm64-apple-ios17.0-simulator --sdk "$SDK")
     \(appIntentsSetup(ios: true))
     # The simulator takes an app's entitlements (Health, iCloud) from a section of its binary, as Xcode puts
     # them, and refuses an app whose signature claims them without a provisioning profile. Lamp writes the file.
@@ -964,7 +991,7 @@ enum Template {
         var steps = """
         # The Apple Watch app, built for the watch simulator and carried in the iPhone app, where iOS looks for it.
         if WATCH_SDK="$(xcrun --sdk watchsimulator --show-sdk-path 2>/dev/null)"; then
-        WATCH_FLAGS=(-c release --triple arm64-apple-watchos10.0-simulator --sdk "$WATCH_SDK" -Xswiftc -g)
+        WATCH_FLAGS=(-c debug --triple arm64-apple-watchos10.0-simulator --sdk "$WATCH_SDK")
         WATCH_ENT=".lamp/watch-entitlements.plist"
         if [[ -f "$WATCH_ENT" ]]; then
           mkdir -p .build
@@ -1866,6 +1893,7 @@ enum Template {
         for (path, template) in files {
             let contents = template
                 .replacingOccurrences(of: "{{PHONE_SECRET}}", with: secret)
+                .replacingOccurrences(of: "{{LAMP_INSTALL}}", with: installPlistLines(for: project))
                 .replacingOccurrences(of: "{{WIDGET_PLIST}}", with: widgetPlist)
                 .replacingOccurrences(of: "{{APP_GROUP}}", with: group)
                 .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
@@ -1969,6 +1997,7 @@ enum Template {
       <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
       <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
       <key>LampPhoneSecret</key><string>{{PHONE_SECRET}}</string>
+      {{LAMP_INSTALL}}
     {{USAGE}}
     {{BACKGROUND}}
     {{ICLOUD}}
@@ -2210,7 +2239,7 @@ enum Template {
     /// The widget's wand (`.lampWand()`): a link the app takes as Customize with Lamp….
     struct LampWidgetWand: View {
         var body: some View {
-            Link(destination: URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!) {
+            Link(destination: URL(string: "\(LampWidget.value("scheme"))://edit?app=\(LampWidget.value("slug"))") ?? URL(fileURLWithPath: "/")) {
                 LampGlyph.Mark(size: 11)
                     .foregroundStyle(.secondary)
                     .frame(width: 22, height: 22)
@@ -2230,8 +2259,13 @@ enum Template {
     /// `read` gives what the app shared last: asked of the app when it's open, and otherwise the last answer,
     /// which the widget keeps. Nil until the app has shared something under that name.
     enum LampWidget {
-        private static let firstPort: UInt16 = {{WIDGET_PORT}}
-        private static let token = "{{WIDGET_TOKEN}}"
+        /// What Lamp told the widget when it installed the app, in the widget's own Info.plist, as LampSupport's
+        /// `LampInstall` is for the app: none of it is compiled in.
+        static func value(_ key: String) -> String {
+            (Bundle.main.object(forInfoDictionaryKey: "LampInstall") as? [String: String])?[key] ?? ""
+        }
+        private static let firstPort = UInt16(clamping: Int(value("widgetPort")) ?? 0)
+        private static let token = value("widgetToken")
 
         /// One thing a widget's button asks the app to do, as both sides write it down.
         private struct Action: Codable {
@@ -2580,10 +2614,6 @@ enum Template {
         guard hasWidget(project) else { return }
         // An iPhone widget reads the folder it shares with its app; a Mac widget asks the app (WidgetSharing).
         let contents = project.platform.hasIOS ? lampWidgetSupportIOSSwift : lampWidgetSupportSwift
-            .replacingOccurrences(of: "{{WIDGET_PORT}}", with: String(widgetPort(for: project)))
-            .replacingOccurrences(of: "{{WIDGET_TOKEN}}", with: widgetToken(for: project))
-            .replacingOccurrences(of: "{{SCHEME}}", with: Edition.urlScheme)
-            .replacingOccurrences(of: "{{SLUG}}", with: project.id)
         try put(contents, at: project.dir.appendingPathComponent(widgetFolder).appendingPathComponent(widgetSupportFile), for: project)
     }
 
@@ -3122,10 +3152,13 @@ enum Template {
 
     """
 
-    /// The line every fresh scaffold shows. It's gone as soon as an agent writes the app's real interface.
-    static let scaffoldHint = "Press ⇧⌘E to tell Lamp what to build."
-    /// The same line in scaffolds made before the app was renamed, which still say it.
-    static let earlierScaffoldHints = ["Press ⇧⌘E to tell Forge what to build."]   // apps made before the rename
+    /// The line every fresh scaffold shows. It's gone as soon as an agent writes the app's real interface. A
+    /// scaffold is written with the first request and opened while the agent starts on it (`Store.showEarly`), so it
+    /// says the app is being made.
+    static let scaffoldHint = "Lamp is making this app."
+    /// The line in scaffolds written by earlier Lamps, which still say it.
+    static let earlierScaffoldHints = ["Press ⇧⌘E to tell Lamp what to build.",
+                                       "Press ⇧⌘E to tell Forge what to build."]   // apps made before the rename
 
     /// Whether the app is still the empty scaffold: nothing has been built into it yet.
     static func isScaffold(_ project: LampProject) -> Bool {
@@ -3155,6 +3188,11 @@ enum Template {
     }
 
     """
+
+    /// How long a Mac app's driver waits for Lamp's cursor when an action's spot couldn't be shown ahead of it, the
+    /// first of a batch above all (`LampDriver.lead` in LampSupport.swift, which must say the same). Every other
+    /// action's spot is announced during the pause before it, with the time until it happens, so nothing waits.
+    static let useAppLead = 0.2
 
     static let lampSupportSwift = Connectors.fill(lampSupportTemplate) + "\n#if os(macOS)" + lampGlyphSwift + "#endif\n"
 
@@ -3546,12 +3584,40 @@ enum Template {
     }
     #endif
 
+    /// What Lamp told this copy of the app when it installed it, in its Info.plist: who the app is to Lamp, the
+    /// secrets it shows Lamp, and where Lamp and its folders are. None of it is compiled in, so a copy built once
+    /// (a starter Lamp ships) works on any Mac and for either Lamp once Lamp has written its own values in.
+    enum LampInstall {
+        static let values = Bundle.main.object(forInfoDictionaryKey: "LampInstall") as? [String: String] ?? [:]
+        static func value(_ key: String) -> String { values[key] ?? "" }
+        static func number(_ key: String) -> Int { Int(value(key)) ?? 0 }
+        /// The app's folder name, which is how Lamp knows it.
+        static var slug: String { value("slug") }
+        /// Shown to Lamp with each request; only Lamp and this app have it.
+        static var token: String { value("token") }
+        static var dataID: String { value("dataID") }
+        static var port: Int { number("port") }
+        static var scheme: String { value("scheme") }
+        /// What Lamp's notifications to and from its apps begin with.
+        static var note: String { value("note") }
+        /// Lamp's own bundle id.
+        static var host: String { value("host") }
+        /// The folder of Lamp's apps, and this app's in it.
+        static var apps: String { value("apps") }
+        static var app: String { apps + "/" + slug }
+        static var macHost: String { value("macHost") }
+        /// A link that asks Lamp to do something for this app.
+        static func link(_ action: String) -> URL {
+            URL(string: "\(scheme.isEmpty ? "lamp" : scheme)://\(action)?app=\(slug)") ?? URL(fileURLWithPath: "/")
+        }
+    }
+
     /// Where Lamp is: on this Mac for a Mac app and for the simulator, and the Mac's name on the local
     /// network for an app on a phone, which Lamp answers on the same Wi‑Fi.
     #if os(iOS) && !targetEnvironment(simulator)
-    let lampGateway = "http://{{MACHOST}}:{{PORT}}"
+    let lampGateway = "http://\(LampInstall.macHost):\(LampInstall.port)"
     #else
-    let lampGateway = "http://127.0.0.1:{{PORT}}"
+    let lampGateway = "http://127.0.0.1:\(LampInstall.port)"
     #endif
 
     /// Where the person turns a permission on: System Settings on a Mac, Settings on a phone.
@@ -3640,8 +3706,8 @@ enum Template {
         static func share() {
             Task {
                 var answer = await ask()
-                if answer == nil, NSRunningApplication.runningApplications(withBundleIdentifier: "{{HOST}}").isEmpty,
-                   let lamp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "{{HOST}}") {
+                if answer == nil, NSRunningApplication.runningApplications(withBundleIdentifier: LampInstall.host).isEmpty,
+                   let lamp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: LampInstall.host) {
                     let config = NSWorkspace.OpenConfiguration()
                     config.activates = false
                     _ = try? await NSWorkspace.shared.openApplication(at: lamp, configuration: config)
@@ -3687,7 +3753,7 @@ enum Template {
             var request = URLRequest(url: url, timeoutInterval: 120)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
+            request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
             request.httpBody = Data("{}".utf8)
             guard let (data, response) = try? await URLSession.shared.data(for: request) else { return nil }
             let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
@@ -3713,9 +3779,38 @@ enum Template {
             var container = encoder.singleValueContainer()
             try container.encodeNil()
         }
+        /// The names of properties taken out of the code while the app was open (`LiveSlots.retire`): what they left
+        /// in a spare neither reads nor counts.
+        nonisolated(unsafe) static var retired = Set<String>()
         /// A struct's property, by name: what was set, kept as set.
-        func field(_ name: String) -> Any? { (value as? [String: Entry])?[name]?.value }
+        func field(_ name: String) -> Any? { Self.retired.contains(name) ? nil : (value as? [String: Entry])?[name]?.value }
+        /// Whether the property was ever set: a value set to nil is a value, told apart from one never set.
+        func has(_ name: String) -> Bool { !Self.retired.contains(name) && (value as? [String: Entry])?[name] != nil }
         struct Entry { var value: Any; var initial: Any }
+        /// A struct's mirror without its spare, and with what the spare keeps after its own fields: its description
+        /// (`print`, `"\(item)"`, `dump`) reads as the app wrote it rather than `Item(__lampSpare_Item: …)`. The copy
+        /// step makes each struct with a spare CustomReflectable with this; its fields are read through the runtime's
+        /// own calls, which the default mirror is made from, since asking for the mirror here would ask for this one.
+        static func mirror<T>(of subject: T) -> Mirror {
+            var children: [(label: String?, value: Any)] = [], kept: [(label: String?, value: Any)] = []
+            for index in 0..<_lampChildCount(subject, type: T.self) {
+                var name: UnsafePointer<CChar>? = nil, free: LampNameFree? = nil
+                let value = _lampChild(of: subject, type: T.self, index: index, outName: &name, outFreeFunc: &free)
+                let label = name.map { String(cString: $0) }
+                free?(name)
+                if let label, label.hasPrefix("__lampSpare_") {
+                    let entries = ((value as? LampSpare)?.value as? [String: Entry]) ?? [:]
+                    // Each is kept by its type's name and its own, with a number when it was brought back
+                    // (`Item.badge#2`): shown by its own.
+                    kept = entries.keys.sorted().filter { !retired.contains($0) }.map { key in
+                        (label: String(key.prefix { $0 != "#" }.split(separator: ".").last ?? Substring(key)), value: entries[key]!.value)
+                    }
+                } else {
+                    children.append((label: label, value: value))
+                }
+            }
+            return Mirror(subject, children: children + kept, displayStyle: .struct)
+        }
         /// Keeps what was set beside the property's starting value, which is what a struct that never set it holds:
         /// two values compare and hash by what their properties are, set or not, as they would stored.
         static func setting(_ name: String, to new: Any, initial: Any, in spare: LampSpare) -> LampSpare {
@@ -3732,7 +3827,7 @@ enum Template {
         static func == (a: LampSpare, b: LampSpare) -> Bool {
             guard let left = a.value as? [String: Entry] ?? (a.value == nil ? [:] : nil),
                   let right = b.value as? [String: Entry] ?? (b.value == nil ? [:] : nil) else { return same(a.value, b.value) }
-            for name in Set(left.keys).union(right.keys) {
+            for name in Set(left.keys).union(right.keys).subtracting(retired) {
                 let one = left[name]?.value ?? right[name]?.initial, other = right[name]?.value ?? left[name]?.initial
                 if !same(one, other) { return false }
             }
@@ -3744,12 +3839,18 @@ enum Template {
                 return
             }
             // What equals its starting value hashes as if never set, as it compares.
-            for (name, entry) in entries.sorted(by: { $0.key < $1.key }) where !Self.same(entry.value, entry.initial) {
+            for (name, entry) in entries.sorted(by: { $0.key < $1.key }) where !Self.retired.contains(name) && !Self.same(entry.value, entry.initial) {
                 hasher.combine(name)
                 if let value = entry.value as? AnyHashable { hasher.combine(value) }
             }
         }
     }
+
+    /// The runtime's calls the standard library's own mirrors are made from: a value's fields, read as its type has them.
+    @_silgen_name("swift_reflectionMirror_count") func _lampChildCount<T>(_: T, type: Any.Type) -> Int
+    typealias LampNameFree = @convention(c) (UnsafePointer<CChar>?) -> Void
+    @_silgen_name("swift_reflectionMirror_subscript") func _lampChild<T>(of: T, type: Any.Type, index: Int,
+        outName: UnsafeMutablePointer<UnsafePointer<CChar>?>, outFreeFunc: UnsafeMutablePointer<LampNameFree?>) -> Any
 
     /// A struct's spare is a property it doesn't spell, so saved data leaves it out: nothing is written for it, and
     /// data without it reads as empty. The app's own Codable code, written by the compiler, takes these over the
@@ -3797,7 +3898,11 @@ enum Template {
         private var changes = 0
         func get<T>(_ name: String, _ initial: () -> T) -> T {
             _ = changes
-            if let value = values[name] as? T { return value }
+            if let stored = values[name] {
+                if let value = stored as? T { return value }
+                // An optional set to nil is kept boxed, which doesn't cast: it was set, to nil.
+                if let kind = T.self as? ExpressibleByNilLiteral.Type { return kind.init(nilLiteral: ()) as! T }
+            }
             let value = initial()
             values[name] = value
             return value
@@ -3820,12 +3925,31 @@ enum Template {
 
         static let start: Void = {
             DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("{{NOTE}}reload"), object: Bundle.main.bundleIdentifier, queue: .main
+                forName: Notification.Name(LampInstall.note + "reload"), object: Bundle.main.bundleIdentifier, queue: .main
             ) { note in
                 let path = note.userInfo?["path"] as? String, signature = note.userInfo?["signature"] as? String
-                MainActor.assumeIsolated { shared.load(path, signature: signature) }
+                let whole = note.userInfo?["whole"] as? String == "1"
+                let retired = (note.userInfo?["retired"] as? String ?? "").split(separator: ",").map(String.init)
+                let until = note.userInfo?["until"] as? String ?? ""
+                MainActor.assumeIsolated { shared.load(path, signature: signature, whole: whole, retired: retired, until: until) }
+            }
+            // A change of the app's files alone (a picture in Assets, read from the app's folder in a live build) has no
+            // code to load: the views draw again, and read the new file.
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name(LampInstall.note + "redraw"), object: Bundle.main.bundleIdentifier, queue: .main
+            ) { note in
+                let at = note.userInfo?["at"] as? String, signature = note.userInfo?["signature"] as? String
+                MainActor.assumeIsolated { shared.redraw(at: at, signature: signature) }
             }
         }()
+
+        private func redraw(at: String?, signature: String?) {
+            guard let at, let signature, let time = Double(at), abs(Date().timeIntervalSince1970 - time) < 30 else { return }
+            let key = SymmetricKey(data: Data(LampInstall.token.utf8))
+            let expected = HMAC<SHA256>.authenticationCode(for: Data(("redraw\n" + at).utf8), using: key).map { String(format: "%02x", $0) }.joined()
+            guard signature == expected else { return }
+            generation += 1
+        }
 
         private var loaded: Set<String> = []
         /// Every replacement so far, by name, and the images whose calls go through pointers: the app and each
@@ -3836,13 +3960,46 @@ enum Template {
         /// The accessors of each stored global and static, and each class's metadata, by name, from the image that
         /// first had it.
         private var kept: [String: UnsafeRawPointer] = [:]
-        /// What the app itself defines, by name.
+        /// What the app itself defines, by name, its private names included.
         private var original: [String: UnsafeRawPointer] = [:]
+        /// Every version of each changed function so far, from the app's on: a method table made after a change
+        /// from the app's description holds the app's code, and is pointed at the newest.
+        private var versions: [String: [UnsafeRawPointer]] = [:]
+        /// The order each class lists its methods in, by the class, as the app or the change that first brought
+        /// the class had it: what a table made as the app runs is laid out from.
+        private var orders: [String: [String]] = [:]
+        /// What `classMade` and `tableMade` read on whatever thread makes a class or asks for a table, so kept
+        /// under a lock rather than on the main actor: the classes Swift has made as the app ran, from its launch
+        /// on; the newest code for every version of each changed function; and the descriptions of the app's and
+        /// the changes' classes. The lock can be taken again by the thread holding it: a generic call made under
+        /// it may ask the runtime for a witness table or a class, which comes back through a hook.
+        nonisolated private static let lock = NSRecursiveLock()
+        nonisolated(unsafe) private static var made: [UnsafeRawPointer] = []
+        nonisolated(unsafe) private static var newest: [UnsafeRawPointer: UnsafeRawPointer] = [:]
+        nonisolated(unsafe) private static var descriptions = Set<UnsafeRawPointer>()
+        /// The conformances of the app's and the changes' types, and the witness tables the runtime has made for
+        /// a generic type's conformance at each type it's used at (`tablesMade`, through `tableMade`), since the
+        /// launch: like a class made as the app runs, such a table is copied from the app's pattern.
+        nonisolated(unsafe) private static var conformances = Set<UnsafeRawPointer>()
+        nonisolated(unsafe) private static var tablesMade: [UnsafeRawPointer] = []
+        nonisolated(unsafe) private static var tablesSeen = Set<UnsafeRawPointer>()
+
+        /// The suffix Lamp renames a library's own copy of a type's metadata or descriptor with (`LiveObject`): its
+        /// code asks for the one under the original name, which is bound here to the app's. With the other suffix
+        /// the library's copy is the one to bind from now on (an enum that gained cases, which the app's doesn't know).
+        nonisolated private static let copySuffix = "$lampcopy", ownSuffix = "$lampown"
+
+        /// The library's copies of types, by the names they were defined under, with whether each is its own to keep.
+        private static func copies(in symbols: [(String, UnsafeRawPointer)]) -> [(name: String, address: UnsafeRawPointer, own: Bool)] {
+            symbols.compactMap {
+                if $0.0.hasSuffix(copySuffix) { return (String($0.0.dropLast(copySuffix.count)), $0.1, false) }
+                if $0.0.hasSuffix(ownSuffix) { return (String($0.0.dropLast(ownSuffix.count)), $0.1, true) }
+                return nil
+            }
+        }
 
         private func keep(_ symbols: [(String, UnsafeRawPointer)]) {
-            let stored = Self.stored(in: symbols)
-            for (name, address) in symbols where kept[name] == nil
-                && (name.hasSuffix("vau") || Self.accesses(name, oneOf: stored) || Self.isClass(name)) {
+            for (name, address) in symbols where kept[name] == nil && (name.hasSuffix("vau") || Self.isClass(name)) {
                 kept[name] = address
             }
         }
@@ -3852,16 +4009,17 @@ enum Template {
         /// (`isClass`), so their tables are pointed at the changed methods here, for the objects the app made and
         /// those the new code makes alike. A table runs from the metadata's description to its end, which the
         /// metadata gives (its size, and where its address point is in it).
-        private static func redirectMethods(of classes: [UnsafeRawPointer], _ moved: [UnsafeRawPointer: UnsafeRawPointer]) -> Int {
+        nonisolated private static func redirectMethods(of classes: [UnsafeRawPointer], _ moved: [UnsafeRawPointer: UnsafeRawPointer]) -> Int {
             guard !moved.isEmpty else { return 0 }
             let page = Int(vm_page_size)
             var count = 0
             for metadata in classes {
                 let size = Int(metadata.load(fromByteOffset: 56, as: UInt32.self))
                 let point = Int(metadata.load(fromByteOffset: 60, as: UInt32.self))
-                guard size < 1 << 20, point <= size, size - point > 72 else { continue }
+                guard size < 1 << 20, point <= size, size - point > 72, point >= 16 else { continue }
                 let words = UnsafeMutablePointer<UnsafeRawPointer?>(mutating: metadata.assumingMemoryBound(to: UnsafeRawPointer?.self))
-                for index in 9..<((size - point) / 8) {
+                // Two words before the metadata is the class's deinit, which the runtime calls when an object goes.
+                for index in [-2] + Array(9..<((size - point) / 8)) {
                     guard let code = words[index], let new = moved[code] else { continue }
                     let start = UInt(bitPattern: words.advanced(by: index)) & ~UInt(page - 1)
                     mprotect(UnsafeMutableRawPointer(bitPattern: start), page, PROT_READ | PROT_WRITE)
@@ -3872,8 +4030,9 @@ enum Template {
             return count
         }
 
-        /// Why a class the change has (`defined`) can't take its changed methods into the table of the copy that's
-        /// kept, if it can't: the two tables differ in size, or a slot holds a different method in each.
+        /// Why a class the change has (`defined`, its copies under their original names) can't take its changed
+        /// methods into the table of the copy that's kept, if it can't: the two tables differ in size, or a slot
+        /// holds a different method in each.
         private static func reshapedMethods(_ defined: [(String, UnsafeRawPointer)], against kept: [String: UnsafeRawPointer]) -> String? {
             var names: [UnsafeRawPointer: String] = [:]
             // The app's and the libraries' names, since an earlier change's method may be in a table now.
@@ -3890,12 +4049,12 @@ enum Template {
             }
             for (name, mine) in defined where name.hasSuffix("CN") {
                 guard let theirs = kept[name], theirs != mine else { continue }
-                let class_ = String(name.dropLast(2))
+                let class_ = String(name.dropLast(1))
                 guard let old = table(theirs), let new = table(mine) else { continue }
-                guard old.count == new.count else { return "the methods of \(class_) changed" }
+                guard old.count == new.count else { return "the methods of \(readable(class_)) changed" }
                 for (a, b) in zip(old, new) {
                     guard let a, let b, let before = names[a], let after = names[b] else { continue }
-                    if before != after { return "the methods of \(class_) changed" }
+                    if before != after { return "the methods of \(readable(class_)) changed" }
                 }
             }
             return nil
@@ -3910,65 +4069,734 @@ enum Template {
             name.hasPrefix("_$s") && ["CMa", "CN", "CMn", "CMm", "CMf", "CMo"].contains { name.hasSuffix($0) }
         }
 
-        private func load(_ path: String?, signature: String?) {
-            let folder = "{{APPS}}/{{SLUG}}/.lamp/live/"
+        /// Loads a change. `whole` says every file of the app's was compiled into it (what's declared changed), so
+        /// what it doesn't define of a class's Objective-C methods was taken away, not left in a file it didn't compile.
+        private func load(_ path: String?, signature: String?, whole: Bool = false, retired: [String] = [], until: String = "") {
+            let folder = LampInstall.app + "/.lamp/live/"
             guard let path, let signature, path.hasPrefix(folder), !path.contains(".."), path.hasSuffix(".dylib"),
                   !loaded.contains(path) else { return }
-            let key = SymmetricKey(data: Data("{{TOKEN}}".utf8))
-            let expected = HMAC<SHA256>.authenticationCode(for: Data("reload\n\(path)".utf8), using: key)
-                .map { String(format: "%02x", $0) }.joined()
+            let key = SymmetricKey(data: Data(LampInstall.token.utf8))
+            let expected = HMAC<SHA256>.authenticationCode(for: Data(("reload\n\(path)" + (whole ? "\nwhole" : "") + (retired.isEmpty ? "" : "\nretired " + retired.joined(separator: ","))
+                + (until.isEmpty ? "" : "\nuntil " + until)).utf8), using: key).map { String(format: "%02x", $0) }.joined()
             guard signature == expected else { return }
             loaded.insert(path)
             var result = "failed"
             defer {
-                try? result.write(to: LampRuntime.folder.appendingPathComponent("reloaded.txt"), atomically: true, encoding: .utf8)
+                try? (result + "\n" + path).write(to: LampRuntime.folder.appendingPathComponent("reloaded.txt"), atomically: true, encoding: .utf8)
             }
-            guard dlopen(path, RTLD_NOW) != nil else {
-                print("Lamp couldn't load the change: \(String(cString: dlerror()))")
+            // Lamp waits only so long for the answer and then treats the change as not in: one that reaches the app
+            // after that (the app busy, the notification late) must stay out, or the app would run code Lamp doesn't
+            // know it has.
+            if let deadline = Double(until), Date().timeIntervalSince1970 > deadline {
+                result = "failed: the change reached the app too late to go in"
                 return
             }
-            guard let image = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == path }),
+            guard dlopen(path, RTLD_NOW) != nil else {
+                result = "failed: the change couldn't be loaded (\(String(cString: dlerror()).prefix(200)))"
+                return
+            }
+            // The loader names the image by its real path, which may differ from the one asked for by a link.
+            let real = realpath(path, nil).map { String(cString: $0) } ?? path
+            guard let image = (0..<_dyld_image_count()).first(where: { [path, real].contains(String(cString: _dyld_get_image_name($0))) }),
                   let header = _dyld_get_image_header(image) else { return }
-            Self.takeFieldOffsets(header, slide: _dyld_get_image_vmaddr_slide(image))
-            let defined = Self.definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image))
+            let slide = _dyld_get_image_vmaddr_slide(image)
+            Self.takeFieldOffsets(header, slide: slide, earlier: images)
+            let defined = Self.definedSymbols(header, slide: slide)
+            let everything = Self.definedSymbols(header, slide: slide, local: true)
+            let all = Self.copies(in: everything)
+            let copies = all.map { ($0.name, $0.address) }
+            // The change's categories (an extension with `@objc` members, an override in one): the runtime doesn't
+            // see them, since their list was renamed before linking, so a change refused leaves the kept class
+            // answering as it did; they're attached by hand once the checks pass.
+            let categories = Self.categories(header)
             if original.isEmpty, let app = _dyld_get_image_header(0) {
-                let symbols = Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0))
-                original = Dictionary(symbols, uniquingKeysWith: { first, _ in first })
-                keep(symbols)
+                let everything = Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0), local: true)
+                original = Dictionary(everything, uniquingKeysWith: { first, _ in first })
+                orders = Self.methodOrder(everything)
+                keep(Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0)))
+            }
+            // A change refused leaves what's known of the app as it was, for the changes after it.
+            let (keptBefore, latestBefore) = (kept, latest)
+            func refuse(_ why: String) { (kept, latest) = (keptBefore, latestBefore); result = "failed: \(why)" }
+            // The types the change defines over again are the app's, or an earlier change's that first brought
+            // one, and only a new type's is the library's own: so there's one of each type however many changes
+            // have gone in, and a value made before a change is still of its type after it. One the change brings
+            // as its own (an enum that gained cases) has the library's descriptor and conformances from now on, but its
+            // metadata stays the app's, made to describe the new cases below: one identity, so a value boxed before the
+            // change (in `Any`, an `AnyHashable`, SwiftUI's tags) still casts to it.
+            func isMetadata(_ name: String) -> Bool { name.hasSuffix("ON") || name.hasSuffix("OMf") }
+            for copy in all where kept[copy.name] == nil || copy.own {
+                kept[copy.name] = copy.own && !(isMetadata(copy.name) && original[copy.name] != nil) ? copy.address : original[copy.name] ?? copy.address
             }
             // A kept class's method table is the app's, so the new code's has to have the same shape: a method added,
             // taken away or moved would put a call in another method's place. Such a change reopens the app.
-            if let why = Self.reshapedMethods(defined, against: kept) {
-                result = "failed: \(why)"
-                return
-            }
+            if let why = Self.reshapedMethods(defined + copies, against: kept) { return refuse(why) }
             // Each changed function's code before this change, for the class method tables that still hold it.
-            var moved: [UnsafeRawPointer: UnsafeRawPointer] = [:]
-            for (name, address) in defined where Self.isCode(name) && !Self.accesses(name, oneOf: Self.stored(in: defined)) {
+            var moved: [UnsafeRawPointer: UnsafeRawPointer] = [:], code: [(String, UnsafeRawPointer)] = []
+            // Every symbol, not only the exported ones: a protocol witness (the thunk a witness table holds, or for an
+            // async one the record of the thunk) is private to its file, and so are the methods of a private class and
+            // a private override, whose places in a method table move to the new code too.
+            for (name, address) in everything where Self.isCode(name) {
                 if let before = latest[name] ?? original[name] { moved[before] = address }
                 latest[name] = address
+                code.append((name, address))
             }
+            // A class whose metadata is made as the app runs (a generic one at each type it's used at, a class under
+            // a generic superclass) gets its table from the description that first brought the class, in the order
+            // its methods are listed there: the change's have to be listed the same, or its calls would land in
+            // other methods' places.
+            let listed = Self.methodOrder(everything)
+            for (class_, methods) in listed {
+                guard let before = orders[class_], before != methods else { continue }
+                return refuse("the methods of \(Self.readable(String(class_.dropLast(2)))) changed")
+            }
+            // Started without Lamp's entry (an App declared in a shape the copy step didn't know), nothing records
+            // the classes made as the app runs, so a change to the methods of one reopens the app as before.
+            if !Self.watching, let why = Self.unwatchedClassMethod(changed: Set(defined.map(\.0)), copies: copies) { return refuse(why) }
+            // A class the change has may no longer answer to something from Objective-C that the kept class does (an
+            // override taken out, a selector's target); the kept class would go on answering with old code. Only a
+            // change compiled from every file can say: another leaves what an unchanged file's extension adds.
+            if whole, let why = Self.removedMethods(copies: copies, kept: kept, original: original, categories: categories) { return refuse(why) }
             // Stored globals and statics, and classes, stay where they were first made: the new code's own copies
             // would be a second set, made afresh. So its calls to them go to the app's, or to the earlier change's
-            // that first added one, and only one that's new keeps its own.
+            // that first added one, and only one that's new keeps its own. Their accessors are code like any other:
+            // they reach the storage through the kept addressor, so a `didSet` added to one goes in.
             keep(defined)
-            let bindings = latest.merging(kept) { new, _ in new }
-            images.append(path)
-            var rebound = Self.rebind(image: 0, to: latest)
-            for earlier in images {
-                guard let index = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == earlier }) else { continue }
-                rebound += Self.rebind(image: index, to: bindings)
+            // What the library's data names is worked out, and found possible, before anything is pointed at the
+            // new code: a change refused leaves the app as it was.
+            guard let descriptors = Self.plannedDescriptors(header, copies: copies, kept: kept) else {
+                return refuse("the change's types couldn't all be made the app's")
             }
-            rebound += Self.redirectMethods(of: kept.filter { $0.key.hasSuffix("CN") }.map(\.value), moved)
+            // The library's data is pointed at the app's types before any call is pointed at its code: each write
+            // opens and closes a page of the library for writing, and a thread already running the new code on that
+            // page would stop there.
+            var rebound = 0
+            for write in descriptors where write.apply() { rebound += 1 }
+            let bindings = latest.merging(kept) { new, _ in new }
+            images.append(String(cString: _dyld_get_image_name(image)))
+            // The libraries first, this one included, so its references to the types it brings are bound before its
+            // new classes are worked out, and both before the app's calls reach its code.
+            for index in images.compactMap(Self.imageIndex) { rebound += Self.rebind(image: index, to: bindings) }
+            Self.takeFieldOffsets(header, slide: slide, earlier: images, ownClasses: true)
+            rebound += Self.rebind(image: 0, to: latest)
+            orders.merge(listed) { first, _ in first }
+            Self.lock.lock()
+            // Every version of each function, the app's included, so a table made from any description that ever
+            // held one is pointed at the newest: a function born in a change has its first version too.
+            for (name, address) in code {
+                var history = versions[name] ?? [original[name]].compactMap { $0 }
+                if !history.contains(address) { history.append(address) }
+                versions[name] = history
+                for earlier in history where earlier != address { Self.newest[earlier] = address }
+            }
+            Self.descriptions = Self.allDescriptions
+            let classes = Self.classes(kept.filter { $0.key.hasSuffix("CN") }.map(\.value))
+            Self.lock.unlock()
+            // Only now, outside the lock: listing the runtime's classes can make a class, which takes the lock.
+            rebound += Self.redirectMethods(of: classes + Self.dynamicSubclasses(of: classes), Self.newest)
+            // A kept witness table holds the app's thunks; one compiled when a requirement was answered by the
+            // protocol's own default goes on calling it after the change answers it in the type. So the tables are
+            // pointed at the new thunks: the app's and the earlier changes' (`WP`), and those the runtime made
+            // from them for a generic type (`tablesMade`).
+            Self.lock.lock()
+            Self.conformances = Self.allConformances
+            Self.lock.unlock()
+            Self.recordTables(of: all.filter { $0.name.hasSuffix("Mc") && kept[$0.name] == $0.address }.map(\.address))
+            Self.lock.lock()
+            let tables = Self.tablesMade
+            Self.lock.unlock()
+            rebound += Self.redirectWitnesses(of: kept.filter { $0.key.hasSuffix("WP") }.map(\.value) + tables, Self.newest)
+            // What a class answers to from Objective-C (an override of a system class's method, a selector's
+            // target) is in its method list, not its table: the kept class takes the change's copy's.
+            for (name, copy) in copies where name.hasSuffix("CN") {
+                if let theirs = kept[name], theirs != copy {
+                    rebound += Self.takeMethods(from: copy, to: theirs, accessor: original[String(name.dropLast()) + "Ma"])
+                }
+            }
+            // The change's categories go to the kept classes: one on a class the change defines names the copy.
+            let keptClass = Self.keptClasses(copies: copies, kept: kept)
+            for category in categories {
+                let target = keptClass[category.class_] ?? category.class_
+                rebound += Self.attach(category, to: target, accessor: Self.accessor(of: target, original: original, defined: defined))
+            }
+            // An enum that gained cases keeps the app's metadata, which every value of it made before carries and the
+            // change's code is bound to: it's pointed at the change's description, which knows the new cases, and at the
+            // change's value witness table (the word before it), which knows how many there are, so a tag past the old
+            // last case is read as the case it is.
+            for copy in all where copy.own && copy.name.hasSuffix("ON") {
+                guard let old = original[copy.name], old != copy.address else { continue }
+                let description = copy.address.load(fromByteOffset: 8, as: UnsafeRawPointer.self)
+                let witnesses = copy.address.load(fromByteOffset: -8, as: UnsafeRawPointer.self)
+                if DescriptorWrite(field: old.advanced(by: 8), pointer: description).apply() { rebound += 1 }
+                if DescriptorWrite(field: old.advanced(by: -8), pointer: witnesses).apply() { rebound += 1 }
+            }
+            // A struct's property taken out of the code leaves its value in the spare, which would go on counting in
+            // `==` and `hash`: the names retired are set aside.
+            LampSpare.retired.formUnion(retired)
+            Self.watch(image: image)
             generation += 1
+            // With the library it answers, so an answer to an earlier request is never read as this one's.
             result = "ok \(rebound)"
         }
 
-        /// Functions, getters and setters, by their Swift names: never a type's metadata, descriptors, witness
-        /// tables or the accessors of stored globals, whose new copies would be a second set of the app's types
-        /// and state.
+        /// A change to the library's data: a relative pointer given a new offset, or a slot a new pointer.
+        @MainActor private struct DescriptorWrite {
+            var field: UnsafeRawPointer
+            var relative: Int32?
+            var pointer: UnsafeRawPointer?
+            /// The field's page is opened for the moment; a slot's is in data and stays open, as the symbol pointers'
+            /// pages do, while the library's text is given back as it was, executable.
+            func apply() -> Bool {
+                if let pointer { return write(pointer, to: field, executable: false) }
+                return write(relative ?? 0, to: field, executable: true)
+            }
+        }
+
+        /// The library's own copies of the app's types are what its data still names: the mangled type names its
+        /// code resolves at run time (a view's body, `[Mood]`, `any Shape`) and its conformance records refer to the
+        /// copies' descriptors by relative pointers, which no symbol reaches. Pointed at the kept descriptors
+        /// (`DescriptorWrite`), so an existential of the app's protocol, a conformance the change adds, and every
+        /// generic type made from a mangled name are the app's. The sections sit in the library's text. Nil when a
+        /// reference can't be pointed over (the app's descriptor is out of a relative pointer's reach, or a page can't
+        /// be opened): the change is then refused, before anything else has changed, rather than left naming two of
+        /// a type.
+        private static func plannedDescriptors(_ header: UnsafePointer<mach_header>, copies: [(String, UnsafeRawPointer)],
+                                               kept: [String: UnsafeRawPointer]) -> [DescriptorWrite]? {
+            var replacements: [UnsafeRawPointer: UnsafeRawPointer] = [:]
+            for (name, address) in copies where name.hasSuffix("Mn") || name.hasSuffix("Mp") {
+                if let theirs = kept[name], theirs != address { replacements[address] = theirs }
+            }
+            guard !replacements.isEmpty else { return [] }
+            let header64 = UnsafeRawPointer(header).assumingMemoryBound(to: mach_header_64.self)
+            var writes: [DescriptorWrite] = [], failed = false
+            // A relative pointer to a descriptor, made to point at the kept one when it points at a copy; one through
+            // a slot (`indirect`, or the low bit set where the pointer may say so itself, `flagged`) has the slot's
+            // pointer changed instead.
+            func redirect(_ field: UnsafeRawPointer, indirect: Bool = false, flagged: Bool = false) {
+                let value = field.loadUnaligned(as: Int32.self)
+                if indirect || (flagged && value & 1 != 0) {
+                    let slot = field.advanced(by: Int(value & ~1))
+                    guard let pointer = slot.loadUnaligned(as: UnsafeRawPointer?.self), let theirs = replacements[pointer] else { return }
+                    if canWrite(slot) { writes.append(DescriptorWrite(field: slot, pointer: theirs)) } else { failed = true }
+                } else {
+                    guard let theirs = replacements[field.advanced(by: Int(value))] else { return }
+                    let distance = Int(bitPattern: theirs) - Int(bitPattern: field)
+                    guard let relative = Int32(exactly: distance), canWrite(field) else { return failed = true }
+                    writes.append(DescriptorWrite(field: field, relative: relative))
+                }
+            }
+            var size: UInt = 0
+            if let names = getsectiondata(header64, "__TEXT", "__swift5_typeref", &size) {
+                // Mangled names, each ended by a zero byte. A control byte in one is a symbolic reference: up to 0x17
+                // it carries a relative pointer, 0x01 to a descriptor and 0x02 to a slot holding one; above, an
+                // absolute pointer, passed over.
+                var at = 0
+                while at < Int(size) {
+                    let byte = names[at]
+                    if byte == 0 || byte >= 0x20 { at += 1; continue }
+                    if byte >= 0x18 { at += 9; continue }
+                    if byte == 1 || byte == 2 { redirect(UnsafeRawPointer(names.advanced(by: at + 1)), indirect: byte == 2) }
+                    at += 5
+                }
+            }
+            // A conformance the app has already is found through its own record; the library's copy is left naming
+            // the copies, which nothing asks about. One the change adds is made to name the kept descriptors.
+            let known = Set(copies.filter { $0.0.hasSuffix("Mc") && kept[$0.0] != $0.1 }.map(\.1))
+            if let records = getsectiondata(header64, "__TEXT", "__swift5_proto", &size) {
+                for index in 0..<(Int(size) / 4) {
+                    let entry = UnsafeRawPointer(records.advanced(by: index * 4))
+                    let descriptor = entry.advanced(by: Int(entry.loadUnaligned(as: Int32.self)))
+                    guard !known.contains(descriptor) else { continue }
+                    redirect(descriptor, flagged: true)
+                    // The type it's for: a descriptor, directly (0) or through a slot (1); the others name a class.
+                    switch (descriptor.loadUnaligned(fromByteOffset: 12, as: UInt32.self) >> 3) & 0x7 {
+                    case 0: redirect(descriptor.advanced(by: 4))
+                    case 1: redirect(descriptor.advanced(by: 4), indirect: true)
+                    default: break
+                    }
+                }
+            }
+            return failed ? nil : writes
+        }
+
+        /// Whether the page holding `pointer` can be opened for writing: tried, and given back as it was.
+        private static func canWrite(_ pointer: UnsafeRawPointer) -> Bool {
+            let page = Int(vm_page_size)
+            let start = UnsafeMutableRawPointer(bitPattern: UInt(bitPattern: pointer) & ~UInt(page - 1))
+            guard mprotect(start, page, PROT_READ | PROT_WRITE) == 0 else { return false }
+            mprotect(start, page, PROT_READ | PROT_EXEC)
+            return true
+        }
+
+        /// Stores a value in memory that may be read-only, opening its page for the moment: the library's text is
+        /// given back as it was, executable. False when the page can't be opened.
+        nonisolated private static func write<T>(_ value: T, to pointer: UnsafeRawPointer, executable: Bool) -> Bool {
+            let page = Int(vm_page_size)
+            let start = UnsafeMutableRawPointer(bitPattern: UInt(bitPattern: pointer) & ~UInt(page - 1))
+            let length = Int(UInt(bitPattern: pointer) + UInt(MemoryLayout<T>.size) - 1 - (UInt(bitPattern: pointer) & ~UInt(page - 1))) / page * page + page
+            guard mprotect(start, length, PROT_READ | PROT_WRITE) == 0 else { return false }
+            UnsafeMutableRawPointer(mutating: pointer).storeBytes(of: value, as: T.self)
+            if executable { mprotect(start, length, PROT_READ | PROT_EXEC) }
+            return true
+        }
+
+        /// The loaded image with this path, by its index now.
+        nonisolated private static func imageIndex(_ path: String) -> UInt32? {
+            (0..<_dyld_image_count()).first { String(cString: _dyld_get_image_name($0)) == path }
+        }
+
+        /// Whether a class's metadata is one Swift made from a description in the app or a change: a Swift class
+        /// says so in the low bits of its data word, and its description is then at the end of its header.
+        nonisolated private static func isOwnClass(_ metadata: UnsafeRawPointer, _ descriptions: Set<UnsafeRawPointer>) -> Bool {
+            guard metadata.load(fromByteOffset: 32, as: UInt.self) & 2 != 0,
+                  let description = metadata.load(fromByteOffset: 64, as: UnsafeRawPointer?.self) else { return false }
+            return descriptions.contains(description)
+        }
+
+        /// The descriptions of every class in the app and the changes, where a class made as the app runs points.
+        nonisolated private static var allDescriptions: Set<UnsafeRawPointer> {
+            var all = Set<UnsafeRawPointer>()
+            for image in 0..<_dyld_image_count() where image == 0 || String(cString: _dyld_get_image_name(image)).contains("/.lamp/live/") {
+                guard let header = _dyld_get_image_header(image) else { continue }
+                // A change's are renamed as copies, or as its own (`LiveObject`); a class born in a change is its own.
+                for (name, address) in definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image), local: true)
+                where name.hasSuffix("CMn") || name.hasSuffix("CMn" + copySuffix) || name.hasSuffix("CMn" + ownSuffix) {
+                    all.insert(address)
+                }
+            }
+            return all
+        }
+
+        /// The kept classes' metadata and every class Swift has made since the launch (`made`): nothing of the
+        /// app's makes one before its entry runs. Called with the lock held.
+        nonisolated private static func classes(_ kept: [UnsafeRawPointer]) -> [UnsafeRawPointer] {
+            var all = kept, seen = Set(kept)
+            for metadata in made where seen.insert(metadata).inserted { all.append(metadata) }
+            return all
+        }
+
+        /// The classes the Objective-C runtime has made under the app's (key-value observing makes one for each
+        /// class it observes, with a copy of its method table as it was then), by their superclass chain. Listed
+        /// without realizing every class in the process, and never as classes, which would send them messages.
+        nonisolated private static func dynamicSubclasses(of classes: [UnsafeRawPointer]) -> [UnsafeRawPointer] {
+            let own = Set(classes)
+            var found: [UnsafeRawPointer] = []
+            for class_ in objc_enumerateClasses(fromImage: .dynamicClasses) {
+                let metadata = unsafeBitCast(class_, to: UnsafeRawPointer.self)
+                var above = metadata.load(fromByteOffset: 8, as: UnsafeRawPointer?.self)
+                var depth = 0
+                while let superclass = above, depth < 64 {
+                    if own.contains(superclass) { found.append(metadata); break }
+                    above = superclass.load(fromByteOffset: 8, as: UnsafeRawPointer?.self)
+                    depth += 1
+                }
+            }
+            return found
+        }
+
+        /// A class Swift makes as the app runs (a generic class at each type it's used at, a class under a generic
+        /// superclass) gets its method table from its description, which holds the app's code. So the runtime's
+        /// call that fills such a table in is pointed, in the app from its launch (`LampLive.watch()`, from the
+        /// entry the live copy adds before the App's own) and in each change as it loads, at `classMade`, which
+        /// lets it fill the table and then points the table at the newest code. The pointer the runtime's function
+        /// is called through is the one `rebind` reaches, as any function's; once pointed over it stays so.
+        nonisolated(unsafe) private static var watching = false
+        nonisolated static func watch(image: UInt32 = 0) {
+            guard initClassMetadata != nil, getWitnessTable != nil else { return }
+            lock.lock()
+            if image == 0 { (descriptions, conformances, watching) = (allDescriptions, allConformances, true) }
+            lock.unlock()
+            if image != 0, let header = _dyld_get_image_header(image) { noteGetters(header, slide: _dyld_get_image_vmaddr_slide(image)) }
+            var hooks = ["_swift_initClassMetadata2": unsafeBitCast(classMade, to: UnsafeRawPointer.self),
+                         "_swift_getWitnessTable": unsafeBitCast(tableMade, to: UnsafeRawPointer.self)]
+            if getKeyPath != nil { hooks["_swift_getKeyPath"] = unsafeBitCast(keyPathMade, to: UnsafeRawPointer.self) }
+            _ = rebind(image: image, to: hooks)
+            if image == 0, let header = _dyld_get_image_header(0) {
+                recordTables(of: definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(0), local: true).filter { $0.0.hasSuffix("Mc") }.map(\.1))
+            }
+        }
+
+        /// A witness table the runtime makes for a conformance that has none of its own in the image (one to a
+        /// protocol of the system's that may change between releases: Comparable, Hashable, Codable) is made the
+        /// first time something asks, which may be a cast (`as? any Comparable`) rather than a request through the
+        /// hook. So at launch, and for the conformances a change brings, the table of each such conformance of a
+        /// type that isn't generic is asked for here and recorded as `tableMade` records the rest; a generic type's
+        /// are made at each type it's used at, which only a request names.
+        nonisolated private static func recordTables(of conformances: [UnsafeRawPointer]) {
+            guard let get = getWitnessTable else { return }
+            typealias Call = @convention(thin) (UnsafeRawPointer, UnsafeRawPointer?, UnsafeRawPointer?) -> UnsafeRawPointer?
+            for conformance in conformances {
+                // The protocol first: one the app only has on a later system (a conformance under `@available`) is a
+                // slot the loader left empty, and asking for a table through it would crash before any check of
+                // the system's version could run.
+                let toProtocol = conformance.loadUnaligned(as: Int32.self)
+                if toProtocol & 1 != 0 {
+                    guard conformance.advanced(by: Int(toProtocol & ~1)).load(as: UnsafeRawPointer?.self) != nil else { continue }
+                } else if toProtocol == 0 { continue }
+                // The type: its descriptor, directly (0) or through a slot (1); a class named another way is passed over.
+                let kind = (conformance.loadUnaligned(fromByteOffset: 12, as: UInt32.self) >> 3) & 0x7
+                guard kind == 0 || kind == 1 else { continue }
+                var descriptor = conformance.advanced(by: 4 + Int(conformance.loadUnaligned(fromByteOffset: 4, as: Int32.self)))
+                if kind == 1 { guard let direct = descriptor.load(as: UnsafeRawPointer?.self) else { continue }; descriptor = direct }
+                guard descriptor.load(as: UInt32.self) & 0x80 == 0 else { continue }
+                // The type's metadata, from the accessor its descriptor names.
+                let toAccessor = descriptor.loadUnaligned(fromByteOffset: 12, as: Int32.self)
+                guard toAccessor != 0,
+                      let metadata = unsafeBitCast(descriptor.advanced(by: 12 + Int(toAccessor)), to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0),
+                      let table = unsafeBitCast(get, to: Call.self)(conformance, metadata, nil) else { continue }
+                lock.lock()
+                if tablesSeen.insert(table).inserted { tablesMade.append(table) }
+                lock.unlock()
+            }
+        }
+        /// A key path to a computed property is told apart by its getter's address (the id in its pattern), and a change
+        /// has a getter of its own for every property in the files it was compiled from: `\Model.count` made by its code
+        /// would be another key path than the app's, so observation keyed by the app's (`withObservationTracking`, an
+        /// App's or a scene's body, which a change doesn't draw again) would no longer hear the property change. Each key
+        /// path made is passed through here, and every getter of a change's in it is pointed at the getter of the same
+        /// name the app has, or the first change that had it: the id is only compared and hashed, never called.
+        nonisolated(unsafe) private static var getterIDs: [UInt: UInt] = [:]
+        nonisolated(unsafe) private static var firstGetters: [String: UInt]?
+        nonisolated(unsafe) private static let getKeyPath: UnsafeRawPointer? = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "swift_getKeyPath").map { UnsafeRawPointer($0) }
+
+        nonisolated private static func isGetter(_ name: String) -> Bool { name.hasPrefix("_$s") && (name.hasSuffix("vg") || name.hasSuffix("ig")) }
+
+        nonisolated private static func noteGetters(_ header: UnsafePointer<mach_header>, slide: Int) {
+            lock.lock()
+            defer { lock.unlock() }
+            if firstGetters == nil, let app = _dyld_get_image_header(0) {
+                firstGetters = Dictionary(definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0), local: true)
+                    .filter { isGetter($0.0) }.map { ($0.0, UInt(bitPattern: $0.1)) }, uniquingKeysWith: { first, _ in first })
+            }
+            for (name, address) in definedSymbols(header, slide: slide, local: true) where isGetter(name) {
+                let mine = UInt(bitPattern: address)
+                if let first = firstGetters?[name] { if first != mine { getterIDs[mine] = first } } else { firstGetters?[name] = mine }
+            }
+        }
+
+        /// Takes `swift_getKeyPath`'s two arguments (a pattern, its arguments) and returns the key path as the runtime's
+        /// does, with a change's getters in it pointed at the first of their name. A key path is a heap object whose
+        /// components follow a 32-bit header at byte 24, the header's low bits saying how many bytes they take; a
+        /// computed component's id is a whole word, and only a word equal to one of a change's getters is touched.
+        nonisolated private static let keyPathMade: @convention(c) (UnsafeRawPointer, UnsafeRawPointer?) -> UnsafeMutableRawPointer? = { pattern, arguments in
+            typealias Call = @convention(c) (UnsafeRawPointer, UnsafeRawPointer?) -> UnsafeMutableRawPointer?
+            guard let real = getKeyPath, let made = unsafeBitCast(real, to: Call.self)(pattern, arguments) else { return nil }
+            lock.lock()
+            defer { lock.unlock() }
+            // Every time, not once per object: a key path made with arguments (in generic code, a subscript's) isn't
+            // kept by the runtime, and another may be made where it was. Writing the same id again changes nothing.
+            guard !getterIDs.isEmpty else { return made }
+            let size = Int(made.load(fromByteOffset: 24, as: UInt32.self) & 0x00FF_FFFF)
+            guard size < 1 << 16 else { return made }
+            var offset = 28
+            while offset + 8 <= 32 + size {
+                if let first = getterIDs[made.loadUnaligned(fromByteOffset: offset, as: UInt.self)] {
+                    made.storeBytes(of: first, toByteOffset: offset, as: UInt.self)
+                    offset += 8
+                } else {
+                    offset += 4
+                }
+            }
+            return made
+        }
+
+        /// The runtime's own `swift_initClassMetadata2` and `swift_getWitnessTable`, found by name.
+        nonisolated(unsafe) private static let initClassMetadata: UnsafeRawPointer? = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "swift_initClassMetadata2").map { UnsafeRawPointer($0) }
+        nonisolated(unsafe) private static let getWitnessTable: UnsafeRawPointer? = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "swift_getWitnessTable").map { UnsafeRawPointer($0) }
+
+        /// Takes `swift_getWitnessTable`'s three arguments (a conformance, a type, instantiation arguments) and
+        /// returns the table as the runtime's does. A table for one of the app's conformances is recorded the first
+        /// time it's seen, and pointed at the newest thunks then: one made before a change was copied from the
+        /// app's pattern.
+        nonisolated private static let tableMade: @convention(thin) (UnsafeRawPointer, UnsafeRawPointer?, UnsafeRawPointer?) -> UnsafeRawPointer? = { conformance, type, arguments in
+            typealias Call = @convention(thin) (UnsafeRawPointer, UnsafeRawPointer?, UnsafeRawPointer?) -> UnsafeRawPointer?
+            guard let real = getWitnessTable else { return nil }
+            guard let table = unsafeBitCast(real, to: Call.self)(conformance, type, arguments) else { return nil }
+            lock.lock()
+            defer { lock.unlock() }
+            if conformances.contains(conformance), tablesSeen.insert(table).inserted {
+                tablesMade.append(table)
+                _ = redirectWitnesses(of: [table], newest)
+            }
+            return table
+        }
+
+        /// The conformance descriptors in the app and the changes, under whatever name (`LiveObject` renames a
+        /// change's).
+        nonisolated private static var allConformances: Set<UnsafeRawPointer> {
+            var all = Set<UnsafeRawPointer>()
+            for image in 0..<_dyld_image_count() where image == 0 || String(cString: _dyld_get_image_name(image)).contains("/.lamp/live/") {
+                guard let header = _dyld_get_image_header(image) else { continue }
+                for (name, address) in definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image), local: true)
+                where name.hasSuffix("Mc") || name.hasSuffix("Mc" + copySuffix) || name.hasSuffix("Mc" + ownSuffix) {
+                    all.insert(address)
+                }
+            }
+            return all
+        }
+
+        /// Points each witness table's entries that hold a replaced thunk at the newest one. A table begins with
+        /// its conformance's descriptor, which names the protocol, whose descriptor says how many requirements
+        /// (and so entries) follow.
+        nonisolated private static func redirectWitnesses(of tables: [UnsafeRawPointer], _ moved: [UnsafeRawPointer: UnsafeRawPointer]) -> Int {
+            guard !moved.isEmpty else { return 0 }
+            var count = 0
+            for table in tables {
+                guard let conformance = table.load(as: UnsafeRawPointer?.self) else { continue }
+                // The protocol: a relative pointer, through a slot when its low bit is set.
+                let relative = conformance.loadUnaligned(as: Int32.self)
+                var protocol_ = conformance.advanced(by: Int(relative & ~1))
+                if relative & 1 != 0 { guard let direct = protocol_.load(as: UnsafeRawPointer?.self) else { continue }; protocol_ = direct }
+                let requirements = Int(protocol_.load(fromByteOffset: 16, as: UInt32.self))
+                guard requirements < 1 << 12 else { continue }
+                for index in stride(from: 1, through: requirements, by: 1) {
+                    let slot = table.advanced(by: index * 8)
+                    guard let old = slot.load(as: UnsafeRawPointer?.self), let new = moved[old] else { continue }
+                    if write(new, to: slot, executable: false) { count += 1 }
+                }
+            }
+            return count
+        }
+
+        /// Why the change can't go in for what a class answers to from Objective-C, if it can't: the kept class
+        /// answers to a selector of its own (an override of a system class's method, an `@objc` method) that its copy
+        /// in the change no longer has. The kept class is completed first (its accessor), so the runtime lists it.
+        nonisolated private static func removedMethods(copies: [(String, UnsafeRawPointer)], kept: [String: UnsafeRawPointer],
+                                                       original: [String: UnsafeRawPointer], categories: [Category]) -> String? {
+            let keptClass = keptClasses(copies: copies, kept: kept)
+            for (name, copy) in copies where name.hasSuffix("CN") {
+                guard let theirs = kept[name], theirs != copy else { continue }
+                if let accessor = original[String(name.dropLast()) + "Ma"] { _ = unsafeBitCast(accessor, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0) }
+                guard isRealized(theirs) else { continue }
+                let own = categories.filter { (keptClass[$0.class_] ?? $0.class_) == theirs }
+                for meta in [false, true] {
+                    let have = Set(methods(of: meta ? theirs.load(as: UnsafeRawPointer.self) : theirs).map { NSStringFromSelector($0.0) })
+                    var has = Set(methods(of: meta ? copy.load(as: UnsafeRawPointer.self) : copy).map { NSStringFromSelector($0.0) })
+                    for category in own { has.formUnion((meta ? category.classMethods : category.instance).map(methods(in:))?.map { NSStringFromSelector($0.0) } ?? []) }
+                    if let gone = have.subtracting(has).sorted().first {
+                        return "\(readable(String(name.dropLast()))) no longer answers to \(gone) from Objective-C"
+                    }
+                }
+            }
+            return nil
+        }
+
+        /// Gives a kept class the methods its copy in a change answers to from Objective-C: each of the copy's,
+        /// and its metaclass's, is added to the kept class, or replaces the one it has of its own (a superclass's
+        /// is left as it is, which the add refuses to touch). The copy is a class object the Objective-C runtime
+        /// has never seen (Swift registers a class with it on first use, and nothing uses the copy), so its methods
+        /// are read off its class data as the compiler laid it out, never asked of the runtime, which would take
+        /// the class for one it had set up and crash. The kept class is completed first (its accessor, which also
+        /// registers it), and one the runtime still doesn't have is left alone.
+        nonisolated private static func takeMethods(from copy: UnsafeRawPointer, to kept: UnsafeRawPointer, accessor: UnsafeRawPointer?) -> Int {
+            if let accessor { _ = unsafeBitCast(accessor, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0) }
+            guard isRealized(kept) else { return 0 }
+            let target: AnyClass = unsafeBitCast(kept, to: AnyClass.self)
+            var count = 0
+            // The class's own methods, then its metaclass's (the first word of a class is its metaclass).
+            for (source, to) in [(copy, target), (copy.load(as: UnsafeRawPointer.self), object_getClass(target))] {
+                guard let to else { continue }
+                count += add(methods(of: source), to: to)
+            }
+            return count
+        }
+
+        /// Whether the Objective-C runtime has set a class up: its data word then points at the runtime's record,
+        /// whose first word says so (bit 31); before that it points at the compiler's, whose never has it.
+        /// The bits of a class's data word that are the pointer: the runtime keeps flags in the low three and the top.
+        nonisolated private static let dataMask: UInt = 0x0f00_7fff_ffff_fff8
+        nonisolated private static func isRealized(_ class_: UnsafeRawPointer) -> Bool {
+            guard let data = UnsafeRawPointer(bitPattern: class_.load(fromByteOffset: 32, as: UInt.self) & dataMask) else { return false }
+            return data.load(as: UInt32.self) & 0x8000_0000 != 0
+        }
+
+        /// A category of the change's: an extension with `@objc` members, or an override of a system class's method
+        /// in one, which the compiler puts in a list of its own. The list is renamed before the library is linked
+        /// (`__lamp_catlist`), so the runtime, which attaches every category it finds as an image loads, before any
+        /// check here could run, leaves these to be attached once the change is found to fit.
+        struct Category { var class_: UnsafeRawPointer; var instance: UnsafeRawPointer?; var classMethods: UnsafeRawPointer?; var protocols: UnsafeRawPointer? }
+        nonisolated private static func categories(_ header: UnsafePointer<mach_header>) -> [Category] {
+            let header64 = UnsafeRawPointer(header).assumingMemoryBound(to: mach_header_64.self)
+            var out: [Category] = []
+            for segment in ["__DATA", "__DATA_CONST"] {
+                var size: UInt = 0
+                guard let list = getsectiondata(header64, segment, "__lamp_catlist", &size) else { continue }
+                for index in 0..<(Int(size) / 8) {
+                    // Name, class, instance methods, class methods, protocols, then properties, a word each.
+                    guard let category = UnsafeRawPointer(list).load(fromByteOffset: index * 8, as: UnsafeRawPointer?.self),
+                          let class_ = category.load(fromByteOffset: 8, as: UnsafeRawPointer?.self) else { continue }
+                    out.append(Category(class_: class_, instance: category.load(fromByteOffset: 16, as: UnsafeRawPointer?.self),
+                                        classMethods: category.load(fromByteOffset: 24, as: UnsafeRawPointer?.self),
+                                        protocols: category.load(fromByteOffset: 32, as: UnsafeRawPointer?.self)))
+                }
+            }
+            return out
+        }
+
+        /// The kept class for each class the change defines a copy of, by the copy's address.
+        nonisolated private static func keptClasses(copies: [(String, UnsafeRawPointer)], kept: [String: UnsafeRawPointer]) -> [UnsafeRawPointer: UnsafeRawPointer] {
+            Dictionary(copies.filter { $0.0.hasSuffix("CN") }.compactMap { name, copy in kept[name].map { (copy, $0) } }, uniquingKeysWith: { first, _ in first })
+        }
+
+        /// The metadata accessor of a class, by its address: the app's, or the change's own for a class it brings.
+        nonisolated private static func accessor(of class_: UnsafeRawPointer, original: [String: UnsafeRawPointer],
+                                                 defined: [(String, UnsafeRawPointer)]) -> UnsafeRawPointer? {
+            for (name, address) in original where address == class_ && name.hasSuffix("CN") {
+                if let accessor = original[String(name.dropLast()) + "Ma"] { return accessor }
+            }
+            for (name, address) in defined where address == class_ && name.hasSuffix("CN$lampcopy") {
+                if let accessor = defined.first(where: { $0.0 == String(name.dropLast(10)) + "Ma" })?.1 { return accessor }
+            }
+            return nil
+        }
+
+        /// Attaches a category of the change's to a kept class: its methods as `takeMethods` gives a copy's, and its
+        /// protocols. The class is completed first; one the runtime still doesn't have is left alone.
+        nonisolated private static func attach(_ category: Category, to kept: UnsafeRawPointer, accessor: UnsafeRawPointer?) -> Int {
+            if let accessor { _ = unsafeBitCast(accessor, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0) }
+            let target: AnyClass = unsafeBitCast(kept, to: AnyClass.self)
+            // A class of the system's (an extension of ByteCountFormatter) has no accessor of the app's, and may not
+            // have been used yet: asking the runtime for it by name completes it.
+            if accessor == nil, !isRealized(kept) { _ = objc_getClass(class_getName(target)) }
+            guard isRealized(kept) else { return 0 }
+            var count = 0
+            for (list, to) in [(category.instance, target), (category.classMethods, object_getClass(target))] {
+                guard let list, let to else { continue }
+                count += add(methods(in: list), to: to)
+            }
+            if let protocols = category.protocols {
+                let number = Int(protocols.load(as: UInt64.self))
+                for index in 0..<min(number, 1 << 10) {
+                    // The list names the library's own copy of each protocol, which the runtime left unregistered
+                    // when it already had one by that name (its isa unset): asked for by its name, the runtime's is adopted.
+                    guard let protocol_ = protocols.load(fromByteOffset: 8 + index * 8, as: UnsafeRawPointer?.self),
+                          let name = protocol_.load(fromByteOffset: 8, as: UnsafePointer<CChar>?.self),
+                          let known = objc_getProtocol(name) else { continue }
+                    if class_addProtocol(target, known) { count += 1 }
+                }
+            }
+            return count
+        }
+
+        /// Gives a class methods: each is added, or replaces the one it has of its own (a superclass's is left as it
+        /// is, which the add refuses to touch).
+        nonisolated private static func add(_ methods: [(Selector, IMP, UnsafePointer<CChar>?)], to class_: AnyClass) -> Int {
+            var count = 0
+            for (selector, code, types) in methods {
+                if class_addMethod(class_, selector, code, types) { count += 1; continue }
+                if let own = class_getInstanceMethod(class_, selector), method_getImplementation(own) != code {
+                    method_setImplementation(own, code)
+                    count += 1
+                }
+            }
+            return count
+        }
+
+        /// A class's methods as the compiler laid them out, from its class data (`methods(in:)`). A class the runtime
+        /// has set up is asked instead, since its data is the runtime's.
+        nonisolated private static func methods(of class_: UnsafeRawPointer) -> [(Selector, IMP, UnsafePointer<CChar>?)] {
+            if isRealized(class_) {
+                var number: UInt32 = 0
+                guard let list = class_copyMethodList(unsafeBitCast(class_, to: AnyClass.self), &number) else { return [] }
+                defer { free(list) }
+                return (0..<Int(number)).map { (method_getName(list[$0]), method_getImplementation(list[$0]), method_getTypeEncoding(list[$0])) }
+            }
+            guard let data = UnsafeRawPointer(bitPattern: class_.load(fromByteOffset: 32, as: UInt.self) & dataMask),
+                  let list = data.load(fromByteOffset: 32, as: UnsafeRawPointer?.self) else { return [] }
+            return methods(in: list)
+        }
+
+        /// The methods in a list as the compiler laid it out: it begins with each entry's size (in the low bits of
+        /// its first word; the top bit says the entries are three offsets rather than three pointers) and their
+        /// number. An offset entry names its selector through a slot the loader filled in.
+        nonisolated private static func methods(in list: UnsafeRawPointer) -> [(Selector, IMP, UnsafePointer<CChar>?)] {
+            let header = list.load(as: UInt32.self), count = Int(list.load(fromByteOffset: 4, as: UInt32.self))
+            let size = Int(header & 0xFFFC), offsets = header & 0x8000_0000 != 0
+            guard count < 1 << 12, offsets ? size == 12 : size == 24 else { return [] }
+            var out: [(Selector, IMP, UnsafePointer<CChar>?)] = []
+            for index in 0..<count {
+                let entry = list.advanced(by: 8 + index * size)
+                let name: UnsafePointer<CChar>?, types: UnsafePointer<CChar>?, code: UnsafeRawPointer?
+                if offsets {
+                    let slot = entry.advanced(by: Int(entry.load(as: Int32.self)))
+                    name = slot.load(as: UnsafePointer<CChar>?.self)
+                    types = UnsafePointer(entry.advanced(by: 4 + Int(entry.load(fromByteOffset: 4, as: Int32.self))).assumingMemoryBound(to: CChar.self))
+                    code = entry.advanced(by: 8 + Int(entry.load(fromByteOffset: 8, as: Int32.self)))
+                } else {
+                    name = entry.load(as: UnsafePointer<CChar>?.self)
+                    types = entry.load(fromByteOffset: 8, as: UnsafePointer<CChar>?.self)
+                    code = entry.load(fromByteOffset: 16, as: UnsafeRawPointer?.self)
+                }
+                guard let name, let code else { continue }
+                out.append((sel_registerName(name), unsafeBitCast(code, to: IMP.self), types))
+            }
+            return out
+        }
+
+        /// Takes `swift_initClassMetadata2`'s five arguments and returns its two words as the runtime's does.
+        nonisolated private static let classMade: @convention(thin) (UnsafeRawPointer, Int, Int, UnsafeRawPointer?, UnsafeRawPointer?) -> (UnsafeRawPointer?, Int) = { metadata, flags, fields, types, offsets in
+            typealias Call = @convention(thin) (UnsafeRawPointer, Int, Int, UnsafeRawPointer?, UnsafeRawPointer?) -> (UnsafeRawPointer?, Int)
+            guard let real = initClassMetadata else { return (nil, 0) }
+            let result = unsafeBitCast(real, to: Call.self)(metadata, flags, fields, types, offsets)
+            // Only once the metadata is complete: the runtime asks again for one that isn't.
+            guard result.0 == nil else { return result }
+            lock.lock()
+            defer { lock.unlock() }
+            if isOwnClass(metadata, descriptions) {
+                made.append(metadata)
+                _ = redirectMethods(of: [metadata], newest)
+            }
+            return result
+        }
+
+        /// Why the change can't go in while nothing watches the classes made as the app runs, if it can't: one of
+        /// the overridable methods (those with a method descriptor, `Tq`) of a class whose table is made then (a
+        /// generic class, or one the app has no complete metadata for) is among the changed functions.
+        private static func unwatchedClassMethod(changed: Set<String>, copies: [(String, UnsafeRawPointer)]) -> String? {
+            let complete = Set(copies.map(\.0).filter { $0.hasSuffix("CN") })
+            for (name, descriptor) in copies where name.hasSuffix("CMn") {
+                let class_ = String(name.dropLast(2))
+                guard descriptor.load(as: UInt32.self) & 0x80 != 0 || !complete.contains(class_ + "N") else { continue }
+                if changed.contains(where: { $0.hasPrefix(class_) && isCode($0) && changed.contains($0 + "Tq") }) {
+                    return "a method of \(readable(class_)) changed, and the app wasn't started through Lamp's entry"
+                }
+            }
+            return nil
+        }
+
+        /// The method descriptors (`Tq`) of each class in an image, in their order, by the class's descriptor they
+        /// follow: a class's methods are listed after its description.
+        private static func methodOrder(_ symbols: [(String, UnsafeRawPointer)]) -> [String: [String]] {
+            let sorted = symbols.filter { $0.0.hasSuffix("CMn") || $0.0.hasSuffix("CMn" + copySuffix) || $0.0.hasSuffix("CMn" + ownSuffix) || $0.0.hasSuffix("Tq") }
+                .sorted { $0.1 < $1.1 }
+            var order: [String: [String]] = [:], current: String?
+            for (name, _) in sorted {
+                if name.hasSuffix("Tq") { if let current { order[current, default: []].append(name) } }
+                else if name.hasSuffix(copySuffix) { current = String(name.dropLast(copySuffix.count)) }
+                else if name.hasSuffix(ownSuffix) { current = String(name.dropLast(ownSuffix.count)) }
+                else { current = name }
+            }
+            return order
+        }
+
+        /// A mangled name in plain words for the chat's details, by the runtime's own demangler.
+        nonisolated private static func readable(_ name: String) -> String {
+            guard name.hasPrefix("_$s"), let demangle = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "swift_demangle") else { return name }
+            typealias Demangle = @convention(c) (UnsafePointer<CChar>, Int, UnsafeMutablePointer<CChar>?, UnsafeMutablePointer<Int>?, UInt32) -> UnsafeMutablePointer<CChar>?
+            let mangled = String(name.dropFirst())
+            guard let out = unsafeBitCast(demangle, to: Demangle.self)(mangled, mangled.utf8.count, nil, nil, 0) else { return name }
+            defer { free(out) }
+            return String(cString: out)
+        }
+
+        /// Functions, getters, setters and deinits, by their Swift names: never a type's metadata, descriptors,
+        /// witness tables or the accessors of stored globals, whose new copies would be a second set of the app's
+        /// types and state.
         private static func isCode(_ name: String) -> Bool {
             guard name.hasPrefix("_$s") else { return false }
+            if name.hasSuffix("fD") || name.hasSuffix("TW") { return true }
+            // A default argument is made by a function of its own, which every caller calls.
+            if name.hasSuffix("_"), let fA = name.range(of: "fA", options: .backwards), name[fA.upperBound...].dropLast().allSatisfy(\.isNumber) { return true }
             // An async function is called through a small record of its own (its code and how much room it needs),
             // which is what calls and method tables hold.
             if name.hasSuffix("Tu") { return isCode(String(name.dropLast(2))) }
@@ -3979,19 +4807,7 @@ enum Template {
             return name.hasSuffix("F") || name.hasSuffix("g") || name.hasSuffix("s") || name.hasSuffix("M") || name.hasSuffix("fC") || name.hasSuffix("fc")
         }
 
-        /// The properties kept in storage among these symbols: those with an addressor, by the name before it.
-        private static func stored(in symbols: [(String, UnsafeRawPointer)]) -> Set<String> {
-            Set(symbols.map(\.0).filter { $0.hasSuffix("vau") }.map { String($0.dropLast(3)) })
-        }
-
-        /// Whether this is the getter, setter or modify of a property kept in storage (one with an addressor).
-        private static func accesses(_ name: String, oneOf stored: Set<String>) -> Bool {
-            let name = name.hasSuffix("Z") ? String(name.dropLast()) : name
-            guard ["vg", "vs", "vM"].contains(where: { name.hasSuffix($0) }) else { return false }
-            return stored.contains(String(name.dropLast(2)))
-        }
-
-        private static func commands(_ header: UnsafePointer<mach_header>) -> [UnsafeRawPointer] {
+        nonisolated private static func commands(_ header: UnsafePointer<mach_header>) -> [UnsafeRawPointer] {
             let header64 = UnsafeRawPointer(header).assumingMemoryBound(to: mach_header_64.self)
             var command = UnsafeRawPointer(header64).advanced(by: MemoryLayout<mach_header_64>.size)
             var all: [UnsafeRawPointer] = []
@@ -4002,12 +4818,12 @@ enum Template {
             return all
         }
 
-        private static func segmentName(_ segment: UnsafePointer<segment_command_64>) -> String {
+        nonisolated private static func segmentName(_ segment: UnsafePointer<segment_command_64>) -> String {
             withUnsafeBytes(of: segment.pointee.segname) { String(cString: Array($0.bindMemory(to: CChar.self)) + [0]) }
         }
 
         /// The symbol and string tables of an image, where they sit in memory.
-        private static func tables(_ header: UnsafePointer<mach_header>, slide: Int)
+        nonisolated private static func tables(_ header: UnsafePointer<mach_header>, slide: Int)
             -> (symbols: UnsafePointer<nlist_64>, strings: UnsafePointer<CChar>, count: Int, base: UnsafeRawPointer, dysymtab: UnsafePointer<dysymtab_command>?)? {
             var symtab: UnsafePointer<symtab_command>?, dysymtab: UnsafePointer<dysymtab_command>?, linkedit: UnsafePointer<segment_command_64>?
             for command in commands(header) {
@@ -4027,53 +4843,86 @@ enum Template {
                     Int(symtab.pointee.nsyms), base, dysymtab)
         }
 
-        private static func definedSymbols(_ header: UnsafePointer<mach_header>, slide: Int, local: Bool = false) -> [(String, UnsafeRawPointer)] {
+        /// The symbols an image defines, with their addresses: every one with `local`, else the exported ones. An
+        /// image is read once and kept (`scanned`): the app's is asked for at launch and with every change, several
+        /// times each, and each earlier change's with every later one, and none of them changes or goes away.
+        nonisolated(unsafe) private static var scanned: [UnsafeRawPointer: (all: [(String, UnsafeRawPointer)], exported: [(String, UnsafeRawPointer)])] = [:]
+        nonisolated private static func definedSymbols(_ header: UnsafePointer<mach_header>, slide: Int, local: Bool = false) -> [(String, UnsafeRawPointer)] {
+            let key = UnsafeRawPointer(header)
+            lock.lock()
+            let known = scanned[key]
+            lock.unlock()
+            if let known { return local ? known.all : known.exported }
             guard let tables = tables(header, slide: slide) else { return [] }
-            var out: [(String, UnsafeRawPointer)] = []
+            var all: [(String, UnsafeRawPointer)] = [], exported: [(String, UnsafeRawPointer)] = []
             for index in 0..<tables.count {
                 let symbol = tables.symbols[index]
-                guard local || symbol.n_type & UInt8(N_EXT) != 0, symbol.n_type & UInt8(N_STAB) == 0,
-                      symbol.n_type & UInt8(N_TYPE) == UInt8(N_SECT), symbol.n_value != 0,
+                guard symbol.n_type & UInt8(N_STAB) == 0, symbol.n_type & UInt8(N_TYPE) == UInt8(N_SECT), symbol.n_value != 0,
                       let address = UnsafeRawPointer(bitPattern: Int(symbol.n_value) + slide) else { continue }
-                out.append((String(cString: tables.strings.advanced(by: Int(symbol.n_un.n_strx))), address))
+                let entry = (String(cString: tables.strings.advanced(by: Int(symbol.n_un.n_strx))), address)
+                all.append(entry)
+                if symbol.n_type & UInt8(N_EXT) != 0 { exported.append(entry) }
             }
-            return out
+            lock.lock()
+            scanned[key] = (all, exported)
+            lock.unlock()
+            return local ? all : exported
         }
 
         /// Where a class's fields are is worked out as the app runs when it can't be known when it's compiled (a
         /// subclass, or fields after one of the system's types, such as an @Observable class's registrar), and kept
-        /// in a global for each field. A library has its own copies, which nothing fills in: its code would read
-        /// every such field at the start of the object. So they take the app's values, once the app has worked
-        /// the class out (asking for its metadata does that). A field the app has none for is new, and stays the
-        /// library's.
-        private static func takeFieldOffsets(_ header: UnsafePointer<mach_header>, slide: Int) {
-            guard let app = _dyld_get_image_header(0) else { return }
-            let theirs = Dictionary(definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0), local: true), uniquingKeysWith: { first, _ in first })
+        /// in a global for each field (`Wvd`); so is where a class's own members begin when its superclass is one of
+        /// the system's whose size may change between releases (`CMo`, the class's bounds), which is how its code
+        /// finds its method table. A library has its own copies, which nothing fills in: its code would read every
+        /// such field at the start of the object, and look for the table where there is none. So they take the
+        /// app's values, once the app has worked the class out (asking for its metadata does that). A field's
+        /// value the compiler knew may differ from the app's too (a guess under a system class), so a copy that
+        /// differs is replaced, not only an empty one. A class an earlier change brought takes that change's values the
+        /// same way. A field neither has is new, and stays the library's:
+        /// its class is worked out by the library's own accessor, only with `ownClasses`, once the library's
+        /// references to its own types are bound (`rebind`): before, the accessor reads a null description and the
+        /// app crashes.
+        private static func takeFieldOffsets(_ header: UnsafePointer<mach_header>, slide: Int, earlier: [String], ownClasses: Bool = false) {
+            // The app's, then each earlier change's that went in (`images`, in that order): a class an earlier change
+            // brought is that change's (`kept`), which worked its fields out when it went in, and a later change that
+            // compiles the class again has to take them from there, or its code would read every field at the
+            // object's start. A change refused is left out: its own classes were never worked out.
+            var theirs: [String: UnsafeRawPointer] = [:]
+            for image in [UInt32(0)] + earlier.compactMap(imageIndex) {
+                guard let other = _dyld_get_image_header(image), other != header else { continue }
+                theirs.merge(definedSymbols(other, slide: _dyld_get_image_vmaddr_slide(image), local: true), uniquingKeysWith: { first, _ in first })
+            }
+            guard !theirs.isEmpty else { return }
             let accessors = theirs.filter { $0.key.hasSuffix("CMa") }
             let mine = definedSymbols(header, slide: slide, local: true)
             let ownAccessors = Dictionary(mine.filter { $0.0.hasSuffix("CMa") }, uniquingKeysWith: { first, _ in first })
-            for (name, address) in mine where name.hasSuffix("Wvd") {
-                // One the compiler knew is already right, and may be in memory that can't be written.
-                guard address.load(as: Int.self) == 0 else { continue }
+            func complete(_ name: String, in accessors: [String: UnsafeRawPointer]) {
+                if let accessor = accessors.filter({ name.hasPrefix($0.key.dropLast(2)) }).max(by: { $0.key.count < $1.key.count }) {
+                    _ = unsafeBitCast(accessor.value, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0)
+                }
+            }
+            for (name, address) in mine where name.hasSuffix("Wvd") || name.hasSuffix("CMo") {
+                let bounds = name.hasSuffix("CMo")
                 guard let source = theirs[name] else {
                     // A field the app has under no such name: a new class's, or a private one whose code moved to
                     // another file (a private name carries its file's). The library works its class out itself,
                     // which lays it out as the app did when it's the same class.
-                    if let accessor = ownAccessors.filter({ name.hasPrefix($0.key.dropLast(2)) }).max(by: { $0.key.count < $1.key.count }) {
-                        _ = unsafeBitCast(accessor.value, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0)
-                    }
+                    if ownClasses, address.load(as: Int.self) == 0 { complete(name, in: ownAccessors) }
                     continue
                 }
-                if source.load(as: Int.self) == 0,
-                   let accessor = accessors.filter({ name.hasPrefix($0.key.dropLast(2)) }).max(by: { $0.key.count < $1.key.count }) {
-                    _ = unsafeBitCast(accessor.value, to: (@convention(c) (Int) -> UnsafeRawPointer?).self)(0)
+                guard !ownClasses else { continue }
+                if source.load(as: Int.self) == 0 { complete(name, in: accessors) }
+                // The bounds are where the members begin, then two sizes; a field's place is one word.
+                for offset in bounds ? [0, 8] : [0] {
+                    let value = source.load(fromByteOffset: offset, as: Int.self)
+                    guard address.load(fromByteOffset: offset, as: Int.self) != value else { continue }
+                    _ = write(value, to: address.advanced(by: offset), executable: false)
                 }
-                UnsafeMutableRawPointer(mutating: address).storeBytes(of: source.load(as: Int.self), as: Int.self)
             }
         }
 
         /// Points the image's symbol pointers, which its calls to its own functions go through, at the new code.
-        private static func rebind(image: UInt32, to replacements: [String: UnsafeRawPointer]) -> Int {
+        nonisolated private static func rebind(image: UInt32, to replacements: [String: UnsafeRawPointer]) -> Int {
             guard let header = _dyld_get_image_header(image) else { return 0 }
             let slide = _dyld_get_image_vmaddr_slide(image)
             guard let tables = tables(header, slide: slide), let dysymtab = tables.dysymtab else { return 0 }
@@ -4125,6 +4974,15 @@ enum Template {
                         LampSidebar.restore(window)
                     }
                 }
+                // The lit wand's symbol follows whether its window is in front (`showWand`).
+                for name in [NSWindow.didBecomeMainNotification, NSWindow.didResignMainNotification,
+                             NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
+                    center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                        MainActor.assumeIsolated {
+                            for window in NSApp.windows where isAppWindow(window) { showWand(in: window) }
+                        }
+                    }
+                }
                 // Opened behind the person's windows (Lamp's looks during a change), no window becomes key: the
                 // first one is put back in place and reported once launching is done all the same.
                 center.addObserver(forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main) { _ in
@@ -4140,22 +4998,29 @@ enum Template {
                         }
                     }
                 }
-                // A change reopens the app: its window, as it was, is left for Lamp to show in its place
-                // meanwhile, and where it was, for the new copy to open there.
+                // A change reopens the app: where its window was is left for the new copy to open there.
                 center.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
-                    MainActor.assumeIsolated { leaveCover() }
+                    MainActor.assumeIsolated { leavePlace() }
                 }
                 // Lamp hands the chat over to the app (`LampSidebar.openForLamp`).
                 DistributedNotificationCenter.default().addObserver(
-                    forName: Notification.Name("{{NOTE}}openSidebar"), object: Bundle.main.bundleIdentifier, queue: .main
+                    forName: Notification.Name(LampInstall.note + "openSidebar"), object: Bundle.main.bundleIdentifier, queue: .main
                 ) { _ in
                     MainActor.assumeIsolated { if isOn { LampSidebar.openForLamp() } }
                 }
                 // Lamp's chat asks for something on the screen to be pointed at.
                 DistributedNotificationCenter.default().addObserver(
-                    forName: Notification.Name("{{NOTE}}pick"), object: Bundle.main.bundleIdentifier, queue: .main
+                    forName: Notification.Name(LampInstall.note + "pick"), object: Bundle.main.bundleIdentifier, queue: .main
                 ) { _ in
                     MainActor.assumeIsolated { Picker.start() }
+                }
+                // A change that can't go into the app as it runs waits for the person: Lamp asks for a Reload button
+                // in the title bar, and takes it away once the change is in (`Store.awaitReload`).
+                DistributedNotificationCenter.default().addObserver(
+                    forName: Notification.Name(LampInstall.note + "reloadReady." + LampInstall.slug), object: nil, queue: .main
+                ) { note in
+                    let on = (note.userInfo?["on"] as? String) == "1"
+                    MainActor.assumeIsolated { setReload(on ? .ready : .none) }
                 }
                 for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification,
                              NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
@@ -4172,24 +5037,17 @@ enum Template {
             }
         }()
 
-        private static var cover: URL { LampRuntime.folder.appendingPathComponent("cover.png") }
         private static var coverFrame: URL { LampRuntime.folder.appendingPathComponent("cover-frame.txt") }
-        /// Where the chat was beside the window, for Lamp to stand its own glass in until the new copy's chat is up.
-        private static var coverChatFrame: URL { LampRuntime.folder.appendingPathComponent("cover-chat-frame.txt") }
 
-        /// The front window's picture and place, as the app quits. Lamp shows the picture where the window was
-        /// until the new copy is up; the new copy opens its window in that place (`putBack`).
-        @MainActor private static func leaveCover() {
+        /// The front window's place, as the app quits: the new copy opens its window there (`putBack`).
+        @MainActor private static func leavePlace() {
             guard isOn, let window = NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible && ($0.isKeyWindow || $0.isMainWindow) })
                     ?? NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible })
                     ?? NSApp.windows.first(where: { isAppWindow($0) && $0.isMiniaturized }) else { return }
-            // Whether or not there's a picture to leave: a window in full screen or the Dock is still owed its width.
+            // A window in full screen or the Dock is still owed its width, though it has no place to hand on.
             LampSidebar.handOn(window)
-            guard !window.isMiniaturized, !window.styleMask.contains(.fullScreen),
-                  let picture = LampRuntime.picture(of: window) else { return }
-            try? picture.write(to: cover)
+            guard !window.isMiniaturized, !window.styleMask.contains(.fullScreen) else { return }
             try? NSStringFromRect(window.frame).write(to: coverFrame, atomically: true, encoding: .utf8)
-            try? NSStringFromRect(LampSidebar.panelFrame(of: window) ?? .zero).write(to: coverChatFrame, atomically: true, encoding: .utf8)
         }
 
         /// The first window of a copy started for a change goes where the last one was, once.
@@ -4215,6 +5073,15 @@ enum Template {
         @MainActor private final class Picker: NSView {
             private static var current: Picker?
             private var items: [LampScreen.Item] = []
+            /// For each item, the window it's in: -1 the target, else its place in `covers`.
+            private var inWindow: [Int] = []
+            /// The app's own windows over the target (`windowsOver`), front to back, in this view's points.
+            private var covers: [NSRect] = []
+            /// The windows and frames `covers` and the items were worked out for.
+            private var coverKey: [String]?
+            /// The target's own named things, read before the glass is up: the accessibility API finds a window by
+            /// its frame, which the glass shares.
+            private var targetItems: [LampScreen.Item] = []
             private var scale: CGFloat = 1
             private var hovered: Int?
             private var keyMonitor: Any?
@@ -4233,14 +5100,34 @@ enum Template {
                 glass.hasShadow = false
                 glass.isReleasedWhenClosed = false
                 glass.becomesKeyOnlyIfNeeded = false
+                // An alert the app runs while the person points would otherwise keep every click for itself.
+                glass.worksWhenModal = true
                 let picker = Picker(frame: NSRect(origin: .zero, size: window.frame.size))
                 picker.autoresizingMask = [.width, .height]
-                picker.items = LampDriver.elements(in: window).map(\.item)
+                picker.targetItems = LampDriver.elements(in: window).map(\.item)
                 picker.scale = LampRuntime.scale(of: window)
                 picker.target = window
                 glass.contentView = picker
                 window.addChildWindow(glass, ordered: .above)
                 glass.makeKeyAndOrderFront(nil)
+                picker.keepOnTop()
+                // A panel, sheet or alert of the app's, open already or opening while the person points, would
+                // cover the outline and take its clicks.
+                picker.observers = [NSApplication.didUpdateNotification, NSWindow.didBecomeKeyNotification,
+                                    NSApplication.didResignActiveNotification, NSApplication.didBecomeActiveNotification].map {
+                    NotificationCenter.default.addObserver(forName: $0, object: nil, queue: .main) { _ in
+                        MainActor.assumeIsolated { picker.keepOnTop() }
+                    }
+                } + [NSWindow.didMoveNotification, NSWindow.didResizeNotification].map {
+                    NotificationCenter.default.addObserver(forName: $0, object: window, queue: .main) { _ in
+                        MainActor.assumeIsolated { picker.keepOnTop() }
+                    }
+                } + [NSWindow.willCloseNotification, NSWindow.willMiniaturizeNotification].map {
+                    // Pointing ends with its window: away from it, the glass would be left where the window was.
+                    NotificationCenter.default.addObserver(forName: $0, object: window, queue: .main) { _ in
+                        MainActor.assumeIsolated { picker.stop() }
+                    }
+                }
                 picker.addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .activeAlways, .inVisibleRect, .cursorUpdate],
                                                       owner: picker, userInfo: nil))
                 picker.keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
@@ -4250,10 +5137,101 @@ enum Template {
                 current = picker
             }
 
+            private var observers: [NSObjectProtocol] = []
+
+            /// The app's own windows in front of `target` and over it, front to back: its panels, alerts and
+            /// sheets, not its other windows, and not Lamp's own (the chat beside it, a change's effect, the glass).
+            /// A floating panel goes when the app isn't in front (macOS hides it a moment after saying so).
+            static func windowsOver(_ target: NSWindow) -> [NSWindow] {
+                let order = NSWindow.windowNumbers(options: []) ?? []
+                func place(_ window: NSWindow) -> Int { order.firstIndex(of: NSNumber(value: window.windowNumber)) ?? .max }
+                return NSApp.windows.filter {
+                    $0 !== target && !isAppWindow($0) && $0.isVisible && !$0.isMiniaturized && $0.frame.intersects(target.frame)
+                        && $0.level < .popUpMenu && place($0) < place(target) && (NSApp.isActive || !$0.hidesOnDeactivate)
+                        && !($0.contentView is Picker) && !($0 is LampTransition.Glass) && !($0 is LampSidebar.Beside)
+                }
+                .sorted { place($0) < place($1) }
+            }
+
+            /// Keeps the glass over the app's own windows on the target, however high they float (a floating
+            /// panel, a modal panel or an alert), and over its sheets, but no higher: at the window's own level,
+            /// so other apps' windows still cover it as they cover the app. With nothing of the app's over the
+            /// window the glass is its child and moves with it. Otherwise it can't be: AppKit keeps a child at its
+            /// parent's level, and a sheet above its window and its children, so the glass leaves the window's
+            /// children, follows its frame itself and is ordered just above the frontmost of them.
+            func keepOnTop() {
+                guard let glass = window, glass.isVisible else { return }
+                guard let target, target.isVisible, !target.isMiniaturized else { return stop() }
+                let over = Self.windowsOver(target)
+                // Again when one of them, or the window, moved or changed size: the places are relative to the window.
+                let key = ([target] + over).map { "\($0.windowNumber) \(NSStringFromRect($0.frame))" }
+                if coverKey != key { coverKey = key; gather(target, over) }
+                guard let top = over.first else {
+                    if glass.parent == nil {
+                        glass.level = target.level
+                        glass.setFrame(target.frame, display: true)
+                        target.addChildWindow(glass, ordered: .above)
+                    }
+                    return
+                }
+                if glass.parent != nil { target.removeChildWindow(glass) }
+                let level = over.map(\.level).reduce(target.level) { max($0, $1) }
+                if glass.level != level { glass.level = level }
+                if glass.frame != target.frame { glass.setFrame(target.frame, display: true) }
+                // Front to back, this app's windows on the screen.
+                let order = NSWindow.windowNumbers(options: []) ?? []
+                func place(_ window: NSWindow) -> Int { order.firstIndex(of: NSNumber(value: window.windowNumber)) ?? .max }
+                if place(top) < place(glass) { glass.order(.above, relativeTo: top.windowNumber) }
+            }
+
+            /// What can be pointed at: the named things in the target and in each of the app's windows over it,
+            /// all in the target's picture's pixels. Where a panel covers the target, only the panel's count.
+            private func gather(_ target: NSWindow, _ over: [NSWindow]) {
+                covers = over.map { NSRect(x: $0.frame.minX - target.frame.minX, y: target.frame.maxY - $0.frame.maxY,
+                                           width: $0.frame.width, height: $0.frame.height) }
+                var found = targetItems
+                var inWindow = Array(repeating: -1, count: found.count)
+                for (index, window) in over.enumerated() {
+                    let own = LampRuntime.scale(of: window), cover = covers[index]
+                    for var item in LampDriver.elements(in: window).map(\.item) {
+                        let frame = item.frame
+                        item.frame = CGRect(x: (frame.minX / own + cover.minX) * scale, y: (frame.minY / own + cover.minY) * scale,
+                                            width: frame.width / own * scale, height: frame.height / own * scale)
+                        found.append(item)
+                        inWindow.append(index)
+                    }
+                }
+                items = found
+                self.inWindow = inWindow
+                hovered = nil
+                needsDisplay = true
+            }
+
+            /// The window with the app's own windows over it as they're shown, so a pick over a panel is of the
+            /// panel. Its own windows need no screen recording permission; the call is looked up by name as in
+            /// `LampRuntime.shown`.
+            private static func picture(of window: NSWindow) -> Data? {
+                typealias Capture = @convention(c) (CGRect, CFArray, UInt32) -> Unmanaged<CGImage>?
+                let over = windowsOver(window)
+                guard !over.isEmpty, let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImageFromArray") else {
+                    return LampRuntime.picture(of: window)
+                }
+                var ids = (over + [window]).map { UnsafeRawPointer(bitPattern: UInt($0.windowNumber)) }
+                let list = CFArrayCreate(nil, &ids, ids.count, nil)
+                let top = (NSScreen.screens.first?.frame.maxY ?? 0) - window.frame.maxY
+                let bounds = CGRect(x: window.frame.minX, y: top, width: window.frame.width, height: window.frame.height)
+                // At full resolution (1 << 3).
+                guard let list, let image = unsafeBitCast(symbol, to: Capture.self)(bounds, list, 1 << 3)?.takeRetainedValue(),
+                      image.width > 1, image.height > 1 else { return LampRuntime.picture(of: window) }
+                return LampRuntime.png(image, at: window)
+            }
+
             /// `tell` is false when Lamp hears instead that something was picked, or pointing starts over.
             func stop(tell: Bool = true) {
                 keyMonitor.map(NSEvent.removeMonitor)
                 keyMonitor = nil
+                observers.forEach(NotificationCenter.default.removeObserver)
+                observers = []
                 if let glass = window {
                     glass.parent?.removeChildWindow(glass)
                     glass.orderOut(nil)
@@ -4261,10 +5239,10 @@ enum Template {
                 if Picker.current === self { Picker.current = nil }
                 // Pointing may have been asked for from Lamp's window, which then comes back in front: macOS lets
                 // Lamp do that only when the app in front hands it over.
-                NSApp.yieldActivation(toApplicationWithBundleIdentifier: "{{HOST}}")
+                NSApp.yieldActivation(toApplicationWithBundleIdentifier: LampInstall.host)
                 if tell {
                     DistributedNotificationCenter.default().postNotificationName(
-                        Notification.Name("{{NOTE}}pickEnded"), object: Bundle.main.bundleIdentifier, userInfo: nil, deliverImmediately: true)
+                        Notification.Name(LampInstall.note + "pickEnded"), object: Bundle.main.bundleIdentifier, userInfo: nil, deliverImmediately: true)
                 }
             }
 
@@ -4282,7 +5260,8 @@ enum Template {
 
             /// The smallest named thing under the point: a button inside a row, not the row.
             private func item(at point: NSPoint) -> Int? {
-                items.indices.filter { rect(items[$0]).contains(point) }
+                let front = covers.firstIndex { $0.contains(point) } ?? -1
+                return items.indices.filter { inWindow[$0] == front && rect(items[$0]).contains(point) }
                     .min { rect(items[$0]).width * rect(items[$0]).height < rect(items[$1]).width * rect(items[$1]).height }
             }
 
@@ -4347,11 +5326,13 @@ enum Template {
                 let own = rect(items[index])
                 let label = items[index].label.isEmpty ? items[index].value : items[index].label
                 func short(_ text: String) -> Bool { !text.isEmpty && text.count <= 40 && text != label && !text.contains("\n") }
-                let words = items.indices.filter { $0 != index && ["text", "heading"].contains(items[$0].role) && short(items[$0].label) }
+                // Only things in the same window: a panel's button isn't part of what's under the panel.
+                let peers = items.indices.filter { inWindow[$0] == inWindow[index] }
+                let words = peers.filter { $0 != index && ["text", "heading"].contains(items[$0].role) && short(items[$0].label) }
                 let left = words.filter { rect(items[$0]).maxX <= own.minX + 2 && abs(rect(items[$0]).midY - own.midY) < own.height / 2 + 4 }
                     .max { rect(items[$0]).maxX < rect(items[$1]).maxX }
                 if let left { return items[left].label }
-                let around = items.indices.filter { other in
+                let around = peers.filter { other in
                     let box = rect(items[other])
                     return other != index && box.contains(own) && box != own && box.width * box.height < bounds.width * bounds.height / 2
                         && items[other].label.components(separatedBy: " · ").contains(where: short)
@@ -4376,11 +5357,13 @@ enum Template {
                 guard let window = target else { return stop() }
                 let scale = scale
                 stop(tell: false)
-                // The picture is taken once the outline is off the screen, a little wider than the thing itself.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { MainActor.assumeIsolated {
+                // The picture is taken once the outline is off the screen, a little wider than the thing itself. An
+                // alert the app runs holds the run loop in a mode of its own, where the main queue waits until it's
+                // answered and the alert is gone from the picture, so the timer runs in that mode too.
+                let later = Timer(timeInterval: 0.15, repeats: false) { _ in MainActor.assumeIsolated {
                     // What it is and what it says; Lamp names the picture with them.
                     var info: [String: String] = ["role": role, "label": label, "context": context]
-                    if let png = LampRuntime.picture(of: window), let image = NSBitmapImageRep(data: png)?.cgImage {
+                    if let png = Self.picture(of: window), let image = NSBitmapImageRep(data: png)?.cgImage {
                         let margin = 12 * scale
                         let crop = CGRect(x: box.minX * scale, y: box.minY * scale, width: box.width * scale, height: box.height * scale)
                             .insetBy(dx: -margin, dy: -margin)
@@ -4392,8 +5375,9 @@ enum Template {
                         }
                     }
                     DistributedNotificationCenter.default().postNotificationName(
-                        Notification.Name("{{NOTE}}picked"), object: Bundle.main.bundleIdentifier, userInfo: info, deliverImmediately: true)
+                        Notification.Name(LampInstall.note + "picked"), object: Bundle.main.bundleIdentifier, userInfo: info, deliverImmediately: true)
                 } }
+                for mode in [RunLoop.Mode.common, .modalPanel] { RunLoop.main.add(later, forMode: mode) }
             }
 
             override func rightMouseDown(with event: NSEvent) { stop() }
@@ -4431,12 +5415,13 @@ enum Template {
         }
 
         /// Whether Lamp's experiment is on (Settings → Experimental): a file Lamp keeps beside the apps' folders.
-        static var isOn: Bool { FileManager.default.fileExists(atPath: "{{APPS}}/.magic") }
+        static var isOn: Bool { FileManager.default.fileExists(atPath: LampInstall.apps + "/.magic") }
 
         @MainActor private static func detach(from window: NSWindow) {
             while let index = window.titlebarAccessoryViewControllers.firstIndex(where: { $0.view.identifier == identifier }) {
                 window.removeTitlebarAccessoryViewController(at: index)
             }
+            floating(in: window)?.superview?.subviews.filter { $0 is ReloadButton }.forEach { $0.removeFromSuperview() }
             floating(in: window)?.removeFromSuperview()
         }
 
@@ -4463,6 +5448,7 @@ enum Template {
             let holder = NSView()
             holder.identifier = identifier
             holder.addSubview(button(LampGlyph.image(pointSize: 14, weight: .medium), "Customize This App", "Customize this app with Lamp", #selector(Opener.open(_:))))
+            holder.addSubview(ReloadButton.make(floating: false))
             let accessory = NSTitlebarAccessoryViewController()
             accessory.view = holder
             accessory.layoutAttribute = .trailing
@@ -4475,11 +5461,109 @@ enum Template {
         /// The button as tall as the toolbar's buttons when there's a toolbar, smaller in a plain title bar, in
         /// the middle of the title bar's height, at the right of the app's own content.
         @MainActor private static func fit(_ holder: NSView, in window: NSWindow) {
-            guard let button = holder.subviews.first else { return }
+            guard let button = holder.subviews.first(where: { !($0 is ReloadButton) }) else { return }
             let titlebar = max(window.frame.height - window.contentLayoutRect.height, 28)
             let side = buttonSide(titlebar)
-            holder.frame.size = NSSize(width: side + 14, height: titlebar)
-            button.frame = NSRect(x: 4, y: ((titlebar - side) / 2).rounded(), width: side, height: side)
+            // A holder made by an app built before the button, kept across a live change, gets it now.
+            let reload = holder.subviews.compactMap { $0 as? ReloadButton }.first ?? {
+                let made = ReloadButton.make(floating: false)
+                holder.addSubview(made)
+                return made
+            }()
+            var x: CGFloat = 4
+            reload.show(reloadState, height: side)
+            if !reload.isHidden {
+                reload.frame.origin = NSPoint(x: x, y: ((titlebar - reload.frame.height) / 2).rounded())
+                x += reload.frame.width + 8
+            }
+            holder.frame.size = NSSize(width: x + side + 10, height: titlebar)
+            button.frame = NSRect(x: x, y: ((titlebar - side) / 2).rounded(), width: side, height: side)
+        }
+
+        /// Whether a change waits for the person to reload the app (`Store.awaitReload`), and whether they have.
+        enum ReloadState { case none, ready, reloading }
+        @MainActor static var reloadState = ReloadState.none
+
+        /// Shows or takes away the Reload button in every window.
+        @MainActor static func setReload(_ state: ReloadState) {
+            reloadState = state
+            for window in NSApp.windows where isAppWindow(window) && isOn { attach(to: window) }
+        }
+
+        /// The button that reloads the app for a change waiting on it, beside the wand: tinted glass in the accent
+        /// colour whose tint brightens and settles again, so it's seen without being in the way (a push button in
+        /// the accent colour before macOS 26). Its tint is all that moves: faded as a whole it would look disabled.
+        /// A click asks Lamp to put the change in, by reopening the app as it was.
+        @MainActor final class ReloadButton: NSButton {
+            private var pulse: Timer?
+
+            static func make(floating: Bool) -> ReloadButton {
+                let button = ReloadButton(title: "Reload", image: NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil) ?? NSImage(),
+                                          target: Opener.shared, action: #selector(Opener.reload(_:)))
+                button.identifier = NSUserInterfaceItemIdentifier("lampReload")
+                button.imagePosition = .imageLeading
+                button.imageHugsTitle = true
+                if #available(macOS 26, *) {
+                    button.bezelStyle = .glass
+                    button.borderShape = .capsule
+                    button.tintProminence = .primary
+                } else {
+                    button.bezelStyle = .push
+                }
+                button.bezelColor = .controlAccentColor
+                button.toolTip = "Reload the app to see the latest change"
+                button.setAccessibilityLabel("Reload to see the latest change")
+                button.isHidden = true
+                return button
+            }
+
+            /// Shown while a change waits, and says so while the app reopens. As tall as the wand beside it, with its
+            /// words and symbol at the size of the toolbar's own, so the title bar reads as one row of buttons.
+            func show(_ state: ReloadState, height: CGFloat) {
+                isHidden = state == .none
+                isEnabled = state == .ready
+                title = state == .reloading ? "Reloading…" : "Reload"
+                let tall = height > 30
+                controlSize = tall ? .large : .regular
+                font = .systemFont(ofSize: tall ? 15 : NSFont.systemFontSize(for: .regular), weight: .medium)
+                image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)?
+                    .withSymbolConfiguration(.init(pointSize: tall ? 14 : 12, weight: .medium))
+                sizeToFit()
+                frame.size.height = height
+                breathe(state == .ready)
+            }
+
+            private func breathe(_ on: Bool) {
+                guard on else {
+                    pulse?.invalidate()
+                    pulse = nil
+                    bezelColor = .controlAccentColor
+                    return
+                }
+                guard pulse == nil else { return }
+                let start = Date()
+                pulse = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] timer in
+                    MainActor.assumeIsolated {
+                        // A button taken away with its window or its title bar stops, rather than tick on unseen.
+                        guard let self, self.window != nil else { return timer.invalidate() }
+                        let phase = (1 - cos(Date().timeIntervalSince(start) * 2 * .pi / 2.2)) / 2
+                        self.bezelColor = NSColor.controlAccentColor.blended(withFraction: 0.4 * phase, of: .white)
+                    }
+                }
+            }
+
+            override func viewDidMoveToWindow() {
+                super.viewDidMoveToWindow()
+                if window == nil {
+                    pulse?.invalidate()
+                    pulse = nil
+                } else if !isHidden, isEnabled {
+                    breathe(true)
+                }
+            }
+
+            // One click works in a window in the back too, as it does on the wand beside it.
+            override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
         }
 
         /// A window whose content runs under a title bar with nothing drawn in it (a game, a full-bleed app) has no
@@ -4512,6 +5596,14 @@ enum Template {
             let right = bar.bounds.width - inset
             wand.autoresizingMask = [.minXMargin]
             wand.frame = NSRect(x: (right - side).rounded(), y: (zoom.frame.midY - side / 2).rounded(), width: side, height: side)
+            let reload = bar.subviews.compactMap { $0 as? ReloadButton }.first ?? {
+                let made = ReloadButton.make(floating: true)
+                bar.addSubview(made)
+                return made
+            }()
+            reload.show(reloadState, height: side)
+            reload.autoresizingMask = [.minXMargin]
+            reload.frame.origin = NSPoint(x: (wand.frame.minX - 8 - reload.frame.width).rounded(), y: (wand.frame.midY - reload.frame.height / 2).rounded())
             showWand(in: window)
         }
 
@@ -4602,11 +5694,14 @@ enum Template {
             if let floating = wand as? FloatingWand {
                 floating.active = open
             } else {
-                // A toggle that's on, as a toolbar's are drawn lit, and the symbol in the accent colour itself: a tint
-                // alone doesn't show on a glass button, nor in a window that isn't in front.
+                // A toggle that's on, as a toolbar's are drawn lit. In the window in front the lit glass is filled
+                // with the accent colour and draws the symbol white; behind, or with the app in the back, the glass
+                // is gray and the symbol is put in the accent colour itself, since a tint alone doesn't show there.
+                // An accent symbol on the accent glass all but disappeared.
+                let inFront = NSApp.isActive && window.isMainWindow
                 wand.setButtonType(.pushOnPushOff)
                 wand.state = open ? .on : .off
-                wand.image = LampGlyph.image(pointSize: 14, weight: .medium, color: open ? .controlAccentColor : nil)
+                wand.image = LampGlyph.image(pointSize: 14, weight: .medium, color: open && !inFront ? .controlAccentColor : nil)
             }
         }
 
@@ -4618,7 +5713,7 @@ enum Template {
             reported = true
             let shown = window.isVisible && !window.isMiniaturized && !window.styleMask.contains(.fullScreen)
             DistributedNotificationCenter.default().postNotificationName(
-                Notification.Name("{{NOTE}}windowFrame"), object: Bundle.main.bundleIdentifier,
+                Notification.Name(LampInstall.note + "windowFrame"), object: Bundle.main.bundleIdentifier,
                 userInfo: ["frame": shown ? NSStringFromRect(window.frame) : ""], deliverImmediately: true)
         }
 
@@ -4627,6 +5722,27 @@ enum Template {
             @objc func open(_ sender: NSButton) {
                 guard let window = sender.window ?? NSApp.keyWindow ?? NSApp.mainWindow, isAppWindow(window) else { return }
                 LampSidebar.toggle(window)
+            }
+            /// Asks Lamp to put in the change that's waiting: it closes the app the usual way and opens it again
+            /// where it was. Only a change Lamp holds for this app goes in, whoever asks.
+            @objc func reload(_ sender: NSButton) {
+                guard reloadState == .ready else { return }
+                setReload(.reloading)
+                if NSRunningApplication.runningApplications(withBundleIdentifier: LampInstall.host).isEmpty {
+                    // Lamp was quit: the link opens it, and it reloads the app once it's running.
+                    let configuration = NSWorkspace.OpenConfiguration()
+                    configuration.activates = false
+                    NSWorkspace.shared.open(LampInstall.link("reload"), configuration: configuration)
+                } else {
+                    DistributedNotificationCenter.default().postNotificationName(
+                        Notification.Name(LampInstall.note + "reloadNow"), object: nil,
+                        userInfo: ["app": LampInstall.slug], deliverImmediately: true)
+                }
+                // The app is closed for the change within moments. Still open later, the request didn't arrive (or
+                // the change went in another way): the button is there to press again.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+                    MainActor.assumeIsolated { if reloadState == .reloading { setReload(.ready) } }
+                }
             }
         }
     }
@@ -4769,7 +5885,7 @@ enum Template {
         @MainActor static func openFromMenu() {
             if LampMagic.isOn, frontWindow() == nil, LampMenuBar.isInstalled { return LampMenuBar.customize() }
             guard LampMagic.isOn, let window = frontWindow(), !window.isMiniaturized else {
-                NSWorkspace.shared.open(URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!)
+                NSWorkspace.shared.open(LampInstall.link("edit"))
                 return
             }
             window.makeKeyAndOrderFront(nil)
@@ -4848,7 +5964,7 @@ enum Template {
             coach(window)
         }
 
-        /// The width a window was made narrower by, handed on as the app quits for a change (`LampMagic.leaveCover`)
+        /// The width a window was made narrower by, handed on as the app quits for a change (`LampMagic.leavePlace`)
         /// to the window put back in its place (`LampMagic.putBack`), or the new copy's first window when none is put
         /// back, whose chat gives it back when it closes. Only that window takes it: another was never narrowed.
         @MainActor static func handOn(_ window: NSWindow) {
@@ -5351,13 +6467,6 @@ enum Template {
             }
         }
 
-        /// Where the chat beside a window is now, for the picture Lamp shows in the app's place while a change reopens
-        /// it (`LampMagic.leaveCover`); nothing when it's closed.
-        @MainActor static func panelFrame(of window: NSWindow) -> NSRect? {
-            guard let chat = chat(in: window), chat.inPanel, let panel = chat.panel else { return nil }
-            return panel.frame.insetBy(dx: Beside.shade, dy: Beside.shade)
-        }
-
         /// The chat's paper, as the chat draws it (`ChatLook.paper`): a warm off-white, a warm near-black in the dark.
         private final class Paper: NSView {
             override init(frame: NSRect) {
@@ -5616,20 +6725,20 @@ enum Template {
         /// Lamp listens for the chat: told directly when it's running (so this Lamp answers, not another copy),
         /// else started by its link, without coming in front.
         @MainActor private static func tellLamp() {
-            if !NSRunningApplication.runningApplications(withBundleIdentifier: "{{HOST}}").isEmpty {
+            if !NSRunningApplication.runningApplications(withBundleIdentifier: LampInstall.host).isEmpty {
                 DistributedNotificationCenter.default().postNotificationName(
-                    Notification.Name("{{NOTE}}sidebar"), object: nil, userInfo: ["app": "{{SLUG}}"], deliverImmediately: true)
+                    Notification.Name(LampInstall.note + "sidebar"), object: nil, userInfo: ["app": LampInstall.slug], deliverImmediately: true)
                 return
             }
             let configuration = NSWorkspace.OpenConfiguration()
             configuration.activates = false
-            NSWorkspace.shared.open(URL(string: "{{SCHEME}}://sidebar?app={{SLUG}}")!, configuration: configuration)
+            NSWorkspace.shared.open(LampInstall.link("sidebar"), configuration: configuration)
         }
 
         /// No chat in this copy of the app (installed by a Lamp from before it): the chat in Lamp's window.
         @MainActor private static func fallback() {
             UserDefaults.standard.set(false, forKey: openKey)
-            NSWorkspace.shared.open(URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!)
+            NSWorkspace.shared.open(LampInstall.link("edit"))
         }
     }
 
@@ -5641,7 +6750,7 @@ enum Template {
         static let start: Void = {
             LampBackground.start
             DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("{{NOTE}}showWindow"), object: Bundle.main.bundleIdentifier, queue: .main
+                forName: Notification.Name(LampInstall.note + "showWindow"), object: Bundle.main.bundleIdentifier, queue: .main
             ) { _ in
                 MainActor.assumeIsolated { show() }
             }
@@ -5710,7 +6819,7 @@ enum Template {
         /// take a missing ordinary window for a failure and relaunch the app.
         private static func shown() {
             DistributedNotificationCenter.default().postNotificationName(
-                Notification.Name("{{NOTE}}windowShown"), object: Bundle.main.bundleIdentifier, userInfo: nil, deliverImmediately: true)
+                Notification.Name(LampInstall.note + "windowShown"), object: Bundle.main.bundleIdentifier, userInfo: nil, deliverImmediately: true)
         }
 
         /// The menu item that opens a window: File ▸ New Window (⌘N) while it still does that, or for an app with
@@ -5754,7 +6863,7 @@ enum Template {
     /// Saves what this app prints (`print`, `NSLog`, SwiftUI runtime warnings, fatal errors) and a picture of
     /// its windows to its Lamp project, where Lamp's builder looks to see what happened while the app ran.
     enum LampRuntime {
-        static let folder = URL(fileURLWithPath: "{{APPS}}/{{SLUG}}/.lamp/runtime")
+        static let folder = URL(fileURLWithPath: LampInstall.app + "/.lamp/runtime")
 
         /// Runs once, at launch. Each launch starts a new log.txt and keeps the one before as previous-log.txt.
         static let start: Void = {
@@ -5764,36 +6873,42 @@ enum Template {
             try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
             // Pictures: once the first window has settled, and whenever the user leaves the app
             // (often to ask Lamp for a change).
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { MainActor.assumeIsolated { snapshot() } }
+            DispatchQueue.main.async { MainActor.assumeIsolated { firstSnapshot() } }
             NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification,
                                                    object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { snapshot() }
             }
             // Lamp asks for fresh pictures when its builder wants to look at the app.
             DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("{{NOTE}}snapshot.{{SLUG}}"), object: nil, queue: .main) { _ in
+                forName: Notification.Name(LampInstall.note + "snapshot." + LampInstall.slug), object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { snapshot() }
             }
             // ...and a few seconds of its front window, frame after frame, when the builder wants to see what moves.
             DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("{{NOTE}}motion.{{SLUG}}"), object: nil, queue: .main) { _ in
+                forName: Notification.Name(LampInstall.note + "motion." + LampInstall.slug), object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { recordMotion() }
             }
             // ...and clicks, types and presses keys in it when the builder wants to try something (LampDriver).
             DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("{{NOTE}}useApp.{{SLUG}}"), object: nil, queue: .main) { note in
+                forName: Notification.Name(LampInstall.note + "useApp." + LampInstall.slug), object: nil, queue: .main) { note in
                 let actions = note.userInfo?["actions"] as? String, id = note.userInfo?["id"] as? String
                 let signature = note.userInfo?["lampUseAppSignature"] as? String
                 MainActor.assumeIsolated { LampDriver.perform(actions, id: id, signature: signature) }
+            }
+            // ...and stops part way through when the person takes the app back with Lamp's Stop.
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name(LampInstall.note + "useAppStop." + LampInstall.slug), object: nil, queue: .main) { note in
+                let id = note.userInfo?["id"] as? String, signature = note.userInfo?["lampUseAppStop"] as? String
+                MainActor.assumeIsolated { LampDriver.Handover.stop(id: id, signature: signature, token: LampInstall.token) }
             }
             // ...and, before it asks the app to quit for a rebuild, whether it still answers, so it can tell the
             // person when an app isn't responding rather than wait in silence. Answered on the main thread,
             // since that's the one a stuck app has lost. The file says this copy listens.
             let pid = String(ProcessInfo.processInfo.processIdentifier)
             DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("{{NOTE}}stillThere.{{SLUG}}"), object: nil, queue: .main) { _ in
+                forName: Notification.Name(LampInstall.note + "stillThere." + LampInstall.slug), object: nil, queue: .main) { _ in
                 DistributedNotificationCenter.default().postNotificationName(
-                    Notification.Name("{{NOTE}}here.{{SLUG}}"), object: pid, userInfo: nil, deliverImmediately: true)
+                    Notification.Name(LampInstall.note + "here." + LampInstall.slug), object: pid, userInfo: nil, deliverImmediately: true)
             }
             try? pid.write(to: folder.appendingPathComponent("listening"), atomically: true, encoding: .utf8)
             let log = folder.appendingPathComponent("log.txt")
@@ -5801,6 +6916,7 @@ enum Template {
             try? fm.removeItem(at: previous)
             try? fm.moveItem(at: log, to: previous)
             LampWidgetPlacement.start
+            LampTransition.start
             guard freopen(log.path, "a", stderr) != nil else { return }
             dup2(fileno(stderr), STDOUT_FILENO)
             setvbuf(stdout, nil, _IOLBF, 0)   // so nothing is lost if the app crashes
@@ -5812,6 +6928,18 @@ enum Template {
             }
             trimmer.resume()
         }()
+
+        /// The first pictures after launch, which Lamp's builder waits for when it opens the app to look at it: half a
+        /// second after a window is first on screen, time for it to draw and finish appearing, or at two seconds
+        /// whatever there is (a menu bar app may have nothing).
+        @MainActor
+        private static func firstSnapshot(waited: Double = 0) {
+            guard windowsOnScreen.isEmpty, waited < 2 else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + (waited < 2 ? 0.5 : 0)) { MainActor.assumeIsolated { snapshot() } }
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { MainActor.assumeIsolated { firstSnapshot(waited: waited + 0.1) } }
+        }
 
         /// Saves up to three open windows, frontmost first, as screenshot.png, screenshot-2.png and screenshot-3.png.
         /// An app may picture its own windows without screen recording permission.
@@ -5862,7 +6990,10 @@ enum Template {
             var windows = NSApp.orderedWindows.flatMap(withSheets)
             // Alerts and panels shown on their own.
             windows.insert(contentsOf: NSApp.windows.filter { $0 is NSPanel && !$0.isSheet && !windows.contains($0) }, at: 0)
-            return windows.filter { $0.isVisible && !$0.isMiniaturized && $0.frame.width > 40 && $0.frame.height > 40 }
+            // Not the clear windows a change's effect is drawn in (LampTransition), nor the chat's panel beside a window,
+            // which another process draws and the app pictures as blank: the pictures are of the app.
+            return windows.filter { $0.isVisible && !$0.isMiniaturized && $0.frame.width > 40 && $0.frame.height > 40
+                && !($0 is LampTransition.Glass) && !($0 is LampSidebar.Beside) }
         }
 
         /// Picture pixels per window point: at most 1400 pixels on the long side, a size models see unscaled.
@@ -6008,6 +7139,289 @@ enum Template {
         }()
     }
 
+    // LampTransition
+    /// While Lamp builds a change for this app, its windows glow softly at their edges, and when the change goes in
+    /// a band of light crosses them once, so the change looks alive rather than abrupt. Only Lamp starts it: the
+    /// request is signed with the app's token (the "lampTransitionSignature" key marks the builds that understand
+    /// it), and nothing here is reachable from the app's own code. It's drawn in clear windows laid over the app's
+    /// (children, so they move and stack with them) that let every click through, and the pictures Lamp takes for
+    /// its builder are of the app's windows alone, so the effect is never in them.
+    fileprivate enum LampTransition {
+        static let start: Void = {
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name(LampInstall.note + "transition." + LampInstall.slug), object: nil, queue: .main
+            ) { note in
+                let info = note.userInfo
+                let phase = info?["phase"] as? String ?? "", id = info?["id"] as? String ?? ""
+                let at = info?["at"] as? String ?? "", signature = info?["lampTransitionSignature"] as? String ?? ""
+                MainActor.assumeIsolated {
+                    guard gate.admits(phase: phase, id: id, at: at, signature: signature, now: Date()) else { return }
+                    switch phase {
+                    case "begin": begin()
+                    case "land": land()
+                    default: end()
+                    }
+                }
+            }
+            for name in [NSWindow.didResizeNotification, NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
+                NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { note in
+                    MainActor.assumeIsolated {
+                        guard let window = note.object as? NSWindow, let glass = glasses.first(where: { $0.over === window }) else { return }
+                        glass.fit()
+                    }
+                }
+            }
+        }()
+
+        /// Whether a request is Lamp's, and new: signed with the token over its phase, id and time, sent in the
+        /// last few seconds, and not seen before, so a request another process overheard can't be played again.
+        struct Gate {
+            let token: String
+            private var seen: [String] = []
+
+            init(token: String) { self.token = token }
+
+            static func signature(phase: String, id: String, at: String, token: String) -> String {
+                HMAC<SHA256>.authenticationCode(for: Data("transition\n\(id)\n\(phase)\n\(at)".utf8), using: SymmetricKey(data: Data(token.utf8)))
+                    .map { String(format: "%02x", $0) }.joined()
+            }
+
+            mutating func admits(phase: String, id: String, at: String, signature: String, now: Date) -> Bool {
+                guard !token.isEmpty, !id.isEmpty, ["begin", "land", "end"].contains(phase), let sent = Double(at),
+                      abs(now.timeIntervalSince1970 - sent) < 10, !seen.contains(id),
+                      signature == Self.signature(phase: phase, id: id, at: at, token: token) else { return false }
+                seen.append(id)
+                if seen.count > 64 { seen.removeFirst(seen.count - 64) }
+                return true
+            }
+        }
+
+        @MainActor private static var gate = Gate(token: LampInstall.token)
+        @MainActor private static var glasses: [Glass] = []
+        /// An effect never outlives what it's for: a begin Lamp stops renewing (it renews it while a build runs) fades by itself.
+        @MainActor private static var timeout: DispatchWorkItem?
+        private static let patience: TimeInterval = 90
+
+        private static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+
+        /// The app's own windows and its menu bar panel: not dialogs, sheets or the chat beside it, which says what's going on itself.
+        @MainActor private static var windows: [NSWindow] {
+            NSApp.windows.filter { ($0 is Glass) == false && $0.isVisible && !$0.isMiniaturized
+                && (LampMagic.isAppWindow($0) || LampDriver.isBarPanel($0)) && $0.frame.width > 40 && $0.frame.height > 40 }
+        }
+
+        @MainActor static func begin() {
+            renew()
+            glasses.removeAll { $0.over == nil || $0.isLeaving }
+            for window in windows where !glasses.contains(where: { $0.over === window }) {
+                let glass = Glass(over: window)
+                glasses.append(glass)
+                glass.glow(still: reduceMotion)
+            }
+        }
+
+        /// The change went in: a band of light crosses each window once (a soft wash where motion is reduced), then the glow goes.
+        @MainActor static func land() {
+            timeout?.cancel()
+            if glasses.isEmpty {
+                // A copy opened for this change never saw the begin: it shows that it's new all the same.
+                for window in windows { glasses.append(Glass(over: window)) }
+            }
+            for glass in glasses { glass.reveal(still: reduceMotion) }
+            glasses.removeAll()
+        }
+
+        @MainActor static func end() {
+            timeout?.cancel()
+            for glass in glasses { glass.fade() }
+            glasses.removeAll()
+        }
+
+        @MainActor private static func renew() {
+            timeout?.cancel()
+            let work = DispatchWorkItem { MainActor.assumeIsolated { end() } }
+            timeout = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + patience, execute: work)
+        }
+
+        /// A clear window over one of the app's, holding the effect's layers. Core Animation runs them out of the
+        /// app's process, so they keep moving while the app is busy taking the change in.
+        @MainActor final class Glass: NSPanel {
+            weak var over: NSWindow?
+            private(set) var isLeaving = false
+            private let glowLayer = CALayer()
+            private let shine = CAGradientLayer()
+            private let wash = CALayer()
+
+            init(over window: NSWindow) {
+                over = window
+                super.init(contentRect: window.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+                isOpaque = false
+                backgroundColor = .clear
+                hasShadow = false
+                ignoresMouseEvents = true
+                isReleasedWhenClosed = false
+                hidesOnDeactivate = false
+                animationBehavior = .none
+                let view = NSView(frame: NSRect(origin: .zero, size: window.frame.size))
+                view.wantsLayer = true
+                view.autoresizingMask = [.width, .height]
+                contentView = view
+                view.layer?.masksToBounds = true
+                view.layer?.cornerRadius = Self.cornerRadius(of: window)
+                for layer in [wash, shine, glowLayer] {
+                    layer.opacity = 0
+                    view.layer?.addSublayer(layer)
+                }
+                arrange()
+                window.addChildWindow(self, ordered: .above)
+            }
+
+            override var canBecomeKey: Bool { false }
+            override var canBecomeMain: Bool { false }
+
+            /// The colours the glow goes round, the same as the light round a wish being built on the desk (`BuildingGlow`).
+            static let hues: [NSColor] = [.systemBlue, .systemPurple, .systemOrange]
+
+            /// The window's own rounding, so the glow follows its corners; macOS's usual when it doesn't say.
+            private static func cornerRadius(of window: NSWindow) -> CGFloat {
+                guard window.styleMask.contains(.titled), !window.styleMask.contains(.fullScreen) else { return 0 }
+                if window.responds(to: NSSelectorFromString("_cornerRadius")),
+                   let radius = window.value(forKey: "_cornerRadius") as? CGFloat, radius > 0 { return radius }
+                return 12
+            }
+
+            func fit() {
+                guard let over else { return }
+                setFrame(over.frame, display: true)
+                contentView?.layer?.cornerRadius = Self.cornerRadius(of: over)
+                arrange()
+            }
+
+            private func arrange() {
+                guard let bounds = contentView?.bounds else { return }
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                let radius = contentView?.layer?.cornerRadius ?? 12
+                glowLayer.frame = bounds
+                glowLayer.sublayers?.forEach { $0.removeFromSuperlayer() }
+                // Only blur, no line: each band is drawn just outside the window, where the window's own rounding cuts
+                // it off, so all that shows is its shadow coming in from the edge. A wide one, and a nearer one twice over for its colour to carry.
+                for (blur, strength) in [(CGFloat(60), Float(0.9)), (28, 1), (28, 1)] {
+                    let band: CGFloat = 40
+                    let edge = CAShapeLayer()
+                    edge.frame = bounds
+                    edge.path = CGPath(roundedRect: bounds.insetBy(dx: -band / 2, dy: -band / 2), cornerWidth: radius + band / 2,
+                                       cornerHeight: radius + band / 2, transform: nil)
+                    edge.fillColor = nil
+                    edge.strokeColor = NSColor.white.cgColor
+                    edge.lineWidth = band
+                    edge.shadowColor = Self.hues[0].cgColor
+                    edge.shadowOpacity = strength
+                    edge.shadowRadius = blur
+                    edge.shadowOffset = .zero
+                    // The colour goes round blue, purple and orange, slowly, while the glow lasts.
+                    let cycle = CAKeyframeAnimation(keyPath: "shadowColor")
+                    cycle.values = (Self.hues + [Self.hues[0]]).map(\.cgColor)
+                    cycle.duration = 6
+                    cycle.repeatCount = .infinity
+                    cycle.calculationMode = .linear
+                    edge.add(cycle, forKey: "hue")
+                    glowLayer.addSublayer(edge)
+                }
+                wash.frame = bounds
+                wash.backgroundColor = NSColor.white.withAlphaComponent(0.22).cgColor
+                // The band of light is wider than the window is tall, laid at a slant, and starts off its left edge.
+                let side = hypot(bounds.width, bounds.height)
+                shine.bounds = CGRect(x: 0, y: 0, width: max(side * 0.35, 160), height: side * 1.6)
+                shine.position = CGPoint(x: -shine.bounds.width, y: bounds.midY)
+                shine.setAffineTransform(CGAffineTransform(rotationAngle: -.pi / 9))
+                shine.startPoint = CGPoint(x: 0, y: 0.5)
+                shine.endPoint = CGPoint(x: 1, y: 0.5)
+                let light = NSColor.white.blended(withFraction: 0.2, of: .systemPurple) ?? .white
+                shine.colors = [light.withAlphaComponent(0).cgColor, light.withAlphaComponent(0.38).cgColor, light.withAlphaComponent(0).cgColor]
+                shine.locations = [0, 0.5, 1]
+                CATransaction.commit()
+            }
+
+            /// How strongly the glow shows at its brightest: enough to see that something is coming, faint enough that
+            /// the app can go on being used under it.
+            static let strength: Float = 0.3
+
+            /// The glow comes up and breathes, or stays still where motion is reduced.
+            func glow(still: Bool) {
+                orderFront(nil)
+                Self.animate(glowLayer, "opacity", from: 0, to: Self.strength * (still ? 0.8 : 1), duration: 0.45)
+                guard !still else { return }
+                let breathe = CABasicAnimation(keyPath: "opacity")
+                breathe.fromValue = Self.strength
+                breathe.toValue = Self.strength * 0.45
+                breathe.duration = 1.2
+                breathe.autoreverses = true
+                breathe.repeatCount = .infinity
+                breathe.beginTime = CACurrentMediaTime() + 0.45
+                breathe.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                glowLayer.add(breathe, forKey: "breathe")
+            }
+
+            func reveal(still: Bool) {
+                isLeaving = true
+                orderFront(nil)
+                glowLayer.removeAnimation(forKey: "breathe")
+                let glowing = glowLayer.presentation()?.opacity ?? glowLayer.opacity
+                if still {
+                    Self.animate(wash, "opacity", from: 1, to: 0, duration: 0.6)
+                } else {
+                    // A brief brightening that settles as the band passes, covering the moment the new code draws.
+                    let flash = CAKeyframeAnimation(keyPath: "opacity")
+                    flash.values = [0, 1, 0]
+                    flash.keyTimes = [0, 0.2, 1]
+                    flash.duration = 0.7
+                    wash.add(flash, forKey: "flash")
+                    let width = contentView?.bounds.width ?? 0
+                    shine.opacity = 1
+                    let sweep = CABasicAnimation(keyPath: "position.x")
+                    sweep.fromValue = -shine.bounds.width / 2
+                    sweep.toValue = width + shine.bounds.width / 2
+                    sweep.duration = 0.75
+                    sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    sweep.fillMode = .forwards
+                    sweep.isRemovedOnCompletion = false
+                    shine.add(sweep, forKey: "sweep")
+                }
+                Self.animate(glowLayer, "opacity", from: glowing, to: 0, duration: still ? 0.6 : 0.9)
+                close(after: 1.0)
+            }
+
+            func fade() {
+                isLeaving = true
+                glowLayer.removeAnimation(forKey: "breathe")
+                Self.animate(glowLayer, "opacity", from: glowLayer.presentation()?.opacity ?? glowLayer.opacity, to: 0, duration: 0.35)
+                close(after: 0.4)
+            }
+
+            private func close(after seconds: Double) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+                    MainActor.assumeIsolated {
+                        self.over?.removeChildWindow(self)
+                        self.orderOut(nil)
+                    }
+                }
+            }
+
+            private static func animate(_ layer: CALayer, _ key: String, from: Float, to: Float, duration: Double) {
+                let animation = CABasicAnimation(keyPath: key)
+                animation.fromValue = from
+                animation.toValue = to
+                animation.duration = duration
+                animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                layer.setValue(to, forKey: key)
+                layer.add(animation, forKey: key)
+            }
+        }
+    }
+    // end LampTransition
+
     #endif
 
     /// Keeps the app's data safe across launches and across changes to the app, in a SQLite database
@@ -6038,8 +7452,8 @@ enum Template {
             // On a Mac the data is kept under the app's plain id, whatever the app is signed as: an app made for
             // the Mac and later made for the iPhone too carries its team in its id, and its data stays where it
             // was. One that was kept under its signed id before is moved here once.
-            let url = base.appendingPathComponent("{{DATAID}}")
-            if let signed = Bundle.main.bundleIdentifier, signed != "{{DATAID}}" {
+            let url = base.appendingPathComponent(LampInstall.dataID)
+            if let signed = Bundle.main.bundleIdentifier, signed != LampInstall.dataID {
                 let old = base.appendingPathComponent(signed)
                 if FileManager.default.fileExists(atPath: old.path), !FileManager.default.fileExists(atPath: url.path) {
                     try? FileManager.default.moveItem(at: old, to: url)
@@ -6557,12 +7971,114 @@ enum Template {
             var to_y: Double?
         }
 
+        // begin LampDriver.Handover
+        /// The batch of actions being carried out, and the person's way to take the app back part way through it.
+        /// Lamp's Stop (or Esc while Lamp is in front) arrives as a stop signed like the request. The person's own
+        /// click or key in the app is seen here as it reaches the app: the driver's own events go straight to the
+        /// window, never through the app's event queue, and the one kind that does (a key held down) is marked.
+        /// Either way nothing more is done, keys held down are let go, and Lamp hears at once how far it got.
+        @MainActor
+        final class Handover {
+            private(set) static var current: Handover?
+            let id: String
+            let count: Int
+            /// How many of the actions have been begun.
+            var done = 0
+            private(set) var stopped = false
+            private let finish: (String) -> Void
+            private var held: [(up: NSEvent, timer: Timer)] = []
+            /// When the driver's own queued presses were made: the queue keeps a press's time only to the
+            /// nanosecond, so it's matched within a hair of that.
+            private var own: [TimeInterval] = []
+            private static var monitor: Any?
+
+            private init(id: String, count: Int, finish: @escaping (String) -> Void) {
+                self.id = id
+                self.count = count
+                self.finish = finish
+            }
+
+            /// A new batch. One still running is no longer carried on: its steps ask `carriesOn` first.
+            static func begin(id: String, count: Int, finish: @escaping (String) -> Void) -> Handover {
+                current?.letGo()
+                let batch = Handover(id: id, count: count, finish: finish)
+                current = batch
+                watch()
+                return batch
+            }
+
+            /// Whether the batch's next step may run: it wasn't stopped, and no newer batch took its place.
+            var carriesOn: Bool { !stopped && Self.current === self }
+
+            /// Every action was carried out: from now on the person's clicks and keys are just theirs.
+            func end() {
+                if Self.current === self { Self.current = nil }
+            }
+
+            /// A key held down by the driver: pressed now through the app's own event queue (where a game's key
+            /// monitors see it) and let go after `seconds`, or at once if the batch stops first.
+            func hold(_ down: NSEvent, _ up: NSEvent, for seconds: Double) {
+                own.append(down.timestamp)
+                NSApp.postEvent(down, atStart: false)
+                let timer = Timer(timeInterval: seconds, repeats: false) { timer in
+                    MainActor.assumeIsolated {
+                        guard let index = self.held.firstIndex(where: { $0.timer === timer }) else { return }
+                        NSApp.postEvent(self.held.remove(at: index).up, atStart: false)
+                    }
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                held.append((up, timer))
+            }
+
+            /// Ends the batch where it is: nothing more is done, keys held down are let go, and Lamp is told.
+            func stop() {
+                guard carriesOn else { return }
+                stopped = true
+                letGo()
+                finish("Stopped after \(done) of \(count) action\(count == 1 ? "" : "s"): the person took the app over. Nothing after that was done.")
+            }
+
+            private func letGo() {
+                for key in held {
+                    key.timer.invalidate()
+                    NSApp.postEvent(key.up, atStart: true)
+                }
+                held = []
+            }
+
+            /// Lamp's Stop for batch `id`, signed with the app's token like the request, so no other process can stop it.
+            static func stop(id: String?, signature: String?, token: String) {
+                guard let id, let signature, let batch = current, batch.id == id else { return }
+                let expected = HMAC<SHA256>.authenticationCode(for: Data("stop\n\(id)".utf8), using: SymmetricKey(data: Data(token.utf8)))
+                    .map { String(format: "%02x", $0) }.joined()
+                guard signature == expected else { return }
+                batch.stop()
+            }
+
+            /// The person's own presses, as they reach the app, while a batch runs. Esc only stops; anything else
+            /// goes on to the app as they meant it, so what they click or type isn't lost.
+            private static func watch() {
+                guard monitor == nil else { return }
+                monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]) { event in
+                    let made = event.timestamp, escape = event.type == .keyDown && event.keyCode == 53
+                    let stopped = MainActor.assumeIsolated { () -> Bool in
+                        guard let batch = current, batch.carriesOn, !batch.own.contains(where: { abs($0 - made) < 0.000_01 }) else { return false }
+                        batch.stop()
+                        return true
+                    }
+                    return stopped && escape ? nil : event
+                }
+            }
+        }
+        // end LampDriver.Handover
+
         /// Only Lamp knows this app's token, so only Lamp can sign a request (the "lampUseAppSignature" key marks
-        /// builds that check it; notifications reach every process, so the token itself never travels).
+        /// builds that check it; notifications reach every process, so the token itself never travels). Builds
+        /// that take Lamp's Stop (`Handover`) have "lampUseAppStop" in them.
         static func perform(_ json: String?, id: String?, signature: String?) {
             guard let id, let json, let signature, let data = json.data(using: .utf8),
                   let actions = try? JSONDecoder().decode([Action].self, from: data) else { return }
-            let key = SymmetricKey(data: Data("{{TOKEN}}".utf8))
+            let key = SymmetricKey(data: Data(LampInstall.token.utf8))
             let expected = HMAC<SHA256>.authenticationCode(for: Data("\(id)\n\(json)".utf8), using: key)
                 .map { String(format: "%02x", $0) }.joined()
             guard signature == expected else { return }
@@ -6571,6 +8087,29 @@ enum Template {
             let front = LampRuntime.windowsOnScreen.first
             let before = front.flatMap(LampRuntime.picture), dialog = front.map(isDialog) ?? false
             var report: [String] = []
+            func answer(stopped: Bool) {
+                LampRuntime.snapshot()
+                var answer = ["id": id, "report": report.joined(separator: "\n")]
+                if stopped { answer["stopped"] = "person" }
+                try? JSONSerialization.data(withJSONObject: answer)
+                    .write(to: LampRuntime.folder.appendingPathComponent("use.json"), options: .atomic)
+            }
+            let batch = Handover.begin(id: id, count: actions.count) { why in
+                // The person has the app now, the menu bar icon's panel included: it takes the keyboard again and
+                // isn't put back up.
+                if holdsBarPanel { forgetBarPanel() }
+                report.append(why)
+                answer(stopped: true)
+            }
+            // Which window the actions are in, before any of them and whenever an action changes it (a panel
+            // opened, a dialog): Lamp's glow goes round it from the start.
+            var told: Int?
+            func tellWindow() {
+                guard let window = LampRuntime.windowsOnScreen.first, window.windowNumber != told else { return }
+                told = window.windowNumber
+                announce(id, window: window.windowNumber)
+            }
+            tellWindow()
             // The last action that should have changed something: its line, and how its window looked before.
             var last: (line: Int, window: NSWindow, picture: Data?)?
             func note() {
@@ -6579,39 +8118,126 @@ enum Template {
                       LampRuntime.picture(of: last.window) == last.picture else { return }
                 report[last.line] += " (nothing changed on screen)"
             }
-            func step(_ index: Int) {
+            /// `shown` is where Lamp's cursor was sent for this action during the pause before it, if anywhere;
+            /// the spot is found again now that it's due, since the app may have moved it meanwhile.
+            func step(_ index: Int, shown: Aim?) {
+                guard batch.carriesOn else { return }
                 keepBarPanel()
                 note()
                 guard index < actions.count else {
+                    batch.end()
                     // Let the app react, then show the result.
                     after(0.6) {
                         keepBarPanel()
                         report.append(outcome(since: front, before, wasDialog: dialog))
-                        LampRuntime.snapshot()
-                        let answer = ["id": id, "report": report.joined(separator: "\n")]
-                        try? JSONSerialization.data(withJSONObject: answer)
-                            .write(to: LampRuntime.folder.appendingPathComponent("use.json"), options: .atomic)
+                        answer(stopped: false)
                     }
                     return
                 }
                 let action = actions[index]
                 let held = action.action == "key" ? min(action.amount ?? 0, 10) : 0
                 let pause = action.action == "wait" ? min(action.amount ?? 1, 10) : action.action == "bar_icon" ? 1 : held > 0 ? held + 0.2 : 0.35
+                // The cursor is on the spot already, sent there during the last pause. Where it isn't (the first
+                // action; a target that wasn't on screen yet; one that has moved since, or a window that has opened
+                // over it), it goes now, and the action waits the lead for it.
+                var lead = 0.0
+                if let aim = aimed(action), !(shown.map { $0.window == aim.window && hypot($0.point.x - aim.point.x, $0.point.y - aim.point.y) < 2 } ?? false) {
+                    announce(id, aim, in: Self.lead)
+                    lead = Self.lead
+                }
+                let due = lead + pause
                 // The next step is set up first: a click that opens a save panel or an alert doesn't return until
                 // that closes, and the steps after it are how it gets answered.
-                after(pause) { step(index + 1) }
-                let line = report.count
-                report.append("\(action.action): opened something that waits for an answer before the app carries on")
-                if action.action != "wait", action.item == nil, let window = LampRuntime.windowsOnScreen.first,
-                   !(window is NSSavePanel) {
-                    last = (line, window, LampRuntime.picture(of: window))
+                var next: Aim?
+                after(due) { step(index + 1, shown: next) }
+                // The next action's spot is shown while this one's pause runs, so the cursor is there when it's
+                // due and nothing waits for it: once the app has taken this action up (`settle`), and no sooner
+                // than the glide needs, so that after a long wait the screen is read late, not at its start.
+                if index + 1 < actions.count {
+                    let early = max(lead + Self.settle, due - 0.95)
+                    if due - early >= 0.2 {
+                        after(early) {
+                            guard batch.carriesOn, let aim = aimed(actions[index + 1]) else { return }
+                            next = aim
+                            announce(id, aim, in: due - early)
+                        }
+                    }
                 }
-                report[line] = run(action)
-                if action.action != "bar_icon" { keepBarPanel() }
-                // A menu that was only read out, or an action that found nothing to do, isn't expected to change anything.
-                if report[line].contains("\n") || report[line].contains("nothing on the screen is called that") || report[line].contains("several things are called that") { last = nil }
+                func act() {
+                    guard batch.carriesOn else { return }
+                    batch.done = index + 1
+                    let line = report.count
+                    report.append("\(action.action): opened something that waits for an answer before the app carries on")
+                    if action.action != "wait", action.item == nil, let window = LampRuntime.windowsOnScreen.first,
+                       !(window is NSSavePanel) {
+                        last = (line, window, LampRuntime.picture(of: window))
+                    }
+                    report[line] = run(action)
+                    if action.action != "bar_icon" { keepBarPanel() }
+                    tellWindow()
+                    // A menu that was only read out, or an action that found nothing to do, isn't expected to change anything.
+                    if report[line].contains("\n") || report[line].contains("nothing on the screen is called that") || report[line].contains("several things are called that") { last = nil }
+                }
+                if lead > 0 { after(lead) { act() } } else { act() }
             }
-            after(0) { step(0) }
+            after(0) { step(0, shown: nil) }
+        }
+
+        /// How long an action waits for Lamp's cursor when it couldn't be sent ahead (`step`): the first of a
+        /// batch, or one whose spot wasn't there to be seen during the pause before it.
+        static let lead = 0.2
+        /// How long after an action the next one's spot is looked for: a press is taken up on the run loop's
+        /// next turn, so what it opened or changed is on screen by then.
+        static let settle = 0.1
+
+        /// Where an action happens on screen, what it's doing in a few words, which window that's in, and
+        /// whether it presses there, for the cursor Lamp shows going to each spot first.
+        typealias Aim = (point: CGPoint, doing: String, window: Int, press: Bool)
+
+        /// Where an action happens on screen, what it's doing in a few words, and whether it presses there, for
+        /// the cursor Lamp shows going to each spot first. Nil for what happens nowhere in particular (a key, a
+        /// menu, a wait, typing into whatever has focus). The point is in screen points from the top left of the
+        /// main display, as Lamp draws.
+        private static func aimed(_ action: Action) -> Aim? {
+            let verbs = ["click": "clicking", "double_click": "double-clicking", "right_click": "right-clicking", "drag": "dragging",
+                         "scroll": "scrolling", "type": "typing into", "key": "pressing a key in"]
+            let named = action.target?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            guard var verb = verbs[action.action], named || !["type", "key"].contains(action.action),
+                  let window = LampRuntime.windowsOnScreen.first, !(window is NSSavePanel), let frame = window.contentView?.superview else { return nil }
+            var x = action.x, y = action.y, name = ""
+            if named, let target = action.target?.trimmingCharacters(in: .whitespacesAndNewlines) {
+                let items = elements(in: window).map(\.item)
+                guard case .one(let index) = LampScreen.find(target, in: items) else { return nil }
+                x = items[index].frame.midX
+                y = items[index].frame.midY
+                name = items[index].label.count > 30 ? String(items[index].label.prefix(29)) + "…" : items[index].label
+            }
+            guard let x, let y else { return nil }
+            if name.isEmpty { verb = verb.replacingOccurrences(of: " into", with: "").replacingOccurrences(of: " in", with: "") }
+            let scale = LampRuntime.scale(of: window)
+            let local = NSPoint(x: x / scale, y: frame.bounds.height - y / scale)
+            guard frame.bounds.contains(local) else { return nil }
+            let onScreen = window.convertPoint(toScreen: frame.convert(local, to: nil))
+            let top = NSScreen.screens.first?.frame.maxY ?? 0
+            return (CGPoint(x: onScreen.x, y: top - onScreen.y), name.isEmpty ? verb : verb + " " + name, window.windowNumber,
+                    ["click", "double_click", "right_click", "type"].contains(action.action))
+        }
+
+        /// Tells Lamp where the next action happens and how long until it does (`in`, seconds: the cursor is paced
+        /// to arrive just before), or just which window the actions are in. In the notification's object, the
+        /// one part a sandboxed app may send.
+        private static func announce(_ id: String, _ aim: Aim, in seconds: Double) {
+            announce(id, ["x": aim.point.x, "y": aim.point.y, "doing": aim.doing, "window": aim.window, "press": aim.press, "in": seconds])
+        }
+
+        private static func announce(_ id: String, window: Int) { announce(id, ["window": window]) }
+
+        private static func announce(_ id: String, _ fields: [String: Any]) {
+            let step = fields.merging(["id": id]) { $1 }
+            guard let data = try? JSONSerialization.data(withJSONObject: step) else { return }
+            DistributedNotificationCenter.default().postNotificationName(
+                Notification.Name(LampInstall.note + "useAppStep." + LampInstall.slug), object: String(decoding: data, as: UTF8.self),
+                userInfo: nil, deliverImmediately: true)
         }
 
         /// Steps run from run-loop timers, not the main dispatch queue: that queue stands still while a step is
@@ -6761,8 +8387,8 @@ enum Template {
                     let hold = min(seconds, 10)
                     guard let down = event(.keyDown, characters, code, flags, window),
                           let up = event(.keyUp, characters, code, flags, window) else { return "key \(name): couldn't press it" }
-                    NSApp.postEvent(down, atStart: false)
-                    after(hold) { NSApp.postEvent(up, atStart: false) }
+                    guard let batch = Handover.current else { return "key \(name): couldn't press it" }
+                    batch.hold(down, up, for: hold)
                     return "held \(name) for \(LampScreen.number(hold)) s, sent to \(focus(of: window))"
                 }
                 if let named, let what {
@@ -8784,7 +10410,7 @@ enum Template {
     enum LampAssets {
         #if LAMP_LIVE
         // A live build reads them from the app's folder, so a file added while the app is open is there at once.
-        static var folder: URL? { URL(fileURLWithPath: "{{APPS}}/{{SLUG}}/Assets") }
+        static var folder: URL? { URL(fileURLWithPath: LampInstall.app + "/Assets") }
         #else
         static var folder: URL? { Bundle.main.resourceURL?.appendingPathComponent("Assets") }
         #endif
@@ -9234,7 +10860,7 @@ enum Template {
                     var request = URLRequest(url: URL(string: lampGateway + "/browser/surface")!)
                     request.httpMethod = "POST"
                     request.timeoutInterval = 5
-                    request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
+                    request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     request.httpBody = try JSONSerialization.data(withJSONObject: body)
                     let (data, response) = try await URLSession.shared.data(for: request)
@@ -9311,15 +10937,15 @@ enum Template {
         fileprivate enum PageServer {
             /// The first of the ports the app may use; when another program has it, the next few are tried, as
             /// Chrome's sidebar and Lamp's preview do. Only this app answers its own name on any of them.
-            static let firstPort: UInt16 = {{SIDEBAR_PORT}}
-            static let tries: UInt16 = {{SIDEBAR_TRIES}}
+            static let firstPort = UInt16(clamping: LampInstall.number("sidebarPort"))
+            static let tries = UInt16(clamping: max(1, LampInstall.number("sidebarTries")))
             nonisolated(unsafe) static var port: UInt16 = firstPort
-            static let host = "{{SIDEBAR_HOST}}"
-            static let key = "{{SIDEBAR_KEY}}"
+            static let host = LampInstall.value("sidebarHost")
+            static let key = LampInstall.value("sidebarKey")
             static let queue = DispatchQueue(label: "LampBrowser.page")
             nonisolated(unsafe) static var listeners: [NWListener] = []
             nonisolated(unsafe) static var version = 0
-            static let policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors {{SIDEBAR_FRAMER}}"
+            static let policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors \(LampInstall.value("sidebarFramer"))"
 
             static var folder: URL? { LampAssets.folder?.appendingPathComponent("Sidebar") }
 
@@ -9789,7 +11415,7 @@ enum Template {
             var request = URLRequest(url: url, timeoutInterval: 5)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
+            request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
             let done = DispatchSemaphore(value: 0)
             nonisolated(unsafe) var answer: [String: Any]?
@@ -11592,7 +13218,7 @@ enum Template {
             func direct() async throws -> [String: Any] {
                 try await LampDirect.handle(path, (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:])
             }
-            if await !LampDirect.useMac(token: "{{TOKEN}}"), LampDirect.keys != nil { return try await direct() }
+            if await !LampDirect.useMac(token: LampInstall.token), LampDirect.keys != nil { return try await direct() }
             do {
                 return try await postToLamp(path, body: body, timeout: timeout)
             } catch where LampDirect.unreachable(error) && LampDirect.keys != nil {
@@ -11608,7 +13234,7 @@ enum Template {
             var request = URLRequest(url: URL(string: lampGateway + path)!)
             request.httpMethod = "POST"
             request.timeoutInterval = timeout
-            request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
+            request.setValue("Bearer \(LampInstall.token)", forHTTPHeaderField: "Authorization")
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = body
 
@@ -11626,7 +13252,7 @@ enum Template {
                     #if os(macOS)
                     let config = NSWorkspace.OpenConfiguration()
                     config.activates = false
-                    if let lamp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "{{HOST}}") {
+                    if let lamp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: LampInstall.host) {
                         _ = try? await NSWorkspace.shared.openApplication(at: lamp, configuration: config)
                     }
                     #endif
@@ -13189,7 +14815,7 @@ enum Template {
         }()
 
         /// The link the widget's wand opens: the same one the app opens to show its chat in Lamp's window.
-        static let wand = URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!
+        static let wand = LampInstall.link("edit")
 
         @objc private func open(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
             guard let text = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
@@ -13257,8 +14883,8 @@ enum Template {
     ///         if name == "addWater" { model.add(payload.decode(Int.self) ?? 250) }
     ///     }
     enum LampWidget {
-        private static let firstPort: UInt16 = {{WIDGET_PORT}}
-        private static let token = "{{WIDGET_TOKEN}}"
+        private static let firstPort = UInt16(clamping: LampInstall.number("widgetPort"))
+        private static let token = LampInstall.value("widgetToken")
         private static let queue = DispatchQueue(label: "LampWidget")
 
         /// What a widget's button sent with its action.
@@ -14191,6 +15817,46 @@ enum Template {
         }
     }
 
+    /// Customize with Lamp, in a menu bar app's panel: put it in the panel's header, beside the app's own buttons, as a
+    /// window has the wand in its title bar. Without it Lamp puts the wand in a strip of its own above the panel.
+    /// It shows only in the panel (the window the panel opens as has the wand in its title bar) and while Lamp is on:
+    ///
+    ///     HStack { Text("Buzzerbeater").font(.headline); Spacer(); refreshButton; LampPanelWand() }
+    struct LampPanelWand: View {
+        var size: CGFloat = 13
+        @Environment(\.lampInMenuBarPanel) private var inPanel
+
+        var body: some View {
+            Group {
+                if inPanel && LampMagic.isOn {
+                    Button { LampMenuBar.customize() } label: {
+                        LampGlyph.Mark(size: size).frame(minWidth: 20, minHeight: 20).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help("Customize this app with Lamp")
+                    .accessibilityLabel("Customize This App")
+                }
+            }
+            .preference(key: LampPanelWandPlaced.self, value: true)
+        }
+    }
+
+    /// Whether the panel's own code placed `LampPanelWand`, so the strip above it isn't needed.
+    struct LampPanelWandPlaced: PreferenceKey {
+        static let defaultValue = false
+        static func reduce(value: inout Bool, nextValue: () -> Bool) { value = value || nextValue() }
+    }
+
+    private struct LampInMenuBarPanelKey: EnvironmentKey { static let defaultValue = false }
+    extension EnvironmentValues {
+        /// The view is in a menu bar app's panel (`LampMenuBar`), not a window.
+        var lampInMenuBarPanel: Bool {
+            get { self[LampInMenuBarPanelKey.self] }
+            set { self[LampInMenuBarPanelKey.self] = newValue }
+        }
+    }
+
     /// An app that lives in the menu bar: an icon there, a panel that drops down from it, and no Dock icon.
     /// Use it as the app's scene, instead of SwiftUI's MenuBarExtra:
     ///
@@ -14278,7 +15944,7 @@ enum Template {
         /// Scenes can't be chosen with `if`, so both are there and only the one for the style is put in the menu bar.
         var body: some Scene {
             MenuBarExtra(isInserted: .constant(style == .panel)) {
-                content().background(SettingsOpener()).safeAreaInset(edge: .top, spacing: 0) { PanelWand() }
+                PanelHost(content: content())
             } label: {
                 label()
             }
@@ -14308,9 +15974,25 @@ enum Template {
             }
         }
 
+        /// The panel as the menu bar shows it: the app's content, told it's in the panel (`LampPanelWand` shows there and
+        /// not in the window the panel opens as, whose title bar has the wand), with a strip for the wand above it
+        /// unless the app's own code put one in its header.
+        private struct PanelHost: View {
+            let content: AnyView
+            @State private var placed = false
+
+            var body: some View {
+                content
+                    .environment(\.lampInMenuBarPanel, true)
+                    .background(SettingsOpener())
+                    .safeAreaInset(edge: .top, spacing: 0) { if !placed { PanelWand() } }
+                    .onPreferenceChange(LampPanelWandPlaced.self) { placed = $0 }
+            }
+        }
+
         /// The wand every window of a Lamp app has at the top right of its title bar, here at the top right of the
         /// panel, in a strip of its own above the app's content as a title bar would be, so it covers nothing the
-        /// app put in its corner.
+        /// app put in its corner. Only for a panel whose code doesn't place `LampPanelWand` itself.
         private struct PanelWand: View {
             var body: some View {
                 if LampMagic.isOn {
@@ -14674,58 +16356,171 @@ enum Template {
 
 """#
 
-    /// The copy step's spare places (LiveSlots), written beside the live copy and run on each file copied: every class
-    /// of the app's gets `LiveSlots.count` (named after the class, so a subclass's don't clash with what it inherits;
-    /// `@Published` when it says it's an ObservableObject), every view one `@State` box, and every other struct one
-    /// place for any number of properties. Left out: what a spare would break (SwiftData and Core Data models,
-    /// Sendable classes, Equatable views, the App and its scenes, property wrappers, App Intents) and structs in a
-    /// file that lays memory out by hand (vertex data for the GPU), whose size must be what it says.
-    static let sparesPerl = #"""
+    /// The one pass over each file of the live copy (LiveReload), in perl so build.sh needs nothing but the system's:
+    /// `live.pl scan [-own=<Lamp's files>] <files>` prints the names something may subclass (superclasses, the bounds
+    /// of generic parameters and `where` clauses, each followed through the file's typealiases), then `-raw` when a
+    /// file of the app's (not Lamp's own, which always read raw memory) lays memory out by hand and `-nospare:Name`
+    /// for each struct an extension makes an OptionSet or RawRepresentable, and `live.pl <spares> <names>
+    /// <flags> <files>` rewrites each file in place, with flags `s` for spare places and `f` for final classes.
+    /// Stretches of string literals (plain, multi-line and raw, with their escapes), block comments (nested) and line
+    /// comments are found first and never touched, so a `class` or `var body` in a help text stays as it is.
+    /// What it does to a file: (1) each view's `var body: some View` becomes an `AnyView` that reads
+    /// `LampLive.generation` and draws `__lampBody`, so its type never changes and every view draws again on a
+    /// reload; (2) the `@main` moves from the App to `__LampEntry`, which starts `LampLive.watch` before it; (3) every
+    /// class gets spare places and every struct and view one (`LiveSlots`; not what a spare would break: SwiftData
+    /// and Core Data models, Sendable classes, Equatable views, the App and its scenes, wrappers, intents, OptionSets
+    /// and RawRepresentable structs, whose `init(rawValue:)` is the memberwise one, and any struct in an app that
+    /// lays memory out by hand in any file, since the one read as bytes may be declared in another); (4) every class
+    /// nothing subclasses is made `final`, since a final class
+    /// keeps no method table and so takes a method added without reopening the app (`open` and already-final ones
+    /// are left). A member spelt `class final func` or `class private func` is no type and is passed over. A class made
+    /// final that something subclasses after all fails the build in the compiler's words, which `LiveSlots.brokeFinal`
+    /// reads, and the copy is made without that step from then on (`no-final`), as spares are (`no-spares`).
+    static let livePerl = ##"""
     use strict; use warnings;
-    my $count = shift @ARGV;
     local $/;
-    for my $file (@ARGV) {
-        open(my $in, '<', $file) or die "$file: $!"; my $s = <$in>; close($in);
-        my $raw = $s =~ /MemoryLayout|withUnsafe|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
-        $s =~ s#^([ \t]*)(((?:@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated|indirect)\s+)*)(class|struct)\s+(?!(?:func|var|let|subscript|override|class)\b)(\w+)([^{\n]*)\{)#$1 . spares($1, $2, $3 . $6, $4, $5, $raw)#gme;
-        open(my $out, '>', $file) or die "$file: $!"; print $out $s; close($out);
+    my $modifier = qr/(?:func|var|let|subscript|override|class|final|open|public|internal|private|fileprivate|package|static|dynamic|required|convenience|nonisolated|lazy|weak|unowned|optional|indirect|init|deinit)\b/;
+    if (($ARGV[0] // '') eq 'scan') {
+        shift @ARGV;
+        # Lamp's own files (`-own=LampSupport.swift,…`) are scanned for names like the rest, but what they do with
+        # raw memory is their own business, never a reason to keep the app's structs from their spares.
+        my %own = map { $_ => 1 } split /,/, (($ARGV[0] // '') =~ /^-own=(.*)/ ? do { shift @ARGV; $1 } : '');
+        my (%names, %alias, %nospare, %equatable, %reflects, $raw, $mirrors);
+        for my $file (@ARGV) {
+            open(my $in, '<', $file) or next; my $s = <$in>; close($in);
+            # A struct read as bytes anywhere (MemoryLayout, a buffer handed to Metal) must stay the size it's written
+            # with, and the one read may be declared in another file: so no struct gets a spare in such an app.
+            $raw = 1 if !$own{(split m#/#, $file)[-1]} && $s =~ /MemoryLayout|withUnsafe|unsafeBitCast|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
+            $s =~ s#/\*[\s\S]*?\*/# #g; $s =~ s#//[^\n]*##g;
+            # A struct made an OptionSet or RawRepresentable in an extension: its memberwise initializer is the
+            # protocol's `init(rawValue:)`, which a spare's parameter would unfit. One made BitwiseCopyable can hold
+            # nothing a spare is.
+            while ($s =~ /\bextension\s+([\w.]+)\s*:[^{]*\b(?:OptionSet|RawRepresentable|BitwiseCopyable)\b/g) { $nospare{(split /\./, $1)[-1]} = 1 }
+            # A view made Equatable or Hashable in an extension: its state box isn't either, and the synthesized
+            # conformance would fail as it does for one declared so (`spares` reads only the declaration's header).
+            while ($s =~ /\bextension\s+([\w.]+)\s*:[^{]*\b(?:Equatable|Hashable)\b/g) { $equatable{(split /\./, $1)[-1]} = 1 }
+            # A struct with a mirror of its own keeps it (`spares` gives one to the rest): made CustomReflectable in an
+            # extension, or any `customMirror` the app's code writes, which a second would clash with.
+            while ($s =~ /\bextension\s+([\w.]+)\s*:[^{]*\bCustomReflectable\b/g) { $reflects{(split /\./, $1)[-1]} = 1 }
+            $mirrors = 1 if !$own{(split m#/#, $file)[-1]} && $s =~ /\bcustomMirror\b/;
+            # A class under a class of the same simple name (`B.Item: A.Item`): spare places are named by the simple
+            # name, so the subclass's would override the superclass's stored ones. Neither gets any.
+            while ($s =~ /\bclass\s+(?!$modifier)(\w+)(?:<[^>]*>)?\s*:\s*([\w.]+)/g) { my ($n, $up) = ($1, (split /\./, $2)[-1]); $nospare{$n} = 1 if $n eq $up }
+            while ($s =~ /\btypealias\s+(\w+)(?:<[^>]*>)?\s*=\s*([\w.]+)/g) { $alias{$1} = $2 }
+            while ($s =~ /\bclass\s+\w+(?:<[^>]*>)?\s*:\s*([\w.]+)/g) { $names{$1} = 1 }
+            while ($s =~ /<[^<>]*>/g) { my $g = $&; while ($g =~ /:\s*([\w.]+)/g) { $names{$1} = 1 } }
+            while ($s =~ /\bwhere\b([^{]*)/g) { my $w = $1; while ($w =~ /:\s*([\w.]+)/g) { $names{$1} = 1 } }
+        }
+        for my $name (keys %names) { my $n = $name; for (1 .. 4) { last unless exists $alias{(split /\./, $n)[-1]}; $n = $alias{(split /\./, $n)[-1]}; $names{$n} = 1 } }
+        # The names, then what the spares step is told: `-raw`, and `-nospare:Name` for each.
+        print join(' ', sort(keys %names), ($raw ? '-raw' : ()), ($mirrors ? '-nomirror' : ()), (map { "-nospare:$_" } sort keys %nospare),
+            (map { "-equatable:$_" } sort keys %equatable), map { "-reflects:$_" } sort keys %reflects), "\n";
+        exit 0;
     }
+    my ($count, $subclassed, $flags, @files) = @ARGV;
+    my %subclassed = map { (split /\./)[-1] => 1 } grep { !/^-/ } split ' ', $subclassed;
+    my $rawAll = $subclassed =~ /(?:^|\s)-raw(?:\s|$)/;
+    my %nospare = map { substr($_, 9) => 1 } grep { /^-nospare:/ } split ' ', $subclassed;
+    my %equatable = map { substr($_, 11) => 1 } grep { /^-equatable:/ } split ' ', $subclassed;
+    my %reflects = map { substr($_, 10) => 1 } grep { /^-reflects:/ } split ' ', $subclassed;
+    my $noMirror = $subclassed =~ /(?:^|\s)-nomirror(?:\s|$)/;
+    # A struct given a spare is made CustomReflectable in its own header, so its description leaves the spare out
+    # (`LampSpare.mirror`): after its inheritance list, before a `where`, or as the list when it has none.
+    sub conform {
+        my ($whole, $name) = @_;
+        return undef unless $whole =~ /^([\s\S]*?\bstruct\s+\Q$name\E)(?<g><(?:[^<>]++|(?&g))*>)?([^{]*?)(\s*)\{\z/;
+        my ($head, $generics, $rest, $space) = ($1, $2 // '', $3, $4);
+        if ($rest =~ /^\s*:/) {
+            $rest =~ s/(\s)where\b/, CustomReflectable$1where/ or $rest =~ s/(\s*)\z/, CustomReflectable$1/;
+        } else {
+            $rest = ": CustomReflectable" . $rest;
+        }
+        return "$head$generics$rest$space\{";
+    }
+    my $wantSpares = $flags =~ /s/; my $wantFinal = $flags =~ /f/;
+    # The stretches of a file no rewrite may touch, worked out again after each rewrite moves them.
+    my @skip;
+    sub spans {
+        my $s = shift; my @found;
+        while ($s =~ /((#+)"""(?:\\\2[\s\S]|\\(?!\2)|[^\\])*?"""\2|"""(?:\\[\s\S]|[^\\])*?"""|(#+)"(?:\\\3[^\n]|\\(?!\3)|[^"\\\n]|"(?!\3))*?"\3|"(?:[^"\\\n]|\\.)*"|(?<blk>\/\*(?:(?&blk)|(?!\*\/)[\s\S])*+(?:\*\/|\z))|\/\/[^\n]*)/g) { push @found, [$-[0], $+[0]] }
+        return @found;
+    }
+    sub inside { my $p = shift; for my $span (@skip) { return 1 if $p >= $span->[0] && $p < $span->[1] } 0 }
     sub spares {
         my ($i, $whole, $header, $kind, $name, $raw) = @_;
-        my $pad = "\n$i    ";
+        # On a line of its own the places go under it, indented; after other text they go on the same line.
+        my $pad = $i =~ /^[ \t]*$/ ? "\n$i    " : " ";
         if ($kind eq 'class') {
-            return $whole if $header =~ /\@Model\b|NSManagedObject|(?<!unchecked )\bSendable\b/;
+            return $whole if $nospare{$name} || $header =~ /\@Model\b|NSManagedObject|(?<!unchecked )\bSendable\b/;
             my $published = $header =~ /ObservableObject/ ? '@Published ' : '';
             return $whole . join('', map { "${pad}${published}var __lampSpare_${name}_$_: LampSpare? = nil;" } 0 .. $count - 1);
         }
         return $whole if $header =~ /\@propertyWrapper|\@frozen|\b(?:App|Scene|Commands|DynamicProperty|AppIntent|\w*Intent|AppEntity|\w*Query|TimelineProvider|TimelineEntry|Widget\w*)\b/;
         if ($header =~ /\bView\b/) {
-            return $whole if $header =~ /\b(?:Equatable|Hashable)\b/;
+            return $whole if $equatable{$name} || $header =~ /\b(?:Equatable|Hashable)\b/;
             return "${whole}${pad}\@State private var __lampState_${name} = LampStateBox();";
         }
-        return $whole if $raw;
-        return "${whole}${pad}var __lampSpare_${name} = LampSpare(nil);";
+        return $whole if $raw || $nospare{$name} || $header =~ /\b(?:OptionSet|RawRepresentable|BitwiseCopyable)\b/;
+        my $mirrored = !$noMirror && !$reflects{$name} && $header !~ /\bCustomReflectable\b|~\s*(?:Copyable|Escapable)/ ? conform($whole, $name) : undef;
+        return "${whole}${pad}var __lampSpare_${name} = LampSpare(nil);" unless defined $mirrored;
+        return "${mirrored}${pad}var __lampSpare_${name} = LampSpare(nil);${pad}var customMirror: Mirror { LampSpare.mirror(of: self) };";
     }
-    """#
+    for my $file (@files) {
+        open(my $in, '<', $file) or die "$file: $!"; my $s = <$in>; close($in);
+        my $raw = $rawAll || $s =~ /MemoryLayout|withUnsafe|unsafeBitCast|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
+        @skip = spans($s);
+        $s =~ s{var\s+body\s*:\s*some\s+(?:SwiftUI\.)?View\s*\{}~ inside($-[0]) ? $& : "var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\n    \@ViewBuilder var __lampBody: some View {" ~ge;
+        @skip = spans($s);
+        my $main;
+        $s =~ s{^([ \t]*(?:(?:\@\w+(?:\([^)]*\))?|public|internal|fileprivate|private|open|final)\s+)*)\@main((?:\s+(?:\@\w+(?:\([^)]*\))?|public|internal|fileprivate|private|open|final))*\s+(?:struct|class|enum|actor)\s+(\w+))}{ if (inside($-[0])) { $& } else { $main = $3; "$1$2" } }me;
+        $s .= "\n\@main enum __LampEntry { \@MainActor static func main() { LampLive.watch(); $main.main() } }\n" if defined $main;
+        if ($wantSpares) {
+            @skip = spans($s);
+            # At the start of a line, or after a brace or semicolon on one (a type declared inside another on one line).
+            $s =~ s#(^[ \t]*|[{;][ \t]*)(((?:\@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|open|final|nonisolated|indirect)\s+)*)(class|struct)\s+(?!$modifier)(\w+)([^{;]*)\{)#inside($-[0] + length($1)) ? $& : $1 . spares($1, $2, $3 . $6, $4, $5, $raw)#gme;
+        }
+        if ($wantFinal) {
+            @skip = spans($s);
+            $s =~ s{^([ \t]*)((?:\@[\w.]+(?:\([^)\n]*\))?\s+)*(?:(?:public|private|fileprivate|internal|nonisolated|indirect)\s+)*)(class)\s+(?!$modifier)(\w+)}{ (inside($-[3]) || $subclassed{$4}) ? $& : "$1$2final " . substr($&, length($1) + length($2)) }gme;
+        }
+        open(my $out, '>', $file) or die "$file: $!"; print $out $s; close($out);
+    }
+    """##
 
-    /// The live copy of the sources (LiveReload): each file copied into .lamp/live with its views' bodies wrapped,
-    /// so a body's type stays the same from one change to the next (`LampLive`), and only when it differs, so the
-    /// build stays incremental; files gone from Sources go from the copy too. Indented for the scripts' `if`.
     static let liveCopySteps = """
       LIVE=.lamp/live
       mkdir -p "$LIVE/Sources"
-      cat > "$LIVE/spares.pl" <<'LAMPSPARES'
-    \(sparesPerl)
-    LAMPSPARES
+      cat > "$LIVE/live.pl" <<'LAMPLIVE'
+    \(livePerl)
+    LAMPLIVE
+      # The names something may subclass, so every other class can be final.
+      SUBCLASSED=$(perl "$LIVE/live.pl" scan -own=LampSupport.swift,\(sceneSupportFile) Sources/**/*.swift(N) 2>/dev/null || true)
+      # The pass is kept for each file with what it was made from, and taken again only when any of that changed:
+      # over LampSupport.swift, which hardly ever does, it takes a second or more, and every change waited for it.
+      KEY="\(LiveSlots.count)|$(cksum < "$LIVE/live.pl")|$SUBCLASSED"
       for f in Sources/**/*.swift(N); do
         out="$LIVE/$f"
-        mkdir -p "${out:h}"
-        perl -0pe 's/var body: some View \\{/var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\\n    \\@ViewBuilder var __lampBody: some View {/g' "$f" > "$out.new"
-        # Spare places for properties added while the app is open (LiveSlots), unless they kept the app from building.
-        case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) [[ -e "$LIVE/no-spares" ]] || perl "$LIVE/spares.pl" \(LiveSlots.count) "$out.new" ;; esac
+        made="$LIVE/.made/$f"
+        mkdir -p "${out:h}" "${made:h}"
+        # Lamp's own files get the body wrap and the entry only; the app's get spare places and final classes too,
+        # unless either kept the app from building.
+        flags=""
+        case "${f:t}" in LampSupport.swift|\(sceneSupportFile)) ;; *) [[ -e "$LIVE/no-spares" ]] || flags="${flags}s"; [[ -e "$LIVE/no-final" ]] || flags="${flags}f" ;; esac
+        if [[ -f "$made.out" ]] && cmp -s "$f" "$made.in" && [[ "$(cat "$made.key" 2>/dev/null)" == "$KEY|$flags" ]]; then
+          cmp -s "$made.out" "$out" || cp "$made.out" "$out"
+          continue
+        fi
+        # The entry is void until it's whole again, and holds the very text the pass was made from: the agent may
+        # edit the file meanwhile, and a build ended halfway (a newer change's) must leave no entry that looks right.
+        rm -f "$made.key"
+        cp "$f" "$made.in"
+        cp "$made.in" "$out.new"
+        perl "$LIVE/live.pl" \(LiveSlots.count) "$SUBCLASSED" "$flags" "$out.new"
+        cp "$out.new" "$made.out"; print -r -- "$KEY|$flags" > "$made.key"
         if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi
       done
-      for f in "$LIVE"/Sources/**/*.swift(N); do [[ -f "${f#$LIVE/}" ]] || rm "$f"; done
+      # Lamp's own file beside the spares (LiveSlots.addMemberwise) has no original to be kept by.
+      for f in "$LIVE"/Sources/**/*.swift(N); do [[ -f "${f#$LIVE/}" || "${f:t}" == \(LiveSlots.memberwiseFile) ]] || rm "$f"; done
       # What's built beside the app (a widget, a share extension) is built from the copy too, as it is.
       for d in Widget Share; do
         if [[ -d "$d" ]]; then mkdir -p "$LIVE/$d"; rsync -a --delete "$d/" "$LIVE/$d/"; else rm -rf "$LIVE/$d"; fi
@@ -14754,8 +16549,9 @@ enum Template {
       cmp -s Package.swift "$LIVE/Package.swift" || cp Package.swift "$LIVE/Package.swift"
       # Lamp only wants the live copy, to put a change into the open app before building the whole of it.
       [[ "${LAMP_LIVE_COPY:-}" == 1 ]] && exit 0
-      # What this build compiles, which is what the app runs once it's installed (LiveReload.markRunning).
-      rsync -a --delete "$LIVE/Sources/" "$LIVE/built/"
+      # What this build compiles, which is what the app runs once it's installed (LiveReload.markRunning): kept
+      # aside, and the record only once the build has worked, or a failed one would name code no app runs.
+      rsync -a --delete "$LIVE/Sources/" "$LIVE/building/"
       FLAGS=(-c debug --package-path "$LIVE" --scratch-path "$LIVE/.build" -Xswiftc -DLAMP_LIVE -Xswiftc -enable-testing -Xlinker -interposable "${RESTRICT[@]}")
     fi
     \(appIntentsSetup(ios: false))
@@ -14764,10 +16560,18 @@ enum Template {
     # binary until the link runs again. Take that binary away once, and it links again with the segment.
     if [ -f "$BIN" ] && ! otool -l "$BIN" 2>/dev/null | grep -qs __RESTRICT; then rm -f "$BIN"; fi
     swift build "${FLAGS[@]}" 2>&1
+    if [[ "${LAMP_LIVE:-}" == 1 ]]; then rsync -a --delete "$LIVE/building/" "$LIVE/built/"; fi
     APP="build/{{EXE}}.app"
     rm -rf "$APP"
     mkdir -p "$APP/Contents/MacOS"
     cp "$BIN" "$APP/Contents/MacOS/{{EXE}}"
+    # SwiftPM records the oldest macOS the app runs on as the SDK it was built with, and macOS draws an app the way
+    # the SDK it names did: Liquid Glass only for one built with macOS 26's or later. So the copy names the SDK it
+    # was really built with, the oldest macOS staying as it is.
+    if SDKVER="$(xcrun --sdk "${SDKROOT:-macosx}" --show-sdk-version 2>/dev/null)" \
+      && MINOS="$(otool -l "$APP/Contents/MacOS/{{EXE}}" | awk '/minos/ {print $2; exit}')" && [ -n "$MINOS" ]; then
+      xcrun vtool -set-build-version macos "$MINOS" "$SDKVER" -replace -output "$APP/Contents/MacOS/{{EXE}}" "$APP/Contents/MacOS/{{EXE}}" >/dev/null 2>&1 || true
+    fi
     cat > "$APP/Contents/Info.plist" <<PLIST
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
