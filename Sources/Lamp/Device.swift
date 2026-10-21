@@ -8,13 +8,15 @@ import AppKit
 /// Building) and the agent's note read nothing but it.
 struct Device: Identifiable, Hashable {
     enum Kind: String, Hashable {
-        case mac, iphone, ipad, watch
+        case mac, iphone, ipad, watch, android, androidEmulator
         var name: String {
             switch self {
             case .mac: return "Mac"
             case .iphone: return "iPhone"
             case .ipad: return "iPad"
             case .watch: return "Apple Watch"
+            case .android: return "Android device"
+            case .androidEmulator: return "Android emulator"
             }
         }
         var symbol: String {
@@ -23,10 +25,13 @@ struct Device: Identifiable, Hashable {
             case .iphone: return "iphone"
             case .ipad: return "ipad"
             case .watch: return "applewatch"
+            case .android, .androidEmulator: return "smartphone"
             }
         }
         /// An iPhone or iPad: where Play can put an app directly.
         var isPhone: Bool { self == .iphone || self == .ipad }
+        /// An Android phone or tablet of the person's, or the emulator on this Mac.
+        var isAndroid: Bool { self == .android || self == .androidEmulator }
     }
 
     /// A screen, in pixels and in the points an app lays out in.
@@ -100,6 +105,11 @@ struct Device: Identifiable, Hashable {
     /// Developer Mode on. The team is judged when the watch's setup is asked, as a phone's is, so a team chosen
     /// after the list was read counts at once.
     var hasCompanionIPhone = false
+    /// An Android device's state as adb lists it: "device" (usable), "unauthorized" (debugging not yet allowed to
+    /// this Mac), "offline".
+    var adbState = "device"
+    /// An Android device's pixels per inch, for turning its pictures' pixels into points.
+    var density: Int?
 
     static let macID = "this-mac"
 
@@ -121,6 +131,15 @@ struct Device: Identifiable, Hashable {
             if !hasCompanionIPhone { return .needs("Set up the iPhone it's paired with") }
             if team.count != 10 { return .needs("Choose your Apple team") }
             return .ready
+        case .androidEmulator:
+            return adbState == "device" ? .ready : .needs("Start it again")
+        case .android:
+            switch adbState {
+            case "device": return .ready
+            case "unauthorized": return .needs("Allow USB debugging on it")
+            case "offline": return .needs("Reconnect it")
+            default: return .needs("Turn on USB debugging on it")
+            }
         }
     }
 
@@ -199,6 +218,27 @@ struct Device: Identifiable, Hashable {
         return device
     }
 
+    /// An Android device from adb's listing and its own properties (`Adb.getprop`): the emulator Lamp made, or the
+    /// person's phone or tablet, plugged in (a plain serial) or on the network (an address and port).
+    static func from(adb serial: String, state: String, properties: [String: String]) -> Device {
+        let emulator = serial.hasPrefix("emulator-") || properties["ro.kernel.qemu"] == "1" || properties["ro.boot.qemu"] == "1"
+        let maker = properties["ro.product.manufacturer"].flatMap { $0.isEmpty ? nil : $0 } ?? (emulator ? "Google" : "Android")
+        let model = properties["ro.product.model"].flatMap { $0.isEmpty ? nil : $0 }
+        let name = emulator ? AndroidTools.avdName : (model.map { "\(maker) \($0)" } ?? "Android device")
+        var device = Device(id: serial, kind: emulator ? .androidEmulator : .android, maker: maker,
+                            model: emulator ? "Android emulator" : (model ?? "Android device"),
+                            modelID: properties["ro.product.device"] ?? "", name: name, os: "Android",
+                            osVersion: properties["ro.build.version.release"] ?? "",
+                            input: ["touch"], features: [], reach: emulator ? .thisMac : serial.contains(":") ? .network : .cable)
+        device.adbState = state
+        device.density = properties["density"].flatMap { Int($0) }
+        if let size = properties["size"], let density = device.density {
+            let parts = size.split(separator: "x").compactMap { Int($0) }
+            if parts.count == 2 { device.screens = [Screen(name: "screen", width: parts[0], height: parts[1], scale: max(1, Int((Double(density) / 160).rounded())))] }
+        }
+        return device
+    }
+
     /// What a device has that changes what's built for it, read off its product type. The Dynamic Island is
     /// on every iPhone from the 14 Pro (iPhone15,2) on, but the 16e (iPhone17,5).
     static func features(kind: Kind, productType: String) -> [String] {
@@ -211,7 +251,7 @@ struct Device: Identifiable, Hashable {
             }
             return features + ["NFC", "HealthKit"]
         case .watch: return ["HealthKit"]
-        case .ipad, .mac: return []
+        case .ipad, .mac, .android, .androidEmulator: return []
         }
     }
 }
@@ -225,6 +265,24 @@ struct Device: Identifiable, Hashable {
 enum DeviceNote {
     @MainActor static func line(for project: LampProject, store: Store) -> String {
         let phones = store.devices.filter { $0.kind.isPhone }
+        if project.onAndroid {
+            let androids = store.devices.filter { $0.kind == .android }
+            var line: String
+            if let serial = project.device {
+                line = androids.first(where: { $0.udid == serial }).map { "Try On points at the person's \($0.name): \($0.forAgent)." }
+                    ?? "Try On points at one of the person's Android devices, which Lamp's device list didn't return; it's put there once it's connected."
+            } else {
+                line = "Try On points at the Android emulator on this Mac (\(AndroidTools.avdName), Android \(AndroidTools.platformLevel == 36 ? "16" : "\(AndroidTools.platformLevel)"), a Pixel-sized phone): that is where the app opens and what the person sees."
+            }
+            for device in androids where device.udid != project.device {
+                let state = device.setup() == .ready ? "set up for the app to go on it" : "not set up yet (next: \(device.setup().words.lowercased()))"
+                line += " The person's \(device.name) (\(device.forAgent)) is \(state)."
+            }
+            if androids.isEmpty {
+                line += " No Android phone or tablet of the person's is connected to this Mac, so call it the emulator, never their phone; they can plug one in and choose it under Try On."
+            }
+            return line
+        }
         if project.onIOS {
             if let udid = project.device {
                 // Chosen, but not in the list (away, or the lookup failed): still where Play puts the app.

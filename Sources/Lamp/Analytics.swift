@@ -100,6 +100,7 @@ enum Analytics {
         case .mac: "mac"
         case .phone: "iphone"   // what the kind was called when it was iPhone or iPad, so the counts carry on
         case .universal: "universal"
+        case .android: "android"
         }
     }
 

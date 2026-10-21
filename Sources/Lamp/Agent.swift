@@ -317,6 +317,7 @@ enum Agent {
         case .mac: systemPrompt
         case .iphone: iPhonePrompt(for: project.family)
         case .universal: universalPrompt(for: project.family)
+        case .android: androidPrompt()
         }
     }
 

@@ -65,10 +65,14 @@ enum Runtime {
         // change for an app that has them (Store.intentsCanComeBack).
         // The same for a share extension, which a Mac app keeps only when it's signed for a team (Store.shareCanComeBack).
         if project.platform == .mac, Store.usesAppIntents(project) || Template.hasShare(project) { hasher.update(data: Data(Devices.team.utf8)) }
-        let roots = ["Sources", Template.widgetFolder, Template.shareFolder, Template.watchFolder, "Package.swift", "icon.json", "capabilities.json"].map { project.dir.appendingPathComponent($0) }
+        // An Android app's code is its `app` module, whose `build` folder is what the build makes, not what it's made from.
+        let names = project.platform == .android ? [Template.androidAppFolder, "icon.json"]
+            : ["Sources", Template.widgetFolder, Template.shareFolder, Template.watchFolder, "Package.swift", "icon.json", "capabilities.json"]
+        let roots = names.map { project.dir.appendingPathComponent($0) }
         for root in roots {
             let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? [])
                 .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
+                .filter { project.platform != .android || !$0.path.hasPrefix(root.appendingPathComponent("build").path + "/") }
             for file in ([root] + files).sorted(by: { $0.path < $1.path }) {
                 guard let data = try? Data(contentsOf: file) else { continue }
                 hasher.update(data: Data(file.path.dropFirst(project.dir.path.count).utf8))

@@ -506,7 +506,7 @@ enum EngineInstall {
 }
 
 /// One download to a file, with its progress: URLSession's own, since the files are hundreds of megabytes.
-private final class Download: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+final class Download: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     private let destination: URL
     private let expected: Int64?
     private let progress: @Sendable (Double) -> Void

@@ -119,7 +119,8 @@ enum AppName {
     names.
 
     Last, list the devices it runs on: "mac" for this Mac, "iphone" for iPhone and iPad, "watch" for Apple Watch \
-    (with "iphone", when they mention a watch or their wrist). ["iphone"] when they \
+    (with "iphone", when they mention a watch or their wrist), "android" (alone) for an Android phone or tablet. \
+    ["android"] when they mention Android, a Pixel, a Samsung phone or Google Play; ["iphone"] when they \
     mention a phone, an iPhone or iPad, or what's done away from a desk (out walking or running, the camera on \
     the go, tilting or shaking it); ["mac", "iphone"] when they want it on their Mac and their phone, or kept the \
     same on each; ["mac"] otherwise. Set "devices_by_user" to true only when they said where it runs.

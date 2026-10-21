@@ -246,7 +246,7 @@ struct AppMenu: View {
             .disabled(busy)
         Button("Quit") { Task { await store.quitApp(project) } }
             .disabled(!store.isOpen(project))
-        if project.platform.hasIOS {
+        if project.platform.hasIOS || project.platform == .android {
             // Which simulator the app opens in (it's built for both), or which of the person's own phones.
             Menu("Try On") { TryOnChoices(project: project) }
                 .disabled(busy)
@@ -850,17 +850,18 @@ struct ProjectView: View {
                 .help(made ? "Use \(project.name) (right-click it on the desk to rebuild)" : "Lamp opens it once it's made")
             }
         }
-        if project.platform.hasIOS {
+        if project.platform.hasIOS || project.platform == .android {
             ToolbarItem {
                 // Which simulator the app opens in, beside the Play button where Xcode keeps its destination.
                 Menu {
                     TryOnChoices(project: project)
                 } label: {
                     let device = store.devices.first { $0.udid == project.device }
-                    Label(store.tryOnName(project), systemImage: !project.onIOS ? "laptopcomputer" : (device?.family ?? project.family) == .ipad ? "ipad" : "iphone")
+                    Label(store.tryOnName(project), systemImage: project.onAndroid ? "smartphone" : !project.onIOS ? "laptopcomputer" : (device?.family ?? project.family) == .ipad ? "ipad" : "iphone")
                 }
                 .disabled(busy)
-                .help(project.platform == .universal ? "Where it opens: this Mac, a simulator, or your own iPhone or iPad"
+                .help(project.platform == .android ? "Where it opens: the emulator, or your own Android phone or tablet"
+                      : project.platform == .universal ? "Where it opens: this Mac, a simulator, or your own iPhone or iPad"
                       : "Where it opens: a simulator, or your own iPhone or iPad")
             }
         }
@@ -1717,6 +1718,41 @@ private struct TryOnChoices: View {
     @State private var olderPhones: [PhoneTools.OlderPhone] = []
 
     var body: some View {
+        if project.platform == .android {
+            androidChoices
+        } else {
+            appleChoices
+        }
+    }
+
+    /// An Android app's places: the emulator Lamp made, and the person's Android devices adb can see.
+    @ViewBuilder private var androidChoices: some View {
+        let devices = store.devices.filter { $0.kind == .android }
+        Picker("Emulator", selection: Binding(get: { project.device == nil ? "emulator" : nil }, set: { if $0 != nil { store.setAndroidDevice(project, nil) } })) {
+            Label(AndroidTools.avdName, systemImage: "smartphone").tag(Optional("emulator"))
+        }
+        .pickerStyle(.inline)
+        Picker("Your Devices", selection: Binding(get: { project.device }, set: { if let serial = $0 { store.setAndroidDevice(project, serial) } })) {
+            ForEach(devices) { device in
+                let step = device.setup() == .ready ? "" : " (\(device.setup().words))"
+                Label("\(device.name)\(step)", systemImage: "smartphone").tag(Optional(device.udid))
+            }
+            if let chosen = project.device, !devices.contains(where: { $0.udid == chosen }) {
+                Label("Chosen device (not connected)", systemImage: "smartphone").tag(Optional(chosen))
+            }
+        }
+        .pickerStyle(.inline)
+        if devices.isEmpty {
+            Text("No Android device found. Plug one in with USB debugging on, then look again.")
+        }
+        Divider()
+        Button("Check Android Setup…") { AndroidSetup.shared.show(device: project.device) }
+        Button("All Your Devices…") { settingsTab = "building"; openSettings() }
+        Button("Look for Devices Again") { store.refreshDevices() }
+            .onAppear { store.refreshDevices() }
+    }
+
+    @ViewBuilder private var appleChoices: some View {
         if project.platform == .universal {
             // An app for both: this Mac is a place to open it too, beside the simulators and phones.
             Picker("This Mac", selection: Binding(get: { project.onIOS ? nil : Destination.mac },

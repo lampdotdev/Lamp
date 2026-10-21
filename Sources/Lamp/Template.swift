@@ -56,6 +56,7 @@ enum Template {
         case .mac: (app, view, md) = (appSwift, contentViewSwift, appMd)
         case .iphone: (app, view, md) = (iPhoneAppSwift, iPhoneContentViewSwift, iPhoneAppMd)
         case .universal: (app, view, md) = (universalAppSwift, universalContentViewSwift, universalAppMd)
+        case .android: try fillAndroid(project); return
         }
         try write(app, to: "Sources/App.swift", for: project)
         try write(view, to: "Sources/ContentView.swift", for: project)
@@ -122,6 +123,8 @@ enum Template {
     /// the agent read, put in them ever runs: they're replaced, not checked. A failure to write any of them is
     /// a failure to build, since the old file would be what runs.
     static func writeOwnedFiles(for project: LampProject) throws {
+        // An Android app has no support library of Lamp's: its own files are the Gradle project's.
+        if project.platform == .android { try writeAndroidOwnedFiles(for: project); return }
         // Where an earlier Lamp kept the phone's secret, readable by the agent's commands; a new one is made in
         // Lamp's own folder (`phoneSecret(in:)`).
         AppFolder.remove(project.dir.appendingPathComponent(".lamp/phone-secret"), in: project.dir)
@@ -164,6 +167,8 @@ enum Template {
             try write(withWatch(universalBuildSh(widget: widget, share: share), for: project), to: "build.sh", for: project, executable: true)
             try write(withWatch(universalPackageSwift(widget: widget, share: share), for: project), to: "Package.swift", for: project)
             try writeDeviceProject(for: project, team: Devices.team)
+        case .android:
+            break   // above
         }
     }
 
@@ -184,7 +189,7 @@ enum Template {
             .replacingOccurrences(of: appSigningLine, with: watchBuildSteps(complications: complications) + appSigningLine)
     }
 
-    private static func write(_ template: String, to path: String, for project: LampProject, executable: Bool = false) throws {
+    static func write(_ template: String, to path: String, for project: LampProject, executable: Bool = false) throws {
         let contents = template
             .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
             .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
@@ -193,6 +198,7 @@ enum Template {
             .replacingOccurrences(of: "{{EXE}}", with: project.exe)
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
             .replacingOccurrences(of: "{{BUNDLE}}", with: project.bundleID)
+            .replacingOccurrences(of: "{{ANDROID_PACKAGE}}", with: androidPackage(for: project))
         let url = project.dir.appendingPathComponent(path)
         // Never makes the app's folder itself, which would leave a folder of build files where an app was.
         guard FileManager.default.fileExists(atPath: project.dir.path) else { throw CocoaError(.fileNoSuchFile) }
@@ -241,6 +247,8 @@ enum Template {
     /// Lamp owns LampSupport.swift and rewrites it before every agent turn and build,
     /// so existing apps pick up helper improvements automatically.
     static func writeSupport(for project: LampProject) throws {
+        // An Android app has no Swift, and no support library of Lamp's yet.
+        guard project.platform != .android else { return }
         let contents = lampSupportSwift
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
         try put(contents, at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
@@ -2187,6 +2195,7 @@ enum Template {
     /// What an app is made for, read off its Package.swift, which every version keeps: the platforms it lists.
     /// A version restored from before `make_app_for` brings its kind back with its code (`Versions.restoreFiles`).
     static func platform(fromPackageIn dir: URL) -> Platform? {
+        if isAndroid(dir) { return .android }
         guard let text = try? String(contentsOf: dir.appendingPathComponent("Package.swift"), encoding: .utf8) else { return nil }
         let mac = text.contains(".macOS("), ios = text.contains(".iOS(")
         return mac && ios ? .universal : ios ? .iphone : mac ? .mac : nil

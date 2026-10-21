@@ -6,20 +6,22 @@ import AppKit
 import LampFileLook
 
 /// What an app is for: a Mac app that installs beside the user's others, an iPhone app that runs in the
-/// iOS Simulator on this Mac or on the person's own phone, or one app for both, as Xcode's multiplatform
-/// apps are: one code, built for whichever is chosen under Try On (`LampProject.destination`).
+/// iOS Simulator on this Mac or on the person's own phone, one app for both, as Xcode's multiplatform
+/// apps are: one code, built for whichever is chosen under Try On (`LampProject.destination`), or an Android
+/// app (Kotlin and Compose, `AndroidTools`), which runs in the Android emulator or on the person's own device.
 enum Platform: String, Codable {
-    case mac, iphone, universal   // "iphone" is the iOS kind: iPhone and iPad apps alike (see DeviceFamily)
+    case mac, iphone, universal, android   // "iphone" is the iOS kind: iPhone and iPad apps alike (see DeviceFamily)
 
-    var hasMac: Bool { self != .iphone }
-    var hasIOS: Bool { self != .mac }
+    var hasMac: Bool { self == .mac || self == .universal }
+    var hasIOS: Bool { self == .iphone || self == .universal }
+    var hasAndroid: Bool { self == .android }
 }
 
-/// Where an app is built for and opened: this Mac, or iOS (a simulator, or the person's phone, by
-/// `LampProject.family` and `device`). A Mac app or an iPhone app has one; an app for both has the one
-/// Try On last chose.
+/// Where an app is built for and opened: this Mac, iOS (a simulator, or the person's phone, by
+/// `LampProject.family` and `device`), or Android (the emulator, or the person's device by `device`). A Mac
+/// app, an iPhone app or an Android app has one; an app for both has the one Try On last chose.
 enum Destination: String, Codable {
-    case mac, ios
+    case mac, ios, android
 }
 
 /// Which simulator an iOS app opens on. The app itself is built for both.
@@ -36,6 +38,8 @@ extension Platform {
     /// "iphone" for iPhone and iPad, "watch"). A watch app is part of an iPhone app (`Template.hasWatch`), so
     /// "watch" brings the iPhone with it. Nil for an empty list or a device Lamp doesn't make apps for.
     init?(devices: Set<String>) {
+        // An Android app stands alone: Lamp doesn't make one code for Apple's devices and Android.
+        if devices == ["android"] { self = .android; return }
         guard !devices.isEmpty, devices.isSubset(of: ["mac", "iphone", "watch"]) else { return nil }
         let phone = devices.contains("iphone") || devices.contains("watch")
         self = devices.contains("mac") ? (phone ? .universal : .mac) : .iphone
@@ -43,22 +47,24 @@ extension Platform {
 }
 
 enum AppKind: String, CaseIterable {
-    case mac = "Mac", phone = "iPhone & iPad", universal = "Mac, iPhone & iPad"
+    case mac = "Mac", phone = "iPhone & iPad", universal = "Mac, iPhone & iPad", android = "Android"
 
     init(_ project: LampProject) {
         self = switch project.platform {
         case .mac: .mac
         case .universal: .universal
         case .iphone: .phone
+        case .android: .android
         }
     }
-    var platform: Platform { self == .mac ? .mac : self == .universal ? .universal : .iphone }
+    var platform: Platform { self == .mac ? .mac : self == .universal ? .universal : self == .android ? .android : .iphone }
     /// For the prompts that describe the app to a model: "a Mac app", "an iPhone and iPad app".
     var phrase: String {
         switch self {
         case .mac: "a Mac app"
         case .phone: "an iPhone and iPad app"
         case .universal: "an app for the Mac and the iPhone, one code for both"
+        case .android: "an Android app"
         }
     }
     /// The device's picture where the kind is chosen.
@@ -67,6 +73,7 @@ enum AppKind: String, CaseIterable {
         case .mac: "laptopcomputer"
         case .phone: "iphone"
         case .universal: "laptopcomputer.and.iphone"
+        case .android: "smartphone"
         }
     }
 }
@@ -108,11 +115,14 @@ struct LampProject: Identifiable, Hashable {
         case .mac: .mac
         case .iphone: .ios
         case .universal: chosen
+        case .android: .android
         }
     }
     /// On iOS now: the simulator, or the person's phone. The rest of Lamp's phone work follows this, and an
     /// app for both goes through it only while that's where it opens.
     var onIOS: Bool { destination == .ios }
+    /// An Android app: the emulator, or the person's own Android device (`device`, its adb serial).
+    var onAndroid: Bool { destination == .android }
     /// An app for both is registered with Apple under the person's team on the Mac too, so its one id
     /// carries the team everywhere, as a phone build's does (`deviceBundleID`).
     var bundleID: String {
@@ -124,7 +134,10 @@ struct LampProject: Identifiable, Hashable {
     /// another team may have registered the plain one for the same app name.
     func deviceBundleID(team: String) -> String { platform == .universal ? bundleID : bundleID + "." + team.lowercased() }
     /// An app for both keeps a build for each place, so checking one half never replaces the other's.
-    var builtURL: URL { dir.appendingPathComponent(platform == .universal && onIOS ? "build/iOS/\(exe).app" : "build/\(exe).app") }
+    var builtURL: URL {
+        if platform == .android { return dir.appendingPathComponent("app/build/outputs/apk/debug/app-debug.apk") }
+        return dir.appendingPathComponent(platform == .universal && onIOS ? "build/iOS/\(exe).app" : "build/\(exe).app")
+    }
     /// Every successful build is copied here so it shows up in Spotlight and Launchpad.
     var installedURL: URL { Store.installDir.appendingPathComponent("\(name).app") }
     /// What the app is called on screen. An unnamed one has only a stand-in name on disk ("Untitled", which
@@ -812,7 +825,7 @@ final class Store: ObservableObject {
         watchOpenApps()
         // Asking for phones runs devicectl, so only for someone with iPhone apps; Try On asks again when it's opened.
         // This Mac's record is read either way, off the main thread, so the first request's note has it.
-        if projects.contains(where: { $0.platform.hasIOS }) { refreshDevices(); refreshSimulators() }
+        if projects.contains(where: { $0.platform.hasIOS || $0.platform == .android }) { refreshDevices(); refreshSimulators() }
         else { Task { thisMac = await Device.readThisMac() } }
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
@@ -1385,6 +1398,10 @@ final class Store: ObservableObject {
     /// changes it by asking (`convert`, the agent's `make_app_for`).
     func chooseKind(_ project: LampProject, _ kind: Platform, said: Bool, watch: Bool = false) async -> LampProject {
         guard !project.scaffolded, kind != project.platform else { return project }
+        if kind == .android, !said, !AndroidTools.isReady {
+            log(project, .iphoneSetup, kind.rawValue)
+            return project
+        }
         if kind.hasIOS, !said {
             let both = kind == .universal
             let ready = await Task.detached { PhoneTools.checked(family: .iphone, phone: nil, requiresTeam: both, requiresPaidTeam: false).ready }.value
@@ -1396,7 +1413,7 @@ final class Store: ObservableObject {
         setKind(project, kind)
         guard let chosen = current(project) else { return project }
         if kind != .mac {
-            let devices = kind == .iphone ? "iPhone and iPad" : "the Mac, iPhone and iPad"
+            let devices = kind == .iphone ? "iPhone and iPad" : kind == .android ? "Android" : "the Mac, iPhone and iPad"
             log(chosen, .status, watch ? "Making this for \(devices), and Apple Watch." : "Making this for \(devices).")
         }
         return chosen
@@ -1467,6 +1484,24 @@ final class Store: ObservableObject {
         }
     }
 
+    /// Which Android device an Android app opens on: the person's own, by its serial, or nil for the emulator.
+    /// The copy on the old one is closed, so Play and Stop are about the one chosen.
+    func setAndroidDevice(_ project: LampProject, _ serial: String?) {
+        guard project.platform == .android, project.device != serial, begin(project) != nil else { return }
+        var changed = project
+        changed.device = serial
+        try? Template.saveMeta(changed)
+        if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
+        let name = devices.first(where: { $0.udid == serial })?.name
+        let said = name.map { "\(changed.name) will open on \($0) from now on. Press Play to put it there." }
+            ?? "\(changed.name) will open in the emulator from now on."
+        Task {
+            await quit(project)
+            log(changed, .status, said)
+            finish(changed)
+        }
+    }
+
     /// Back to a simulator from a phone, as one change: the family is set on the project as it is after
     /// the phone is forgotten, not on the copy the menu held.
     func setSimulator(_ project: LampProject, _ family: DeviceFamily) {
@@ -1499,6 +1534,10 @@ final class Store: ObservableObject {
 
     /// What Try On shows beside Play: the simulator's kind, or the chosen phone's name, or this Mac.
     func tryOnName(_ project: LampProject) -> String {
+        if project.onAndroid {
+            guard let serial = project.device else { return "Emulator" }
+            return devices.first(where: { $0.udid == serial })?.name ?? "Your device"
+        }
         guard project.onIOS else { return "My Mac" }
         guard let udid = project.device else { return simulatorName(project) }
         return devices.first(where: { $0.udid == udid })?.name ?? "Your phone"
@@ -1556,7 +1595,8 @@ final class Store: ObservableObject {
 
     func refreshDevices() {
         Task {
-            let found = await Devices.list()
+            // Apple's devices, and Android's when Android's tools are here (adb is one of them).
+            let found = await Devices.list() + Adb.devices()
             if found != devices { devices = found }
             let mac = await Device.readThisMac()
             if mac != thisMac { thisMac = mac }
@@ -3635,6 +3675,20 @@ final class Store: ObservableObject {
     /// Opens the installed app, or brings it to the front if it's running. Only builds when there's
     /// nothing installed yet (or the installed copy was deleted).
     func open(_ project: LampProject) async {
+        if project.onAndroid {
+            if let running = androidApps[project.id], running.log?.isRunning == true, await Adb.pid(of: Template.androidPackage(for: project), on: running.serial) != nil {
+                await Emulator.bringForward()
+                return
+            }
+            if FileManager.default.fileExists(atPath: project.builtURL.path), !Runtime.sourcesChanged(project) {
+                guard begin(project) != nil else { return }
+                defer { finish(project) }
+                await installReportingCrash(project)
+            } else {
+                await run(project)
+            }
+            return
+        }
         if project.onIOS {
             // Running already: bring the simulator forward. Otherwise build (if needed) and launch.
             let toSimulator = project.device == nil
@@ -3776,6 +3830,7 @@ final class Store: ObservableObject {
             return await BrowserPreview.use(project, actions: actions, page: request["page"] as? String, selection: request["selection"] as? String)
         }
         if project.onIOS { return await useOnSimulator(project, actions: actions, json: json) }
+        if project.onAndroid { return await useOnAndroid(project, actions: actions, json: json) }
         // Not in the copy the person kept open: what it holds is theirs, and it isn't the agent's change.
         if Runtime.holdsBuild(project), isRunning(project) {
             return held(turn, in: project, note: Runtime.waitsForReload(project) ? reloadNote(for: project) : Self.keptOpenNote, using: true)
@@ -4210,7 +4265,7 @@ final class Store: ObservableObject {
     private func agentKind(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         let devices = Set(arguments["devices"] as? [String] ?? [])
         guard let kind = Platform(devices: devices) else {
-            return (400, ["error": "`devices` must list one or more of mac, iphone and watch."])
+            return (400, ["error": "`devices` must list one or more of mac, iphone and watch, or android alone."])
         }
         // Asked before the change: once an app isn't for the iPhone, its Watch/ no longer counts as a watch app.
         let hadWatch = current(project).map(Template.hasWatch) ?? false
@@ -4239,8 +4294,13 @@ final class Store: ObservableObject {
         guard let current = current(project), let index = projects.firstIndex(where: { $0.id == project.id }) else {
             return (404, ["error": "Lamp can't find the app."])
         }
-        let words = kind == .mac ? "the Mac" : kind == .iphone ? "iPhone and iPad" : "the Mac, iPhone and iPad"
+        let words = kind == .mac ? "the Mac" : kind == .iphone ? "iPhone and iPad" : kind == .android ? "Android" : "the Mac, iPhone and iPad"
         guard kind != current.platform else { return (200, ["text": "It's already made for \(words)."]) }
+        if kind == .android, let issue = await AndroidTools.check().issue {
+            AndroidSetup.shared.show()
+            return (200, ["text": "Not yet: this Mac can't build it for Android. \(issue.title): \(issue.message) Lamp opened its setup steps. " +
+                          "Tell the person in a sentence, and that you'll make the change when they ask again once it's done. Change nothing else for it."])
+        }
         if kind.hasIOS {
             let both = kind == .universal
             let report = await Task.detached { PhoneTools.checked(family: .iphone, phone: nil, requiresTeam: both, requiresPaidTeam: false) }.value
@@ -4288,9 +4348,17 @@ final class Store: ObservableObject {
         case .universal: Agent.Rules.universal + Agent.Rules.universalFrameworks + Agent.Rules.universalTry
         case .iphone: Agent.Rules.iPhoneFrameworks + Agent.Rules.iPhoneTry
         case .mac: Agent.Rules.macFrameworks
+        case .android: Agent.Rules.androidEdit + Agent.Rules.androidFrameworks + Agent.Rules.androidData + Agent.Rules.androidTry
         }
+        // To or from Android the code is written over again in the other language: the scaffold of the new kind is
+        // put in beside what's there, for the agent to move the app into.
+        if (kind == .android) != (current.platform == .android), changed.scaffolded {
+            try? Template.fill(changed)
+        }
+        let rewrite = kind == .android ? "Write the app again in Kotlin and Jetpack Compose under app/ (the scaffold is there), reading the Swift in Sources/ for what it does, then delete Sources/, Package.swift and the other Swift-only files with delete_file. "
+            : current.platform == .android ? "Write the app again in Swift under Sources/ (the scaffold is there), reading the Kotlin in app/ for what it does, then delete app/ and the Gradle files with delete_file. " : ""
         return (200, ["text": "Done: \(changed.name) is made for \(words) from now on, and that replaces what your instructions said " +
-                      "about what it runs on. Adapt its code now, in this request, and build it before you finish. " +
+                      "about what it runs on. Adapt its code now, in this request, and build it before you finish. " + rewrite +
                       (kind == .universal ? "Put what only one platform has under `#if os(macOS)` or `#if os(iOS)`. " : "") +
                       "What applies now:\n" + rules.replacingOccurrences(of: "{{DEVICE}}", with: changed.family.name)])
     }
@@ -4991,7 +5059,8 @@ final class Store: ObservableObject {
             return problem
         }
         let command = universal ? "./build.sh \(project.onIOS ? "ios" : "mac")" : "./build.sh"
-        var env: [String: String] = universal ? ["LAMP_TEAM": Devices.team] : [:]
+        // An Android app's build is Gradle's, with Google's tools where Lamp put them (`AndroidTools.environment`).
+        var env: [String: String] = universal ? ["LAMP_TEAM": Devices.team] : project.platform == .android ? AndroidTools.buildEnvironment : [:]
         // The open app takes the change first, when it can (LiveReload): a few seconds, where the whole build
         // takes several more. That build goes on afterwards, for the app to be installed from when it closes.
         if inPlace, await reloadBeforeBuilding(project, command: command, env: env, fingerprint: fingerprint) { return nil }
@@ -5505,6 +5574,13 @@ final class Store: ObservableObject {
         // The turn this install belongs to, taken before the icon wait: a Stop during it can end the turn
         // and start the next one's, which must not inherit this launch.
         let owner = turns[project.id]
+        if project.onAndroid {
+            await prepareIcon(project)
+            guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
+            let problem = await installOnAndroid(project, owner: owner, inFront: inFront)
+            upgradeIconArt(project)
+            return problem
+        }
         if project.onIOS {
             await prepareIcon(project)
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
@@ -5668,6 +5744,133 @@ final class Store: ObservableObject {
 
     /// The iPhone counterpart of `install`: the built app goes into the booted simulator and is launched there,
     /// with what it prints going to the same log the Mac apps use. Returns what's known if it died at once.
+    /// The Android apps open now: where each runs (the emulator's or the device's serial), its process on the
+    /// device, and the log Lamp reads from it, which ends when the app does.
+    private var androidApps: [String: (serial: String, pid: Int32, log: Process?)] = [:]
+    /// The screen density of the device each Android app is open on, for its pictures (`Adb.screenshot`).
+    private var androidDensities: [String: Int] = [:]
+
+    /// Puts an Android app on the device Try On points at (the person's own, or the emulator, started when it
+    /// isn't running) and opens it, with its log read into the app's log. Nil when it's open; else what went wrong.
+    private func installOnAndroid(_ project: LampProject, owner: Turn, inFront: Bool) async -> String? {
+        func stillOwns() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped }
+        let package = Template.androidPackage(for: project)
+        let serial: String
+        do {
+            if let chosen = project.device {
+                let found = await Adb.devices().first { $0.udid == chosen }
+                guard let found, found.adbState == "device" else {
+                    let problem = found.map { Adb.advice(for: $0.name, state: $0.adbState) }
+                        ?? "Lamp can't see the Android device chosen under Try On. Plug it in and unlock it, or choose the emulator."
+                    log(project, .error, problem)
+                    return problem
+                }
+                serial = chosen
+                androidDensities[project.id] = found.density
+            } else {
+                note("Starting the Android emulator…", for: project)
+                serial = try await Emulator.start(show: inFront)
+                if androidDensities[project.id] == nil {
+                    androidDensities[project.id] = (await Adb.getprop(on: serial))["density"].flatMap { Int($0) }
+                }
+            }
+            guard stillOwns() else { return "The app was deleted or stopped before it opened." }
+            note("Opening \(project.name) on \(project.device == nil ? "the emulator" : "your device")…", for: project)
+            retireLaunches(of: project)
+            if let previous = androidApps[project.id]?.log, previous.isRunning { previous.terminate() }
+            try await Adb.install(project.builtURL, package: package, on: serial)
+            guard stillOwns() else { return "The app was deleted or stopped before it opened." }
+            Runtime.startLog(project)
+            let pid = try await Adb.launch(package, on: serial)
+            let logcat = try? Adb.logcat(pid: pid, on: serial, log: Runtime.logURL(project))
+            androidApps[project.id] = (serial, pid, logcat)
+            if inFront, project.device == nil { await Emulator.bringForward() }
+            let opened = Date()
+            _ = watchLaunch(project, owner: owner, opened: opened, alive: { [weak self] in
+                self?.androidApps[project.id]?.log?.isRunning == true
+            }, report: { [weak self] in
+                guard let self else { return "" }
+                return Runtime.logTail(project, lines: 40) ?? "The app quit right after opening, and printed nothing."
+            })
+            refreshOpenApps()
+            return nil
+        } catch {
+            let problem = error.localizedDescription
+            log(project, .error, problem)
+            return problem
+        }
+    }
+
+    /// `look_at_app` for an Android app: the app built, put on the emulator or the device, pictured with adb and
+    /// read as text, with what it logged.
+    private func lookOnAndroid(_ project: LampProject, turn: Turn, changed: Bool, reopen: Bool) async -> (Int, [String: Any]) {
+        var summary = "The app built and is running."
+        let running = await isAndroidRunning(project)
+        if changed || !running || reopen {
+            let crash = await install(project, inFront: false, early: true)
+            turn.look.installed = true
+            turn.look.crash = crash
+            if let crash { return (200, ["text": "The app \(changed ? "built" : "is built"), but it didn't open.\n\n\(crash)"]) }
+            if !changed { summary = "The app is running your latest code; it was reopened without rebuilding." }
+            if reopen { summary = "The app was closed and opened again, so it started fresh." }
+        } else {
+            summary = "The app is running your latest code; nothing needed rebuilding."
+        }
+        note("Looking at \(project.name)", for: project)
+        guard let open = androidApps[project.id] else { return (200, ["text": summary + " It isn't open now."]) }
+        try? await Task.sleep(for: Self.simulatorFirstScreen)
+        var screenshots: [URL] = []
+        let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
+        if await Adb.screenshot(on: open.serial, to: picture, density: androidDensities[project.id]) { screenshots = [picture] }
+        let place = project.device == nil ? "the Android emulator (\(AndroidTools.avdName))" : "the person's Android device"
+        var text = summary + " It's open on \(place). " + (screenshots.isEmpty ? "No picture of the screen could be taken."
+            : Privacy.sharesPictures ? "A picture of its screen follows. Points for use_app are pixels in it." : Privacy.picturesOff)
+        if !Privacy.sharesLog { text += " " + Privacy.logOff }
+        if Privacy.sharesPictures, let screen = await Adb.screen(on: open.serial, density: androidDensities[project.id]) { text += "\n\n" + screen.text }
+        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it logged:\n\(tail)" }
+        return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
+    }
+
+    private func isAndroidRunning(_ project: LampProject) async -> Bool {
+        guard let open = androidApps[project.id] else { return false }
+        return await Adb.pid(of: Template.androidPackage(for: project), on: open.serial) == open.pid
+    }
+
+    /// `use_app` for an Android app: the actions carried out with adb, the screen read between them.
+    private func useOnAndroid(_ project: LampProject, actions: [[String: Any]], json: String) async -> (Int, [String: Any]) {
+        guard let open = androidApps[project.id], await isAndroidRunning(project) else {
+            return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
+        }
+        guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        guard let data = json.data(using: .utf8), let decoded = try? JSONDecoder().decode([Simulator.Driver.Action].self, from: data) else {
+            return (400, ["error": "use_app needs a list of actions."])
+        }
+        let density = androidDensities[project.id]
+        let screen = await Adb.screen(on: open.serial, density: density)
+        let report = await Adb.perform(decoded, on: open.serial, density: density, screen: screen) { [weak self] in
+            guard let self, exists(project), turns[project.id] === owner, !owner.stopped else { return false }
+            return await isAndroidRunning(project)
+        }
+        var text = "What happened:\n\(report)"
+        guard await isAndroidRunning(project) else {
+            text += "\n\nThe app quit or crashed while doing that."
+            if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nLast lines it logged:\n" + tail }
+            return (200, ["text": text])
+        }
+        if Runtime.sourcesChanged(project) {
+            text += "\n\nThis is the app as last built: it doesn't have the changes you've made to the code since. Call look_at_app to build and open them."
+        }
+        var screenshots: [URL] = []
+        let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
+        if Privacy.sharesPictures {
+            if let after = await Adb.screen(on: open.serial, density: density) { text += "\n\n" + after.text }
+            if await Adb.screenshot(on: open.serial, to: picture, density: density) { screenshots = [picture] }
+            text += "\n\nA picture of the screen follows. Points for the next use_app are pixels in it."
+        }
+        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nLast lines it logged:\n" + tail }
+        return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
+    }
+
     private func installOnSimulator(_ project: LampProject, owner: Turn, inFront: Bool, early: Bool) async -> String? {
         guard let udid = Simulator.device(project.family, preferring: project.simulator) else {
             let problem = "No \(project.family.name) simulator with iOS \(Simulator.minimumIOS) or later is installed. Open Xcode once and add one in Settings → Components."
@@ -6942,7 +7145,9 @@ final class Store: ObservableObject {
         }
         simulatorApps = simulatorApps.filter { Simulator.isRunning(pid: $0.value.pid) }
         deviceApps = deviceApps.filter { $0.value.isRunning }
-        let onIOS = Array(simulatorApps.keys) + Array(deviceApps.keys)
+        // An Android app is open while the log Lamp reads from it runs (it ends with the app).
+        androidApps = androidApps.filter { $0.value.log?.isRunning == true }
+        let onIOS = Array(simulatorApps.keys) + Array(deviceApps.keys) + Array(androidApps.keys)
         // A build or icon held for a Mac copy goes in when that copy closes, even with its iPhone copy still open.
         let closedOnMac = openOnMac.subtracting(onMac)
         if Set(onMac) != openOnMac { openOnMac = Set(onMac) }
@@ -6988,6 +7193,15 @@ final class Store: ObservableObject {
     private func quit(_ project: LampProject, for owner: Turn? = nil, only place: Destination? = nil) async -> Bool {
         // Lamp closing it isn't the app dying on launch.
         retireLaunches(of: project)
+        if project.platform == .android {
+            if let running = androidApps[project.id] {
+                await Adb.stop(Template.androidPackage(for: project), on: running.serial)
+                if let log = running.log, log.isRunning { log.terminate() }
+            }
+            androidApps[project.id] = nil
+            refreshOpenApps()
+            return true
+        }
         if project.platform.hasIOS, place != .mac {
             if let attached = deviceApps[project.id] {
                 if attached.isRunning { attached.terminate() }
@@ -7809,6 +8023,7 @@ final class Store: ObservableObject {
         // What went into the open app as the agent saved, since its last look.
         let saved = turn.autoApplied
         turn.autoApplied = 0
+        if project.onAndroid { return await lookOnAndroid(project, turn: turn, changed: changed, reopen: reopen) }
         if project.onIOS {
             // The simulator photographs the screen; nothing in the app has to cooperate.
             // Open, and the device still this app's: otherwise it's opened again (which takes the device back).
@@ -8001,7 +8216,9 @@ final class Store: ObservableObject {
         guard progress[project.id]?.newApp == true, !turn.look.presented, turns[project.id] === turn, !turn.stopped,
               !turn.keptOpen else { return }
         turn.look.presented = true
-        if project.onIOS {
+        if project.onAndroid {
+            if project.device == nil { await Emulator.bringForward() }
+        } else if project.onIOS {
             if let udid = simulatorApps[project.id]?.udid { await Simulator.show(udid) }
         } else {
             Task { await MagicPanel.shared.handOff(project) }
