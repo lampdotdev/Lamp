@@ -1707,8 +1707,8 @@ struct StarterIdeas: View {
     }
 }
 
-/// The Try On choices: the iPhone and iPad simulators and each of the person's paired phones. The simulator choice is the family the agent builds and looks at; a phone is where
-/// Play puts the app.
+/// The Try On choices: the iPhone and iPad simulators and each of the person's paired phones, by its exact model.
+/// The simulator choice is the family the agent builds and looks at; a phone is where Play puts the app.
 private struct TryOnChoices: View {
     @EnvironmentObject private var store: Store
     let project: LampProject
@@ -1745,12 +1745,16 @@ private struct TryOnChoices: View {
             }
         }
         do {
-            let paired = store.devices.filter(\.paired), unpaired = store.devices.filter { !$0.paired }
+            // The person's phones, each by its exact model, and what it still needs before Play can put the app
+            // on it. A watch isn't a place of its own: its app goes with the iPhone's, so it's listed in Settings.
+            let phones = store.devices.filter { $0.kind.isPhone }
+            let paired = phones.filter(\.paired), unpaired = phones.filter { !$0.paired }
             Picker("Your Devices", selection: Binding(get: { project.onIOS ? project.device : nil }, set: { chosen in
                 store.choosePreparedDevice(project, chosen)
             })) {
                 ForEach(paired) { device in
-                    Label(device.name + (device.developerMode ? "" : " (Developer Mode is off)"), systemImage: device.family == .ipad ? "ipad" : "iphone")
+                    let step = device.setup() == .ready ? "" : " (\(device.setup().words))"
+                    Label("\(device.name) · \(device.model)\(step)", systemImage: device.kind.symbol)
                         .tag(Optional(device.udid))
                 }
                 if let chosen = project.device, !paired.contains(where: { $0.udid == chosen }) {
@@ -1760,22 +1764,27 @@ private struct TryOnChoices: View {
             .pickerStyle(.inline)
             // A phone that's plugged in but hasn't trusted this Mac yet: pairing puts the question on it.
             ForEach(unpaired) { device in
-                Button(store.pairing.contains(device.udid) ? "Pairing with \(device.name)…" : "Pair \(device.name)…") {
+                Button(store.pairing.contains(device.udid) ? "Pairing with \(device.name)…" : "Pair \(device.name) (\(device.model))…") {
                     store.pairDevice(device, for: project)
                 }
                 .disabled(store.pairing.contains(device.udid))
             }
-            ForEach(olderPhones.filter { old in !store.devices.contains(where: { $0.udid == old.id }) }) { phone in
+            ForEach(olderPhones.filter { old in !phones.contains(where: { $0.udid == old.id }) }) { phone in
                 Button("\(phone.name) (needs iOS \(PhoneTools.minimumIOS))…") {
                     PhoneSetup.shared.show(family: phone.family, phone: phone.id)
                 }
             }
-            if store.devices.isEmpty && olderPhones.isEmpty {
+            if phones.isEmpty && olderPhones.isEmpty {
                 Text("No iPhone or iPad found. Plug one in with a cable and unlock it, then look again.")
             }
         }
         Divider()
         Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show(family: project.family, phone: project.device) }
+        // Every device Lamp knows, with where its setup stands, is in Settings → Building.
+        Button("All Your Devices…") {
+            UserDefaults.standard.set("building", forKey: "settingsTab")
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        }
         Button("Look for Devices Again") { refresh() }
             .onAppear { refresh() }
     }

@@ -811,7 +811,9 @@ final class Store: ObservableObject {
         startGateway()
         watchOpenApps()
         // Asking for phones runs devicectl, so only for someone with iPhone apps; Try On asks again when it's opened.
+        // This Mac's record is read either way, off the main thread, so the first request's note has it.
         if projects.contains(where: { $0.platform.hasIOS }) { refreshDevices(); refreshSimulators() }
+        else { Task { thisMac = await Device.readThisMac() } }
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
         }
@@ -1488,9 +1490,12 @@ final class Store: ObservableObject {
         project.simulator.flatMap { udid in simulators.first { $0.udid == udid }?.name } ?? project.family.name
     }
 
-    /// The person's paired iPhones and iPads, for Try On. Looked up when the list is wanted (opening the
-    /// menu) and at startup; a phone that's gone stays chosen, and Play says so.
-    @Published var devices: [Devices.Device] = []
+    /// The person's iPhones, iPads and Apple Watches (`Device`), for Try On, Settings → Building and the agent's
+    /// note. Looked up when the list is wanted (opening the menu) and at startup; a phone that's gone stays
+    /// chosen, and Play says so.
+    @Published var devices: [Device] = []
+    /// This Mac as a device, read when the list is, so the agent's note never waits for it.
+    @Published var thisMac: Device?
 
     /// What Try On shows beside Play: the simulator's kind, or the chosen phone's name, or this Mac.
     func tryOnName(_ project: LampProject) -> String {
@@ -1514,14 +1519,17 @@ final class Store: ObservableObject {
 
     /// Pairs a plugged-in phone that hasn't trusted this Mac yet, then lists again. Told in the app's chat,
     /// where the person is looking, as the Try On menu is the app's.
-    func pairDevice(_ device: Devices.Device, for project: LampProject) {
+    /// Settings → Building pairs with no app open: then nothing is said in a chat, and the row says where it got.
+    func pairDevice(_ device: Device, for project: LampProject?) {
         guard !pairing.contains(device.udid) else { return }
         pairing.insert(device.udid)
-        log(project, .status, "Look at \(device.name): tap Trust when it asks, and enter its passcode.")
+        if let project { log(project, .status, "Look at \(device.name): tap Trust when it asks, and enter its passcode.") }
         Task {
             defer { pairing.remove(device.udid) }
             // The chat may have moved meanwhile: a first message renames a new app under a new id.
-            @MainActor func tell(_ kind: LogLine.Kind, _ text: String) { if let now = current(project) { log(now, kind, text) } }
+            @MainActor func tell(_ kind: LogLine.Kind, _ text: String) {
+                if let project, let now = current(project) { log(now, kind, text) }
+            }
             do {
                 try await Devices.pair(device.udid)
                 devices = await Devices.list()
@@ -1550,6 +1558,8 @@ final class Store: ObservableObject {
         Task {
             let found = await Devices.list()
             if found != devices { devices = found }
+            let mac = await Device.readThisMac()
+            if mac != thisMac { thisMac = mac }
         }
     }
 
@@ -2986,6 +2996,7 @@ final class Store: ObservableObject {
                     Memory.compacted(project)
                     AIStatus.compacted(project)
                     Skills.compacted(project)
+                    DeviceNote.compacted(project)
                 case .naming(let words):
                     turn.naming = words.nilIfEmpty
                     if let words = turn.naming { noteAgent(words, for: project) }
@@ -3040,6 +3051,7 @@ final class Store: ObservableObject {
                         Memory.delivered(to: project, session: id)
                         AIStatus.delivered(to: project, session: id)
                         Skills.delivered(to: project, session: id)
+                        DeviceNote.delivered(to: project, session: id)
                     }
                 }
             }
@@ -3085,7 +3097,7 @@ final class Store: ObservableObject {
         turn.steering = nil
         turn.toolRunning = false
         takeBackHanded(project)
-        if answered { Memory.delivered(to: project); AIStatus.delivered(to: project); Skills.delivered(to: project) }
+        if answered { Memory.delivered(to: project); AIStatus.delivered(to: project); Skills.delivered(to: project); DeviceNote.delivered(to: project) }
         endApprovals(for: project)
         // A message cut short (the run was stopped, or failed) keeps what was written of it.
         showWritten(for: project)
@@ -3318,6 +3330,7 @@ final class Store: ObservableObject {
         Memory.compacted(project)
         AIStatus.compacted(project)
         Skills.compacted(project)
+        DeviceNote.compacted(project)
     }
 
     /// One pi conversation per app, so the agent remembers earlier requests, including ones that were undone.

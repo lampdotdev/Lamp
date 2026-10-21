@@ -313,7 +313,7 @@ enum PhoneTools {
         }
         report.passed.append(.platform)
         func listRuntimes() -> (result: Subprocess.Result, list: [[String: Any]]?) {
-            let result = probe.run(developer + "/usr/bin/simctl", ["list", "runtimes", "-j"], env)
+            let result = probe.run(DeveloperTools.path("simctl", in: developer), ["list", "runtimes", "-j"], env)
             guard result.ok, let data = result.output.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return (result, nil) }
             return (result, json["runtimes"] as? [[String: Any]])
@@ -338,7 +338,7 @@ enum PhoneTools {
             return stop(.runtime, "Download iOS for the simulator", "Lamp tries your app in a simulator, an iPhone or iPad that appears on your Mac's screen, and that needs iOS \(minimumIOS) or later. Click Open Xcode, choose Xcode → Settings from the menu bar, then click Components (Platforms in older versions of Xcode) and click Get beside the newest iOS. Come back to Lamp when the download finishes.", .components)
         }
         report.passed.append(.runtime)
-        let devices = probe.run(developer + "/usr/bin/simctl", ["list", "devices", "available", "-j"], env)
+        let devices = probe.run(DeveloperTools.path("simctl", in: developer), ["list", "devices", "available", "-j"], env)
         guard devices.ok, Simulator.device(family, listing: devices.output) != nil else {
             return stop(.simulator, "Add an \(family.name) simulator", "There's no \(family.name) for Lamp to try your app on yet. Click Open Simulator, then choose File → New Simulator from the menu bar. Pick any \(family.name) with iOS \(minimumIOS) or later, click Create, and come back to Lamp.", .simulator)
         }
@@ -386,7 +386,7 @@ enum PhoneTools {
         if let phone {
             let file = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-phone-version-\(UUID().uuidString).json")
             defer { try? FileManager.default.removeItem(at: file) }
-            let result = probe.run(developer + "/usr/bin/devicectl", ["list", "devices", "--timeout", "5", "--json-output", file.path], env)
+            let result = probe.run(DeveloperTools.path("devicectl", in: developer), ["list", "devices", "--timeout", "5", "--json-output", file.path], env)
             guard result.ok, let data = probe.read(file),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let devices = (json["result"] as? [String: Any])?["devices"] as? [[String: Any]],
