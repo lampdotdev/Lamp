@@ -656,9 +656,13 @@ final class Store: ObservableObject {
     /// The person pressed Reload, in the app or the chat: the waiting change goes in, by closing the app the usual way
     /// and opening it again where it was. Pressed while a turn has the app, it's done when the turn ends.
     func reloadWaiting(_ id: String) {
-        guard let project = projects.first(where: { $0.id == id }), Runtime.waitsForReload(project) else { return }
+        guard let project = projects.first(where: { $0.id == id }), Runtime.waitsForReload(project) else {
+            reloadWhenFree.remove(id)
+            return
+        }
         // Taken now, before anything queued can start: otherwise kept until the turn that has the app ends.
         guard begin(project) != nil else { reloadWhenFree.insert(id); return }
+        reloadWhenFree.remove(id)
         // The Mac copy's change, wherever Try On points now (an app for both may have moved it to a phone since).
         var mac = project
         mac.chosen = .mac
@@ -667,7 +671,9 @@ final class Store: ObservableObject {
             finish(project)
         }
     }
-    private var reloadWhenFree: Set<String> = []
+    /// Reloads pressed while something else had the app (the agent's turn): each goes in when it's done, and the chat
+    /// says so meanwhile (`ReloadLine.queued`), since nothing else would seem to happen.
+    @Published private(set) var reloadWhenFree: Set<String> = []
 
     /// Whether reopening the app now would close it under the person: a request's turn, the Mac app open, and not a
     /// new app's first turn (nobody is using it yet, and its passes are built for the person to watch go in). Then
@@ -2391,7 +2397,7 @@ final class Store: ObservableObject {
             Task {
                 await applyIconArt(project, spec: spec)
                 release(project)
-                if reloadWhenFree.remove(project.id) != nil { reloadWaiting(project.id) }
+                if reloadWhenFree.contains(project.id) { reloadWaiting(project.id) }
                 fixHeldCrash(project)
                 offerHeldDrawing(project)
                 startQueued(project)
@@ -2400,7 +2406,7 @@ final class Store: ObservableObject {
             return
         }
         release(project)
-        if reloadWhenFree.remove(project.id) != nil { reloadWaiting(project.id) }
+        if reloadWhenFree.contains(project.id) { reloadWaiting(project.id) }
         if iconFallbackWhenFree.remove(project.id) != nil, let spec = Icons.load(project) {
             Task { await artworkWontCome(project, spec: spec, failed: false) }
         }

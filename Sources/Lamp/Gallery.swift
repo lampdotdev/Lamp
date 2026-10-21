@@ -307,6 +307,11 @@ enum Gallery {
                 ChatLook.UndoChange {}
             })
         },
+        // Reload pressed while the agent is still at work on the app: it goes in once that's done.
+        Entry(group: "Activity", name: "Reload, waiting for the request") {
+            AnyView(ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.queued("Hot Shelf"), button: "Reload",
+                                        disabled: true, prominent: true) {})
+        },
         Entry(group: "Activity", name: "Under the agent's progress lines") {
             let started = Date().addingTimeInterval(-95)
             return AnyView(VStack(alignment: .leading, spacing: 12) {

@@ -563,7 +563,9 @@ struct LogRow: View, Equatable {
             WidgetCardView(dir: dir)
         case .reload:
             if let project = Store.shared.projects.first(where: { $0.dir == dir }) {
-                ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.text(project.name), button: "Reload", prominent: true) {
+                let queued = Store.shared.reloadWhenFree.contains(project.id)
+                ChatLook.ActionLine(symbol: "arrow.clockwise", text: queued ? ReloadLine.queued(project.name) : ReloadLine.text(project.name),
+                                    button: "Reload", disabled: queued, prominent: true) {
                     Store.shared.reloadWaiting(project.id)
                 }
             }
@@ -703,6 +705,8 @@ struct StatusGroup: View {
 /// one in the app's title bar does.
 enum ReloadLine {
     static func text(_ name: String) -> String { "Reload \(name) to see this change." }
+    /// Reload was pressed while the agent was still at work on the app: it goes in once that's done.
+    static func queued(_ name: String) -> String { "\(name) reloads when this request is done." }
 }
 
 /// A turn's steps as its one line opens to them: "Worked for…" once it's over, and the live line while it goes on.
