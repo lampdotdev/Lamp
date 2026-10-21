@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Gave Meter its new field types)
+== run
+before: lazy 0 level=0, lazy 1 level=1, lazy 2 level=2, list 0 level=0, list 1 level=1, list 2 level=2
+RELOAD 1 (whole): ok
+after1 (want every row drawn with a Double level, list 0.0 to 2.0 and lazy 0.0 to 2.0, or a reopen; never another number): lazy 0 level=0.0, lazy 1 level=1.0, lazy 2 level=2.0, list 0 level=0.0, list 1 level=1.0, list 2 level=2.0

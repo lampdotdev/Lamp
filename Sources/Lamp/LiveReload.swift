@@ -272,7 +272,7 @@ enum LiveReload {
     enum Group: String {
         case launch = "\u{1}launch", constant = "\u{2}constant", alias = "\u{3}alias", declared = "\u{5}declared"
         case opaque = "\u{6}opaque", place = "\u{7}place", inits = "\u{8}inits", shape = "\u{e}shape", stored = "\u{10}stored"
-        case hash = "\u{11}hash"
+        case hash = "\u{11}hash", defaults = "\u{12}defaults"
         func entry(_ parts: String...) -> String { ([rawValue] + parts).joined(separator: "\t") }
         /// The entry's parts when it's of this group, else nil.
         func parts(of entry: String) -> [String]? {
@@ -289,7 +289,7 @@ enum LiveReload {
             guard let parts = parts(of: entry), let first = parts.first else { return nil }
             switch self {
             case .alias: return first.components(separatedBy: " = ").first
-            case .constant, .stored, .hash: return String(parts.joined(separator: "\t").prefix { $0 != ":" })
+            case .constant, .stored, .hash, .defaults: return String(parts.joined(separator: "\t").prefix { $0 != ":" })
             case .inits: return first.hasSuffix(".final") ? String(first.dropLast(6)) : first.range(of: ".init").map { String(first[..<$0.lowerBound]) }
             case .place: return parts.joined(separator: "\t")
             case .opaque, .shape: return first
@@ -671,26 +671,49 @@ enum LiveReload {
         var files: [String: SwiftSource.Text] = [:]
         // What the bodies call, but only code nothing else calls: a factory a body calls and a hosting view's root
         // also takes makes a value the open app keeps. Dropped until every caller left is a body or such code.
-        var helpers = bodies.flatMap { SwiftSource.called(from: $0.start, to: $0.last, in: declarations, files: &files) }
+        // Not what a body's actions call or make: an action runs once, when it's called, and hands what it made on
+        // (`.onAppear { openPanel() }`, which puts a view in a hosting view of its own).
+        let actions = declarations.actions
+        var helpers = bodies.flatMap { SwiftSource.called(from: $0.start, to: $0.last, in: declarations, files: &files, skipping: actions) }
         var dropped = true
         while dropped {
             dropped = false
             let safe = bodies + helpers
             helpers.removeAll { helper in
                 let outside = declarations.calls.contains { call in
-                    SwiftSource.within(call.to, helper) && !SwiftSource.within(call.at, helper) && !safe.contains { SwiftSource.within(call.at, $0) }
+                    SwiftSource.within(call.to, helper) && !SwiftSource.within(call.at, helper)
+                        && (!safe.contains { SwiftSource.within(call.at, $0) } || actions.contains { SwiftSource.within(call.at, $0) })
                 }
                 if outside { dropped = true }
                 return outside
             }
         }
         let allowed = bodies + helpers
+        func made(at place: SwiftSource.Position) -> Bool {
+            allowed.contains { SwiftSource.within(place, $0) } && !actions.contains { SwiftSource.within(place, $0) }
+        }
         let name = bare(view), short = String(name.split(separator: ".").last ?? "")
         return declarations.uses.contains { use in
             // The type itself or one of its initializers: reading a member of a view made elsewhere makes none.
             let names = use.name == name || use.name == short || use.name.hasSuffix("." + short) || use.name.hasPrefix(name + ".init")
             guard !use.at.file.hasPrefix("@"), names else { return false }
-            return !allowed.contains { SwiftSource.within(use.at, $0) }
+            return !made(at: use.at)
+        }
+    }
+
+    /// The properties whose starting value changed (`Group.defaults`), as type and name: not one added or taken away.
+    static func changedStartingValues(before: [String], after: [String]) -> [(type: String, name: String)] {
+        func values(_ entries: [String]) -> [String: String] {
+            Dictionary(Group.defaults.parts(in: entries).compactMap { parts -> (String, String)? in
+                let field = parts.joined(separator: "\t")
+                guard let colon = field.range(of: ": ", options: .backwards) else { return nil }
+                return (String(field[..<colon.lowerBound]), String(field[colon.upperBound...]))
+            }, uniquingKeysWith: { first, _ in first })
+        }
+        let old = values(before), new = values(after)
+        return new.keys.sorted().compactMap { key in
+            guard let was = old[key], was != new[key], let tab = key.lastIndex(of: "\t") else { return nil }
+            return (String(key[..<tab]), String(key[key.index(after: tab)...]))
         }
     }
 
@@ -901,6 +924,7 @@ enum LiveReload {
     /// Reads what code may go on running after a change, line by line as `SwiftSource.walk` gives them. It keeps a
     /// scope stack of its own, since what matters here is how a scope outlives a draw, not what it declares.
     final class OldCode {
+        private var preview: Int?
         private enum Kind { case body, escaping, async, function(String?, async: Bool), named(String), other }
         // A view's body, or the live copy's name for it (`Template.liveCopySteps` moves the body into `__lampBody`).
         private let bodyDecl = try! NSRegularExpression(pattern: #"^(\s*)\(var_decl\b[^"]*"(?:body|__lampBody)" "#)
@@ -951,6 +975,10 @@ enum LiveReload {
 
         func take(_ line: SwiftSource.Walk.Line) {
             let indent = line.indent, opens = line.opens
+            // A preview's code (`#Preview { … }`) never runs in the app.
+            if let open = preview, indent > open { return }
+            // And the type such a macro writes for it, named by its mangled name (`$s…PreviewRegistryfMu_`).
+            preview = opens("macro_expansion_decl") || opens("struct_decl") && line.has(" \"$s") ? indent : nil
             while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
             while let last = callees.last, last.indent >= indent { callees.removeLast() }
             while let last = calls.last, last >= indent { calls.removeLast() }
@@ -1862,11 +1890,14 @@ enum LiveReload {
         // of them hold no object at all.
         var plain = Set<String>()
         if let before, let after {
-            let unsure = LiveSlots.unsureTypes(project, before: before, after: after, declarations: declarations)
+            var unsure = LiveSlots.unsureTypes(project, before: before, after: after, declarations: declarations)
+            // And those of the constants and stored values made from an enum that grew, which are made again or reopen.
+            let fromGrown = LiveSlots.constants(naming: grownEarly, in: declarations, layout: after, judging: false)
+            unsure.merge(LiveSlots.unsureTypes(of: fromGrown, layout: after, declarations: declarations)) { first, _ in first }
             if !unsure.isEmpty { plain = await plainTypes(unsure, in: project) }
         }
         var constants = before.flatMap { before in after.map { LiveSlots.changedConstants(project, before: before, after: $0, declarations: declarations, plain: plain) } } ?? []
-        constants = Array(Set(constants + LiveSlots.constants(naming: grownEarly, in: declarations, layout: after ?? []))).sorted()
+        constants = Array(Set(constants + LiveSlots.constants(naming: grownEarly, in: declarations, layout: after ?? [], plain: plain))).sorted()
         // A key's default SwiftUI reads once and keeps (an environment value's, a preference's, a focused value's): a
         // new one would never be read.
         if let after, case let conformed = conformances(inLayout: after), let key = constants.first(where: { key in
@@ -1968,7 +1999,7 @@ enum LiveReload {
             }
             // A stored static, global or lazy property made from it keeps what the open app made, and only one never
             // read yet would see the new case.
-            if let made = LiveSlots.stored(naming: grown, in: declarations, layout: after ?? []).first {
+            if let made = LiveSlots.stored(naming: grown, in: declarations, layout: after ?? [], plain: plain).first {
                 let name = made.hasPrefix("\t") ? String(made.dropFirst()) : made.replacingOccurrences(of: "\t", with: ".")
                 return .reopen(why: "\(bare(name)) is made from \(bare(grown[0])), which gained cases, and the open app made it once and keeps it")
             }
@@ -2009,6 +2040,25 @@ enum LiveReload {
             }
             changed = appFiles(project)
             said.append("Gave \(views.map(readable).joined(separator: ", ")) \(views.count == 1 ? "its" : "their") new field types")
+        }
+        // A view's plain property given another starting value (`let columns = 2` to `3`) shows only in a view made
+        // again: one the app makes once (the window's root, at launch; a hosting view's) keeps the value it was made with.
+        if let before, let after, case let changedDefaults = changedStartingValues(before: before, after: after), !changedDefaults.isEmpty {
+            let views = conformances(inLayout: after).of
+            // A default SwiftUI reads once and keeps: a key's (`defaultValue`, computed too) or an `@Entry` value's.
+            let keys: Set<String> = ["EnvironmentKey", "PreferenceKey", "FocusedValueKey", "ContainerValueKey"]
+            if let (type, name) = changedDefaults.first(where: { type, name in
+                let plain = bare(type)
+                return ["EnvironmentValues", "FocusedValues", "ContainerValues"].contains(plain)
+                    || name == "defaultValue" && !(views[type] ?? views[plain] ?? []).isDisjoint(with: keys)
+            }) {
+                return .reopen(why: "\(readable(type)).\(name) changed, and SwiftUI keeps the default it first read")
+            }
+            for (type, name) in changedDefaults where views[type]?.contains("View") == true || views[bare(type)]?.contains("View") == true {
+                if madeOutsideBodies(type, declarations: declarations, layout: after) {
+                    return .reopen(why: "\(readable(type)).\(name) starts as something else now, and the open app made \(readable(type)) once (at launch, or outside a view's body), which keeps what it started as")
+                }
+            }
         }
         if let after, let gone = LiveSlots.retiredFromValue(project, keeping: after) {
             return .reopen(why: "\(gone) was added while the app was open and is taken away now, which changes how the open app's values of it compare and hash")
@@ -2324,20 +2374,23 @@ enum LiveSlots {
 
     /// The constants (as `changedConstants` names them) whose starting value names one of `types`, or calls code
     /// that does (`countMoods()`): made from an enum that grew, they keep the value the open app made.
-    static func constants(naming types: [String], in declarations: SwiftSource.Declarations, layout: [String]) -> [String] {
-        made(declarations.constants, naming: types, in: declarations, layout: layout)
+    static func constants(naming types: [String], in declarations: SwiftSource.Declarations, layout: [String],
+                          plain: Set<String> = [], judging: Bool = true) -> [String] {
+        made(declarations.constants, naming: types, in: declarations, layout: layout, plain: plain, judging: judging)
     }
 
     /// The same of stored statics, globals and lazy properties, which the open app made once and can't be given
     /// another value in place: one made from a grown enum reopens the app.
-    static func stored(naming types: [String], in declarations: SwiftSource.Declarations, layout: [String]) -> [String] {
-        made(declarations.stored, naming: types, in: declarations, layout: layout)
+    static func stored(naming types: [String], in declarations: SwiftSource.Declarations, layout: [String], plain: Set<String> = []) -> [String] {
+        made(declarations.stored, naming: types, in: declarations, layout: layout, plain: plain)
     }
 
     /// One that holds an object isn't: the object is the app's state, kept like every other, and the enum values in
     /// its fields are held to what a grown enum allows as any field is.
+    /// `plain` names the system types this Mac said hold no object (`LiveReload.plainTypes`); `judging` false lists
+    /// every one made from the enums, to find which of those types to ask about.
     private static func made(_ variables: [String: SwiftSource.Variable], naming types: [String], in declarations: SwiftSource.Declarations,
-                             layout: [String]) -> [String] {
+                             layout: [String], plain: Set<String> = [], judging: Bool = true) -> [String] {
         guard !types.isEmpty else { return [] }
         let byType = LiveReload.byType(LiveReload.bared(layout))
         func cases(of type: String) -> Set<String> { caseNames(byType[type] ?? []) }
@@ -2346,7 +2399,7 @@ enum LiveSlots {
         return variables.keys.sorted().filter { key in
             guard let variable = variables[key], let initial = initialRange(of: variable, in: declarations) else { return false }
             var seen = Set<String>()
-            if holdsObject(variable.type, classes: declarations.classes, layout: byType, seen: &seen) { return false }
+            if judging, holdsObject(variable.type, classes: declarations.classes, layout: byType, seen: &seen, plain: plain) { return false }
             let binding = declarations.bindings[variable.binding]
             let ranges = [initial] + SwiftSource.called(from: binding.start, to: binding.last, in: declarations, files: &files, members: true)
             return names.contains { declarations.names(type: $0, within: ranges, except: cases(of: $0)) }
@@ -2540,8 +2593,9 @@ enum LiveSlots {
     }
 
     /// The same for these constants, whether they changed or not: every constant of the app's, asked ahead of the
-    /// first change (`LiveReload.warm`), so no change waits for the answer.
+    /// first change (`LiveReload.warm`), and those made from an enum that grew, so no change waits for the answer.
     static func unsureTypes(of keys: [String], layout after: [String], declarations: SwiftSource.Declarations) -> [String: String] {
+        guard !keys.isEmpty else { return [:] }
         let layout = LiveReload.byType(LiveReload.bared(after)), own = declarations.ownTypeNames
         var asked = Set<String>()
         for key in keys {
@@ -2603,6 +2657,9 @@ enum LiveSlots {
             } else if members.contains(type + "\t_\(place(in: type, holder: .view)): State<LampStateBox>")
                         || members.contains(type + "\t__\(place(in: type, holder: .view)): LazyState<LampStateBox>") {
                 holder = .view
+            } else if extras.contains(where: { $0.dropFirst(type.count + 1).hasPrefix("case ") }) {
+                // An enum keeps no spare: a case added anywhere but at the end, or one that carries values, lays its values out anew.
+                return .refused("\(type) gained a case that carries values or isn't at the end, which lays out its values anew")
             } else {
                 return .refused("\(type) has no spare place of Lamp's (a model, a Sendable class, an Equatable view, a wrapper or a struct in a file that lays memory out by hand gets none)")
             }
@@ -2631,7 +2688,11 @@ enum LiveSlots {
                 case .view:
                     // Or a `let` with a literal (below), which never changes and is no parameter of the initializer.
                     guard unwrap("State") || unwrap("LazyState", underscores: 2) || declarations.lets.contains(type + "\t" + name) else {
-                        return .refused("\(type).\(name) isn't @State, and a view's spare keeps state")
+                        // A wrapper's storage (`_size: AppStorage<Int>`) is said by its wrapper.
+                        if name.hasPrefix("_"), let open = kind.firstIndex(of: "<") {
+                            return .refused("\(type).\(name.dropFirst()) is @\(kind[..<open]), and a view's spare keeps only @State")
+                        }
+                        return .refused("\(type).\(name) isn't @State, and a view's spare keeps only @State")
                     }
                 }
                 // A property in a Codable type's CodingKeys, written or made by the compiler, stays a field: moved into a
@@ -2992,7 +3053,10 @@ enum LiveSlots {
                     // type's own fields with their own types.
                     let field = member[..<colon.lowerBound].split(separator: "\t").last.map(String.init) ?? ""
                     if field.hasPrefix("__lamp") { continue }
-                    if let held = objectHeld(in: String(member[colon.upperBound...]), classes: classes, layout: layout, seen: &seen,
+                    // A case's raw value (`= "pantry"`) is a value, not a type it holds.
+                    var kind = String(member[colon.upperBound...])
+                    if field.hasPrefix("case "), let raw = kind.range(of: " = ") { kind = String(kind[..<raw.lowerBound]) }
+                    if let held = objectHeld(in: kind, classes: classes, layout: layout, seen: &seen,
                                              plain: plain, unsure: unsure) {
                         // The deepest field is the one that says why: an outer one only leads to it.
                         return held.contains(" (a ") ? held : "\(name).\(field) (a \(held))"
@@ -3094,6 +3158,8 @@ enum LiveSlots {
                 to -= 1
                 while to > from, text.bytes[to] != UInt8(ascii: ",") { to -= 1 }
             }
+            // Names out of order are no list Lamp can split: refused rather than read backwards.
+            guard from <= to else { return nil }
             pieces.append(text.slice(from, to).trimmingCharacters(in: .whitespacesAndNewlines))
         }
         // The line's indent, for the lines added after it.

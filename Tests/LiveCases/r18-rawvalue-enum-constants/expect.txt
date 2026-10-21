@@ -1,0 +1,14 @@
+VERDICT 1: REOPEN (Pantry.open is made from Rank, which gained cases, and the open app made it once and keeps it)
+VERDICT 2: RELOAD (Gave Catalog.start its new value)
+VERDICT 3: RELOAD (Gave Catalog.look its new value)
+== run
+before: open=2 shelves=2 live=2 ranks=2 start=pantry size=12.0
+RELOAD 1: REOPEN Pantry.open is made from Rank, which gained cases, and the open app made it once and keeps it
+after1 (want shelves=3 like live=3, as ranks=3, or a reopen; and open=2 only with a reopen: two enums gained a case, one with String raw values, one with Int raw values): open=2 shelves=2 live=2 ranks=2 start=pantry size=12.0
+before: open=3 shelves=3 live=3 ranks=3 start=pantry size=12.0
+RELOAD 1: in the restart
+after1 (want shelves=3 like live=3, as ranks=3, or a reopen; and open=2 only with a reopen: two enums gained a case, one with String raw values, one with Int raw values): open=3 shelves=3 live=3 ranks=3 start=pantry size=12.0
+RELOAD 2 (whole): ok
+after2 (want start=fridge, in place like any plain constant: a constant of the String enum changed): open=3 shelves=3 live=3 ranks=3 start=fridge size=12.0
+RELOAD 3 (whole): ok
+after3 (want size=14.0, in place: a theme constant holding that enum changed): open=3 shelves=3 live=3 ranks=3 start=fridge size=14.0

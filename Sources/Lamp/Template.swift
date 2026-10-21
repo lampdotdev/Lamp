@@ -16594,12 +16594,14 @@ enum Template {
         @skip = spans($s);
         $s =~ s{var\s+body\s*:\s*some\s+(?:SwiftUI\.)?View\s*\{}~ inside($-[0]) ? $& : "var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\n    \@ViewBuilder var __lampBody: some View {" ~ge;
         @skip = spans($s);
-        # What else SwiftUI keeps until something it reads changes: a modifier's and a style's body, a layout's
-        # placement, a representable's update. Each reads the generation too, so a change draws it again with the new
-        # code. Only what a statement can open without changing what it returns: the two bodies are view builders, and
-        # the others return nothing. Only a declaration with a body (`[^{}]*` stops at a protocol's requirement, which
-        # has none).
-        $s =~ s{\bfunc\s+(?:body\s*\(\s*content|makeBody\s*\(\s*configuration|placeSubviews\s*\(\s*in|update(?:NS|UI)View(?:Controller)?\s*\()[^{}]*\{}~ inside($-[0]) ? $& : "$&let _ = LampLive.touch(); " ~ge;
+        # What else SwiftUI keeps until something it reads changes: a modifier's and a style's body, and a layout's
+        # placement. Each reads the generation too, so a change draws it again with the new code. Only a body that
+        # returns `some View` (a view builder, where a statement before the views changes nothing) and a placement,
+        # which returns nothing; never across another declaration (a protocol's requirement has no body, and the
+        # next `{` may be a property's `{ get }`). Not a representable's update: run again on every change, it would
+        # redo what it does each time (a web view reloading, a map going back to where it started).
+        my $sig = qr/(?:(?!\b(?:func|var|let|init|subscript|struct|class|enum|protocol|extension|actor|case)\b)[^{}])*/;
+        $s =~ s{\bfunc\s+(?:body\s*\(\s*content|makeBody\s*\(\s*configuration)$sig->\s*some\s+(?:SwiftUI\.)?View\s*\{|\bfunc\s+placeSubviews\s*\(\s*in$sig\)\s*\{}~ inside($-[0]) ? $& : "$&let _ = LampLive.touch(); " ~ge;
         @skip = spans($s);
         # A layout's `sizeThatFits` too, which is asked again only when what it read changes. Its body runs inside a
         # closure that reads it first (`LampLive.touched`), which returns what the body returns, written as one
@@ -16607,7 +16609,7 @@ enum Template {
         # end is found brace by brace outside strings and comments, from the last such method back.
         @skip = spans($s);
         my @layouts;
-        while ($s =~ /\bfunc\s+sizeThatFits\s*\(\s*proposal[^{}]*\{/g) { push @layouts, pos($s) - 1 unless inside($-[0]) }
+        while ($s =~ /\bfunc\s+sizeThatFits\s*\(\s*proposal$sig->\s*CGSize\s*\{/g) { push @layouts, pos($s) - 1 unless inside($-[0]) }
         for my $open (reverse @layouts) {
             my ($depth, $close) = (0, -1);
             for (my $i = $open; $i < length($s); $i++) {

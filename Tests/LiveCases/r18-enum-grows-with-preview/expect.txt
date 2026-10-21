@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD
+VERDICT 2: RELOAD
+== run
+before: tones=2 moods=2
+RELOAD 1 (whole): ok
+after1 (want it in: Tone gained a case, and no #Preview names it): tones=3 moods=2
+RELOAD 2 (whole): ok
+after2 (want it in, like after1: Mood gained a case, and only a #Preview, which never runs in the app, names it): tones=3 moods=3

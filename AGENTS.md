@@ -873,9 +873,12 @@ inside it again, its views' state included, which `Agent.liveNote` tells the age
 `LAMP_LIVE` and `-Xlinker -interposable` (SwiftPM for a Mac app; Xcode for an app for both, from a copy of the
 device project, with its debug library off so the code is in the one binary). The copy is made by one
 perl pass over each file (`Template.livePerl`: the body wrap, a read of the generation in what SwiftUI keeps besides a body (a modifier's
-`body(content:)`, a style's `makeBody`, a layout's methods, a representable's update; `LampLive.touch`, and for a
+`body(content:)`, a style's `makeBody`, a layout's methods; `LampLive.touch`, matched only up to the declaration's own
+`{`, never across another declaration; and for a
 `sizeThatFits` written as one expression `LampLive.touched`, which runs it after the read; a layout is asked again only
-when SwiftUI lays out again, which the read doesn't force), Lamp's entry, the spare places and the `final` below,
+when SwiftUI lays out again, which the read doesn't force; a representable's make and update aren't given the read,
+since every representable would then run its update on every change (a web view reloading), and neither is a
+`Shape`'s `path(in:)`, which SwiftUI asks again only when the shape's value changes: `Agent.liveNote` tells the agent), Lamp's entry, the spare places and the `final` below,
 with the stretches of strings and comments found once and never touched). It makes every class `final` that nothing
 in Sources subclasses (`live.pl scan` lists the names used as superclasses and as the bounds of generic parameters
 and `where` clauses, followed through typealiases): a final class keeps no method table, so a method or computed
@@ -1188,7 +1191,11 @@ object isn't remade (`static let shared = Store()`): the object is the app's sta
 read by what runs only at launch (its types and their extensions), there or through what it calls
 (`SwiftSource.reaches`), reopens the app, and so does
 a constant of the app's own option set or raw-value type, which the open app's values of it are made of.
-So does a key's `defaultValue` (an environment value's, a preference's), which SwiftUI reads once and keeps.
+So does a key's `defaultValue` (an environment value's, a preference's, computed too, in the type or an extension of it, with what its getter calls) or an `@Entry` value's, which
+SwiftUI reads once and keeps. A view's plain property given another starting value (`let columns = 2` to `3`, an
+`@AppStorage` default, or what it's made by: `initialColumns()`; `Group.defaults`, digested with the code it calls) reopens the app when the view is made once (the window's root, a hosting
+view's), which keeps what it started as; one a body makes is made again. A case's raw value is a value, never read
+as a type a constant holds. A `#Preview`'s code, and the type its macro writes, is no use of anything and no old code.
 
 A stored static or global `var` is made once too, the first time it's read, so a new starting value for one can't
 show without reopening, and whether it seemed to would depend on whether it had been read: its starting value and its type are part of the layout as a digest as well (`LiveReload.Group.stored`), and one that changed reopens the app, as does one whose starting value calls code that changed, unless it holds one
@@ -1204,7 +1211,8 @@ A view's stored parameter that changes from one plain value to another of the sa
 next draw, when its parent makes it again with the new code, and two such fields copy, destroy and compare alike, so
 the open app's value witnesses do right by either (a `Bool`, a `Bool?` and a one-byte number are three layouts:
 their spare bit patterns, which Swift uses for `nil`, differ). Only when every place the app's code makes one is a
-view's own `var body` or code such a body calls (`LiveReload.madeOutsideBodies`): what a modifier's or a style's
+view's own `var body` or code only bodies call (`LiveReload.madeOutsideBodies`), not an action closure in one
+(`.onAppear { openPanel() }`, which runs once and hands what it made on; `Declarations.actions`): what a modifier's or a style's
 body, a hosting view's root or a stored property made is kept as the open app laid it out. Not a name the app declares itself (`typealias Date = String`), in
 either layout, nor a view something holds by value, through a typealias too (it's laid out in that), nor its wrappers
 (`State`, a binding, the environment, which SwiftUI keeps), nor one the App's scenes make, there or in code they call

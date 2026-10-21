@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Gave Theme.current, Theme.plain their new value)
+== run
+before: themed=2 plain=2 live=2
+RELOAD 1 (whole): ok
+after1 (want shelves=3 everywhere, like live, or a reopen: a theme with a font field lists the cases of an enum that grew): themed=3 plain=3 live=3

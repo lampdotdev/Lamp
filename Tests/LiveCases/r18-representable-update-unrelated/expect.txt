@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: label v1 loads=1 control=1
+RELOAD 1: ok
+after1 (want the label v2 and loads=1 like control=1: the change didn't touch the web view, whose update loads its page again): label v2 loads=1 control=1

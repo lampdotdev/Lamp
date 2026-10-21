@@ -2,4 +2,4 @@ VERDICT 1: RELOAD
 == run
 before: layout v1, modifier v1, representable v1, root v1, shape v1, style v1
 RELOAD 1: ok
-after1 (want every piece drawn by v2: the root's body, the modifier's body, the shape's path, the button style, the layout, the representable's update): layout v2, modifier v2, representable v2, root v2, style v2
+after1 (want every piece drawn by v2: the root's body, the modifier's body, the shape's path, the button style, the layout, the representable's update): layout v2, modifier v2, root v2, style v2

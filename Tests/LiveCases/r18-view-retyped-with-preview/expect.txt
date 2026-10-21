@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Gave RailText its new field types)
+== run
+before: IPA heat=3
+RELOAD 1 (whole): ok
+after1 (want it in without reopening, IPA heat=6.5: as view-field-retyped, with a #Preview of the view, which never runs in the app): IPA heat=6.5

@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: make v1 shown: placeholder=Write a note bordered=true
+RELOAD 1: ok
+after1 (want the field configured by v2, or a reopen: the representable's makeNSView changed, which SwiftUI ran once):  shown: placeholder=Write a note bordered=true
