@@ -504,6 +504,9 @@ final class Store: ObservableObject {
         var reloadWhy: String?
         /// A live change took in the one that was waiting for Reload: the agent is told, since it was told to wait.
         var endedReloadWait = false
+        /// The crash set aside earlier (`setAside`) that the request carries: what the agent saves comes after it has
+        /// read it, so it goes into the app by itself as usual (`autoApply`). Not a crash set aside during the turn.
+        var carriedSetAside: String?
         /// The turn's own looks at the agent's saved files (`autoApply`): the loop that watches for a save, the one
         /// change going in at the moment, which a build waits for, and how many went in since the agent last looked.
         var autoApply: Task<Void, Never>?
@@ -2591,10 +2594,18 @@ final class Store: ObservableObject {
         let pointed = asked.compactMap { id in logs[project.id]?.first { $0.id == id }?.pointed }
         let notes = Attachments.note(for: saved) + PointedAt.note(for: pointed) + Versions.note(for: project)
             + (sentAgain ? "" : Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project))
-            + (untoldSetAside(project).map { "\n\nNote from Lamp: a change saved earlier crashed the open app. \($0)\nFix the cause as part of this request." } ?? "")
+        // A crash the agent hasn't heard of goes with the request, and counts as told only once the request has reached
+        // the agent, like the note about going back: a run that never started leaves it for the next request.
+        let carried = setAsideChanges[project.id].flatMap { $0.told ? nil : $0.crash }
+        let crashAside = carried.map { "\n\nNote from Lamp: a change saved earlier crashed the open app. \($0)\nFix the cause as part of this request." } ?? ""
         turns[project.id]?.request = prompt
-        let ran = await runAgent(prompt + notes, files: files, on: project)
+        turns[project.id]?.carriedSetAside = carried
+        let ran = await runAgent(prompt + notes + crashAside, files: files, on: project)
         project = current(project) ?? project
+        if let carried, let last = asked.last, Self.reachedAgent(last, in: logs[project.id] ?? []),
+           setAsideChanges[project.id]?.crash == carried {
+            setAsideChanges[project.id]?.told = true
+        }
         // The note about going back is the agent's only word of it, so it's kept until the agent has had it:
         // a turn that failed before reaching the agent leaves it for the next one.
         if let last = asked.last, Self.reachedAgent(last, in: logs[project.id] ?? []) { Versions.forgetNote(for: project) }
@@ -4954,7 +4965,8 @@ final class Store: ObservableObject {
                       let current = current(project), LiveReload.eligible(current),
                       isRunning(current), !Runtime.waitsForReload(current),
                       // A change that crashed the app waits for the agent to hear of it: what it saves meanwhile may crash it again.
-                      setAsideChanges[project.id]?.told != false else { continue }
+                      setAsideChanges[project.id]?.told != false
+                          || turn.carriedSetAside == setAsideChanges[project.id]?.crash else { continue }
                 let now = Runtime.fingerprint(current)
                 // Still being written: wait for a reading with nothing new in it.
                 if now != seen { seen = now; seenAt = Date(); continue }
