@@ -2,6 +2,7 @@ VERDICT 1: REOPEN (RankBadge changed what a field holds, and something other tha
 == run
 before: rank 2.0
 RELOAD 1: REOPEN RankBadge changed what a field holds, and something other than a view's body makes one, which SwiftUI keeps as the open app laid it out
+after1 (want the badge drawn as rank 2, or a reopen; never a crash): 
 before: rank silver
 RELOAD 1: in the restart
 after1 (want the badge drawn as rank 2, or a reopen; never a crash): 

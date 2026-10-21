@@ -16548,7 +16548,7 @@ enum Template {
             while ($s =~ /\btypealias\s+(\w+)(?:<[^>]*>)?\s*=\s*([\w.]+)/g) { $alias{$1} = $2 }
             while ($s =~ /\bclass\s+\w+(?:<[^>]*>)?\s*:\s*([\w.]+)/g) { $names{$1} = 1 }
             while ($s =~ /<[^<>]*>/g) { my $g = $&; while ($g =~ /:\s*([\w.]+)/g) { $names{$1} = 1 } }
-            while ($s =~ /\bwhere\b([^{]*)/g) { my $w = $1; while ($w =~ /:\s*([\w.]+)/g) { $names{$1} = 1 } }
+            while ($s =~ /\bwhere\b(?!\s*:)([^{]*)/g) { my $w = $1; while ($w =~ /:\s*([\w.]+)/g) { $names{$1} = 1 } }
         }
         for my $name (keys %names) { my $n = $name; for (1 .. 4) { last unless exists $alias{(split /\./, $n)[-1]}; $n = $alias{(split /\./, $n)[-1]}; $names{$n} = 1 } }
         # The names, then what the spares step is told: `-raw`, and `-nospare:Name` for each.
@@ -16617,6 +16617,10 @@ enum Template {
         # redo what it does each time (a web view reloading, a map going back to where it started).
         my $sig = qr/(?:(?!\b(?:func|var|let|init|subscript|struct|class|enum|protocol|extension|actor|case)\b)[^{}])*/;
         $s =~ s{\bfunc\s+(?:body\s*\(\s*content|makeBody\s*\(\s*configuration)$sig->\s*some\s+(?:SwiftUI\.)?View\s*\{|\bfunc\s+placeSubviews\s*\(\s*in$sig\)\s*\{}~ inside($-[0]) ? $& : "$&let _ = LampLive.touch(); " ~ge;
+        # And the body of content that isn't a view (a toolbar's, a chart's, a map's, a tab's): built by a builder that
+        # takes a statement first as a view builder does, and kept by SwiftUI the same way.
+        @skip = spans($s);
+        $s =~ s{\bvar\s+body\s*:\s*some\s+(?:SwiftUI\.|Charts\.|MapKit\.)?(?:ToolbarContent|CustomizableToolbarContent|ChartContent|MapContent|TabContent|AccessibilityRotorContent)\s*\{}~ inside($-[0]) ? $& : "$&let _ = LampLive.touch(); " ~ge;
         @skip = spans($s);
         # A layout's `sizeThatFits` too, which is asked again only when what it read changes. Its body runs inside a
         # closure that reads it first (`LampLive.touched`), which returns what the body returns, written as one

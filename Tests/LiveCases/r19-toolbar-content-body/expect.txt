@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: title=Export, toolbar=Export items: []
+RELOAD 1: ok
+after1 (want toolbar=Share and the view's own title=Share, or a reopen: only a word in the toolbar content's body and the view's changed): title=Share, toolbar=Share items: []

@@ -5458,7 +5458,7 @@ final class Store: ObservableObject {
     }
 
     /// Puts the change just built into the open Mac app, when it was built live and the change can go in that
-    /// way (`LiveReload.reloadable`). True when it went in: the app is updated where it is, and the build is held,
+    /// way (`LiveReload.verdict`). True when it went in: the app is updated where it is, and the build is held,
     /// to be installed when the app closes. False sends the change the usual way, by reopening the app. `saysWhy`
     /// false keeps why it couldn't go in out of the chat: the try before the build is followed by the install's,
     /// which asks again and says it, so the chat said it twice.

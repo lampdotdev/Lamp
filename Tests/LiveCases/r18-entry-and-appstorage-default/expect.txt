@@ -4,12 +4,14 @@ VERDICT 3: REOPEN (ShadeKey.defaultValue changed, and SwiftUI keeps the default 
 == run
 before: accent=blue shade=light size=10
 RELOAD 1: REOPEN EnvironmentValues.accent changed, and SwiftUI keeps the default it first read
+after1 (want accent=red, or a reopen: an @Entry environment value's default changed): 
 before: accent=red shade=light size=10
 RELOAD 1: in the restart
 after1 (want accent=red, or a reopen: an @Entry environment value's default changed): 
 RELOAD 2: ok
 after2 (want size=20, or a reopen: an unset @AppStorage's default changed): accent=red shade=light size=20
 RELOAD 3: REOPEN ShadeKey.defaultValue changed, and SwiftUI keeps the default it first read
+after3 (want shade=dark, or a reopen: a computed environment key's default changed): 
 before: accent=red shade=dark size=20
 RELOAD 1: in the restart
 after1 (want accent=red, or a reopen: an @Entry environment value's default changed): 

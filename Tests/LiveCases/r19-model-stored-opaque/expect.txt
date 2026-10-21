@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Model.content: some View returns another kind of value now (some …), which what the open app made can't take)
+== run
+before: Text
+RELOAD 1: REOPEN Model.content: some View returns another kind of value now (some …), which what the open app made can't take
+after1 (want a reopen: the model kept its content, a Text, which the new code would read as a VStack): Text
+before: VStack<Text>
+RELOAD 1: in the restart
+after1 (want a reopen: the model kept its content, a Text, which the new code would read as a VStack): VStack<Text>

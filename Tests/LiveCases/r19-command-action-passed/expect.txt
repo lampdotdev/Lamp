@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: v1
+RELOAD 1: ok
+after1 (want v2 in place: the store's refresh runs when its menu item is chosen, passed to the button as a function, not at launch): v2

@@ -311,6 +311,26 @@ enum LiveReload {
     static let aliasGroup = Group.alias.rawValue, declarationGroup = Group.declared.rawValue, opaqueGroup = Group.opaque.rawValue
     static let placeGroup = Group.place.rawValue, initsGroup = Group.inits.rawValue, shapeGroup = Group.shape.rawValue
 
+    /// What the code read only at launch calls (`buildMenu()` from an app delegate, a model's initializer from the
+    /// App), as far down as that goes, as one launch entry: it ran once, so a change to it shows only when the app
+    /// opens again. Not what its actions call (a menu command's button), which runs each time it's chosen.
+    static func launchCalls(_ launch: [String], _ declarations: SwiftSource.Declarations) -> [String] {
+        let names = Set(Group.launch.parts(in: launch).compactMap { $0.first.map { String($0.prefix { $0 != ":" }).replacingOccurrences(of: "extension ", with: "") } })
+        let ranges = declarations.types.filter { names.contains(bare($0.key)) }.map(\.value) + names.flatMap { declarations.extensions[$0] ?? [] }
+        guard !ranges.isEmpty else { return [] }
+        var files: [String: SwiftSource.Text] = [:]
+        // Into what an initializer makes as it starts (`let menu = makeMenu()`), the one the compiler wrote included.
+        let called = SwiftSource.called(fromAll: ranges, in: declarations, files: &files, members: true, skipping: declarations.actions)
+            .filter { range in !ranges.contains { SwiftSource.within(range.start, $0) } }
+            .compactMap { range -> String? in
+                guard let text = files[range.start.file] ?? SwiftSource.Text(path: range.start.file),
+                      let from = text.offset(range.start), let end = text.tokenEnd(range.last), from < end else { return nil }
+                return text.slice(from, end)
+            }
+        guard !called.isEmpty else { return [] }
+        return [Group.launch.entry("the code it calls: " + SwiftSource.digest(Set(called).sorted().joined(separator: "\n")))]
+    }
+
     /// The SwiftData model classes in a layout, each with the file that declares it (`SwiftSource.LaunchReader`):
     /// a change that compiles that file, whatever it changed, makes the model's key paths over again.
     static func modelFiles(inLayout layout: [String]) -> [(name: String, file: String)] {
@@ -349,7 +369,8 @@ enum LiveReload {
         return names
     }
 
-    static func layoutProblem(before: [String]?, after: [String]?) -> (problem: String?, layout: [String]?) {
+    /// `freeOpaque` names the `some View` members whose type may change: only a view's bodies use them (`freeOpaque(…)`).
+    static func layoutProblem(before: [String]?, after: [String]?, freeOpaque: Set<String> = []) -> (problem: String?, layout: [String]?) {
         guard let now = after else { return ("the new code doesn't type-check as a whole", nil) }
         guard let before else { return ("the compiler couldn't say what the open app's types hold", nil) }
         // A typealias is printed as itself wherever it's used, so a type keeping `var amount: Money` reads the same
@@ -559,7 +580,9 @@ enum LiveReload {
         func opaque(_ entries: [String]) -> [String: String] {
             Dictionary(Group.opaque.parts(in: entries).compactMap { $0.count == 2 ? ($0[0], $0[1]) : nil }, uniquingKeysWith: { first, _ in first })
         }
-        for (name, was) in opaque(before).sorted(by: { $0.key < $1.key }) {
+        // Not a view member only views' bodies use (`freeOpaque`): what it builds is made again at every draw, and
+        // every caller is compiled again with it (`opaqueChanged`), each taking the type it now builds.
+        for (name, was) in opaque(before).sorted(by: { $0.key < $1.key }) where !freeOpaque.contains(name) {
             guard let is_ = opaque(now)[name], is_ != was else { continue }
             if !was.hasPrefix("~"), !is_.hasPrefix("~") { return ("\(name) returns a \(is_) now, where the open app's returned a \(was)", nil) }
             return ("\(name) returns another kind of value now (some …), which what the open app made can't take", nil)
@@ -662,6 +685,12 @@ enum LiveReload {
     /// call, which every draw after a change runs again: what a modifier's or a style's body, a hosting view or a
     /// stored property made stays as the open app made it. A preview (code a macro wrote) never runs in the app.
     static func madeOutsideBodies(_ view: String, declarations: SwiftSource.Declarations, layout: [String]) -> Bool {
+        madeOutsideBodies(view, declarations: declarations, made: madeInBodies(declarations: declarations, layout: layout))
+    }
+
+    /// Where the app's code makes what every draw makes again: the views' bodies and the code only they call (not
+    /// their actions'). Worked out once for a change, however many views it asks about.
+    static func madeInBodies(declarations: SwiftSource.Declarations, layout: [String]) -> [(start: SwiftSource.Position, last: SwiftSource.Position)] {
         let conformed = conformances(inLayout: layout)
         let viewTypes = conformed.of.filter { $0.value.contains("View") }.map(\.key)
         let scopes = viewTypes.compactMap { declarations.types[$0] } + viewTypes.flatMap { declarations.extensions[bare($0)] ?? [] }
@@ -674,21 +703,29 @@ enum LiveReload {
         // Not what a body's actions call or make: an action runs once, when it's called, and hands what it made on
         // (`.onAppear { openPanel() }`, which puts a view in a hosting view of its own).
         let actions = declarations.actions
-        var helpers = bodies.flatMap { SwiftSource.called(from: $0.start, to: $0.last, in: declarations, files: &files, skipping: actions) }
+        var helpers = SwiftSource.called(fromAll: bodies, in: declarations, files: &files, skipping: actions)
+        // Each helper's callers, found once.
+        let callers = helpers.map { helper in declarations.calls.filter { SwiftSource.within($0.to, helper) && !SwiftSource.within($0.at, helper) }.map(\.at) }
+        var kept = Array(helpers.indices)
         var dropped = true
         while dropped {
             dropped = false
-            let safe = bodies + helpers
-            helpers.removeAll { helper in
-                let outside = declarations.calls.contains { call in
-                    SwiftSource.within(call.to, helper) && !SwiftSource.within(call.at, helper)
-                        && (!safe.contains { SwiftSource.within(call.at, $0) } || actions.contains { SwiftSource.within(call.at, $0) })
+            let safe = bodies + kept.map { helpers[$0] }
+            kept.removeAll { index in
+                let outside = callers[index].contains { at in
+                    !safe.contains { SwiftSource.within(at, $0) } || actions.contains { SwiftSource.within(at, $0) }
                 }
                 if outside { dropped = true }
                 return outside
             }
         }
-        let allowed = bodies + helpers
+        helpers = kept.map { helpers[$0] }
+        return bodies + helpers
+    }
+
+    static func madeOutsideBodies(_ view: String, declarations: SwiftSource.Declarations,
+                                  made allowed: [(start: SwiftSource.Position, last: SwiftSource.Position)]) -> Bool {
+        let actions = declarations.actions
         func made(at place: SwiftSource.Position) -> Bool {
             allowed.contains { SwiftSource.within(place, $0) } && !actions.contains { SwiftSource.within(place, $0) }
         }
@@ -698,6 +735,60 @@ enum LiveReload {
             let names = use.name == name || use.name == short || use.name.hasSuffix("." + short) || use.name.hasPrefix(name + ".init")
             guard !use.at.file.hasPrefix("@"), names else { return false }
             return !made(at: use.at)
+        }
+    }
+
+    /// A `some`-returning member's name from its opaque entry's key (`ContentView.hero: some View` is `hero`).
+    static func opaqueMember(_ key: String) -> String {
+        let head = key.range(of: ": ").map { String(key[..<$0.lowerBound]) } ?? key
+        return String((head.split(separator: ".").last ?? "").prefix { $0 != "(" })
+    }
+
+    /// The members a protocol may require to return `some …`: SwiftUI's own, and every member the app's protocols list.
+    static func opaqueRequirements(_ layout: [String]) -> Set<String> {
+        Set(layout.compactMap { entry -> String? in
+            guard entry.hasPrefix("protocol "), let tab = entry.firstIndex(of: "\t") else { return nil }
+            return String(entry[entry.index(after: tab)...].prefix { $0 != ":" && $0 != "(" })
+        }).union(["body", "makeBody"])
+    }
+
+    /// The `some`-returning members whose type changed (their opaque entries' keys).
+    static func opaqueChanged(before: [String], after: [String]) -> Set<String> {
+        func opaque(_ entries: [String]) -> [String: String] {
+            Dictionary(Group.opaque.parts(in: entries).compactMap { $0.count == 2 ? ($0[0], $0[1]) : nil }, uniquingKeysWith: { first, _ in first })
+        }
+        let was = opaque(before), now = opaque(after)
+        return Set(was.compactMap { name, value in now[name].map { $0 != value } == true ? name : nil })
+    }
+
+    /// Of those, the view members whose type may change in place: a view's helper (`var hero: some View`) that no
+    /// protocol requires, used only in views' bodies and code only they call, not their actions. What it builds is
+    /// made again at every draw and kept by nothing the open app laid out; one kept anywhere else (a stored value, an
+    /// array, another type's field) would carry the old type into the new code.
+    static func freeOpaque(_ changed: Set<String>, declarations: SwiftSource.Declarations, layout: [String]) -> Set<String> {
+        let required = opaqueRequirements(layout)
+        // A computed member of a view: a stored one (`let content: some View`) is laid out in whatever keeps its owner.
+        let views = Set(conformances(inLayout: layout).of.filter { $0.value.contains("View") }.map { bare($0.key) })
+        let fields = byType(bared(layout))
+        let candidates = changed.filter { key in
+            let head = bare(key.range(of: ": ").map { String(key[..<$0.lowerBound]) } ?? key)
+            guard key.hasSuffix("some View"), !required.contains(opaqueMember(key)), let dot = head.lastIndex(of: ".") else { return false }
+            let owner = String(head[..<dot]), member = opaqueMember(key)
+            // The layout lists what a type stores, wrappers' storage under `_name`.
+            let stored = (fields[owner] ?? []).contains { entry in
+                let field = entry.split(separator: "\t").last.map(String.init) ?? ""
+                return field.hasPrefix(member + ": ") || field.hasPrefix("_" + member + ": ")
+            }
+            return views.contains(owner) && !stored
+        }
+        guard !candidates.isEmpty else { return [] }
+        let bodies = madeInBodies(declarations: declarations, layout: layout), actions = declarations.actions
+        return candidates.filter { key in
+            let head = bare(key.range(of: ": ").map { String(key[..<$0.lowerBound]) } ?? key)
+            let uses = declarations.uses.filter { $0.name == head && !$0.at.file.hasPrefix("@") }
+            return uses.allSatisfy { use in
+                bodies.contains { SwiftSource.within(use.at, $0) } && !actions.contains { SwiftSource.within(use.at, $0) }
+            }
         }
     }
 
@@ -979,6 +1070,9 @@ enum LiveReload {
             if let open = preview, indent > open { return }
             // And the type such a macro writes for it, named by its mangled name (`$s…PreviewRegistryfMu_`).
             preview = opens("macro_expansion_decl") || opens("struct_decl") && line.has(" \"$s") ? indent : nil
+            // What the `@State` macro writes for a property (`StatefMp_`): its starting value handed to `State` as a
+            // closure, which SwiftUI calls only to make a new view's first value, never code kept running.
+            if preview == nil, line.has("range=[@__swiftmacro_"), line.has("StatefMp_") { preview = indent }
             while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
             while let last = callees.last, last.indent >= indent { callees.removeLast() }
             while let last = calls.last, last >= indent { calls.removeLast() }
@@ -1358,7 +1452,8 @@ enum LiveReload {
         let declared = SwiftSource.DeclarationsReader(), launch = SwiftSource.LaunchReader(), old = OldCode()
         SwiftSource.walk(dump) { line in plain.take(line); held.take(line); declared.take(line); launch.take(line); old.take(line) }
         let declarations = declared.finish()
-        let made = (layout: plain.finish() + launch.finish(folder: folder) + SwiftSource.constantEntries(declarations),
+        let launched = launch.finish(folder: folder)
+        let made = (layout: plain.finish() + launched + launchCalls(launched, declarations) + SwiftSource.constantEntries(declarations),
                     held: held.finish(), declarations: declarations, oldCode: old.finish())
         // Kept only when the code didn't change while it was read.
         if Analyses.digest(of: folder, module: module, macOS: macOS) == digest {
@@ -1883,7 +1978,10 @@ enum LiveReload {
         let spared = !LiveSlots.mapping(project).isEmpty || LiveSlots.hasConstants(project)
         async let early: (url: URL?, problem: String?) = spared ? (nil, nil) : await compile(project, changed: changed)
         let (before, after, declarations, oldCode) = await layouts(project)
-        var check = layoutProblem(before: before, after: after)
+        // View members whose type changed but which only views' bodies use: in place, with every file compiled.
+        let opaqueMoved = before.flatMap { before in after.map { opaqueChanged(before: before, after: $0) } } ?? []
+        let free = opaqueMoved.isEmpty || after == nil ? [] : freeOpaque(opaqueMoved, declarations: declarations, layout: after ?? [])
+        var check = layoutProblem(before: before, after: after, freeOpaque: free)
         // A constant made from an enum that grew (`Mood.allCases`) keeps the value the open app made: remade too.
         let grownEarly = before.flatMap { before in after.map { grownEnums(before: before, after: $0) } } ?? []
         // The system types Lamp can't judge from the code that the constants a change remakes are made of, and which
@@ -1952,7 +2050,7 @@ enum LiveReload {
             // A constant newly read through its new code is read so everywhere: the open app's own reads go to storage
             // that keeps the first value. Afterwards every caller reads through it, so later changes need no more.
             if !fitted.constants.isEmpty { changed = appFiles(project) }
-            check = layoutProblem(before: before, after: fitted.layout)
+            check = layoutProblem(before: before, after: fitted.layout, freeOpaque: free)
             if check.problem == nil, !fitted.added.isEmpty { said.append("Added \(fitted.added.joined(separator: ", "))") }
             if check.problem == nil, !fitted.constants.isEmpty {
                 said.append("Gave \(fitted.constants.joined(separator: ", ")) \(fitted.constants.count == 1 ? "its" : "their") new value")
@@ -1966,6 +2064,8 @@ enum LiveReload {
             if case .refused(let refused?) = fitting { return .reopen(why: why + "; " + refused) }
             return .reopen(why: why)
         }
+        // A member that builds another type now (`some View`): every caller is compiled again, taking the new type.
+        if !free.isEmpty { changed = appFiles(project) }
         // What's declared changed (a function added, an overload, a conformance): an unchanged caller may now mean
         // another one, so every file is compiled again and every call goes to code compiled with the new declarations.
         if let before, let after, declarationsChanged(before: before, after: after) {
@@ -2028,7 +2128,8 @@ enum LiveReload {
             // Made anywhere but a view's own `var body`, or what such a body calls, a value of it outlives the change:
             // a modifier's body, a style's, a hosting view's root, a static, are never made again, and SwiftUI would hand
             // the open app's bytes to the new code's body.
-            if let made = views.first(where: { madeOutsideBodies($0, declarations: declarations, layout: layout) }) {
+            let inBodies = madeInBodies(declarations: declarations, layout: layout)
+            if let made = views.first(where: { madeOutsideBodies($0, declarations: declarations, made: inBodies) }) {
                 return .reopen(why: "\(readable(made)) changed what a field holds, and something other than a view's body makes one, which SwiftUI keeps as the open app laid it out")
             }
             guard let running = await oldCodeUsesOfRunning(project) else { return .reopen(why: "the compiler couldn't say where the open app uses \(readable(views[0]))") }
@@ -2054,8 +2155,10 @@ enum LiveReload {
             }) {
                 return .reopen(why: "\(readable(type)).\(name) changed, and SwiftUI keeps the default it first read")
             }
+            var inBodies: [(start: SwiftSource.Position, last: SwiftSource.Position)]?
             for (type, name) in changedDefaults where views[type]?.contains("View") == true || views[bare(type)]?.contains("View") == true {
-                if madeOutsideBodies(type, declarations: declarations, layout: after) {
+                if inBodies == nil { inBodies = madeInBodies(declarations: declarations, layout: after) }
+                if madeOutsideBodies(type, declarations: declarations, made: inBodies ?? []) {
                     return .reopen(why: "\(readable(type)).\(name) starts as something else now, and the open app made \(readable(type)) once (at launch, or outside a view's body), which keeps what it started as")
                 }
             }
