@@ -22,6 +22,8 @@
  *   adapt the code.
  * - `connectors`: lists the services an app can connect to with the person's own account, and open data that
  *   needs none, or says how to build on one.
+ * - `device_integration`: hands Lamp a device's integration as data; Lamp checks it and answers with what's wrong,
+ *   or keeps it and finds the device.
  * - `ask`, `progress`, `write_wish`: `ask` puts questions in the chat as a card the person answers by clicking,
  *   `progress` puts a short line on how the work is going in the chat, and
  *   `write_wish` writes a found wish into the message box. Lamp draws the card and turns a click into the
@@ -583,6 +585,23 @@ const connectors = defineTool({
 	},
 });
 
+const deviceIntegration = defineTool({
+	...spec("device_integration"),
+	async execute(_toolCallId, params, signal) {
+		const url = process.env.LAMP_INTEGRATION_URL;
+		if (!url) throw new Error("Lamp isn't available to take an integration.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
+		});
+		const reply = (await response.json()) as { text?: string; error?: string };
+		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
+		return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
+	},
+});
+
 function talkTool(name: string) {
 	return defineTool({
 		...spec(name),
@@ -638,6 +657,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(offerSetup);
 	pi.registerTool(makeAppFor);
 	pi.registerTool(connectors);
+	pi.registerTool(deviceIntegration);
 	for (const name of ["ask", "progress", "write_wish"]) pi.registerTool(talkTool(name));
 	for (const name of ["read_notes", "save_notes"]) pi.registerTool(notesTool(name));
 	pi.registerTool(readSkill);

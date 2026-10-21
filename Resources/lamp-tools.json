@@ -459,6 +459,28 @@
     }
   },
   {
+    "name": "device_integration",
+    "label": "Device integration",
+    "description": "Hands Lamp a device's integration: how to find it, read who it is, set it up, and put software on it, as data in the format the device-integrations skill gives (read it first). Lamp checks it and answers with what's wrong, to fix and send again; once it's taken, Lamp looks for the device and shows the person its setup steps itself.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "integration"
+      ],
+      "properties": {
+        "integration": {
+          "type": "object",
+          "description": "The integration, as the device-integrations skill describes it"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
+        }
+      }
+    }
+  },
+  {
     "name": "ask",
     "label": "Ask",
     "description": "Asks the person something as a card in the chat that they answer with a click, instead of questions written in your reply. Each question comes with 2 to 4 likely answers, each with a `symbol` that pictures it; the person can also type their own, or leave it to you. `layout` is how it's shown: `steps` is one question at a time (the usual choice); `together` puts short questions on one card with their answers as chips, for two or three quick picks that don't depend on each other. Asking ends your turn: change nothing and call nothing after it. The answer is the next message, each question followed by its answer.",

@@ -203,7 +203,8 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// build one yet, and offers the setup (`IPhoneSetupLine`); its text is the kind that was wanted.
     /// `progress` is the agent's line on how the work is going (`Talk`'s `progress`), folded with the turn's
     /// steps once it ends.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload }
+    /// `deviceStep` is a device's next setup step, drawn from its integration (`DeviceStepLine`); its text is the device's id.
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -1382,6 +1383,53 @@ final class Store: ObservableObject {
         sendWhenShown = project.id
     }
 
+    /// Set Up… on a device Lamp doesn't know: a new wish whose first request asks the builder to write the device's
+    /// integration (`device_integration`), with what the device said of itself. Like finding a wish, nothing is named,
+    /// scaffolded or built until a wish for the device is sent.
+    func setUpDevice(_ device: Device) {
+        create(from: .finding)
+        guard let project = selected else { return }
+        updateDraft(Draft(text: Agent.deviceSetupRequest(device)), for: project)
+        sendWhenShown = project.id
+    }
+
+    /// `device_integration`: the builder hands Lamp an integration. Lamp checks it and answers with what's wrong, or
+    /// keeps it, looks for its devices now, and puts the next step of each one found that isn't set up in the chat.
+    func agentIntegration(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
+        let given = arguments["integration"]
+        let data: Data?
+        if let text = given as? String { data = Data(text.utf8) }
+        else if let object = given, JSONSerialization.isValidJSONObject(object) { data = try? JSONSerialization.data(withJSONObject: object) }
+        else { data = nil }
+        guard let data else { return (400, ["error": "`integration` must be the integration as a JSON object."]) }
+        let (kept, problems) = Integrations.submit(data)
+        guard let integration = kept else {
+            return (400, ["error": "Lamp didn't take the integration. Fix these and call device_integration again:\n" + problems.map { "- " + $0 }.joined(separator: "\n")])
+        }
+        let scan = Integrations.Scan(answers: await DeviceProbe.ssdp("ssdp:all", seconds: 2))
+        var found: [Device] = []
+        for address in await Integrations.addresses(for: integration, scan: scan) {
+            if let device = await Integrations.identify(integration, at: address) { found.append(device) }
+        }
+        // In the list at once, for the card below; the next look for devices keeps them while they answer.
+        for device in found { devices.removeAll { $0.id == device.id }; devices.append(device) }
+        refreshDevices()
+        var text = "Lamp kept the \(integration.name) integration."
+        if found.isEmpty {
+            text += " No \(integration.name) answered on the network just now, by what find and identity say. If the person's is on, check those against the device's documentation; otherwise it's set up once it's found, from Settings → Building → Your Devices."
+        }
+        for device in found {
+            let shown = (logs[project.id] ?? []).contains { $0.kind == .deviceStep && $0.text == device.id }
+            if let step = Integrations.next(for: device) {
+                if !shown { log(project, .deviceStep, device.id) }
+                text += " Found \(device.name) (\(device.line)); its next step, \"\(step.title)\", is a card in the chat, which the person follows. It isn't set up until they have, so don't say it is, and don't repeat its steps in your words."
+            } else {
+                text += " Found \(device.name) (\(device.line)), already set up."
+            }
+        }
+        return (200, ["text": text])
+    }
+
     /// "Help me find one": a new wish whose first request asks the agent to find it with the person, in the
     /// chat, through its cards (`Agent.findRules`).
     func findWish() {
@@ -1664,7 +1712,9 @@ final class Store: ObservableObject {
             async let apple = Devices.list()
             async let android = Adb.devices()
             async let tvs = TVs.devices()
-            let found = await apple + android + tvs
+            let kits = await apple + android + tvs
+            // What integrations find, and what's on the network that nothing Lamp has knows, after the kits' own.
+            let found = kits + (await Integrations.devices(known: Set(kits.compactMap(\.address))))
             if found != devices { devices = found }
             let mac = await Device.readThisMac()
             if mac != thisMac { thisMac = mac }
@@ -4190,6 +4240,7 @@ final class Store: ObservableObject {
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             case "make_app_for": (status, answer) = await agentKind(arguments, for: project)
             case "connectors": (status, answer) = Connectors.answer(arguments, for: project)
+            case "device_integration": (status, answer) = await agentIntegration(arguments, for: project)
             case "ask", "progress", "write_wish": (status, answer) = talk(name, arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
@@ -7567,7 +7618,7 @@ final class Store: ObservableObject {
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -7748,6 +7799,9 @@ final class Store: ObservableObject {
         if route == "/agent/steer" {
             guard turns[project.id]?.steering == .pi else { return (200, [:]) }
             return (200, handOver(project).map { ["message": $0] } ?? [:])
+        }
+        if route == "/agent/integration" {
+            return await agentIntegration((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
         }
         if route == "/agent/connectors" {
             return Connectors.answer((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)

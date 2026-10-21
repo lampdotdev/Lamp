@@ -51,7 +51,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,ask,progress,write_wish,read_skill"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,device_integration,ask,progress,write_wish,read_skill"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -66,7 +66,7 @@ enum Agent {
 
     /// Rules for the tools every engine has: pi through Resources/lamp-tools.ts, Claude Code and
     /// Codex through Lamp's MCP endpoint (Store.mcp). Keep the two in step.
-    static var tryRules: String { talkRules + findRules + lookRules + planRules + artRules + setupRules + connectorRules + (Memory.isOn ? memoryRules : "") }
+    static var tryRules: String { talkRules + findRules + lookRules + planRules + artRules + setupRules + connectorRules + deviceRules + (Memory.isOn ? memoryRules : "") }
 
     /// For the engines whose shell commands run confined (Sandbox): what the shell can and can't reach.
     static let sandboxNote = """
@@ -296,6 +296,24 @@ enum Agent {
     `LampAPIButton` in the app, so the person gets the same Connect sheet: never a key field or dialog of your \
     own, and never UserDefaults, LampStore or a Keychain item.
     """
+
+    /// How a device Lamp has no kit for is taken on: the integration's format is the skill's, so this stays short.
+    private static let deviceRules = """
+
+    - When the person asks to set up a device Lamp doesn't know, or a wish is for one, open the `device-integrations` \
+    skill and hand Lamp the device's integration with `device_integration` before writing any app for it. Lamp finds, \
+    checks and sets up the device itself, and draws every step's card: never walk the person through its steps in your \
+    own words, and never try to reach the device with a command of yours.
+    """
+
+    /// The first request of a wish started from Set Up… on a device Lamp doesn't know (`Store.setUpDevice`): what the
+    /// device said of itself when it was found, for the builder to write its integration from.
+    static func deviceSetupRequest(_ device: Device) -> String {
+        var said = [device.maker, device.model].filter { !$0.isEmpty }.joined(separator: " ")
+        if !device.modelID.isEmpty { said += " (model number \(device.modelID))" }
+        return "Set up my \(device.name) so I can make wishes for it. Lamp found it on my network: \(said)."
+            + (device.discovery.map { " It answered Lamp's scan as \($0)." } ?? "")
+    }
 
     /// Kept short, like the tools' descriptions: every word here is sent with every call to the model. What the
     /// notes cover comes at the end of a request (Memory.brief); the notes only when the agent asks.

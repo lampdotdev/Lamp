@@ -903,6 +903,10 @@ struct DevicesSection: View {
             switch setup {
             case .ready:
                 Label("Ready", systemImage: "checkmark.circle.fill").foregroundStyle(.green).labelStyle(.titleAndIcon)
+            case .needs(let step) where device.kind == .other && device.integration == nil:
+                // Found on the network, with nothing yet that knows it: not a problem, an offer.
+                Text(step).foregroundStyle(.secondary)
+                next(for: device)
             case .needs(let step):
                 Label(step, systemImage: "exclamationmark.circle.fill").foregroundStyle(.orange).labelStyle(.titleAndIcon)
                 next(for: device)
@@ -922,6 +926,13 @@ struct DevicesSection: View {
             Button("How…") { PhoneSetup.shared.show(family: device.family ?? .iphone, phone: device.udid) }.controlSize(.small)
         } else if device.kind.isTV {
             Button("Set Up…") { TVSetup.shared.show(device.udid) }.controlSize(.small)
+        } else if device.kind == .other {
+            // One Lamp has an integration for is set up in the window drawn from it; one it doesn't know yet starts
+            // the work of writing its integration, in a wish of its own.
+            Button("Set Up…") {
+                if device.integration != nil { DeviceSetupWindow.show(device) } else { store.setUpDevice(device) }
+            }
+            .controlSize(.small)
         }
     }
 }

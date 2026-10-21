@@ -9,6 +9,8 @@ import AppKit
 struct Device: Identifiable, Hashable {
     enum Kind: String, Hashable {
         case mac, iphone, ipad, watch, android, androidEmulator, samsungTV, lgTV
+        /// A device found by an integration (`Integration`), or one on the network nothing Lamp has knows yet.
+        case other
         var name: String {
             switch self {
             case .mac: return "Mac"
@@ -19,6 +21,7 @@ struct Device: Identifiable, Hashable {
             case .androidEmulator: return "Android emulator"
             case .samsungTV: return "Samsung TV"
             case .lgTV: return "LG TV"
+            case .other: return "Device"
             }
         }
         var symbol: String {
@@ -29,6 +32,7 @@ struct Device: Identifiable, Hashable {
             case .watch: return "applewatch"
             case .android, .androidEmulator: return "smartphone"
             case .samsungTV, .lgTV: return "tv"
+            case .other: return "dot.radiowaves.left.and.right"
             }
         }
         /// An iPhone or iPad: where Play can put an app directly.
@@ -118,6 +122,10 @@ struct Device: Identifiable, Hashable {
     /// A TV's address on the network, and a Samsung TV's device id, which its certificate names.
     var address: String?
     var duid: String?
+    /// The integration that found it; nil for a device on the network Lamp doesn't know yet.
+    var integration: String?
+    /// For a device Lamp doesn't know: what it said when it was found, for whoever writes its integration.
+    var discovery: String?
 
     static let macID = "this-mac"
 
@@ -156,11 +164,17 @@ struct Device: Identifiable, Hashable {
             return .ready
         case .lgTV:
             return developerMode ? .ready : .needs("Turn on Developer Mode on it")
+        case .other:
+            guard integration != nil else { return .needs("Lamp doesn't know it yet") }
+            return Integrations.next(for: self).map { .needs($0.title) } ?? .ready
         }
     }
 
     /// The model and software, in one line for a list: "iPhone 16 Pro Max · iOS 27".
-    var line: String { "\(model) · \(os) \(kind.isTV ? osVersion : osMajor)" }
+    var line: String {
+        if kind == .other { return [model, [os, osVersion].filter { !$0.isEmpty }.joined(separator: " ")].filter { !$0.isEmpty }.joined(separator: " · ") }
+        return "\(model) · \(os) \(kind.isTV ? osVersion : osMajor)"
+    }
 
     /// The device as the agent is told it: "iPhone 16 Pro Max, iOS 27, Dynamic Island".
     var forAgent: String {
@@ -268,7 +282,7 @@ struct Device: Identifiable, Hashable {
             }
             return features + ["NFC", "HealthKit"]
         case .watch: return ["HealthKit"]
-        case .ipad, .mac, .android, .androidEmulator, .samsungTV, .lgTV: return []
+        case .ipad, .mac, .android, .androidEmulator, .samsungTV, .lgTV, .other: return []
         }
     }
 }

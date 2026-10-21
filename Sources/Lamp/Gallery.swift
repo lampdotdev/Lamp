@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + transitionEntries
+    static let entries: [Entry] = chatEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + transitionEntries + deviceEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -273,6 +273,81 @@ enum Gallery {
             })
         }
     }
+
+    // MARK: Device setup
+
+    /// A device's setup step drawn from its integration's data, in each shape a step can take, the approval a command
+    /// on the device waits on, and the setup window around them.
+    private static let deviceEntries: [Entry] = [
+        step("Hands on the device, not tried yet", rokuMode, state: .waiting("Waiting for Living Room Roku…")),
+        step("Typing a password", rokuPassword),
+        step("This Mac's address and a code", frameAddress),
+        step("A sign-in with the maker, checked by Lamp", frameSignIn, known: .init(how: .lamp, model: "QN50LS03B", version: "6.5")),
+        step("Done by people, and failed", rokuPassword, known: .init(how: .people, model: "4850X", version: "14.0"),
+             state: .failed("Living Room Roku said the password was wrong. Type it again.")),
+        Entry(group: "Device setup", name: "Approving a command on the device") {
+            AnyView(DeviceCommandCard(approval: DeviceCommandApproval(action: IntegrationAction(ssh: .init(port: 9922, user: "prisoner",
+                command: "luna-send-pub -n 1 luna://com.webos.appInstallService/dev/install '{\"id\":\"{appID}\"}'",
+                explanation: "Installs your app on the TV from the package Lamp just copied there.")), device: "Bedroom TV"), allow: {}, deny: {}))
+        },
+        Entry(group: "Device setup", name: "Approving a downloaded tool") {
+            AnyView(DeviceCommandCard(approval: DeviceCommandApproval(action: IntegrationAction(tool: .init(download: "https://example.org/frame-cli",
+                sha256: String(repeating: "a", count: 64), arguments: ["push", "{package}"],
+                explanation: "Sends the app to the photo frame the way its maker's own tool does.")), device: "Hallway frame"), allow: {}, deny: {}))
+        },
+        Entry(group: "Device setup", name: "The setup window") {
+            AnyView(DeviceSetupPage(device: roku, steps: [rokuMode, rokuPassword, rokuLook], passed: [rokuMode.id],
+                                    content: DeviceStepCard.Content(step: rokuPassword, number: 2, of: 3, device: roku.name, values: [:], state: .idle),
+                                    typed: .constant(""), approval: nil, act: {}, decide: { _ in }))
+        },
+        Entry(group: "Device setup", name: "The setup window, set up") {
+            AnyView(DeviceSetupPage(device: roku, steps: [rokuMode, rokuPassword, rokuLook], passed: [rokuMode.id, rokuPassword.id, rokuLook.id],
+                                    content: nil, typed: .constant(""), approval: nil, act: {}, decide: { _ in }))
+        },
+    ]
+
+    private static func step(_ name: String, _ step: Integration.Step, known: Integration.Known? = nil, state: DeviceStepCard.State = .idle) -> Entry {
+        var step = step
+        if let known { step.known = known }
+        return Entry(group: "Device setup", name: name) {
+            AnyView(DeviceStepCard(content: DeviceStepCard.Content(step: step, number: 1, of: 3, device: "Living Room Roku",
+                                                                   values: ["mac": "192.168.1.24", "read:pair": "4827"], state: state),
+                                   typed: .constant(""), act: {}))
+        }
+    }
+
+    private static let roku: Device = {
+        var device = Device(id: "roku:X01", kind: .other, maker: "Roku", model: "Roku Ultra", modelID: "4850X", name: "Living Room Roku",
+                            os: "Roku OS", osVersion: "14.0", reach: .network)
+        device.integration = "roku"
+        return device
+    }()
+
+    private static let infoCheck = Integration.Condition(http: Request(port: 8060, path: "/query/device-info"), xml: "developer-enabled", equals: "true")
+    private static let rokuMode = Integration.Step(
+        id: "developer-mode", title: "Turn on developer mode",
+        lines: ["Press Home three times on the remote", "Then Up, Up, Right, Left, Right, Left, Right",
+                "Choose Enable installer and restart", "Agree to the developer license"],
+        accepts: [.softwareRisk], wait: true, check: [infoCheck],
+        known: .init(how: .read, source: "https://developer.roku.com/docs/developer-program/getting-started/developer-setup.md"))
+    private static let rokuPassword = Integration.Step(
+        id: "password", title: "Give Lamp the developer password",
+        lines: ["Type the password you set on the Roku"],
+        field: .init(key: "password", label: "Developer password", secret: true),
+        check: [Integration.Condition(http: Request(port: 80, path: "/", auth: .init(digest: true, user: "rokudev", password: "{field:password}")))],
+        known: .init(how: .read))
+    private static let rokuLook = Integration.Step(id: "look", title: "Let Lamp see the screen", check: [Integration.Condition(tcp: 80)])
+    private static let frameAddress = Integration.Step(
+        id: "pair", title: "Point the frame at this Mac",
+        lines: ["Open Settings on the frame", "Choose Developer, then Host", "Type this Mac's address", "Scan the code with the frame's camera"],
+        show: [.init(label: "This Mac", value: "{mac}"), .init(label: "Pairing code", value: "{read:pair}")], qr: "{mac}",
+        wait: true, check: [Integration.Condition(tcp: 26101)], known: .init(how: .read))
+    private static let frameSignIn = Integration.Step(
+        id: "certificate", title: "Sign in to Samsung",
+        lines: ["Sign in with your Samsung account", "Lamp makes the frame's permission for this Mac"],
+        accepts: [.account],
+        run: [IntegrationAction(vendorSignIn: .init(page: "https://account.samsung.com/accounts/TDC/signInGate?redirect={callback}"))],
+        check: [Integration.Condition(signedIn: true)])
 
     // MARK: Build
 
