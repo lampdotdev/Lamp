@@ -110,13 +110,14 @@ enum Devices {
     }
 
     /// The list as read from devicectl's output.
-    static func list(devicectl data: Data, team: String = Devices.team) -> [Device] {
+    static func list(devicectl data: Data) -> [Device] {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let entries = (json["result"] as? [String: Any])?["devices"] as? [[String: Any]] else { return [] }
         var devices = entries.compactMap(Device.from(devicectl:))
-        // A watch's app goes with its iPhone's, so it's set up once an iPhone is.
-        let phoneReady = devices.contains { $0.kind.isPhone && $0.setup(team: team) == .ready }
-        for index in devices.indices where devices[index].kind == .watch { devices[index].companionReady = phoneReady }
+        // A watch's app goes with its iPhone's (never an iPad's), so it needs an iPhone that's paired with Developer
+        // Mode on; the team is judged when its setup is asked.
+        let phoneUsable = devices.contains { $0.kind == .iphone && $0.paired && $0.developerMode }
+        for index in devices.indices where devices[index].kind == .watch { devices[index].hasCompanionIPhone = phoneUsable }
         return devices.sorted { ($0.connected ? 0 : 1, $0.kind == .watch ? 1 : 0, $0.name) < ($1.connected ? 0 : 1, $1.kind == .watch ? 1 : 0, $1.name) }
     }
 

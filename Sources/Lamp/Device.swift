@@ -96,8 +96,10 @@ struct Device: Identifiable, Hashable {
     var paired = true
     var developerMode = true
     var connected = true
-    /// A watch's: whether an iPhone it can go with is set up, read off the list it came in.
-    var companionReady = false
+    /// A watch's: whether the list it came in holds an iPhone its app can go with, paired with this Mac with
+    /// Developer Mode on. The team is judged when the watch's setup is asked, as a phone's is, so a team chosen
+    /// after the list was read counts at once.
+    var hasCompanionIPhone = false
 
     static let macID = "this-mac"
 
@@ -116,7 +118,9 @@ struct Device: Identifiable, Hashable {
             if team.count != 10 { return .needs("Choose your Apple team") }
             return .ready
         case .watch:
-            return companionReady ? .ready : .needs("Set up the iPhone it's paired with")
+            if !hasCompanionIPhone { return .needs("Set up the iPhone it's paired with") }
+            if team.count != 10 { return .needs("Choose your Apple team") }
+            return .ready
         }
     }
 
@@ -222,7 +226,11 @@ enum DeviceNote {
     @MainActor static func line(for project: LampProject, store: Store) -> String {
         let phones = store.devices.filter { $0.kind.isPhone }
         if project.onIOS {
-            if let udid = project.device, let phone = phones.first(where: { $0.udid == udid }) {
+            if let udid = project.device {
+                // Chosen, but not in the list (away, or the lookup failed): still where Play puts the app.
+                guard let phone = phones.first(where: { $0.udid == udid }) else {
+                    return "Try On points at one of the person's phones, which Lamp's device list didn't return; Play still puts the app there once it's connected."
+                }
                 return "Try On points at the person's \(phone.name): \(phone.forAgent)."
             }
             let simulator = project.simulator.flatMap { udid in store.simulators.first { $0.udid == udid } }

@@ -22,7 +22,7 @@ final class DeviceRecordTests: XCTestCase {
     """
 
     func testPhonesAndWatchesAreReadExactly() {
-        let devices = Devices.list(devicectl: Data(listing.utf8), team: "ABCDE12345")
+        let devices = Devices.list(devicectl: Data(listing.utf8))
         XCTAssertEqual(devices.map(\.id), ["PHONE", "NEW", "WATCH"])
         let phone = devices[0]
         XCTAssertEqual(phone.forAgent, "iPhone 16 Pro Max, iOS 27, Dynamic Island, NFC, HealthKit")
@@ -35,11 +35,15 @@ final class DeviceRecordTests: XCTestCase {
         XCTAssertFalse(new.features.contains("Dynamic Island"))
         XCTAssertEqual(new.reach, .cable)
         XCTAssertEqual(new.setup(team: "ABCDE12345"), .needs("Pair it with this Mac"))
-        // A watch goes with a set-up iPhone.
+        // A watch goes with a paired iPhone with Developer Mode on, and needs the team as the phone does.
         let watch = devices[2]
         XCTAssertEqual(watch.kind, .watch)
         XCTAssertEqual(watch.forAgent, "Apple Watch Series 10, watchOS 26, HealthKit")
         XCTAssertEqual(watch.setup(team: "ABCDE12345"), .ready)
-        XCTAssertEqual(Devices.list(devicectl: Data(listing.utf8), team: "")[2].setup(team: ""), .needs("Set up the iPhone it's paired with"))
+        XCTAssertEqual(watch.setup(team: ""), .needs("Choose your Apple team"))
+        // An iPad is no companion: without the iPhone the watch's next step is its iPhone.
+        let withoutPhone = listing.replacingOccurrences(of: "\"deviceType\": \"iPhone\", \"marketingName\": \"iPhone 16 Pro Max\"", with: "\"deviceType\": \"iPad\", \"marketingName\": \"iPad Pro\"")
+        let pad = Devices.list(devicectl: Data(withoutPhone.utf8))
+        XCTAssertEqual(pad.first { $0.kind == .watch }?.setup(team: "ABCDE12345"), .needs("Set up the iPhone it's paired with"))
     }
 }
