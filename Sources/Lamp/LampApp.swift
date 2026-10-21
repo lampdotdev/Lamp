@@ -147,6 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Store.shared.flushDrafts()
             Store.shared.flushChats()
             LocalModels.shared.stopServer()
+            Adb.stopServer()
         }
     }
 }

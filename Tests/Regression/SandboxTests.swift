@@ -56,6 +56,19 @@ final class SandboxTests: XCTestCase {
         XCTAssertEqual(try run("cat ../../outside.txt", in: project).status == 0, false)
     }
 
+    /// Lamp's adb server and emulator can't be reached by a command, nor stood in for: through them it could
+    /// install, remove or drive apps on the emulator and the person's phone. Another local port stays open.
+    func testLampsAdbServerAndEmulatorAreClosed() throws {
+        let (project, _) = try project()
+        let ports = Edition.androidPorts
+        for port in [ports.server, ports.console, ports.bridge, ports.control] {
+            let reach = try run("/usr/bin/nc -z -G 2 127.0.0.1 \(port) 2>&1; /usr/bin/nc -l 127.0.0.1 \(port) 2>&1 & sleep 0.5; kill %1 2>/dev/null", in: project)
+            XCTAssertTrue(reach.output.contains("Operation not permitted"), "\(port): \(reach.output)")
+        }
+        let other = try run("/usr/bin/nc -l 127.0.0.1 0 2>&1 & sleep 0.5; kill %1 && echo listened", in: project)
+        XCTAssertTrue(other.output.contains("listened"), other.output)
+    }
+
     /// The apps Lamp installs can't be started by a command: exec maps the binary without the read the
     /// profile closes, so the profile refuses it by name. A command could otherwise run another app with a
     /// library of its own inside (DYLD_INSERT_LIBRARIES) and read that app's secrets out of Lamp through it.
