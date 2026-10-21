@@ -538,8 +538,11 @@ enum Adb {
                     _ = await run(["shell", "input", "tap", "\(x)", "\(y)"], on: serial, timeout: 30)
                     try? await Task.sleep(for: .milliseconds(300))
                 }
-                // In place of what the field held, as on the other devices: to the end, then back over it, one
-                // delete per character up to what a field is likely to hold, all in one call.
+                // In place of what the field held, as on the other devices: everything selected (Android 11 and
+                // later take a key combination) and deleted; on an older device, to the end and back over it,
+                // one delete per character up to what a field is likely to hold, all in one call.
+                _ = await run(["shell", "input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_A"], on: serial, timeout: 30)
+                _ = await run(["shell", "input", "keyevent", "KEYCODE_DEL"], on: serial, timeout: 30)
                 _ = await run(["shell", "input", "keyevent", "KEYCODE_MOVE_END"], on: serial, timeout: 30)
                 _ = await run(["shell", "input", "keyevent"] + Array(repeating: "KEYCODE_DEL", count: 120), on: serial, timeout: 60)
                 // `input text` takes no spaces and reads % and some punctuation its own way: each is escaped as adb's shell wants.

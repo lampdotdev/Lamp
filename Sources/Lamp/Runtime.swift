@@ -89,13 +89,14 @@ enum Runtime {
 
     /// Starts a new log for a launch the simulator makes (a Mac app does this itself in LampRuntime.start):
     /// the last one becomes previous-log.txt.
+    /// Written on the app's folder's terms (`AppFolder`, `AppFile`): the runtime folder is the agent's to write, so a
+    /// link left there must not carry the log, or what was in it, anywhere else.
     static func startLog(_ project: LampProject) {
-        let fm = FileManager.default
-        try? fm.createDirectory(at: folder(project), withIntermediateDirectories: true)
         let log = logURL(project), previous = folder(project).appendingPathComponent("previous-log.txt")
-        try? fm.removeItem(at: previous)
-        try? fm.moveItem(at: log, to: previous)
-        fm.createFile(atPath: log.path, contents: nil)
+        try? AppFolder.createDirectory(folder(project), in: project.dir)
+        let last = AppFile.read(log, in: project) ?? Data()
+        try? AppFolder.write(last, to: previous, in: project.dir)
+        try? AppFolder.write(Data(), to: log, in: project.dir)
     }
 
     // MARK: - Launch

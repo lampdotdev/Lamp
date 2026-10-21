@@ -5782,11 +5782,14 @@ final class Store: ObservableObject {
     /// The screen density of the device each Android app is open on, for its pictures (`Adb.screenshot`).
     private var androidDensities: [String: Int] = [:]
 
+    /// The launch in progress on each Android device, for the next one to wait for: as on a simulator, launches
+    /// on one device go one after another, so two apps can't be racing onto the same screen.
+    private var androidWork: [String: Task<Void, Never>] = [:]
+
     /// Puts an Android app on the device Try On points at (the person's own, or the emulator, started when it
     /// isn't running) and opens it, with its log read into the app's log. Nil when it's open; else what went wrong.
     private func installOnAndroid(_ project: LampProject, owner: Turn, inFront: Bool) async -> String? {
         func stillOwns() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped }
-        let package = Template.androidPackage(for: project)
         let serial: String
         do {
             if let chosen = project.device {
@@ -5806,7 +5809,30 @@ final class Store: ObservableObject {
                     androidDensities[project.id] = (await Adb.getprop(on: serial))["density"].flatMap { Int($0) }
                 }
             }
+        } catch {
+            let problem = error.localizedDescription
+            log(project, .error, problem)
+            return problem
+        }
+        guard stillOwns() else { return "The app was deleted or stopped before it opened." }
+        let previous = androidWork[serial]
+        let mine = Task<String?, Never> { [self] in
+            await previous?.value
             guard stillOwns() else { return "The app was deleted or stopped before it opened." }
+            return await launchOnAndroid(project, owner: owner, serial: serial, inFront: inFront)
+        }
+        androidWork[serial] = Task { _ = await mine.value }
+        return await mine.value
+    }
+
+    /// The launch itself, once the device is this project's turn: the device's screen is leased to it from here, and
+    /// every wait asks again whether it still is.
+    private func launchOnAndroid(_ project: LampProject, owner: Turn, serial: String, inFront: Bool) async -> String? {
+        let package = Template.androidPackage(for: project)
+        func stillOwns() -> Bool {
+            exists(project) && turns[project.id] === owner && !owner.stopped && androidLeases[serial] == project.id
+        }
+        do {
             note("Opening \(project.name) on \(project.device == nil ? "the emulator" : "your device")…", for: project)
             retireLaunches(of: project)
             androidApps[project.id]?.end()
@@ -5827,9 +5853,12 @@ final class Store: ObservableObject {
             let logcat = (try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)).flatMap { try? Adb.logcat(pid: pid, on: serial, log: $0) }
             let run = AndroidRun(serial: serial, pid: pid, log: logcat)
             androidApps[project.id] = run
+            // Often in the first seconds, when a crash on launch would show and the launch watch is judging it.
             run.watch = Task { [weak self] in
+                var polls = 0
                 while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(2))
+                    try? await Task.sleep(for: .milliseconds(polls < 10 ? 500 : 2000))
+                    polls += 1
                     guard let self, androidApps[project.id] === run else { return }
                     if await Adb.pid(of: package, on: serial) != pid {
                         run.end()
