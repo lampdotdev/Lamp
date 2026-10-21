@@ -130,8 +130,10 @@ final class ComputerOverlay {
         if pill.frame.origin != origin { pill.setFrameOrigin(origin) }
     }
 
+    /// How far the glow reaches out from the window's edge before it has faded away.
+    private static let glowReach: CGFloat = 14
     /// Room around the window for the glow to fade out in.
-    private static let glowMargin: CGFloat = 40
+    private static let glowMargin: CGFloat = glowReach + 10
 
     private func place(_ window: NSWindow, around frame: CGRect, above id: CGWindowID) {
         let cocoa = Self.cocoa(frame).insetBy(dx: -Self.glowMargin, dy: -Self.glowMargin)
@@ -154,12 +156,12 @@ final class ComputerOverlay {
             halo.fillColor = ComputerOverlay.tint.cgColor
             halo.shadowColor = ComputerOverlay.tint.cgColor
             halo.shadowOpacity = 1
-            halo.shadowRadius = 24
+            halo.shadowRadius = ComputerOverlay.glowReach / 2
             halo.shadowOffset = .zero
             near.fillColor = ComputerOverlay.tint.cgColor
             near.shadowColor = ComputerOverlay.tint.cgColor
             near.shadowOpacity = 0.9
-            near.shadowRadius = 7
+            near.shadowRadius = ComputerOverlay.glowReach / 5
             near.shadowOffset = .zero
             outside.fillRule = .evenOdd
             outside.fillColor = NSColor.black.cgColor
@@ -205,10 +207,10 @@ final class ComputerOverlay {
         if !reduceMotion {
             // The halo breathes: wider and brighter, then back, like a lamp's light wavering.
             let breathe = CABasicAnimation(keyPath: "shadowRadius")
-            breathe.fromValue = 18
-            breathe.toValue = 30
+            breathe.fromValue = Self.glowReach / 2
+            breathe.toValue = Self.glowReach / 2 * 1.2
             let brighten = CABasicAnimation(keyPath: "opacity")
-            brighten.fromValue = 0.8
+            brighten.fromValue = 0.85
             brighten.toValue = 1
             let group = CAAnimationGroup()
             group.animations = [breathe, brighten]
