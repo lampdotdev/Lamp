@@ -1,5 +1,8 @@
-VERDICT 1: RELOAD
+VERDICT 1: REOPEN (Screen.inner(): (Screen) -> () -> some View returns another kind of value now (some …), which what the open app made can't take)
 == run
 before: VStack<Text> VStack<Text>
-RELOAD 1: ok
+RELOAD 1: REOPEN Screen.inner(): (Screen) -> () -> some View returns another kind of value now (some …), which what the open app made can't take
 after: VStack<Text> VStack<Text> VStack<Text>
+before: VStack<Text> HStack<Text>
+RELOAD 1: in the restart
+after: VStack<Text> HStack<Text> VStack<Text>

@@ -5061,7 +5061,9 @@ final class Store: ObservableObject {
             // agent saved it, when this is a look's build of the same code), and the light crossed then. Without
             // this it was renewed until the turn ended.
             AppTransition.end(project)
-            if let app = macCopies(of: project).first {
+            // Only the copy that took it: one opened again while the whole build ran starts from what was installed,
+            // and is installed from the whole build as any other.
+            if let app = macCopies(of: project).first, LiveReload.tookChanges(project, pid: app.processIdentifier, launched: app.launchDate) {
                 if inFront {
                     app.activate()
                     log(project, .status, "\(project.name) is updated")

@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: tags=1
+RELOAD 1 (whole): ok
+after1 (want live: the same types, spelt another way; labels=done): tags=1 labels=done

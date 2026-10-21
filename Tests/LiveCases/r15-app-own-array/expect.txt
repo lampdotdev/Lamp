@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Shop.Holder changed what it holds (Shop.Holder.items: [Int]))
+== run
+before: value=7
+RELOAD 1: REOPEN Shop.Holder changed what it holds (Shop.Holder.items: [Int])
+after1 (the field was the app's own Array and is Swift's now: want a reopen, or count=1): value=7
+before: count=1
+RELOAD 1: in the restart
+after1 (the field was the app's own Array and is Swift's now: want a reopen, or count=1): count=1

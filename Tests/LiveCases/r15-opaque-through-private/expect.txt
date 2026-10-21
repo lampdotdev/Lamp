@@ -1,0 +1,10 @@
+VERDICT 1: REOPEN (Badge.label(): (Badge) -> () -> some CustomStringConvertible returns another kind of value now (some …), which what the open app made can't take)
+== run
+before: 42
+RELOAD 1: REOPEN Badge.label(): (Badge) -> () -> some CustomStringConvertible returns another kind of value now (some …), which what the open app made can't take
+after1 (want 'a longer label than before', or a reopen): 42
+again: 42
+before: a longer label than before
+RELOAD 1: in the restart
+after1 (want 'a longer label than before', or a reopen): a longer label than before
+again: a longer label than before

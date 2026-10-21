@@ -16574,7 +16574,7 @@ enum Template {
         $s =~ s{var\s+body\s*:\s*some\s+(?:SwiftUI\.)?View\s*\{}~ inside($-[0]) ? $& : "var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\n    \@ViewBuilder var __lampBody: some View {" ~ge;
         @skip = spans($s);
         my $main;
-        $s =~ s{^([ \t]*(?:(?:\@\w+(?:\([^)]*\))?|public|internal|fileprivate|private|open|final)\s+)*)\@main((?:\s+(?:\@\w+(?:\([^)]*\))?|public|internal|fileprivate|private|open|final))*\s+(?:struct|class|enum|actor)\s+(\w+))}{ if (inside($-[0])) { $& } else { $main = $3; "$1$2" } }me;
+        $s =~ s{^([ \t]*(?:(?:\@\w+(?:\([^)]*\))?|public|internal|fileprivate|private|open|final)\s+)*)\@main((?:(?:\s|//[^\n]*|/\*[\s\S]*?\*/)+(?:\@\w+(?:\([^)]*\))?|public|internal|fileprivate|private|open|final))*(?:\s|//[^\n]*|/\*[\s\S]*?\*/)+(?:struct|class|enum|actor)\s+(\w+))}{ if (inside($-[0])) { $& } else { $main = $3; "$1$2" } }me;
         $s .= "\n\@main enum __LampEntry { \@MainActor static func main() { LampLive.watch(); $main.main() } }\n" if defined $main;
         if ($wantSpares) {
             @skip = spans($s);

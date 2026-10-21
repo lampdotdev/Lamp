@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Style.bold changed, and the open app's Style values are made of it (an option set's bits, a raw value), so they'd read as something else)
+== run
+before: bold=true italic=true
+RELOAD 1: REOPEN Style.bold changed, and the open app's Style values are made of it (an option set's bits, a raw value), so they'd read as something else
+after1 (want bold=true italic=true, or a reopen: the open app's value was made with the old bits): bold=true italic=true
+before: bold=true italic=true underline=false
+RELOAD 1: in the restart
+after1 (want bold=true italic=true, or a reopen: the open app's value was made with the old bits): bold=true italic=true underline=false
