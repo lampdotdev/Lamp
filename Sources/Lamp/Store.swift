@@ -3650,12 +3650,17 @@ final class Store: ObservableObject {
         }
         // Their own click or key in the app stopped it there: the pill says the app is theirs, as for Stop.
         if answer?.stopped == true { trial.take() }
-        if trial.tookOver {
-            turn.tookOver = true
-            log(project, .status, Self.stoppedByYou)
+        // Asked again after the reads below: they take a moment, and Stop may come during them.
+        func tookOver() -> Bool {
+            guard trial.tookOver else { return false }
+            if !turn.tookOver {
+                turn.tookOver = true
+                log(project, .status, Self.stoppedByYou)
+            }
+            return true
         }
         guard let report = answer?.report else {
-            if turn.tookOver {
+            if tookOver() {
                 return (200, ["text": "Stopped: the person took the app over before it answered.\n\n" + Self.tookOverNote])
             }
             guard app.isTerminated else {
@@ -3664,7 +3669,6 @@ final class Store: ObservableObject {
             return (200, ["text": "The app quit or crashed while doing that.\n\n" + (await Runtime.launchReport(project))])
         }
         var text = "What happened:\n\(report)"
-        if turn.tookOver { text += "\n\n" + Self.tookOverNote }
         // The agent may have edited the code since: what it's clicking is the app from before those edits.
         if Runtime.sourcesChanged(project) {
             text += "\n\nThis is the app as last built: it doesn't have the changes you've made to the code since. " +
@@ -3672,6 +3676,7 @@ final class Store: ObservableObject {
         }
         // The front window in words goes wherever its picture does: what's on it is the same thing either way.
         if Privacy.sharesPictures, readsScreen, let words = await Runtime.screenText(of: project, since: asked) { text += "\n\n" + words }
+        if tookOver() { text += "\n\n" + Self.tookOverNote }
         text += Privacy.sharesPictures
             ? "\n\nPictures of its windows follow, frontmost first. The screen as text is the first picture's, and x and y for the next use_app are pixels in it."
             : "\n\n" + Privacy.picturesOff
@@ -3775,17 +3780,22 @@ final class Store: ObservableObject {
         if let data = try? JSONSerialization.data(withJSONObject: ["id": UUID().uuidString, "report": report]) {
             try? data.write(to: Runtime.folder(project).appendingPathComponent("use.json"))
         }
-        if trial.tookOver {
-            owner.tookOver = true
-            log(project, .status, Self.stoppedByYou)
+        // Asked again after the reads below: they take a moment, and Stop may come during them.
+        func tookOver() -> Bool {
+            guard trial.tookOver else { return false }
+            if !owner.tookOver {
+                owner.tookOver = true
+                log(project, .status, Self.stoppedByYou)
+            }
+            return true
         }
         guard Simulator.isRunning(pid: running.pid) else {
             var text = "What happened:\n\(report)\n\nThe app quit or crashed while doing that."
+            if tookOver() { text += "\n\n" + Self.tookOverNote }
             if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nLast lines it printed:\n" + tail }
             return (200, ["text": text])
         }
         var text = "What happened:\n\(report)"
-        if trial.tookOver { text += "\n\n" + Self.tookOverNote }
         if Runtime.sourcesChanged(project) {
             text += "\n\nThis is the app as last built: it doesn't have the changes you've made to the code since. " +
                 "Call look_at_app to build and open them."
@@ -3794,6 +3804,7 @@ final class Store: ObservableObject {
         // Asked again after the read: it takes a moment, and the setting can be turned off meanwhile.
         let words = Privacy.sharesPictures ? await Simulator.Driver.screenText(on: screen) : nil
         if Privacy.sharesPictures, let words { text += "\n\n" + words }
+        if tookOver() { text += "\n\n" + Self.tookOverNote }
         text += Privacy.sharesPictures
             ? "\n\nA picture of the iPhone's screen follows. Points for the next use_app are pixels in it."
             : "\n\n" + Privacy.picturesOff

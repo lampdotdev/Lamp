@@ -7983,12 +7983,21 @@ enum Template {
                     .write(to: LampRuntime.folder.appendingPathComponent("use.json"), options: .atomic)
             }
             let batch = Handover.begin(id: id, count: actions.count) { why in
-                keepBarPanel()
+                // The person has the app now, the menu bar icon's panel included: it takes the keyboard again and
+                // isn't put back up.
+                if holdsBarPanel { forgetBarPanel() }
                 report.append(why)
                 answer(stopped: true)
             }
-            // Which window the actions are for, before any of them: Lamp's glow goes round it from the start.
-            if let window = front { announce(id, window: window.windowNumber) }
+            // Which window the actions are in, before any of them and whenever an action changes it (a panel
+            // opened, a dialog): Lamp's glow goes round it from the start.
+            var told: Int?
+            func tellWindow() {
+                guard let window = LampRuntime.windowsOnScreen.first, window.windowNumber != told else { return }
+                told = window.windowNumber
+                announce(id, window: window.windowNumber)
+            }
+            tellWindow()
             // The last action that should have changed something: its line, and how its window looked before.
             var last: (line: Int, window: NSWindow, picture: Data?)?
             func note() {
@@ -8032,6 +8041,7 @@ enum Template {
                     }
                     report[line] = run(action)
                     if action.action != "bar_icon" { keepBarPanel() }
+                    tellWindow()
                     // A menu that was only read out, or an action that found nothing to do, isn't expected to change anything.
                     if report[line].contains("\n") || report[line].contains("nothing on the screen is called that") || report[line].contains("several things are called that") { last = nil }
                 }
