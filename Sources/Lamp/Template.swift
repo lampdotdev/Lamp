@@ -5073,6 +5073,15 @@ enum Template {
         @MainActor private final class Picker: NSView {
             private static var current: Picker?
             private var items: [LampScreen.Item] = []
+            /// For each item, the window it's in: -1 the target, else its place in `covers`.
+            private var inWindow: [Int] = []
+            /// The app's own windows over the target (`windowsOver`), front to back, in this view's points.
+            private var covers: [NSRect] = []
+            /// The windows and frames `covers` and the items were worked out for.
+            private var coverKey: [String]?
+            /// The target's own named things, read before the glass is up: the accessibility API finds a window by
+            /// its frame, which the glass shares.
+            private var targetItems: [LampScreen.Item] = []
             private var scale: CGFloat = 1
             private var hovered: Int?
             private var keyMonitor: Any?
@@ -5091,14 +5100,34 @@ enum Template {
                 glass.hasShadow = false
                 glass.isReleasedWhenClosed = false
                 glass.becomesKeyOnlyIfNeeded = false
+                // An alert the app runs while the person points would otherwise keep every click for itself.
+                glass.worksWhenModal = true
                 let picker = Picker(frame: NSRect(origin: .zero, size: window.frame.size))
                 picker.autoresizingMask = [.width, .height]
-                picker.items = LampDriver.elements(in: window).map(\.item)
+                picker.targetItems = LampDriver.elements(in: window).map(\.item)
                 picker.scale = LampRuntime.scale(of: window)
                 picker.target = window
                 glass.contentView = picker
                 window.addChildWindow(glass, ordered: .above)
                 glass.makeKeyAndOrderFront(nil)
+                picker.keepOnTop()
+                // A panel, sheet or alert of the app's, open already or opening while the person points, would
+                // cover the outline and take its clicks.
+                picker.observers = [NSApplication.didUpdateNotification, NSWindow.didBecomeKeyNotification,
+                                    NSApplication.didResignActiveNotification, NSApplication.didBecomeActiveNotification].map {
+                    NotificationCenter.default.addObserver(forName: $0, object: nil, queue: .main) { _ in
+                        MainActor.assumeIsolated { picker.keepOnTop() }
+                    }
+                } + [NSWindow.didMoveNotification, NSWindow.didResizeNotification].map {
+                    NotificationCenter.default.addObserver(forName: $0, object: window, queue: .main) { _ in
+                        MainActor.assumeIsolated { picker.keepOnTop() }
+                    }
+                } + [NSWindow.willCloseNotification, NSWindow.willMiniaturizeNotification].map {
+                    // Pointing ends with its window: away from it, the glass would be left where the window was.
+                    NotificationCenter.default.addObserver(forName: $0, object: window, queue: .main) { _ in
+                        MainActor.assumeIsolated { picker.stop() }
+                    }
+                }
                 picker.addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .activeAlways, .inVisibleRect, .cursorUpdate],
                                                       owner: picker, userInfo: nil))
                 picker.keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
@@ -5108,10 +5137,101 @@ enum Template {
                 current = picker
             }
 
+            private var observers: [NSObjectProtocol] = []
+
+            /// The app's own windows in front of `target` and over it, front to back: its panels, alerts and
+            /// sheets, not its other windows, and not Lamp's own (the chat beside it, a change's effect, the glass).
+            /// A floating panel goes when the app isn't in front (macOS hides it a moment after saying so).
+            static func windowsOver(_ target: NSWindow) -> [NSWindow] {
+                let order = NSWindow.windowNumbers(options: []) ?? []
+                func place(_ window: NSWindow) -> Int { order.firstIndex(of: NSNumber(value: window.windowNumber)) ?? .max }
+                return NSApp.windows.filter {
+                    $0 !== target && !isAppWindow($0) && $0.isVisible && !$0.isMiniaturized && $0.frame.intersects(target.frame)
+                        && $0.level < .popUpMenu && place($0) < place(target) && (NSApp.isActive || !$0.hidesOnDeactivate)
+                        && !($0.contentView is Picker) && !($0 is LampTransition.Glass) && !($0 is LampSidebar.Beside)
+                }
+                .sorted { place($0) < place($1) }
+            }
+
+            /// Keeps the glass over the app's own windows on the target, however high they float (a floating
+            /// panel, a modal panel or an alert), and over its sheets, but no higher: at the window's own level,
+            /// so other apps' windows still cover it as they cover the app. With nothing of the app's over the
+            /// window the glass is its child and moves with it. Otherwise it can't be: AppKit keeps a child at its
+            /// parent's level, and a sheet above its window and its children, so the glass leaves the window's
+            /// children, follows its frame itself and is ordered just above the frontmost of them.
+            func keepOnTop() {
+                guard let glass = window, glass.isVisible else { return }
+                guard let target, target.isVisible, !target.isMiniaturized else { return stop() }
+                let over = Self.windowsOver(target)
+                // Again when one of them, or the window, moved or changed size: the places are relative to the window.
+                let key = ([target] + over).map { "\($0.windowNumber) \(NSStringFromRect($0.frame))" }
+                if coverKey != key { coverKey = key; gather(target, over) }
+                guard let top = over.first else {
+                    if glass.parent == nil {
+                        glass.level = target.level
+                        glass.setFrame(target.frame, display: true)
+                        target.addChildWindow(glass, ordered: .above)
+                    }
+                    return
+                }
+                if glass.parent != nil { target.removeChildWindow(glass) }
+                let level = over.map(\.level).reduce(target.level) { max($0, $1) }
+                if glass.level != level { glass.level = level }
+                if glass.frame != target.frame { glass.setFrame(target.frame, display: true) }
+                // Front to back, this app's windows on the screen.
+                let order = NSWindow.windowNumbers(options: []) ?? []
+                func place(_ window: NSWindow) -> Int { order.firstIndex(of: NSNumber(value: window.windowNumber)) ?? .max }
+                if place(top) < place(glass) { glass.order(.above, relativeTo: top.windowNumber) }
+            }
+
+            /// What can be pointed at: the named things in the target and in each of the app's windows over it,
+            /// all in the target's picture's pixels. Where a panel covers the target, only the panel's count.
+            private func gather(_ target: NSWindow, _ over: [NSWindow]) {
+                covers = over.map { NSRect(x: $0.frame.minX - target.frame.minX, y: target.frame.maxY - $0.frame.maxY,
+                                           width: $0.frame.width, height: $0.frame.height) }
+                var found = targetItems
+                var inWindow = Array(repeating: -1, count: found.count)
+                for (index, window) in over.enumerated() {
+                    let own = LampRuntime.scale(of: window), cover = covers[index]
+                    for var item in LampDriver.elements(in: window).map(\.item) {
+                        let frame = item.frame
+                        item.frame = CGRect(x: (frame.minX / own + cover.minX) * scale, y: (frame.minY / own + cover.minY) * scale,
+                                            width: frame.width / own * scale, height: frame.height / own * scale)
+                        found.append(item)
+                        inWindow.append(index)
+                    }
+                }
+                items = found
+                self.inWindow = inWindow
+                hovered = nil
+                needsDisplay = true
+            }
+
+            /// The window with the app's own windows over it as they're shown, so a pick over a panel is of the
+            /// panel. Its own windows need no screen recording permission; the call is looked up by name as in
+            /// `LampRuntime.shown`.
+            private static func picture(of window: NSWindow) -> Data? {
+                typealias Capture = @convention(c) (CGRect, CFArray, UInt32) -> Unmanaged<CGImage>?
+                let over = windowsOver(window)
+                guard !over.isEmpty, let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImageFromArray") else {
+                    return LampRuntime.picture(of: window)
+                }
+                var ids = (over + [window]).map { UnsafeRawPointer(bitPattern: UInt($0.windowNumber)) }
+                let list = CFArrayCreate(nil, &ids, ids.count, nil)
+                let top = (NSScreen.screens.first?.frame.maxY ?? 0) - window.frame.maxY
+                let bounds = CGRect(x: window.frame.minX, y: top, width: window.frame.width, height: window.frame.height)
+                // At full resolution (1 << 3).
+                guard let list, let image = unsafeBitCast(symbol, to: Capture.self)(bounds, list, 1 << 3)?.takeRetainedValue(),
+                      image.width > 1, image.height > 1 else { return LampRuntime.picture(of: window) }
+                return LampRuntime.png(image, at: window)
+            }
+
             /// `tell` is false when Lamp hears instead that something was picked, or pointing starts over.
             func stop(tell: Bool = true) {
                 keyMonitor.map(NSEvent.removeMonitor)
                 keyMonitor = nil
+                observers.forEach(NotificationCenter.default.removeObserver)
+                observers = []
                 if let glass = window {
                     glass.parent?.removeChildWindow(glass)
                     glass.orderOut(nil)
@@ -5140,7 +5260,8 @@ enum Template {
 
             /// The smallest named thing under the point: a button inside a row, not the row.
             private func item(at point: NSPoint) -> Int? {
-                items.indices.filter { rect(items[$0]).contains(point) }
+                let front = covers.firstIndex { $0.contains(point) } ?? -1
+                return items.indices.filter { inWindow[$0] == front && rect(items[$0]).contains(point) }
                     .min { rect(items[$0]).width * rect(items[$0]).height < rect(items[$1]).width * rect(items[$1]).height }
             }
 
@@ -5205,11 +5326,13 @@ enum Template {
                 let own = rect(items[index])
                 let label = items[index].label.isEmpty ? items[index].value : items[index].label
                 func short(_ text: String) -> Bool { !text.isEmpty && text.count <= 40 && text != label && !text.contains("\n") }
-                let words = items.indices.filter { $0 != index && ["text", "heading"].contains(items[$0].role) && short(items[$0].label) }
+                // Only things in the same window: a panel's button isn't part of what's under the panel.
+                let peers = items.indices.filter { inWindow[$0] == inWindow[index] }
+                let words = peers.filter { $0 != index && ["text", "heading"].contains(items[$0].role) && short(items[$0].label) }
                 let left = words.filter { rect(items[$0]).maxX <= own.minX + 2 && abs(rect(items[$0]).midY - own.midY) < own.height / 2 + 4 }
                     .max { rect(items[$0]).maxX < rect(items[$1]).maxX }
                 if let left { return items[left].label }
-                let around = items.indices.filter { other in
+                let around = peers.filter { other in
                     let box = rect(items[other])
                     return other != index && box.contains(own) && box != own && box.width * box.height < bounds.width * bounds.height / 2
                         && items[other].label.components(separatedBy: " · ").contains(where: short)
@@ -5234,11 +5357,13 @@ enum Template {
                 guard let window = target else { return stop() }
                 let scale = scale
                 stop(tell: false)
-                // The picture is taken once the outline is off the screen, a little wider than the thing itself.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { MainActor.assumeIsolated {
+                // The picture is taken once the outline is off the screen, a little wider than the thing itself. An
+                // alert the app runs holds the run loop in a mode of its own, where the main queue waits until it's
+                // answered and the alert is gone from the picture, so the timer runs in that mode too.
+                let later = Timer(timeInterval: 0.15, repeats: false) { _ in MainActor.assumeIsolated {
                     // What it is and what it says; Lamp names the picture with them.
                     var info: [String: String] = ["role": role, "label": label, "context": context]
-                    if let png = LampRuntime.picture(of: window), let image = NSBitmapImageRep(data: png)?.cgImage {
+                    if let png = Self.picture(of: window), let image = NSBitmapImageRep(data: png)?.cgImage {
                         let margin = 12 * scale
                         let crop = CGRect(x: box.minX * scale, y: box.minY * scale, width: box.width * scale, height: box.height * scale)
                             .insetBy(dx: -margin, dy: -margin)
@@ -5252,6 +5377,7 @@ enum Template {
                     DistributedNotificationCenter.default().postNotificationName(
                         Notification.Name(LampInstall.note + "picked"), object: Bundle.main.bundleIdentifier, userInfo: info, deliverImmediately: true)
                 } }
+                for mode in [RunLoop.Mode.common, .modalPanel] { RunLoop.main.add(later, forMode: mode) }
             }
 
             override func rightMouseDown(with event: NSEvent) { stop() }
