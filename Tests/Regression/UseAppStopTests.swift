@@ -106,18 +106,29 @@ final class UseAppStopTests: XCTestCase {
     }
 
     /// On an iPhone the simulator is another app, so Lamp watches it: a press is the person's when Lamp didn't post
-    /// it, and it's a click in the simulator's window or a key while the simulator is in front.
+    /// it, and it's a click that lands on the simulator's window or a key while the simulator is in front.
     func testOnlyThePersonsOwnPressInTheSimulatorTakesItBack() {
         let simulator: pid_t = 501
         let window = CGRect(x: 100, y: 100, width: 400, height: 800)
         let inside = CGPoint(x: 300, y: 500), outside = CGPoint(x: 900, y: 500)
-        XCTAssertTrue(Handover.isPersons(key: false, mark: 0, at: inside, frontmost: 77, window: window, of: simulator))
-        XCTAssertFalse(Handover.isPersons(key: false, mark: Handover.mark, at: inside, frontmost: 77, window: window, of: simulator))
-        XCTAssertFalse(Handover.isPersons(key: false, mark: 0, at: outside, frontmost: simulator, window: window, of: simulator))
-        XCTAssertFalse(Handover.isPersons(key: false, mark: 0, at: inside, frontmost: simulator, window: nil, of: simulator))
-        XCTAssertTrue(Handover.isPersons(key: true, mark: 0, at: outside, frontmost: simulator, window: window, of: simulator))
-        XCTAssertFalse(Handover.isPersons(key: true, mark: Handover.mark, at: outside, frontmost: simulator, window: window, of: simulator))
-        XCTAssertFalse(Handover.isPersons(key: true, mark: 0, at: inside, frontmost: 77, window: window, of: simulator))
+        XCTAssertTrue(Handover.isPersons(key: false, mark: 0, at: inside, frontmost: 77, window: window, under: simulator, of: simulator))
+        XCTAssertFalse(Handover.isPersons(key: false, mark: Handover.mark, at: inside, frontmost: 77, window: window, under: simulator, of: simulator))
+        XCTAssertFalse(Handover.isPersons(key: false, mark: 0, at: outside, frontmost: simulator, window: window, under: 77, of: simulator))
+        XCTAssertFalse(Handover.isPersons(key: false, mark: 0, at: inside, frontmost: simulator, window: nil, under: simulator, of: simulator))
+        XCTAssertTrue(Handover.isPersons(key: true, mark: 0, at: outside, frontmost: simulator, window: window, under: nil, of: simulator))
+        XCTAssertFalse(Handover.isPersons(key: true, mark: Handover.mark, at: outside, frontmost: simulator, window: window, under: nil, of: simulator))
+        XCTAssertFalse(Handover.isPersons(key: true, mark: 0, at: inside, frontmost: 77, window: window, under: nil, of: simulator))
+    }
+
+    /// Another app's window over the simulator takes a click inside the simulator's rectangle for itself, so the
+    /// trial goes on; the same click with the simulator on top there, in front or not, takes the app back.
+    func testAClickOnAWindowCoveringTheSimulatorDoesNotTakeItBack() {
+        let simulator: pid_t = 501, covering: pid_t = 77
+        let window = CGRect(x: 100, y: 100, width: 400, height: 800)
+        let point = CGPoint(x: 300, y: 500)
+        XCTAssertFalse(Handover.isPersons(key: false, mark: 0, at: point, frontmost: covering, window: window, under: covering, of: simulator))
+        XCTAssertTrue(Handover.isPersons(key: false, mark: 0, at: point, frontmost: covering, window: window, under: simulator, of: simulator))
+        XCTAssertTrue(Handover.isPersons(key: false, mark: 0, at: point, frontmost: simulator, window: window, under: simulator, of: simulator))
     }
 
     private func run(_ command: String, in directory: URL) throws -> (status: Int32, output: String) {

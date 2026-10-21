@@ -187,7 +187,7 @@ enum AppAI {
         Provider.ListedModel(id: "claude-fable-5-1", name: "Claude Fable", blurb: "Smartest, priciest", openRouter: "anthropic/claude-fable-5.1"),
         Provider.ListedModel(id: "opus", name: "Claude Opus", blurb: "Best at coding", openRouter: "anthropic/claude-opus-5.5"),
         Provider.ListedModel(id: "sonnet", name: "Claude Sonnet", blurb: "Faster & cheaper", openRouter: "anthropic/claude-sonnet-5.5"),
-        Provider.ListedModel(id: "haiku", name: "Claude Haiku", blurb: "Fastest, cheapest", openRouter: "anthropic/claude-haiku-4.5"),
+        Provider.ListedModel(id: "haiku", name: "Claude Haiku", blurb: "Fastest, cheapest", openRouter: "anthropic/claude-haiku-5.5"),
     ]
 
     /// Every route there is, whether or not it can answer right now; the pickers show the ones that can,
@@ -472,7 +472,7 @@ enum AppAI {
         case .claude:
             // Claude Code takes images by reading them, so it gets the Read tool and their names.
             if !files.isEmpty { env["LAMP_PROMPT"] = prompt + "\n\n(Images: " + files.joined(separator: ", ") + ". Read them.)" }
-            env["LAMP_MODEL"] = model   // "haiku", "sonnet" or "opus": Claude Code's own aliases
+            env["LAMP_MODEL"] = model   // Claude Code's own aliases ("sonnet", "opus") or a full model id
             command = """
             "$LAMP_TOOL" -p "$LAMP_PROMPT" --output-format stream-json --verbose --no-session-persistence \\
               --restricted --strict-mcp-config --disable-slash-commands \\
@@ -735,13 +735,11 @@ enum AppAI {
         return (answers, 0)
     }
 
-    /// The fast model of whatever answers for apps, for decisions made by text: Haiku through Claude Code,
-    /// Luna through Codex, and pi's own model otherwise.
-    /// The small model for quick judgments on the route that will run them: Haiku when Claude Code answers,
-    /// Luna when Codex does; any other route uses its own model.
+    /// The small model for quick judgments on the route that will run them: Haiku 5.5 when Claude Code
+    /// answers, Luna 6 when Codex does; any other route uses its own model.
     static func fastModel(for route: TextRoute) -> String? {
         switch route.kind {
-        case .engine(.claude, _): "haiku"
+        case .engine(.claude, _): Builder.claudeFastModel
         case .engine(.codex, _): Builder.codexFastModel
         default: nil
         }
@@ -753,7 +751,7 @@ enum AppAI {
     /// The same for one route: an app's own text choice.
     @MainActor static func fastModelName(for model: TextRoute) -> String {
         switch model.kind {
-        case .engine(.claude, _): "Haiku through Claude"
+        case .engine(.claude, _): "Haiku 5.5 through Claude"
         case .engine(.codex, _): (Builder.codexModels.first { $0.id == Builder.codexFastModel }?.label).map { "\($0) through ChatGPT" } ?? "ChatGPT"
         default: model.label.replacingOccurrences(of: "Your ", with: "your ")
         }

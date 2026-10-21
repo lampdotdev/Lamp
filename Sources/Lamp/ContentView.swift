@@ -348,6 +348,9 @@ struct ProjectView: View {
     private func written(_ lines: [LogLine]) -> Int { busy ? lines.last?.text.count ?? 0 : 0 }
     /// The chat area has to be about twice the build card's height before the card is pinned.
     private static let roomToPinCard: CGFloat = 560
+    /// The build card's steps are open: the card is as tall as they make it, so it isn't pinned, or the ones past
+    /// the window's height could never be reached and the card would cover the chat under it.
+    @State private var cardStepsOpen = false
     /// Space above a request held at the top of the chat.
     private static let pinMargin: CGFloat = 16
 
@@ -438,7 +441,7 @@ struct ProjectView: View {
                 // While a new app is being built, its card stays in view above the steps, if there's
                 // room: in a short window a pinned card would fill the chat and hide everything else.
                 chatRows(shown, pin: pin, height: area.size.height,
-                         cardPinned: building != nil && area.size.height >= Self.roomToPinCard)
+                         cardPinned: building != nil && !cardStepsOpen && area.size.height >= Self.roomToPinCard)
                 // Room for the answer to a request just sent. The answer fills it as it comes; once
                 // there's more, the chat follows it down as ever.
                 Color.clear.id("bottom").layoutValue(key: ChatStack.Room.self, value: true)
@@ -532,7 +535,7 @@ struct ProjectView: View {
             // The build card goes straight after the request that began the app, and stays there through
             // the agent's questions and their answers; what the agent says and does follows it.
             transcript(Array(lines[...request]), busy: false, pin: pin)
-            BuildCard(project: project, progress: card)
+            BuildCard(project: project, progress: card, lines: Array(lines[(request + 1)...]), stepsOpen: $cardStepsOpen)
                 .padding(.top, 16).padding(.bottom, 12)
                 .background(ChatLook.paper)
                 // Pinned: once it reaches the top of the chat it stays there, over the steps going by.
@@ -551,7 +554,7 @@ struct ProjectView: View {
             let awaited = pinWanted && lines.last { $0.kind == .user }?.id == pinAfter
             let progress = busy && !awaited && Talk.open(in: lines) == nil ? store.progress[project.id] : nil
             transcript(lines, busy: busy, progressShown: progress != nil, pin: pin)
-            if let progress { ActivityRow(progress: progress, lines: lines).padding(.top, 12) }
+            if let progress { ActivityRow(progress: progress, lines: lines, dir: project.dir).padding(.top, 12) }
         }
         if let change = undoChange {
             ChatLook.UndoChange { Task { await store.undo(project, change: change) } }.padding(.top, 12)

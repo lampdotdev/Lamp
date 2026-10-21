@@ -92,11 +92,13 @@ final class Handover {
         if let global = NSEvent.addGlobalMonitorForEvents(matching: watched, handler: { [weak self] event in
             let mark = event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0
             let key = event.type == .keyDown
-            let location = ComputerOverlay.drivers(NSEvent.mouseLocation)
+            let pointer = NSEvent.mouseLocation
+            let location = ComputerOverlay.drivers(pointer)
             MainActor.assumeIsolated {
                 guard let self, let window = self.window, !self.tookOver else { return }
                 let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
-                if Self.isPersons(key: key, mark: mark, at: location, frontmost: front, window: ComputerOverlay.frame(of: window), of: simulator) {
+                let under = key ? nil : Self.owner(at: pointer)
+                if Self.isPersons(key: key, mark: mark, at: location, frontmost: front, window: ComputerOverlay.frame(of: window), under: under, of: simulator) {
                     self.take()
                 }
             }
@@ -109,11 +111,22 @@ final class Handover {
     }
 
     /// Whether a press seen in another app is the person's own in the simulator: not one Lamp posted, and a click
-    /// inside its window, or a key while it's the app in front (keys go to the front app wherever the pointer is).
-    nonisolated static func isPersons(key: Bool, mark: Int64, at location: CGPoint, frontmost: pid_t?, window: CGRect?, of simulator: pid_t) -> Bool {
+    /// inside its window that landed on it (`under`, the app whose window is on top there: another app's window
+    /// over the simulator takes the click itself), or a key while it's the app in front (keys go to the front app
+    /// wherever the pointer is).
+    nonisolated static func isPersons(key: Bool, mark: Int64, at location: CGPoint, frontmost: pid_t?, window: CGRect?, under: pid_t?, of simulator: pid_t) -> Bool {
         guard mark != Self.mark else { return false }
         if key { return frontmost == simulator }
-        return window?.contains(location) == true
+        return under == simulator && window?.contains(location) == true
+    }
+
+    /// The app whose window a click at a point (AppKit's coordinates) reaches: the window server's own answer,
+    /// which passes over windows that take no clicks (Lamp's glow and cursor over the simulator, other apps'
+    /// overlays), where the window list would give the first window there, seen or not.
+    static func owner(at point: CGPoint) -> pid_t? {
+        let id = NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)
+        guard id > 0, let info = (CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(id)) as? [[String: Any]])?.first else { return nil }
+        return info[kCGWindowOwnerPID as String] as? pid_t
     }
 
     /// The front window of an app on screen, in the order the window server stacks them: the first with a title,

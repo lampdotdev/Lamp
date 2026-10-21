@@ -91,7 +91,7 @@ struct SetupCard: View {
         let resolution = AppAI.resolve(offer.capability, for: project, in: offer.context)
         let byHand = resolution.provider == Icons.byHand
         if resolution.tier == .best {
-            return (title(offer), byHand ? "All set. You draw each app's icon with Image Playground." : doneText(offer, resolution.answer ?? ""), true)
+            return (title(offer), byHand ? "All set. Image Playground creates each app's icon with AI, and you pick the one you like." : doneText(offer, resolution.answer ?? ""), true)
         }
         if offer.declined(in: project) {
             return (title(offer), offer.capability == .browser ? "No problem. You can connect Chrome any time in Lamp’s Settings, under Experimental." : "No problem. You can set this up any time in Lamp's Settings, under AI Providers.", false)
@@ -142,7 +142,7 @@ struct SetupCard: View {
     private func status(_ resolution: Resolution, done: Bool, byHand: Bool) -> some View {
         if done {
             Label {
-                Text(byHand ? "All set. You draw each app's icon with Image Playground." : doneText(resolution.answer ?? ""))
+                Text(byHand ? "All set. Image Playground creates each app's icon with AI, and you pick the one you like." : doneText(resolution.answer ?? ""))
             } icon: {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
             }
@@ -414,8 +414,8 @@ private struct DrawIconsUpgrade: View {
     let compact: Bool
 
     var body: some View {
-        OptionRow(symbol: "paintbrush.pointed", title: "Draw icons yourself",
-                  detail: "Free, with Image Playground. You draw each app's icon.", compact: compact) {
+        OptionRow(symbol: "paintbrush.pointed", title: "Create icons in Image Playground",
+                  detail: "Free. Apple's Image Playground creates each app's icon with AI on this Mac, and you pick the one you like.", compact: compact) {
             Button("Use for All Apps") { Icons.iconChoice = Icons.byHand }
         }
     }

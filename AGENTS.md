@@ -44,15 +44,17 @@ A capability given to one engine must be given to all of them that can take it, 
   request came to is the agent's last message, in a sentence or two (`Agent.Rules.finish`), under the line that says
   the app is ready or updated; a card for it said no more than that message did and hid what it said beyond it.
   While longer work goes on, the agent says how it's going with `progress`: a line of 12 words at most, shown at once
-  in both chats as a message like any other, which stays one when the turn ends. A turn's steps belong to its one
-  live line (`ChatLook.ActivityLine`, `ChatItem.live`, the sidebar's `SidebarState.workingSteps`), which says what
-  it's doing now and changes in place. While the turn goes on the line is open, at the bottom under the steps done
-  so far, oldest first, so what's done reads in order and what's going on now is always last (a command by the name
+  in both chats as a message like any other, which stays one when the turn ends. The chat is one timeline: messages,
+  steps and Reload in the order they happened, the newest at the bottom, so steps never collect below what was said
+  after them. A turn's steps since it last said something belong to its one live line (`ChatLook.ActivityLine`,
+  `ChatItem.live`, the sidebar's `SidebarState.workingSteps`), which says what it's doing now and changes in place;
+  the steps before that stay rows where they came, between the messages. While the turn goes on the line is open, at
+  the bottom under its steps, oldest first, so what's going on now is always last (a command by the name
   the agent gave it, any other tool call in the words the line said while it ran, `LogLine.visible`, never its
   files); the step still going is the line itself and joins the list when the agent moves on (`ChatItem.live`), and a
-  click folds the list; when the turn ends the line and its
-  steps give way to "Worked for…" (`ChatItem.items`), folded, under the turn's last message, which opens to the same
-  steps. Whatever the agent writes as messages on the way is
+  click folds the list. When the turn ends each stretch of steps folds where it came (`ChatItem.items`): the one just
+  before the turn's last message into "Worked for…", above that message, any other to how many steps it was, or to
+  its one step. Whatever the agent writes as messages on the way is
   treated the same, each shown as it's said and kept as it was (`LogLine.visible`), since models write such updates
   whether or not they're asked to use the tool: what the person has read never turns into a gray line among the
   steps or goes away. (A Lamp from before this folded them; `ChatLook.ProgressLine` and the status line marked with
@@ -66,7 +68,9 @@ A capability given to one engine must be given to all of them that can take it, 
   forward at the agent's first look. When no chat comes back beside the app after a pass reopens it (the reopen
   failed, it crashed, or the pass made it an app with no window), the chat goes back to Lamp's window
   (`MagicPanel.keepChatInSight`). The early build is settled before the turn lets go of the app, however it ends.
-  Result cards saved by an earlier Lamp still read and aren't shown (`LogLine.visible`). A new app's build card folds
+  Result cards saved by an earlier Lamp still read and aren't shown (`LogLine.visible`). A new app's first turn has the build card in
+  the live line's place: the agent's plan with ticks, and under it the turn's steps so far behind one line
+  (`BuildCardView.steps`, "4 steps so far"), folded, so a long first build reads without Agent Details. The card folds
   to its first line (its name, Ready) once the turn is over, with no picture of the app. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
   tool waits for the person: it returns at once, the agent ends its reply, and a click is sent as the
@@ -734,7 +738,8 @@ typing in it themselves. A Mac app sees their own presses as they reach its even
 the driver's events go straight to the window and never pass through it, and the one kind that does (a key held
 down) is marked. Lamp's Stop reaches it as a stop signed with the app's token like the request
 ("lampUseAppStop" marks the builds that take it; older ones are rebuilt first). For the simulator Lamp watches
-for a click in its window or a key while it's in front (`Handover.isPersons`), and marks the taps and keys it
+for a click that lands on its window (the window server's own hit test, `Handover.owner`: a click on another app's
+window over it is that app's) or a key while it's in front (`Handover.isPersons`), and marks the taps and keys it
 posts itself. Either way the rest of the batch is dropped, keys held down are let go, the Simulator isn't
 brought forward again, the pill says "You have the app. Lamp stopped trying it.", the chat gets a "Trying it:
 stopped by you" line, and `use_app` answers how far it got and refuses further calls until the person's next
@@ -776,9 +781,9 @@ process of its own whose view the app hosts (`EXHostViewController`) but can't d
 the chat's content, never the app: the extension shows what Lamp sends and passes on what the person does
 (`SidebarWire`, one JSON value a line, in Sources/LampSidebarKit), so all the chat does stays in Lamp
 (`SidebarServer`: the lines as Lamp's window shows them without Agent Details, gathered and spaced as `Transcript`
-does, the draft, attachments, the open question card). Without Agent Details a finished turn's steps are one line above
-its answer, "Worked for 2 min 3 s" from the turn's summary, which opens to show them (`ChatItem.items(gather:)`,
-`ChatLook.Worked`); a turn still going shows its steps as they come. Both draw the chat with the same pieces, in
+does, the draft, attachments, the open question card). Without Agent Details a finished turn's steps fold where they came, those just
+before its answer into one line above it, "Worked for 2 min 3 s" from the turn's summary, which opens to show them
+(`ChatItem.items(gather:)`, `ChatLook.Worked`); a turn still going shows its steps as they come. Both draw the chat with the same pieces, in
 Sources/LampSidebarKit (`Composer`, the message box; `ChatLook`, the bubbles, statuses, progress line, Stop and Send),
 so a change to how Lamp's chat looks is made there and reaches both; the sidebar program is part of `BuildStamp`, so
 apps installed with an earlier one are built again when next opened. It reaches Lamp on this Mac's own address at `Edition.sidebarPort` (macOS keeps other apps, Lamp
@@ -1175,7 +1180,7 @@ value; `LiveSlots.changedConstants`, `rewriteConstant`). The first time a consta
 compiled again, so every reader goes through it; it stays rewritten until the app is installed again. One that can
 hold an object needs the app reopened instead (it waits for Reload, as above), since a second object would split the
 app's state: one of the app's own classes, and anything that isn't a plain value of Swift's or SwiftUI's
-(`holdsObject`), so a Lamp building block such as `LampAPI.own(…)` or a system class too. A system type the code can't settle (`Font.Design` in a theme's typeface: what it holds isn't public) is asked of the system before the constant is judged (`LiveReload.plainTypes`): a small program naming it by the module and name the compiler resolved it to (`SwiftUICore.Font.Design`, `Declarations.systemResolved`), compiled with the app's SDK and run in the app's sandbox on this Mac, says whether it holds any reference (`_isPOD`); only a constant that changed asks, never about the app's own classes or a name the compiler resolved to one of the app's declarations anywhere (`ownResolved`, the widget's shared code included), each type once while Lamp runs, and the refusal names the field. A tuple's labels and Lamp's
+(`holdsObject`), so a Lamp building block such as `LampAPI.own(…)` or a system class too. A system type the code can't settle (`Font.Design` in a theme's typeface: what it holds isn't public) is asked of the system before the constant is judged (`LiveReload.plainTypes`): a small program naming it by the module and name the compiler resolved it to (`SwiftUICore.Font.Design`, `Declarations.systemResolved`), compiled with the app's SDK and run in the app's sandbox on this Mac, says whether it holds any reference (`_isPOD`); only a constant that changed asks, never about the app's own classes or a name the compiler resolved to one of the app's declarations anywhere (`ownResolved`, the widget's shared code included), each type once per macOS version (`plain-types.json` in Lamp's folder), asked ahead when the app opens (`LiveReload.warm`, for every constant the app has, once for the sources the open app runs on this macOS, `plain-asked.txt`, whether its layout was saved already or not) so no change waits for the compile, and the refusal names the field. A pointer (`OpaquePointer`, `Unsafe…Pointer`, `ObjectIdentifier`, `Unmanaged`; `pointerValues`) is never plain, though its bytes are: it names what the open app opened or made once (a C library's handle), which a new value would make twice. A tuple's labels and Lamp's
 own spare places in a struct name no type of their own, so they don't count. A constant declared in one list with others (`let a = 1, b = 2`) isn't rewritten, and the reason says so. A
 constant's digest also takes in what its starting value calls: the text of every declaration of the app's it calls,
 as far down as that goes (`SwiftSource.calledText`), so one made by `build()` or from a computed `width` is given its
