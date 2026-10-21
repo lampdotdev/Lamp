@@ -1392,9 +1392,9 @@ struct ImportReviewCard: View {
     let update: () -> Void
 
     /// The heights of what stays put, measured as laid out: the app's name and description at the top, the
-    /// line about the copy already here when there is one, and the buttons.
+    /// review's summary and what to weigh, the line about the copy already here when there is one, and the buttons.
     @State private var fixed: [Part: CGFloat] = [:]
-    private enum Part { case name, existing, buttons }
+    private enum Part { case name, summary, considerations, existing, buttons }
     /// How tall the scrolling middle may be: the height a long review always stopped at, or less when the
     /// screen below the sheet's top is shorter than that. Taken off besides the fixed parts: the sheet's
     /// padding (48) and a 16-point gap after each part but the last.
@@ -1426,24 +1426,27 @@ struct ImportReviewCard: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.name] = $0 }
 
             if let review {
-                // What the app does scrolls when it's long (an app that does many things) or the screen is
-                // short; the app's name above and the buttons below stay put.
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        if !review.summary.isEmpty {
-                            section("What it does") { Text(review.summary).fixedSize(horizontal: false, vertical: true) }
-                        }
-                        let considerations = Self.considerations(review)
-                        if !considerations.isEmpty {
-                            section("Things to consider") {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    ForEach(considerations) { consideration($0) }
-                                }
-                            }
-                        }
-                        section("What it can do on your Mac") { capabilities(review) }
+                // What it does and what to weigh stay in view, however short the screen, so a warning is never
+                // scrolled away beside the button that opens the app; only what it can do scrolls.
+                if !review.summary.isEmpty {
+                    section("What it does") {
+                        // The reviewer is asked for a sentence or two: a few lines here, the whole of it on hover.
+                        Text(review.summary).lineLimit(5).fixedSize(horizontal: false, vertical: true).help(review.summary)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.summary] = $0 }
+                }
+                let considerations = Self.considerations(review)
+                if !considerations.isEmpty {
+                    section("Things to consider") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(considerations) { consideration($0) }
+                        }
+                    }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.considerations] = $0 }
+                }
+                ScrollView {
+                    section("What it can do on your Mac") { capabilities(review) }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: limit)
                 .fixedSize(horizontal: false, vertical: true)   // no taller than its content, up to the limit
