@@ -707,7 +707,7 @@ enum LiveReload {
     /// (an escaping closure made outside a view's body, an async closure, an async function), as
     /// "Type<tab>where<tab>switches over" or "…<tab>prints", for every enum: which ones will grow isn't known yet.
     static func oldCodeUses(inDump dump: String) -> [String] {
-        let reader = OldCode(views: SwiftSource.names(inDump: dump).views)
+        let reader = OldCode()
         SwiftSource.walk(dump, reader.take)
         return reader.finish()
     }
@@ -732,16 +732,12 @@ enum LiveReload {
         private var scopes: [(indent: Int, kind: Kind)] = [], uses: [String] = [], seen = Set<String>()
         private var switching: Int?, typeNames: [String: [String]] = [:]
         // The calls around the line being read, by the module each one's function is from.
-        private var calls: [Int] = [], callees: [(indent: Int, module: String, view: Bool, keeps: Bool)] = [], holders: [Int] = []
+        private var calls: [Int] = [], callees: [(indent: Int, module: String, keeps: Bool)] = [], holders: [Int] = []
         // SwiftUI's modifiers that keep the last value they were given, to compare the next with: what they hold was
         // made by old code, and an optional of a grown enum there would read its nil as the new case.
         private let keeping: Set<String> = ["onChange", "task", "animation", "id", "tag", "transaction", "sensoryFeedback",
                                             "phaseAnimator", "keyframeAnimator", "symbolEffect", "contentTransition"]
         private let calleeName = try! NSRegularExpression(pattern: #" decl="SwiftUI(?:Core)?\.\(file\)\.(?:[^"(@]*\.)?(\w+)\("#)
-        // The app's own views, and how a call names one's initializer (`Case.(file).Chip.init(title:onTap:)`).
-        private let views: Set<String>
-        private let viewInit = try! NSRegularExpression(pattern: #" decl="[\w.]+?\.\(file\)\.(?:[\w.]+\.)?(\w+)\.init\("#)
-        init(views: Set<String> = []) { self.views = views }
 
         private func note(_ type: String, _ how: String) {
             let use = type + "\t" + place() + "\t" + how
@@ -780,9 +776,8 @@ enum LiveReload {
             if line.node.name == "assign_expr" || line.node.name == "pattern_binding_decl" { holders.append(indent) }
             // The call's function is the first thing named under it; what its arguments name is theirs.
             if let at = calls.last, callees.last?.indent != at, opens("declref_expr"), let m = callee.firstMatch(in: line.text, range: line.range) {
-                let made = viewInit.firstMatch(in: line.text, range: line.range).map { String(line.text[Range($0.range(at: 1), in: line.text)!]) }
                 let named = calleeName.firstMatch(in: line.text, range: line.range).map { String(line.text[Range($0.range(at: 1), in: line.text)!]) }
-                callees.append((at, String(line.text[Range(m.range(at: 2), in: line.text)!]), made.map(views.contains) ?? false, named.map(keeping.contains) ?? false))
+                callees.append((at, String(line.text[Range(m.range(at: 2), in: line.text)!]), named.map(keeping.contains) ?? false))
             }
             if opens("var_decl"), bodyDecl.firstMatch(in: line.text, range: line.range) != nil {
                 scopes.append((indent, .body))
@@ -793,9 +788,9 @@ enum LiveReload {
                 // passed as a function (`.map(\.name)`) is an escaping closure the compiler makes for that call, and
                 // lives with it.
                 let stored = (holders.last ?? -1) > (calls.last ?? -1)
-                // One handed to a view of the app's own (`Chip(title:) { … }`) lives in that view's value, which the
-                // next draw makes again, as a Button's action is.
-                let kept = stored || !(["SwiftUI", "SwiftUICore"].contains(callees.last?.module ?? "SwiftUI") || callees.last?.view == true)
+                // One handed to a view of the app's own counts as kept too: its initializer may keep it anywhere (a
+                // model's handler, a timer), which its being a view says nothing of.
+                let kept = stored || !["SwiftUI", "SwiftUICore"].contains(callees.last?.module ?? "SwiftUI")
                 let keyPath = line.has("(autoclosure_expr implicit") && rest.contains("captures=($kp$")
                 scopes.append((indent, rest.contains(" async") ? .async : rest.contains(" escaping") && !keyPath ? (kept ? .async : .escaping) : .other))
             } else if opens("func_decl", "accessor_decl", "constructor_decl"), let m = function.firstMatch(in: line.text, range: line.range) {
@@ -1117,7 +1112,7 @@ enum LiveReload {
         // One pass over the printout for all of it.
         let names = SwiftSource.names(inDump: dump)
         let plain = Members(rawValues: false, held: false, names: names), held = Members(rawValues: false, held: true, names: names)
-        let declared = SwiftSource.DeclarationsReader(), launch = SwiftSource.LaunchReader(), old = OldCode(views: names.views)
+        let declared = SwiftSource.DeclarationsReader(), launch = SwiftSource.LaunchReader(), old = OldCode()
         SwiftSource.walk(dump) { line in plain.take(line); held.take(line); declared.take(line); launch.take(line); old.take(line) }
         let declarations = declared.finish()
         let made = (layout: plain.finish() + launch.finish(folder: folder) + SwiftSource.constantEntries(declarations),
@@ -2206,7 +2201,7 @@ enum LiveSlots {
                 if holder == .view, declarations.lets.contains(type + "\t" + name), !(isLiteral(initial) || isLiteral(variable, in: declarations)) {
                     return .refused("\(type).\(name) is a let that starts as \(initial), and a view's let goes in only with a literal, which it returns")
                 }
-                if holder == .value, !isSteady(initial, type: kind, cases: cases, literal: isLiteral(variable, in: declarations)) {
+                if holder == .value, !isSteady(initial, type: kind, cases: cases, literal: isLiteral(variable, in: declarations), own: declarations.ownTypeNames) {
                     return .refused("\(type).\(name) starts as \(initial), which may differ from one value to the next; a struct's property kept in a spare starts from a literal, an empty collection or one of the app's enum's cases")
                 }
                 moved.insert(extra)
@@ -2421,14 +2416,6 @@ enum LiveSlots {
                 queue.append(made)
             }
         }
-        // And the cases of every enum those texts name (`Mood.allCases.count`): the value is made again each time
-        // the enum grows, not only the first.
-        for (type, entries) in layout {
-            let cases = entries.filter { $0.contains("\tcase ") }
-            guard !cases.isEmpty, case let short = String(type.split(separator: ".").last ?? ""),
-                  sources.values.contains(where: { SwiftText.mentions(short, in: $0) }) else { continue }
-            sources["\u{0}" + type] = cases.sorted().joined(separator: "\n")
-        }
         // And what they call (`build()`, a computed `width`): made by other code, it's another value.
         var files: [String: SwiftSource.Text] = [:]
         let called = sources.keys.sorted().compactMap { name -> String? in
@@ -2437,6 +2424,14 @@ enum LiveSlots {
             return SwiftSource.calledText(from: binding.start, to: binding.last, in: declarations, files: &files)
         }.joined(separator: "\n")
         if !called.isEmpty { sources["\u{1}calls"] = called }
+        // And the cases of every enum those texts name, what they call included (`Mood.allCases.count`): the value is made again each time
+        // the enum grows, not only the first.
+        for (type, entries) in layout {
+            let cases = entries.filter { $0.contains("\tcase ") }
+            guard !cases.isEmpty, case let short = String(type.split(separator: ".").last ?? ""),
+                  sources.values.contains(where: { SwiftText.mentions(short, in: $0) }) else { continue }
+            sources["\u{0}" + type] = cases.sorted().joined(separator: "\n")
+        }
         // Named by its key, the file of a private one included: two files' `private let spacing` are two values.
         let name = key.replacingOccurrences(of: "\t", with: ".") + "#" + SwiftSource.digest(sources.keys.sorted().map { $0 + "=" + sources[$0]! }.joined(separator: "\n"))
         let quoted = name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
@@ -2604,7 +2599,7 @@ enum LiveSlots {
             return ["final var \(name): \(declared) { \(getter)\(setter) }"]
         case .value:
             guard isSteady(initial, type: declared, cases: item.isNew ? cases : [enumName(item.slot.type): Set(item.slot.cases ?? [])],
-                           literal: isLiteral(variable, in: declarations)) else { return nil }
+                           literal: isLiteral(variable, in: declarations), own: declarations.ownTypeNames) else { return nil }
             if let taken = item.slot.initial, taken != initial { return nil }
             let place = place(in: type, holder: .value)
             let getter = "get { if \(place).has(\"\(key)\") { \(read("\(place).field(\"\(key)\")")) }; return \(initial) }"
@@ -2651,12 +2646,13 @@ enum LiveSlots {
     /// starting value must come out the same every time: a literal, an empty collection (`[Item]()`), or one of
     /// the app's own enum's cases (`.sedan`, by the enum's cases in `cases`). Nothing judged by its spelling alone:
     /// `Session()` may make something new each time, and `.shared` or `.now` may be worked out on each read.
-    private static func isSteady(_ value: String, type: String, cases: [String: Set<String>], literal: Bool) -> Bool {
+    private static func isSteady(_ value: String, type: String, cases: [String: Set<String>], literal: Bool, own: Set<String> = []) -> Bool {
         if literal || isLiteral(value) || value.range(of: #"^(?:\[[\w.<>, :?]+\]|(?:Set|Dictionary|Array|String)(?:<[\w.<>, :?\[\]]+>)?)\(\)$"#, options: .regularExpression) != nil { return true }
         let enumName = enumName(type)
         let parts = value.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count == 2, parts[0].isEmpty || parts[0] == Substring(enumName) else { return false }
-        if let members = steadyMembers[enumName], members.contains(String(parts[1])) { return true }
+        // The system's own type only: one of the app's of the same name, or an alias by it, may make a new value each read.
+        if !own.contains(enumName), let members = steadyMembers[enumName], members.contains(String(parts[1])) { return true }
         return cases[enumName]?.contains(String(parts[1])) == true
     }
 

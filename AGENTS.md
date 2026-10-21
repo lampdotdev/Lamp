@@ -997,7 +997,8 @@ all (`LampSpare.has`, a class's non-nil `LampSpare?`, the state box's stored ent
 doesn't cast back. A class's starting value that isn't a literal (`.now`, a call) is worked out on the first read and kept;
 a struct can't keep one from a read, so its new property needs a starting value that comes out the same every time (a
 literal (by the compiler's word, however it's spelt: `"a\nb"`, `0xFF`), an empty collection, one of the app's own
-enum's cases, or a constant of the system's named one by one (`.zero`, `.blue`: `LiveSlots.steadyMembers`), judged again each time the property is put back;
+enum's cases, or a constant of the system's named one by one (`.zero`, `.blue`: `LiveSlots.steadyMembers`, never where the app
+names a type or an alias the same, `Declarations.ownTypeNames`), judged again each time the property is put back;
 anything else, or a different one later, reopens the app, since the spare compares a value that never set the
 property by the starting value it was taken in with); a `@Published` property in a class whose places aren't published (conforming
 in an extension) reopens it too. `@State` is read in both forms the compiler has given it: `_name: State<T>`, and
@@ -1021,8 +1022,8 @@ so the sources the open app runs, and those of every change that went in since i
 `LiveReload.recordOldCode`: what an earlier change's code started may still be running), are read for a switch over the
 enum, or an interpolation of it, in an escaping closure that outlives a draw (one made outside a view's body or a
 member returning a view, or one a body hands to anything but SwiftUI, a Timer's, a dispatch queue's, the app's own, or
-sets into a property or gives as a property's value; a Button's action is made again at the next draw, and so is
-one handed to a view of the app's own, which lives in that view's value), an async
+sets into a property or gives as a property's value; a Button's action is made again at the next draw; one handed to a view of the app's own counts as kept,
+since its initializer may keep it anywhere), an async
 closure or an async function (`LiveReload.enumsMetByOldCode`), and the app reopens when there is one. The enum's description and value witnesses stay the change's
 own (`LiveReload.compile(keep:)`, renamed `$lampown` so `LampLive` binds every later change to them), since the app's
 don't know the new cases; its metadata stays the app's, so a value boxed before the change and one boxed after are the

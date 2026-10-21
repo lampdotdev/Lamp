@@ -81,6 +81,14 @@ enum SwiftSource {
         /// Each type's own `hash(into:)`, by its qualified name: sets and dictionaries the open app keeps were laid out
         /// by it (`hashEntries`).
         var hashing: [String: (start: Position, last: Position)] = [:]
+        /// The names of the app's own typealiases, which may stand for a system type's name (`typealias Color = Paint`).
+        var aliases: Set<String> = []
+
+        /// Every name the app gives a type of its own, by its last part: the system's type of that name isn't what
+        /// the app's code means by it.
+        var ownTypeNames: Set<String> {
+            Set(types.keys.map { String(LiveReload.bare($0).split(separator: ".").last ?? "") }).union(aliases)
+        }
     }
 
     /// A printout's line that opens a node: its indent and the node's name, the run of letters, digits, `_` and `=`
@@ -170,6 +178,7 @@ enum SwiftSource {
         private let observer = try! NSRegularExpression(pattern: #"^\s*\(accessor_decl\b.*? (?:didSet|willSet) for="(\w+)""#)
         // An assignment in an initializer the type writes: the node under it says what's set.
         private let assigned = try! NSRegularExpression(pattern: #"^(\s*)\(member_ref_expr\b.*? decl="[^"]*?\.(\w+)@"#)
+        private let aliasName = try! NSRegularExpression(pattern: #"^\s*\(typealias\b[^"]*"(\w+)""#)
         private var observed = Set<String>()
         private var out = Declarations()
         // The initializer being read, and an assignment in it whose target is the next node.
@@ -182,6 +191,9 @@ enum SwiftSource {
 
         func take(_ line: Walk.Line) {
             let indent = line.indent, opens = line.opens
+            if opens("typealias"), let m = aliasName.firstMatch(in: line.text, range: line.range) {
+                out.aliases.insert(String(line.text[Range(m.range(at: 1), in: line.text)!]))
+            }
             if opens("func_decl", "constructor_decl", "subscript_decl", "pattern_binding_decl"), !line.has(" implicit"),
                let r = SwiftSource.range(in: line.text) {
                 out.bodies.append(r)
@@ -566,13 +578,10 @@ extension SwiftSource {
         /// asks the class's initializers about anything else).
         struct Names {
             var classes = Set<String>(), protocols = Set<String>()
-            /// The app's own views, by their simple name: what's handed one lives in its value, made again at each draw.
-            var views = Set<String>()
         }
     }
 
     private static let walkTypeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|actor)_decl\b[^"]*"([^"]+)".*? access=(\w+)"#)
-    private static let walkViewDecl = try! NSRegularExpression(pattern: #"^\s*\(struct_decl\b[^"]*"(\w+)".*? inherits="([^"]*)""#)
     private static let walkGenericDecl = try! NSRegularExpression(pattern: #"^\s*\(\w+_decl\b[^"]*"[^"]+" "<([^"]*)>""#)
     private static let walkInherits = try! NSRegularExpression(pattern: #" inherits="([^"]*)""#)
     private static let walkExtensionDecl = try! NSRegularExpression(pattern: #"^(\s*)\(extension_decl\b[^"]*"([^"]+)""#)
@@ -583,14 +592,10 @@ extension SwiftSource {
     static func names(inDump dump: String) -> Walk.Names {
         var names = Walk.Names()
         for raw in lines(dump) {
-            guard let node = node(raw), node.opens("class_decl", "protocol", "struct_decl") else { continue }
+            guard let node = node(raw), node.opens("class_decl", "protocol") else { continue }
             let line = String(raw), range = NSRange(line.startIndex..., in: line)
             if node.opens("class_decl"), let m = walkClassName.firstMatch(in: line, range: range) { names.classes.insert(String(line[Range(m.range(at: 1), in: line)!])) }
             if node.opens("protocol"), let m = walkProtocolDecl.firstMatch(in: line, range: range) { names.protocols.insert(String(line[Range(m.range(at: 3), in: line)!])) }
-            if node.opens("struct_decl"), let m = walkViewDecl.firstMatch(in: line, range: range),
-               line[Range(m.range(at: 2), in: line)!].split(separator: ",").contains(where: { ["View", "SwiftUI.View"].contains($0.trimmingCharacters(in: .whitespaces)) }) {
-                names.views.insert(String(line[Range(m.range(at: 1), in: line)!]))
-            }
         }
         return names
     }

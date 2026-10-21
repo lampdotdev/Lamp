@@ -4,5 +4,5 @@ import SwiftUI
     let m = Model()
     print("before:", describe(m))
     reload(1); choose(m)
-    print("after1 (want the new case in: the chip's closure is made again at the next draw, as a Button's is):", describe(m))
+    print("after1 (want a reopen: the chip's initializer may keep its closure anywhere, a model's handler or a timer):", describe(m))
 }}}
