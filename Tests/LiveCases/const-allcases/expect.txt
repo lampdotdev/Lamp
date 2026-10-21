@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Gave allMoods, Catalog.moods, Catalog.names their new value)
+== run
+before: static=2 names=2 global=2 live=2
+RELOAD 1 (whole): ok
+after (want 3 everywhere): static=3 names=3 global=3 live=3

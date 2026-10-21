@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (an initializer of Engine was added, taken away or changed, and a class's initializers are in its method table)
+== run
+before: e
+RELOAD 1: REOPEN an initializer of Engine was added, taken away or changed, and a class's initializers are in its method table
+after: e e
+before: e
+RELOAD 1: in the restart
+after: e f

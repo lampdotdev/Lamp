@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Money is a typealias for Double now, where the open app's is a type of its own)
+== run
+before: amount=5 EUR label=cash
+RELOAD 1: REOPEN Money is a typealias for Double now, where the open app's is a type of its own
+after1 (want amount=5 label=cash; or a reopen): amount=5 EUR label=cash
+before: amount=5.0 label=cash
+RELOAD 1: in the restart
+after1 (want amount=5 label=cash; or a reopen): amount=5.0 label=cash

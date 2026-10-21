@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Phase holds Mood as (Phase.Type) -> (Mood) -> Phase, which a new case would change)
+== run
+before: phase=idle phases=["idle", "running(sad)", "done"] row=done rows=["idle"]
+RELOAD 1: REOPEN Phase holds Mood as (Phase.Type) -> (Mood) -> Phase, which a new case would change
+after (want the same): phase=idle phases=["idle", "running(sad)", "done"] row=done rows=["idle"]
+before: phase=idle phases=["idle", "running(sad)", "done"] row=done rows=["idle"]
+RELOAD 1: in the restart
+after (want the same): phase=idle phases=["idle", "running(sad)", "done"] row=done rows=["idle"]

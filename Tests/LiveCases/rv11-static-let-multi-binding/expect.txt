@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Config.a is declared in one list with others, and Lamp gives a constant its new value only on a line of its own)
+== run
+before: 1 2
+RELOAD 1: REOPEN Config.a is declared in one list with others, and Lamp gives a constant its new value only on a line of its own
+after1 (want 5 2): 1 2
+before: 5 2
+RELOAD 1: in the restart
+after1 (want 5 2): 5 2

@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD
+VERDICT 2: RELOAD
+== run
+before: no taps
+RELOAD 1 (whole): ok
+after (want Taps: 1): Taps: 1
+RELOAD 2 (whole): ok
+after (want Taps: 1, doubled 2): Taps: 1, doubled 2

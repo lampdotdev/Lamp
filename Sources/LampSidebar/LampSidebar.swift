@@ -17,10 +17,12 @@ struct SidebarExtension: AppExtension {
             PrimitiveAppExtensionScene(id: "chat") {
                 SidebarView().environmentObject(Link.shared)
             } onConnection: { connection in
-                // The app only says where the sidebar is on screen.
+                // The app only says where the sidebar is on screen; the sidebar asks it to close or move its panel.
                 connection.exportedInterface = NSXPCInterface(with: SidebarPlacement.self)
                 connection.exportedObject = Placement()
+                connection.remoteObjectInterface = NSXPCInterface(with: SidebarHost.self)
                 connection.resume()
+                DispatchQueue.main.async { MainActor.assumeIsolated { Host.add(connection) } }
                 return true
             })
     }
@@ -36,6 +38,32 @@ private final class Placement: NSObject, SidebarPlacement {
     }
 }
 
+/// The app hosting the chat, for what only it can do with the chat's panel (`SidebarHost`). An app with a chat beside
+/// each of several windows has one connection for each, and nothing here says which connection is which chat's: each
+/// is asked, and the app acts on the chat the pointer is on (`LampSidebar.Answering`), where the click was.
+@MainActor
+enum Host {
+    private static var connections: [NSXPCConnection] = []
+
+    static func add(_ connection: NSXPCConnection) {
+        connections.append(connection)
+        connection.invalidationHandler = { [weak connection] in
+            DispatchQueue.main.async { MainActor.assumeIsolated { connections.removeAll { $0 === connection || $0 == nil } } }
+        }
+    }
+
+    private static var apps: [SidebarHost] { connections.compactMap { $0.remoteObjectProxy as? SidebarHost } }
+
+    static func closeChat() {
+        let request = UUID().uuidString
+        apps.forEach { $0.closeChat(request: request) }
+    }
+    static func startMove() {
+        let request = UUID().uuidString
+        apps.forEach { $0.startMove(request: request) }
+    }
+}
+
 /// The line to Lamp: a connection on this Mac's own address, at the port Lamp wrote into this extension's
 /// Info.plist. Tried again until Lamp is there.
 @MainActor
@@ -43,11 +71,14 @@ final class Link: ObservableObject {
     static let shared = Link()
 
     @Published var state: SidebarState?
-    /// The wish's file after Share…, until the share menu has taken it (`ChatToolbar`).
+    /// The wish's file after Share…, until the share menu has taken it (`ChatBar`).
     @Published var sharing: SidebarSharing?
     @Published var connected = false
     /// Lamp hasn't answered for a while: it isn't open.
     @Published var lampAway = false
+    /// The box's words as last typed here, with the draft version they were typed over. Lamp doesn't send back words
+    /// typed here, so a box drawn again (a panel was open in the chat's place) takes them from here, not from Lamp.
+    var typed: (version: Int, text: String)?
 
     private var fd: Int32 = -1
     private var outbox: SidebarOutbox?
@@ -108,6 +139,8 @@ final class Link: ObservableObject {
     }
 
     private func drop() {
+        // Versions are counted afresh by each Lamp that connects: words kept against one could be taken for another's.
+        typed = nil
         outbox?.close()
         outbox = nil
         source?.cancel()
@@ -142,6 +175,7 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            ChatBar(state: link.connected ? link.state : nil)
             if let state = link.state, link.connected {
                 Chat(state: state)
             } else {
@@ -166,6 +200,24 @@ struct SidebarView: View {
     }
 }
 
+/// Whether the end of the chat is in view: within a line of it counts. Before macOS 15 there's no telling, and
+/// the chat is held at its end as it was (`OpensAtEnd`).
+private struct TracksEnd: ViewModifier {
+    @Binding var atEnd: Bool
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content.onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentSize.height + geometry.contentInsets.bottom - geometry.visibleRect.maxY < 24
+            } action: { _, now in
+                atEnd = now
+            }
+        } else {
+            content
+        }
+    }
+}
+
 /// Where the top of the chat lies in its scroll view, while there's more of it to load.
 private struct EarlierTop: PreferenceKey {
     static let defaultValue: CGFloat = -.infinity
@@ -180,10 +232,12 @@ private struct Chat: View {
     @State private var askedEarlierAt: UUID?
     /// Off until the chat has opened at its end, so the top of the chat seen while laying out asks for nothing.
     @State private var settled = false
+    /// The end of the chat is in view, or the person hasn't scrolled away from it: while it is, the chat stays
+    /// at its end as it and its panel change size, and follows what's added to it.
+    @State private var atEnd = true
 
     var body: some View {
         VStack(spacing: 0) {
-            if let toolbar = state.toolbar { ChatToolbar(state: state, toolbar: toolbar) }
             switch state.panel {
             case .versions: VersionsPanel(state: state)
             case .info: InfoPanel(state: state)
@@ -212,7 +266,11 @@ private struct Chat: View {
                             ChatLook.UndoChange { link.send(.undoChange(change)) }.padding(.top, 12)
                         }
                         if let working = state.working, let since = state.workingSince {
-                            ChatLook.ActivityLine(working, started: since).padding(.top, 12)
+                            ChatLook.ActivityLine(working, started: since, since: state.workingActivitySince,
+                                                  hasSteps: !(state.workingSteps ?? []).isEmpty) {
+                                ForEach(state.workingSteps ?? []) { step in LineView(line: step, busy: false) }
+                            }
+                            .padding(.top, 12)
                         }
                         if let notResponding = state.notResponding {
                             ChatLook.UnresponsiveNotice(text: notResponding) { link.send(.forceQuit) }.padding(.top, 12)
@@ -239,6 +297,12 @@ private struct Chat: View {
                     .frame(maxWidth: .infinity)
                 }
                 .coordinateSpace(name: "chat")
+                // A reopened app (a reload to apply a change) brings its chat back in a new panel. The one scroll
+                // to the end a moment after it appears (below) misses on a busy Mac, and the chat then stays at its
+                // top. So the chat starts at its end and stays there as it and its panel change size, unless the
+                // person has scrolled up to read.
+                .modifier(OpensAtEnd(holdsEnd: atEnd))
+                .modifier(TracksEnd(atEnd: $atEnd))
                 .onPreferenceChange(EarlierTop.self) { top in
                     guard settled, top > -200, state.hasEarlier == true, askedEarlierAt != state.lines.first?.id else { return }
                     askedEarlierAt = state.lines.first?.id
@@ -248,15 +312,16 @@ private struct Chat: View {
                 .onChange(of: state.lines.first?.id) { old, _ in
                     if let old, old == askedEarlierAt { scroller.scrollTo(old, anchor: .top) }
                 }
-                .onChange(of: state.lines.last?.id) { follow(scroller) }
+                // What the person sends is followed wherever they were; anything else only while they're at the end.
+                .onChange(of: state.lines.last?.id) { follow(scroller, always: state.lines.last?.kind == .user) }
                 .onChange(of: state.lines.last?.text) { follow(scroller) }
                 .onChange(of: state.working) { follow(scroller) }
-                .onChange(of: state.queued?.count) { follow(scroller) }
+                .onChange(of: state.queued?.count) { old, new in follow(scroller, always: (new ?? 0) > (old ?? 0)) }
                 .onChange(of: state.undoChange) { follow(scroller) }
                 // Once the lines are laid out: scrolled before then, the chat opens partway up.
                 .onAppear {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        follow(scroller, animated: false)
+                        follow(scroller, animated: false, always: true)
                         DispatchQueue.main.async { settled = true }
                     }
                 }
@@ -277,10 +342,11 @@ private struct Chat: View {
             }
             if let approval = state.approval {
                 ChatLook.ApprovalCard(title: approval.title, command: approval.command, explanation: approval.explanation,
+                                      request: approval.request, whyAsked: approval.whyAsked,
                                       onAllow: { link.send(.approve(approval.id, allow: true, allowAll: false)) },
                                       onAllowAll: { link.send(.approve(approval.id, allow: true, allowAll: true)) },
                                       onDeny: { link.send(.approve(approval.id, allow: false, allowAll: false)) })
-                    // Each request starts with its command hidden, even when one follows another.
+                    // Each request starts with How to Decide closed, even when one follows another.
                     .id(approval.id)
                     .frame(maxWidth: 640)
                     .padding(.horizontal, 20).padding(.top, 8)
@@ -290,7 +356,9 @@ private struct Chat: View {
         }
     }
 
-    private func follow(_ scroller: ScrollViewProxy, animated: Bool = true) {
+    /// To the end of the chat, unless the person has scrolled up to read and `always` isn't asked for.
+    private func follow(_ scroller: ScrollViewProxy, animated: Bool = true, always: Bool = false) {
+        guard always || atEnd else { return }
         withAnimation(animated ? .easeOut(duration: 0.2) : nil) { scroller.scrollTo("end", anchor: .bottom) }
     }
 }
@@ -327,13 +395,20 @@ private struct LineView: View {
         case .agent:
             ChatLook.AgentText(line.text, keep: !line.growing)
         case .status:
-            if let command = ChatLook.ranCommand(in: line.text) {
-                ChatLook.RanCommand(command)
+            if line.symbol == ChatLook.progressSymbol {
+                // The agent's line on how the work went, among a finished turn's steps.
+                ChatLook.ProgressLine(line.text)
+            } else if let command = ChatLook.ranCommand(in: line.text) {
+                ChatLook.RanCommand(command, said: line.said)
             } else {
                 ChatLook.StatusLine(line.text, running: line.running)
             }
         case .summary:
             ChatLook.SummaryLine(line.text)
+        case .work:
+            ChatLook.Worked(line.text) {
+                ForEach(line.steps ?? []) { step in LineView(line: step, busy: busy) }
+            }
         case .error:
             ChatLook.ErrorNote(line.text)
         case .offer:
@@ -342,7 +417,7 @@ private struct LineView: View {
             }
         case .action:
             ChatLook.ActionLine(symbol: line.symbol ?? "sparkles", text: line.text, button: line.button ?? "",
-                                disabled: line.disabled ?? false) { link.send(.offer(line.id)) }
+                                disabled: line.disabled ?? false, prominent: line.prominent ?? false) { link.send(.offer(line.id)) }
         case .note:
             ChatLook.NoteLine(title: line.text, added: line.added ?? [], removed: line.removed ?? [], undone: line.undone ?? false,
                               problem: line.problem, undo: { link.send(.undoNote(line.id)) })
@@ -369,7 +444,10 @@ private struct AskLine: View {
 
     var body: some View {
         if let ask = line.ask {
-            AskCardView(ask: ask, isOpen: line.askOpen ?? false, progress: $progress) { answers in
+            let waiting = line.takeBack.map { id in
+                AskWaiting(forSetup: line.waitingForSetup ?? false) { link.send(.unqueue(id)) }
+            }
+            AskCardView(ask: ask, isOpen: line.askOpen ?? false, progress: $progress, waiting: waiting) { answers in
                 link.send(.answer(line.id, answers))
             }
             .onAppear { take() }
@@ -488,10 +566,13 @@ private struct ComposerRow: View {
     @State private var height = Composer.lineHeight
     @State private var version = -1
     @State private var focus = 0
+    /// The box was just emptied by Return: that isn't the person's edit, so it isn't sent to Lamp as the draft.
+    @State private var emptiedToSend = false
 
     var body: some View {
         ChatLook.MessageBar(busy: state.busy, canSend: canSend, attachHelp: "Attach files. You can also paste images and files here.",
-                            attach: chooseFiles, send: submit, stop: { link.send(.stop) }, focus: { focus += 1 }) {
+                            attach: chooseFiles, point: { link.send(.point) }, send: submit, stop: { link.send(.stop) },
+                            focus: { focus += 1 }) {
             Composer(text: $text, height: $height, placeholder: ChatLook.placeholder(busy: state.busy, empty: state.empty),
                      // No suggestion while a request from the chat is in the box, as in Lamp's window.
                      suggestion: state.replacing == true ? nil : state.suggestion,
@@ -518,19 +599,13 @@ private struct ComposerRow: View {
                 }
                 .padding(.top, 2)
             }
-        } beside: {
+        } inside: {
             // Dictation runs in Lamp, which has the microphone, and writes into the box as Lamp's window does.
-            if state.canDictate == true {
+            // Once something's typed the person has chosen the keyboard; while it listens, it's how dictation stops.
+            if state.canDictate == true, state.listening == true || text.isEmpty {
                 let listening = state.listening ?? false
-                Button { link.send(.dictate(!listening)) } label: {
-                    Image(systemName: listening ? "mic.fill" : "mic")
-                        .foregroundStyle(listening ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-                        .symbolEffect(.pulse, isActive: listening)
-                }
-                .buttonStyle(ChatLook.Round(prominent: false))
-                .disabled(state.submitting == true)
-                .help(listening ? "Stop dictation" : "Dictate a change")
-                .accessibilityLabel(listening ? "Stop dictation" : "Dictate a change")
+                ChatLook.MicButton(listening: listening) { link.send(.dictate(!listening)) }
+                    .disabled(state.submitting == true)
             }
         }
         // Lined up with the chat above it, as in Lamp's window.
@@ -539,7 +614,11 @@ private struct ComposerRow: View {
         .frame(maxWidth: .infinity)
         .onAppear { take(state) }
         .onChange(of: state.draftVersion) { take(state) }
-        .onChange(of: text) { link.send(.draft(text)) }
+        .onChange(of: text) {
+            link.typed = (version, text)
+            if emptiedToSend { emptiedToSend = false; return }
+            link.send(.draft(text))
+        }
     }
 
     /// As in Lamp's window: not while a message is on its way in, and a request sent again can't wait behind a turn.
@@ -552,14 +631,21 @@ private struct ComposerRow: View {
     private func take(_ state: SidebarState) {
         guard state.draftVersion != version else { return }
         version = state.draftVersion
-        if text != state.draft { text = state.draft }
+        let words = link.typed.flatMap { $0.version == state.draftVersion ? $0.text : nil } ?? state.draft
+        if text != words { text = words }
         focus += 1
     }
 
     /// Lamp sends it and empties the box as its window does, keeping whatever came after (`afterSubmission`).
+    /// The box empties at once rather than when Lamp's answer comes back, which took a round trip and a redraw of
+    /// the whole chat: Lamp gives the words back (a new draft) if they weren't sent after all.
     private func submit() {
         guard canSend else { return }
         link.send(.send(text, sends: state.sends ?? 0))
+        if !text.isEmpty {
+            emptiedToSend = true
+            text = ""
+        }
     }
 
     /// Only this process can read what was pasted or chosen here: the files go to Lamp whole.

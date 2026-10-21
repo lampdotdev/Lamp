@@ -1,1 +1,7 @@
-{"subject": "a yellow jigsaw puzzle piece", "symbol": "puzzlepiece.fill", "background": "yellow", "tint": "#7A4E00"}
+{
+  "subject": "a glossy golden jigsaw puzzle piece",
+  "symbol": "puzzlepiece.fill",
+  "background": "graphite",
+  "tint": "#FFD60A",
+  "game": true
+}

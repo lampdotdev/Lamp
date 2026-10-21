@@ -10,6 +10,14 @@ struct LampApp: App {
     /// Read when the scenes are built rather than when the App is made, which is before there is an NSApplication.
     private var store: Store { Store.shared }
 
+    init() {
+        // A release builds the starters it ships before it's signed (PrebuiltStarters), with this program.
+        if ProcessInfo.processInfo.environment["PREBUILD_STARTERS"] == "1" {
+            if CommandLine.arguments.contains(PrebuiltStarters.commandLineFlag) { PrebuiltStarters.runFromCommandLine() }
+            if CommandLine.arguments.contains(PrebuiltStarters.restampFlag) { PrebuiltStarters.restampFromCommandLine() }
+        }
+    }
+
     var body: some Scene {
         Window(Edition.name, id: "main") {
             ContentView()
@@ -86,9 +94,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Generated apps call back with lamp://edit?app=<slug> (⇧⌘E inside the app).
     func application(_ application: NSApplication, open urls: [URL]) {
         MainActor.assumeIsolated {
-            // An app's sidebar started Lamp: the chat is in that app, so Lamp's own window stays out of the way.
-            // Opened already, it stays as it was. The Dock icon brings it back.
-            let forSidebar = urls.contains { $0.scheme == Edition.urlScheme && $0.host == "sidebar" }
+            // An app's sidebar started Lamp, or its Reload button: what the person is doing is in that app, so Lamp's
+            // own window stays out of the way. Opened already, it stays as it was. The Dock icon brings it back.
+            let forSidebar = urls.contains { $0.scheme == Edition.urlScheme && ($0.host == "sidebar" || $0.host == "reload") }
             if forSidebar, Date().timeIntervalSince(launched) < 5, Onboarding.isDone { MagicPanel.keepMainWindowHidden() }
             urls.forEach(Store.shared.handle(url:))
         }

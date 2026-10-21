@@ -17,8 +17,8 @@ enum Engine: String, CaseIterable, Identifiable {
 
 /// When the agent needs the user's go-ahead to run a shell command (Settings → Building).
 enum CommandApproval: String, CaseIterable, Identifiable {
-    /// risky: the card is for commands the decision model's answers show to be risky; the rest run when the
-    /// sandbox confines them, and only the plainly fine ones when it doesn't.
+    /// risky: Claude Code's and Codex's own reviewers decide their commands; for pi's, the card is for commands
+    /// the decision model's answers show to be risky, and the rest run confined.
     /// There was an "unusual" beside it, which differed only in not letting the in-app model's "low" run a
     /// command; nothing does that now, so a saved "unusual" (or the older "auto") is risky.
     case risky, always, never
@@ -244,6 +244,9 @@ struct AgentRun {
     /// For an engine that reads its request from its input and keeps reading while it works (Claude Code): the
     /// request as the first line written there. Nil for one given it on the command line.
     var opening: String? = nil
+    /// Whether the chat says each command the engine ran from its own output (`AgentEvent.ran`), for a run whose
+    /// commands come to no card of Lamp's.
+    var saysCommands = false
 }
 
 extension Agent {
@@ -256,6 +259,14 @@ extension Agent {
         }
         guard words.count > AppDescription.limit else { return "" }
         return "\n\n---\nThis app's description in \(AppDescription.file) is \(words.count) characters (from Lamp, not part of the request above): once your work is done, shorten it to \(AppDescription.limit) at most, still one sentence saying what the app is."
+    }
+
+    /// Said with each request while the app's code is still Lamp's placeholder. The rule on `plan` is for a new
+    /// app, and left to tell one from the placeholder code on its own, not every model does: some build the whole
+    /// app with no checklist at all.
+    static func newApp(_ project: LampProject) -> String {
+        guard !project.finding, Template.isScaffold(project) else { return "" }
+        return "\n\n---\nThis is a new app (from Lamp, not part of the request above): its code is still Lamp's placeholder. Unless you ask first, call `plan` before writing any code."
     }
 
     /// The user's own pi config (logins, subscriptions, settings).
@@ -272,6 +283,7 @@ extension Agent {
             + AIStatus.brief(for: project, engine: Builder.engine, session: session, offered: offered)
             + Skills.brief(for: project, engine: Builder.engine, session: session)
             + Agent.undescribed(project)
+            + Agent.newApp(project)
             + (LiveReload.eligible(project) ? Agent.liveNote : "")
         var env: [String: String] = ["LAMP_PROMPT": prompt, "LAMP_SYSTEM": systemPrompt(for: project), "LAMP_DIR": project.dir.path,
                                      "PATH": ToolLocator.userPath]
@@ -307,7 +319,7 @@ extension Agent {
             // Shell commands go through a PreToolUse hook that asks Lamp and waits for the user's answer; Lamp
             // replies in Claude Code's hook format. If Lamp can't be reached the hook fails and the command is denied.
             env["LAMP_TOKEN"] = token
-            env["LAMP_SYSTEM"] = systemPrompt(for: project) + tryRules + sandboxNote
+            env["LAMP_SYSTEM"] = systemPrompt(for: project) + tryRules + Self.claudeNote + sandboxNote
             // How commands are approved (Settings → Building):
             // - auto: Claude Code's own classifier (--permission-mode auto) runs routine commands; when it would
             //   ask, its PermissionRequest hook sends the request to Lamp's approval card.
@@ -331,7 +343,7 @@ extension Agent {
                         "command": "/usr/bin/curl -sf --max-time 3540 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
             }
             var permissionMode = "acceptEdits"
-            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__offer_setup,mcp__lamp__make_app_for,mcp__lamp__connectors,mcp__lamp__ask,mcp__lamp__write_wish,mcp__lamp__read_skill"
+            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__offer_setup,mcp__lamp__make_app_for,mcp__lamp__connectors,mcp__lamp__ask,mcp__lamp__progress,mcp__lamp__write_wish,mcp__lamp__read_skill"
             if Memory.isOn { allowed += ",mcp__lamp__read_notes,mcp__lamp__save_notes" }
             // look_at_app and use_app come from Lamp's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
             // it the only server. The config is a file that reads the token from the environment, so the
@@ -349,6 +361,7 @@ extension Agent {
             env["LAMP_FILE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-file"
             var preToolUse: [[String: Any]] = [["matcher": "Read|Edit|Write|Glob|Grep", "hooks": [hook("LAMP_FILE_URL", event: "PreToolUse")]]]
             var hooks: [String: Any] = [:]
+            var autoMode: [String: Any]?
             // Every shell command goes to Lamp before it runs, in every mode but Never, so the setting means
             // the same with Claude Code as with pi and Codex: Lamp's decision model decides what is routine, and
             // the user sees the rest. Claude's own classifier never gets to wave a command through on its own.
@@ -358,9 +371,20 @@ extension Agent {
             preToolUse.append(["matcher": "Bash", "hooks": [hook("LAMP_APPROVE_URL", event: "PreToolUse")]])
             switch approval {
             case .risky:
-                // For the tools that aren't shell commands (a fetch, a web search), Claude's automatic mode asks
-                // Lamp only about what its classifier escalates.
+                // Claude Code's own classifier (auto mode) decides, shell commands included: Lamp's hook only hands
+                // each command back confined (Sandbox), with no decision, and what the classifier would ask about
+                // comes to Lamp's card through PermissionRequest. A command that ran is said in the chat afterwards.
+                // `classifyAllShell` keeps any narrow allow rule from letting a command past it.
                 permissionMode = "auto"
+                env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-confine"
+                env["LAMP_RAN_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-ran"
+                // A command that ran says so whether it succeeded or failed (a failing build or test).
+                hooks["PostToolUse"] = [["matcher": "Bash", "hooks": [hook("LAMP_RAN_URL", event: "PostToolUse")]]]
+                hooks["PostToolUseFailure"] = [["matcher": "Bash", "hooks": [hook("LAMP_RAN_URL", event: "PostToolUseFailure")]]]
+                // What the classifier refused is the classifier's to refuse (the agent is told why), and the chat says so.
+                env["LAMP_REFUSED_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-refused"
+                hooks["PermissionDenied"] = [["matcher": "Bash", "hooks": [hook("LAMP_REFUSED_URL", event: "PermissionDenied")]]]
+                autoMode = ["classifyAllShell": true]
                 env["LAMP_PERMISSION_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-permission"
                 hooks["PermissionRequest"] = [["matcher": "*", "hooks": [hook("LAMP_PERMISSION_URL", event: "PermissionRequest")]]]
             case .always:
@@ -369,7 +393,9 @@ extension Agent {
                 allowed += ",Bash"
             }
             hooks["PreToolUse"] = preToolUse
-            env["LAMP_CLAUDE_SETTINGS"] = String(decoding: (try? JSONSerialization.data(withJSONObject: ["hooks": hooks])) ?? Data("{}".utf8), as: UTF8.self)
+            var settings: [String: Any] = ["hooks": hooks]
+            if let autoMode { settings["autoMode"] = autoMode }
+            env["LAMP_CLAUDE_SETTINGS"] = String(decoding: (try? JSONSerialization.data(withJSONObject: settings)) ?? Data("{}".utf8), as: UTF8.self)
             env["LAMP_CLAUDE_MODE"] = permissionMode
             env["LAMP_CLAUDE_ALLOWED"] = allowed
             env["LAMP_TOOL"] = EngineInstall.path(for: .claude) ?? "claude"
@@ -400,10 +426,14 @@ extension Agent {
             env["LAMP_TOOL"] = EngineInstall.path(for: .codex) ?? "codex"
             env.merge(EngineInstall.environment(for: .codex)) { $1 }
             env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Self.tomlString(systemPrompt(for: project) + tryRules + Self.codexNote + sandboxNote)
-            // Approvals (Settings → Building): a PreToolUse hook sends each shell command to Lamp before it runs,
-            // and Lamp applies the setting: the decision model, then the user (Only when risky), or the user
-            // every time (Always). "Never" has no hook. In
-            // every mode Codex stays in its sandbox (writes only in the app's folder), with network access.
+            // Codex's commands run in Codex's own sandbox (`Sandbox.codexPermissions`): the app's folder, the system,
+            // developer tools, caches and temporary folders, with network access; the rest of the Mac stays closed.
+            // Approvals (Settings → Building): under "Only when risky" Codex's own reviewer (Auto-review, with Lamp's
+            // rules in its policy, `CodexReview`) decides whatever needs more than the sandbox gives, and refuses
+            // what Lamp calls risky; nothing comes to Lamp's card. "Always" sends each shell command to Lamp's card
+            // first through a PreToolUse hook, and "Never" lets every command run in the sandbox. In both, a command
+            // that needs more is refused rather than reviewed (`approval_policy="never"`): the person chose to
+            // decide every command, or none.
             // Codex has no file tools of its own, and a shell command can read anything on the Mac without
             // Lamp knowing what. So it reads with Lamp's `read`, `ls`, `find` and `grep` (FileTools, listed for
             // it by `files=1`), which are held to the privacy rule pi's file tools follow, and needs no shell
@@ -413,46 +443,58 @@ extension Agent {
             env["LAMP_TOKEN"] = token
             env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=codex"
             let hook = Bundle.main.resourceURL?.appendingPathComponent("lamp-approve.sh").path ?? "lamp-approve.sh"
-            env["LAMP_CODEX_HOOKS"] = approval == .never ? "hooks={}"
+            env["LAMP_CODEX_HOOKS"] = approval != .always ? "hooks={}"
                 : #"hooks.PreToolUse=[{matcher="^Bash$",hooks=[{type="command",timeout=3600,command="'"# + hook + #"'"}]}]"#
+            env["LAMP_CODEX_PERMISSIONS"] = Sandbox.codexPermissions(for: project)
+            env["LAMP_CODEX_POLICY"] = "auto_review.policy=" + Self.tomlString(CodexReview.policy)
+            let review = approval == .risky
+                ? #"-c approval_policy="on-request" -c approvals_reviewer="auto_review" -c "$LAMP_CODEX_POLICY""#
+                : #"-c approval_policy="never""#
             let codexModel = Builder.engineModel(.codex)
             if !codexModel.isEmpty { env["LAMP_MODEL"] = codexModel }
-            // Inside Lamp's sandbox (below) Codex's own is off: one can't run inside the other, and Lamp's closes
-            // the rest of the Mac to reads as well as writes, which Codex's never did.
-            // Codex's own sandbox stays off: it runs inside Lamp's (below), and one can't be nested in the other.
-            let sandboxMode = "-c sandbox_mode=\"danger-full-access\""
+            // Codex's own bundled skills stay off, as every engine's own skills do (Skills).
+            // `skills.bundled.enabled` is defined in Codex's config (BundledSkillsConfig in its config schema) but isn't
+            // in OpenAI's published reference; a Codex that drops it ignores the setting and offers its own skills.
+            // Codex sends no summaries of the model's thinking unless asked; their headings name its steps in the
+            // chat (`AgentEvent.naming`), where the shell commands alone said nothing a person could follow.
             let options = (codexModel.isEmpty ? "" : "-m \"$LAMP_MODEL\" ") + """
             --json --ignore-user-config --ignore-rules --dangerously-bypass-hook-trust --skip-git-repo-check \\
-              \(sandboxMode) \\
-              -c web_search="live" -c "$LAMP_CODEX_INSTRUCTIONS" -c "$LAMP_CODEX_HOOKS" \\
+              -c "$LAMP_CODEX_PERMISSIONS" -c default_permissions="lamp" \(review) \\
+              -c web_search="live" -c model_reasoning_summary="detailed" -c skills.bundled.enabled=false -c "$LAMP_CODEX_INSTRUCTIONS" -c "$LAMP_CODEX_HOOKS" \\
               -c mcp_servers.lamp.url="http://127.0.0.1:\(Gateway.port)/mcp?files=1" -c mcp_servers.lamp.bearer_token_env_var="LAMP_TOKEN" \\
               -c mcp_servers.lamp.tool_timeout_sec=3600 -c mcp_servers.lamp.default_tools_approval_mode="approve"
             """
+            // Lamp's `swift` first on the commands' path, as for the other engines (Sandbox.bin): SwiftPM's own
+            // sandbox can't start inside Codex's either.
+            let tool = "/usr/bin/env \(Sandbox.shimEnvironment) \"$LAMP_TOOL\""
             let launch: String
             if session != nil {
                 // `exec resume` keeps the conversation; it takes no -C/-i (Lamp already runs in the app's folder).
-                launch = "\"$LAMP_TOOL\" exec resume \(options) \"$LAMP_SESSION\" -- \"$LAMP_PROMPT\""
+                launch = "\(tool) exec resume \(options) \"$LAMP_SESSION\" -- \"$LAMP_PROMPT\""
             } else {
                 let images = files.enumerated().filter { Attachments.isImage(URL(fileURLWithPath: $0.element)) }
                     .map { "-i \"$LAMP_FILE_\($0.offset)\"" }.joined(separator: " ")
-                launch = "\"$LAMP_TOOL\" exec \(options) -C \"$LAMP_DIR\" \(images) -- \"$LAMP_PROMPT\""
+                launch = "\(tool) exec \(options) -C \"$LAMP_DIR\" \(images) -- \"$LAMP_PROMPT\""
             }
-            // The whole run confined to the app. Codex's own folder is readable, and writable only where Codex
-            // keeps its state: the files at its top (databases, locks, the sign-in it refreshes, caches) and
-            // the folders of sessions, logs, caches, snapshots and memories. What tells Codex how to behave
-            // (config.toml, AGENTS.md, and the rules, skills, plugins and prompts folders) stays out of reach
-            // of its apply_patch, which, unlike a shell command, never asks Lamp.
-            let codex = EngineInstall.configFolder(.codex).path
-            let install = EngineInstall.path(for: .codex).map(Sandbox.installFolders(of:)) ?? []
-            let state = ["sessions", "archived_sessions", "log", "tmp", ".tmp", "cache", "shell_snapshots", "memories",
-                         "thread-writer-locks", "mcp-oauth-locks"].map { codex + "/" + $0 }
-            // Without its profile Codex doesn't run at all: nothing else keeps its commands inside the app.
-            let command = Sandbox.wrapEngine(launch, for: project, opening: state, reading: install + [codex], writing: [codex],
-                                             keeping: [codex + "/config.toml", codex + "/AGENTS.md"])
-                ?? "echo 'Lamp could not set up the sandbox that keeps ChatGPT Codex inside the app.' >&2; exit 1"
-            return AgentRun(command: command, env: env)
+            // The profile names the app's folder by its own name, and Codex refuses a writable folder that is a link
+            // (`Sandbox.codexPermissions`); a folder already swapped for one is said here in Lamp's own words. Codex
+            // starts only with the shims it puts on the path.
+            let folder = project.realDir.path
+            let linked = (try? FileManager.default.destinationOfSymbolicLink(atPath: folder)) != nil
+            let command = !linked && Sandbox.prepareShims() ? launch
+                : "echo 'Lamp could not set up the sandbox that keeps ChatGPT Codex inside the app.' >&2; exit 1"
+            return AgentRun(command: command, env: env, saysCommands: approval != .always)
         }
     }
+
+    /// Claude Code asks the model what each shell command is for; Lamp shows that, in place of the command, as
+    /// the step's name in the chat and the line saying what's going on (`AgentEvent.naming`).
+    static let claudeNote = """
+
+    - (Claude Code) A shell command's description is what the person sees for that step, never the command: \
+    write it for them, a few plain words on what you're doing ("Reading how the shelf works", "Checking it \
+    builds"), with no file names, paths or commands.
+    """
 
     /// Which tools the "file tools" of the rules above are, for Codex: its own are the shell and apply_patch.
     static let codexNote = """
@@ -460,6 +502,10 @@ extension Agent {
     - (Codex) Your file tools are Lamp's `read`, `ls`, `find` and `grep`. Read, list and search files with \
     them, never with the shell (no cat, sed, nl, ls, rg, grep or find there): inside the app's folder they need \
     no approval, while a shell command may wait for the user's OK. Change files with apply_patch.
+    - (Codex) A command that would reach outside this app may be refused by a review the person never sees. Then \
+    it didn't run: don't try another way. Say in a sentence, in their words, what you couldn't do and why (\
+    "I didn't delete the old-notes folder: it's outside this app."), never the command, a path you didn't name \
+    for them, or the review itself.
     """
 
     /// A TOML basic string, for `codex -c key=value`.
@@ -513,6 +559,13 @@ extension Agent {
         return String(decoding: (try? JSONSerialization.data(withJSONObject: message)) ?? Data(), as: UTF8.self)
     }
 
+    /// Messages the person sent while Codex worked, as the run that resumes its conversation sends them. Codex
+    /// tells the model the person interrupted it on purpose, which reads as "stop": they were only passed on.
+    static func carryOn(_ text: String) -> String {
+        "The person sent this while you were working, and Lamp paused you to pass it on. Take it into account "
+            + "and carry on with the request, unless it says otherwise.\n\n" + text
+    }
+
     /// Claude Code calls Lamp's MCP tools `mcp__lamp__look_at_app`; Lamp knows them by their plain names.
     private static func plainName(_ tool: String) -> String { tool.replacingOccurrences(of: "mcp__lamp__", with: "") }
 
@@ -528,13 +581,17 @@ extension Agent {
             if obj["subtype"] as? String == "compact_boundary" { return [.compacted] }
         case "assistant":
             let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
-            return content.compactMap { block in
+            return content.flatMap { block -> [AgentEvent] in
                 switch block["type"] as? String {
-                case "text": (block["text"] as? String)?.trimmed.nilIfEmpty.map(AgentEvent.text)
+                case "text": return (block["text"] as? String)?.trimmed.nilIfEmpty.map { [AgentEvent.text($0)] } ?? []
                 case "tool_use":
-                    .tool(tool(block["name"] as? String ?? "Tool", block["input"] as? [String: Any] ?? [:]),
-                          call: callKey(plainName(block["name"] as? String ?? "Tool"), block["input"] as? [String: Any] ?? [:]))
-                default: nil
+                    let name = block["name"] as? String ?? "Tool", input = block["input"] as? [String: Any] ?? [:]
+                    let said = ((input["doing"] as? String) ?? (name == "Bash" ? input["description"] as? String : nil))?.trimmed.nilIfEmpty
+                    let call = AgentEvent.tool(tool(name, input), call: callKey(plainName(name), input), said: said)
+                    // Claude Code has the model say what each command is for, in a few words of its own.
+                    guard name == "Bash" else { return [call] }
+                    return [.naming((input["description"] as? String)?.trimmed ?? ""), call]
+                default: return []
                 }
             }
         case "stream_event":
@@ -572,22 +629,57 @@ extension Agent {
         return []
     }
 
+    /// The bold heading a Codex reasoning summary opens with, or nil when it has none: the rest is the model
+    /// thinking aloud, too long to name a step.
+    static func heading(of summary: String) -> String? {
+        guard let first = summary.trimmed.components(separatedBy: .newlines).first?.trimmed,
+              first.hasPrefix("**"), first.hasSuffix("**"), first.count > 4 else { return nil }
+        return String(first.dropFirst(2).dropLast(2)).trimmed.nilIfEmpty
+    }
+
     static func parseCodex(_ line: String) -> [AgentEvent] {
         guard let obj = json(line), let type = obj["type"] as? String else {
             // Notices Codex prints for the flags Lamp chose on purpose.
             if line.contains("--dangerously-bypass-hook-trust") || line.hasPrefix("Reading additional input") { return [] }
-            // Codex looks for the person's own skills in ~/.agents/skills at every start, whatever its settings;
-            // the sandbox keeps the home folder closed, as it should, and Codex says so.
+            // Codex looks for the person's own skills in ~/.agents/skills at every start, whatever its settings, and
+            // says so when that folder can't be read: nothing the person needs to hear.
             if line.contains("codex_skills_extension"), line.contains("failed to walk skills root") { return [] }
             return line.trimmed.isEmpty ? [] : [.raw(line)]
         }
         let item = obj["item"] as? [String: Any] ?? [:]
-        switch (type, item["type"] as? String) {
+        let kind = item["type"] as? String
+        // What Codex does on its own, from its start to its end, so Lamp knows when nothing is half done.
+        if ["command_execution", "mcp_tool_call", "file_change", "web_search"].contains(kind), let id = item["id"] as? String {
+            if type == "item.started" { return [.acting(id, true)] + codexEvents(type, kind, obj, item) }
+            if type == "item.completed" { return codexEvents(type, kind, obj, item) + [.acting(id, false)] }
+        }
+        return codexEvents(type, kind, obj, item)
+    }
+
+    /// The command as the agent wrote it: Codex reports each one inside the shell that runs it
+    /// (`/bin/zsh -lc "…"` or `'…'`).
+    static func unwrapped(_ command: String) -> String {
+        for prefix in ["/bin/zsh -lc ", "/bin/bash -lc ", "/bin/zsh -c ", "/bin/bash -c "] where command.hasPrefix(prefix) {
+            let rest = String(command.dropFirst(prefix.count))
+            guard let quote = rest.first, quote == "'" || quote == "\"", rest.count >= 2, rest.last == quote else { return command }
+            let inner = String(rest.dropFirst().dropLast())
+            return quote == "'" ? inner.replacingOccurrences(of: "'\\''", with: "'")
+                : inner.replacingOccurrences(of: "\\\"", with: "\"").replacingOccurrences(of: "\\\\", with: "\\")
+        }
+        return command
+    }
+
+    private static func codexEvents(_ type: String, _ kind: String?, _ obj: [String: Any], _ item: [String: Any]) -> [AgentEvent] {
+        switch (type, kind) {
         case ("thread.started", _):
             return (obj["thread_id"] as? String).map { [.session($0)] } ?? []
         case ("turn.started", _):
             // The model starts by thinking, sometimes for minutes, and says nothing until its first tool call.
             return [.step("")]
+        case ("item.completed", "reasoning"):
+            // A summary of what the model is thinking, which Codex opens with a heading of a few words in bold
+            // ("**Reading the shelf code**"): what the commands after it are for.
+            return Self.heading(of: item["text"] as? String ?? "").map { [.naming($0)] } ?? []
         case ("item.completed", "agent_message"):
             return (item["text"] as? String)?.trimmed.nilIfEmpty.map { [.text($0)] } ?? []
         case ("item.started", "web_search"):
@@ -595,12 +687,16 @@ extension Agent {
         case ("item.completed", "error"):
             guard let message = item["message"] as? String, !message.contains("--dangerously-bypass-hook-trust") else { return [] }
             return [.raw(message)]
-        case ("item.completed", "command_execution"), ("item.completed", "mcp_tool_call"):
+        case ("item.completed", "command_execution"):
+            // "declined": Codex's reviewer refused it, and it never ran.
+            let command = item["command"] as? String ?? ""
+            return [.step("")] + (command.isEmpty ? [] : [.ran(Self.unwrapped(command), refused: item["status"] as? String == "declined")])
+        case ("item.completed", "mcp_tool_call"):
             return [.step("")]
         case ("item.started", "mcp_tool_call"):
             let name = item["tool"] as? String ?? "tool"
             let arguments = item["arguments"] as? [String: Any] ?? [:]
-            return [.tool(tool(name, arguments), call: callKey(name, arguments))]
+            return [.tool(tool(name, arguments), call: callKey(name, arguments), said: (arguments["doing"] as? String)?.trimmed.nilIfEmpty)]
         case ("item.started", "command_execution"):
             let command = "Run: \(item["command"] as? String ?? "")"
             return [.tool(command, call: command)]

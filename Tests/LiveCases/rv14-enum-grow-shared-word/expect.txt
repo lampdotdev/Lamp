@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: cases=2 last=closed
+RELOAD 1 (whole): ok
+after1 (want in, as for an enum named Mood: the app here is named Case, and its enum CaseStatus shares the word): cases=3 last=archived

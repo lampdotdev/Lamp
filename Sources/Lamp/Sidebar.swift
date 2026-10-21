@@ -198,6 +198,17 @@ final class SidebarServer {
         }
     }
 
+    /// The sidebar empties its box as Return is pressed, before Lamp has the words: when they weren't sent after all,
+    /// Lamp's draft (which still holds them) goes back to the box, as a draft changed here would.
+    private func giveBack(_ project: LampProject) {
+        draftVersions[project.id, default: 0] += 1
+        pushNow()
+    }
+
+    private func pushNow() {
+        connections.values.forEach { $0.push(force: false) }
+    }
+
     // MARK: What the sidebar shows
 
     /// Bumped when the draft is changed anywhere but the sidebar itself, which then takes it up.
@@ -226,6 +237,9 @@ final class SidebarServer {
                                  working: progress?.activity, workingSince: progress?.started, empty: log.isEmpty, busy: busy,
                                  draft: draft.text, draftVersion: draftVersions[project.id] ?? 0,
                                  attachments: draft.attachments.map { Self.attachment($0) })
+        state.workingActivitySince = progress?.activitySince
+        state.workingSteps = progress == nil ? nil : Self.liveSteps(log, details: details, doing: progress?.activity,
+                                                                                 looking: progress?.looking == true)
         state.pointed = draft.pointed.map { Self.pointed($0, canChooseAgain: store.canPoint(in: project)) }
         let canSendNow = store.canSendNow(in: project)
         let lastWaiting = store.waitingToSend(in: project).last?.id
@@ -238,9 +252,17 @@ final class SidebarServer {
             queued.canSendNow = canSendNow && message.id == lastWaiting ? true : nil
             return queued
         }
+        let waiting = store.queued[project.id] ?? []
+        for index in state.lines.indices where state.lines[index].kind == .ask {
+            guard let line = log.first(where: { $0.id == state.lines[index].id }),
+                  let message = Talk.waiting(on: line, in: waiting) else { continue }
+            state.lines[index].takeBack = message.id
+            state.lines[index].waitingForSetup = store.setup.ready ? nil : true
+        }
         state.waitingForSetup = !store.setup.ready
         state.approval = store.approvals[project.id].map {
-            SidebarApproval(id: $0.id, title: $0.title, command: $0.command, explanation: $0.explanation?.look)
+            SidebarApproval(id: $0.id, title: $0.title, command: $0.command, explanation: $0.explanation?.look, request: $0.request,
+                            whyAsked: $0.whyAsked)
         }
         state.notResponding = store.notResponding[project.id] != nil ? ErrorMessages.notResponding(project.name) : nil
         state.replacing = draft.replacing != nil
@@ -369,8 +391,48 @@ final class SidebarServer {
         }
     }
 
+    /// The agent's progress line: a message like any other while its turn goes on, and once it's among a finished
+    /// turn's steps (as the messages it wrote on the way are) a status line with the progress line's mark, which a sidebar from before progress lines draws
+    /// as a status line rather than failing to read the chat.
+    static func progress(_ line: LogLine, gap: Double, folded: Bool = false) -> SidebarLine {
+        guard folded else { return SidebarLine(id: line.id, kind: .agent, text: line.text, gap: gap) }
+        var out = SidebarLine(id: line.id, kind: .status, text: line.text, gap: gap)
+        out.symbol = ChatLook.progressSymbol
+        return out
+    }
+
     /// The chat as Lamp's window shows it without Agent Details (`Transcript`): the same lines, gathered and
     /// spaced the same way. Cards and notes Lamp's window has and this doesn't yet are left out.
+    static func tools(_ run: [LogLine], gap: Double, running: Bool) -> SidebarLine {
+        let calls = run.map { ToolCall($0.text) }
+        var line = SidebarLine(id: run[0].id, kind: .tools, text: ToolGroup.summary(calls), gap: gap, running: running)
+        line.symbol = ToolGroup.icon(calls)
+        line.calls = calls.map { SidebarToolCall(symbol: $0.icon, verb: $0.verb, argument: $0.argument) }
+        return line
+    }
+
+    /// A turn's steps as its one line opens to them, in "Worked for…" and in the live line, as Lamp's window shows them.
+    static func stepLines(_ steps: [LogLine]) -> [SidebarLine] {
+        ChatItem.items(steps).flatMap { step -> [SidebarLine] in
+            switch step {
+            case .tools(let run): [tools(run, gap: 4, running: false)]
+            case .statuses(let run): run.map { line in
+                var status = SidebarLine(id: line.id, kind: .status, text: line.text, gap: 4)
+                status.said = line.said
+                return status
+            }
+            default: []
+            }
+        }
+    }
+
+    /// The steps of the turn still going, for the line that says what it's doing, as Lamp's window shows them.
+    static func liveSteps(_ log: [LogLine], details: Bool, doing: String? = nil, looking: Bool = false) -> [SidebarLine]? {
+        guard !details else { return nil }
+        let steps = ChatItem.live(LogLine.visible(log, details: false), doing: doing, looking: looking).steps
+        return steps.isEmpty ? nil : stepLines(steps)
+    }
+
     static func lines(_ log: [LogLine], project: LampProject, busy: Bool, progressShown: Bool,
                       reach: Int = LogLine.recentCount, canSendAgain: Bool = false, details: Bool = false) -> [SidebarLine] {
         let dir = project.dir
@@ -382,7 +444,9 @@ final class SidebarServer {
         let start = LogLine.recentStart(in: lines, atLeast: reach)
         let latestRequest = lines.last { $0.kind == .user }?.id
         let shown = Array(lines[start...])
-        let items = ChatItem.items(progressShown ? Transcript.withoutStepInProgress(shown) : shown)
+        // While the turn goes on, its steps are in the line that says what it's doing (`liveSteps`), not lines of their own.
+        let items = ChatItem.items(progressShown ? (details ? Transcript.withoutStepInProgress(shown) : ChatItem.live(shown).shown) : shown,
+                                   gather: !details)
         var out: [SidebarLine] = []
         for (index, item) in items.enumerated() {
             let isLast = index == items.count - 1
@@ -391,15 +455,16 @@ final class SidebarServer {
             case .statuses(let run):
                 for (position, line) in run.enumerated() {
                     let running = isLast && busy && !progressShown && line.id == run.last?.id && line.text.hasSuffix("…")
-                    out.append(SidebarLine(id: line.id, kind: .status, text: line.text, gap: position == 0 ? gap : 4, running: running))
+                    var status = SidebarLine(id: line.id, kind: .status, text: line.text, gap: position == 0 ? gap : 4, running: running)
+                    status.said = line.said
+                    out.append(status)
                 }
             case .tools(let run):
                 // Only with Agent Details on: the steps, summed up, each one under it.
-                let calls = run.map { ToolCall($0.text) }
-                var line = SidebarLine(id: run[0].id, kind: .tools, text: ToolGroup.summary(calls), gap: gap,
-                                       running: isLast && busy && !progressShown)
-                line.symbol = ToolGroup.icon(calls)
-                line.calls = calls.map { SidebarToolCall(symbol: $0.icon, verb: $0.verb, argument: $0.argument) }
+                out.append(tools(run, gap: gap, running: isLast && busy && !progressShown))
+            case .work(let id, let title, let steps):
+                var line = SidebarLine(id: id, kind: .work, text: title, gap: gap)
+                line.steps = Self.stepLines(steps)
                 out.append(line)
             case .line(let line):
                 switch line.kind {
@@ -414,6 +479,8 @@ final class SidebarServer {
                     out.append(request)
                 case .agent:
                     out.append(SidebarLine(id: line.id, kind: .agent, text: line.text, gap: gap, growing: busy))
+                case .progress:
+                    out.append(Self.progress(line, gap: gap))
                 case .summary:
                     out.append(SidebarLine(id: line.id, kind: .summary, text: line.text, gap: gap))
                 case .error:
@@ -452,6 +519,15 @@ final class SidebarServer {
                     card.symbol = "widget.small"
                     card.status = project.platform.hasIOS ? WidgetCard.phoneStatus(project.name) : WidgetCard.status(project.name, placed: placed)
                     card.done = placed
+                    out.append(card)
+                case .reload:
+                    let queued = Store.shared.reloadWhenFree.contains(project.id)
+                    var card = SidebarLine(id: line.id, kind: .action,
+                                           text: queued ? ReloadLine.queued(project.name) : ReloadLine.text(project.name), gap: gap)
+                    card.symbol = "arrow.clockwise"
+                    card.button = "Reload"
+                    card.prominent = true
+                    card.disabled = queued
                     out.append(card)
                 case .drawIcon:
                     var card = SidebarLine(id: line.id, kind: .action, text: DrawIconLine.text(project.name), gap: gap)
@@ -545,10 +621,11 @@ final class SidebarServer {
         let submitted = store.draft(for: project)
         guard !submitted.isEmpty else { return }
         let replaced = submitted.replacing.flatMap { id in store.logs[project.id]?.first { $0.id == id } }
-        guard replaced == nil || !store.busy.contains(project.id), let token = store.beginSubmission(project) else { return }
+        guard replaced == nil || !store.busy.contains(project.id), let token = store.beginSubmission(project) else {
+            return giveBack(project)
+        }
         // The box's words are taken: a Send the sidebar made before it heard so isn't sent again.
         sends[project.id, default: 0] += 1
-        scheduleUpdate()
         dictations[project.id]?.cancel()
         store.endArrival(for: project.id)
         func finish(sent: Bool) {
@@ -556,6 +633,9 @@ final class SidebarServer {
                 store.updateDraft(store.draft(for: current).afterSubmission(submitted, sent: sent), for: current)
             }
             store.endSubmission(token)
+            if !sent { giveBack(project) }
+            // At once, not after the usual pause: the person is waiting to see their message go.
+            pushNow()
         }
         PhoneSetup.shared.perform(for: project, in: store, cancelled: { finish(sent: false) }) { current in
             let text = submitted.text.trimmed
@@ -698,6 +778,8 @@ final class SidebarServer {
             store.attach(urls, to: project)
         case .offer(let id):
             guard let line = store.logs[project.id]?.first(where: { $0.id == id }) else { return }
+            // Reload is done where the person is, beside the app: nothing to show in Lamp's window.
+            if line.kind == .reload { return store.reloadWaiting(project.id) }
             // In Lamp's window: where the card's keys, downloads and sign-ins are, and what Image Playground
             // opens over, which Lamp may have put away for the sidebar.
             NSApp.activate(ignoringOtherApps: true)
@@ -738,6 +820,10 @@ final class SidebarServer {
         case .forceQuit:
             guard store.notResponding[project.id] != nil else { return }
             store.forceQuit(project)
+        case .showLamp:
+            // Asked for from another app's window, so Lamp has to take the front for itself.
+            NSApp.activate(ignoringOtherApps: true)
+            store.showDesk()
         case .undo:
             Task { await store.undo(project) }
         case .delete:
@@ -824,6 +910,11 @@ final class SidebarServer {
         private var source: DispatchSourceRead?
         private var buffer = Data()
         private var last: Data?
+        /// The draft as last sent, and its version. The sidebar takes the draft only when its version changes, so a
+        /// draft that changed only by the person typing in the sidebar is sent as it last was: otherwise each pause in
+        /// typing sent the whole chat back, to be read and drawn again.
+        private var sentDraft = ""
+        private var sentDraftVersion = -1
         private let outbox: SidebarOutbox
         /// A state that came while the last one was still going out: only the latest is sent once it has.
         private var waiting = false
@@ -876,6 +967,16 @@ final class SidebarServer {
             guard !outbox.isHolding else { waiting = true; return }
             guard let server, let project = Store.shared.projects.first(where: { $0.id == projectID }) else { return }
             var state = server.state(for: project)
+            // A sidebar from before a turn's steps were folded can't read the fold, and would drop the whole chat: it
+            // gets the steps as lines, as it showed them.
+            if version < 7 {
+                state.lines = state.lines.flatMap { line -> [SidebarLine] in
+                    guard line.kind == .work else { return [line] }
+                    var steps = line.steps ?? []
+                    if !steps.isEmpty { steps[0].gap = line.gap }
+                    return steps
+                }
+            }
             // A sidebar from before the summary line can't read one, and would drop the whole chat.
             if version < 2 { state.lines.removeAll { $0.kind == .summary } }
             // Nor one from before the notes receipt a receipt.
@@ -896,6 +997,20 @@ final class SidebarServer {
                     message.attachments += asFile(message.pointed)
                     return message
                 }
+            }
+            // Answers clicked on a card and waiting in line are drawn as the folded card; a sidebar from before that
+            // takes them back only from the waiting message.
+            if version >= 8 {
+                let onCards = Set(state.lines.compactMap(\.takeBack))
+                state.queued = state.queued?.filter { !onCards.contains($0.id) }
+            }
+            // A sidebar from before keeps no words of its own when its box is drawn again (a panel closed), and reads
+            // Lamp's: it gets the draft as it is.
+            if version >= 9, state.draftVersion == sentDraftVersion {
+                state.draft = sentDraft
+            } else {
+                sentDraft = state.draft
+                sentDraftVersion = state.draftVersion
             }
             guard let data = SidebarWire.encode(state), force || data != last else { return }
             last = data

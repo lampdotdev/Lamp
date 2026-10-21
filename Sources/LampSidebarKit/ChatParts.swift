@@ -78,6 +78,9 @@ extension ChatLook {
         }
     }
 
+    /// Under what waits for setup before it's sent.
+    public static let waitingForSetup = "Starts when Apple's app-building tools finish installing"
+
     /// A message waiting for the current change to finish. It can still be taken back. The latest of its group has
     /// the group's caption, and, where the agent can take them while it works, Send Now for the whole group
     /// (`sendNow`); once that's asked, the caption says they're on their way.
@@ -108,17 +111,14 @@ extension ChatLook {
                 HStack(spacing: 6) {
                     Button(action: onRemove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                         .buttonStyle(.plain)
-                        .help("Remove from the queue")
-                        .accessibilityLabel("Remove from the queue")
-                    Text(text)
-                        .lineSpacing(2)
-                        .padding(.horizontal, 12).padding(.vertical, 8)
-                        .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
-                        .foregroundStyle(.secondary)
+                        .help("Unsend")
+                        .accessibilityLabel("Unsend")
+                    UserBubble(text, waiting: true)
                 }
                 // The width limit goes around the button too, so it stays next to the bubble.
-                .frame(maxWidth: 480 + 22, alignment: .trailing)
-                if place.last { caption }
+                .frame(maxWidth: 480 + 22 + ChatLook.tailRoom, alignment: .trailing)
+                .padding(.leading, 40)
+                if place.last { caption.padding(.trailing, ChatLook.tailRoom) }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
@@ -130,9 +130,13 @@ extension ChatLook {
                     Label(several ? "Sending \(place.count) now" : "Sending now", systemImage: "arrow.up.circle")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
-                    Label(waitingForSetup ? "Starts when Apple's app-building tools finish installing"
-                              : several ? "\(place.count) queued" : "Queued",
-                          systemImage: "clock").font(.caption).foregroundStyle(.secondary)
+                    if waitingForSetup {
+                        Label(ChatLook.waitingForSetup, systemImage: "clock")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        // Worded like a text the other side hasn't read yet, with no icon, as Messages shows it.
+                        Text(several ? "\(place.count) unread" : "Unread").font(.caption).foregroundStyle(.secondary)
+                    }
                     if let sendNow {
                         Button(several ? "Send All Now" : "Send Now", action: sendNow)
                             .buttonStyle(.link).font(.caption)
@@ -168,129 +172,6 @@ extension ChatLook {
             .padding(.horizontal, 12).padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
-        }
-    }
-
-    /// What a command does and how risky it is, in plain words for people who don't read shell commands.
-    public struct Explanation: Codable, Equatable {
-        public var summary: String
-        /// "low", "medium" or "high"; empty when nothing rated it.
-        public var risk: String
-        public var why: String
-
-        public init(summary: String, risk: String, why: String) {
-            self.summary = summary
-            self.risk = risk
-            self.why = why
-        }
-    }
-
-    /// A shell command the agent wants to run, explained in plain words. Nothing runs until the person allows it.
-    public struct ApprovalCard: View {
-        let title: String
-        let command: String
-        let explanation: Explanation?
-        let onAllow: () -> Void
-        let onAllowAll: () -> Void
-        let onDeny: () -> Void
-        @State private var showCommand = false
-
-        public init(title: String, command: String, explanation: Explanation?, onAllow: @escaping () -> Void,
-                    onAllowAll: @escaping () -> Void, onDeny: @escaping () -> Void) {
-            self.title = title
-            self.command = command
-            self.explanation = explanation
-            self.onAllow = onAllow
-            self.onAllowAll = onAllowAll
-            self.onDeny = onDeny
-        }
-
-        private var highRisk: Bool { explanation?.risk == "high" }
-
-        /// The same green, yellow and red as app icons' backgrounds (Lamp's `Icons.backgrounds`). The icon
-        /// yellow is too pale to read on a light background, so light mode gets a darker shade of it.
-        private var riskColor: Color {
-            switch explanation?.risk {
-            case "low": return Color(nsColor: NSColor(srgbRed: 0x28 / 255, green: 0xA7 / 255, blue: 0x45 / 255, alpha: 1))
-            case "high": return Color(nsColor: NSColor(srgbRed: 0xE0 / 255, green: 0x30 / 255, blue: 0x2A / 255, alpha: 1))
-            default:
-                let yellow = NSColor(srgbRed: 1, green: 0xC4 / 255, blue: 0, alpha: 1)
-                return Color(nsColor: NSColor(name: nil) { appearance in
-                    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? yellow : yellow.blended(withFraction: 0.3, of: .black) ?? yellow
-                })
-            }
-        }
-
-        public var body: some View {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(title).font(.caption).foregroundStyle(.secondary)
-                if let explanation {
-                    // No fixedSize here: it makes SwiftUI size the text for its narrowest possible width, and that
-                    // height became the whole window's minimum, growing the window past the screen.
-                    Text(explanation.summary).font(.headline)
-                } else {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Working out what this does…").foregroundStyle(.secondary)
-                    }
-                }
-                // Not a DisclosureGroup: on the Mac only its chevron toggles it, so clicking the words did nothing.
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { showCommand.toggle() }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
-                            .rotationEffect(.degrees(showCommand ? 90 : 0))
-                        Text(showCommand ? "Hide command" : "Show command").font(.caption)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                if showCommand {
-                    // A short command takes only the room it needs; a long one scrolls rather than pushing the chat
-                    // out of the window. The limit goes on a scroll view sized to what's in it: a frame with only
-                    // a maximum takes all the height it's offered, which made a one-line command a five-line box.
-                    ScrollView { commandText }
-                        .scrollBounceBehavior(.basedOnSize)
-                        .frame(maxHeight: 120)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(8)
-                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
-                }
-                HStack {
-                    // Nothing rated it: no level to show, so nothing here.
-                    if let explanation, !explanation.risk.isEmpty {
-                        (Text("\(explanation.risk.capitalized) risk").bold() + Text(explanation.why.isEmpty ? "" : ": \(explanation.why)"))
-                            .font(.callout)
-                            .foregroundStyle(riskColor)
-                    }
-                    Spacer()
-                    if highRisk {
-                        // Risky: denying is the default, on Escape as well, and there's no blanket "allow all".
-                        Button("Allow", action: onAllow)
-                        Button("Deny", role: .cancel, action: onDeny)
-                            .keyboardShortcut(.cancelAction)
-                            .buttonStyle(.borderedProminent)
-                    } else {
-                        Button("Deny", role: .cancel, action: onDeny)
-                            .keyboardShortcut(.escape, modifiers: [])
-                        Button("Allow All This Turn", action: onAllowAll)
-                        Button("Allow", action: onAllow)
-                            .keyboardShortcut(.return, modifiers: .command)
-                            .buttonStyle(.borderedProminent)
-                    }
-                }
-            }
-        }
-
-        private var commandText: some View {
-            Text(command)
-                .font(.system(.callout, design: .monospaced))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

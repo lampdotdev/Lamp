@@ -1,0 +1,12 @@
+VERDICT 1: REOPEN (start() uses Wrapper in code that may still be running (a timer, a task, an observer), which doesn't know the new cases)
+== run
+before: old: json={"mood":"happy"} back=happy hashable=true iterable=true set=1 dict=1 mirror=1 anyhash=true name=happy raw=happy
+new: cases=2 hashable=true reflecting=Case.Mood.happy raw=none json={"mood":"happy"}
+RELOAD 1: REOPEN start() uses Wrapper in code that may still be running (a timer, a task, an observer), which doesn't know the new cases
+after (want angry everywhere, 3 cases, no crash): old: json={"mood":"sad"} back=sad hashable=true iterable=true set=1 dict=1 mirror=1 anyhash=true name=sad raw=sad
+new: cases=2 hashable=true reflecting=Case.Mood.sad raw=none json={"mood":"sad"}
+before: new closure: count=1
+new: cases=3 hashable=true reflecting=Case.Mood.happy raw=angry json={"mood":"happy"}
+RELOAD 1: in the restart
+after (want angry everywhere, 3 cases, no crash): new closure: count=1
+new: cases=3 hashable=true reflecting=Case.Mood.angry raw=angry json={"mood":"angry"}

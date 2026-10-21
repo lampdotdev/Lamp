@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: [[Case.Mood.a, Case.Mood.b]] ["x": [Case.Mood.a]]
+RELOAD 1 (whole): ok
+after1 (want "[[a, b]] ["x": [a]] c", in place): [[Case.Mood.a, Case.Mood.b]] ["x": [Case.Mood.a]] c

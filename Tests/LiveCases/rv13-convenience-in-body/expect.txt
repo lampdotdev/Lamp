@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: a
+RELOAD 1 (whole): ok
+after1 (want untitled, as with a convenience init in an extension): untitled

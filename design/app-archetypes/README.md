@@ -20,7 +20,7 @@ together.
 - **Pick once and remember it.** The choice is the first line of APP.md (`Kind: companion`), which every
   engine reads and the agent keeps current, so every later turn and rebuild keeps
   the same voice. It changes only when the person asks ("make it more playful", "make it more serious")
-  or the app grows into another kind.
+  or the app grows into another kind. A change in what the app is about isn't a change of kind: see below.
 - **Never ask.** It isn't a question for the person, and they never see the archetype's name.
 
 ## The archetypes
@@ -106,6 +106,44 @@ Anything played rather than used.
 - Sprites, backgrounds and characters are generated art in one consistent style, with sound and haptics.
 - Scores are kept on the device.
 
+## When the subject changes, the theme follows
+
+The kind is an app's structure: a grid, one picture of where you are now, a sidebar. Its theme is the part of
+its look that comes from what it's about. Hot Shelf's pink wall, chilies and pepper ratings are hot sauce;
+a campfire songbook's taped index cards, embers and lantern vignettes are the campfire; Wedding Words' terracotta is
+Naples. Lamp is for changing the apps people have, and the most common big change is the subject: "make it for
+my wines". Someone who asks that expects a wine cellar, not a pink wall of chilies holding wine bottles, and they
+shouldn't have to ask a second time. So when a request changes what an app is about, the agent changes the theme
+with it, in the same request and without asking, whoever made the app: one it built, a starter, or a shared
+copy someone is working from. The rule is `Agent.Rules.theme`, at the end of the kinds.
+
+- **What follows**: the palette, backgrounds and motifs, the style pictures are drawn in and the pictures, the
+  lettering, the symbols things are rated or counted with, the words and their tone, the example content, and the
+  icon. icon.json first, since `make_art` takes its colors from the icon's tint.
+- **As particular as before**: the new look is as specific to the new subject as the old one was to the old
+  subject, never a plainer version of the old one.
+- **What stays**: the kind and its structure, whatever still fits the new subject (a wooden bookcase holds
+  records too), what the person chose or styled themselves, their own items, and their saved data (raw values
+  are kept and old ones mapped to the new).
+- **How much**: as much as the look was made of the subject. A tool in system colors and SF Symbols changes its
+  words and symbols; a themed app gets a new theme. A change within the same subject (a wishlist, a new screen)
+  changes nothing visual.
+- **Watched, not waited for**: a re-theme changes much of what the person sees, so it's built in passes.
+
+APP.md's `Look:` line (`Agent.Rules.appMd`) says what an app's look is made of and where, so the turn that
+changes the subject knows what to change. The themed starters carry one written by hand. An app without one is
+read from its code.
+
+| Change | What follows |
+|---|---|
+| Hot Shelf: hot sauce to wine | A cellar instead of the pink wall and chilies, labels redrawn in a style for wine, glasses or grapes instead of peppers, "What are we pouring tonight?", grape varieties for flavour families, wine examples, a wine bottle icon |
+| A campfire songbook: guitar to jazz piano standards | A smoky club at night instead of the campfire: lamplight for embers, a piano and a martini among the vignettes, chord charts for piano, a new icon |
+| Wedding Words: a wedding in Naples to a friend's wedding in Kyoto | Japanese and new people to talk to, colors and a tone of Kyoto instead of terracotta, a new icon |
+| Pet: a cat to a thirsty cactus | The figure, its colors, what it eats and its words, a cactus icon |
+| Shelves: books to vinyl | Sleeves instead of spines and new words; the wooden shelf stays |
+| Transcripts: meetings to podcast interviews | Words only: it's a tool |
+| Hot Shelf: add a wishlist of sauces | Nothing visual: the subject didn't change |
+
 ## Pictures in apps
 
 `make_art` (all three engines: `lamp-tools.json`, pi's extension, `Store.mcp`) paints a picture into the
@@ -168,4 +206,8 @@ style the person asked for won over the archetype.
 | Inventory for my small shop | Tool |
 | A pomodoro timer that looks like a 1970s kitchen timer | The person's style, with the companion structure |
 | A snake game | Game |
+
+And for the theme rule, a change to an app that exists (a copy, never the person's own), each expecting the
+row of the table above: Hot Shelf to wine, a campfire songbook to jazz piano, Wedding Words to Kyoto, Pet to a cactus,
+Transcripts to podcasts and Hot Shelf with a wishlist.
 | A minimal, black and white habit tracker | The person's style: no generated art |

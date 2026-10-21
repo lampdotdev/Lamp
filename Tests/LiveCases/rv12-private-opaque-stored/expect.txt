@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Card.shape: some Shape returns a RoundedRectangle now, where the open app's returned a Circle)
+== run
+before: Circle name=card
+RELOAD 1: REOPEN Card.shape: some Shape returns a RoundedRectangle now, where the open app's returned a Circle
+after1 (the open card holds a Circle: want a reopen, or a RoundedRectangle with corner=8x8): Circle name=card
+before: RoundedRectangle corner=8x8 name=card
+RELOAD 1: in the restart
+after1 (the open card holds a Circle: want a reopen, or a RoundedRectangle with corner=8x8): RoundedRectangle corner=8x8 name=card

@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: 1 2
+RELOAD 1: ok
+after1 (want 10 20, the overridden private methods' new code): 10 20

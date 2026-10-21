@@ -27,13 +27,14 @@ export SIGN_IN="$(services LampService)" TOKEN="$(services LampAPI)"
 extract() {
   awk -v start="static let $1 = #\"\"\"" '
     index($0, start) { on = 1; next }
-    on && /^ *"""#$/ { exit }
+    on && /^ *"""#( \+ [A-Za-z]+)?$/ { exit }
     on { print }' "$template" |
     perl -pe 's/^ *\/\/ \{\{SIGN_IN_SERVICES\}\}\n/$ENV{SIGN_IN}\n/; s/^ *\/\/ \{\{TOKEN_SERVICES\}\}\n/$ENV{TOKEN}\n/' |
     sed -E 's/\{\{[A-Z_]*(PORT|TRIES)\}\}/7777/g; s/\{\{[A-Z_]+\}\}/stand-in/g'
 }
-extract lampSupportTemplate > "$work/LampSupport.swift"
-extract lampWidgetSupportSwift > "$work/LampWidgetSupport.swift"
+# Lamp's flame, which both files end with (`lampGlyphSwift`, macOS only in LampSupport).
+{ extract lampSupportTemplate; print "#if os(macOS)"; extract lampGlyphSwift; print "#endif" } > "$work/LampSupport.swift"
+{ extract lampWidgetSupportSwift; extract lampGlyphSwift } > "$work/LampWidgetSupport.swift"
 
 sdk="${SDKROOT:-$(xcrun --sdk macosx --show-sdk-path)}"
 check() {

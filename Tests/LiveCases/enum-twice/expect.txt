@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD
+VERDICT 2: RELOAD
+== run
+before: mood=happy raw=happy scores=[(key: Case.Mood.happy, value: 1), (key: Case.Mood.sad, value: 2)] happy=1 set=1 hist=[Case.Mood.happy] all=2 json=[{"mood":"sad","note":"n"}] back=["sad"] mirror=["nil", "nil"] any=happy hashable=true anyhash=true
+RELOAD 1 (whole): ok
+after1 (want angry everywhere, all=3): mood=angry raw=angry scores=[(key: Case.Mood.angry, value: 9), (key: Case.Mood.happy, value: 1), (key: Case.Mood.sad, value: 2)] happy=1 set=2 hist=[Case.Mood.happy, Case.Mood.angry] all=3 json=[{"mood":"sad","note":"n"},{"mood":"angry","note":"x"}] back=["sad", "angry"] mirror=["nil", "nil"] any=angry hashable=true anyhash=true
+RELOAD 2 (whole): ok
+after2 (want bored everywhere, all=4): mood=bored raw=bored scores=[(key: Case.Mood.angry, value: 9), (key: Case.Mood.bored, value: 9), (key: Case.Mood.happy, value: 1), (key: Case.Mood.sad, value: 2)] happy=1 set=3 hist=[Case.Mood.happy, Case.Mood.angry, Case.Mood.bored] all=4 json=[{"mood":"sad","note":"n"},{"mood":"angry","note":"x"},{"mood":"bored","note":"x"}] back=["sad", "angry", "bored"] mirror=["nil", "nil"] any=bored hashable=true anyhash=true

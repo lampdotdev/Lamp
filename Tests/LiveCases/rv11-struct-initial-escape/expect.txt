@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD (Added Item.greeting)
+VERDICT 2: RELOAD (Added Item.mask)
+== run
+before: 1
+RELOAD 1 (whole): ok
+after1 (want in place: a string with an escape is a literal): 1 3
+RELOAD 2 (whole): ok
+after2 (want in place: 0xFF is a literal): 1 3 255

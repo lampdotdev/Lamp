@@ -1,0 +1,6 @@
+VERDICT 1: RELOAD (Added Settings.limit)
+== run
+before: s
+RELOAD 1 (whole): ok
+after1 (want "s 10"): s 10
+after1 set (want "s 3"): s 3

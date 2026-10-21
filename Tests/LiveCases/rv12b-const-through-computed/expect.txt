@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD (Gave Size.half its new value)
+VERDICT 2: RELOAD
+== run
+before: 5
+RELOAD 1 (whole): ok
+after1 (want 10, half the new width): 10
+RELOAD 2: ok
+after2 (want 15): 15

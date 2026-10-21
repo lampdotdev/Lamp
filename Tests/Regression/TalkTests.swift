@@ -40,6 +40,7 @@ final class TalkTests: XCTestCase {
         let lines = [LogLine(kind: .user, text: "wish"), LogLine(kind: .ask, text: "q"), answer,
                      LogLine(kind: .agent, text: "reply"), LogLine(kind: .summary, text: "s"),
                      LogLine(kind: .result, text: "card"), guess, LogLine(kind: .agent, text: "changed"), LogLine(kind: .summary, text: "s")]
-        XCTAssertEqual(LogLine.visible(lines, details: false).map(\.text), ["wish", "q", "reply", "guess", "changed"])
+        // Each turn's summary stays too, for how long it worked; the chat doesn't draw it as a line.
+        XCTAssertEqual(LogLine.visible(lines, details: false).map(\.text), ["wish", "q", "reply", "s", "guess", "changed", "s"])
     }
 }

@@ -20,8 +20,26 @@ extension ChatLook {
         }
 
         public var body: some View {
+            // The buttons beside the words where they fit, else under them, at the trailing edge.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 12) {
+                    header
+                    Spacer(minLength: 8)
+                    buttons.cardButtons()
+                }
+                VStack(alignment: .trailing, spacing: 10) {
+                    header.frame(maxWidth: .infinity, alignment: .leading)
+                    buttons.cardButtons()
+                }
+            }
+            .padding(14)
+            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+        }
+
+        private var header: some View {
             let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
-            HStack(alignment: .center, spacing: 12) {
+            return HStack(alignment: .center, spacing: 12) {
                 Image(systemName: done ? "checkmark" : symbol)
                     .font(.system(size: 20, weight: .medium))
                     .foregroundStyle(.white)
@@ -36,39 +54,49 @@ extension ChatLook {
                     Text(status).font(.body).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer(minLength: 8)
-                buttons.controlSize(.small)
             }
-            .padding(14)
-            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
         }
     }
 
-    /// A line offering one thing to do, like Draw Icon: a symbol, what's so, and the button.
+    /// A line offering one thing to do, like Draw Icon: a symbol, what's so, and the button. Laid out as a status
+    /// line is (`StatusLine`): its symbol in the steps' column and its words in their size, in line with the agent's
+    /// bubbles, "Worked for…" and Undo Last Change around it.
     public struct ActionLine: View {
         let symbol: String
         let text: String
         let button: String
         let disabled: Bool
+        /// The one thing to do next (Reload, for a change waiting on it): the button in the accent colour.
+        let prominent: Bool
         let action: () -> Void
 
-        public init(symbol: String, text: String, button: String, disabled: Bool = false, action: @escaping () -> Void) {
+        public init(symbol: String, text: String, button: String, disabled: Bool = false, prominent: Bool = false,
+                    action: @escaping () -> Void) {
             self.symbol = symbol
             self.text = text
             self.button = button
             self.disabled = disabled
+            self.prominent = prominent
             self.action = action
         }
 
         public var body: some View {
-            HStack(spacing: 8) {
-                Image(systemName: symbol).foregroundStyle(.secondary)
-                Text(text).foregroundStyle(.secondary)
-                Button(button, action: action)
-                    .controlSize(.small)
-                    .disabled(disabled)
+            HStack(spacing: 6) {
+                Image(systemName: symbol).foregroundStyle(.secondary).frame(width: 16)
+                Text(text).font(ChatLook.stepFont).foregroundStyle(.secondary)
+                if prominent {
+                    Button(button, action: action)
+                        .controlSize(.small)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(disabled)
+                } else {
+                    Button(button, action: action)
+                        .controlSize(.small)
+                        .disabled(disabled)
+                }
             }
+            .font(ChatLook.stepFont)
+            .padding(.leading, ChatLook.stepIndent)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

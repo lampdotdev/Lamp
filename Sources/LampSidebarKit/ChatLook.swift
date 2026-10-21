@@ -5,21 +5,30 @@ import AppKit
 /// extension), so the two are drawn by the same code and can't drift apart. Each takes plain values: what a line
 /// says and how it stands, never Lamp's own state.
 public enum ChatLook {
-    /// A request's bubble, on the right.
+    /// A request's bubble, on the right, as Messages draws what you sent: white words on the accent colour.
+    /// A request still waiting its turn is the same bubble, faded.
     public struct UserBubble: View {
         let text: String
-        public init(_ text: String) { self.text = text }
+        let waiting: Bool
+        public init(_ text: String, waiting: Bool = false) {
+            self.text = text
+            self.waiting = waiting
+        }
 
         public var body: some View {
             Text(text)
                 .textSelection(.enabled)
                 .lineSpacing(2)
-                .padding(.horizontal, 12).padding(.vertical, 8)
-                .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
+                .foregroundStyle(.white)
+                .tint(.white)
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .background(Bubble(.trailing).fill(Color.accentColor))
+                .opacity(waiting ? 0.7 : 1)
+                .padding(.trailing, ChatLook.tailRoom)
         }
     }
 
-    /// What the agent says, as prose with its inline markdown.
+    /// What the agent says, as prose with its markdown (`ChatLook.pieces`).
     public struct AgentText: View {
         let text: String
         let keep: Bool
@@ -29,17 +38,233 @@ public enum ChatLook {
             self.keep = keep
         }
 
+        /// In a grey bubble on the left, as Messages draws the other person's. Answers run longer than a text
+        /// message, so the bubble may take most of the width, leaving room on the right to tell it from a request.
         public var body: some View {
-            Text(ChatLook.prose(text, keep: keep))
-                .lineSpacing(4)
-                .textSelection(.enabled)
+            content
+                .lineSpacing(3)
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .background(Bubble(.leading).fill(ChatLook.agentBubble))
+                .padding(.leading, ChatLook.tailRoom)
+                .padding(.trailing, 32)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        /// A reply is drawn as few texts as it can be. Each selectable text costs macOS far more to lay out than
+        /// its words do, and every reply above is measured again with each word of one being written, so a reply
+        /// cut into a text per line, cell and item made the whole chat slow while the agent wrote.
+        @ViewBuilder private var content: some View {
+            let pieces = ChatLook.pieces(text, keep: keep)
+            if pieces.count == 1, case .text(let string) = pieces[0] {
+                Text(string).textSelection(.enabled)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(pieces.indices, id: \.self) { PieceView(piece: pieces[$0]) }
+                }
+            }
         }
     }
 
-    /// The line that says a change closed the open app and opened it again: the window going away and coming back
-    /// is otherwise left unexplained, since why is only in Agent Details.
-    public static let reloaded = "Lamp reloaded the app to apply this change"
+    /// A reply as it's drawn: its prose, headings, lists and quotes run together as one styled text, and only what a
+    /// text can't draw is a piece of its own.
+    public enum Piece: Equatable {
+        case text(AttributedString)
+        case code(String)
+        case rule
+        case table(columns: [HorizontalAlignment], header: [AttributedString], rows: [[AttributedString]])
+    }
+
+    private struct PieceView: View {
+        let piece: Piece
+
+        var body: some View {
+            switch piece {
+            case .text(let string):
+                Text(string).textSelection(.enabled)
+            case .code(let code):
+                Text(code)
+                    .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 8).padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
+            case .rule:
+                Divider()
+            case .table(let columns, let header, let rows):
+                // Top-aligned: lining cells up by their first baselines cost several times as much to lay out, and
+                // a cell's first line sits level with its neighbours' either way. The cells can't be selected, for
+                // the same cost: a selectable text in each would make a table the slowest thing in the chat.
+                Grid(alignment: .topLeading, horizontalSpacing: 14, verticalSpacing: 4) {
+                    GridRow {
+                        ForEach(header.indices, id: \.self) { column in
+                            Text(header[column]).fontWeight(.semibold).gridColumnAlignment(columns[column])
+                        }
+                    }
+                    Divider().gridCellUnsizedAxes(.horizontal)
+                    ForEach(rows.indices, id: \.self) { row in
+                        GridRow { ForEach(rows[row].indices, id: \.self) { Text(rows[row][$0]) } }
+                    }
+                }
+                .textSelection(.disabled)
+            }
+        }
+    }
+
+    /// Read once per message, like its prose.
+    @MainActor private static var pieceCache: [String: [Piece]] = [:]
+
+    /// The reply's pieces, read by Apple's markdown parser with its full syntax. A reply with nothing but prose (no
+    /// line starts as a block could) skips it and is read as before, inline styles only, so its line breaks stay as
+    /// the agent wrote them; in a reply with blocks a line break inside a paragraph is kept too.
+    @MainActor public static func pieces(_ text: String, keep: Bool = true) -> [Piece] {
+        if let cached = pieceCache[text] { return cached }
+        if pieceCache.count > 2000 { pieceCache.removeAll() }
+        var pieces = [Piece.text(prose(text, keep: keep))]
+        if mayHaveBlocks(text),
+           let parsed = try? AttributedString(markdown: text, options: .init(interpretedSyntax: .full,
+                                                                             failurePolicy: .returnPartiallyParsedIfPossible)),
+           parsed.runs.contains(where: { $0.presentationIntent?.components.contains { $0.kind != .paragraph } == true }) {
+            pieces = Self.pieces(of: parsed)
+        }
+        if keep { pieceCache[text] = pieces }
+        return pieces
+    }
+
+    /// Whether a line starts the way a heading, list, quote, table, rule or fence does. Most replies are prose, and
+    /// a quick look spares them the full parse.
+    static func mayHaveBlocks(_ text: String) -> Bool {
+        text.split(separator: "\n", omittingEmptySubsequences: true).contains { line in
+            guard let first = line.first(where: { $0 != " " && $0 != "\t" }) else { return false }
+            return "#|>-*+_`~=".contains(first) || first.isNumber
+        }
+    }
+
+    /// Walks the parsed reply's runs block by block (a paragraph, heading, code block, rule or table cell, the
+    /// innermost of each run's intents), joining what a text can draw and keeping the rest as pieces.
+    private static func pieces(of parsed: AttributedString) -> [Piece] {
+        var pieces: [Piece] = []
+        var text = AttributedString()
+        var lastBlock: [PresentationIntent.IntentType] = []
+        var markedItems = Set<Int>()
+        var table: (id: Int, columns: [HorizontalAlignment], cells: [Int: [Int: AttributedString]])?
+
+        func endText() {
+            if !text.characters.isEmpty { pieces.append(.text(text)) }
+            text = AttributedString()
+            lastBlock = []
+        }
+        func endTable() {
+            guard let done = table else { return }
+            table = nil
+            let width = done.columns.count
+            let row = { (index: Int) in (0..<width).map { done.cells[index]?[$0] ?? AttributedString() } }
+            let rows = done.cells.keys.filter { $0 > 0 }.sorted().map(row)
+            pieces.append(.table(columns: done.columns, header: row(0), rows: rows))
+        }
+
+        var index = parsed.startIndex
+        while index < parsed.endIndex {
+            let components = parsed.runs[index].presentationIntent?.components ?? []
+            let leaf = components.first?.identity
+            // The run of runs in the same block.
+            var end = parsed.runs[index].range.upperBound
+            while end < parsed.endIndex, parsed.runs[end].presentationIntent?.components.first?.identity == leaf {
+                end = parsed.runs[end].range.upperBound
+            }
+            var content = AttributedString(parsed[index..<end])
+            index = end
+
+            if let tableIntent = components.first(where: { if case .table = $0.kind { true } else { false } }) {
+                guard case .table(let columns) = tableIntent.kind else { continue }
+                if table?.id != tableIntent.identity {
+                    endText()
+                    endTable()
+                    table = (tableIntent.identity, columns.map { column in
+                        switch column.alignment {
+                        case .center: .center
+                        case .right: .trailing
+                        default: .leading
+                        }
+                    }, [:])
+                }
+                var row = 0, column = 0
+                for component in components {
+                    switch component.kind {
+                    case .tableRow(let number): row = number
+                    case .tableCell(let number): column = number
+                    default: break
+                    }
+                }
+                styleInline(&content)
+                table?.cells[row, default: [:]][column] = content
+                continue
+            }
+            endTable()
+
+            switch components.first?.kind {
+            case .codeBlock:
+                endText()
+                var code = String(content.characters)
+                if code.hasSuffix("\n") { code.removeLast() }
+                pieces.append(.code(code))
+            case .thematicBreak:
+                endText()
+                pieces.append(.rule)
+            default:
+                styleInline(&content)
+                if case .header = components.first?.kind { content.font = .headline }
+                let lists = components.filter { if case .listItem = $0.kind { true } else { false } }
+                if components.contains(where: { $0.kind == .blockQuote }) {
+                    // A bar before each of the quote's lines, as a quote is drawn in mail.
+                    content.foregroundColor = .secondary
+                    var bar = AttributedString("▍ ")
+                    bar.foregroundColor = Color.secondary.opacity(0.5)
+                    var lines = content.characters.indices.filter { content.characters[$0] == "\n" }
+                        .map { content.characters.index(after: $0) }
+                    lines.insert(content.startIndex, at: 0)
+                    for start in lines.reversed() { content.insert(bar, at: start) }
+                }
+                if let item = lists.first {
+                    // An item's marker once, before its first paragraph; nested lists go in a step each.
+                    let indent = String(repeating: "    ", count: lists.count - 1)
+                    var marker = indent + "    "
+                    if markedItems.insert(item.identity).inserted, case .listItem(let ordinal) = item.kind {
+                        let ordered = components.drop { $0.identity != item.identity }.dropFirst().first?.kind == .orderedList
+                        marker = indent + (ordered ? "\(ordinal)." : "•") + " "
+                    }
+                    content = AttributedString(marker) + content
+                }
+                if !text.characters.isEmpty {
+                    // Items of one list follow on the next line; anything else is a paragraph apart.
+                    let listsHere = Set(components.filter(isList).map(\.identity))
+                    let sameList = lastBlock.contains { isList($0) && listsHere.contains($0.identity) }
+                    text.append(AttributedString(sameList ? "\n" : "\n\n"))
+                }
+                text.append(content)
+                lastBlock = components
+            }
+        }
+        endTable()
+        endText()
+        return pieces
+    }
+
+    private static func isList(_ intent: PresentationIntent.IntentType) -> Bool {
+        intent.kind == .unorderedList || intent.kind == .orderedList
+    }
+
+    /// The parser's soft line breaks back as the line breaks the agent typed, and code spans set off as in prose.
+    private static func styleInline(_ string: inout AttributedString) {
+        for run in string.runs.reversed() {
+            guard let intent = run.inlinePresentationIntent else { continue }
+            if intent.contains(.softBreak) { string.replaceSubrange(run.range, with: AttributedString("\n")) }
+            else if intent.contains(.code) { string[run.range].backgroundColor = Color.primary.opacity(0.07) }
+        }
+    }
+
+    /// The line above a fix Lamp started on its own after the app crashed: the request it sent isn't shown, so this
+    /// says why the agent is at work with nobody having asked.
+    public static let fixingCrash = "The app crashed, so Lamp is fixing it"
 
     /// One status line: a check, or a small spinner for a step still going.
     public struct StatusLine: View {
@@ -53,31 +278,66 @@ public enum ChatLook {
         public var body: some View {
             HStack(spacing: 6) {
                 Group {
-                    if running { ProgressView().controlSize(.mini) } else { Image(systemName: text == ChatLook.reloaded ? "arrow.clockwise" : "checkmark.circle") }
+                    if running { ProgressView().controlSize(.mini) } else { Image(systemName: "checkmark.circle") }
                 }
                 .frame(width: 16)
                 Text(text)
             }
-            .font(.callout)
+            .font(ChatLook.stepFont)
             .foregroundStyle(.secondary)
+            .padding(.leading, ChatLook.stepIndent)
         }
     }
 
-    /// A command the agent ran without asking ("Ran: git clone …"). The chat says that it happened; the command
-    /// itself is a click away, for anyone who wants to see it.
-    public struct RanCommand: View {
-        let command: String
+    /// What the agent said about how the work was going ("The layout's in. Now the timer."), once its turn is over
+    /// and the line is among the turn's steps: grey like them. While the turn goes on it's a message like any other
+    /// (`AgentText`).
+    public struct ProgressLine: View {
+        let text: String
+        public init(_ text: String) { self.text = text }
+
+        public var body: some View {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: ChatLook.progressSymbol).frame(width: 16)
+                Text(text).fixedSize(horizontal: false, vertical: true)
+            }
+            .font(ChatLook.stepFont)
+            .foregroundStyle(.secondary)
+            .padding(.leading, ChatLook.stepIndent)
+            .padding(.trailing, 32)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    /// The progress line's mark, which also tells the sidebar a status line is one (`SidebarLine.symbol`).
+    public static let progressSymbol = "ellipsis.bubble"
+
+    /// The agent's steps (what it ran, read, checked) are told in small grey words under its bubbles, as Messages
+    /// says a message was delivered: there, but quieter than what's said.
+    public static let stepFont = Font.subheadline
+    /// Steps line up with the words in the agent's bubbles.
+    public static let stepIndent: CGFloat = tailRoom + 4
+
+    /// A finished turn's steps under one line, "Worked for 2 min 3 s", opened with a click to show each of them.
+    /// The steps draw themselves, set in as the agent's steps are.
+    public struct Worked<Steps: View>: View {
+        let title: String
+        let steps: Steps
         @State private var expanded = false
-        public init(_ command: String) { self.command = command }
+
+        public init(_ title: String, @ViewBuilder steps: () -> Steps) {
+            self.title = title
+            self.steps = steps()
+        }
 
         public var body: some View {
             VStack(alignment: .leading, spacing: 4) {
                 Button {
                     withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
                 } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checkmark.circle").frame(width: 16)
-                        Text("Ran a command")
+                    HStack(spacing: 4) {
+                        Text(title)
                         Image(systemName: "chevron.right")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.tertiary)
@@ -86,57 +346,152 @@ public enum ChatLook {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointingHand()
+                .font(ChatLook.stepFont)
+                .foregroundStyle(.secondary)
+                .padding(.leading, ChatLook.stepIndent)
+                .help(expanded ? "Hide the steps" : "Show the steps")
+                .accessibilityHint(expanded ? "Hides the steps" : "Shows the steps")
+                if expanded {
+                    VStack(alignment: .leading, spacing: 4) { steps }
+                        .transition(.opacity)
+                }
+            }
+        }
+    }
+
+    /// A command the agent ran ("Ran: git clone …"). The chat says that it happened, by what the agent said it was
+    /// for when it said ("Reading how the shelf works"); the command itself is a click away, for anyone who wants
+    /// to see it. Several the agent gave one name to are one row, their commands one under another.
+    public struct RanCommand: View {
+        let command: String
+        let said: String?
+        @State private var expanded = false
+        public init(_ command: String, said: String? = nil) {
+            self.command = command
+            self.said = said
+        }
+
+        public var body: some View {
+            VStack(alignment: .leading, spacing: 4) {
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle").frame(width: 16)
+                        Text(said ?? ChatLook.unnamedStep)
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(expanded ? 90 : 0))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointingHand()
                 .help("Show the command")
                 if expanded {
                     Text(command)
-                        .font(.system(.callout, design: .monospaced))
+                        .font(.system(.subheadline, design: .monospaced))
                         .foregroundStyle(.tertiary)
                         .textSelection(.enabled)
                         .padding(.leading, 22)
                 }
             }
-            .font(.callout)
+            .font(ChatLook.stepFont)
             .foregroundStyle(.secondary)
+            .padding(.leading, ChatLook.stepIndent)
         }
     }
 
-    /// The command in a status line that says one was run.
+    /// A step the agent gave no words of its own.
+    public static let unnamedStep = "Did a bit of housekeeping"
+
+    /// The command in a status line that says one was run, or that one was stopped before it ran ("Not run: …", by
+    /// a reviewer or a classifier). A stopped command is the same step, by the name the agent gave it, whatever the
+    /// engine: its line was already showing while it was judged, and only opening the step says it didn't run.
     public static func ranCommand(in status: String) -> String? {
-        status.hasPrefix("Ran: ") ? String(status.dropFirst(5)) : nil
+        if status.hasPrefix("Ran: ") { return String(status.dropFirst(5)) }
+        if status.hasPrefix(notRun) { return String(status.dropFirst(notRun.count)) + "  (not run)" }
+        return nil
     }
 
-    /// A turn's progress: what the agent is doing and for how long.
-    public struct ActivityLine: View {
+    /// How a status line says a command was stopped before it ran.
+    public static let notRun = "Not run: "
+
+    /// A turn's progress: one line saying what the agent is doing, with no clock beside it, which changes in place
+    /// as it moves from one thing to the next. `since` is when the activity began, which a long think or build is
+    /// counted from (the turn's start when it isn't known). It starts open, with the steps done so far above it,
+    /// oldest first, and itself at the bottom saying what's going on now; a click folds them. The whole turn's time is
+    /// its "Worked for…": when the turn ends this line's place is taken by it (`Worked`), folded, which opens to the
+    /// same steps.
+    public struct ActivityLine<Steps: View>: View {
         let activity: String
         let started: Date
-        public init(_ activity: String, started: Date) {
+        let since: Date
+        let hasSteps: Bool
+        let steps: Steps
+        @State private var expanded = true
+        @State private var dim = false
+
+        public init(_ activity: String, started: Date, since: Date? = nil, hasSteps: Bool,
+                    @ViewBuilder steps: () -> Steps) {
             self.activity = activity
             self.started = started
+            self.since = since ?? started
+            self.hasSteps = hasSteps
+            self.steps = steps()
         }
 
         public var body: some View {
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.mini).frame(width: 16)
-                Text(activity).lineLimit(1)
-                Text("·")
-                Elapsed(from: started, to: nil)
+            VStack(alignment: .leading, spacing: 4) {
+                // What's done reads down in the order it happened, and the line saying what's going on now stays at the
+                // bottom, under all of it: a step that finishes joins the list above the line.
+                if expanded && hasSteps {
+                    VStack(alignment: .leading, spacing: 4) { steps }
+                        .transition(.opacity)
+                }
+                Button {
+                    guard hasSteps else { return }
+                    withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini).frame(width: 16)
+                        // It breathes while the agent works, so the line reads as live rather than stuck.
+                        ActivityText(activity, since: since)
+                            .opacity(dim ? 0.5 : 1)
+                            .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: dim)
+                        if hasSteps {
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                                .rotationEffect(.degrees(expanded ? -90 : 0))
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointingHand()
+                .font(ChatLook.stepFont)
+                .foregroundStyle(.secondary)
+                .padding(.leading, ChatLook.stepIndent)
+                .help(hasSteps ? (expanded ? "Hide the steps" : "Show the steps") : "")
+                .onAppear { dim = true }
             }
-            .font(.callout)
-            .foregroundStyle(.secondary)
         }
     }
 
-    /// The line that ends a turn ("Worked for 8s"), between rules.
+    /// The line that ends a turn ("Worked for 8s"), small and centred, the way Messages marks the time between
+    /// messages.
     public struct SummaryLine: View {
         let text: String
         public init(_ text: String) { self.text = text }
 
         public var body: some View {
-            HStack(spacing: 10) {
-                Rectangle().fill(.separator).frame(height: 1)
-                Text(text).font(.caption).foregroundStyle(.tertiary).fixedSize()
-                Rectangle().fill(.separator).frame(height: 1)
-            }
+            Text(text)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
         }
     }
 
@@ -160,14 +515,15 @@ public enum ChatLook {
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+            .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.leading, ChatLook.tailRoom)
         }
     }
 
     /// The message box as a row of controls with nothing behind them, in Lamp's window and beside an app alike: a round attach button,
-    /// the rounded field with the text (and what's attached above it), any other round buttons beside it (such
-    /// as dictation), and a round button that sends, with one that stops the turn beside it while one runs.
-    public struct MessageBar<Field: View, Above: View, Beside: View>: View {
+    /// the rounded field with the text (what's attached above it, and small buttons such as dictation at its end, so
+    /// the text keeps the width), and a round button that sends, or stops the turn while one runs.
+    public struct MessageBar<Field: View, Above: View, Inside: View>: View {
         let busy: Bool
         let canSend: Bool
         let attachHelp: String
@@ -179,12 +535,12 @@ public enum ChatLook {
         let focus: () -> Void
         let field: Field
         let above: Above
-        let beside: Beside
+        let inside: Inside
 
         public init(busy: Bool, canSend: Bool, attachHelp: String, attach: @escaping () -> Void, point: (() -> Void)? = nil,
                     send: @escaping () -> Void, stop: @escaping () -> Void, focus: @escaping () -> Void,
                     @ViewBuilder field: () -> Field,
-                    @ViewBuilder above: () -> Above = { EmptyView() }, @ViewBuilder beside: () -> Beside = { EmptyView() }) {
+                    @ViewBuilder above: () -> Above = { EmptyView() }, @ViewBuilder inside: () -> Inside = { EmptyView() }) {
             self.busy = busy
             self.canSend = canSend
             self.attachHelp = attachHelp
@@ -195,24 +551,31 @@ public enum ChatLook {
             self.focus = focus
             self.field = field()
             self.above = above()
-            self.beside = beside()
+            self.inside = inside()
         }
 
-        /// A one-line field is as tall as the round buttons, so the three line up.
+        /// How tall a one-line field is. The round buttons are a little smaller, level with its middle.
         public static var height: CGFloat { Composer.lineHeight + 2 * padding }
         static var padding: CGFloat { 6 }
+        public static var buttonSide: CGFloat { 30 }
+        /// Under each round button, so it sits level with a one-line field and stays at the bottom of a taller one.
+        static var buttonLift: CGFloat { (height - buttonSide) / 2 }
 
         public var body: some View {
             HStack(alignment: .bottom, spacing: 8) {
                 Button(action: plus) { Image(systemName: "plus") }
                     .buttonStyle(Round(prominent: false))
-                    .help(point == nil ? attachHelp : "Add files, or point at part of the app")
+                    .help(point == nil ? attachHelp : "Point at part of the app, or attach a file")
                     .accessibilityLabel(point == nil ? "Attach files" : "Add")
-                VStack(alignment: .leading, spacing: 6) {
-                    above
-                    field
+                    .padding(.bottom, Self.buttonLift)
+                HStack(alignment: .bottom, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        above
+                        field
+                    }
+                    inside
                 }
-                .padding(.vertical, Self.padding).padding(.leading, 10).padding(.trailing, 12)
+                .padding(.vertical, Self.padding).padding(.leading, 10).padding(.trailing, 8)
                 .frame(minHeight: Self.height)
                 // Pressing anywhere in the field, not only on the text, is for typing: the field's padding hands
                 // focus to the text. Behind the text and what's attached, so clicks on those stay theirs.
@@ -221,20 +584,22 @@ public enum ChatLook {
                         .onTapGesture(perform: focus)
                 }
                 .overlay(Self.fieldShape.strokeBorder(Color(nsColor: .separatorColor)))
-                beside
-                // Stop stays for as long as the turn runs, beside Send rather than in its place: someone writing the
-                // next change can still stop this one, and what they've written stays in the box.
+                // While a turn runs the round button stops it; Return still sends what's typed, which waits its turn,
+                // so the row needs no second button for that.
                 if busy {
                     Button(action: stop) { Image(systemName: "stop.fill") }
-                        .buttonStyle(Round(prominent: false))
-                        .help("Stop")
+                        .buttonStyle(Round(prominent: true))
+                        .help("Stop. Press Return to send what you've typed after this change.")
                         .accessibilityLabel("Stop")
+                        .padding(.bottom, Self.buttonLift)
+                } else {
+                    Button(action: send) { Image(systemName: "arrow.up") }
+                        .buttonStyle(Round(prominent: true))
+                        .disabled(!canSend)
+                        .help("Send")
+                        .accessibilityLabel("Send")
+                        .padding(.bottom, Self.buttonLift)
                 }
-                Button(action: send) { Image(systemName: "arrow.up") }
-                    .buttonStyle(Round(prominent: true))
-                    .disabled(!canSend)
-                    .help(busy ? "Queue this change. It's sent when the current one is done." : "Send")
-                    .accessibilityLabel("Send")
             }
         }
 
@@ -242,13 +607,13 @@ public enum ChatLook {
         /// buttons have.
         private func plus() {
             guard let point else { return attach() }
-            PlusMenu.show([("Add Files…", attach), ("Point at Something in the App", point)])
+            PlusMenu.show([("Point at the Screen", "scope", point), ("Attach a File…", "paperclip", attach)])
         }
 
         static var fieldShape: RoundedRectangle { RoundedRectangle(cornerRadius: height / 2, style: .continuous) }
     }
 
-    /// A round button beside the message box: the accent colour for Send, plain for the rest.
+    /// A round button beside the message box: the accent colour for Send and Stop, plain for the rest.
     public struct Round: ButtonStyle {
         let prominent: Bool
         @Environment(\.isEnabled) private var isEnabled
@@ -256,9 +621,9 @@ public enum ChatLook {
         public init(prominent: Bool) { self.prominent = prominent }
 
         public func makeBody(configuration: Configuration) -> some View {
-            let size = MessageBar<EmptyView, EmptyView, EmptyView>.height
+            let size = MessageBar<EmptyView, EmptyView, EmptyView>.buttonSide
             configuration.label
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(prominent ? (isEnabled ? AnyShapeStyle(.white) : AnyShapeStyle(.tertiary))
                                            : AnyShapeStyle(.secondary))
                 .frame(width: size, height: size)
@@ -272,6 +637,30 @@ public enum ChatLook {
                 }
                 .contentShape(Circle())
                 .opacity(configuration.isPressed ? 0.7 : 1)
+        }
+    }
+
+    /// Dictation, as a small button at the end of the message box: red and pulsing while it listens.
+    public struct MicButton: View {
+        let listening: Bool
+        let action: () -> Void
+        public init(listening: Bool, action: @escaping () -> Void) {
+            self.listening = listening
+            self.action = action
+        }
+
+        public var body: some View {
+            Button(action: action) {
+                Image(systemName: listening ? "mic.fill" : "mic")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(listening ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                    .symbolEffect(.pulse, isActive: listening)
+                    .frame(width: 22, height: Composer.lineHeight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(listening ? "Stop dictation" : "Dictate a change")
+            .accessibilityLabel(listening ? "Stop dictation" : "Dictate a change")
         }
     }
 
@@ -304,20 +693,22 @@ public enum ChatLook {
     }
 }
 
-/// A running clock, "0:42", that stops at `end`.
-public struct Elapsed: View {
-    let start: Date
-    let end: Date?
+extension View {
+    /// A card's buttons, on every card in both chats: the size Allow and Don't Allow are, never the small one. In
+    /// the wand's narrow panel a small button beside a card's words was too slight to find and hard to hit.
+    public func cardButtons() -> some View { controlSize(.large) }
 
-    public init(from start: Date, to end: Date?) {
-        self.start = start
-        self.end = end
-    }
+    /// The pointing hand over something that opens or closes when clicked (a line of steps, a command to show):
+    /// it says the line is a control, which text alone doesn't.
+    public func pointingHand() -> some View { modifier(PointingHand()) }
+}
 
-    public var body: some View {
-        TimelineView(.periodic(from: start, by: 1)) { context in
-            let seconds = max(0, Int((end ?? context.date).timeIntervalSince(start)))
-            Text(String(format: "%d:%02d", seconds / 60, seconds % 60)).monospacedDigit()
+private struct PointingHand: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content.pointerStyle(.link)
+        } else {
+            content.onHover { inside in inside ? NSCursor.pointingHand.push() : NSCursor.pop() }
         }
     }
 }
@@ -333,16 +724,25 @@ enum PlusMenu {
         @objc func run(_ item: NSMenuItem) { actions[item.tag]() }
     }
 
-    static func show(_ items: [(String, () -> Void)]) {
-        let target = Target(items.map(\.1))
+    /// Each item's title, its symbol and what it does.
+    static func show(_ items: [(String, String, () -> Void)]) {
+        let target = Target(items.map(\.2))
         let menu = NSMenu()
-        for (index, title) in items.map(\.0).enumerated() {
-            let item = NSMenuItem(title: title, action: #selector(Target.run(_:)), keyEquivalent: "")
+        for (index, entry) in items.enumerated() {
+            let item = NSMenuItem(title: entry.0, action: #selector(Target.run(_:)), keyEquivalent: "")
+            item.image = NSImage(systemSymbolName: entry.1, accessibilityDescription: nil)
             item.target = target
             item.tag = index
             menu.addItem(item)
         }
         // The target lives as long as the menu is up: popUp returns once it closes.
         withExtendedLifetime(target) { _ = menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil) }
+    }
+}
+
+extension ChatLook.ActivityLine where Steps == EmptyView {
+    /// The line with no steps to open: a turn that has done nothing yet, or a place that doesn't list them.
+    public init(_ activity: String, started: Date, since: Date? = nil) {
+        self.init(activity, started: started, since: since, hasSteps: false) { EmptyView() }
     }
 }

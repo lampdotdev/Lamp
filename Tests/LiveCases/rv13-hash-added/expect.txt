@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Key has a hash(into:) of its own, and the sets and dictionaries the open app keeps were laid out by the old hash)
+== run
+before: all 200 found
+RELOAD 1: REOPEN Key has a hash(into:) of its own, and the sets and dictionaries the open app keeps were laid out by the old hash
+after1 (the open set was laid out by the synthesized hash: want 200 found, or a reopen): all 200 found
+before: all 200 found
+RELOAD 1: in the restart
+after1 (the open set was laid out by the synthesized hash: want 200 found, or a reopen): all 200 found

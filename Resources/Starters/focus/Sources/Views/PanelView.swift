@@ -36,6 +36,7 @@ struct PanelView: View {
         HStack(spacing: 10) {
             TodayDots(done: timer.todaysSessions.count, every: timer.settings.longBreakEvery)
             Spacer()
+            LampPanelWand()
             Button {
                 LampMenuBar.openSettings()
             } label: {

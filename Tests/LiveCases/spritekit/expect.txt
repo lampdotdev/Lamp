@@ -1,0 +1,6 @@
+VERDICT 1: RELOAD
+== run
+before: tick-old update-old 1
+RELOAD 1: ok
+after (want NEW, score 102): tick-NEW update-NEW 101
+responds: true

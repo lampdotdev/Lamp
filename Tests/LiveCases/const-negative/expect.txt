@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Gave Limits.eps, Limits.floor, Limits.half their new value)
+== run
+before: -5 -0.25 1e-06
+RELOAD 1 (whole): ok
+after1 (want "-7 -0.5 1e-07"): -7 -0.5 1e-07

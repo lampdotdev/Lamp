@@ -6,7 +6,7 @@ import Foundation
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
     /// What this side reads and writes; see `SidebarCommand.hello`.
-    public static let version = 6
+    public static let version = 9
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -43,6 +43,11 @@ public struct SidebarState: Codable, Equatable {
     public var attachments: [SidebarAttachment]
     // Optional, like everything added since the first sidebar: a sidebar talking to a Lamp from before these
     // were sent still reads its chat.
+    /// When `working` began, for how its words change as the wait goes on (`Activity.words`).
+    public var workingActivitySince: Date?
+    /// The steps of the turn still going, which the line saying what it's doing opens to: they aren't lines of
+    /// their own while it goes on.
+    public var workingSteps: [SidebarLine]?
     /// Messages waiting for the current change to finish.
     public var queued: [SidebarQueued]?
     /// The first request is waiting for Apple's tools to install, not for a turn.
@@ -99,7 +104,7 @@ public struct SidebarState: Codable, Equatable {
 }
 
 public struct SidebarLine: Codable, Equatable, Identifiable {
-    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary, note, offer, action, tools }
+    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary, note, offer, action, tools, work }
     public var id: UUID
     public var kind: Kind
     public var text: String
@@ -107,6 +112,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var gap: Double
     /// A status step still going, with its spinner.
     public var running: Bool
+    /// For a command the agent ran: what it said the command was for, its name in the chat (`RanCommand`).
+    public var said: String?
     /// A request's pictures and files.
     public var attachments: [SidebarAttachment]?
     /// An agent's message that may still be growing.
@@ -121,6 +128,10 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     /// Goes up when the progress changed in Lamp's window, so the sidebar takes it up; its own edits come back
     /// with the same number and are left alone, so an echo of an older one never undoes a newer one.
     public var progressVersion: Int?
+    /// Answers clicked on it that wait in line (`AskWaiting`): the waiting message, to take back, and whether it
+    /// waits for setup.
+    public var takeBack: UUID?
+    public var waitingForSetup: Bool?
     /// What a request made as Lamp's window draws it.
     public var result: TalkCard.Result?
     /// A receipt for a save of Lamp's notes (its title is `text`): the lines added and removed, whether it was
@@ -137,6 +148,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var done: Bool?
     public var button: String?
     public var disabled: Bool?
+    /// An action line's button is the one thing to do next (Reload): drawn in the accent colour.
+    public var prominent: Bool?
     /// A request's buttons: going back to how the app was around it, and taking it back to change it.
     public var canGoBack: Bool?
     public var canSendAgain: Bool?
@@ -145,6 +158,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var pointed: SidebarPointed?
     /// The agent's steps, shown with Agent Details on (`tools`): what `text` sums up, one by one.
     public var calls: [SidebarToolCall]?
+    /// A finished turn's steps (`work`, its line "Worked for 2 min 3 s" is `text`): status lines and runs of tool calls.
+    public var steps: [SidebarLine]?
 
     public init(id: UUID, kind: Kind, text: String, gap: Double = 0, running: Bool = false, attachments: [SidebarAttachment]? = nil,
                 growing: Bool = false, questions: [SidebarQuestion]? = nil) {
@@ -294,12 +309,19 @@ public struct SidebarApproval: Codable, Equatable {
     public var title: String
     public var command: String
     public var explanation: ChatLook.Explanation?
+    /// What the person asked for in this turn, to weigh the step against.
+    public var request: String?
+    /// Why Lamp is asking, in plain words.
+    public var whyAsked: String?
 
-    public init(id: UUID, title: String, command: String, explanation: ChatLook.Explanation?) {
+    public init(id: UUID, title: String, command: String, explanation: ChatLook.Explanation?, request: String? = nil,
+                whyAsked: String? = nil) {
         self.id = id
         self.title = title
         self.command = command
         self.explanation = explanation
+        self.request = request
+        self.whyAsked = whyAsked
     }
 }
 
@@ -382,6 +404,8 @@ public enum SidebarCommand: Codable, Equatable {
     case approve(UUID, allow: Bool, allowAll: Bool)
     case forceQuit
     // The toolbar's, as in Lamp's window.
+    /// Lamp's icon at the start of the bar: Lamp in front, on its desk.
+    case showLamp
     /// Undo Last Change: back to the version before this one.
     case undo
     /// Delete the wish, which the sidebar has already confirmed.
@@ -471,6 +495,19 @@ public final class SidebarOutbox {
 /// can say to it, and nothing that reaches Lamp. LampSupport.swift declares the same.
 @objc(LampSidebarPlacement) public protocol SidebarPlacement {
     func place(x: Double, y: Double)
+}
+
+/// What the sidebar asks of the app hosting it, over the same connection: the two things about its own panel that only
+/// the app can do, since the panel is the app's window. The chat's bar is drawn here, with its close button and the
+/// room to drag the chat by, and the app closes or moves the panel when asked. Nothing about the wish goes this way.
+/// LampSupport.swift declares the same.
+@objc(LampSidebarHost) public protocol SidebarHost {
+    /// Close the chat, as the wand does when it's open. `request` is the same on every connection a request is sent
+    /// over, so the app chooses its chat once for all of them.
+    func closeChat(request: String)
+    /// The person pressed on the bar and started dragging: the app moves the panel with the pointer until the button
+    /// is let go.
+    func startMove(request: String)
 }
 
 /// Something the person needs to know before a thing can work, as an alert: its title, what to do, and the

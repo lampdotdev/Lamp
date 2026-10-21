@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD (Added A.score, B.score)
+VERDICT 2: RELOAD
+== run
+before: aEqual=true bEqual=true bScore=-1
+RELOAD 1 (whole): ok
+after1 (want aEqual=false bEqual=false bScore=9): aEqual=false bEqual=false bScore=9
+RELOAD 2 (whole): ok
+after2 (want aEqual=true bEqual=false bScore=9): aEqual=true bEqual=false bScore=9

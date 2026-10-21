@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Item.total)
+== run
+before: 2
+RELOAD 1: ok
+after1 (want 7 then 9): 7 9

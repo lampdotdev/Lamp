@@ -76,28 +76,11 @@ struct Bottle: Codable, Identifiable, Equatable {
     var stars: Int? = nil
     /// Whether the app has already looked for a real label photo for it.
     var labelTried: Bool? = nil
-    /// The hand-drawn version of its label that stands on the shelf.
-    var artName: String? = nil
-    var artTried: Bool? = nil
-    /// Which version of the drawing style its picture was made in.
-    var artStyle: Int? = nil
 
     var score: Int? { stars ?? rating.map { min(10, $0 * 2) } }
     /// How hot, 1–10 peppers.
     var intensity: Int { max(1, min(10, Int(heat.rounded()))) }
     var hasPhoto: Bool { imageName.map { !$0.hasPrefix("style:") } ?? false }
-}
-
-struct Gap: Codable, Identifiable, Equatable {
-    var family: String
-    var line: String
-    var id: String { family }
-}
-
-struct TasteMap: Codable, Equatable {
-    var summary: String = ""
-    var gaps: [Gap] = []
-    var signature: String = ""
 }
 
 struct Pick: Equatable {
@@ -138,13 +121,10 @@ final class Shelf: ObservableObject {
     static let shared = Shelf()
 
     @Published private(set) var bottles: [Bottle] = []
-    @Published var taste = TasteMap()
     @Published var pick: Pick?
     @Published var picking = false
     @Published var pickError: String?
-    @Published var mapping = false
     @Published var showAdd = false
-    @Published var showMap = false
     @Published var lifted: String?
     /// The bottle whose card is open over the shelf, if any.
     @Published var openID: String?
@@ -161,7 +141,6 @@ final class Shelf: ObservableObject {
     }
 
     private let store = LampStore.collection("bottles", of: Bottle.self)
-    private var mapTask: Task<Void, Never>?
 
     init() {
         bottles = store.all(orderBy: "addedAt")
@@ -171,9 +150,7 @@ final class Shelf: ObservableObject {
             bottles[i].tag = "bright & clean"
             store.put(bottles[i])
         }
-        taste = LampStore.load(TasteMap.self, from: "taste") ?? TasteMap()
         Nudges.reschedule(bottles)
-        refreshTasteMapSoon()
     }
 
     /// A starter shelf, once, the first time it's empty.
@@ -183,10 +160,6 @@ final class Shelf: ObservableObject {
         let starters = Seed.bottles()
         store.put(starters)
         bottles = starters
-        // Its taste map comes with it, marked as made for this shelf, so the AI isn't asked until it changes.
-        taste = Seed.tasteMap
-        taste.signature = signature
-        LampStore.save(taste, to: "taste")
         changed()
     }
 
@@ -233,7 +206,6 @@ final class Shelf: ObservableObject {
 
     func delete(_ id: String) {
         if let name = bottle(id)?.imageName { BottleImages.remove(name) }
-        if let art = bottle(id)?.artName { BottleImages.remove(art) }
         bottles.removeAll { $0.id == id }
         store.delete(id)
         if pick?.bottleID == id { pick = nil; lifted = nil }
@@ -242,9 +214,6 @@ final class Shelf: ObservableObject {
 
     private func changed() {
         Nudges.reschedule(bottles)
-        refreshTasteMapSoon()
-        // Later, so this never runs while the shelf itself is still starting up.
-        DispatchQueue.main.async { Illustrator.shared.illustrateMissing() }
     }
 
     // MARK: Learning
@@ -321,55 +290,5 @@ final class Shelf: ObservableObject {
             pick = nil
         }
         skipped = []
-    }
-
-    // MARK: Taste map
-
-    /// By id, so the same shelf gives the same signature however its bottles were loaded.
-    private var signature: String {
-        bottles.sorted { $0.id < $1.id }.map { "\($0.id)\($0.score ?? 0)\($0.intensity)\($0.family)\($0.isRetired)\($0.verdict ?? "")" }.joined() + profile
-    }
-
-    func refreshTasteMapSoon(force: Bool = false) {
-        guard force || taste.signature != signature else { return }
-        mapTask?.cancel()
-        mapTask = Task {
-            if !force { try? await Task.sleep(for: .seconds(2)) }
-            guard !Task.isCancelled else { return }
-            await refreshTasteMap()
-        }
-    }
-
-    func refreshTasteMap() async {
-        let sig = signature
-        guard !bottles.isEmpty else {
-            taste = TasteMap(summary: "", gaps: [], signature: sig)
-            LampStore.save(taste, to: "taste")
-            return
-        }
-        mapping = true
-        defer { mapping = false }
-        struct Answer: Decodable { let summary: String; let gaps: [Gap] }
-        let families = FlavorFamily.allCases.map { "\($0.rawValue): \($0.meaning)" }.joined(separator: "\n")
-        do {
-            let data = try JSONSerialization.data(withJSONObject: bottles.map(summary), options: [.prettyPrinted])
-            let answer = try await LampAI.ask(
-                "Here is my hot sauce shelf (in the data), with my star ratings (out of 10), intensity in peppers (out of 10) and verdicts on bottles I finished. " +
-                "Build my taste map: what I actually love, and the gaps on my shelf worth filling given my taste. " +
-                "Flavor families:\n\(families)\n" +
-                "Give 1 to 3 gaps, each a family key from the list where my shelf is thin or empty but I'd likely enjoy it. " +
-                "Never suggest a family I dislike. Each gap line is a short handwritten-tag phrase, lowercase, 2 to 5 words, " +
-                "like \"nothing smoky\" or \"no fermented ones\". " +
-                "The summary is two warm, cheeky sentences about my taste, max 40 words. " +
-                #"Reply as JSON: {"summary": "...", "gaps": [{"family": "<key>", "line": "..."}]}"#,
-                data: String(decoding: data, as: UTF8.self),
-                system: "You know this person's kitchen. Their taste: \(profile)",
-                as: Answer.self)
-            let gaps = answer.gaps.filter { FlavorFamily(rawValue: $0.family) != nil }
-            taste = TasteMap(summary: answer.summary, gaps: Array(gaps.prefix(3)), signature: sig)
-            LampStore.save(taste, to: "taste")
-        } catch {
-            print("Taste map failed: \(error.localizedDescription)")
-        }
     }
 }

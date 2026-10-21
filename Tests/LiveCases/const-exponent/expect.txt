@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Gave K.eps its new value)
+== run
+before: 1e-06
+RELOAD 1 (whole): ok
+after1 (want 1e-07): 1e-07

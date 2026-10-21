@@ -5,6 +5,69 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.16.0
+
+- A new app opens beside its chat as soon as it's started and takes shape there in passes, the layout first, so
+  you watch it being built instead of waiting for the end.
+- While a change is built, the open app glows softly at its edges, and a band of light crosses it as the change
+  goes in. Changes go in faster, and an app that has to restart comes back sooner.
+- Lamp asks before restarting an app you have open: a Reload button in its title bar and in the chat puts the
+  change in when you're ready.
+- The agent describes each step in its own words, and tells you what you can see now rather than what it wrote.
+- Drag wishes on the desk into any order, or onto the trash to delete them. A wish being built glows and says
+  what it's doing under its name.
+- Hot Shelf is a lit studio shelf of real bottles. A starter's suggested changes now show the first time you
+  open it, even after an update.
+- Approving the agent's commands takes about half the time, and the approval card puts the decision first.
+- More changes go into an open app without restarting it, and the ones that can't say why in plainer words.
+
+## 0.15.1
+
+- A new case added to an enum goes into the open app more reliably: everything that reads the enum, including
+  printing and saving, sees the new case, lists built from it are built again, and a change that code still
+  running couldn't take reopens the app with a sentence saying why.
+- More from Lamp's list can be read on a Mac in dark mode, and the wand's flame shows on its blue glass.
+
+## 0.15.0
+
+- Far more changes go into an open app without restarting it: a new method, computed property or stored
+  property, a new case in an enum, a new default for an argument, a changed constant, a changed typealias, and
+  what an extension adds from Objective-C. When a change can't go in that way, the chat says why in a sentence
+  and the app shows a Reload button where it was, which puts the change in when you're ready; Undo, a restore and
+  Rebuild & Open wait for it the same way.
+- Before a change goes into an app, Lamp keeps a copy of the app's data from just before it, so a change that
+  spoils what the app saved can be put right.
+- Every app Lamp builds is drawn with Liquid Glass on macOS Tahoe, and the Reload button is glass too.
+- The chat draws the agent's tables, headings, lists, code blocks and quotes, and its text can be selected.
+- While the agent works, its steps are one line that says what it's doing now and opens to the rest, in Lamp's
+  window and beside the app; what it writes on the way stays as a message. A build that runs long says so, and
+  the agent names each command in its own words.
+- Approvals ask only for what reaches beyond the app: a command that works on the app itself, its files, builds
+  and tests, runs without a card.
+
+## 0.14.0
+
+- Change an app while you use it: the wand in its title bar opens its chat beside the window, and most changes
+  go into the open app without it restarting, so what you were looking at stays put.
+- Point at part of an app, a button or a spot in a game, and it goes into your message as a picture.
+- Lamp opens on your wishes, and starts from what would make your day easier or more fun rather than from an
+  app. A vague wish gets a good first attempt instead of a round of questions.
+- No more choosing Mac or iPhone: Lamp works out where a wish belongs. An app can be for the Mac and the iPhone
+  at once, with iCloud keeping its data the same on every device.
+- iPhone apps can have home screen widgets, Live Activities and an Apple Watch app with complications, and keep
+  working while they're closed.
+- Mac widgets' buttons work. Apps' actions show up in Siri, Shortcuts and Spotlight, apps can take things in
+  from the Share menu, and every Mac app has File ▸ Share….
+- New building blocks: Apple Health, Photos, location, weather, music, the home, 3D scenes and maps. Apps
+  connect to Notion, Linear, Todoist, Jira, monday.com, Home Assistant and more, signing in through the
+  service itself.
+- Send Now hands waiting messages to the agent while it works, and Undo Last Change sits under the latest
+  change.
+- Safer builds: they run in the app's own sandbox, and the agent's commands can't change your Applications
+  folder, Homebrew or Xcode.
+- A rebuild waits while an app asks about unsaved work, and leaves it open if you say so. Rebuilding no longer
+  asks for your keychain password, and deleting an app takes its data to the Trash too.
+
 ## 0.13.0
 
 - Building with your Claude or ChatGPT subscription no longer needs their apps or a command-line install:

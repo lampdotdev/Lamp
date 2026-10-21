@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (the starting value of retries changed, and the open app made it once and keeps it)
+== run
+before: limit=3 name=a retries=2
+RELOAD 1: REOPEN the starting value of retries changed, and the open app made it once and keeps it
+after1 (the agent wrote 5): limit=3 name=a retries=2
+before: limit=5 name=b retries=4
+RELOAD 1: in the restart
+after1 (the agent wrote 5): limit=5 name=b retries=4
