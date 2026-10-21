@@ -981,8 +981,8 @@ struct ComputerUseSettings: View {
     }
 }
 
-/// What's on this Mac (Native Mac AI, and the Claude Code and Codex sign-ins), then OpenRouter, each with its
-/// state. Double-click one to see its models, sign in, or change its key.
+/// Claude, ChatGPT, OpenRouter and Native Mac AI in one list, each with its state. Double-click one to see its
+/// models, sign in, or change its key.
 struct ProvidersSettings: View {
     @EnvironmentObject private var store: Store
     @ObservedObject private var local = LocalModels.shared
@@ -994,10 +994,10 @@ struct ProvidersSettings: View {
     @State private var signedIn: [Engine: Bool?] = [:]
     @ObservedObject private var downloads = EngineDownloads.shared
 
-    /// On this Mac: Native Mac AI and the coding agents, downloaded or not: this is where Building's Configure
-    /// providers… leads, so each is listed with its sign-in.
-    private var onThisMac: [String] {
-        [Builder.localProvider] + [Engine.claude, .codex].map { "engine:\($0.rawValue)" }
+    /// Every provider, in the welcome's order: the sign-ins (downloaded or not, since this is where Building's
+    /// Configure providers… leads), the key, then the models on this Mac.
+    private var providers: [String] {
+        [Engine.claude, .codex].map { "engine:\($0.rawValue)" } + Provider.keyProviders.map(\.id) + [Builder.localProvider]
     }
 
     /// One row: logo, name and state. What each is used for is chosen, and shown, in Building and Apps.
@@ -1036,11 +1036,8 @@ struct ProvidersSettings: View {
     var body: some View {
         Form {
             Section {
-                list(onThisMac)
-            } header: { Text("On this Mac") }
-            Section {
-                list(Provider.keyProviders.map(\.id))
-            } header: { Text("Cloud") }
+                list(providers)
+            }
         }
         .settingsPane()
         .sheet(item: $showing) { detail in
