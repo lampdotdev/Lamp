@@ -39,3 +39,22 @@ final class PauseAtReloadTests: XCTestCase {
         XCTAssertEqual(Talk.drawnWaiting([carryOn, typed], in: []).map(\.id), [typed.id])
     }
 }
+
+extension PauseAtReloadTests {
+    /// The paused queue outlives a Lamp relaunch, as the held build it waits for does: Lamp's own request keeps its
+    /// flags through the saved form, and a queue with one in it is kept even once setup is done, while an ordinary
+    /// queue is kept only while setup isn't.
+    func testThePausedQueueIsKeptAcrossARelaunch() {
+        let carryOn = QueuedMessage(text: Agent.afterReload, byLamp: true, afterReload: true)
+        let typed = QueuedMessage(text: "Make the shelves darker")
+        let back = QueuedMessage(saved: carryOn.saved, attachments: [])
+        XCTAssertTrue(back.afterReload)
+        XCTAssertTrue(back.byLamp)
+        XCTAssertEqual(back.text, Agent.afterReload)
+        XCTAssertFalse(QueuedMessage(saved: typed.saved, attachments: []).afterReload)
+        XCTAssertTrue(Store.keptAcrossRelaunch([carryOn, typed], setupReady: true))
+        XCTAssertFalse(Store.keptAcrossRelaunch([typed], setupReady: true))
+        XCTAssertTrue(Store.keptAcrossRelaunch([typed], setupReady: false))
+        XCTAssertFalse(Store.keptAcrossRelaunch([], setupReady: false))
+    }
+}

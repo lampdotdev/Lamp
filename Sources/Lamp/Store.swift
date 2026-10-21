@@ -317,6 +317,8 @@ extension QueuedMessage {
     var saved: [String: Any] {
         var saved: [String: Any] = ["text": text, "attachments": attachments.map(\.path)]
         if let card { saved["card"] = card.uuidString }
+        if byLamp { saved["byLamp"] = true }
+        if afterReload { saved["afterReload"] = true }
         return saved
     }
 
@@ -324,7 +326,8 @@ extension QueuedMessage {
     /// still waiting from then can be taken back and its card opens again.
     init(saved: [String: Any], attachments: [URL]) {
         self.init(text: saved["text"] as? String ?? "", attachments: attachments,
-                  card: ((saved["card"] ?? saved["ask"]) as? String).flatMap(UUID.init(uuidString:)))
+                  card: ((saved["card"] ?? saved["ask"]) as? String).flatMap(UUID.init(uuidString:)),
+                  byLamp: saved["byLamp"] as? Bool ?? false, afterReload: saved["afterReload"] as? Bool ?? false)
     }
 }
 
@@ -2166,7 +2169,7 @@ final class Store: ObservableObject {
     }
 
     private func saveWaiting() {
-        let waiting = setup.ready ? [:] : queued.filter { !$0.value.isEmpty }.mapValues { messages in
+        let waiting = queued.filter { Self.keptAcrossRelaunch($0.value, setupReady: setup.ready) }.mapValues { messages in
             messages.map(\.saved)
         }
         if waiting.isEmpty {
@@ -2176,8 +2179,15 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Brings back requests that were waiting for setup when Lamp last quit. Kept files no waiting request
-    /// needs any more (its build has started, or it was taken back) are cleared out.
+    /// Which waiting messages are kept across a relaunch: every queue while setup isn't done, and a queue paused for
+    /// Reload (`pause`), whose held build outlives Lamp too, so the request carries on after the Reload whenever it
+    /// comes and nothing typed behind it is lost.
+    static func keptAcrossRelaunch(_ messages: [QueuedMessage], setupReady: Bool) -> Bool {
+        !messages.isEmpty && (!setupReady || messages.contains(where: \.afterReload))
+    }
+
+    /// Brings back requests that were waiting for setup, or for Reload, when Lamp last quit. Kept files no waiting
+    /// request needs any more (its build has started, or it was taken back) are cleared out.
     private func restoreWaiting() {
         var kept = Set<String>()
         if let waiting = UserDefaults.standard.dictionary(forKey: Self.waitingKey) as? [String: [[String: Any]]] {
@@ -2282,6 +2292,7 @@ final class Store: ObservableObject {
               Self.startsNow(messages, changeHeld: Runtime.holdsBuild(project)),
               let owner = begin(project) else { return }
         queued[project.id] = nil
+        saveWaiting()
         // The request Lamp paused goes on: the chat says why the agent is back at work, since its own request is
         // hidden, as a crash fix's is (`byLamp`).
         if messages.first?.afterReload == true { log(project, .status, ChatLook.carryingOn) }
@@ -2654,9 +2665,14 @@ final class Store: ObservableObject {
         try? await writeOwnFiles(project, all: false)
         let changed = Runtime.sourcesChanged(project)
         if changed, owner.paused {
-            // A file written in the moment before Lamp ended the agent: built once, with no run of the agent to fix
-            // it (nothing it did could be seen), and what fails to build is its own to fix when it carries on.
-            _ = await build(project)
+            // A file written in the moment before Lamp ended the agent: built once, with no run of the agent to fix it
+            // (nothing it did could be seen). One that doesn't build is neither saved nor installed, as after any
+            // build that fails, and its errors go to the agent with the request that carries on after Reload.
+            if let errors = await build(project) {
+                carry(errors, into: project)
+                log(project, .error, ErrorMessages.buildFailed)
+                return TurnResult(end: .failed, watched: isWatching(project.id))
+            }
         } else if changed {
             guard await buildFixingErrors(project) else {
                 return TurnResult(end: owner.asked ? .replied : .failed, watched: isWatching(project.id))
@@ -3211,8 +3227,28 @@ final class Store: ObservableObject {
         turn.paused = true
         if !(queued[project.id] ?? []).contains(where: \.afterReload) {
             queued[project.id, default: []].insert(QueuedMessage(text: Agent.afterReload, byLamp: true, afterReload: true), at: 0)
+            saveWaiting()
         }
         return (status, [status == 200 ? "text" : "error": text])
+    }
+
+    /// The request paused for Reload is over: the person went another way (Undo, an earlier version, the request sent
+    /// again in other words), and carrying it on would do work on a change they just backed out of.
+    private func dropPausedRequest(_ project: LampProject) {
+        guard queued[project.id]?.contains(where: \.afterReload) == true else { return }
+        queued[project.id]?.removeAll(where: \.afterReload)
+        if queued[project.id]?.isEmpty == true { queued[project.id] = nil }
+        saveWaiting()
+    }
+
+    /// A file the agent wrote after the pause didn't build: its errors go with the request that carries on after
+    /// Reload, in place of "carry on", since nothing of it was saved or installed.
+    private func carry(_ errors: String, into project: LampProject) {
+        guard let index = queued[project.id]?.firstIndex(where: \.afterReload) else { return }
+        let text = Agent.afterReload + "\n\nA file you changed after your last look didn't build, so it wasn't saved or " +
+            "installed: the app has the change from that look, not this one. Fix these compiler errors first:\n\n" + errors
+        queued[project.id]?[index] = QueuedMessage(text: text, byLamp: true, afterReload: true)
+        saveWaiting()
     }
 
     /// Whether the waiting messages wait for the person's Reload (`pause`): the chats say so under them.
@@ -4590,8 +4626,7 @@ final class Store: ObservableObject {
     func undo(_ project: LampProject, change: String? = nil) async {
         guard begin(project) != nil else { return }
         defer { finish(project) }
-        // A request paused for Reload isn't carried on over its own Undo: the person's next message says what's next.
-        queued[project.id]?.removeAll(where: \.afterReload)
+        dropPausedRequest(project)
         let versions = await Versions.list(project)
         let unsaved = await Versions.hasUnsavedChanges(project)
         if let change, unsaved || versions.first?.id != change || Versions.undoTarget(in: versions)?.undoing.id != change {
@@ -4622,6 +4657,7 @@ final class Store: ObservableObject {
     func restore(_ project: LampProject, to version: AppVersion) async {
         guard begin(project) != nil else { return }
         defer { finish(project) }
+        dropPausedRequest(project)
         guard await Versions.restore(project, to: version, message: Versions.restoredMessage(to: version)) else {
             log(project, .status, "The app is already like “\(version.label)”")
             return
@@ -4650,6 +4686,7 @@ final class Store: ObservableObject {
     func sendAgain(_ line: LogLine, as text: String, attachments: [URL], pointed: PointedAt? = nil, in project: LampProject) async -> Bool {
         guard busy.insert(project.id).inserted else { return false }
         defer { finish(project) }   // which starts the turn queued below
+        dropPausedRequest(project)
         let versions = await Versions.list(project)
         // Requests from before Lamp noted where they were sent from: the version one made follows that point.
         let start = line.before ?? line.version.flatMap { id in versions.first { $0.id == id }?.parent }

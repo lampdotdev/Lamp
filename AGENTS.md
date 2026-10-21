@@ -996,7 +996,11 @@ and end, the turn is over whatever it does next (an agent that calls another too
 `ask`, Codex by its own interrupt so its conversation keeps the look's answer), and Lamp's own request to carry on
 (`Agent.afterReload`, a `QueuedMessage` marked `afterReload`, hidden in the chat as a crash fix's request is, with
 `ChatLook.carryingOn` above it) waits in line until the held change is in (`Store.startsNow`): the person's Reload,
-or the app closing, puts it in and the agent goes on in the same conversation on every engine; Undo drops it. Only
+or the app closing, puts it in and the agent goes on in the same conversation on every engine. The paused queue is
+kept across a relaunch like one waiting for setup (`Store.keptAcrossRelaunch`, `QueuedMessage.saved` with its flags),
+since the held build outlives Lamp too; Undo, an earlier version and a request sent again drop it
+(`Store.dropPausedRequest`). A file the agent wrote in the moment before Lamp ended it that doesn't build is neither
+saved nor installed, as after any build that fails, and its errors ride with the carry-on request (`Store.carry`). Only
 the Reload button reloads the app: a message typed meanwhile waits in the same line (the chats say "Sent once you
 press Reload" under it, `ChatLook.waitingForReload`), since the chat is beside the app and a reopen takes the chat
 down with it, and nothing the agent did meanwhile could be seen. So the note asks for the changes that go in live
