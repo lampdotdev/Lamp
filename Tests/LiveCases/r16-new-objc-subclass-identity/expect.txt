@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Boss is a new class under Node, which the open app's objects and method tables can't take in place)
+== run
+before: enemy kind=true size=1
+RELOAD 1: REOPEN Boss is a new class under Node, which the open app's objects and method tables can't take in place
+after1 (want boss kind=true size=1: a node subclass written beside its superclass is one of its, to Swift and to Objective-C): enemy kind=true size=1
+before: boss kind=true size=1
+RELOAD 1: in the restart
+after1 (want boss kind=true size=1: a node subclass written beside its superclass is one of its, to Swift and to Objective-C): boss kind=true size=1

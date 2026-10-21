@@ -251,7 +251,7 @@ final class LiveCasesTests: XCTestCase {
         let live = try XCTUnwrap(text.range(of: "    @MainActor @Observable final class LampLive {"))
         let end = try XCTUnwrap(text.range(of: "\n    }\n", range: live.upperBound..<text.endIndex))
         let install = "enum LampInstall { static let token = \"x\", note = \"t\" }\n"
-        return "import Foundation\nimport CryptoKit\nimport MachO\nimport Observation\nimport SwiftUI\n" + install + text[start.lowerBound..<end.upperBound]
+        return "import Combine\nimport Foundation\nimport CryptoKit\nimport MachO\nimport Observation\nimport SwiftUI\n" + install + text[start.lowerBound..<end.upperBound]
             .replacingOccurrences(of: "LampInstall.app + \"/.lamp/live/\"", with: "\"\(project.dir.path)/.lamp/live/\"")
             .replacingOccurrences(of: "LampRuntime.folder.appendingPathComponent(\"reloaded.txt\")", with: "URL(fileURLWithPath: \"\(Runtime.macFolder(project).path)/reloaded.txt\")")
             .replacingOccurrences(of: "private func load(", with: "func load(")

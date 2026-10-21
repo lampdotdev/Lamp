@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Model.lastWidth)
+== run
+before: a sent=0
+RELOAD 1 (whole): ok
+after1 (want sent=0: a property without @Published announces nothing, as it would stored): a 320.0 sent=0

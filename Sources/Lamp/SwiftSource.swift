@@ -475,8 +475,12 @@ enum SwiftSource {
         }
         // A type's own stored properties' starting values and its cases with their raw values: what an initializer
         // the compiler wrote, one that leaves them as they start, and a case (or its `rawValue`) are made of.
-        func members(of type: (start: Position, last: Position)) -> [String] {
-            (declarations.bindings.map { ($0.start, $0.last) } + declarations.cases).filter { within($0.start, type) }.compactMap { text($0) }
+        // Its own: not a local in one of its functions (the bodies are a binding's too, which a member is in).
+        let bindingStarts = Set(declarations.bindings.map { "\($0.start.file):\($0.start.line):\($0.start.column)" })
+        func members(of type: (start: Position, last: Position)) -> [(start: Position, last: Position)] {
+            let inside = declarations.bodies.filter { within($0.start, type) && !bindingStarts.contains("\($0.start.file):\($0.start.line):\($0.start.column)") }
+            return (declarations.bindings.map { ($0.start, $0.last) } + declarations.cases)
+                .filter { member in within(member.start, type) && !inside.contains { within(member.start, $0) } }
         }
         let initializer = try! NSRegularExpression(pattern: #"^\s*(?:@\w+\s+|\w+\s+)*init\b"#)
         while let r = pending.popLast() {
@@ -489,7 +493,11 @@ enum SwiftSource {
                 if followMembers, inner == nil || bodyText.map({ initializer.firstMatch(in: $0, range: NSRange($0.startIndex..., in: $0)) != nil }) == true,
                    let type = declarations.types.filter({ within(call.to, $0.value) }).min(by: { before($1.value.start, $0.value.start) }),
                    typesSeen.insert(type.key).inserted {
-                    parts.append(contentsOf: members(of: type.value))
+                    // And what each member's starting value calls, as far down as that goes (`var audio = Audio()`).
+                    for member in members(of: type.value) {
+                        if let made = text(member) { parts.append(made) }
+                        pending.append(member)
+                    }
                 }
                 // The innermost declaration holding the place it names.
                 guard let index = declarations.bodies.indices.filter({ within(call.to, declarations.bodies[$0]) })

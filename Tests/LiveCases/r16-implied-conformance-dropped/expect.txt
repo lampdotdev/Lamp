@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: shown x equatable=true
+RELOAD 1 (whole): ok
+after1 (want SHOWN x equatable=true: Tag still conforms to Equatable through Hashable, so this can go in): SHOWN x equatable=true

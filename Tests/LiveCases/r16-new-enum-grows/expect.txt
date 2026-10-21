@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD
+VERDICT 2: RELOAD
+== run
+before: none
+RELOAD 1 (whole): ok
+after1 (want done): done
+RELOAD 2 (whole): ok
+after2 (want done: a value made before the enum grew is still a Filter): done fresh: done

@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Board.columnCount's new value can't be made where the open app reads it)
+== run
+before: columns=3
+RELOAD 1: REOPEN Board.columnCount's new value can't be made where the open app reads it
+after1 (want 4 columns in place, or a reopen with a plain reason): columns=3
+before: columns=4
+RELOAD 1: in the restart
+after1 (want 4 columns in place, or a reopen with a plain reason): columns=4

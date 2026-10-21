@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Gave Layout.columns its new value)
+== run
+before: columns=3
+RELOAD 1 (whole): ok
+after1 (want 4 columns in place: GridItem is a plain value, holding no object): columns=4
