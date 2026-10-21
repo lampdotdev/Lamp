@@ -1,24 +1,28 @@
 Kind: dashboard
-Look: Naples and a family wedding. The terracotta tint and washes (`Color.terracotta`), the warm, slightly funny
-tone, Marco's mother as the one the AI plays, the toast, and the champagne glasses icon. Another place or occasion
-gets colours and words of its own.
+Look: an Italian wedding's stationery. Cream paper, maiolica-blue ink, hand-drawn lemons washed in yellow, a
+script for the words a card would write by hand ("save the date", "a tavola", "il brindisi"), all in `Look.swift`;
+the warm, slightly funny tone, Marco's mother as the one the AI plays, the toast, and the champagne glasses icon.
+Another place or occasion gets colours, drawings and words of its own.
 
 # Wedding Words
 
 An Italian coach for one occasion: the person's sister is marrying Marco, whose family is from Naples, and they
 have to hold a conversation with Marco's mother at the rehearsal dinner and give a toast in Italian. Everything is
-rehearsal, not lessons, and the tone is warm and a bit funny. A sidebar with three pages:
+rehearsal, not lessons, and the tone is warm and a bit funny. It looks like the wedding's invitations: each page is
+cream paper with cards on it, a lemon branch in ink beside its heading. A sidebar with three pages:
 
-- **The wedding**: the countdown in days, four "Can I do it yet?" milestones (introduce myself to Marco's mother,
-  small talk at the table, politely survive a third plate, deliver the toast), each with how often it was
-  rehearsed and the coach's confidence, and today's phrase with Hear It and a button to practice the weakest
-  milestone.
+- **The wedding**: the countdown in days on a save-the-date card under a lemon branch, four "Can I do it yet?"
+  milestones (introduce myself to Marco's mother, small talk at the table, politely survive a third plate, deliver
+  the toast), each with how often it was rehearsed and the coach's confidence as five lemons, and today's phrase
+  beside a maiolica tile, with Hear It and a button to practice the weakest milestone.
 - **At the table**: spoken roleplay. The AI plays Marco's mother in Italian, one short turn at a time, adapting to
   the milestone and the person's score; the person answers by speaking (Italian speech recognition) or typing,
-  and gets one gentle correction in English. Her lines are spoken aloud; the reply box appears once she's done
-  (Skip Audio stops her). Show English shows the translation.
+  and gets one gentle correction in English. Before the first line a painted plate sits on the table. Her lines are
+  set in italic on cards, the person's on a wash at the right. Hers are spoken aloud; the reply box appears once
+  she's done (Skip Audio stops her). Show English shows the translation.
 - **My toast**: a rough English draft and a few stories become short Italian lines with a pronunciation guide
-  (AI), rehearsed one line at a time or as a full run-through, each attempt coached. Rebuilding rewrites the toast
+  (AI), rehearsed one line at a time on a card or as a full run-through set like the card it will be read from,
+  each attempt coached. Rebuilding rewrites the toast
   for the person's Italian now.
 
 Settings: the wedding date (three months after the first launch to begin with), the sister's and the mother's
@@ -30,8 +34,10 @@ model not to claim it heard an accent.
 ## Code
 
 - `App.swift`: the window and the Settings scene; one `WeddingCoach` shared by both.
-- `ContentView.swift`: the sidebar, the home page (countdown, milestones, today's phrase) and the `terracotta`
-  colour.
+- `ContentView.swift`: the sidebar and the home page (countdown, milestones, today's phrase).
+- `Look.swift`: the colours (`Look.paper`, `card`, `ink`, `lemon`, `wash`, each with a dark version), the script
+  and serif type, `Engraved` capitals, `invitationCard`, `PageHeading`, and the drawings, made in code:
+  `LemonBranch`, `LemonMark` and `LemonScore`, `MaiolicaTile`, `MaiolicaPlate`, `LemonRule`.
 - `Coach.swift`: `WeddingState` (everything kept), `WeddingCoach` (milestones, scores, the weakest one, the daily
   phrase, notifications) and `CoachSettings`.
 - `Practice.swift`: the roleplay page.
@@ -61,4 +67,5 @@ weakest milestone.
   headline words in `ContentView.home`, and who the AI plays in `TableTalk.ask`.
 - How hard the coach is: the scoring and correction instructions in the prompts.
 - Notification wording and rhythm: `WeddingCoach.scheduleNotifications`.
-- Colours: `Color.terracotta` in `ContentView.swift`.
+- The look: `Look.swift`. The colours are at its top; the lemons and leaves are drawn by `Sketch` (another fruit
+  or flower is a new outline there), and the script face is `Look.script`.
