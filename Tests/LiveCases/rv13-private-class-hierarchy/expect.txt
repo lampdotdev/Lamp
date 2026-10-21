@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: 0 4 shape square
+RELOAD 1: ok
+after1 (want "0 9 shape SQUARE", each method's new code): 0 9 shape SQUARE

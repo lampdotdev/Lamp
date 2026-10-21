@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (count is private and moved from A.swift to B.swift, which makes it another variable for the open app, starting over)
+== run
+before: 42
+RELOAD 1: REOPEN count is private and moved from A.swift to B.swift, which makes it another variable for the open app, starting over
+after1 (want 43, the count the open app kept, or a reopen): 43
+before: 42
+RELOAD 1: in the restart
+after1 (want 43, the count the open app kept, or a reopen): 43

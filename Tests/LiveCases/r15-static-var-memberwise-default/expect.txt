@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: static=5 fresh=5
+RELOAD 1: ok
+after1 (want the open app's settings kept as they were made, volume=5: a stored var is state, as an object's fields are): static=5 fresh=7

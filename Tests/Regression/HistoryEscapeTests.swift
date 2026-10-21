@@ -49,17 +49,7 @@ final class HistoryEscapeTests: XCTestCase {
     }
 
     func loose(_ command: String, in folder: URL) throws -> (status: Int32, output: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = ["-c", command]
-        process.currentDirectoryURL = folder
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+        TestShell.run("/bin/bash", ["-c", command], in: folder)
     }
 
     /// As the agent's command runs: wrapped by Lamp, under the profile Lamp wrote for this app.

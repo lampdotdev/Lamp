@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Gave K.table its new value)
+== run
+before: [1, 2]
+RELOAD 1 (whole): ok
+after1 (want [1, 2, 3], what build() makes now): [1, 2, 3] fresh: [1, 2, 3]

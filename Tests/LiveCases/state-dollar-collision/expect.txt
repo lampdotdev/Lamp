@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added EditorB.text)
+== run
+before: v0
+RELOAD 1 (whole): ok
+after1 (want v1, in place): v1

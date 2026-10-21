@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Special is a new class under Base, which the open app's objects and method tables can't take in place)
+== run
+before: kid:Base:kid not a Base
+RELOAD 1: REOPEN Special is a new class under Base, which the open app's objects and method tables can't take in place
+after1 (want kid:Base:kid special:Base:special, a new subclass is one of Base's): kid:Base:kid not a Base
+before: kid:Base:kid special:Base:special
+RELOAD 1: in the restart
+after1 (want kid:Base:kid special:Base:special, a new subclass is one of Base's): kid:Base:kid special:Base:special

@@ -71,7 +71,6 @@ struct BottleDetail: View {
                     Menu {
                         Button("Find the Real Label") { LabelFinder.shared.find(id, force: true) }
                         Button("Use My Photo…") { choosePhoto = true }
-                        Button("Draw It Again") { Illustrator.shared.redraw(id) }
                     } label: {
                         Text("Label").font(.system(size: 12, weight: .semibold, design: .serif))
                     }
@@ -97,9 +96,6 @@ struct BottleDetail: View {
                 if bottle.hasPhoto, let old = bottle.imageName { BottleImages.remove(old) }
                 bottle.imageName = name
                 bottle.labelTried = true
-                if let art = bottle.artName { BottleImages.remove(art) }
-                bottle.artName = nil
-                bottle.artTried = nil
                 shelf.update(bottle)
             }
         }

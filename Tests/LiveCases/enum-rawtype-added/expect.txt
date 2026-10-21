@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Mood has raw values (String), which its values hash and compare by in the open app's sets and dictionaries)
+== run
+before: b
+RELOAD 1: REOPEN Mood has raw values (String), which its values hash and compare by in the open app's sets and dictionaries
+after1 (want "b b c c"): b
+before: b b c c
+RELOAD 1: in the restart
+after1 (want "b b c c"): b b c c

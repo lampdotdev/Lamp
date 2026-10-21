@@ -155,11 +155,7 @@ final class SharedAppReviewTests: XCTestCase {
         let folder = try appFolder(sources: ["App.swift": Data("let a = 1\n".utf8), "Hidden.swift": notText])
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-review-\(UUID().uuidString).lampapp")
         folders.append(file)
-        let zip = Process()
-        zip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        zip.arguments = ["-c", "-k", folder.path, file.path]
-        try zip.run()
-        zip.waitUntilExit()
+        TestShell.run("/usr/bin/ditto", ["-c", "-k", folder.path, file.path])
         XCTAssertThrowsError(try Sharing.open(file)) { error in
             XCTAssertEqual(error.localizedDescription, "This Lamp app file has code that isn't plain text, so Lamp can't check it.")
         }
@@ -326,11 +322,7 @@ final class SharedAppReviewTests: XCTestCase {
             let folder = try appFolder(name: name, sources: ["App.swift": Data("let a = 1\n".utf8)])
             let file = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-review-\(UUID().uuidString).lampapp")
             folders.append(file)
-            let zip = Process()
-            zip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-            zip.arguments = ["-c", "-k", folder.path, file.path]
-            try zip.run()
-            zip.waitUntilExit()
+            TestShell.run("/usr/bin/ditto", ["-c", "-k", folder.path, file.path])
             return try self.opened(file)
         }
         XCTAssertEqual(try opened(named: "Tally").name, "Tally")
@@ -338,5 +330,18 @@ final class SharedAppReviewTests: XCTestCase {
         // Only the spacing: every other character of a name is the sender's and stays.
         let kept = "می\u{200C}خواهم 🏴\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F} “Notes” «x» co\u{00AD}op"
         XCTAssertEqual(try opened(named: kept).name, kept)
+    }
+    /// Things to consider: nothing when Lamp vouches for the app, red only for what should stop someone (a
+    /// check that never answered among it), said even when what the code does outranks it in the verdict.
+    func testThingsToConsider() {
+        XCTAssertEqual(ImportReviewCard.considerations(review(.low, by: cloud)), [])
+        var risky = review(.high, by: cloud)
+        risky.concerns = ["Sends your notes to a website"]
+        XCTAssertEqual(ImportReviewCard.considerations(risky).map(\.weight), [.warning, .warning])
+        var unanswered = review(nil, detected: [.powerful])
+        unanswered.note = "No credit left."
+        let said = ImportReviewCard.considerations(unanswered)
+        XCTAssertEqual(said.map(\.weight), [.caution, .warning])
+        XCTAssertEqual(said.last?.detail, "No credit left.")
     }
 }

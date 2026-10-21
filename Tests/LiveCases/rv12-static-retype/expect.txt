@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (the starting value of Store.total changed, and the open app made it once and keeps it)
+== run
+before: total=5 size=200 | other file reads: total=5 size=200
+RELOAD 1: REOPEN the starting value of Store.total changed, and the open app made it once and keeps it
+after1 (want one total, 7.0 in both files, and size 200.0 in both; or a reopen): total=7 size=200 | other file reads: total=7 size=200
+before: total=5.0 size=200.0 | other file reads: total=5.0 size=200.0
+RELOAD 1: in the restart
+after1 (want one total, 7.0 in both files, and size 200.0 in both; or a reopen): total=7.0 size=200.0 | other file reads: total=7.0 size=200.0

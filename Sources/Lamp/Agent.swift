@@ -22,7 +22,8 @@ enum AgentEvent {
     case textPiece(String) // a piece of the message the model is writing, as it streams in; `.text` follows with the whole
     /// A tool call as shown in the chat ("grep cache.json"), and the whole call with its arguments,
     /// which is what tells a repeated call from a similar one.
-    case tool(String, call: String)
+    /// `said`: what the agent said the step is for, in its own words (a command's description, a tool's `doing`).
+    case tool(String, call: String, said: String? = nil)
     case cost(Double)
     case failed(String)
     case raw(String)
@@ -39,6 +40,9 @@ enum AgentEvent {
     /// What the agent says it's doing, in its own words: Claude Code's or pi's description of a command, a Codex
     /// reasoning summary's heading. Empty for a command that came without one, which leaves it unnamed.
     case naming(String)
+    /// A shell command Codex finished, or that was refused before it ran (`refused`), as the agent wrote it. The step
+    /// the person reads is named by `naming`; the command is shown only when the step is opened.
+    case ran(String, refused: Bool)
 }
 
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.
@@ -81,10 +85,15 @@ enum Agent {
 
     private static let lookRules = """
 
-    - `look_at_app` builds the app with your changes, opens it, and shows you its windows, what it printed \
-    and any build errors or crash, so you can check your work instead of guessing. Once your edits are in, use \
-    it after changing the interface or after a fix you can't verify from the code, and fix what you see before \
-    finishing. Skip it for small changes you're sure of.
+    - `look_at_app` puts what you've written into the app and shows you its windows, what it printed and any \
+    build errors or crash, so you can check your work instead of guessing. What you save goes into the open app \
+    by itself when it can; a look shows you what the person sees. While the app is open a look is quick, since \
+    only the files you changed are compiled. Fix what you see before finishing.
+    - Show the change early and bit by bit. The person is waiting beside the app, and a minute of nothing feels \
+    long: your first look comes as soon as there's one thing to see, before you've read more than that one thing \
+    needs, and a change with several parts is saved part by part, in the order they'd notice (a theme: the colors \
+    first, then the type, then the symbols), each going into the open app as you save it, with a look when you \
+    need to see how it came out; never written whole and looked at once at the end.
     - Work in passes when you build a new app, or when a request changes much of what the person sees in an app \
     they already have (a new screen, a redesign, a new main feature; not a fix or a small change), so they \
     watch it take shape instead of waiting for the end. Each pass leaves the app building and visibly further \
@@ -96,7 +105,10 @@ enum Agent {
     whole thing before the first look: the first pass ends with a look before any of the logic is written. \
     Make what's read only at launch (the App, its scenes and menu commands) right in the first pass, since \
     changing it reopens the app, and later passes then go in while it stays open. Rough is fine until the last \
-    pass: don't polish one before showing it.
+    pass: don't polish one before showing it. When a look says the change waits for Reload, nothing after it \
+    shows until the person presses it: go on with the passes left, and your progress lines say they show after \
+    Reload, never that they're in. When you need to see the app before going on, look: Lamp stops you there, you \
+    say in a sentence that you need to see the change and ask for Reload, and Lamp starts you again after it.
     - `use_app` then uses the open app like a person: clicks, types, presses keys, scrolls and picks from menus, \
     and shows you the result. Both tools give you the front window as text beside its picture: every control \
     and piece of text, each with an id, its name, what it holds and where it is. Act on things by name: set \
@@ -114,13 +126,15 @@ enum Agent {
     - A new app is open in front of the person while you build it (from the start, or from your first look), \
     with the chat beside it, so they watch each pass go in. Once the last pass looks right, stop there: say in one sentence what they now \
     have, and don't describe the app further.
-    - Don't use the app (`use_app`) unless the person asks you to try it: they're probably using it, and your \
-    clicks, keys and windows get in their way. Check a change with `look_at_app` and by reading the code, and \
-    fix what you see. Say what wasn't tried in one plain sentence, only for a change to what the app does \
+    - Look at the app, don't test it: never click around in it (`use_app`) unless the person asks you to try \
+    it. They're probably using it, and your clicks, keys and windows get in their way. Check a change with \
+    `look_at_app` and by reading the code, and fix what you see. Say what wasn't tried in one plain sentence, only for a change to what the app does \
     (a button's effect, a form, saving). \
     When they ask you to try it, walk through the main things they asked for with `use_app` as they would \
     (add an item and see it appear, fill the form and submit it, quit and reopen to see what was kept), fix \
-    what you find, and say in one plain sentence what you tried and what happened.
+    what you find, and say in one plain sentence what you tried and what happened. They watch you try it and \
+    can take it back at any moment: when `use_app` says they took the app over, leave it to them for the rest \
+    of this request, and say in one plain sentence what's left for them to try.
     """
 
     /// Every engine has these too (pi's extension, Lamp's MCP endpoint). Kept apart from the look rules only
@@ -161,7 +175,8 @@ enum Agent {
     answer: follow it.
     - What the person sees: their messages, your cards, and each thing you write, as a message the moment you \
     write it. Your tool calls are never shown: no commands, files, code or results, only a gray line per step \
-    ("Ran a command", or the description you gave the command). Everything you write stays in the chat as a \
+    ("Did a bit of housekeeping", or the words you gave the step: a command's description, a tool's `doing`). Give \
+    those words to every step, in their terms, since they're what the person reads while it runs. Everything you write stays in the chat as a \
     message, and your last one is the answer. So write each message for someone who sees nothing else: it makes sense on its own and is about the app, \
     never leaning on a step they can't see, whether it leads into one, points back at one ("that fixed it", \
     "the error above") or names its files and code.
@@ -191,7 +206,7 @@ enum Agent {
     complete (the full glass, the ripe tomato), and show how far along it is in code: the complete picture masked \
     to the progress over a faint or outlined copy, so it reads as empty at zero; never paint the empty state too. \
     Look at each picture before using it (call it again with a better subject if it's wrong). When nothing can make pictures, use \
-    SF Symbols in the app's palette instead: Lamp offers the user a way to set that up.
+    SF Symbols in the app's palette instead, never a picture drawn in code: Lamp offers the user a way to set that up.
     """
 
     /// Rides with a message the person sent while the agent worked (`Store.handOver`), not in the system prompt:
@@ -211,7 +226,20 @@ enum Agent {
 
 
     ---
+    The person has this app open beside the chat and is watching it as you work. A change that goes into the \
+    open app shows at once; one that can't waits until they press Reload, and until then they see nothing of it. \
+    So work in small steps, each shown with a look as it lands, prefer the shape of change that goes in live, and \
+    say what they can see now, not what you've written. Each look tells you which way the change went and why. \
+    What you save goes into the open app by itself a few seconds after you save it, whenever it can, so the person \
+    sees each piece as you write it: save the most visible piece first, and don't wait for a look to show it. \
+    Once a change in a request has to wait for Reload, nothing more shows until they press it: go on with what's \
+    left, saying in progress lines what shows after Reload and never that it's in, and when you need to see the \
+    app before going on, look, and Lamp stops you there until they've pressed Reload and starts you again after. \
+    So make the changes that go in live first, with a look after each, and leave what needs Reload for last, all \
+    together. \
     This app is updated in place while it's open, keeping what's on screen, when a change only edits or adds code. \
+    A body whose structure changes (a modifier or a view added around others) is built again, and the @State and \
+    @StateObject of the views inside it start over, so keep what must survive in a model those views read. \
     New stored properties go in too, in a class, a struct or (as @State) a view, when each has a starting value \
     (or is an optional) and no didSet or willSet; so do new cases at the end of an enum whose cases carry nothing, \
     and new values for constants that hold no object. Changing or removing a stored property, a case anywhere \
@@ -223,13 +251,14 @@ enum Agent {
     to that method goes in; make that method internal, not private or fileprivate, since a private one is called \
     directly and stays as it was. A property added in place isn't saved until the app reopens. A method, computed property or \
     initializer added to a class that something subclasses needs the app reopened; a class nothing subclasses takes \
-    methods and computed properties in place. A `static var` or global `var` keeps the value the open app gave it: a \
-    new starting value for one shows only after the app reopens, so change what reads it, or a `let`. Mark a view \
-    that only its own file uses `private`, so a change to it compiles that file alone. \
+    methods and computed properties in place. A new starting value for a `static var` or global `var` needs the app \
+    reopened, since the open app made its value once; a `let`'s goes in place, and so does a `let` made by \
+    a function that changes (`static let table = build()`), unless it holds an object. Making a type or a static \
+    private, or no longer private, needs it reopened, and so does changing a type's hash(into:). \
     Any change to a file that declares a SwiftData @Model class needs it reopened. \
     A look shows the window as the person left it, with the change in it. To see the app start from the \
-    beginning (how long it takes to open, what runs once at launch), look with `reopen`; never quit or kill the \
-    app yourself.
+    beginning (how long it takes to open, what runs once at launch), look with `reopen`, which asks the person \
+    first while they have it open; never quit or kill the app yourself.
     """
 
     /// Short for the same reason. What AI the app has comes at the end of a request (AIStatus.brief), since it
@@ -346,7 +375,7 @@ enum Agent {
             .replacingOccurrences(of: "{{DEVICE}}", with: device)
             .replacingOccurrences(of: "{{A_DEVICE}}", with: mac ? "a Mac" : "an iPhone")
             .replacingOccurrences(of: "{{IMAGE}}", with: mac ? "NSImage" : "UIImage")
-            .replacingOccurrences(of: "{{RELAUNCH}}", with: mac ? "builds and relaunches it" : "builds it and opens it in the simulator")
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: mac ? "builds it and puts it into the open app" : "builds it and opens it in the simulator")
             .replacingOccurrences(of: "{{TRANSLATION_OS}}", with: mac ? "macOS 15" : "iOS 18")
             .replacingOccurrences(of: "{{EXTRA_PERMISSIONS}}", with: mac ? "and calendars, reminders, contacts, photos, Bluetooth and Mail"
                                   : "and photos, calendars, reminders and contacts")
@@ -363,8 +392,8 @@ enum Agent {
         static let universalHeader = """
         You are Lamp's builder agent. The current directory is a standalone SwiftUI app for the Mac and for iPhone and \
         iPad, one code for both (a Swift Package, Swift 5.9 language mode, macOS 14+ and iOS 17+; Lamp keeps an Xcode \
-        project of its own for the builds). Lamp opens it on the user's Mac or in the {{DEVICE}} simulator, whichever \
-        Try On points at, and that is what the user sees. Read APP.md first for context.
+        project of its own for the builds). Lamp opens it on the user's Mac, in the {{DEVICE}} simulator or on their own \
+        phone, whichever Try On points at, and that is what the user sees. \(phone) Read APP.md first for context.
         """
 
         static let universal = """
@@ -421,7 +450,16 @@ enum Agent {
         You are Lamp's builder agent. The current directory is a standalone SwiftUI app for iPhone and iPad (a Swift \
         Package built for the iOS Simulator, Swift 5.9 language mode, iOS 17+, no Xcode project). Lamp opens it \
         in the {{DEVICE}} simulator on the user's Mac, which is what the user sees, so design for the {{DEVICE}} \
-        first while keeping the other usable; it can't be put on a real device yet. Read APP.md first for context.
+        first while keeping the other usable. \(phone) Read APP.md first for context.
+        """
+
+        /// Installing on the person's own phone and looking in the simulator, shared by both iOS prompts.
+        static let phone = """
+        Lamp can build, sign and install the app on the person's own iPhone or iPad, the one chosen under Try On, \
+        with a free Apple account; some capabilities require a paid Apple Developer membership. To open the app \
+        on a phone, the person connects it, chooses it under Try On and presses Play. Your looks at the iPhone app \
+        are in the simulator. An iPhone preview result includes a note about the Try On selection and Lamp's \
+        device lookup once per turn, after the simulator app opens.
         """
 
         static let edit = """
@@ -448,9 +486,10 @@ enum Agent {
         - You can read, search and edit files and read web pages without asking. You can also run shell commands \
         (to clone a repo, convert data, run a script); Lamp may ask the user to approve them. Never use the shell to \
         read, list, search or edit files (no cat, ls, head, grep, find, sed or heredocs): use your file tools for that, which need \
-        no approval. Save the shell for what the file tools can't do. Don't build or run the app yourself: when \
-        you finish, Lamp {{RELAUNCH}}, and if the build fails your next message will contain the \
-        compiler errors to fix. If something you need is denied or unavailable, say plainly what you need (for \
+        no approval. Save the shell for what the file tools can't do. Lamp builds the app: never open or \
+        run it yourself, and build it only where a rule here says to check that it compiles. When you finish, Lamp \
+        {{RELAUNCH}}, and if the build fails your next message will contain the compiler errors to fix. If \
+        something you need is denied or unavailable, say plainly what you need (for \
         example "attach the files" or "allow the clone"). To read a GitHub repo, clone it shallowly into \
         .lamp/reference/ (`gh repo clone owner/name .lamp/reference/name -- --depth 1` when gh is installed, which \
         also works for private repos; otherwise `git clone --depth 1`); it's reference only, not part of the app. \
@@ -634,7 +673,9 @@ enum Agent {
         no menus, so the panel needs its own Settings button, which calls `LampMenuBar.openSettings()` (never \
         `SettingsLink` or `openSettings`: from a menu bar app those open the window behind other apps, where it gets \
         lost), and its own Quit button (`NSApp.terminate(nil)`). `LampMenuBar.close()` closes the panel after an \
-        action in it. Give the panel a fixed width, and hand it its model inside the braces (`{ PanelView().environmentObject(model) }`), \
+        action in it. Put `LampPanelWand()` beside the panel's own buttons, at the right of its header (or of its footer, beside Settings and Quit, when the header has none), as a \
+        window has Lamp's wand in its title bar (without it, Lamp gives it a strip of its own above the panel). \
+        Give the panel a fixed width, and hand it its model inside the braces (`{ PanelView().environmentObject(model) }`), \
         never with a modifier on the scene, which crashes the panel. Pass `dockIcon: true` only when the app also has a main window. \
         For a menu instead of a panel: `LampMenuBar(menu: "Clipboard", systemImage: "list.clipboard") { Button(…); Toggle(…); \
         Divider() }`, which adds Settings… and Quit itself (`settings: false` when there's no Settings scene). For one \
@@ -970,9 +1011,12 @@ enum Agent {
         static let macGenerated = """
         - Sources/LampSupport.swift is generated by Lamp: never edit it. Keep the `.commands { LampCommands() }` modifier \
         (an app that is only a widget has none). The wand in each window's title bar is Lamp's, which opens this chat \
-        beside the app: the user may be asking from there, with the app open, and each change reopens it. So the \
-        app comes back as they left it: keep what they were looking at (the selected item, tab or filter) in \
-        `@SceneStorage`, and their data in LampStore as ever.
+        beside the app: the user may be asking from there, with the app open. Most changes go into the open app as \
+        it runs and keep what's on screen; some wait for the person to press Reload, and so does your next look at it; \
+        the person is asked before a reopen. One that crashes the open app as it goes in is set aside: the version \
+        before it opens again with their data, and you're given the crash to fix. So the app comes back as they left \
+        it: keep what they were looking at (the selected item, tab or \
+        filter) in `@SceneStorage`, and their data in LampStore as ever.
         """
 
         static let iPhoneGenerated = """
@@ -1021,7 +1065,7 @@ enum Agent {
 
         static let decisions = """
         - Decisions are your default tool for anything that depends on meaning. `LampAI.isTrue`, `LampAI.choose`, \
-        `LampAI.rate` and `LampAI.decide` call a decision model (TypeSafe's Jev) that is smart, very fast \
+        `LampAI.rate` and `LampAI.decide` call a decision model (Jev) that is smart, very fast \
         (well under a second) and extremely cheap (about $0.04 per million input tokens: judging hundreds of items \
         costs a fraction of a cent). Use them generously, without being asked, whenever the app sorts, filters, \
         labels, prioritizes, groups, matches, routes, moderates or flags things by what they are or mean: file \
@@ -1199,9 +1243,9 @@ enum Agent {
         audio, location, fetch, processing, remote-notification, bluetooth-central, bluetooth-peripheral. \
         `bonjourServices` are the service types MultipeerConnectivity browses for (both _tcp and _udp of \
         the same name, up to 15 characters); `backgroundTasks` are the identifiers BGTaskScheduler registers, \
-        needed with the fetch and processing modes. Not possible yet: extensions other than widgets and Live \
-        Activities (share sheets, keyboards, Watch apps), push notifications from a server, and in-app \
-        purchases; say so when asked.
+        needed with the fetch and processing modes. Not possible yet: extensions other than \
+        the ones described here (a keyboard, for one), push notifications from a server, and in-app purchases; say \
+        so when asked.
         """
 
         static let appMd = """
@@ -1212,8 +1256,8 @@ enum Agent {
 
         static let audience = """
         - The person you're talking to isn't a programmer and never sees the code: to them, Lamp makes apps, \
-        and you're the one making theirs. Everything you say to them is about their app and what it does, in \
-        everyday words. Never name files, folders, types, functions, frameworks or tools, and never show code, \
+        and you're the one making theirs. Their app is open on screen beside this chat, and they want to see each \
+        result there right away. Everything you say to them is about their app and what it does, in everyday words. Never name files, folders, types, functions, frameworks or tools, and never show code, \
         commands or compiler errors, unless they ask for them. Their Mac is set to \(language): write to them \
         in that, with its spelling, and make the app's own words the same.
         """
@@ -1236,11 +1280,14 @@ enum Agent {
         """
 
         static let finish = """
+        - Never say you've done something ("I've added…", "it now has…") before it shows in the app. Until it does, \
+        say what you're doing, or, for a change waiting for Reload, what they'll see once they press it ("Press \
+        Reload to see the water counter.").
         - How you finish depends on what was asked, and it is one thing, never two. A question: answer it in a \
         sentence or two. A small change or a fix they'll see at once (bigger text, a color, a bug gone): one \
         plain sentence, and one more only if something couldn't be tried. A change that gives them something \
         new to find (a button, a menu, a page, a shortcut, a new way to do something): one sentence saying what's \
-        new and where it is, after trying it as the rule on trying says. A new app, or a big change: one \
+        new and where it is, once a look shows it there. A new app, or a big change: one \
         sentence on what they now have. \
         Whichever it is: no list, no bold labels, no headings, no walk through of how to use what you made and \
         no account of each thing you clicked. Users often don't know what {{A_DEVICE}} can \
@@ -1267,18 +1314,16 @@ enum Agent {
     static func environment(prompt: String, files: [String] = [], project: LampProject? = nil, session: String, sessionDir: String) -> [String: String] {
         var env = [
             "LAMP_PI": executable?.path ?? "pi",
-            "LAMP_PROVIDER": Builder.piProvider == Builder.myPiProvider ? myPiProvider
-                : Builder.piProvider == Builder.localProvider ? LocalModels.piProvider(for: Builder.piModel)
+            "LAMP_PROVIDER": Builder.piProvider == Builder.localProvider ? LocalModels.piProvider(for: Builder.piModel)
                 : Builder.piProvider,
-            "LAMP_MODEL": Builder.piProvider == Builder.myPiProvider ? myPiModel : Builder.piModel,
+            "LAMP_MODEL": Builder.piModel,
             "LAMP_SESSION": session,
             "LAMP_SESSION_DIR": sessionDir,
             "LAMP_SYSTEM": (project.map(systemPrompt(for:)) ?? systemPrompt) + tryRules + sandboxNote,
             "LAMP_PROMPT": prompt,
             "LAMP_TOOLS": lampTools?.path ?? "",
             "LAMP_TOOLS_JSON": Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.json").path ?? "",
-            // "My pi setup" uses the user's own pi config (their logins); everything else uses Lamp's.
-            "PI_CODING_AGENT_DIR": Builder.piProvider == Builder.myPiProvider ? userConfigDir : configDir,
+            "PI_CODING_AGENT_DIR": configDir,
             "PI_SKIP_VERSION_CHECK": "1",
             "PI_TELEMETRY": "0",
         ]
@@ -1286,7 +1331,7 @@ enum Agent {
         // pi asks Lamp for the key when it first needs it (keyCommand), so the key is in neither a file nor
         // the environment every shell command would inherit. The ticket is good for one answer, and pi spends
         // it before the model has said anything: a command the agent runs later finds it used.
-        if let provider = Provider.apiProvider(Builder.piProvider), Builder.piProvider != Builder.myPiProvider {
+        if let provider = Provider.keyProvider(Builder.piProvider) {
             syncKeyFile()
             // No ticket unless pi is sure to spend it. It wouldn't if auth.json holds something else for
             // this provider (a sign-in of pi's, or a key that couldn't be taken out yet), or if Lamp was
@@ -1311,7 +1356,7 @@ enum Agent {
         editKeyFile { auth in
             let entry = auth[provider] as? [String: Any]
             guard entry == nil || entry?["type"] as? String == "api_key" else { return }
-            auth[provider] = present && Provider.apiProvider(provider) != nil ? ["type": "api_key", "key": keyCommand] : nil
+            auth[provider] = present && Provider.keyProvider(provider) != nil ? ["type": "api_key", "key": keyCommand] : nil
         }
     }
 
@@ -1325,7 +1370,7 @@ enum Agent {
                 let entry = auth[provider] as? [String: Any]
                 guard entry == nil || entry?["type"] as? String == "api_key" else { continue }
                 if let key = entry?["key"] as? String, !key.hasPrefix("!"), !KeyStore.adopt(key, for: provider) { continue }
-                auth[provider] = KeyStore.key(for: provider) != nil && Provider.apiProvider(provider) != nil
+                auth[provider] = KeyStore.key(for: provider) != nil
                     ? ["type": "api_key", "key": keyCommand] : nil
             }
         }
@@ -1360,30 +1405,18 @@ enum Agent {
         }
     }
 
-    /// "My pi setup" models are stored as "provider/model" (e.g. "anthropic/claude-opus-5-5").
-    static var myPiProvider: String { String(Builder.piModel.split(separator: "/", maxSplits: 1).first ?? "") }
-    static var myPiModel: String {
-        let parts = Builder.piModel.split(separator: "/", maxSplits: 1)
-        return parts.count == 2 ? String(parts[1]) : Builder.piModel
-    }
-
-    /// Models pi can use for a provider, from `pi --list-models` (offline, from pi's catalog).
-    /// For "My pi setup" the result is "provider/model" for every provider signed in there.
-    static func listModels(provider: String) async -> [String] {
+    /// Models pi can use through OpenRouter, from `pi --list-models` (offline, from pi's catalog).
+    static func listModels() async -> [String] {
         guard let pi = executable else { return [] }
-        var env = ["PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0", "PI_OFFLINE": "1",
-                   "PI_CODING_AGENT_DIR": provider == Builder.myPiProvider ? userConfigDir : configDir]
-        if let api = Provider.apiProvider(provider) { env[api.envVar] = KeyStore.key(for: api.id) ?? "placeholder" }
+        let api = Provider.openRouterProvider
+        let env = ["PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0", "PI_OFFLINE": "1", "PI_CODING_AGENT_DIR": configDir,
+                   api.envVar: KeyStore.key(for: api.id) ?? "placeholder"]
         var rows: [String] = []
         _ = await Shell.run("\"$LAMP_PI\" --list-models", cwd: URL(fileURLWithPath: NSTemporaryDirectory()),
                             env: env.merging(["LAMP_PI": pi.path]) { $1 }) { line in
             let columns = line.split(separator: " ", omittingEmptySubsequences: true)
-            guard columns.count >= 2, columns[0] != "provider" else { return }
-            if provider == Builder.myPiProvider {
-                rows.append("\(columns[0])/\(columns[1])")
-            } else if columns[0] == provider {
-                rows.append(String(columns[1]))
-            }
+            guard columns.count >= 2, columns[0] == api.id else { return }
+            rows.append(String(columns[1]))
         }
         return rows
     }
@@ -1410,7 +1443,8 @@ enum Agent {
         case "tool_execution_start":
             let name = obj["toolName"] as? String ?? "tool"
             let args = obj["args"] as? [String: Any] ?? [:]
-            var events: [AgentEvent] = [.tool(describe(name, args), call: callKey(name, args))]
+            let said = ((args["doing"] as? String) ?? (name == "bash" ? args["description"] as? String : nil))?.trimmed.nilIfEmpty
+            var events: [AgentEvent] = [.tool(describe(name, args), call: callKey(name, args), said: said)]
             // Lamp's extension gives pi's bash a description, which the model fills in as Claude Code's does.
             if name == "bash" { events.insert(.naming((args["description"] as? String)?.trimmed ?? ""), at: 0) }
             if name == "plan", args["parts"] != nil { events.append(.plan(PlanPart.parts(from: args))) }

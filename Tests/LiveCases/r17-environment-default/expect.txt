@@ -1,0 +1,7 @@
+VERDICT 1: REOPEN (AccentKey.defaultValue changed, and SwiftUI keeps the default it first read)
+== run
+before: accent=blue size=10
+RELOAD 1: REOPEN AccentKey.defaultValue changed, and SwiftUI keeps the default it first read
+before: accent=red size=20
+RELOAD 1: in the restart
+after1 (want accent=red size=20: an environment key's default and an unset @AppStorage's default, both changed): 

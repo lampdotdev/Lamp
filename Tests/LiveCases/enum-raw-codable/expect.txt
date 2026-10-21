@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: all=2 back=["happy", "sad"] extra=["undecodable"] set=1 any=happy
+RELOAD 1 (whole): ok
+after (want 3 cases, angry decoded): all=3 back=["happy", "sad"] extra=["angry"] set=1 any=happy

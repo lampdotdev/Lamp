@@ -21,10 +21,10 @@ final class WeddingWordsRetryTests: XCTestCase {
 
         let lamp = try StandInLamp()
         defer { lamp.stop() }
-        let support = project.dir.appendingPathComponent("Sources/LampSupport.swift")
-        try String(contentsOf: support, encoding: .utf8)
-            .replacingOccurrences(of: "http://127.0.0.1:\(Gateway.port)", with: "http://127.0.0.1:\(lamp.port)")
-            .write(to: support, atomically: true, encoding: .utf8)
+        // The app finds Lamp where its Info.plist says, as an installed copy does: here, at the stand-in.
+        var values = Template.installValues(for: project)
+        values["port"] = String(lamp.port)
+        let install = try InstallValues.linkerFlags(values, in: work)
 
         let words = "Piacere, sono la sorella della sposa."
         let program = """
@@ -46,7 +46,7 @@ final class WeddingWordsRetryTests: XCTestCase {
         try program.write(to: work.appendingPathComponent("check.swift"), atomically: true, encoding: .utf8)
         let sources = ["LampSupport.swift", "TableTalk.swift"]
             .map { "\"\(project.dir.appendingPathComponent("Sources/\($0)").path)\"" }.joined(separator: " ")
-        let built = try run(Shell.compatibleSDK + "xcrun swiftc -parse-as-library -o check check.swift \(sources) 2>&1", in: work)
+        let built = try run(Shell.compatibleSDK + "xcrun swiftc -parse-as-library -o check check.swift \(sources) \(install) 2>&1", in: work)
         XCTAssertEqual(built.status, 0, built.output)
         let home = work.appendingPathComponent("home")
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
@@ -65,17 +65,7 @@ final class WeddingWordsRetryTests: XCTestCase {
     }
 
     private func run(_ command: String, in directory: URL) throws -> (status: Int32, output: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", command]
-        process.currentDirectoryURL = directory
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+        TestShell.run(command, in: directory)
     }
 }
 

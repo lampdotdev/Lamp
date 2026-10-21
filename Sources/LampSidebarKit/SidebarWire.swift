@@ -6,7 +6,7 @@ import Foundation
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
     /// What this side reads and writes; see `SidebarCommand.hello`.
-    public static let version = 8
+    public static let version = 9
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -52,6 +52,8 @@ public struct SidebarState: Codable, Equatable {
     public var queued: [SidebarQueued]?
     /// The first request is waiting for Apple's tools to install, not for a turn.
     public var waitingForSetup: Bool?
+    /// The waiting messages wait for the person to press Reload: the agent is paused on a change they haven't seen.
+    public var waitingForReload: Bool?
     /// A command or file the agent is asking to use, waiting for an answer.
     public var approval: SidebarApproval?
     /// The app was asked to quit and isn't responding: what the notice says.

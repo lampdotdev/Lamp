@@ -49,6 +49,7 @@ enum Runtime {
         try? AppFolder.write(Data(), to: reloadURL(project), in: project.dir)
     }
     static func waitsForReload(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: reloadURL(project).path) }
+
     static func holdsBuild(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: heldURL(project).path) }
 
     /// What the app is built from, as one hash: the contents of Sources, its widget's folder, Package.swift and the icon design,
@@ -321,17 +322,18 @@ enum Runtime {
         return fresh()
     }
 
-    /// What the app says happened when it carried out a `use_app` request (see `LampDriver` in the app). It
-    /// writes this after its fresh pictures, so once it's here they're ready too. nil if it never answers,
-    /// or `running` turns false: the app is gone.
+    /// What the app says happened when it carried out a `use_app` request (see `LampDriver` in the app), and
+    /// whether the person stopped it part way (`LampDriver.Handover`). It writes this after its fresh pictures,
+    /// so once it's here they're ready too. nil if it never answers, or `running` turns false: the app is gone.
     @MainActor
     static func useReport(of project: LampProject, id: String, waiting seconds: Double,
-                          while running: () -> Bool) async -> String? {
+                          while running: () -> Bool) async -> (report: String, stopped: Bool)? {
         let url = folder(project).appendingPathComponent("use.json")
         for _ in 0..<Int(seconds * 4) where running() {
             if let data = AppFile.read(url, in: project),
-               let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: String], answer["id"] == id {
-                return answer["report"]
+               let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: String], answer["id"] == id,
+               let report = answer["report"] {
+                return (report, answer["stopped"] != nil)
             }
             try? await Task.sleep(for: .milliseconds(250))
         }
@@ -413,10 +415,16 @@ enum Runtime {
     }
 
     /// Whether the app crashed since `date`: macOS wrote a report for it. Not a quit, which leaves none.
-    static func crashed(_ project: LampProject, since date: Date) -> Bool {
+    static func crashed(_ project: LampProject, since date: Date) -> Bool { crash(of: project, since: date) != nil }
+
+    /// What macOS's newest report of a crash since `date` says, whichever build it was of.
+    static func crash(of project: LampProject, since date: Date) -> String? {
         let files = (try? FileManager.default.contentsOfDirectory(at: reports, includingPropertiesForKeys: nil)) ?? []
-        return files.contains { $0.pathExtension == "ips" && $0.lastPathComponent.hasPrefix(project.exe + "-")
-            && (report($0, bundleID: project.bundleID)?.date ?? .distantPast) > date }
+        return files
+            .filter { $0.pathExtension == "ips" && $0.lastPathComponent.hasPrefix(project.exe + "-") }
+            .compactMap { report($0, bundleID: project.bundleID) }
+            .filter { $0.date > date }
+            .max { $0.date < $1.date }?.summary
     }
 
     /// Reads a macOS crash report (.ips): one line of JSON metadata, then the report as JSON.

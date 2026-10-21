@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Box.count)
+== run
+before: s
+RELOAD 1 (whole): ok
+after1 (want "s 3" then "1 2"): s 3 1 2

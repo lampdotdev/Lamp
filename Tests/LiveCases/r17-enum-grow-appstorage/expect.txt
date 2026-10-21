@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (SettingsPane holds Theme as AppStorage<Theme>, which a new case would change)
+== run
+before: light dark
+RELOAD 1: REOPEN SettingsPane holds Theme as AppStorage<Theme>, which a new case would change
+after1 (want it in: a setting kept in @AppStorage gains a choice at the end, as a theme picker does): light dark
+before: light dark sepia
+RELOAD 1: in the restart
+after1 (want it in: a setting kept in @AppStorage gains a choice at the end, as a theme picker does): light dark sepia

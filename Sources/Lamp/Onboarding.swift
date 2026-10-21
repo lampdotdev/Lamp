@@ -109,9 +109,11 @@ struct OnboardingView: View {
             Analytics.capture(.welcomeStep, ["step": "\(step)"])
         }
         .onChange(of: store.arrivedWish) { arrive(animated: true) }
-        // Menus can be rebuilt at any moment, so keep Settings switched off for as long as the welcome is up.
+        // Menus can be rebuilt at any moment, so Settings is set again at each update while the welcome is up: off
+        // until it's finished. The welcome stays on screen a moment after that, fading out, and an update then must
+        // leave Settings on, or ⌘, stays dead until Lamp is opened again.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didUpdateNotification)) { _ in
-            SettingsMenu.enable(false)
+            SettingsMenu.enable(onboarded)
         }
     }
 
@@ -251,12 +253,12 @@ private struct SetupStep: View {
     @State private var choice: Builder.Choice?
     @State private var signedIn: [Engine: Bool] = [:]
     @State private var signingIn: Engine?
-    /// Whether the Lamp Agent option on screen (that provider, that model) is the one set up to build.
+    /// Whether the Other option on screen (that provider, that model) is the one set up to build.
     @State private var lampReady = false
     @ObservedObject private var downloads = EngineDownloads.shared
 
     var body: some View {
-        // Centered like the other steps. The Lamp Agent options can make it taller than a small window,
+        // Centered like the other steps. The Other card's options can make it taller than a small window,
         // so it scrolls rather than running into the buttons.
         GeometryReader { proxy in
             ScrollView {
@@ -325,7 +327,7 @@ private struct SetupStep: View {
 extension Builder {
     /// What the welcome offers to build apps with.
     enum Choice: Hashable {
-        case claude, chatGPT, openRouter, another, onThisMac
+        case claude, chatGPT, openRouter, onThisMac
 
         var isForge: Bool { self != .claude && self != .chatGPT }
 
@@ -334,12 +336,7 @@ extension Builder {
             switch Engine(rawValue: engine) {
             case .claude: return .claude
             case .codex: return .chatGPT
-            default:
-                switch piProvider {
-                case "openrouter": return .openRouter
-                case let id where Provider.apiProvider(id) != nil || LocalModels.externalIDs.contains(id): return .another
-                default: return .onThisMac
-                }
+            default: return piProvider == Builder.localProvider ? .onThisMac : .openRouter
             }
         }
 
@@ -348,30 +345,10 @@ extension Builder {
             switch self {
             case .claude: return engine == Engine.claude.rawValue
             case .chatGPT: return engine == Engine.codex.rawValue
-            case .openRouter: return forge && piProvider == "openrouter"
-            case .another:
-                return forge && piProvider != "openrouter"
-                    && (Provider.apiProvider(piProvider) != nil || LocalModels.externalIDs.contains(piProvider))
-            case .onThisMac:
-                return forge && Provider.apiProvider(piProvider) == nil && !LocalModels.externalIDs.contains(piProvider)
+            case .openRouter: return forge && piProvider != Builder.localProvider
+            case .onThisMac: return forge && piProvider == Builder.localProvider
             }
         }
-    }
-
-    /// A good model to start with from a provider's list: the strongest current one, never a small or
-    /// preview model, so a first app has the best chance.
-    static func suggestedModel(_ models: [String], provider: String) -> String? {
-        let favorites: [String: [String]] = [
-            "anthropic": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5"],
-            "google": ["gemini-3.1-pro-preview", "gemini-2.5-pro"],
-        ]
-        if let favorite = favorites[provider]?.first(where: models.contains) { return favorite }
-        // OpenAI and others name their main line "gpt-5.2" and so on: take the newest plain one.
-        let plain = models.filter { $0.range(of: #"^gpt-\d+(\.\d+)?$"#, options: .regularExpression) != nil }
-        if let newest = plain.max(by: { $0.compare($1, options: .numeric) == .orderedAscending }) { return newest }
-        let small = ["mini", "nano", "lite", "haiku", "preview", "latest", "audio", "image", "realtime", "search",
-                     "embed", "tts", "transcribe", "instruct"]
-        return models.last { model in !small.contains { model.lowercased().contains($0) } } ?? models.last
     }
 }
 
@@ -457,7 +434,7 @@ private struct BuilderCard: View {
         Card {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Choose your AI agent").font(.system(size: 15, weight: .semibold))
+                    Text("Choose your AI").font(.system(size: 15, weight: .semibold))
                     Text("You can change this any time.")
                         .font(.system(size: 13)).foregroundStyle(.secondary)
                 }
@@ -468,8 +445,8 @@ private struct BuilderCard: View {
                     Option(selected: choice == .chatGPT, title: Engine.codex.title, detail: "Uses your ChatGPT subscription") {
                         ProviderLogo(id: "openai", size: 30)
                     } action: { pick(.chatGPT) }
-                    Option(selected: choice?.isForge == true, title: "Lamp Agent", detail: "You choose the AI") {
-                        Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 34, height: 34)
+                    Option(selected: choice?.isForge == true, title: "Other", detail: "You choose the AI") {
+                        ProviderLogo(id: "lamp", size: 30)
                     } action: { pick(choice?.isForge == true ? choice! : .openRouter) }
                 }
                 if let choice {
@@ -541,7 +518,7 @@ private struct BuilderCard: View {
                 Spacer()
             } else {
                 // Claude's free plan doesn't include Claude Code: said before the browser, not after a failed build.
-                Text(problem ?? "Sign in to \(app) so \(name) can build.\(which == .claude ? " It needs a paid Claude plan." : "")")
+                Text(problem ?? "Sign in so \(name) can build.\(which == .claude ? " It needs a paid Claude plan." : "")")
                     .font(.system(size: 13)).foregroundStyle(problem == nil ? Color.secondary : Color.orange)
                 Spacer()
                 Button("Sign In…") { signIn(which) }
@@ -567,7 +544,7 @@ private struct BuilderCard: View {
     }
 }
 
-/// Lamp's own agent: OpenRouter, another provider, or a model on this Mac, each set up right here.
+/// Lamp's own agent: OpenRouter, or a model on this Mac, each set up right here.
 private struct LampAgentOptions: View {
     @EnvironmentObject private var store: Store
     @ObservedObject private var local = LocalModels.shared
@@ -578,9 +555,6 @@ private struct LampAgentOptions: View {
     @State private var key = ""
     @State private var checkingKey = false
     @State private var problem: String?
-    @State private var provider = "anthropic"
-    @State private var models: [String] = []
-    @State private var model = ""
     @State private var localChoice = ""
 
     var body: some View {
@@ -588,18 +562,12 @@ private struct LampAgentOptions: View {
             Radio(title: "OpenRouter", selected: choice == .openRouter) { pick(.openRouter) } content: {
                 openRouter
             }
-            Radio(title: "Another provider", selected: choice == .another) { pick(.another) } content: {
-                anotherProvider
-            }
             Radio(title: "A model on this Mac", selected: choice == .onThisMac) { pick(.onThisMac) } content: {
                 onThisMac
             }
         }
         .padding(.top, 2)
         .onAppear {
-            if piProvider != "openrouter", Provider.apiProvider(piProvider) != nil || LocalModels.externalIDs.contains(piProvider) {
-                provider = piProvider
-            }
             localChoice = defaultLocalChoice()
             apply()
         }
@@ -628,8 +596,6 @@ private struct LampAgentOptions: View {
         switch choice {
         case .openRouter:
             if KeyStore.key(for: "openrouter") != nil { use(provider: "openrouter", model: nil) }
-        case .another:
-            if providerReady, models.contains(model) { use(provider: provider, model: model) }
         case .onThisMac:
             if localChoice.hasPrefix("installed:") { use(provider: Builder.localProvider, model: String(localChoice.dropFirst(10))) }
         default:
@@ -651,8 +617,6 @@ private struct LampAgentOptions: View {
         switch choice {
         case .openRouter:
             return piProvider == "openrouter"
-        case .another:
-            return piProvider == provider && providerReady && models.contains(model) && Builder.piModel == model
         case .onThisMac:
             return localChoice.hasPrefix("installed:") && piProvider == Builder.localProvider
                 && Builder.piModel == String(localChoice.dropFirst(10))
@@ -693,101 +657,6 @@ private struct LampAgentOptions: View {
             key = ""
             use(provider: "openrouter", model: nil)
         }
-    }
-
-    // MARK: Another provider
-
-    /// Cloud providers and the model apps on this Mac Lamp can talk to, in one alphabetical list.
-    private var others: [(id: String, name: String)] {
-        (Provider.apiProviders.filter { $0.id != "openrouter" }.map { ($0.id, $0.name) }
-            + LocalModels.externalIDs.map { ($0, LocalModels.externalName($0)) })
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-    }
-
-    private var isServer: Bool { LocalModels.externalIDs.contains(provider) }
-
-    /// Ready to build: a cloud provider with its key, or a model app that's running with a model in it.
-    private var providerReady: Bool { isServer ? !models.isEmpty : KeyStore.key(for: provider) != nil }
-
-    @ViewBuilder private var anotherProvider: some View {
-        let name = others.first { $0.id == provider }?.name ?? provider
-        HStack(spacing: 10) {
-            Picker("", selection: $provider) {
-                ForEach(others, id: \.id) { Text($0.name).tag($0.id) }
-            }
-            .labelsHidden()
-            .frame(width: 200)
-            if providerReady && !models.isEmpty {
-                Picker("", selection: $model) {
-                    ForEach(models, id: \.self) { Text($0).tag($0) }
-                }
-                .labelsHidden()
-                .frame(maxWidth: 260)
-            }
-        }
-        .onChange(of: provider) {
-            // The last provider's models don't belong to this one: nothing to pick until its own list is in.
-            models = []
-            model = ""
-            key = ""
-            problem = nil
-            Task { await loadModels() }
-        }
-        .onChange(of: model) {
-            guard models.contains(model) else { return }
-            UserDefaults.standard.set(model, forKey: "piModel.\(provider)")
-            apply()
-        }
-        .task { await loadModels() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            // Back from opening Ollama or LM Studio.
-            if isServer { Task { await loadModels() } }
-        }
-        if isServer {
-            if models.isEmpty {
-                HStack(spacing: 10) {
-                    note("Open \(name) with a model downloaded in it, and Lamp finds it here.")
-                    Spacer()
-                    Link("Get \(name)", destination: URL(string: provider == "ext-ollama" ? "https://ollama.com/download" : "https://lmstudio.ai")!)
-                        .font(.system(size: 13, weight: .medium))
-                }
-            } else if isUsing(.another) && piProvider == provider {
-                ready("\(name) will make your apps, right here on this Mac.")
-            }
-        } else if let current = Provider.apiProvider(provider) {
-            if KeyStore.key(for: provider) != nil {
-                if isUsing(.another) && piProvider == provider {
-                    ready("Your \(current.name) key is saved.")
-                }
-            } else {
-                keyField(name: current.name, url: current.keyURL) {
-                    let candidate = key.trimmed
-                    guard !candidate.isEmpty else { return }
-                    KeyStore.setKey(candidate, for: provider)
-                    key = ""
-                    Task {
-                        await loadModels()
-                        apply()
-                    }
-                }
-            }
-        }
-    }
-
-    private func loadModels() async {
-        let id = provider
-        let list: [String]
-        if LocalModels.externalIDs.contains(id) {
-            await local.detectExternal()
-            list = local.external[id] ?? []
-        } else {
-            list = await Agent.listModels(provider: id)
-        }
-        guard id == provider else { return }
-        models = list
-        let saved = UserDefaults.standard.string(forKey: "piModel.\(id)") ?? ""
-        model = list.contains(saved) ? saved : (Builder.suggestedModel(list, provider: id) ?? "")
-        apply()
     }
 
     // MARK: A model on this Mac

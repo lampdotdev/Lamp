@@ -1,0 +1,8 @@
+import Foundation
+import SwiftData
+@main struct Main { static func main() { MainActor.assumeIsolated {
+    let container = try! ModelContainer(for: Note.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+    let n = Note(title: "abc"); container.mainContext.insert(n)
+    print("before:", n.label)
+    reload(1); print("after1 (an overload the model's own code would now call: want a reopen):", n.label)
+}}}

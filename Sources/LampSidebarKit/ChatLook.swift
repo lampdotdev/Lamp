@@ -266,6 +266,10 @@ public enum ChatLook {
     /// says why the agent is at work with nobody having asked.
     public static let fixingCrash = "The app crashed, so Lamp is fixing it"
 
+    /// The line above the agent's return to a request Lamp paused for Reload: the request it sent isn't shown, so this
+    /// says why the agent is at work again.
+    public static let carryingOn = "The change is in. Lamp is carrying on with the request"
+
     /// One status line: a check, or a small spinner for a step still going.
     public struct StatusLine: View {
         let text: String
@@ -379,7 +383,7 @@ public enum ChatLook {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle").frame(width: 16)
-                        Text(said ?? "Ran a command")
+                        Text(said ?? ChatLook.unnamedStep)
                         Image(systemName: "chevron.right")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.tertiary)
@@ -404,15 +408,26 @@ public enum ChatLook {
         }
     }
 
-    /// The command in a status line that says one was run.
+    /// A step the agent gave no words of its own.
+    public static let unnamedStep = "Did a bit of housekeeping"
+
+    /// The command in a status line that says one was run, or that one was stopped before it ran ("Not run: …", by
+    /// a reviewer or a classifier). A stopped command is the same step, by the name the agent gave it, whatever the
+    /// engine: its line was already showing while it was judged, and only opening the step says it didn't run.
     public static func ranCommand(in status: String) -> String? {
-        status.hasPrefix("Ran: ") ? String(status.dropFirst(5)) : nil
+        if status.hasPrefix("Ran: ") { return String(status.dropFirst(5)) }
+        if status.hasPrefix(notRun) { return String(status.dropFirst(notRun.count)) + "  (not run)" }
+        return nil
     }
 
+    /// How a status line says a command was stopped before it ran.
+    public static let notRun = "Not run: "
+
     /// A turn's progress: one line saying what the agent is doing, with no clock beside it, which changes in place
-    /// as it moves from one thing to the next, and opens to show the steps so far. `since` is when the activity
-    /// began, which a long think or build is counted from (the turn's start when it isn't known). The whole turn's
-    /// time is its "Worked for…": when the turn ends this line's place is taken by it (`Worked`), which opens to the
+    /// as it moves from one thing to the next. `since` is when the activity began, which a long think or build is
+    /// counted from (the turn's start when it isn't known). It starts open, with the steps done so far above it,
+    /// oldest first, and itself at the bottom saying what's going on now; a click folds them. The whole turn's time is
+    /// its "Worked for…": when the turn ends this line's place is taken by it (`Worked`), folded, which opens to the
     /// same steps.
     public struct ActivityLine<Steps: View>: View {
         let activity: String
@@ -420,7 +435,7 @@ public enum ChatLook {
         let since: Date
         let hasSteps: Bool
         let steps: Steps
-        @State private var expanded = false
+        @State private var expanded = true
         @State private var dim = false
 
         public init(_ activity: String, started: Date, since: Date? = nil, hasSteps: Bool,
@@ -434,6 +449,12 @@ public enum ChatLook {
 
         public var body: some View {
             VStack(alignment: .leading, spacing: 4) {
+                // What's done reads down in the order it happened, and the line saying what's going on now stays at the
+                // bottom, under all of it: a step that finishes joins the list above the line.
+                if expanded && hasSteps {
+                    VStack(alignment: .leading, spacing: 4) { steps }
+                        .transition(.opacity)
+                }
                 Button {
                     guard hasSteps else { return }
                     withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
@@ -448,6 +469,8 @@ public enum ChatLook {
                             Image(systemName: "chevron.right")
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(.tertiary)
+                                // Right when folded and down when open, as every other fold in the chat turns
+                                // (the steps, "Worked for…"), so the line reads as one of them.
                                 .rotationEffect(.degrees(expanded ? 90 : 0))
                         }
                     }
@@ -460,10 +483,6 @@ public enum ChatLook {
                 .padding(.leading, ChatLook.stepIndent)
                 .help(hasSteps ? (expanded ? "Hide the steps" : "Show the steps") : "")
                 .onAppear { dim = true }
-                if expanded && hasSteps {
-                    VStack(alignment: .leading, spacing: 4) { steps }
-                        .transition(.opacity)
-                }
             }
         }
     }
@@ -681,6 +700,10 @@ public enum ChatLook {
 }
 
 extension View {
+    /// A card's buttons, on every card in both chats: the size Allow and Don't Allow are, never the small one. In
+    /// the wand's narrow panel a small button beside a card's words was too slight to find and hard to hit.
+    public func cardButtons() -> some View { controlSize(.large) }
+
     /// The pointing hand over something that opens or closes when clicked (a line of steps, a command to show):
     /// it says the line is a control, which text alone doesn't.
     public func pointingHand() -> some View { modifier(PointingHand()) }

@@ -543,12 +543,8 @@ enum ComputerUse {
             return try await loop(task, endpoint: "https://openrouter.ai/api/v1/chat/completions", key: key, model: model)
         case .engine(.pi, _), .localModel:
             guard Agent.executable != nil else { throw Failure(message: "Lamp's AI builder is missing. Download Lamp again.") }
-            // A local model's server is started, and Ollama's or LM Studio's models are registered with pi,
-            // as before a build turn.
-            if case .localModel(let provider, let model) = route.kind {
-                if provider == Builder.localProvider { _ = try await LocalModels.shared.ensureServer(for: model) }
-                if LocalModels.externalIDs.contains(provider) { await LocalModels.shared.detectExternal() }
-            }
+            // A local model's server is started, as before a build turn.
+            if case .localModel(_, let model) = route.kind { _ = try await LocalModels.shared.ensureServer(for: model) }
             return try await viaEngine(.pi, task, token: token, model: nil, piRoute: route)
         case .engine(let engine, let model):
             guard EngineInstall.path(for: engine) != nil else {
@@ -687,8 +683,8 @@ enum ComputerUse {
             // The route's own provider and model when it's a model on this Mac rather than the builder's.
             // Those providers are registered in Lamp's own pi configuration, so pi reads that even when
             // building goes through the person's own setup.
-            if case .localModel(let provider, let model)? = piRoute?.kind {
-                env["LAMP_PROVIDER"] = provider == Builder.localProvider ? LocalModels.piProvider(for: model) : provider
+            if case .localModel(_, let model)? = piRoute?.kind {
+                env["LAMP_PROVIDER"] = LocalModels.piProvider(for: model)
                 env["LAMP_MODEL"] = model
                 env["PI_CODING_AGENT_DIR"] = Agent.configDir
                 source = piRoute?.group ?? source

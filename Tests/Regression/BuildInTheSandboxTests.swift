@@ -10,8 +10,10 @@ final class BuildInTheSandboxTests: XCTestCase {
     private var racer: Process?
 
     override func tearDown() async throws {
-        racer?.terminate()
-        racer?.waitUntilExit()
+        if let racer {
+            racer.terminate()
+            TestShell.wait(for: racer, timeout: 10)
+        }
         if let root { try? FileManager.default.removeItem(at: root) }
     }
 
@@ -56,7 +58,7 @@ final class BuildInTheSandboxTests: XCTestCase {
             _ = await Store.runBuild("./build.sh", for: project, env: [:]) { output.append($0) }
         }
         racer.terminate()
-        racer.waitUntilExit()
+        TestShell.wait(for: racer, timeout: 10)
 
         let ran = (try? String(contentsOf: dir.appendingPathComponent("ran.txt"), encoding: .utf8)) ?? ""
         XCTAssertFalse(ran.isEmpty, "the swapped-in build.sh never ran, so nothing was tested")

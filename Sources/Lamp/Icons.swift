@@ -2,6 +2,7 @@ import AppKit
 import CoreImage
 import CryptoKit
 import ImagePlayground
+import SwiftUI
 import Vision
 
 /// The editable description of an app's icon, kept in `icon.json` in the app folder
@@ -192,6 +193,18 @@ enum Icons {
         let top: String
         let bottom: String
         var isLight = false
+
+        /// The one color the tile is filled with at every stage (the blueprint, the symbol, the glass): Icon
+        /// Composer lights it with its own slight gradient, and Lamp's drawings do the same (`gradient`).
+        var fill: String { name == "white" ? "#F2F2F5" : bottom }
+
+        /// The fill as a slight gradient from top to bottom, the way Icon Composer's automatic one looks.
+        var gradient: (top: NSColor, bottom: NSColor) { Icons.gradient(from: fill) }
+    }
+
+    static func gradient(from hex: String) -> (top: NSColor, bottom: NSColor) {
+        let base = color(hex: hex) ?? .gray
+        return (base.blended(withFraction: 0.12, of: .white) ?? base, base)
     }
 
     static let backgrounds: [Background] = [
@@ -229,6 +242,8 @@ enum Icons {
     static func carURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/Assets.car") }
     static func documentURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/AppIcon.icon") }
     static func previewURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/icon.png") }
+    /// There while the icon on the app is the blueprint waiting for its artwork, so a relaunch of Lamp picks it up again.
+    static func waitingURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/icon-waiting") }
     /// The icon as iOS takes it: a plain 1024px square, which the device rounds itself.
     static func squareURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/AppIcon-square.png") }
 
@@ -300,6 +315,9 @@ enum Icons {
     enum Artwork {
         case glass(GlassArt)
         case picture(NSImage)
+        /// None yet, but it's being drawn: the icon is the blueprint in the design's colors until it comes, so the
+        /// design's symbol never passes for the icon.
+        case waiting
 
         var picture: NSImage? { if case .picture(let image) = self { image } else { nil } }
     }
@@ -339,7 +357,10 @@ enum Icons {
 
     /// Asks the in-app AI model to design an icon from the app's name and APP.md, or, for a brand-new app,
     /// from the first thing its user asked for.
-    static func design(for project: LampProject, brief: String? = nil, avoiding current: IconSpec? = nil) async -> IconSpec {
+    /// `background`, when given, is the color already chosen with the app's name, which the blueprint has shown since:
+    /// the icon keeps it, so the tile never changes color on the way to the icon.
+    static func design(for project: LampProject, brief: String? = nil, avoiding current: IconSpec? = nil,
+                       background chosen: String? = nil) async -> IconSpec {
         let about = brief.map { "Its user asked for: \($0)" }
             ?? AppFile.text(project.dir.appendingPathComponent("APP.md"), in: project) ?? ""
         let names = backgrounds.map(\.name).joined(separator: ", ")
@@ -351,6 +372,9 @@ enum Icons {
         stopwatch, a stack of photos, a paint palette), in Apple's Liquid Glass style. Prefer a real-world metaphor \
         over a generic symbol.
         \(GlassIcons.styleGuide)
+
+        The subject is ONE object, never two: not "a leaf overlapping a clipboard", not "a camera next to a photo". \
+        The glass layers are that one object's own parts.
 
         Reply as JSON: {"subject": "<the object as a short noun phrase with one or two concrete details, \
         e.g. a yellow legal pad with a red pencil; name its parts and colors, never its texture or shading>", \
@@ -365,16 +389,37 @@ enum Icons {
         if let current, let json = try? String(data: JSONEncoder().encode(current), encoding: .utf8) {
             prompt += "\nMake it clearly different from the current icon (a different object and background): \(json)"
         }
+        let chosen = chosen.map { background(named: $0).name }
+        if let chosen { prompt += "\nThe background is already chosen: \(chosen). Use it, and pick tint to go with it." }
+        var best: IconSpec?
         for _ in 0..<2 {
             guard let (text, _) = try? await AppAI.complete(prompt: prompt, images: [], system: "", json: true),
                   var spec = try? JSONDecoder().decode(IconSpec.self, from: Data(text.utf8)) else { break }
-            spec.background = background(named: spec.background).name
-            if NSImage(systemSymbolName: spec.symbol, accessibilityDescription: nil) != nil, color(hex: spec.tint) != nil {
-                return spec
+            spec.background = chosen ?? background(named: spec.background).name
+            guard NSImage(systemSymbolName: spec.symbol, accessibilityDescription: nil) != nil, color(hex: spec.tint) != nil else {
+                prompt += "\n\"\(spec.symbol)\" is not a valid SF Symbol name, or tint isn't a #RRGGBB color. Fix it."
+                continue
             }
-            prompt += "\n\"\(spec.symbol)\" is not a valid SF Symbol name, or tint isn't a #RRGGBB color. Fix it."
+            // A second try for a subject that's two things; a sound one that still says so is better than none.
+            guard let second = secondObject(in: spec.subject) else { return spec }
+            best = spec
+            prompt += "\n\"\(spec.subject)\" is two objects (\"\(second)\"). Make the subject one object."
         }
-        return fallback(for: project.name)
+        if let best { return best }
+        // The color already shown stays, even when nothing better than the stand-in design could be had.
+        var standIn = fallback(for: project.name)
+        if let chosen {
+            standIn.background = chosen
+            if background(named: chosen).isLight { standIn.tint = "#3A3A3C" }
+        }
+        return standIn
+    }
+
+    /// The words by which a subject puts a second object beside its one, if it does.
+    static func secondObject(in subject: String) -> String? {
+        let words = " " + subject.lowercased() + " "
+        return [" overlapping ", " next to ", " beside ", " in front of ", " behind ", " on top of ", " alongside "]
+            .first { words.contains($0) }?.trimmed
     }
 
     static func fallback(for name: String) -> IconSpec {
@@ -421,12 +466,30 @@ enum Icons {
 
     /// The full-bleed icon (rounded square, transparent corners) at 1024px, with whatever artwork it has.
     static func tile(_ spec: IconSpec, art: Artwork?) async -> NSImage {
-        if case .glass(let glass) = art { return await GlassIcons.tile(glass) }
-        return await tile(spec, layers: foregroundLayers(spec, art: art?.picture))
+        switch art {
+        case .glass(let glass): return await GlassIcons.tile(glass)
+        case .waiting:
+            let (spec, blueprint) = await blueprint(for: spec)
+            return await tile(spec, layers: foregroundLayers(spec, art: blueprint))
+        default: return await tile(spec, layers: foregroundLayers(spec, art: art?.picture))
+        }
+    }
+
+    /// The blueprint in the design's colors, as a picture filling the tile, and the design as one whose picture
+    /// fills its tile: the blueprint is drawn flat, with no glass.
+    @MainActor static func blueprint(for spec: IconSpec) -> (IconSpec, NSImage) {
+        let bg = background(named: spec.background)
+        let ground = BlueprintTile.ground(bg)
+        let renderer = ImageRenderer(content: BlueprintTile(letter: nil, ground: ground).frame(width: 1024, height: 1024))
+        renderer.scale = 1
+        var flat = spec
+        flat.game = true
+        return (flat, renderer.nsImage ?? NSImage(size: NSSize(width: 1024, height: 1024)))
     }
 
     /// Lamp's own drawing of the icon, at once and without Icon Composer: for a drag.
     static func drawnTile(_ spec: IconSpec, art: Artwork?) -> NSBitmapImageRep {
+        // The blueprint is drawn in SwiftUI, on the main thread: a drag while artwork is drawn gets the symbol.
         if case .glass(let glass) = art { return GlassIcons.drawn(glass) }
         return drawnTile(spec, layers: foregroundLayers(spec, art: art?.picture))
     }
@@ -462,7 +525,7 @@ enum Icons {
         return canvas(1024) { rect in
             let shape = NSBezierPath(roundedRect: rect, xRadius: 1024 * 0.225, yRadius: 1024 * 0.225)
             shape.addClip()
-            NSGradient(colors: [color(hex: bg.top) ?? .white, color(hex: bg.bottom) ?? .gray])?.draw(in: rect, angle: -90)
+            NSGradient(colors: [bg.gradient.top, bg.gradient.bottom])?.draw(in: rect, angle: -90)
             NSGradient(colors: [NSColor.white.withAlphaComponent(bg.isLight ? 0.5 : 0.22), .clear])?
                 .draw(in: NSRect(x: 0, y: rect.midY, width: rect.width, height: rect.height / 2), angle: -90)
 
@@ -494,9 +557,10 @@ enum Icons {
     /// is drawn a little larger than the canvas so its rounded rim falls outside.
     static func square(_ spec: IconSpec, art: Artwork?, tile: NSImage) -> NSBitmapImageRep {
         let bg = background(named: spec.background)
-        var colors = [color(hex: bg.top) ?? .white, color(hex: bg.bottom) ?? .gray]
-        if case .glass(let glass) = art, let ground = color(hex: glass.design.background) {
-            colors = [ground.blended(withFraction: 0.12, of: .white) ?? ground, ground]
+        var colors = [bg.gradient.top, bg.gradient.bottom]
+        if case .glass(let glass) = art {
+            let ground = gradient(from: glass.design.background)
+            colors = [ground.top, ground.bottom]
         }
         return canvas(1024) { rect in
             NSGradient(colors: colors)?.draw(in: rect, angle: -90)
@@ -557,7 +621,9 @@ enum Icons {
             }
             tile = await GlassIcons.tile(glass)
         } else {
-            let layers = foregroundLayers(spec, art: art?.picture)
+            var spec = spec, picture = art?.picture
+            if case .waiting = art { (spec, picture) = await blueprint(for: spec) }
+            let layers = foregroundLayers(spec, art: picture)
             if let tools = IconTools.found {
                 try writeDocument(spec, layers: layers, to: documentURL(project))
                 await tools.compile(documentURL(project), to: carURL(project))
@@ -602,6 +668,8 @@ enum Icons {
         case .picture(let picture):
             guard let data = picture.tiffRepresentation else { return nil }
             hasher.update(data: Data("picture".utf8)); hasher.update(data: data)
+        case .waiting:
+            hasher.update(data: Data("waiting".utf8))
         case nil:
             hasher.update(data: Data("none".utf8))
         }
@@ -642,7 +710,7 @@ enum Icons {
         }
         let bg = background(named: spec.background)
         let document: [String: Any] = [
-            "fill": ["automatic-gradient": composerColor(bg.bottom)],
+            "fill": ["automatic-gradient": composerColor(bg.fill)],
             "groups": groups,
             "supported-platforms": ["squares": ["macOS"]],
         ]

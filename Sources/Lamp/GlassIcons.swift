@@ -103,8 +103,9 @@ enum GlassIcons {
     /// Draws the shapes and puts them right from a look: it needs to draw in vectors and see well.
     static let drawModel = "anthropic/claude-opus-5.5"
     static let candidateCount = 3
-    /// How many times a candidate is looked at and drawn again.
-    static let rounds = 2
+    /// How many times a candidate is looked at and drawn again. Timed with the candidates side by side: none is about
+    /// 35 seconds and visibly rougher, one about a minute, two about 80 seconds and no better than one.
+    static let rounds = 1
 
     /// What makes an icon look like Apple's own in Liquid Glass. The designer, the painter and the judge all read it.
     static let styleGuide = """
@@ -178,11 +179,12 @@ enum GlassIcons {
     }
 
     /// One design: drawn, painted where it asks for a picture, then looked at and drawn again `rounds` times.
-    static func drawCandidate(_ spec: IconSpec, appName: String, about: String, variant: Int,
-                              canPaint: Bool) async throws -> (GlassDesign, [String: Data], NSImage) {
+    static func drawCandidate(_ spec: IconSpec, appName: String, about: String, variant: Int, canPaint: Bool,
+                              rounds: Int = rounds, model: String = drawModel) async throws -> (GlassDesign, [String: Data], NSImage) {
         let format = canPaint ? format : format + "\nNothing here can paint pictures: use no painted layer."
+        let fill = Icons.background(named: spec.background).fill
         var design = try await ask(designPrompt(spec, appName: appName, about: about, variant: variant, format: format,
-                                                canPaint: canPaint), images: [], canPaint: canPaint)
+                                                canPaint: canPaint), images: [], canPaint: canPaint, model: model, fill: fill)
         var paintings = try await paint(design, existing: [:])
         var picture = await tile(GlassArt(design: design, paintings: paintings))
         for _ in 0..<rounds {
@@ -203,7 +205,8 @@ enum GlassIcons {
             improved, in the same JSON shape. Keep what works.
             """
             let image = AppAI.Image(mediaType: "image/png", data: png.base64EncodedString())
-            guard let better = try? await ask(look + "\n\n" + format, images: [image], canPaint: canPaint) else { break }
+            guard let better = try? await ask(look + "\n\n" + format, images: [image], canPaint: canPaint, model: model,
+                                              fill: fill) else { break }
             design = better
             paintings = try await paint(design, existing: paintings)
             picture = await tile(GlassArt(design: design, paintings: paintings))
@@ -248,8 +251,8 @@ enum GlassIcons {
         ]
         let bg = Icons.background(named: spec.background)
         let ground = bg.isLight || bg.name == "graphite"
-            ? "\(bg.name) (\(bg.bottom)), with pieces in the object's own vivid color, \(spec.tint), and its shades"
-            : "\(bg.name) (\(bg.bottom)), with pieces in white and lighter and darker shades of that hue"
+            ? "\(bg.fill), with pieces in the object's own vivid color, \(spec.tint), and its shades"
+            : "\(bg.fill), with pieces in white and lighter and darker shades of that hue"
         return """
         Design the icon for a macOS 26 app called "\(appName)". About the app:
         \(about.prefix(3000))
@@ -264,14 +267,17 @@ enum GlassIcons {
         """
     }
 
-    private static func ask(_ prompt: String, images: [AppAI.Image], canPaint: Bool) async throws -> GlassDesign {
+    private static func ask(_ prompt: String, images: [AppAI.Image], canPaint: Bool, model: String,
+                            fill: String?) async throws -> GlassDesign {
         var prompt = prompt
         var lastError: Error = AppAI.Failure(message: "The icon design couldn't be read.")
         for _ in 0..<2 {
             do {
                 let (text, _) = try await AppAI.complete(prompt: prompt, images: images, system: "You are one of Apple's icon designers.",
-                                                         json: true, model: drawModel)
-                let design = try JSONDecoder().decode(GlassDesign.self, from: Data(text.utf8))
+                                                         json: true, model: model)
+                var design = try JSONDecoder().decode(GlassDesign.self, from: Data(text.utf8))
+                // The tile's color was chosen with the app's name and shown since: the drawing keeps it exactly.
+                if let fill { design.background = fill }
                 if let problem = problem(in: design) { throw AppAI.Failure(message: problem) }
                 if !canPaint, design.layers.contains(where: { $0.material == .painted }) {
                     throw AppAI.Failure(message: "there's no way to paint here, so use no painted layer")
@@ -454,8 +460,8 @@ enum GlassIcons {
         NSGraphicsContext.current?.imageInterpolation = .high
         let rect = NSRect(x: 0, y: 0, width: side, height: side)
         NSBezierPath(roundedRect: rect, xRadius: 1024 * 0.225, yRadius: 1024 * 0.225).addClip()
-        let ground = Icons.color(hex: art.design.background) ?? .systemBlue
-        NSGradient(colors: [ground.blended(withFraction: 0.12, of: .white) ?? ground, ground])?.draw(in: rect, angle: -90)
+        let ground = Icons.gradient(from: art.design.background)
+        NSGradient(colors: [ground.top, ground.bottom])?.draw(in: rect, angle: -90)
         for layer in art.design.layers {
             guard let shape = layerImage(layer, paintings: art.paintings) else { continue }
             let see = [.glass: 0.6, .frosted: 0.75, .lens: 0.8][layer.material] ?? 1.0

@@ -1,0 +1,13 @@
+VERDICT 1: RELOAD (Added Game.pick)
+VERDICT 2: REOPEN (Game keeps pick, added while the app was open, as Mood?, which a new case of Mood would change)
+== run
+before: volume=1
+RELOAD 1 (whole): ok
+after1 (want pick=c isC=true): volume=1 pick=c isC=true
+RELOAD 2: REOPEN Game keeps pick, added while the app was open, as Mood?, which a new case of Mood would change
+after2 (want pick=d, in place or a reopen that names the spare): volume=1 pick=c isC=true
+before: volume=1 pick=nil isC=false
+RELOAD 1: in the restart
+after1 (want pick=c isC=true): volume=1 pick=d isC=false
+RELOAD 2: in the restart
+after2 (want pick=d, in place or a reopen that names the spare): volume=1 pick=d isC=false

@@ -5,6 +5,38 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.17.0
+
+- Each change the agent makes goes into the open app as soon as it's saved, so you watch the app change while it
+  works. While a change is built, a soft smoke rises along the app's edges, and it whooshes away as the change goes in.
+- When the agent tries your app, you see it: its cursor moves to each spot with a word on what it's doing, and Stop
+  hands the app straight back to you.
+- Setup and Settings offer four ways to build and to answer inside apps: Claude, ChatGPT, OpenRouter, and AI that runs
+  on your Mac.
+- New starters: Buzzer Beater tells you when a live game gets close, wild or historic, and opens it where you can
+  watch; Fireside and Local Crossings, a daily crossword made from the map around you, join them. Wedding Words is
+  dressed like the invitations. Wishes you already have stay as they are.
+- The chat beside an app answers at once when you press Return, a menu bar app's panel keeps Lamp's wand beside its
+  own buttons, and a Reload pressed while the agent works says it'll go in when the request is done.
+- Far more changes go into an open app without restarting it, and the review before opening a shared wish puts what
+  to weigh first.
+
+## 0.16.0
+
+- A new app opens beside its chat as soon as it's started and takes shape there in passes, the layout first, so
+  you watch it being built instead of waiting for the end.
+- While a change is built, the open app glows softly at its edges, and a band of light crosses it as the change
+  goes in. Changes go in faster, and an app that has to restart comes back sooner.
+- Lamp asks before restarting an app you have open: a Reload button in its title bar and in the chat puts the
+  change in when you're ready.
+- The agent describes each step in its own words, and tells you what you can see now rather than what it wrote.
+- Drag wishes on the desk into any order, or onto the trash to delete them. A wish being built glows and says
+  what it's doing under its name.
+- Hot Shelf is a lit studio shelf of real bottles. A starter's suggested changes now show the first time you
+  open it, even after an update.
+- Approving the agent's commands takes about half the time, and the approval card puts the decision first.
+- More changes go into an open app without restarting it, and the ones that can't say why in plainer words.
+
 ## 0.15.1
 
 - A new case added to an enum goes into the open app more reliably: everything that reads the enum, including

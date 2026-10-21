@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Gave Config.size its new value)
+== run
+before: 200 Int half=100
+RELOAD 1 (whole): ok
+after1 (want 200.5 Double): 200.5 Double half=100.25

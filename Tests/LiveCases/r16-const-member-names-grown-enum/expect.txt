@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Gave Defaults.picker its new value)
+== run
+before: constant=2 fresh=2
+RELOAD 1 (whole): ok
+after1 (want constant=3 like fresh=3, or a reopen): constant=3 fresh=3

@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Money is a type of its own now, where the open app's is a typealias for Int)
+== run
+before: amount=5 label=cash
+RELOAD 1: REOPEN Money is a type of its own now, where the open app's is a typealias for Int
+after1 (want amount=5 cents, label=cash; or a reopen): amount=5 label=cash
+before: amount=5 EUR label=cash
+RELOAD 1: in the restart
+after1 (want amount=5 cents, label=cash; or a reopen): amount=5 EUR label=cash

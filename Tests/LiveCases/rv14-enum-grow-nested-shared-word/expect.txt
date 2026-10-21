@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: cases=2
+RELOAD 1 (whole): ok
+after1 (want in, as for the same enum nested in a type whose name shares no word with it): cases=3

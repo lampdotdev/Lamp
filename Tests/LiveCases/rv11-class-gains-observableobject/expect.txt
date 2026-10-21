@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: v0 n=1
+RELOAD 1 (whole): ok
+after1 (want v1 in place: a protocol was added, no superclass): v1 n=1

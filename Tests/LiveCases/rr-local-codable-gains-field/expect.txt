@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Shelf.surprise().Answer in Model.swift changed what it holds (Shelf.surprise().Answer in Model.swift.dish: String); Answer (inside Shelf.surprise()) is Codable and gained dish, which has to be stored to be encoded and decoded)
+== run
+before: w
+RELOAD 1: REOPEN Shelf.surprise().Answer@Model.swift changed what it holds (Shelf.surprise().Answer@Model.swift.dish: String); Answer (inside Shelf.surprise()) is Codable and gained dish, which has to be stored to be encoded and decoded
+after1 (want a reopen naming Answer inside Shelf.surprise(): it has to keep the new field to decode it): w
+before: w d
+RELOAD 1: in the restart
+after1 (want a reopen naming Answer inside Shelf.surprise(): it has to keep the new field to decode it): w d

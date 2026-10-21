@@ -29,7 +29,7 @@ enum LiveObject {
     /// copy directly, private or not, so without this the library's accessors would keep a second copy of the value,
     /// starting over; through the table they reach the app's, and so the accessors themselves (with a `didSet`) can
     /// be the change's.
-    static func isIdentity(_ name: String, local: Bool = false) -> Bool {
+    static func isIdentity(_ name: String) -> Bool {
         guard name.hasPrefix("_$s"), !name.hasSuffix(copySuffix), !name.hasSuffix(ownSuffix) else { return false }
         if name.hasSuffix("vau") { return true }
         if name.hasSuffix("Mp") || name.hasSuffix("Mc") || name.hasSuffix("WP") { return true }
@@ -39,6 +39,20 @@ enum LiveObject {
         }
         return false
     }
+
+    /// The type a descriptor's symbol names, demangled by Swift's own runtime, with a private type's discriminator
+    /// left out (`(Mood in _3F…)` is `Mood`): "nominal type descriptor for Pet.PetMood" is "Pet.PetMood".
+    static func demangledType(_ symbol: String) -> String? {
+        typealias Demangle = @convention(c) (UnsafePointer<CChar>?, Int, UnsafeMutablePointer<CChar>?, UnsafeMutablePointer<Int>?, UInt32) -> UnsafeMutablePointer<CChar>?
+        guard let found = demangler else { return nil }
+        let call = unsafeBitCast(found, to: Demangle.self)
+        guard let out = symbol.withCString({ call($0, strlen($0), nil, nil, 0) }) else { return nil }
+        defer { free(out) }
+        let text = String(cString: out)
+        guard let at = text.range(of: "nominal type descriptor for ") else { return nil }
+        return text[at.upperBound...].replacingOccurrences(of: #"\((\w+) in _[0-9A-F]+\)"#, with: "$1", options: .regularExpression)
+    }
+    nonisolated(unsafe) private static let demangler = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "swift_demangle")
 
     /// Rewrites the object at `path` in place. `kept` names the types whose copies the library keeps for itself, by
     /// their mangled name with the module ("3App4MoodO"), as `mangledType` gives it; those found among the object's
@@ -56,6 +70,30 @@ enum LiveObject {
     /// A type's mangled name: the module, then each part of its qualified name with its kind's letter (V for a
     /// struct, C for a class or actor, O for an enum), the last part's `kind` and the outer parts' from `kinds` by
     /// their qualified names (a `Mood` inside a `Game` struct is `4GameV4MoodO`), the last part's kind where none is known.
+    /// Whether a symbol is the kept type's: its mangled name, where a private type's part carries the compiler's
+    /// discriminator between its name and its kind letter (`4Mood33_<32 hex>LLO`, or with the compiler's word
+    /// substitutions, `4Mood022_<hex>LLO`).
+    static func isKept(_ symbol: String, as kept: String) -> Bool {
+        var pattern = "^_\\$s", rest = Substring(kept), module = true
+        while let m = rest.firstMatch(of: #/^(\d+)/#), let length = Int(m.1) {
+            rest = rest.dropFirst(m.1.count)
+            let part = rest.prefix(length)
+            rest = rest.dropFirst(length)
+            pattern += m.1 + NSRegularExpression.escapedPattern(for: String(part))
+            // The module carries no kind letter; each type's part has one, with the discriminator before it.
+            if module { module = false; continue }
+            guard let kind = rest.first else { break }
+            rest = rest.dropFirst()
+            // The discriminator is `_` and 32 hex digits, an identifier of 33; with word substitutions it starts with
+            // `0` instead of a length, which no kind letter does. Either ends at its first `LL`, so it can't run on
+            // into a nested declaration's name (`…LLO5HELLOV`).
+            pattern += #"(?:33_[0-9A-F]{32}LL|0(?:(?!LL)[0-9A-Za-z_])+LL)?"# + String(kind)
+        }
+        // Anchored past the last kind letter: a member of the type (`…O5countSivau`) or a type nested in it
+        // (`…O4InfoVMn`) begins with a length and is the app's, not the kept type's own.
+        return symbol.range(of: pattern + #"(?!\d)"#, options: .regularExpression) != nil
+    }
+
     static func mangledType(_ name: String, module: String, kind: String, kinds: [String: String] = [:]) -> String {
         var prefix = "", out = "\(module.utf8.count)\(module)"
         let parts = name.split(separator: ".")
@@ -66,7 +104,7 @@ enum LiveObject {
         return out
     }
 
-    private struct Section { var name: String; var offset: Int; var size: Int; var reloff: Int; var nreloc: Int; var index: Int }
+    private struct Section { var name: String; var offset: Int; var size: Int; var reloff: Int; var nreloc: Int; var index: Int; var header: Int }
 
     static func rewrite(_ bytes: inout [UInt8], kept: [String], matched: inout Set<String>) -> String? {
         func u32(_ at: Int) -> UInt32 { bytes.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: at, as: UInt32.self) } }
@@ -93,7 +131,7 @@ enum LiveObject {
                     // is kept as data the linker leaves alone, and `LampLive` attaches them once the change fits.
                     if name == "__objc_catlist" { bytes.replaceSubrange(section..<(section + 16), with: Array("__lamp_catlist".utf8) + [0, 0]) }
                     sections.append(Section(name: segment + "," + name, offset: Int(u32(section + 48)), size: Int(u64(section + 40)),
-                                            reloff: Int(u32(section + 56)), nreloc: Int(u32(section + 60)), index: sections.count + 1))
+                                            reloff: Int(u32(section + 56)), nreloc: Int(u32(section + 60)), index: sections.count + 1, header: section))
                     section += MemoryLayout<section_64>.size
                 }
             case UInt32(LC_SYMTAB):
@@ -113,6 +151,27 @@ enum LiveObject {
             let strx = Int(u32(symtab.symoff + index * 16))
             return String(decoding: bytes[(symtab.stroff + strx)...].prefix { $0 != 0 }, as: UTF8.self)
         }
+        // Each kept type as the compiler spelt it here: where an identifier shares a word with one before it, the
+        // compiler writes the word by its place (`Pet` and `PetMood` are `3Pet0A4MoodO`), which a name built from the
+        // parts doesn't follow. The type's descriptor names it as the built name does once both are demangled, and
+        // every symbol of the type begins with the descriptor's spelling.
+        var spelt: [String: String] = [:]
+        if !kept.isEmpty {
+            let wanted = Dictionary(kept.compactMap { k in demangledType("$s" + k + "Mn").map { ($0, k) } }, uniquingKeysWith: { a, _ in a })
+            for index in 0..<symtab.nsyms {
+                let type = bytes[symtab.symoff + index * 16 + 4]
+                guard type & UInt8(N_STAB) == 0, type & UInt8(N_TYPE) == UInt8(N_SECT) else { continue }
+                let name = symbolName(index)
+                guard name.hasPrefix("_$s"), name.hasSuffix("OMn"), let type_ = demangledType(String(name.dropFirst())),
+                      let k = wanted[type_] else { continue }
+                spelt[k] = String(name.dropFirst(3).dropLast(2))
+            }
+        }
+        func keeps(_ name: String, _ k: String) -> Bool {
+            if isKept(name, as: k) { return true }
+            guard let prefix = spelt[k], name.hasPrefix("_$s" + prefix) else { return false }
+            return name.dropFirst(3 + prefix.count).first.map { !$0.isNumber } ?? true
+        }
         // The definitions to rename, by symbol index, each with the index of the undefined symbol that takes its name.
         var renamed: [Int: Int] = [:]
         var added: [(name: String, type: UInt8, desc: UInt16)] = []
@@ -130,13 +189,44 @@ enum LiveObject {
                 bytes[desc + 1] = UInt8(value >> 8)
                 continue
             }
-            guard type & UInt8(N_TYPE) == UInt8(N_SECT), isIdentity(name, local: type & UInt8(N_EXT) == 0) else { continue }
-            if let keep = kept.first(where: { name.hasPrefix("_$s" + $0) }) { matched.insert(keep); own.insert(index) }
+            guard type & UInt8(N_TYPE) == UInt8(N_SECT), isIdentity(name) else { continue }
+            if let keep = kept.first(where: { keeps(name, $0) }) { matched.insert(keep); own.insert(index) }
             renamed[index] = symtab.nsyms + added.count
             added.append((name, UInt8(N_UNDF) | UInt8(N_EXT), UInt16(N_WEAK_REF)))
             names.append(name)
         }
         guard !renamed.isEmpty else { return nil }
+        // A type's metadata is sometimes referred to as its full metadata plus the offset of its address point
+        // (`PreferencesVMf + 16`, passed to a generic call), where the type's own symbol (`PreferencesVN`) is: a load
+        // through the table can't carry an offset, so such a reference names that symbol instead, with none.
+        func value(_ index: Int) -> (section: UInt8, value: UInt64) { (bytes[symtab.symoff + index * 16 + 5], u64(symtab.symoff + index * 16 + 8)) }
+        var defined: [String: Int] = [:]
+        for index in renamed.keys { let (section, at) = value(index); defined["\(section):\(at)"] = index }
+        for s in sections.indices where sections[s].nreloc > 1 {
+            var entries: [(UInt32, UInt32)] = (0..<sections[s].nreloc).map { (u32(sections[s].reloff + $0 * 8), u32(sections[s].reloff + $0 * 8 + 4)) }
+            var r = 0, changed = false
+            while r + 1 < entries.count {
+                let (addend, next) = (entries[r].1, entries[r + 1].1)
+                let kind = Int(next >> 28), symbol = Int(next & 0xFFFFFF)
+                if Int(addend >> 28) == Int(ARM64_RELOC_ADDEND.rawValue), next & (1 << 27) != 0, renamed[symbol] != nil,
+                   kind == Int(ARM64_RELOC_PAGE21.rawValue) || kind == Int(ARM64_RELOC_PAGEOFF12.rawValue) {
+                    // The offset is a signed 24-bit number.
+                    let offset = Int64(Int32(bitPattern: (addend & 0xFFFFFF) << 8) >> 8)
+                    let (section, at) = value(symbol)
+                    if let point = defined["\(section):\(UInt64(Int64(at) + offset))"] {
+                        entries[r + 1].1 = UInt32(point) | (next & 0xFF00_0000)
+                        entries.remove(at: r)
+                        changed = true
+                        continue
+                    }
+                }
+                r += 1
+            }
+            guard changed else { continue }
+            for (n, entry) in entries.enumerated() { put32(entry.0, sections[s].reloff + n * 8); put32(entry.1, sections[s].reloff + n * 8 + 4) }
+            sections[s].nreloc = entries.count
+            put32(UInt32(entries.count), sections[s].header + 60)
+        }
         // Every reference from code becomes a load through the table. Each pair is an `adrp` and an `add` to the
         // same symbol; the `add` becomes `ldr`, and the linker fills in the table's entry.
         for section in sections where section.nreloc > 0 {

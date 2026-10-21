@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Card.corner, Card.columns)
+== run
+before: v0
+RELOAD 1 (whole): ok
+after1 (want the change in without reopening: a let with a literal can't change, so no state is needed): v1 corner=12.0 columns=3

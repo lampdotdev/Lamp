@@ -1,0 +1,13 @@
+VERDICT 1: RELOAD (Added Tag.badge)
+VERDICT 2: REOPEN (Tag.badge was added while the app was open and is taken away now, which changes how the open app's values of it compare and hash)
+== run
+before: picked=0 has=false
+RELOAD 1 (whole): ok
+after1 (want picked=1000 has=true): picked=1000 has=true
+RELOAD 2: REOPEN Tag.badge was added while the app was open and is taken away now, which changes how the open app's values of it compare and hash
+after2 (want picked=1000 has=true: the set the open app keeps still finds the tags it holds, or a reopen): picked=1000 has=true
+before: picked=0 has=false again=1000
+RELOAD 1: in the restart
+after1 (want picked=1000 has=true): picked=0 has=false again=1000
+RELOAD 2: in the restart
+after2 (want picked=1000 has=true: the set the open app keeps still finds the tags it holds, or a reopen): picked=0 has=false again=1000

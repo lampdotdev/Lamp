@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (the file of the SwiftData model Note is compiled again, and its data is found by key paths the open app made)
+== run
+before: any abc
+RELOAD 1: REOPEN the file of the SwiftData model Note is compiled again, and its data is found by key paths the open app made
+after1 (an overload the model calls inside a string interpolation: want a reopen): any abc
+before: ABC
+RELOAD 1: in the restart
+after1 (an overload the model calls inside a string interpolation: want a reopen): ABC

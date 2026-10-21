@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Counter.count is private now, which gives it another name at run time than the one the open app's values and storage go by)
+== run
+before: 42
+RELOAD 1: REOPEN Counter.count is private now, which gives it another name at run time than the one the open app's values and storage go by
+after1 (want 43, the count the open app kept): 43
+before: 42
+RELOAD 1: in the restart
+after1 (want 43, the count the open app kept): 43

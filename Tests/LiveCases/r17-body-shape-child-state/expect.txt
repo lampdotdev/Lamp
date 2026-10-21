@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: child first made 1, model 2
+RELOAD 1: ok
+after1 (want the child's state as it was: first made 1, model 2): child first made 3, model 4

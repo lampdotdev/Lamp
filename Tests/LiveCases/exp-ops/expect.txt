@@ -1,0 +1,36 @@
+VERDICT 1: REOPEN (start() uses Mood in code that may still be running (a loop, a timer, a task, an observer), which doesn't know the new cases)
+== run
+--- before
+old raw: happy
+old describing: happy
+old ==: true hash==: true
+old dict: 1
+old set: 1 true set(happy): 1 array==: true
+old anyhash: true base: true anyhash(happy): true
+old casts: true true true
+old mirror: 1 0
+old json: {"mood":"happy"}
+old decode: happy
+old allCases: 2 init(rawValue): happy
+new raw: happy reflecting: Case.Mood.happy ==: true dict: 1 set: 1 true anyhash: true casts: true allCases: 2 json: {"mood":"happy"}
+RELOAD 1: REOPEN start() uses Mood in code that may still be running (a loop, a timer, a task, an observer), which doesn't know the new cases
+--- after (want angry/3/true everywhere, no crash)
+old raw: sad
+old describing: sad
+old ==: true hash==: true
+old dict: 1
+old set: 1 true set(happy): 1 array==: true
+old anyhash: true base: true anyhash(happy): true
+old casts: true true true
+old mirror: 1 0
+old json: {"mood":"sad"}
+old decode: sad
+old allCases: 2 init(rawValue): sad
+new raw: sad reflecting: Case.Mood.sad ==: true dict: 1 set: 1 true anyhash: true casts: true allCases: 2 json: {"mood":"sad"}
+--- before
+new closure: count=1
+new raw: happy reflecting: Case.Mood.happy ==: true dict: 1 set: 1 true anyhash: true casts: true allCases: 3 json: {"mood":"happy"}
+RELOAD 1: in the restart
+--- after (want angry/3/true everywhere, no crash)
+new closure: count=1
+new raw: angry reflecting: Case.Mood.angry ==: true dict: 1 set: 1 true anyhash: true casts: true allCases: 3 json: {"mood":"angry"}

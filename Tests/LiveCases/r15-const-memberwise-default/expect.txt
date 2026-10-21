@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Gave Defaults.settings its new value)
+== run
+before: constant=5 fresh=5
+RELOAD 1 (whole): ok
+after1 (want constant=7 like fresh=7, or a reopen): constant=7 fresh=7

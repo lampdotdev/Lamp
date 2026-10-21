@@ -38,11 +38,7 @@ final class SharingWidgetTests: XCTestCase {
         for (path, text) in files { try write(text, to: path, in: stage) }
         try write("{\"format\":\(format),\"name\":\"Tally\",\"exportedAt\":\"2026-10-01T00:00:00Z\"}", to: "lamp-app.json", in: stage)
         let file = stage.deletingLastPathComponent().appendingPathComponent("\(UUID().uuidString).lampapp")
-        let zip = Process()
-        zip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        zip.arguments = ["-c", "-k", "--norsrc", stage.path, file.path]
-        try zip.run()
-        zip.waitUntilExit()
+        TestShell.run("/usr/bin/ditto", ["-c", "-k", "--norsrc", stage.path, file.path])
         return file
     }
 
@@ -110,11 +106,7 @@ final class SharingWidgetTests: XCTestCase {
         try Data([0xff, 0xfe, 0x00, 0xd8]).write(to: stage.appendingPathComponent("Widget/Widget.swift"))
         try write("{\"format\":3,\"name\":\"Tally\",\"exportedAt\":\"2026-10-01T00:00:00Z\"}", to: "lamp-app.json", in: stage)
         let file = stage.deletingLastPathComponent().appendingPathComponent("bin.lampapp")
-        let zip = Process()
-        zip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        zip.arguments = ["-c", "-k", "--norsrc", stage.path, file.path]
-        try zip.run()
-        zip.waitUntilExit()
+        TestShell.run("/usr/bin/ditto", ["-c", "-k", "--norsrc", stage.path, file.path])
         XCTAssertThrowsError(try Sharing.open(file)) { error in
             XCTAssertEqual(error.localizedDescription, "This Lamp app file has code that isn't plain text, so Lamp can't check it.")
         }

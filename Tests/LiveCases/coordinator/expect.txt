@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD
+VERDICT 2: RELOAD
+== run
+before:  tap-old | ftap-old | direct: 1 10
+RELOAD 1: ok
+after1 (bodies changed):  tap-NEW | ftap-NEW | direct: 2 20
+RELOAD 2 (whole): ok
+after2 (methods added):  tap-NEW2 extra | ftap-NEW2 fextra | direct: 3 30

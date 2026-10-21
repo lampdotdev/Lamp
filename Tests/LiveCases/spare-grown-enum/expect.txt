@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD (Added Game.mood, Game.history, Settings.mood)
+VERDICT 2: RELOAD
+== run
+before: level=1 volume=1
+RELOAD 1 (whole): ok
+after1 (want mood=sad in all): level=1 volume=1 game.mood=sad history=[Case.Mood.sad, Case.Mood.sad] settings.mood=sad
+RELOAD 2 (whole): ok
+after2 (want mood=sad still): level=1 volume=1 game.mood=sad history=[Case.Mood.sad, Case.Mood.sad] settings.mood=sad

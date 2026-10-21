@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Holder is a new class under Base, which the open app's objects and method tables can't take in place)
+== run
+before: kid base
+RELOAD 1: REOPEN Holder is a new class under Base, which the open app's objects and method tables can't take in place
+after1 (want kid holder: a new generic subclass's override answers, as any subclass's does): kid base
+before: kid holder
+RELOAD 1: in the restart
+after1 (want kid holder: a new generic subclass's override answers, as any subclass's does): kid holder

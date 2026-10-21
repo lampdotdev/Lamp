@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD
+VERDICT 2: RELOAD
+== run
+before: label abc
+RELOAD 1: ok
+after1 (want LABEL): LABEL abc
+RELOAD 2: ok
+after2 (want LABEL abc!, in live: the model's file names nothing newly declared): LABEL abc!

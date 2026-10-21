@@ -23,15 +23,7 @@ final class SharingAssetsTests: XCTestCase {
 
     /// The archive's own listing: what a recipient's Lamp would unpack.
     private func entries(of archive: URL) throws -> [String] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/zipinfo")
-        process.arguments = ["-1", archive.path]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        try process.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return String(decoding: data, as: UTF8.self).split(separator: "\n").map(String.init)
+        TestShell.run("/usr/bin/zipinfo", ["-1", archive.path], mergeErrors: false).output.split(separator: "\n").map(String.init)
     }
 
     func testOnlyAssetsAreShared() throws {

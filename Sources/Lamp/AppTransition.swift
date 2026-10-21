@@ -2,8 +2,8 @@ import AppKit
 import CryptoKit
 import SwiftUI
 
-/// The open app's windows glow at their edges while Lamp builds a change for it, and a band of light crosses them
-/// as it goes in (`LampTransition` in LampSupport.swift, which draws it). Lamp is the only one who asks: each
+/// Smoke curls up from the bottom of the open app's windows while Lamp builds a change for it, and a band of white
+/// whooshes up across them as it goes in (`LampTransition` in LampSupport.swift, which draws it). Lamp is the only one who asks: each
 /// request is signed with the app's token, over its phase, an id and the time, so no other process can start it
 /// or play one again, and the app's own code has no way to.
 ///
@@ -107,38 +107,37 @@ enum AppTransition {
     }
 }
 
-/// Lamp's own copy of the glow, on the picture it shows where the window was while the app reopens for a change
-/// (`CoverView`), so the glow carries on across the reopen: only blur coming in from the edge, its colour going
-/// round blue, purple and orange as the app's does. It doesn't breathe where the person asked for less motion.
-struct TransitionGlow: View {
-    var cornerRadius: CGFloat = 12
+/// The same light around a wish's icon on the desk while it's built: just outside the icon, its colours travelling
+/// round it, bright enough to see at a glance across the desk, since a wish that looks still looks stuck. Where the
+/// person asked for less motion it stays still. The desk fades it out when the build is done.
+struct BuildingGlow: View {
+    let size: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private static let hues: [NSColor] = [.systemBlue, .systemPurple, .systemOrange]
-    private static let cycle = 6.0
+    private static let lap = 3.0
 
     var body: some View {
-        TimelineView(.animation) { timeline in
-            let time = timeline.date.timeIntervalSinceReferenceDate
-            let color = Self.color(at: time)
-            // As faint as the app's own (`LampTransition.Glass.strength`), so it never stands in the way.
-            let breath = 0.3 * (reduceMotion ? 0.8 : 0.725 + 0.275 * cos(time * .pi / 1.2))
-            let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        TimelineView(.animation(paused: reduceMotion)) { timeline in
+            let light = Self.light(at: timeline.date, still: reduceMotion)
+            // The icon's own tile, an 824pt square on its 1024pt canvas, so the light hugs its edge.
+            let side = size * 824 / 1024
+            let shape = RoundedRectangle(cornerRadius: side * 0.225, style: .continuous)
             ZStack {
-                shape.stroke(color.opacity(0.9), lineWidth: 60).blur(radius: 50)
-                shape.stroke(color, lineWidth: 30).blur(radius: 24)
+                shape.stroke(light, lineWidth: side * 0.24).blur(radius: side * 0.15)
+                shape.stroke(light, lineWidth: side * 0.09).blur(radius: side * 0.05)
+                // A crisp rim at the icon's edge, which is what the eye catches from across the window.
+                shape.stroke(light, lineWidth: 2.5).blur(radius: 0.6)
             }
-            .clipShape(shape)
-            .opacity(breath)
+            .frame(width: side, height: side)
         }
+        .frame(width: size, height: size)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
 
-    /// Where in the round of colours the glow is at a moment, blended between the two either side.
-    private static func color(at time: TimeInterval) -> Color {
-        let position = (time / cycle).truncatingRemainder(dividingBy: 1) * Double(hues.count)
-        let index = Int(position) % hues.count
-        let next = hues[(index + 1) % hues.count]
-        return Color(nsColor: hues[index].blended(withFraction: position - Double(Int(position)), of: next) ?? hues[index])
+    /// The light where it is at a moment.
+    private static func light(at date: Date, still: Bool) -> AngularGradient {
+        let turn = still ? 0 : (date.timeIntervalSinceReferenceDate / lap).truncatingRemainder(dividingBy: 1)
+        let colors = [NSColor.systemBlue, .systemPurple, .systemOrange].map(Color.init(nsColor:))
+        return AngularGradient(colors: colors + [colors[0]], center: .center, angle: .degrees(turn * 360))
     }
 }

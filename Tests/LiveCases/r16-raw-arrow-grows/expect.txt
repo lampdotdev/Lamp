@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: <- ->
+RELOAD 1 (whole): ok
+after1 (want 3 cases, going in as any enum that only gained a case at the end): <- -> ^

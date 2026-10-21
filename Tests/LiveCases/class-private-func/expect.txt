@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: 3
+RELOAD 1: ok
+after: 12

@@ -25,17 +25,7 @@ final class WidgetBuildTests: XCTestCase {
 
     @discardableResult
     private func run(_ command: String, in directory: URL) throws -> (status: Int32, output: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", command]
-        process.currentDirectoryURL = directory
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+        TestShell.run(command, in: directory)
     }
 
     /// The two halves Lamp writes, built as two small programs and run against each other and against a
@@ -53,6 +43,9 @@ final class WidgetBuildTests: XCTestCase {
         let support = try text("Sources/LampSupport.swift", in: project)
         let start = try XCTUnwrap(support.range(of: "enum LampWidget {"))
         let end = try XCTUnwrap(support.range(of: "#endif", range: start.upperBound..<support.endIndex))
+        // How the app learns its port and secret: the real `LampInstall`, reading the Info.plist linked in below.
+        let installStart = try XCTUnwrap(support.range(of: "enum LampInstall {"))
+        let installEnd = try XCTUnwrap(support.range(of: "\n    }\n", range: installStart.upperBound..<support.endIndex))
         try ("""
         import Foundation
         import Network
@@ -61,6 +54,7 @@ final class WidgetBuildTests: XCTestCase {
         enum LampStore { static let folder = URL(fileURLWithPath: CommandLine.arguments[1]) }
         enum LampWidgetLinks { static let start: Void = () }
         struct Tide: Codable { var height: Double }
+        \(support[installStart.lowerBound..<installEnd.upperBound])
         \(support[start.lowerBound..<end.lowerBound])
         LampWidget.share(Tide(height: 2.5), as: "tide")
         RunLoop.main.run(until: Date().addingTimeInterval(Double(CommandLine.arguments[2])!))
@@ -81,6 +75,7 @@ final class WidgetBuildTests: XCTestCase {
         try ("""
         import socket, sys
         s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", \(port))); s.listen(5)
+        s.settimeout(30)   # a widget that never asks fails the test rather than leaving this waiting
         print("listening", flush=True)
         for reply in [b'ok\\n{"height":666}', b'ok ' + b'0' * 64 + b'\\n{"height":666}']:
             c, _ = s.accept(); c.recv(4096); c.sendall(reply); c.close()
@@ -90,7 +85,10 @@ final class WidgetBuildTests: XCTestCase {
         // a name of its own for this run, cleared afterwards, keeps one run's answer out of the next.
         let widget = "lamp-widget-test-\(UUID().uuidString)"
         defer { _ = try? run("defaults delete \(widget); rm -f ~/Library/Preferences/\(widget).plist", in: work) }
-        let built = try run(Shell.compatibleSDK + "xcrun swiftc -O -o \(widget) half.swift main.swift 2>&1; xcrun swiftc -O -o app app.swift 2>&1", in: work)
+        // Each half reads its port and secret from its own Info.plist, as Lamp installs them.
+        let appInstall = try InstallValues.linkerFlags(Template.installValues(for: project), in: work, named: "App-Info.plist")
+        let widgetInstall = try InstallValues.linkerFlags(Template.widgetInstallValues(for: project), in: work, named: "Widget-Info.plist")
+        let built = try run(Shell.compatibleSDK + "xcrun swiftc -O -o \(widget) half.swift main.swift \(widgetInstall) 2>&1; xcrun swiftc -O -o app app.swift \(appInstall) 2>&1", in: work)
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: work.appendingPathComponent("app").path), String(built.output.suffix(2000)))
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: work.appendingPathComponent(widget).path), String(built.output.suffix(2000)))
 

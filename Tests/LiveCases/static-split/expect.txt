@@ -1,0 +1,6 @@
+VERDICT 1: RELOAD
+== run
+before: count=3 total=3.0 tag=t1 flag=true items=3 global=3 name=n1
+RELOAD 1: ok
+after (want count=4 total=4 tag=t1 name=n1 flag=true, every value kept): NEW count=4 total=4.0 tag=t1 flag=true items=4 global=4 name=n1
+old code reads: NEW count=4 total=4.0 tag=t1 flag=true items=4 global=4 name=n1

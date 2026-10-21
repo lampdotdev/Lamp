@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (SwiftUI keeps a Mood? that Watch gave it (to compare the next with), and a new case of Mood would read its nil as itself)
+== run
+before: []
+RELOAD 1: REOPEN SwiftUI keeps a Mood? that Watch gave it (to compare the next with), and a new case of Mood would read its nil as itself
+after1 (want no change seen, first is still nil): []
+before: []
+RELOAD 1: in the restart
+after1 (want no change seen, first is still nil): []

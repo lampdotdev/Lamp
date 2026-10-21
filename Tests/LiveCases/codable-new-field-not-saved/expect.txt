@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Todo changed what it holds (Todo.done: Bool); Todo is Codable and gained done, which has to be stored to be encoded and decoded)
+== run
+before: {"title":"x"}
+RELOAD 1: REOPEN Todo changed what it holds (Todo.done: Bool); Todo is Codable and gained done, which has to be stored to be encoded and decoded
+after1 (want done true in the JSON and read back): {"title":"x"} | Todo(title: "x")
+before: {"done":false,"title":"x"}
+RELOAD 1: in the restart
+after1 (want done true in the JSON and read back): {"done":true,"title":"x"} | done=true

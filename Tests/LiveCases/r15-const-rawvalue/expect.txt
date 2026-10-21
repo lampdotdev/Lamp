@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (the raw value of Kind.a changed ("x" to "y"), which the open app's values are kept, compared and hashed by)
+== run
+before: constant=x fresh=x
+RELOAD 1: REOPEN the raw value of Kind.a changed ("x" to "y"), which the open app's values are kept, compared and hashed by
+after1 (want constant=y like fresh=y, or a reopen): constant=x fresh=x
+before: constant=y fresh=y
+RELOAD 1: in the restart
+after1 (want constant=y like fresh=y, or a reopen): constant=y fresh=y

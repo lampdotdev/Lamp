@@ -2,7 +2,7 @@
 name: Transcripts
 offer: Make Transcripts yours
 tweaks:
-  - person.2: Label who's speaking
-  - person.crop.rectangle.stack: A template for one-on-ones
+  - bubble.left.and.bubble.right: Show transcripts as chat bubbles
   - envelope: Email me the action items
+  - book: Make it a voice diary
 ---

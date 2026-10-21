@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + transitionEntries
+    static let entries: [Entry] = chatEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + transitionEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -133,7 +133,7 @@ enum Gallery {
         option("At my desk", "desktopcomputer"), option("On the go", "iphone"),
         option("In the kitchen", "fork.knife"), option("Everywhere", "globe"),
     ])
-    /// Words too long to sit four to a row in the wand's panel: the tiles go two by two, or one under another.
+    /// Words too long to sit four to a row on a wide card: the tiles go one under another there too.
     private static let longWords = Talk.Question(question: "Which languages?", options: [
         option("Internationalization", "globe"), option("Accessibility", "accessibility"),
         option("Localization", "character.book.closed"), option("Documentation", "doc.text"),
@@ -155,7 +155,7 @@ enum Gallery {
         ask("A starter's first changes", Talk.Ask(layout: .steps, questions: [Talk.Question(question: "Make Today yours", options: [
             option("Five priorities instead of three", "list.number"), option("Add a water counter", "drop"),
             option("Remind me to plan at 8", "bell"),
-        ], detail: "Today came with Lamp as an example, and it's yours to change. Try one of these, or describe your own.")],
+        ])],
         offer: true)),
     ]
 
@@ -242,6 +242,8 @@ enum Gallery {
     // MARK: Build
 
     private static let buildEntries: [Entry] = [
+        // A new app before the model has first answered, which has no plan yet.
+        build("Just started") { _ in },
         build("Working on its plan") {
             $0.activity = "Working on the interface"
             $0.plan = [PlanPart(id: 0, title: "Type in the bill", done: true, files: ["BillField.swift"]),
@@ -282,18 +284,46 @@ enum Gallery {
             AnyView(ChatLook.ActivityLine("Opening Countdowns…", started: Date().addingTimeInterval(-95),
                                           since: Date().addingTimeInterval(-4)))
         },
-        cover("Cover, building", "Building…", waited: 12),
-        cover("Cover, the turn over", nil, waited: 0),
-        // The one line a turn has while it goes on, which opens (click it) to the steps so far: commands the agent
-        // named, a few under one name, and one it didn't. "Worked for…" opens to the same rows once it's over.
+        // The one line a turn has while it goes on, under the steps done so far (a click folds them): commands the agent
+        // named, a few under one name, and one it didn't; the one running is the line. "Worked for…", folded, opens to
+        // the same rows once it's over.
         Entry(group: "Activity", name: "Steps the agent named") {
             AnyView(ChatLook.ActivityLine("Checking it builds", started: Date().addingTimeInterval(-48),
                                           since: Date().addingTimeInterval(-6), hasSteps: true) {
                 ChatLook.RanCommand("cat .lamp/starter.md\ncat Sources/App.swift Sources/Model.swift\ncat Sources/ShelfView.swift",
                                     said: "Reading how the shelf works")
-                ChatLook.RanCommand("./build.sh", said: "Checking it builds")
                 ChatLook.RanCommand("ls Assets")
             })
+        },
+        // The steps as the chat gathers them from what was logged: file work Lamp named after a command, logged before
+        // that command's own row (calls made together, the command still running), is one step with it.
+        Entry(group: "Activity", name: "File work before its command") {
+            let logged = [LogLine(kind: .user, text: "Turn this into a beer tracker"),
+                          LogLine(kind: .tool, text: "bash cat Sources/App.swift", said: "Reading how the shelf works"),
+                          LogLine(kind: .status, text: "Ran: cat Sources/App.swift", said: "Reading how the shelf works"),
+                          LogLine(kind: .tool, text: "bash grep -rn label Sources", said: "Reading how labels and pictures are found"),
+                          LogLine(kind: .tool, text: "read Sources/LabelView.swift", said: "Reading how labels and pictures are found"),
+                          LogLine(kind: .status, text: "Ran: grep -rn label Sources", said: "Reading how labels and pictures are found"),
+                          LogLine(kind: .tool, text: "bash grep -rn hot Sources", said: "Finding every hot-sauce word and number"),
+                          LogLine(kind: .status, text: "Ran: grep -rn hot Sources", said: "Finding every hot-sauce word and number")]
+            let steps = ChatItem.live(LogLine.visible(logged, details: false), doing: Activity.thinking).steps
+            return AnyView(ChatLook.ActivityLine("Mulling it over", started: Date().addingTimeInterval(-40),
+                                                 hasSteps: true) { StepList(steps: steps) })
+        },
+        // A change waiting for Reload, under the answer that says so: the action line's symbol and words in the steps'
+        // column, with "Worked for…" above and Undo Last Change below.
+        Entry(group: "Activity", name: "Reload under a change") {
+            AnyView(VStack(alignment: .leading, spacing: 8) {
+                ChatLook.AgentText("Once you press Reload, the rack scrolls to each new spice as you add it.")
+                ChatLook.Worked("Worked for 54 s") { EmptyView() }
+                ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.text("Hot Shelf"), button: "Reload", prominent: true) {}
+                ChatLook.UndoChange {}
+            })
+        },
+        // Reload pressed while the agent is still at work on the app: it goes in once that's done.
+        Entry(group: "Activity", name: "Reload, waiting for the request") {
+            AnyView(ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.queued("Hot Shelf"), button: "Reload",
+                                        disabled: true, prominent: true) {})
         },
         Entry(group: "Activity", name: "Under the agent's progress lines") {
             let started = Date().addingTimeInterval(-95)
@@ -304,21 +334,6 @@ enum Gallery {
             })
         },
     ]
-
-    /// The cover while the app reopens, on a starter's picture of its window.
-    private static func cover(_ name: String, _ activity: String?, waited: TimeInterval) -> Entry {
-        Entry(group: "Activity", name: name) {
-            var progress = TurnProgress(newApp: false)
-            progress.started = Date().addingTimeInterval(-waited - 20)
-            if let activity { progress.activity = activity }
-            progress.activitySince = Date().addingTimeInterval(-waited)
-            if activity == nil { progress.finish(worked: true) }
-            let picture = Starters.folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("countdowns/preview.png")) }
-                ?? NSImage(size: NSSize(width: 340, height: 282))
-            return AnyView(CoverView(image: picture) { CoverNote(progress: progress) }
-                .aspectRatio(picture.size, contentMode: .fit))
-        }
-    }
 
     private static func activity(_ name: String, _ activity: String, waited: TimeInterval) -> Entry {
         Entry(group: "Activity", name: name) {
@@ -355,12 +370,67 @@ enum Gallery {
         ], group: "Progress"),
     ]
 
+    // MARK: Shared wish
+
+    /// The review a shared wish opens with (`ImportReviewCard`), as the sheet draws it: its own width whichever
+    /// width is picked, since it's only ever a sheet over Lamp's window, never in the wand's panel.
+    private static let importEntries: [Entry] = [
+        review("Checking", nil),
+        review("Looks safe", ImportReview(summary: "Keeps a list of the plants on your balcony and reminds you when each needs water.",
+                                          capabilities: ["Saves your plants and when you last watered them"], concerns: [],
+                                          risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true,
+                                          detected: found("Connects to the internet")),
+               app: "Plant Care", description: "Never forget to water the basil again."),
+        review("Partly checked", ImportReview(
+            summary: "A 3D driving game that builds real streets and buildings from map data for any place you search, starting in San Francisco, with cars, people, trains and street furniture.",
+            capabilities: ["Downloads maps of the places you drive", "Remembers the places you searched"],
+            concerns: [ImportReview.tooLarge], risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false),
+            asked: true, detected: found("Uses the camera or microphone", "Connects to the internet"), partial: true),
+               description: "A driving game through real streets anywhere in the world, starting in San Francisco."),
+        review("Looks risky", ImportReview(
+            summary: "Shows a daily quote, and also reads your browser's saved data and sends it to a website.",
+            capabilities: ["Sends what it reads to a website"],
+            concerns: ["Reads your browser's saved logins", "Sends them to a website it doesn't name", "Its description leaves this out"],
+            risk: .high, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true,
+            detected: found("Touches sensitive files (SSH keys, browser data, keychains)", "Connects to the internet")),
+               app: "Morning Quote", description: "A quote to start each day."),
+        review("Not checked by AI", ImportReview(summary: "", capabilities: [], concerns: [], asked: true,
+                                                 detected: found("Runs other programs or shell commands", "Deletes files"),
+                                                 note: "The check didn't run: OpenRouter said the key has no credit left.")),
+        review("Checked on this Mac", ImportReview(summary: "Tracks how long you spend on each project and totals it by week.",
+                                                   capabilities: [], concerns: [], risk: .low,
+                                                   reviewer: ImportReview.Reviewer(name: "Qwen 3", onThisMac: true), asked: true,
+                                                   detected: found("Listens for keyboard shortcuts in every app")),
+               app: "Project Hours"),
+        review("Already here", ImportReview(summary: "Keeps a list of the plants on your balcony and reminds you when each needs water.",
+                                            capabilities: [], concerns: [], risk: .low,
+                                            reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true, detected: []),
+               app: "Plant Care", existing: "Balcony Plants"),
+    ]
+
+    private static func found(_ labels: String...) -> [Sharing.Capability] {
+        labels.compactMap { label in Sharing.checklist.first { $0.label == label } }
+    }
+
+    private static func review(_ name: String, _ review: ImportReview?, app: String = "Drive Anywhere", description: String? = nil,
+                               existing: String? = nil) -> Entry {
+        Entry(group: "Shared wish", name: name) {
+            AnyView(ImportReviewCard(name: app, description: description,
+                                     icon: nil, review: review, existing: existing, cancel: {}, open: {}, update: {})
+                .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+                .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+                .fixedSize())
+        }
+    }
+
     // MARK: Transition
 
-    /// The glow and the light are drawn by the app itself (`LampTransition` in LampSupport.swift), so they're tried
-    /// on a real one: the same signed requests a build sends, to an app open now. The cover's copy of the glow,
-    /// which is Lamp's, is in Activity.
+    /// The glow and the light are drawn by the app itself (`LampTransition` in LampSupport.swift). Their layers
+    /// (`LampTransition.Look`) are compiled into Lamp too, so they're tried here over pictures of apps, and on a
+    /// real one with the same signed requests a build sends, to an app open now.
     private static let transitionEntries: [Entry] = [
+        Entry(group: "Transition", name: "On pictures of apps") { AnyView(TransitionPlayground()) },
         Entry(group: "Transition", name: "On an open app") { AnyView(TransitionTrial()) },
     ]
 

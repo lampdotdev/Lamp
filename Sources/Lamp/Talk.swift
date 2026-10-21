@@ -166,10 +166,11 @@ enum Talk {
         return queue.first { $0.card == card.id }
     }
 
-    /// The waiting messages drawn as such: not those a folded card stands for.
+    /// The waiting messages drawn as such: not those a folded card stands for, and not Lamp's own that carries a
+    /// paused request on after Reload (`Store.pause`), which the Reload line stands for.
     static func drawnWaiting(_ queue: [QueuedMessage], in lines: [LogLine]) -> [QueuedMessage] {
         let clicked = Set(lines.filter { $0.ask?.answers != nil }.map(\.id))
-        return queue.filter { message in message.card.map { !clicked.contains($0) } ?? true }
+        return queue.filter { message in !message.afterReload && (message.card.map { !clicked.contains($0) } ?? true) }
     }
 
     /// The messages a card shows, which the chat leaves out. A guess turned on a result card saved by an earlier Lamp was

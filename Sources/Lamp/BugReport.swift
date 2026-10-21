@@ -45,6 +45,9 @@ enum BugReport {
                 message.hasSuffix(ErrorMessages.quitsAfterLaunchSuffix) {
                 return "The app quit unexpectedly after opening."
             }
+            if message.hasSuffix(ErrorMessages.setAsideSuffix) {
+                return "The app crashed as a change went into it, and the version before it was opened again."
+            }
             if message.hasSuffix(ErrorMessages.crashedSuffix) {
                 return "The app crashed again after Lamp tried to fix it."
             }

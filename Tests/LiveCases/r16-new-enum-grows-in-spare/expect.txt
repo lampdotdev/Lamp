@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD (Added Box.filter, Item.filter)
+VERDICT 2: RELOAD
+== run
+before: x
+RELOAD 1 (whole): ok
+after1 (want done done): done done
+RELOAD 2 (whole): ok
+after2 (want done done: what was chosen before the enum grew is kept): done done

@@ -1,0 +1,31 @@
+VERDICT 1: RELOAD (Added Item.done)
+VERDICT 2: REOPEN (Item.done was added while the app was open and is taken away now, which changes how the open app's values of it compare and hash)
+VERDICT 3: RELOAD (Added Item.done)
+VERDICT 4: REOPEN (Item.done was added while the app was open and is taken away now, which changes how the open app's values of it compare and hash)
+VERDICT 5: RELOAD (Added Item.done)
+== run
+before: equal=true first=- set=2
+RELOAD 1 (whole): ok
+after1 (want equal=false first=T): equal=false first=T set=3
+RELOAD 2: REOPEN Item.done was added while the app was open and is taken away now, which changes how the open app's values of it compare and hash
+after2 (want equal=true): equal=false first=T set=3
+before: equal=true first=- set=2
+RELOAD 1: in the restart
+after1 (want equal=false first=T): equal=true first=- set=2
+RELOAD 2: in the restart
+after2 (want equal=true): equal=true first=- set=2
+RELOAD 3 (whole): ok
+after3 (want equal=true first=F, fresh place): equal=true first=F set=2
+RELOAD 4: REOPEN Item.done was added while the app was open and is taken away now, which changes how the open app's values of it compare and hash
+after4 (want equal=true): equal=true first=F set=2
+before: equal=true first=- set=2
+RELOAD 1: in the restart
+after1 (want equal=false first=T): equal=true first=- set=2
+RELOAD 2: in the restart
+after2 (want equal=true): equal=true first=- set=2
+RELOAD 3: in the restart
+after3 (want equal=true first=F, fresh place): equal=true first=- set=2
+RELOAD 4: in the restart
+after4 (want equal=true): equal=true first=- set=2
+RELOAD 5 (whole): ok
+after5 (want equal=true first=F, fresh place again): equal=true first=F set=2

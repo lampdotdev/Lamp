@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Gave Config.limit its new value)
+== run
+before: limit=3
+RELOAD 1 (whole): ok
+after1 (want limit=5, the constant given its new value): limit=5

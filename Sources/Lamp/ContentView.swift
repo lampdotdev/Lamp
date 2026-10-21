@@ -54,7 +54,7 @@ struct AppIcon: View {
         if let icon = store.icons[project.id] {
             Image(nsImage: icon).resizable().interpolation(.high).frame(width: size, height: size)
         } else {
-            StandInIcon(project: project, size: size)
+            StandInIcon(project: project, size: size, color: store.standInColor(for: project))
         }
     }
 }
@@ -64,12 +64,15 @@ struct AppIcon: View {
 struct StandInIcon: View {
     let project: LampProject
     let size: CGFloat
+    /// The icon's background once it's chosen (`Store.standInColor`), so the tile is the icon's color from the start.
+    var color: String?
 
     var body: some View {
         if project.untitled {
             WishIcon(size: size)
         } else {
-            BlueprintIcon(letter: project.untitled ? nil : project.name.first, size: size)
+            BlueprintIcon(letter: project.name.first ?? "A", size: size,
+                          ground: color.map { BlueprintTile.ground(Icons.background(named: $0)) } ?? BlueprintTile.gray)
         }
     }
 }
@@ -121,44 +124,81 @@ struct WishIcon: View {
 struct BlueprintIcon: View {
     let letter: Character?
     let size: CGFloat
+    var ground = BlueprintTile.gray
 
     var body: some View {
         // Same footprint as a real macOS icon: an 824pt tile on a 1024pt canvas.
         let side = size * 824 / 1024
-        let shape = RoundedRectangle(cornerRadius: side * 0.225, style: .continuous)
-        ZStack {
-            shape.fill(LinearGradient(colors: [Color(red: 0.20, green: 0.46, blue: 0.86),
-                                               Color(red: 0.10, green: 0.30, blue: 0.66)],
-                                      startPoint: .top, endPoint: .bottom))
-            Canvas { context, canvas in
-                let w = canvas.width
-                let thin = max(0.5, w / 400)
-                var grid = Path()
-                for i in 1..<8 {
-                    let p = w * CGFloat(i) / 8
-                    grid.move(to: CGPoint(x: p, y: 0)); grid.addLine(to: CGPoint(x: p, y: w))
-                    grid.move(to: CGPoint(x: 0, y: p)); grid.addLine(to: CGPoint(x: w, y: p))
+        BlueprintTile(letter: letter, ground: ground)
+            .clipShape(RoundedRectangle(cornerRadius: side * 0.225, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: side * 0.225, style: .continuous)
+                .strokeBorder(.white.opacity(0.35), lineWidth: max(0.5, side / 160)))
+            .frame(width: side, height: side)
+            .shadow(color: .black.opacity(0.18), radius: size / 60, y: size / 80)
+            .frame(width: size, height: size)
+    }
+}
+
+/// The blueprint itself, square and full bleed: gray until the icon is designed, then in the design's colors with
+/// a stand-in in place of the initial while its artwork is drawn (`Icons.Artwork.waiting`), so something has moved
+/// on without passing for the icon itself.
+struct BlueprintTile: View {
+    /// The initial; nil once the icon is designed and its artwork is on its way.
+    let letter: Character?
+    var ground = gray
+
+    struct Ground {
+        let top: Color
+        let bottom: Color
+        /// Lines and marks dark on a light ground.
+        var light = false
+    }
+
+    static let gray = Ground(top: Color(white: 0.56), bottom: Color(white: 0.40))
+
+    /// The ground for an icon's background, the same gradient its tile has at every later stage.
+    static func ground(_ background: Icons.Background) -> Ground {
+        Ground(top: Color(nsColor: background.gradient.top), bottom: Color(nsColor: background.gradient.bottom),
+               light: background.isLight)
+    }
+
+    var body: some View {
+        GeometryReader { area in
+            let side = area.size.width
+            let ink: Color = ground.light ? .black : .white
+            ZStack {
+                LinearGradient(colors: [ground.top, ground.bottom], startPoint: .top, endPoint: .bottom)
+                Canvas { context, canvas in
+                    let w = canvas.width
+                    let thin = max(0.5, w / 400)
+                    var grid = Path()
+                    for i in 1..<8 {
+                        let p = w * CGFloat(i) / 8
+                        grid.move(to: CGPoint(x: p, y: 0)); grid.addLine(to: CGPoint(x: p, y: w))
+                        grid.move(to: CGPoint(x: 0, y: p)); grid.addLine(to: CGPoint(x: w, y: p))
+                    }
+                    if w > 40 { context.stroke(grid, with: .color(ink.opacity(0.12)), lineWidth: thin) }
+                    var guides = Path()
+                    guides.move(to: .zero); guides.addLine(to: CGPoint(x: w, y: w))
+                    guides.move(to: CGPoint(x: w, y: 0)); guides.addLine(to: CGPoint(x: 0, y: w))
+                    for r in [0.19, 0.31] { guides.addEllipse(in: CGRect(x: w * (0.5 - r), y: w * (0.5 - r), width: w * r * 2, height: w * r * 2)) }
+                    guides.addRect(CGRect(x: w * 0.16, y: w * 0.16, width: w * 0.68, height: w * 0.68))
+                    context.stroke(guides, with: .color(ink.opacity(0.28)), lineWidth: thin * 1.5)
                 }
-                if w > 40 { context.stroke(grid, with: .color(.white.opacity(0.12)), lineWidth: thin) }
-                var guides = Path()
-                guides.move(to: .zero); guides.addLine(to: CGPoint(x: w, y: w))
-                guides.move(to: CGPoint(x: w, y: 0)); guides.addLine(to: CGPoint(x: 0, y: w))
-                for r in [0.19, 0.31] { guides.addEllipse(in: CGRect(x: w * (0.5 - r), y: w * (0.5 - r), width: w * r * 2, height: w * r * 2)) }
-                guides.addRect(CGRect(x: w * 0.16, y: w * 0.16, width: w * 0.68, height: w * 0.68))
-                context.stroke(guides, with: .color(.white.opacity(0.28)), lineWidth: thin * 1.5)
-            }
-            .clipShape(shape)
-            shape.strokeBorder(.white.opacity(0.35), lineWidth: max(0.5, side / 160))
-            if let letter {
-                Text(String(letter).uppercased())
-                    .font(.system(size: side * 0.48, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.15), radius: side / 60, y: side / 120)
+                Group {
+                    if let letter {
+                        Text(String(letter).uppercased())
+                            .font(.system(size: side * 0.48, weight: .medium, design: .rounded))
+                    } else {
+                        Image(systemName: "app.background.dotted")
+                            .font(.system(size: side * 0.44, weight: .regular))
+                    }
+                }
+                .foregroundStyle(ground.light ? Color.black.opacity(0.55) : .white)
+                .shadow(color: .black.opacity(0.15), radius: side / 60, y: side / 120)
             }
         }
-        .frame(width: side, height: side)
-        .shadow(color: .black.opacity(0.18), radius: size / 60, y: size / 80)
-        .frame(width: size, height: size)
+        .aspectRatio(1, contentMode: .fit)
     }
 }
 
@@ -524,7 +564,8 @@ struct ProjectView: View {
         let canSendNow = store.canSendNow(in: project)
         ForEach(Array(queued.enumerated()), id: \.element.id) { index, message in
             let place = places[index]
-            ChatLook.QueuedRow(text: message.text, waitingForSetup: !store.setup.ready, sending: message.sendNow, place: place,
+            ChatLook.QueuedRow(text: message.text, waitingForSetup: !store.setup.ready,
+                               waitingForReload: store.queueWaitsForReload(in: project), sending: message.sendNow, place: place,
                                onRemove: { store.unqueue(message, from: project) },
                                sendNow: !message.sendNow && place.last && canSendNow ? { store.sendNow(in: project, latest: message.id) } : nil) {
                 if let pointed = message.pointed {
@@ -1160,12 +1201,7 @@ struct AppInfoView: View {
     }
 
     private static var providerName: String {
-        switch Builder.piProvider {
-        case Builder.localProvider: "Native Mac AI"
-        case let id where id.hasPrefix("ext-"): LocalModels.externalName(id)
-        case Builder.myPiProvider: "Your pi setup"
-        case let id: Provider.apiProvider(id)?.name ?? id
-        }
+        Builder.piProvider == Builder.localProvider ? "Native Mac AI" : Provider.openRouter
     }
 
     private static var buildModel: String {
@@ -1304,171 +1340,28 @@ private struct WindowFinder: NSViewRepresentable {
     func updateNSView(_ view: Probe, context: Context) { view.found = found }
 }
 
-/// Shown before building an app someone else shared: what it does, what it can access, and any red flags.
+/// Shown before building an app someone else shared: finds what `ImportReviewCard` draws (the pending file,
+/// its icon, the room under the sheet) and passes it in.
 struct ImportReviewView: View {
     @EnvironmentObject private var store: Store
     let pending: Store.PendingImport
 
-    private var review: ImportReview? { pending.review }
     /// The app's own icon, once drawn from the file; the plain app icon until then, and for a file without one.
     @State private var icon: NSImage?
-    /// What the app says it does, in its sender's words, when the file has that.
     /// How tall the sheet may be where it hangs: from its top down to the bottom of the screen's usable area
     /// (above the Dock). Unlimited until the sheet is on screen.
     @State private var room = CGFloat.infinity
     @State private var sheet: NSWindow?
-    /// The heights of what stays put, measured as laid out: the app's name and description at the top, the
-    /// verdict under the middle, the line about the copy already here when there is one, and the buttons.
-    @State private var fixed: [Part: CGFloat] = [:]
-    private enum Part { case name, verdict, existing, buttons }
-    /// How tall the scrolling middle may be: the height a long review always stopped at, or less when the
-    /// screen below the sheet's top is shorter than that. Taken off besides the fixed parts: the sheet's
-    /// padding (48) and a 16-point gap after each part but the last.
-    private var limit: CGFloat { max(60, min(400, room - fixed.values.reduce(0, +) - 48 - 16 * CGFloat(fixed.count))) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                // Lamp's icons carry their own margin, so one fills a larger frame to sit like the plain icon did.
-                Image(nsImage: icon ?? NSWorkspace.shared.icon(for: .applicationBundle)).resizable()
-                    .frame(width: icon == nil ? 44 : 56, height: icon == nil ? 44 : 56)
-                    .frame(width: 56, height: 56)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    // The name is the sender's: shown as written, never as formatting, and on one line whose
-                    // end (the closing quote and the question mark) stays in view however long it is.
-                    Text(verbatim: "Open “\(pending.package.name)”?").font(.title2.bold())
-                        .lineLimit(1).truncationMode(.middle)
-                    if pending.waited {
-                        Text("You opened this during setup.").font(.callout).foregroundStyle(.secondary)
-                    }
-                    // The sender's words, so the line under them says whose they are.
-                    if let description = pending.package.description {
-                        Text(verbatim: description).font(.callout).lineLimit(4)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.bottom, 2)
-                    }
-                    Text(pending.package.description == nil
-                         ? "Someone shared this wish with you. Lamp builds it and opens it here, where it can do anything an app you run can do."
-                         : "Someone shared this wish with you, and the description above is theirs. Lamp builds it and opens it here, where it can do anything an app you run can do.")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .task {
-                icon = await Sharing.icon(of: pending.package)
-            }
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.name] = $0 }
-
-            if let review {
-              // What the app does scrolls when it's long (an app that does many things) or the screen is short;
-              // the app's name above, and the verdict and buttons below, stay put, so the conclusion is never
-              // off screen.
-              ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                if !review.summary.isEmpty {
-                    section("What it does") { Text(review.summary).fixedSize(horizontal: false, vertical: true) }
-                }
-                section("What it can do on your Mac") { capabilities(review) }
-                if !pending.package.attachments.isEmpty {
-                    section("Files the app uses") {
-                        Text(pending.package.attachments.map(\.lastPathComponent).joined(separator: ", "))
-                            .font(.callout).foregroundStyle(.secondary)
-                    }
-                }
-                if !review.concerns.isEmpty {
-                    section("Concerns") {
-                        ForEach(review.concerns, id: \.self) {
-                            Label($0, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                        }
-                    }
-                }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-              }
-              .frame(maxHeight: limit)
-              .fixedSize(horizontal: false, vertical: true)   // no taller than its content, up to the limit
-              VStack(alignment: .leading, spacing: 16) {
-                verdict(review)
-                if let line = review.reviewerLine {
-                    Text(verbatim: line).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-                if let note = review.note {
-                    // Why the check didn't run can be a provider's own words, of any length, and this part
-                    // doesn't scroll: a few lines here, the whole of it on hover.
-                    Text(note).font(.callout).foregroundStyle(.secondary).lineLimit(4)
-                        .fixedSize(horizontal: false, vertical: true).help(note)
-                }
-                Text("Lamp's check is a guide, not a guarantee. Only open apps from people you trust.")
-                    .font(.caption).foregroundStyle(.secondary)
-              }
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.verdict] = $0 }
-            } else {
-                HStack(spacing: 10) {
-                    ProgressView().controlSize(.small)
-                    Text("Checking what this wish does…").foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 20)
-            }
-
-            if let existing = pending.existing {
-                // The buttons say what each does; this is what someone would worry about before choosing Update.
-                Label {
-                    Text(verbatim: "You already have this wish\(existing.name == pending.package.name ? "" : ", as “\(existing.name)”"). Updating keeps your data, and you can go back if you change your mind.")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                } icon: {
-                    Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(.secondary)
-                }
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.existing] = $0 }
-            }
-
-            HStack {
-                Spacer()
-                // Escape always cancels. Return builds only when the review is in and vouches for the app
-                // (`ImportReview.opening`); anything less takes a deliberate click.
-                Button("Cancel", role: .cancel) { store.cancelImport() }
-                    .keyboardShortcut(.cancelAction)
-                if pending.existing != nil {
-                    // The app is already here: the file either becomes its next version or a second app.
-                    // Either way its code runs, so both follow the same rule as opening does. Return is
-                    // only ever Update: keeping both is the choice someone makes on purpose.
-                    switch review?.opening {
-                    case .byReturn:
-                        Button("Keep Both") { store.confirmImport() }
-                        Button("Update") { store.confirmUpdate() }
-                            .keyboardShortcut(.defaultAction)
-                    case .anyway:
-                        Button("Keep Both Anyway", role: .destructive) { store.confirmImport() }
-                        Button("Update Anyway", role: .destructive) { store.confirmUpdate() }
-                    case .byClick, nil:
-                        Button("Keep Both") { store.confirmImport() }
-                            .disabled(review == nil)
-                        Button("Update") { store.confirmUpdate() }
-                            .disabled(review == nil)
-                    }
-                } else {
-                    switch review?.opening {
-                    case .byReturn:
-                        Button("Build & Open") { store.confirmImport() }
-                            .keyboardShortcut(.defaultAction)
-                    case .anyway:
-                        Button("Open Anyway", role: .destructive) { store.confirmImport() }
-                    case .byClick, nil:
-                        Button("Build & Open") { store.confirmImport() }
-                            .disabled(review == nil)
-                    }
-                }
-            }
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.buttons] = $0 }
-        }
-        .padding(24)
-        .frame(width: 500)
-        .background(WindowFinder { sheet = $0; fit() })
-        // The window can be moved with the sheet down, and the Dock can come and go.
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMoveNotification)) { _ in fit() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in fit() }
+        ImportReviewCard(name: pending.package.name, description: pending.package.description, icon: icon,
+                         review: pending.review, existing: pending.existing?.name, room: room,
+                         cancel: store.cancelImport, open: store.confirmImport, update: store.confirmUpdate)
+            .task { icon = await Sharing.icon(of: pending.package) }
+            .background(WindowFinder { sheet = $0; fit() })
+            // The window can be moved with the sheet down, and the Dock can come and go.
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMoveNotification)) { _ in fit() }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in fit() }
     }
 
     private func fit() {
@@ -1481,46 +1374,256 @@ struct ImportReviewView: View {
     nonisolated static func room(below top: CGFloat, on visible: CGRect) -> CGFloat {
         (top - visible.minY - 12).rounded(.down)
     }
+}
 
-    /// One row per kind of access the code was seen to use, worst first, like the permissions list in System
-    /// Settings: an icon in a tinted square, the plain-words line, and a word on the right for anything beyond
-    /// ordinary. What the AI noticed follows as a line of text: it mostly restates the rows in its own words,
-    /// and now and then adds something the fixed checks have no pattern for.
-    private func capabilities(_ review: ImportReview) -> some View {
-        let found = review.detected.sorted { $0.level > $1.level }
-        return VStack(alignment: .leading, spacing: 8) {
-            VStack(spacing: 0) {
-                if found.isEmpty {
-                    // Says what the fixed checks found, not what the app can't do: the AI's line below, or
-                    // a check that didn't run, may know more.
-                    row(icon: "magnifyingglass", tint: .secondary, text: "Nothing found by Lamp's own checks.")
-                }
-                ForEach(found) { capability in
-                    row(icon: capability.icon, tint: tint(for: capability.level), text: capability.label, badge: badge(for: capability.level))
-                    if capability != found.last { Divider().padding(.leading, 44) }
+/// The review of a shared app, drawn from plain values so the gallery shows what people see: the app, what it
+/// does, what to weigh before opening it, and what it can do on the Mac.
+struct ImportReviewCard: View {
+    let name: String
+    /// What the app says it does, in its sender's words, when the file has that.
+    let description: String?
+    let icon: NSImage?
+    /// Nil while the check runs.
+    let review: ImportReview?
+    /// The name of the wish already here that this file is another version of, if any.
+    let existing: String?
+    var room = CGFloat.infinity
+    let cancel: () -> Void
+    let open: () -> Void
+    let update: () -> Void
+
+    /// The heights of what stays put, measured as laid out: the app's name and description at the top, the
+    /// review's summary, the line about the copy already here when there is one, and the buttons.
+    @State private var fixed: [Part: CGFloat] = [:]
+    private enum Part { case name, summary, existing, buttons }
+    /// The height of Things to consider as laid out in full; nil when there's nothing to consider.
+    @State private var considering: CGFloat?
+    /// What the two scrolling parts share: the room under the sheet's top less the fixed parts, the sheet's
+    /// padding (48) and a 16-point gap after each part but the last (the fixed ones, and the two that scroll).
+    private var budget: CGFloat {
+        let scrolling: CGFloat = considering == nil ? 1 : 2
+        return room - fixed.values.reduce(0, +) - 48 - 16 * (CGFloat(fixed.count) + scrolling - 1)
+    }
+    /// The two share what's left and never take more between them, whatever the screen: Things to consider is
+    /// shown whole when it fits, and otherwise scrolls, leaving what the app can do a few rows, or half when
+    /// there isn't room for that. A long list of concerns never pushes the buttons off the screen, and Lamp's
+    /// verdict, its first lines, is what stays in view. Below 48 points nothing could be read, so that's the floor.
+    private var shared: CGFloat { max(48, budget) }
+    private var considerLimit: CGFloat { min(considering ?? 0, max(shared - 120, shared / 2)) }
+    /// How tall what the app can do may be: the height a long review always stopped at, or what's left.
+    private var limit: CGFloat { min(460, shared - (considering == nil ? 0 : considerLimit)) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 14) {
+                // Lamp's icons carry their own margin, so one fills a larger frame to sit like the plain icon
+                // does, and rises by that margin so its top lines up with the name's.
+                Image(nsImage: icon ?? NSWorkspace.shared.icon(for: .applicationBundle)).resizable()
+                    .frame(width: icon == nil ? 66 : 84, height: icon == nil ? 66 : 84)
+                    .frame(width: 84, height: 84)
+                    .padding(.top, -8)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    // The name is the sender's: shown as written, never as formatting, and on one line whose
+                    // end (the closing quote and the question mark) stays in view however long it is.
+                    Text(verbatim: "Open “\(name)”?").font(.title2.bold())
+                        .lineLimit(1).truncationMode(.middle)
+                    // The sender's words, said to be theirs.
+                    if let description {
+                        Text(verbatim: "Described by the person who shared it with you as: \(description)")
+                            .font(.callout).foregroundStyle(.secondary).lineLimit(5)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
-            if !review.capabilities.isEmpty {
-                Text("The AI also noticed: " + review.capabilities.joined(separator: "; ") + ".")
-                    .font(.callout).foregroundStyle(.secondary)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.name] = $0 }
+
+            if let review {
+                // What it does and the start of what to weigh stay in view, however short the screen, so Lamp's
+                // verdict is never scrolled away beside the button that opens the app.
+                if !review.summary.isEmpty {
+                    section("What it does") {
+                        // The reviewer is asked for a sentence or two: a few lines here, the whole of it on hover.
+                        Text(review.summary).lineLimit(5).fixedSize(horizontal: false, vertical: true).help(review.summary)
+                    }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.summary] = $0 }
+                }
+                let considerations = Self.considerations(review)
+                if !considerations.isEmpty {
+                    ScrollView {
+                        section("Things to consider") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(considerations) { consideration($0) }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { considering = $0 }
+                    }
+                    .frame(maxHeight: considerLimit)
                     .fixedSize(horizontal: false, vertical: true)
+                }
+                ScrollView {
+                    section("What it can do on your Mac") { capabilities(review) }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: limit)
+                .fixedSize(horizontal: false, vertical: true)   // no taller than its content, up to the limit
+            } else {
+                HStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text("Checking what this wish does…").foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 20)
+            }
+
+            if let existing {
+                // The buttons say what each does; this is what someone would worry about before choosing Update.
+                Label {
+                    Text(verbatim: "You already have this wish\(existing == name ? "" : ", as “\(existing)”"). Updating keeps your data, and you can go back if you change your mind.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(.secondary)
+                }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.existing] = $0 }
+            }
+
+            buttons
+                .cardButtons()
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.buttons] = $0 }
+        }
+        .padding(24)
+        .frame(width: 500)
+    }
+
+    private var buttons: some View {
+        HStack {
+            Spacer()
+            // Escape always cancels. Return builds only when the review is in and vouches for the app
+            // (`ImportReview.opening`); anything less takes a deliberate click.
+            Button("Cancel", role: .cancel, action: cancel)
+                .keyboardShortcut(.cancelAction)
+            if existing != nil {
+                // The app is already here: the file either becomes its next version or a second app.
+                // Either way its code runs, so both follow the same rule as opening does. Return is
+                // only ever Update: keeping both is the choice someone makes on purpose.
+                switch review?.opening {
+                case .byReturn:
+                    Button("Keep Both", action: open)
+                    Button("Update", action: update)
+                        .keyboardShortcut(.defaultAction)
+                case .anyway:
+                    Button("Keep Both Anyway", role: .destructive, action: open)
+                    Button("Update Anyway", role: .destructive, action: update)
+                case .byClick, nil:
+                    Button("Keep Both", action: open)
+                        .disabled(review == nil)
+                    Button("Update", action: update)
+                        .disabled(review == nil)
+                }
+            } else {
+                switch review?.opening {
+                case .byReturn:
+                    Button("Build & Open", action: open)
+                        .keyboardShortcut(.defaultAction)
+                case .anyway:
+                    Button("Open Anyway", role: .destructive, action: open)
+                case .byClick, nil:
+                    Button("Build & Open", action: open)
+                        .disabled(review == nil)
+                }
             }
         }
     }
 
-    private func row(icon: String, tint: Color, text: String, badge: String? = nil) -> some View {
+    /// Something to weigh before opening: red for what should stop someone, orange for what should make them think.
+    struct Consideration: Identifiable, Equatable {
+        enum Weight { case caution, warning }
+        let text: String
+        let weight: Weight
+        var icon = "exclamationmark.triangle.fill"
+        /// Said under it, smaller: why the check didn't run, in the provider's words.
+        var detail: String?
+        var id: String { text }
+    }
+
+    /// The verdict first, unless it's an all-clear (said by nothing being here), then each concern.
+    static func considerations(_ review: ImportReview) -> [Consideration] {
+        var list: [Consideration] = []
+        switch review.verdict {
+        case .risky: list.append(Consideration(text: "Looks risky. Don't open unless you trust the sender", weight: .warning, icon: "xmark.octagon.fill"))
+        case .sensitive: list.append(Consideration(text: "Does sensitive things. Open only if you expected that", weight: .warning, icon: "exclamationmark.octagon.fill"))
+        case .partlyChecked: list.append(Consideration(text: "Only partly checked. Open only if you trust the sender", weight: .caution))
+        case .powerful: list.append(Consideration(text: "Powerful. Check it's what you expect", weight: .caution))
+        case .checkedOnThisMac: list.append(Consideration(text: "Nothing worrying found, but not by a check Lamp can vouch for", weight: .caution))
+        case .unchecked: list.append(Consideration(text: "Not checked by AI", weight: .warning, detail: review.note))
+        case .safe: break
+        }
+        // What the code was seen to do can outrank the missing check in the verdict; the reader still hears,
+        // in red, that no AI read it, and why.
+        if review.risk == nil, review.verdict != .unchecked, review.asked || review.note != nil {
+            list.append(Consideration(text: "Not checked by AI", weight: .warning, detail: review.note))
+        }
+        // A high rating makes each reason for it as serious as the rating.
+        let weight: Consideration.Weight = review.risk == .high ? .warning : .caution
+        for concern in review.concerns where !list.contains(where: { $0.text == concern }) {
+            list.append(Consideration(text: concern, weight: weight))
+        }
+        return list
+    }
+
+    private func consideration(_ item: Consideration) -> some View {
+        let color: Color = item.weight == .warning ? .red : .orange
+        return Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: item.text).fixedSize(horizontal: false, vertical: true)
+                if let detail = item.detail {
+                    // A provider's own words, of any length: a few lines here, the whole of it on hover.
+                    Text(verbatim: detail).font(.callout).foregroundStyle(.secondary).lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true).help(detail)
+                }
+            }
+        } icon: {
+            Image(systemName: item.icon)
+        }
+        .foregroundStyle(color)
+    }
+
+    /// One row per thing the app can do, like the permissions list in System Settings: what Lamp's own checks
+    /// found in the code, worst first, then what the AI noticed beyond them, each an icon in a tinted square and
+    /// a line in plain words.
+    private func capabilities(_ review: ImportReview) -> some View {
+        let found = review.detected.sorted { $0.level > $1.level }
+        let rows = found.map { Row(icon: $0.icon, tint: tint(for: $0.level), text: $0.label) }
+            + review.capabilities.map { Row(icon: "sparkle.magnifyingglass", tint: .purple, text: $0) }
+        return VStack(spacing: 0) {
+            if rows.isEmpty {
+                // Says what the checks found, not what the app can't do.
+                row(Row(icon: "magnifyingglass", tint: .secondary, text: "Nothing found by Lamp's checks."))
+            }
+            ForEach(Array(rows.enumerated()), id: \.offset) { index, item in
+                row(item)
+                if index < rows.count - 1 { Divider().padding(.leading, 48) }
+            }
+        }
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private struct Row {
+        let icon: String
+        let tint: Color
+        let text: String
+    }
+
+    private func row(_ item: Row) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: icon)
+            Image(systemName: item.icon)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.white)
                 .frame(width: 26, height: 26)
-                .background(tint, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            Text(text).font(.callout).fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
-            if let badge {
-                Text(badge).font(.caption.weight(.medium)).foregroundStyle(tint == .secondary ? Color.secondary : tint)
-            }
+                .background(item.tint, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            Text(verbatim: item.text).font(.callout).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
         .accessibilityElement(children: .combine)
@@ -1534,37 +1637,11 @@ struct ImportReviewView: View {
         }
     }
 
-    private func badge(for level: Sharing.Capability.Level) -> String? {
-        switch level {
-        case .ordinary: nil
-        case .powerful: "Powerful"
-        case .sensitive: "Sensitive"
-        }
-    }
-
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.headline)
             content()
         }
-    }
-
-    /// The one-line verdict: the AI's rating, lifted by what the code was seen to do.
-    private func verdict(_ review: ImportReview) -> some View {
-        let (text, color, icon): (String, Color, String) = switch review.verdict {
-        case .risky: ("Looks risky. Don't open unless you trust the sender", .red, "xmark.octagon.fill")
-        case .sensitive: ("Does sensitive things. Open only if you expected that", .red, "exclamationmark.octagon.fill")
-        case .partlyChecked: ("Only partly checked. Open only if you trust the sender", .yellow, "exclamationmark.circle.fill")
-        case .powerful: ("Powerful, check it's what you expect", .yellow, "exclamationmark.circle.fill")
-        case .safe: ("Looks safe", .green, "checkmark.seal.fill")
-        case .checkedOnThisMac: ("Nothing worrying found, but not by a check Lamp can vouch for", .secondary, "questionmark.circle")
-        case .unchecked: ("Not checked by AI", .secondary, "questionmark.circle")
-        }
-        return Label(text, systemImage: icon)
-            .font(.callout.bold())
-            .foregroundStyle(color)
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -1630,10 +1707,12 @@ struct StarterIdeas: View {
     }
 }
 
-/// The Try On choices: the iPhone and iPad simulators and each of the person's paired phones. The simulator choice is the family the agent builds and looks at; a phone is where
-/// Play puts the app.
+/// The Try On choices: the iPhone and iPad simulators and each of the person's paired phones, by its exact model.
+/// The simulator choice is the family the agent builds and looks at; a phone is where Play puts the app.
 private struct TryOnChoices: View {
     @EnvironmentObject private var store: Store
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage("settingsTab") private var settingsTab = "building"
     let project: LampProject
     @State private var olderPhones: [PhoneTools.OlderPhone] = []
 
@@ -1668,12 +1747,16 @@ private struct TryOnChoices: View {
             }
         }
         do {
-            let paired = store.devices.filter(\.paired), unpaired = store.devices.filter { !$0.paired }
+            // The person's phones, each by its exact model, and what it still needs before Play can put the app
+            // on it. A watch isn't a place of its own: its app goes with the iPhone's, so it's listed in Settings.
+            let phones = store.devices.filter { $0.kind.isPhone }
+            let paired = phones.filter(\.paired), unpaired = phones.filter { !$0.paired }
             Picker("Your Devices", selection: Binding(get: { project.onIOS ? project.device : nil }, set: { chosen in
                 store.choosePreparedDevice(project, chosen)
             })) {
                 ForEach(paired) { device in
-                    Label(device.name + (device.developerMode ? "" : " (Developer Mode is off)"), systemImage: device.family == .ipad ? "ipad" : "iphone")
+                    let step = device.setup() == .ready ? "" : " (\(device.setup().words))"
+                    Label("\(device.name) · \(device.model)\(step)", systemImage: device.kind.symbol)
                         .tag(Optional(device.udid))
                 }
                 if let chosen = project.device, !paired.contains(where: { $0.udid == chosen }) {
@@ -1683,22 +1766,24 @@ private struct TryOnChoices: View {
             .pickerStyle(.inline)
             // A phone that's plugged in but hasn't trusted this Mac yet: pairing puts the question on it.
             ForEach(unpaired) { device in
-                Button(store.pairing.contains(device.udid) ? "Pairing with \(device.name)…" : "Pair \(device.name)…") {
+                Button(store.pairing.contains(device.udid) ? "Pairing with \(device.name)…" : "Pair \(device.name) (\(device.model))…") {
                     store.pairDevice(device, for: project)
                 }
                 .disabled(store.pairing.contains(device.udid))
             }
-            ForEach(olderPhones.filter { old in !store.devices.contains(where: { $0.udid == old.id }) }) { phone in
+            ForEach(olderPhones.filter { old in !phones.contains(where: { $0.udid == old.id }) }) { phone in
                 Button("\(phone.name) (needs iOS \(PhoneTools.minimumIOS))…") {
                     PhoneSetup.shared.show(family: phone.family, phone: phone.id)
                 }
             }
-            if store.devices.isEmpty && olderPhones.isEmpty {
+            if phones.isEmpty && olderPhones.isEmpty {
                 Text("No iPhone or iPad found. Plug one in with a cable and unlock it, then look again.")
             }
         }
         Divider()
         Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show(family: project.family, phone: project.device) }
+        // Every device Lamp knows, with where its setup stands, is in Settings → Building.
+        Button("All Your Devices…") { settingsTab = "building"; openSettings() }
         Button("Look for Devices Again") { refresh() }
             .onAppear { refresh() }
     }

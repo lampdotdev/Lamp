@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (the raw value of Kind.a changed ("x" to "z"), which the open app's values are kept, compared and hashed by)
+== run
+before: has=true count=1000
+RELOAD 1: REOPEN the raw value of Kind.a changed ("x" to "z"), which the open app's values are kept, compared and hashed by
+after1 (want has=true, or a reopen: the set was laid out by the old raw values): has=true count=1000
+before: has=true count=1000
+RELOAD 1: in the restart
+after1 (want has=true, or a reopen: the set was laid out by the old raw values): has=true count=1000

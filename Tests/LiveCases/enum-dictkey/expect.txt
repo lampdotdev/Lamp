@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: [Case.Mood.happy: 1]
+RELOAD 1 (whole): ok
+after: [Case.Mood.happy: 1]

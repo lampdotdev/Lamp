@@ -20,45 +20,56 @@ struct ToastView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text("For your sister. In your own Italian.").font(.largeTitle.weight(.medium))
-                Text("120 guests don’t need perfect Italian. They need to hear you mean it.").foregroundStyle(.secondary)
-                GroupBox("Start with the things only you could say") {
+                PageHeading(script: "il brindisi", title: "For your sister. In your own Italian.", subtitle: "120 guests don’t need perfect Italian. They need to hear you mean it.")
+                VStack(alignment: .leading, spacing: 10) {
+                    Engraved("Start with the things only you could say").padding(.bottom, 4)
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Your rough English toast").font(.headline)
-                        TextEditor(text: $coach.state.draft).frame(height: 100).border(.quaternary).accessibilityLabel("Rough English toast")
+                        TextEditor(text: $coach.state.draft).font(.body).scrollContentBackground(.hidden).padding(6).frame(height: 100).background(Look.paper, in: RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary)).accessibilityLabel("Rough English toast")
                         Text("A few stories about your sister").font(.headline)
-                        TextEditor(text: $coach.state.stories).frame(height: 80).border(.quaternary).accessibilityLabel("Stories about your sister")
+                        TextEditor(text: $coach.state.stories).font(.body).scrollContentBackground(.hidden).padding(6).frame(height: 80).background(Look.paper, in: RoundedRectangle(cornerRadius: 8)).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary)).accessibilityLabel("Stories about your sister")
                         Text("A childhood moment, why Marco is her person, something that still makes you laugh. Real stories only.").font(.caption).foregroundStyle(.secondary)
                         Button(coach.state.lines.isEmpty ? "Find my Italian words" : "Rebuild for my Italian now", systemImage: "sparkles") {
                             if coach.state.lines.isEmpty { Task { await build() } } else { confirmRebuild = true }
                         }.disabled(busy || (coach.state.draft.isEmpty && coach.state.stories.isEmpty)).buttonStyle(.borderedProminent)
-                    }.padding(8)
-                }
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading).invitationCard(padding: 22)
                 if !coach.state.lines.isEmpty {
                     HStack {
-                        Text("Make it yours, one breath at a time").font(.title2)
+                        Text("Make it yours, one breath at a time").font(Look.serif(22))
                         Spacer()
                         Toggle("Full run-through", isOn: $full).toggleStyle(.switch)
                     }
                     if full {
-                        ForEach(coach.state.lines) { item in Text(item.italian).font(.title2).textSelection(.enabled) }
-                        Button("Hear the whole toast", systemImage: "speaker.wave.2") { coach.speech.say(coach.state.lines.map(\.italian).joined(separator: "\n"), slow: true) }
+                        // The whole toast, set like the card it will be read from.
+                        VStack(spacing: 14) {
+                            Text("Alla sposa e allo sposo").font(Look.script(30)).foregroundStyle(Look.ink)
+                            ForEach(coach.state.lines) { item in Text(item.italian).font(Look.serif(21)).multilineTextAlignment(.center).textSelection(.enabled) }
+                            LemonRule().frame(width: 180).padding(.vertical, 4)
+                            Button("Hear the whole toast", systemImage: "speaker.wave.2") { coach.speech.say(coach.state.lines.map(\.italian).joined(separator: "\n"), slow: true) }
+                        }.padding(.vertical, 16).frame(maxWidth: .infinity).invitationCard(padding: 24, radius: 18)
                     } else {
                         let item = coach.state.lines[min(line, coach.state.lines.count - 1)]
-                        Text("LINE \(line + 1) OF \(coach.state.lines.count)").font(.caption.bold()).foregroundStyle(.secondary)
-                        Text(item.italian).font(.system(size: 30, design: .serif)).textSelection(.enabled)
-                        Text(item.english).foregroundStyle(.secondary)
-                        Label(item.pronunciation, systemImage: "mouth").font(.callout)
-                        HStack {
-                            Button("Previous", systemImage: "chevron.left") { line = max(0, line - 1); feedback = "" }.disabled(line == 0)
-                            Button("Hear slowly", systemImage: "speaker.wave.2") { coach.speech.say(item.italian, slow: true) }
-                            Button("Next", systemImage: "chevron.right") { line = min(coach.state.lines.count - 1, line + 1); feedback = "" }.disabled(line == coach.state.lines.count - 1)
+                        VStack(alignment: .leading, spacing: 10) {
+                            Engraved("Line \(line + 1) of \(coach.state.lines.count)")
+                            Text(item.italian).font(Look.serif(30, italic: true)).textSelection(.enabled)
+                            Text(item.english).foregroundStyle(.secondary)
+                            Label(item.pronunciation, systemImage: "mouth").font(.callout).foregroundStyle(Look.ink)
+                            HStack {
+                                Button("Previous", systemImage: "chevron.left") { line = max(0, line - 1); feedback = "" }.disabled(line == 0)
+                                Button("Hear slowly", systemImage: "speaker.wave.2") { coach.speech.say(item.italian, slow: true) }
+                                Button("Next", systemImage: "chevron.right") { line = min(coach.state.lines.count - 1, line + 1); feedback = "" }.disabled(line == coach.state.lines.count - 1)
+                            }.padding(.top, 6)
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.trailing, 110)
+                        .overlay(alignment: .topTrailing) { LemonMark(filled: true).frame(width: 54, height: 38).rotationEffect(.degrees(-12)) }
+                        .invitationCard(padding: 24, radius: 18)
                     }
                     SpeakingInput(speech: coach.speech, text: $input)
                     Button(full ? "Coach my full run-through" : "Coach this line", systemImage: "heart.text.clipboard") { Task { await assess() } }.disabled(busy || input.isEmpty)
                     Text("Your coach checks the words recognized from your voice. The slow Italian model and sound guide help pronunciation; recognition can miss accents.").font(.caption).foregroundStyle(.secondary)
-                    if !feedback.isEmpty { Text(feedback).padding().background(Color.terracotta.opacity(0.08), in: RoundedRectangle(cornerRadius: 12)) }
+                    if !feedback.isEmpty { Label(feedback, systemImage: "heart.text.clipboard").frame(maxWidth: .infinity, alignment: .leading).invitationCard(padding: 14, radius: 12) }
                 }
                 if busy { ProgressView("Finding words that sound like you…") }
                 if !error.isEmpty { Text(error).foregroundStyle(.red) }

@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Brand.title changed, and what the app reads only at launch reads it)
+== run
+before: Notes
+RELOAD 1: REOPEN Brand.title changed, and what the app reads only at launch reads it
+after1 (want a reopen: the App's body, in an extension, read the title once, at launch): Notes
+before: Journal
+RELOAD 1: in the restart
+after1 (want a reopen: the App's body, in an extension, read the title once, at launch): Journal
