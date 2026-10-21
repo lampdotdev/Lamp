@@ -1,0 +1,56 @@
+{
+  "fill" : {
+    "automatic-gradient" : "srgb:1.00000,0.47843,0.00000,1.00000"
+  },
+  "groups" : [
+    {
+      "blur-material" : 0.69999999999999996,
+      "layers" : [
+        {
+          "fill" : {
+            "automatic-gradient" : "srgb:1.00000,0.96863,0.94118,1.00000"
+          },
+          "glass" : true,
+          "image-name" : "layer-1.svg",
+          "name" : "Milky frosted ball panels, tilted",
+          "opacity" : 0.93999999999999995
+        }
+      ],
+      "lighting" : "individual",
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.40000000000000002
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.45000000000000001
+      }
+    },
+    {
+      "layers" : [
+        {
+          "glass" : true,
+          "image-name" : "layer-0.svg",
+          "name" : "Deep orange ball core glowing from within (shows as the seams)",
+          "opacity" : 1
+        }
+      ],
+      "lighting" : "individual",
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.40000000000000002
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : [
+      "macOS"
+    ]
+  }
+}
