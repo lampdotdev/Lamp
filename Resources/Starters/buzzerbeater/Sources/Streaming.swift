@@ -91,7 +91,7 @@ enum Service: String, Codable, CaseIterable, Identifiable {
         case .huluLive: [.espn, .espnPlus, .abc, .nbc, .cbs, .fox, .fs1, .tnt, .usa, .bigTen, .conference, .nflNetwork]
         case .sling: [.espn, .tnt, .fs1, .usa, .nbc, .fox, .bigTen, .conference, .nbaTV, .nflNetwork, .mlbNetwork, .nhlNetwork]
         case .fubo: [.espn, .abc, .nbc, .cbs, .fox, .fs1, .usa, .bigTen, .conference, .nbaTV, .nflNetwork, .mlbNetwork, .nhlNetwork, .regional]
-        case .directv, .cable: Set(Channel.allCases).subtracting([.espnPlus, .peacock, .paramount, .prime, .apple, .netflix, .youtube])
+        case .directv, .cable: Set(Channel.allCases).subtracting([.espnPlus, .peacock, .paramount, .prime, .apple, .netflix, .youtube, .other])
         case .antenna: [.abc, .nbc, .cbs, .fox]
         case .nbaLeaguePass: [.nbaTV]
         case .nflPlus: [.nflNetwork]
@@ -115,6 +115,8 @@ enum Service: String, Codable, CaseIterable, Identifiable {
 enum Channel: CaseIterable {
     case espn, espnPlus, abc, nbc, peacock, cbs, paramount, fox, fs1, tnt, usa, bigTen, conference
     case prime, apple, netflix, youtube, nbaTV, nflNetwork, mlbNetwork, nhlNetwork, regional
+    /// A national name the list doesn't know (Roku, a new streamer): no service is assumed to carry it.
+    case other
 
     static func of(_ raw: String) -> Channel {
         let n = raw.lowercased()
@@ -139,7 +141,7 @@ enum Channel: CaseIterable {
         if n.contains("nfl net") || n.contains("nfl+") { return .nflNetwork }
         if n.contains("mlb net") || n.contains("mlb.tv") { return .mlbNetwork }
         if n.contains("nhl net") { return .nhlNetwork }
-        return .regional
+        return .other
     }
 }
 
@@ -148,18 +150,21 @@ enum Channel: CaseIterable {
 @MainActor
 enum Streaming {
     static func bestLink(for game: Game, services: [Service]) -> WatchLink {
+        // A league pass's blackout is the game's, not the broadcast's: it carries a game only when neither team is local.
+        let outOfMarket = Markets.isLocal(game, market: .national) == false
         for broadcast in game.broadcasts {
             let channel = Channel.of(broadcast.name)
             let local = Markets.isLocal(game, market: broadcast.market)
 
             for service in services {
                 let carries: Bool
-                if channel == .regional || broadcast.market != .national {
+                if broadcast.market != .national {
                     // A team's own channel: local viewers watch it on TV; everyone else on a league pass.
                     if local == false {
-                        carries = service.carriesOutOfMarket(game.league)
+                        carries = outOfMarket && service.carriesOutOfMarket(game.league)
                     } else {
-                        carries = service.channels.contains(.regional) || service.channels.contains(channel) && channel != .regional
+                        carries = service.channels.contains(.regional)
+                            || service.channels.contains(channel) && channel != .regional && channel != .other
                     }
                 } else {
                     carries = service.channels.contains(channel)
@@ -230,7 +235,7 @@ enum Markets {
     static func prepare(_ games: [Game], settings: WatchSettings) async {
         guard settings.homeLatitude != nil, !settings.myServices.isEmpty else { return }
         var wanted: [String] = []
-        for game in games where game.state != .post && game.broadcasts.contains(where: { $0.market != .national || Channel.of($0.name) == .regional }) {
+        for game in games where game.state != .post && game.broadcasts.contains(where: { $0.market != .national }) {
             for team in [game.home, game.away] {
                 if let key = key(for: team, game), spots[key] == nil, !failed.contains(key), !wanted.contains(key) {
                     wanted.append(key)

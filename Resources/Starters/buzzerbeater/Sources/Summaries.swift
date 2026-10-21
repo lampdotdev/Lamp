@@ -211,7 +211,7 @@ extension Watcher {
     func refreshDetails() async {
         var wanted = detailCandidates()
         let now = Date()
-        for game in games where game.state == .post {
+        for game in flaggedEnded {
             guard let flag = flagged[game.id], flag.highlights == nil else { continue }
             let ended = flag.endedAt ?? now
             let last = details[game.id]?.fetched ?? .distantPast
@@ -256,7 +256,8 @@ extension Watcher {
             flagged[game.id] = FlaggedGame(id: game.id, league: game.league.rawValue, title: game.title, flaggedAt: now)
             changed = true
         }
-        for game in games where game.state == .post {
+        for game in games where game.state == .post && flagged[game.id] != nil { endedGames[game.id] = game }
+        for game in flaggedEnded {
             guard var flag = flagged[game.id] else { continue }
             if flag.endedAt == nil {
                 flag.endedAt = now
@@ -281,14 +282,21 @@ extension Watcher {
         let cutoff = now.addingTimeInterval(-2 * 86_400)
         let old = flagged.filter { $0.value.flaggedAt < cutoff }.map(\.key)
         for id in old { flagged[id] = nil; changed = true }
+        endedGames = endedGames.filter { flagged[$0.key] != nil }
         if changed { LampStore.save(flagged, to: "flagged") }
+    }
+
+    /// Flagged games that have ended: those on today's scoreboard, and those kept from an earlier one.
+    var flaggedEnded: [Game] {
+        let here = games.filter { $0.state == .post && flagged[$0.id] != nil }
+        let ids = Set(here.map(\.id))
+        return here + endedGames.values.filter { !ids.contains($0.id) && flagged[$0.id] != nil }
     }
 
     /// Flagged games that ended in the last twelve hours, newest first.
     var endedFlagged: [Game] {
         let cutoff = Date().addingTimeInterval(-12 * 3600)
-        return games
-            .filter { $0.state == .post }
+        return flaggedEnded
             .filter { (flagged[$0.id]?.endedAt ?? .distantPast) > cutoff }
             .sorted { (flagged[$0.id]?.endedAt ?? .distantPast) > (flagged[$1.id]?.endedAt ?? .distantPast) }
     }

@@ -219,6 +219,9 @@ final class Watcher: ObservableObject {
     static let shared = Watcher()
 
     @Published var games: [Game] = []
+    /// The last scoreboard entry of each flagged game that has ended, kept for "Just ended" and its highlights after
+    /// ESPN's scoreboard has moved on to the next day.
+    var endedGames: [String: Game] = [:]
     @Published var lastUpdated: Date?
     @Published var isLoading = false
     @Published var error: String?
