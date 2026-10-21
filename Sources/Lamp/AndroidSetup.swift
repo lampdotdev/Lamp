@@ -65,6 +65,9 @@ final class AndroidSetup: NSObject, ObservableObject, NSWindowDelegate {
                 startNext()
             } else if active != nil {
                 present()
+            } else {
+                // A look of the person's own: a request that arrived while it ran gets a check of its own now.
+                startNext()
             }
         }
     }
