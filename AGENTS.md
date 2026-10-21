@@ -734,7 +734,8 @@ typing in it themselves. A Mac app sees their own presses as they reach its even
 the driver's events go straight to the window and never pass through it, and the one kind that does (a key held
 down) is marked. Lamp's Stop reaches it as a stop signed with the app's token like the request
 ("lampUseAppStop" marks the builds that take it; older ones are rebuilt first). For the simulator Lamp watches
-for a click in its window or a key while it's in front (`Handover.isPersons`), and marks the taps and keys it
+for a click that lands on its window (the window server's own hit test, `Handover.owner`: a click on another app's
+window over it is that app's) or a key while it's in front (`Handover.isPersons`), and marks the taps and keys it
 posts itself. Either way the rest of the batch is dropped, keys held down are let go, the Simulator isn't
 brought forward again, the pill says "You have the app. Lamp stopped trying it.", the chat gets a "Trying it:
 stopped by you" line, and `use_app` answers how far it got and refuses further calls until the person's next
