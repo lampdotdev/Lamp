@@ -1200,12 +1200,7 @@ struct AppInfoView: View {
     }
 
     private static var providerName: String {
-        switch Builder.piProvider {
-        case Builder.localProvider: "Native Mac AI"
-        case let id where id.hasPrefix("ext-"): LocalModels.externalName(id)
-        case Builder.myPiProvider: "Your pi setup"
-        case let id: Provider.apiProvider(id)?.name ?? id
-        }
+        Builder.piProvider == Builder.localProvider ? "Native Mac AI" : Provider.openRouter
     }
 
     private static var buildModel: String {

@@ -3507,11 +3507,8 @@ enum Template {
         }
 
         private static func decide(_ body: [String: Any], keys: [String: Any]) async throws -> [String: Any] {
-            // Jev answers the same request through OpenRouter or TypeSafe; Lamp sends the TypeSafe key only
-            // when decisions away from the Mac go there.
-            let typesafe = keys["decision_provider"] as? String == "typesafe" ? keys["typesafe"] as? String : nil
-            let key = typesafe ?? keys["openrouter"] as? String ?? ""
-            var request = URLRequest(url: URL(string: typesafe == nil ? "https://openrouter.ai/api/v1/systemone" : "https://api.typesafe.ai/v1/systemone")!)
+            let key = keys["openrouter"] as? String ?? ""
+            var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/systemone")!)
             request.httpMethod = "POST"
             request.timeoutInterval = 60
             request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")

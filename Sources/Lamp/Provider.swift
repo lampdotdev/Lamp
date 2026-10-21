@@ -1,7 +1,8 @@
 import Foundation
 import Security
 
-/// An API-key provider pi supports out of the box.
+/// A provider Lamp keeps an API key for. OpenRouter is the only one: pi builds through it, and it answers
+/// apps' text, pictures and decisions.
 struct PiProvider: Identifiable, Hashable {
     let id: String          // pi's provider id (`--provider`)
     let name: String
@@ -14,36 +15,11 @@ enum Provider {
     /// OpenRouter key present: needed for image generation and the default in-app AI.
     static var hasKey: Bool { KeyStore.openRouterKey != nil }
 
-    /// In alphabetical order, as every list of them shows them.
-    static let apiProviders: [PiProvider] = [
-        PiProvider(id: "openrouter", name: "OpenRouter", envVar: "OPENROUTER_API_KEY", keyURL: "https://openrouter.ai/keys"),
-        PiProvider(id: "anthropic", name: "Anthropic", envVar: "ANTHROPIC_API_KEY", keyURL: "https://console.anthropic.com/settings/keys"),
-        PiProvider(id: "openai", name: "OpenAI", envVar: "OPENAI_API_KEY", keyURL: "https://platform.openai.com/api-keys"),
-        PiProvider(id: "google", name: "Google Gemini", envVar: "GEMINI_API_KEY", keyURL: "https://aistudio.google.com/apikey"),
-        PiProvider(id: "deepseek", name: "DeepSeek", envVar: "DEEPSEEK_API_KEY", keyURL: "https://platform.deepseek.com/api_keys"),
-        PiProvider(id: "mistral", name: "Mistral", envVar: "MISTRAL_API_KEY", keyURL: "https://console.mistral.ai/api-keys"),
-        PiProvider(id: "xai", name: "xAI (Grok)", envVar: "XAI_API_KEY", keyURL: "https://console.x.ai"),
-        PiProvider(id: "groq", name: "Groq", envVar: "GROQ_API_KEY", keyURL: "https://console.groq.com/keys"),
-        PiProvider(id: "cerebras", name: "Cerebras", envVar: "CEREBRAS_API_KEY", keyURL: "https://cloud.cerebras.ai"),
-        PiProvider(id: "together", name: "Together AI", envVar: "TOGETHER_API_KEY", keyURL: "https://api.together.ai/settings/api-keys"),
-        PiProvider(id: "fireworks", name: "Fireworks", envVar: "FIREWORKS_API_KEY", keyURL: "https://fireworks.ai/account/api-keys"),
-        PiProvider(id: "huggingface", name: "Hugging Face", envVar: "HF_TOKEN", keyURL: "https://huggingface.co/settings/tokens"),
-        PiProvider(id: "vercel-ai-gateway", name: "Vercel AI Gateway", envVar: "AI_GATEWAY_API_KEY", keyURL: "https://vercel.com/dashboard/ai-gateway"),
-        PiProvider(id: "moonshotai", name: "Moonshot (Kimi)", envVar: "MOONSHOT_API_KEY", keyURL: "https://platform.moonshot.ai"),
-        PiProvider(id: "zai", name: "Z.ai (GLM)", envVar: "ZAI_API_KEY", keyURL: "https://z.ai/manage-apikey/apikey-list"),
-        PiProvider(id: "minimax", name: "MiniMax", envVar: "MINIMAX_API_KEY", keyURL: "https://www.minimax.io"),
-        PiProvider(id: "nvidia", name: "NVIDIA", envVar: "NVIDIA_API_KEY", keyURL: "https://build.nvidia.com"),
-    ].sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-
-    static func apiProvider(_ id: String) -> PiProvider? { apiProviders.first { $0.id == id } }
-
-    /// TypeSafe answers apps' typed decisions; it isn't a pi provider, but its key lives alongside theirs.
-    static let typesafe = PiProvider(id: "typesafe", name: "TypeSafe", envVar: "TYPESAFE_API_KEY",
-                                     keyURL: "https://typesafe.ai")
+    static let openRouterProvider = PiProvider(id: "openrouter", name: "OpenRouter", envVar: "OPENROUTER_API_KEY",
+                                               keyURL: "https://openrouter.ai/keys")
 
     /// Every provider Lamp keeps an API key for, as listed in Settings → AI Providers.
-    static let keyProviders = (apiProviders + [typesafe])
-        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    static let keyProviders = [openRouterProvider]
 
     static func keyProvider(_ id: String) -> PiProvider? { keyProviders.first { $0.id == id } }
 
@@ -71,7 +47,7 @@ enum Provider {
 
     /// The OpenRouter model used to review shared apps and as the default builder.
     static var model: String {
-        if Builder.engine == .pi, Builder.piProvider == "openrouter", !Builder.piModel.isEmpty { return Builder.piModel }
+        if Builder.engine == .pi, !Builder.piModel.isEmpty { return Builder.piModel }
         return defaultModel
     }
 
@@ -85,10 +61,10 @@ enum Provider {
     /// OpenRouter's name, for the calls that go to it whatever builds apps.
     static let openRouter = "OpenRouter"
 
-    /// What an engine's calls go through, as the person knows it: for Lamp's own agent, the provider whose
-    /// key it uses.
+    /// What an engine's calls go through, as the person knows it: for Lamp's own agent, OpenRouter, whose key
+    /// it uses.
     static func name(of engine: Engine) -> String {
-        engine == .pi ? (apiProvider(Builder.piProvider)?.name ?? "AI provider") : engine.title
+        engine == .pi ? openRouter : engine.title
     }
 
     /// A failed call's raw error, in words for the person. `name` is what that call went through, which is

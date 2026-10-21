@@ -125,8 +125,6 @@ struct SetupView: View {
         }
         all.append(("local", "A model on this Mac",
                     "Free and private: a model Lamp downloads and runs here. Smaller models build simpler apps."))
-        all.append(("other", "Another provider",
-                    "Anthropic, OpenAI, Google, Groq, Mistral and about twenty more, with your own key."))
         return all
     }
 
@@ -195,10 +193,8 @@ struct SetupView: View {
                     case "claude", "codex":
                         let engine: Engine = choice == "claude" ? .claude : .codex
                         Button("Use \(engine.title)") { use(engine) }
-                    case "local":
-                        Button("Choose a Model…") { openSettings(tab: "providers", sheet: Builder.localProvider) }
                     default:
-                        Button("Choose a Provider…") { openSettings(tab: "building") }
+                        Button("Choose a Model…") { openSettings(tab: "providers", sheet: Builder.localProvider) }
                     }
                 }
                 .padding(.leading, 36)
@@ -600,10 +596,10 @@ struct BuildingSettings: View {
         signIns[engine] = await EngineSignIn.isSignedIn(engine) ?? true
     }
 
-    /// Providers added in Settings → AI Providers, plus the current one even if its key was removed.
-    private var addedProviders: [PiProvider] {
+    /// OpenRouter, once its key is added in Settings → AI Providers, or while it builds even if its key was removed.
+    private var openRouterAdded: Bool {
         _ = revision
-        return Provider.apiProviders.filter { KeyStore.key(for: $0.id) != nil || $0.id == provider }
+        return Provider.hasKey || (selectedEngine == .pi && provider != Builder.localProvider)
     }
 
     /// The provider menu's last item switches to the Providers tab instead of choosing a provider.
@@ -613,8 +609,8 @@ struct BuildingSettings: View {
     }
 
     /// One menu for what builds apps, as Settings → Apps lists what answers inside them: the models under
-    /// what runs them (Claude Code, Codex, OpenRouter, Native Mac AI…). Long lists (OpenRouter's, another
-    /// key's) are the suggested models and the current one, with "Other model…" opening the search.
+    /// what runs them (Claude Code, Codex, OpenRouter, Native Mac AI). OpenRouter's long list is the suggested
+    /// models and the current one, with "Other model…" opening the search.
     private struct TextChoice: Identifiable { let id: String; let label: String }
     private struct TextGroup: Identifiable { let title: String; let items: [TextChoice]; var id: String { title } }
 
@@ -628,35 +624,19 @@ struct BuildingSettings: View {
         // can be returned to.
         groups.append(TextGroup(title: Engine.claude.title, items: Builder.claudeModels.map { TextChoice(id: "claude:\($0.id)", label: $0.label) }))
         groups.append(TextGroup(title: Engine.codex.title, items: Builder.codexModels.map { TextChoice(id: "codex:\($0.id)", label: $0.label) }))
-        for api in addedProviders {
-            var items: [TextChoice] = []
-            let current = Builder.piModel(for: api.id)
-            if api.id == "openrouter" {
-                items = Provider.models.map { TextChoice(id: "pi:openrouter:\($0.id)", label: $0.label) }
-                if !current.isEmpty, !Provider.models.contains(where: { $0.id == current }) {
-                    items.append(TextChoice(id: "pi:openrouter:\(current)", label: current))
-                }
-            } else if !current.isEmpty {
-                items.append(TextChoice(id: "pi:\(api.id):\(current)", label: current))
+        if openRouterAdded {
+            var items = Provider.models.map { TextChoice(id: "pi:openrouter:\($0.id)", label: $0.label) }
+            let current = Builder.piModel(for: "openrouter")
+            if !current.isEmpty, !Provider.models.contains(where: { $0.id == current }) {
+                items.append(TextChoice(id: "pi:openrouter:\(current)", label: current))
             }
-            items.append(TextChoice(id: "pi-other:\(api.id)", label: "Other model…"))
-            groups.append(TextGroup(title: api.name, items: items))
-        }
-        if FileManager.default.fileExists(atPath: Agent.userConfigDir) {
-            var items: [TextChoice] = []
-            let current = Builder.piModel(for: Builder.myPiProvider)
-            if !current.isEmpty { items.append(TextChoice(id: "pi:\(Builder.myPiProvider):\(current)", label: current)) }
-            items.append(TextChoice(id: "pi-other:\(Builder.myPiProvider)", label: "Other model…"))
-            groups.append(TextGroup(title: "Your own pi setup", items: items))
+            items.append(TextChoice(id: "pi-other:openrouter", label: "Other model…"))
+            groups.append(TextGroup(title: Provider.openRouter, items: items))
         }
         var onMac = local.installed.filter { !LocalModels.isDecisionModel($0.id) }
             .map { TextChoice(id: "pi:\(Builder.localProvider):\($0.id)", label: $0.name) }
         if onMac.isEmpty { onMac.append(TextChoice(id: "pi-other:\(Builder.localProvider)", label: "No models yet")) }
         groups.append(TextGroup(title: "Native Mac AI", items: onMac))
-        for id in local.external.keys.sorted(by: { LocalModels.externalName($0) < LocalModels.externalName($1) }) {
-            let items = (local.external[id] ?? []).map { TextChoice(id: "pi:\(id):\($0)", label: $0) }
-            if !items.isEmpty { groups.append(TextGroup(title: LocalModels.externalName(id), items: items)) }
-        }
         return groups
     }
 
@@ -718,8 +698,8 @@ struct BuildingSettings: View {
                 agentFix
                 if selectedEngine == .pi {
                     // Keys are managed in Providers; only ask here if the chosen provider has lost its key.
-                    if let api = Provider.apiProvider(provider), KeyStore.key(for: api.id) == nil {
-                        KeyRow(provider: api) { revision += 1; recheck() }
+                    if provider != Builder.localProvider, !Provider.hasKey {
+                        KeyRow(provider: Provider.openRouterProvider) { revision += 1; recheck() }
                     }
                     if otherModel { ModelPicker(provider: provider, model: $model, revision: revision) }
                 }
@@ -729,7 +709,7 @@ struct BuildingSettings: View {
                     ForEach(CommandApproval.allCases) { Text($0.title).tag($0.rawValue) }
                 }
                 if (CommandApproval(rawValue: approval) ?? .risky).isAutomatic && CommandApproval.claudeAutoUnavailable && selectedEngine == .claude {
-                    Text("Claude Code's auto mode isn't available for your account, so Lamp asks before every command.")
+                    Text("Claude's auto mode isn't available for your account, so Lamp asks before every command.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -769,7 +749,6 @@ struct BuildingSettings: View {
         .onChange(of: provider) { model = Builder.piModel; recheck() }
         .onChange(of: model) { Builder.piModel = model; recheck() }
         .onAppear { revision += 1 }   // keys may have changed in the Providers tab
-        .task { await local.detectExternal() }
     }
 
     private func recheck() { Task { await store.recheckSetup() } }
@@ -1001,9 +980,8 @@ struct ComputerUseSettings: View {
     }
 }
 
-/// What's on this Mac (Native Mac AI, Ollama, LM Studio, and the Claude Code and Codex sign-ins), then the
-/// providers you've added a key for, each with its state. Double-click one to see its models, sign in, or
-/// change its key.
+/// What's on this Mac (Native Mac AI, and the Claude Code and Codex sign-ins), then OpenRouter, each with its
+/// state. Double-click one to see its models, sign in, or change its key.
 struct ProvidersSettings: View {
     @EnvironmentObject private var store: Store
     @ObservedObject private var local = LocalModels.shared
@@ -1015,20 +993,10 @@ struct ProvidersSettings: View {
     @State private var signedIn: [Engine: Bool?] = [:]
     @ObservedObject private var downloads = EngineDownloads.shared
 
-    private var added: [PiProvider] {
-        _ = revision
-        return Provider.keyProviders.filter { KeyStore.key(for: $0.id) != nil }
-    }
-
-    private var addable: [PiProvider] {
-        _ = revision
-        return Provider.keyProviders.filter { KeyStore.key(for: $0.id) == nil }
-    }
-
-    /// On this Mac: Native Mac AI, Ollama and LM Studio, and the coding agents, downloaded or not: this is
-    /// where Building's Configure providers… leads, so each is listed with its sign-in.
+    /// On this Mac: Native Mac AI and the coding agents, downloaded or not: this is where Building's Configure
+    /// providers… leads, so each is listed with its sign-in.
     private var onThisMac: [String] {
-        [Builder.localProvider] + LocalModels.externalIDs + [Engine.claude, .codex].map { "engine:\($0.rawValue)" }
+        [Builder.localProvider] + [Engine.claude, .codex].map { "engine:\($0.rawValue)" }
     }
 
     /// One row: logo, name and state. What each is used for is chosen, and shown, in Building and Apps.
@@ -1052,14 +1020,14 @@ struct ProvidersSettings: View {
                     } else {
                         Button(Provider.keyProvider(id) == nil ? "Show Models…" : "Edit…") { showing = ProviderDetail(id) }
                     }
-                    if let provider = Provider.keyProvider(id) {
-                        Button("Remove…", role: .destructive) { removing = provider }
+                    if let provider = Provider.keyProvider(id), KeyStore.key(for: id) != nil {
+                        Button("Remove Key…", role: .destructive) { removing = provider }
                     }
                 }
             } primaryAction: { ids in
                 showing = ids.first.map(ProviderDetail.init)
             }
-            .onDeleteCommand { removing = selection.flatMap(Provider.keyProvider) }
+            .onDeleteCommand { removing = selection.flatMap(Provider.keyProvider).flatMap { KeyStore.key(for: $0.id) == nil ? nil : $0 } }
             .scrollDisabled(true)
             .frame(height: CGFloat(max(rows.count, 1)) * 40)
     }
@@ -1070,43 +1038,14 @@ struct ProvidersSettings: View {
                 list(onThisMac)
             } header: { Text("On this Mac") }
             Section {
-                if added.isEmpty {
-                    Text("None configured yet. We recommend OpenRouter for the most options.")
-                        .font(.callout).foregroundStyle(.secondary)
-                } else {
-                    list(added.map(\.id))
-                }
-                HStack(spacing: 0) {
-                    Menu {
-                        ForEach(addable) { provider in
-                            Button(provider.name) { showing = .key(provider) }
-                        }
-                    } label: {
-                        Image(systemName: "plus").frame(width: 24, height: 20)
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                    .disabled(addable.isEmpty)
-                    Divider().frame(height: 16).padding(.horizontal, 4)
-                    Button {
-                        removing = selection.flatMap(Provider.keyProvider)
-                    } label: {
-                        Image(systemName: "minus").frame(width: 24, height: 20)
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(selection.flatMap(Provider.keyProvider) == nil)
-                    .help("Only keys can be removed")
-                    Spacer()
-                }
-            } header: { Text("Cloud AI providers") }
+                list(Provider.keyProviders.map(\.id))
+            } header: { Text("Cloud") }
         }
         .settingsPane()
         .sheet(item: $showing) { detail in
             switch detail {
             case .key(let provider): ProviderSheet(provider: provider) { changed() }
             case .local: LocalAISheet()
-            case .server(let id): ServerSheet(id: id)
             case .engine(let engine): EngineSheet(engine: engine, signedIn: signedIn[engine] ?? nil) { refreshSignIns() }
             }
         }
@@ -1127,7 +1066,7 @@ struct ProvidersSettings: View {
         .onChange(of: downloads.revision) { refreshSignIns() }
         .onReceive(NotificationCenter.default.publisher(for: KeyStore.changed)) { _ in revision += 1 }
         .onChange(of: pendingSheet) { openPending() }
-        .task { local.refresh(); await local.detectExternal() }
+        .task { local.refresh() }
     }
 
     private func refreshSignIns() {
@@ -1154,10 +1093,8 @@ struct ProvidersSettings: View {
             let bytes = local.installed.reduce(Int64(0)) { $0 + $1.bytes }
             return "\(Self.models(local.installed.count)) · \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))"
         }
-        if id.hasPrefix("ext-") {
-            guard let models = local.external[id] else { return "Not running" }
-            return "Running · \(Self.models(models.count))"
-        }
+        _ = revision
+        guard KeyStore.key(for: id) != nil else { return "Not added" }
         return KeyStore.usesKeychain ? "Key in Keychain" : "Key saved"
     }
 
@@ -1179,28 +1116,24 @@ struct ProvidersSettings: View {
 private enum ProviderDetail: Identifiable {
     case key(PiProvider)
     case local
-    case server(String)
     case engine(Engine)
 
     init(_ id: String) {
-        if id == Builder.localProvider { self = .local }
-        else if id.hasPrefix("engine:"), let engine = Engine(rawValue: String(id.dropFirst(7))) { self = .engine(engine) }
+        if id.hasPrefix("engine:"), let engine = Engine(rawValue: String(id.dropFirst(7))) { self = .engine(engine) }
         else if let provider = Provider.keyProvider(id) { self = .key(provider) }
-        else { self = .server(id) }
+        else { self = .local }
     }
 
     var id: String {
         switch self {
         case .key(let provider): provider.id
         case .local: Builder.localProvider
-        case .server(let id): id
         case .engine(let engine): "engine:\(engine.rawValue)"
         }
     }
 
     static func name(_ id: String) -> String {
         if id == Builder.localProvider { return "Native Mac AI" }
-        if id.hasPrefix("ext-") { return LocalModels.externalName(id) }
         if id.hasPrefix("engine:"), let engine = Engine(rawValue: String(id.dropFirst(7))) { return engine.title }
         return Provider.keyProvider(id)?.name ?? id
     }
@@ -1273,45 +1206,6 @@ private struct ProviderHeader: View {
     }
 }
 
-/// Models an Ollama or LM Studio server offers. They're managed in that app, not here.
-private struct ServerSheet: View {
-    let id: String
-    @ObservedObject private var local = LocalModels.shared
-    @Environment(\.dismiss) private var dismiss
-    @State private var checking = false
-
-    var body: some View {
-        let name = LocalModels.externalName(id)
-        let models = local.external[id]
-        VStack(alignment: .leading, spacing: 16) {
-            ProviderHeader(id: id, detail: models == nil ? "Not running" : "Running on this Mac")
-            if let models {
-                List(models, id: \.self) { Text($0) }
-                    .frame(height: min(CGFloat(max(models.count, 3)) * 32 + 16, 320))
-                Text("Add or remove models in \(name). Pick one to build apps with in Building.")
-                    .font(.caption).foregroundStyle(.secondary)
-            } else {
-                Text("Open \(name) with at least one model, and its models show up here and in Building.")
-                    .font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            HStack {
-                if models == nil {
-                    Button(checking ? "Checking…" : "Check Again") {
-                        checking = true
-                        Task { await local.detectExternal(); checking = false }
-                    }
-                    .disabled(checking)
-                }
-                Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(20)
-        .frame(width: 440)
-    }
-}
-
 /// Add, replace or remove one provider's API key.
 private struct ProviderSheet: View {
     let provider: PiProvider
@@ -1380,7 +1274,6 @@ private struct ProviderSheet: View {
 
 /// Saves a key typed into Settings, asking OpenRouter about its own first, as the key card in the chat does:
 /// a key it refuses isn't saved, so a slip shows up here and not later as a build or a picture that fails.
-/// The other providers' keys are saved as typed; each would need its own question.
 ///
 /// Settings is also where a key is put in ahead of time, perhaps with no connection, so when OpenRouter
 /// can't be asked the key isn't turned away: the person is told, and saving again keeps it unchecked.
@@ -1446,7 +1339,7 @@ struct ProviderLogo: View {
 
     private static var cache: [String: NSImage] = [:]
     /// Logos that are already a full icon, drawn edge to edge instead of on a tile.
-    private static let fullBleed: Set<String> = ["typesafe"]
+    private static let fullBleed: Set<String> = []
 
     private var image: NSImage? {
         if let cached = Self.cache[id] { return cached }
@@ -1536,7 +1429,7 @@ struct KeyRow: View {
     }
 }
 
-/// Searchable model list for a provider (from pi's catalog, downloaded local models, or a detected server).
+/// Searchable model list for a provider (OpenRouter's, from pi's catalog, or the models on this Mac).
 struct ModelPicker: View {
     let provider: String
     @Binding var model: String
@@ -1584,8 +1477,7 @@ struct ModelPicker: View {
         defer { loading = false }
         switch provider {
         case Builder.localProvider: models = local.installed.filter { !LocalModels.isDecisionModel($0.id) }.map(\.id)
-        case let id where id.hasPrefix("ext-"): models = local.external[id] ?? []
-        default: models = await Agent.listModels(provider: provider)
+        default: models = await Agent.listModels()
         }
         if provider == "openrouter" {   // suggested models first
             let suggested = Provider.models.map(\.id)

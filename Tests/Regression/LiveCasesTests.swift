@@ -204,7 +204,7 @@ final class LiveCasesTests: XCTestCase {
     private static func end(_ process: Process) {
         guard process.isRunning else { return }
         process.terminate()
-        process.waitUntilExit()
+        TestShell.wait(for: process, timeout: 10)
     }
 
     /// What the processes print, in order, whichever of them printed it.
@@ -288,28 +288,10 @@ final class LiveCasesTests: XCTestCase {
 
     /// Runs a program and gives its output, waiting off the main actor so other cases' work goes on meanwhile.
     private static func shell(_ executable: String, _ arguments: [String]) async throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        let output: String = try await withCheckedThrowingContinuation { continuation in
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: error)
-                return
-            }
-            DispatchQueue.global().async {
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                // Not `waitUntilExit`, which turns a run loop this thread doesn't have.
-                while process.isRunning { usleep(10_000) }
-                continuation.resume(returning: String(decoding: data, as: UTF8.self))
-            }
-        }
-        guard process.terminationStatus == 0 else {
-            throw NSError(domain: "LiveCasesTests", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: output])
+        // Off the caller's thread: TestShell blocks while it waits.
+        let (status, output) = await Task.detached { TestShell.run(executable, arguments) }.value
+        guard status == 0 else {
+            throw NSError(domain: "LiveCasesTests", code: Int(status), userInfo: [NSLocalizedDescriptionKey: output])
         }
         return output
     }

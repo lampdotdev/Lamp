@@ -23,9 +23,8 @@ Each Mac app is a real `.app` in `~/Applications/Lamp Apps`, with a wand at its 
 | macOS 14 (Sonoma) or later | Lamp and the apps it generates target macOS 14 | |
 | Apple's Command Line Tools (Xcode 15 or later) | Swift compiler, the macOS SDK and `git` | Free. **The full Xcode app is not required** for Mac apps, but works too. With Xcode 26, icons get native Liquid Glass rendering on macOS 26. |
 | Xcode (only for iPhone and iPad apps) | The iOS SDK and simulators, and signing for your own phone | Free in the App Store. Lamp checks for it, and for the iOS simulator, when you send the first request for an iPhone or iPad app, and says what's missing. |
-| An AI to build with | Writes the apps | An [OpenRouter](https://openrouter.ai/keys) key is easiest. You can also use ~20 other providers, Claude Code or ChatGPT Codex if installed, or a model running on your Mac. See [Choosing the AI](#choosing-the-ai). |
-| An OpenRouter key (optional) | The best image models, icon artwork, and the fast in-app AI models | Without one, apps' text AI uses whatever builds them (pi's provider, a local model, or your Claude Code or ChatGPT Codex sign-in) |
-| A TypeSafe key (optional) | Decisions in apps, directly from TypeSafe | Jev is also available through an OpenRouter key |
+| An AI to build with | Writes the apps | Claude Code or ChatGPT Codex with your subscription, an [OpenRouter](https://openrouter.ai/keys) key, or a model running on your Mac. See [Choosing the AI](#choosing-the-ai). |
+| An OpenRouter key (optional) | The best image models, icon artwork, decisions (Jev) and the fast in-app AI models | Without one, apps' text AI uses whatever builds them (a model on your Mac, or your Claude Code or ChatGPT Codex sign-in) |
 
 Nothing else needs installing. The coding agent ([pi](https://github.com/badlogic/pi-mono)) and llama.cpp's model server are bundled inside `Lamp.app`; `build.sh` downloads pinned, checksum-verified copies (about 40 MB together). No Apple developer account is needed to build it. A build from source is **Lamp Dev**: a separate app from the Lamp you install, with its own icon, folders, apps and settings, signed only for your own Mac and never updating itself (release builds are signed and notarized with the team's Developer ID and update themselves). Every app Lamp builds is signed with a certificate Lamp makes on your Mac the first time, so an app keeps the permissions you give it across rebuilds.
 
@@ -102,14 +101,12 @@ With your Apple account signed in to Xcode, plug your phone in: Try On offers to
 
 **Lamp → Settings (⌘,) → AI** chooses what builds your apps:
 
-- **Lamp's built-in agent (pi)** with any of these:
-  - **An API key** for OpenRouter, Anthropic, OpenAI, Google Gemini, DeepSeek, Mistral, xAI, Groq, Cerebras, Together, Fireworks, Hugging Face, Vercel AI Gateway, Moonshot, Z.ai, MiniMax or NVIDIA. Pick any model from that provider's list; it's searchable.
+- **Lamp's built-in agent (pi)** with either of these:
+  - **An OpenRouter key.** Pick any model from OpenRouter's list; it's searchable.
   - **On this Mac (local models).** **Native Mac AI** in **Settings → AI Providers** lists every model Lamp can run. These include models already in the shared Hugging Face cache (`~/.cache/huggingface/hub`) or in Local's folder, so models downloaded for Local show up without downloading again. Lamp's own downloads (a list sized to your Mac's memory, or any GGUF repo) go into that same cache, in the standard `huggingface_hub` layout.
     - **GGUF models** run on Lamp's bundled llama.cpp server (`127.0.0.1:47812`, router mode, loading models on demand). It reads them through a folder of symlinks (`~/Library/Application Support/Lamp/Router`), so nothing is copied.
     - **MLX models** (like the ones Local uses) run on `mlx_lm.server` (`127.0.0.1:47813`) once mlx-lm is installed: Lamp installs it from Settings → AI Providers → Native Mac AI, with its own copy of uv if the Mac has none.
     - Servers start when needed and stop when Lamp quits.
-  - **Ollama or LM Studio**, if they're running. Their models appear automatically.
-  - **My pi setup:** your own `~/.pi/agent`, including any subscriptions you've signed into with pi's `/login` (Claude Pro/Max, ChatGPT, GitHub Copilot and others).
 - **Claude Code or ChatGPT Codex**, with a Claude or ChatGPT subscription. Lamp uses the copy already on the Mac (on your PATH or inside the Claude or ChatGPT app) with its sign-in, or else downloads and updates its own, so nothing else needs installing. It runs them with file editing allowed and the shell turned off (sandboxed, for Codex), and builds the app itself.
 
 With pi, Lamp's rules go in the system prompt. Claude Code gets them through `--append-system-prompt`, and Codex as developer instructions. Attachments are passed natively where the tool supports it.
@@ -160,7 +157,7 @@ Local models are slower and much less capable than the best cloud models for who
 | `Sources/Lamp/Store.swift` | App state and the build / install / undo loop |
 | `Sources/Lamp/Agent.swift` | pi invocation, system prompt, JSON event parsing, shell helper |
 | `Sources/Lamp/Engines.swift` | Engine choice (pi, Claude Code, Codex), commands and parsers, finding installed tools |
-| `Sources/Lamp/LocalModels.swift` | Hugging Face downloads, the bundled llama.cpp server, Ollama / LM Studio detection |
+| `Sources/Lamp/LocalModels.swift` | Hugging Face downloads and the bundled llama.cpp and MLX model servers |
 | `Sources/Lamp/Composer.swift` | Chat input (Return / Shift-Return, paste and drop) and attachments |
 | `Sources/Lamp/Template.swift` | Scaffold for new apps, including the generated `LampSupport.swift` |
 | `Sources/Lamp/AppSigning.swift` | The stable signature on built apps, so macOS permissions survive rebuilds |

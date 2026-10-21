@@ -25,17 +25,7 @@ final class WidgetBuildTests: XCTestCase {
 
     @discardableResult
     private func run(_ command: String, in directory: URL) throws -> (status: Int32, output: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", command]
-        process.currentDirectoryURL = directory
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+        TestShell.run(command, in: directory)
     }
 
     /// The two halves Lamp writes, built as two small programs and run against each other and against a
@@ -81,6 +71,7 @@ final class WidgetBuildTests: XCTestCase {
         try ("""
         import socket, sys
         s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", \(port))); s.listen(5)
+        s.settimeout(30)   # a widget that never asks fails the test rather than leaving this waiting
         print("listening", flush=True)
         for reply in [b'ok\\n{"height":666}', b'ok ' + b'0' * 64 + b'\\n{"height":666}']:
             c, _ = s.accept(); c.recv(4096); c.sendall(reply); c.close()
