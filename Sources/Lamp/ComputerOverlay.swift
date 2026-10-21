@@ -130,7 +130,8 @@ final class ComputerOverlay {
         if pill.frame.origin != origin { pill.setFrameOrigin(origin) }
     }
 
-    private static let glowMargin: CGFloat = 24
+    /// Room around the window for the glow to fade out in.
+    private static let glowMargin: CGFloat = 40
 
     private func place(_ window: NSWindow, around frame: CGRect, above id: CGWindowID) {
         let cocoa = Self.cocoa(frame).insetBy(dx: -Self.glowMargin, dy: -Self.glowMargin)
@@ -138,46 +139,86 @@ final class ComputerOverlay {
         window.order(.above, relativeTo: Int(id))
     }
 
+    /// Lamplight around the window: a halo that is brightest at the window's edge and fades out over the room
+    /// around it, with a fine line along the edge itself. The halo is the window's own shape lit from behind (a
+    /// blurred fill of it), shown only outside the window: the glow sits above the window in the stack, so
+    /// anything drawn inside its edge would cover the app.
+    private final class Glow {
+        let halo = CAShapeLayer()
+        let near = CAShapeLayer()      // the brighter light close to the edge, under the wide halo
+        let line = CAShapeLayer()
+        let outside = CAShapeLayer()   // the mask: everything but the window
+        let holder = CALayer()
+
+        init() {
+            halo.fillColor = ComputerOverlay.tint.cgColor
+            halo.shadowColor = ComputerOverlay.tint.cgColor
+            halo.shadowOpacity = 1
+            halo.shadowRadius = 24
+            halo.shadowOffset = .zero
+            near.fillColor = ComputerOverlay.tint.cgColor
+            near.shadowColor = ComputerOverlay.tint.cgColor
+            near.shadowOpacity = 0.9
+            near.shadowRadius = 7
+            near.shadowOffset = .zero
+            outside.fillRule = .evenOdd
+            outside.fillColor = NSColor.black.cgColor
+            holder.mask = outside
+            holder.addSublayer(halo)
+            holder.addSublayer(near)
+            line.fillColor = nil
+            line.strokeColor = ComputerOverlay.tint.withAlphaComponent(0.95).cgColor
+            line.lineWidth = 2
+        }
+
+        func layout(in bounds: CGRect) {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            for layer in [holder, halo, near, outside, line] { layer.frame = bounds }
+            // Just outside the window's own edge, with the rounding macOS gives windows.
+            let edge = bounds.insetBy(dx: ComputerOverlay.glowMargin - 2, dy: ComputerOverlay.glowMargin - 2)
+            let window = CGPath(roundedRect: edge, cornerWidth: 14, cornerHeight: 14, transform: nil)
+            halo.path = window
+            near.path = window
+            line.path = window
+            let cut = CGMutablePath()
+            cut.addRect(bounds)
+            cut.addPath(window)
+            outside.path = cut
+            CATransaction.commit()
+        }
+    }
+
     private func makeGlowWindow() -> NSWindow {
         let window = Self.clearWindow(level: .normal)
         let view = NSView()
         view.wantsLayer = true
-        let ring = CAShapeLayer()
-        ring.fillColor = nil
-        ring.strokeColor = Self.tint.withAlphaComponent(0.95).cgColor
-        ring.lineWidth = 2.5
-        ring.shadowColor = Self.tint.cgColor
-        ring.shadowOpacity = 0.9
-        ring.shadowRadius = 12
-        ring.shadowOffset = .zero
-        view.layer?.addSublayer(ring)
+        let glow = Glow()
+        view.layer?.addSublayer(glow.holder)
+        view.layer?.addSublayer(glow.line)
         window.contentView = view
-        // Redraw the ring whenever the window is resized to follow its target.
+        // Drawn again whenever the window is resized to follow its target.
         NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { _ in
-            MainActor.assumeIsolated { Self.layout(ring, in: view.bounds) }
+            MainActor.assumeIsolated { glow.layout(in: view.bounds) }
         }
-        Self.layout(ring, in: view.bounds)
+        glow.layout(in: view.bounds)
         if !reduceMotion {
+            // The halo breathes: wider and brighter, then back, like a lamp's light wavering.
             let breathe = CABasicAnimation(keyPath: "shadowRadius")
-            breathe.fromValue = 8
-            breathe.toValue = 18
-            breathe.duration = 1.4
-            breathe.autoreverses = true
-            breathe.repeatCount = .infinity
-            breathe.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            ring.add(breathe, forKey: "breathe")
+            breathe.fromValue = 18
+            breathe.toValue = 30
+            let brighten = CABasicAnimation(keyPath: "opacity")
+            brighten.fromValue = 0.8
+            brighten.toValue = 1
+            let group = CAAnimationGroup()
+            group.animations = [breathe, brighten]
+            group.duration = 1.6
+            group.autoreverses = true
+            group.repeatCount = .infinity
+            group.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            glow.halo.add(group, forKey: "breathe")
         }
         return window
-    }
-
-    private static func layout(_ ring: CAShapeLayer, in bounds: CGRect) {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        ring.frame = bounds
-        // Just outside the window's own edge, with the rounding macOS gives windows.
-        let rect = bounds.insetBy(dx: glowMargin - 3, dy: glowMargin - 3)
-        ring.path = CGPath(roundedRect: rect, cornerWidth: 14, cornerHeight: 14, transform: nil)
-        CATransaction.commit()
     }
 
     // MARK: The cursor
