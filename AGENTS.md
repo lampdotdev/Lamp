@@ -996,7 +996,8 @@ that they're held with it and show after Reload, never to say a held change is i
 and that it shows after Reload), and that looking again is how to ask to see. A look once the agent has been told, or
 any `use_app` while the change waits, is the agent asking to see or try an app that doesn't show its change, and
 stops the turn (`Store.stopsToSee`, `Store.pause`): the answer (`seeNote`) tells it to say in a sentence that it
-needs to see the change and ask for Reload, and end; an agent that calls another tool is ended by Lamp, as one is
+needs to see the change and ask for what puts it in (Reload, or closing the app where the person kept an earlier
+copy open and no Reload is offered), and end; an agent that calls another tool is ended by Lamp, as one is
 after `ask` (`Store.endIfOver`), Codex by its own interrupt so its conversation keeps the answer. Lamp's own request
 to carry on (`Agent.afterReload`, a `QueuedMessage` marked `afterReload`, hidden in the chat as a crash fix's request
 is, with `ChatLook.carryingOn` above it) waits in line until the held change is in (`Store.startsNow`): the person's

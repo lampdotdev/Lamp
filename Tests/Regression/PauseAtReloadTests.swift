@@ -16,6 +16,16 @@ final class PauseAtReloadTests: XCTestCase {
         XCTAssertTrue(Store.stopsToSee(told: false, using: true))
     }
 
+    /// The stop asks the person for what puts the change in: Reload where one is offered, and closing the app where
+    /// they kept an earlier copy open and no Reload is, so a request paused there isn't left waiting for a button
+    /// that isn't on screen.
+    func testTheStopAsksForWhatPutsTheChangeIn() {
+        XCTAssertTrue(Store.seeNote(reloadOffered: true).contains("press Reload"))
+        XCTAssertFalse(Store.seeNote(reloadOffered: true).contains("close the app"))
+        XCTAssertTrue(Store.seeNote(reloadOffered: false).contains("close the app"))
+        XCTAssertFalse(Store.seeNote(reloadOffered: false).contains("Reload"))
+    }
+
     /// After a look answered that the change waits for Reload, the agent's next edit ended its turn.
     func testAnyToolCallEndsAPausedTurn() {
         XCTAssertTrue(Store.endsAgent(asked: false, paused: true, before: "Edit"))

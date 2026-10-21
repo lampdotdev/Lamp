@@ -3253,7 +3253,7 @@ final class Store: ObservableObject {
     /// change, and goes on after Reload.
     private func held(_ turn: Turn, in project: LampProject, note: String, using: Bool = false) -> (Int, [String: Any]) {
         if Self.stopsToSee(told: turn.toldHeld, using: using) {
-            return pause(turn, in: project, saying: Self.seeNote, status: using ? 409 : 200)
+            return pause(turn, in: project, saying: Self.seeNote(reloadOffered: Runtime.waitsForReload(project)), status: using ? 409 : 200)
         }
         turn.toldHeld = true
         return (200, ["text": note])
@@ -7675,14 +7675,22 @@ final class Store: ObservableObject {
         """
 
     /// What a look or `use_app` says once the agent has been told its change waits and asks to see it anyway
-    /// (`held`): the turn stops here, and Lamp holds it to that (`endIfOver`), whichever engine it is.
-    private static let seeNote = """
-        Your change still waits for the person to press Reload, so the app can't show it to you yet, and nothing \
-        you'd do after it would show either. Stop here: say in one sentence that you need to see the change before \
-        going on and ask them to press Reload, and end your reply with no more tool calls. Lamp ends this turn at \
-        your next tool call. Once they've pressed Reload and the app has reopened with your change, Lamp starts you \
-        again in this conversation with a message saying so, and you carry on from there.
-        """
+    /// (`held`): the turn stops here, and Lamp holds it to that (`endIfOver`), whichever engine it is. What the agent
+    /// asks the person for is what puts the change in: Reload where a Reload is offered (`Runtime.awaitReload`), and
+    /// closing the app where the person kept an earlier copy open at its own question and no Reload is (the build
+    /// goes in when it closes, `installIcon`), so the agent never asks for a button that isn't there.
+    static func seeNote(reloadOffered: Bool) -> String {
+        let press = reloadOffered ? "press Reload" : "close the app, so the new version can open"
+        let once = reloadOffered ? "Once they've pressed Reload and the app has reopened with your change"
+            : "Once they've closed the app and the new version has gone in"
+        return """
+            Your change still waits for the person to \(press), so the app can't show it to you yet, and nothing \
+            you'd do after it would show either. Stop here: say in one sentence that you need to see the change \
+            before going on and ask them to \(press), and end your reply with no more tool calls. Lamp ends this \
+            turn at your next tool call. \(once), Lamp starts you again in this conversation with a message saying \
+            so, and you carry on from there.
+            """
+    }
 
     /// How the turn's changes reached the app, as one line in the details ("2 went into the open app, 1 waits for
     /// Reload"): how often a change goes in live is what the live rules are tuned by.
