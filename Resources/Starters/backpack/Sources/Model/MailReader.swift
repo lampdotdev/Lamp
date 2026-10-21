@@ -17,6 +17,9 @@ enum MailReader {
     /// has been read, or was there and couldn't be and will be tried again from there.
     static func read(from start: Date, settings: BackpackSettings, seen: LampStore.Collection<SeenEmail>, onList: [String],
                      status: (String) -> Void, learned: (String) -> Void, keep: ([Todo]) -> Void) async throws -> Date {
+        guard await LampAI.isAvailable(.text) else {
+            throw LampAI.Failure(message: "Reading emails needs AI set up in Lamp.", needsSetup: .text)
+        }
         let now = Date.now
         var windows: [(from: Date, to: Date)] = []
         var day = start
@@ -28,6 +31,7 @@ enum MailReader {
 
         var list = onList
         var gap: Date?
+        var tally = Tally()
         while !windows.isEmpty {
             let window = windows.removeFirst()
             status("Looking through mail from \(window.from.formatted(.dateTime.month(.abbreviated).day()))…")
@@ -38,23 +42,37 @@ enum MailReader {
                 windows.insert(contentsOf: [(window.from, middle), (middle, window.to)], at: 0)
                 continue
             }
-            let whole = try await process(messages, settings: settings, seen: seen, list: &list,
+            let whole = try await process(messages, settings: settings, seen: seen, list: &list, tally: &tally,
                                           status: status, learned: learned, keep: keep)
             // An hour with more mail than one batch can't be read whole: it's read again next time from there.
             if !whole || full { gap = gap ?? window.from }
         }
+        // Nothing judged or read at all is a check that didn't happen (the AI unreachable, say), not an inbox
+        // with nothing in it: it says so, and a first read keeps its examples.
+        if tally.missed > 0 && tally.read == 0 {
+            throw LampAI.Failure(message: tally.missed == 1 ? "Backpack couldn't read the new email. It'll try again."
+                                 : "Backpack couldn't read the \(tally.missed) new emails. It'll try again.")
+        }
         return gap ?? now
+    }
+
+    /// How many new emails a check got through, and how many it couldn't.
+    private struct Tally {
+        var read = 0
+        var missed = 0
     }
 
     /// Judges and reads the emails not read before. False when some couldn't be, which are left to try again.
     private static func process(_ messages: [LampMail.Message], settings: BackpackSettings, seen: LampStore.Collection<SeenEmail>,
-                                list: inout [String], status: (String) -> Void, learned: (String) -> Void,
+                                list: inout [String], tally: inout Tally, status: (String) -> Void, learned: (String) -> Void,
                                 keep: ([Todo]) -> Void) async throws -> Bool {
         let new = messages.filter { seen.get(key(for: $0)) == nil }
         guard !new.isEmpty else { return true }
 
         status(new.count == 1 ? "Sorting 1 new email…" : "Sorting \(new.count) new emails…")
         let sorted = try await sort(new, settings: settings, learned: learned)
+        tally.read += sorted.other.count
+        tally.missed += sorted.unjudged.count
         for message in sorted.other {
             seen.put(SeenEmail(id: key(for: message), subject: message.subject, from: message.sender,
                                received: message.date, isSchool: false, found: 0))
@@ -73,10 +91,12 @@ enum MailReader {
                 list += todos.map(\.title)
                 seen.put(SeenEmail(id: key(for: message), subject: message.subject, from: message.sender,
                                    received: message.date, isSchool: true, found: todos.count))
+                tally.read += 1
             } catch let failure as LampAI.Failure where failure.needsSetup != nil {
                 throw failure
             } catch {
                 whole = false
+                tally.missed += 1
                 print("Backpack couldn't read “\(message.subject)”: \(error.localizedDescription)")
             }
         }
