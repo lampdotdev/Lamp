@@ -251,12 +251,12 @@ private struct SetupStep: View {
     @State private var choice: Builder.Choice?
     @State private var signedIn: [Engine: Bool] = [:]
     @State private var signingIn: Engine?
-    /// Whether the Lamp Agent option on screen (that provider, that model) is the one set up to build.
+    /// Whether the Other option on screen (that provider, that model) is the one set up to build.
     @State private var lampReady = false
     @ObservedObject private var downloads = EngineDownloads.shared
 
     var body: some View {
-        // Centered like the other steps. The Lamp Agent options can make it taller than a small window,
+        // Centered like the other steps. The Other card's options can make it taller than a small window,
         // so it scrolls rather than running into the buttons.
         GeometryReader { proxy in
             ScrollView {
@@ -432,7 +432,7 @@ private struct BuilderCard: View {
         Card {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Choose your AI agent").font(.system(size: 15, weight: .semibold))
+                    Text("Choose your AI").font(.system(size: 15, weight: .semibold))
                     Text("You can change this any time.")
                         .font(.system(size: 13)).foregroundStyle(.secondary)
                 }
@@ -443,8 +443,8 @@ private struct BuilderCard: View {
                     Option(selected: choice == .chatGPT, title: Engine.codex.title, detail: "Uses your ChatGPT subscription") {
                         ProviderLogo(id: "openai", size: 30)
                     } action: { pick(.chatGPT) }
-                    Option(selected: choice?.isForge == true, title: "Lamp Agent", detail: "You choose the AI") {
-                        Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 34, height: 34)
+                    Option(selected: choice?.isForge == true, title: "Other", detail: "You choose the AI") {
+                        ProviderLogo(id: "lamp", size: 30)
                     } action: { pick(choice?.isForge == true ? choice! : .openRouter) }
                 }
                 if let choice {

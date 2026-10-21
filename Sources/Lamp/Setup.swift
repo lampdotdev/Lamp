@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import LampSidebarKit
 
 /// What a fresh Mac is missing before Lamp can build apps.
 struct SetupCheck {
@@ -1353,7 +1354,9 @@ struct ProviderLogo: View {
         let shape = RoundedRectangle(cornerRadius: size * 0.225, style: .continuous)
         ZStack {
             shape.fill(.white)
-            if id == Builder.localProvider {
+            if id == "lamp" {
+                ChatLook.LampFlame().fill(.black).padding(size * 0.2)
+            } else if id == Builder.localProvider {
                 Image(systemName: "desktopcomputer")
                     .font(.system(size: size * 0.5)).foregroundStyle(.black.opacity(0.75))
             } else if id.hasPrefix("engine:") {
