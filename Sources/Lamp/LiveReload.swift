@@ -391,11 +391,14 @@ enum LiveReload {
             Dictionary(Group.hash.parts(in: entries).compactMap { $0.first.map { (String($0.prefix { $0 != ":" }), $0) } }, uniquingKeysWith: { a, _ in a })
         }
         let hashedBefore = hashes(before), hashedNow = hashes(now)
-        for type in Set(hashedBefore.keys).union(hashedNow.keys).sorted() where typesBefore.contains(bare(type)) && typesNow.contains(bare(type)) {
+        // A changed one counts wherever it's written, an extension of a system type's included
+        // (`CLLocationCoordinate2D: Hashable`); one written or taken away, for a type of the app's on both sides.
+        for type in Set(hashedBefore.keys).union(hashedNow.keys).sorted() {
             switch (hashedBefore[type], hashedNow[type]) {
             case let (was?, is_?) where was != is_:
                 return ("\(type)'s hash(into:) or what it reads changed, and the sets and dictionaries the open app keeps were laid out by the old one", nil)
             case (nil, _?), (_?, nil):
+                guard typesBefore.contains(bare(type)), typesNow.contains(bare(type)) else { continue }
                 return ("\(type) \(hashedNow[type] == nil ? "no longer has" : "has") a hash(into:) of its own, and the sets and dictionaries the open app keeps were laid out by the old hash", nil)
             default: continue
             }

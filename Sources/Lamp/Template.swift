@@ -3782,6 +3782,30 @@ enum Template {
         /// Whether the property was ever set: a value set to nil is a value, told apart from one never set.
         func has(_ name: String) -> Bool { !Self.retired.contains(name) && (value as? [String: Entry])?[name] != nil }
         struct Entry { var value: Any; var initial: Any }
+        /// A struct's mirror without its spare, and with what the spare keeps after its own fields: its description
+        /// (`print`, `"\(item)"`, `dump`) reads as the app wrote it rather than `Item(__lampSpare_Item: …)`. The copy
+        /// step makes each struct with a spare CustomReflectable with this; its fields are read through the runtime's
+        /// own calls, which the default mirror is made from, since asking for the mirror here would ask for this one.
+        static func mirror<T>(of subject: T) -> Mirror {
+            var children: [(label: String?, value: Any)] = [], kept: [(label: String?, value: Any)] = []
+            for index in 0..<_lampChildCount(subject, type: T.self) {
+                var name: UnsafePointer<CChar>? = nil, free: LampNameFree? = nil
+                let value = _lampChild(of: subject, type: T.self, index: index, outName: &name, outFreeFunc: &free)
+                let label = name.map { String(cString: $0) }
+                free?(name)
+                if let label, label.hasPrefix("__lampSpare_") {
+                    let entries = ((value as? LampSpare)?.value as? [String: Entry]) ?? [:]
+                    // Each is kept by its type's name and its own, with a number when it was brought back
+                    // (`Item.badge#2`): shown by its own.
+                    kept = entries.keys.sorted().filter { !retired.contains($0) }.map { key in
+                        (label: String(key.prefix { $0 != "#" }.split(separator: ".").last ?? Substring(key)), value: entries[key]!.value)
+                    }
+                } else {
+                    children.append((label: label, value: value))
+                }
+            }
+            return Mirror(subject, children: children + kept, displayStyle: .struct)
+        }
         /// Keeps what was set beside the property's starting value, which is what a struct that never set it holds:
         /// two values compare and hash by what their properties are, set or not, as they would stored.
         static func setting(_ name: String, to new: Any, initial: Any, in spare: LampSpare) -> LampSpare {
@@ -3816,6 +3840,12 @@ enum Template {
             }
         }
     }
+
+    /// The runtime's calls the standard library's own mirrors are made from: a value's fields, read as its type has them.
+    @_silgen_name("swift_reflectionMirror_count") func _lampChildCount<T>(_: T, type: Any.Type) -> Int
+    typealias LampNameFree = @convention(c) (UnsafePointer<CChar>?) -> Void
+    @_silgen_name("swift_reflectionMirror_subscript") func _lampChild<T>(of: T, type: Any.Type, index: Int,
+        outName: UnsafeMutablePointer<UnsafePointer<CChar>?>, outFreeFunc: UnsafeMutablePointer<LampNameFree?>) -> Any
 
     /// A struct's spare is a property it doesn't spell, so saved data leaves it out: nothing is written for it, and
     /// data without it reads as empty. The app's own Codable code, written by the compiler, takes these over the
@@ -4422,7 +4452,6 @@ enum Template {
         /// name the app has, or the first change that had it: the id is only compared and hashed, never called.
         nonisolated(unsafe) private static var getterIDs: [UInt: UInt] = [:]
         nonisolated(unsafe) private static var firstGetters: [String: UInt]?
-        nonisolated(unsafe) private static var keyPathsSeen = Set<UnsafeMutableRawPointer>()
         nonisolated(unsafe) private static let getKeyPath: UnsafeRawPointer? = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "swift_getKeyPath").map { UnsafeRawPointer($0) }
 
         nonisolated private static func isGetter(_ name: String) -> Bool { name.hasPrefix("_$s") && (name.hasSuffix("vg") || name.hasSuffix("ig")) }
@@ -4449,7 +4478,9 @@ enum Template {
             guard let real = getKeyPath, let made = unsafeBitCast(real, to: Call.self)(pattern, arguments) else { return nil }
             lock.lock()
             defer { lock.unlock() }
-            guard !getterIDs.isEmpty, keyPathsSeen.insert(made).inserted else { return made }
+            // Every time, not once per object: a key path made with arguments (in generic code, a subscript's) isn't
+            // kept by the runtime, and another may be made where it was. Writing the same id again changes nothing.
+            guard !getterIDs.isEmpty else { return made }
             let size = Int(made.load(fromByteOffset: 24, as: UInt32.self) & 0x00FF_FFFF)
             guard size < 1 << 16 else { return made }
             var offset = 28
@@ -15962,7 +15993,7 @@ enum Template {
         # Lamp's own files (`-own=LampSupport.swift,…`) are scanned for names like the rest, but what they do with
         # raw memory is their own business, never a reason to keep the app's structs from their spares.
         my %own = map { $_ => 1 } split /,/, (($ARGV[0] // '') =~ /^-own=(.*)/ ? do { shift @ARGV; $1 } : '');
-        my (%names, %alias, %nospare, %equatable, $raw);
+        my (%names, %alias, %nospare, %equatable, %reflects, $raw, $mirrors);
         for my $file (@ARGV) {
             open(my $in, '<', $file) or next; my $s = <$in>; close($in);
             # A struct read as bytes anywhere (MemoryLayout, a buffer handed to Metal) must stay the size it's written
@@ -15976,6 +16007,10 @@ enum Template {
             # A view made Equatable or Hashable in an extension: its state box isn't either, and the synthesized
             # conformance would fail as it does for one declared so (`spares` reads only the declaration's header).
             while ($s =~ /\bextension\s+([\w.]+)\s*:[^{]*\b(?:Equatable|Hashable)\b/g) { $equatable{(split /\./, $1)[-1]} = 1 }
+            # A struct with a mirror of its own keeps it (`spares` gives one to the rest): made CustomReflectable in an
+            # extension, or any `customMirror` the app's code writes, which a second would clash with.
+            while ($s =~ /\bextension\s+([\w.]+)\s*:[^{]*\bCustomReflectable\b/g) { $reflects{(split /\./, $1)[-1]} = 1 }
+            $mirrors = 1 if !$own{(split m#/#, $file)[-1]} && $s =~ /\bcustomMirror\b/;
             # A class under a class of the same simple name (`B.Item: A.Item`): spare places are named by the simple
             # name, so the subclass's would override the superclass's stored ones. Neither gets any.
             while ($s =~ /\bclass\s+(?!$modifier)(\w+)(?:<[^>]*>)?\s*:\s*([\w.]+)/g) { my ($n, $up) = ($1, (split /\./, $2)[-1]); $nospare{$n} = 1 if $n eq $up }
@@ -15986,7 +16021,8 @@ enum Template {
         }
         for my $name (keys %names) { my $n = $name; for (1 .. 4) { last unless exists $alias{(split /\./, $n)[-1]}; $n = $alias{(split /\./, $n)[-1]}; $names{$n} = 1 } }
         # The names, then what the spares step is told: `-raw`, and `-nospare:Name` for each.
-        print join(' ', sort(keys %names), ($raw ? '-raw' : ()), (map { "-nospare:$_" } sort keys %nospare), map { "-equatable:$_" } sort keys %equatable), "\n";
+        print join(' ', sort(keys %names), ($raw ? '-raw' : ()), ($mirrors ? '-nomirror' : ()), (map { "-nospare:$_" } sort keys %nospare),
+            (map { "-equatable:$_" } sort keys %equatable), map { "-reflects:$_" } sort keys %reflects), "\n";
         exit 0;
     }
     my ($count, $subclassed, $flags, @files) = @ARGV;
@@ -15994,6 +16030,21 @@ enum Template {
     my $rawAll = $subclassed =~ /(?:^|\s)-raw(?:\s|$)/;
     my %nospare = map { substr($_, 9) => 1 } grep { /^-nospare:/ } split ' ', $subclassed;
     my %equatable = map { substr($_, 11) => 1 } grep { /^-equatable:/ } split ' ', $subclassed;
+    my %reflects = map { substr($_, 10) => 1 } grep { /^-reflects:/ } split ' ', $subclassed;
+    my $noMirror = $subclassed =~ /(?:^|\s)-nomirror(?:\s|$)/;
+    # A struct given a spare is made CustomReflectable in its own header, so its description leaves the spare out
+    # (`LampSpare.mirror`): after its inheritance list, before a `where`, or as the list when it has none.
+    sub conform {
+        my ($whole, $name) = @_;
+        return undef unless $whole =~ /^([\s\S]*?\bstruct\s+\Q$name\E)(?<g><(?:[^<>]++|(?&g))*>)?([^{]*?)(\s*)\{\z/;
+        my ($head, $generics, $rest, $space) = ($1, $2 // '', $3, $4);
+        if ($rest =~ /^\s*:/) {
+            $rest =~ s/(\s)where\b/, CustomReflectable$1where/ or $rest =~ s/(\s*)\z/, CustomReflectable$1/;
+        } else {
+            $rest = ": CustomReflectable" . $rest;
+        }
+        return "$head$generics$rest$space\{";
+    }
     my $wantSpares = $flags =~ /s/; my $wantFinal = $flags =~ /f/;
     # The stretches of a file no rewrite may touch, worked out again after each rewrite moves them.
     my @skip;
@@ -16018,7 +16069,9 @@ enum Template {
             return "${whole}${pad}\@State private var __lampState_${name} = LampStateBox();";
         }
         return $whole if $raw || $nospare{$name} || $header =~ /\b(?:OptionSet|RawRepresentable|BitwiseCopyable)\b/;
-        return "${whole}${pad}var __lampSpare_${name} = LampSpare(nil);";
+        my $mirrored = !$noMirror && !$reflects{$name} && $header !~ /\bCustomReflectable\b|~\s*(?:Copyable|Escapable)/ ? conform($whole, $name) : undef;
+        return "${whole}${pad}var __lampSpare_${name} = LampSpare(nil);" unless defined $mirrored;
+        return "${mirrored}${pad}var __lampSpare_${name} = LampSpare(nil);${pad}var customMirror: Mirror { LampSpare.mirror(of: self) };";
     }
     for my $file (@files) {
         open(my $in, '<', $file) or die "$file: $!"; my $s = <$in>; close($in);

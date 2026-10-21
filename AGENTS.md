@@ -1056,8 +1056,10 @@ brought back gets a place of its own (a class's under a new index, a struct's or
 name numbered by `Slot.generation`, `LiveSlots.spareKey`); what `fit` planned (the places, the constants remade) is written down only once the change is in
 (`LiveSlots.commit`), so a change refused leaves no record of places it never took: the whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built` once it has built (a failed
 build's sources would name code no app runs), and that's what the open app runs
-once it's installed (`LiveReload.markRunning(from:)`). A spare never reaches saved data: `LampSpare` encodes as
-nothing, and a computed property isn't encoded. If spares ever keep an app from building, it's built again without
+once it's installed (`LiveReload.markRunning(from:)`). A spare never reaches saved data: `LampSpare` encodes as nothing, and a computed property isn't encoded. Nor
+a description: a struct given a spare is made CustomReflectable in its own header (`LampSpare.mirror`, from the
+runtime's own reading of its fields), so `"\(item)"` and `dump` leave the spare out and show what it keeps after the
+struct's own fields; one with a mirror of its own keeps that. If spares ever keep an app from building, it's built again without
 them (`LiveSlots.giveUp`, `.lamp/live/no-spares`), so the agent only sees errors in its own code. Whether they were the
 cause is judged by that build, not by the compiler's words, which print the lines around an error, spares included: when
 it fails as well the errors were the agent's, and the give-up is taken back (`LiveSlots.takeBack`, in
@@ -1084,7 +1086,8 @@ A stored static or global `var` is made once too, the first time it's read, so a
 show without reopening, and whether it seemed to would depend on whether it had been read: its starting value and its type are part of the layout as a digest as well (`LiveReload.Group.stored`), and one that changed reopens the app, as does one whose starting value calls code that changed, unless it holds one
 of the app's objects; a lazy property's is held the same way, since each object made it once. A static or global gone
 from `let` to `var` or back reopens it too. So does a type's own `hash(into:)` changing, being written or taken away,
-or what it reads changing (a constant, a helper, as far down as that goes) (`LiveReload.Group.hash`): the sets and dictionaries the open app keeps put each value
+or what it reads changing (a constant, a helper, as far down as that goes), an app's own hash of a system type
+included (`LiveReload.Group.hash`): the sets and dictionaries the open app keeps put each value
 where the old one said, and a lookup by the new one looks elsewhere.
 
 **The live cases** (`Tests/LiveCases`, run by `LiveCasesTests`) are the record of which side each kind of change
