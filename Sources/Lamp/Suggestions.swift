@@ -119,7 +119,9 @@ enum AppName {
     names.
 
     Last, list the devices it runs on: "mac" for this Mac, "iphone" for iPhone and iPad, "watch" for Apple Watch \
-    (with "iphone", when they mention a watch or their wrist), "android" (alone) for an Android phone or tablet. \
+    (with "iphone", when they mention a watch or their wrist), "android" (alone) for an Android phone or tablet, "tv" \
+    (alone) for a Samsung or LG TV, ["tv"] when they mention their TV, a Frame TV, the living room screen or watching \
+    from the sofa. \
     ["android"] when they mention Android, a Pixel, a Samsung phone or Google Play; ["iphone"] when they \
     mention a phone, an iPhone or iPad, or what's done away from a desk (out walking or running, the camera on \
     the go, tilting or shaking it); ["mac", "iphone"] when they want it on their Mac and their phone, or kept the \

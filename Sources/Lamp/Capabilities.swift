@@ -331,6 +331,8 @@ struct SetupOffer: Codable, Equatable, Hashable {
 /// per conversation and again only when it changes, so most requests carry nothing.
 enum AIStatus {
     @MainActor static func line(for project: LampProject, offered: Set<SetupOffer>) -> String {
+        // A TV app has none of Lamp's AI building blocks, so none of this applies to it.
+        if project.platform == .tv { return "- None: a TV app has no AI building blocks from Lamp." }
         var lines = Capability.allCases.filter { $0 != .browser || (BrowserBridge.enabled && project.platform.hasMac) }.map { capability in
             let resolution = AppAI.resolve(capability, for: project)
             var line = "- \(capability.title): \(AppAI.summary(resolution))"

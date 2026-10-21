@@ -629,6 +629,40 @@ files bring in beyond Lamp's catalogue. Converting to or from Android is a rewri
 language: `convert` puts the new kind's scaffold beside the old code and tells the agent to write the app again and
 delete the rest.
 
+## TV apps
+
+An app can be made for TVs (`Platform.tv`, chosen when a wish names a TV, the Frame or the living room, or by
+`make_app_for` with "tv" alone). It is a web app, HTML, CSS and JavaScript in `Web/`, the same files for Samsung
+(Tizen) and LG (webOS) TVs, with no build step: "building" copies `Web/` into Lamp's own folder (`TVs.stage`, a copy
+made under the app's sandbox, links refused), which is all the preview and the packages ever read. Lamp owns
+`Web/lamp.js` (`TVTemplate.lampJS`, plain ES5 for the TVs' Chrome-79-era browsers): the remote's keys by name, focus
+moved with the arrows to the nearest thing in that direction, OK clicking, Back with `Lamp.onBack` and leaving the
+app when nothing handles it, and `Lamp.store` on localStorage. The rules are `Agent.tvPrompt` (`Rules.tv…`: a
+1920×1080 page that never scrolls whole, design for the sofa, no syntax newer than 2019). The agent tries the app in
+the TV preview (`TVPreview`): a window showing it at the TV's size, half scale, from the staged copy, where
+`look_at_app` pictures it and reads it as text (focusable things and text, with which has focus) and `use_app` presses
+remote keys (synthetic key events with TV key codes), clicks and types; the page's console goes to the app's log;
+each app keeps its own saved data there between openings, as a TV does. TVs are found on the network (`TVs.scan`:
+SSDP, then a Samsung TV's own API at port 8001, an LG TV's UPnP description) and listed with the other devices; a
+found TV is kept (`TVs.keep`, Lamp's TV folder) only once a setup step has worked, since a scan sees neighbours'
+TVs too. Setup is a window of its own per TV (`TVSetup`), each step checked by Lamp. Samsung: developer mode on with
+this Mac's address (read off the TV's API), a connection over sdb (`SdbConnection`: adb's protocol on port 26101,
+spoken directly, pieces kept to 4096 bytes), which reads the TV's device id and Tizen version, and Samsung's
+permission: the person signs in to their Samsung account on Samsung's page (the sign-in posts back to a listener
+on this Mac's loopback only), and Lamp makes an RSA key and asks Samsung's certificate service for an author and a
+distributor certificate naming the TV (`TizenSigning`, the requests Tizen Studio's certificate manager makes; key and
+certificates in Lamp's folder, closed to the agent; Samsung's two public CA certificates ship in
+`Resources/TVCertificates`). Lamp then signs every package itself (`TizenSigning.signatureFile`: the W3C widget
+signature, written already canonical, RSA-SHA512 over each file's SHA-512; checked to reproduce a Tizen Studio
+signature exactly), zips it (`TVPackage.wgt`, with a `config.xml` Lamp writes, never the agent), pushes it to the TV's
+staging folder, installs with `0 vd_appinstall` and opens it with `0 was_execute`, retrying until the TV says it has.
+LG: Developer Mode from LG's store with its Key Server on, the passphrase it shows typed into the setup window, the
+key fetched from the TV (port 9991) and unlocked with `ssh-keygen`, then `TVPackage.ipk` (an ar archive Lamp writes,
+with tarred control and data), `scp -O` and `luna-send-pub` over SSH as `prisoner` on port 9922 (`WebOS`), and the
+developer-mode session renewed with LG at every install. Play with a TV chosen under Try On (`Store.setTVDevice`, which
+runs that TV's setup first) packages and installs; the preview needs nothing set up. Lamp's Info.plist carries a local
+network description; the first scan brings macOS's firewall and local network questions. TV apps aren't shared yet.
+
 ## Apps for both the Mac and the iPhone
 
 An app can be made for both (`Platform.universal`, the "Mac, iPhone & iPad" choice beside Mac and iPhone & iPad), as
