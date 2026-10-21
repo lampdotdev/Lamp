@@ -1711,6 +1711,8 @@ struct StarterIdeas: View {
 /// The simulator choice is the family the agent builds and looks at; a phone is where Play puts the app.
 private struct TryOnChoices: View {
     @EnvironmentObject private var store: Store
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage("settingsTab") private var settingsTab = "building"
     let project: LampProject
     @State private var olderPhones: [PhoneTools.OlderPhone] = []
 
@@ -1781,10 +1783,7 @@ private struct TryOnChoices: View {
         Divider()
         Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show(family: project.family, phone: project.device) }
         // Every device Lamp knows, with where its setup stands, is in Settings → Building.
-        Button("All Your Devices…") {
-            UserDefaults.standard.set("building", forKey: "settingsTab")
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        }
+        Button("All Your Devices…") { settingsTab = "building"; openSettings() }
         Button("Look for Devices Again") { refresh() }
             .onAppear { refresh() }
     }
