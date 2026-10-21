@@ -532,7 +532,7 @@ struct ProjectView: View {
             // The build card goes straight after the request that began the app, and stays there through
             // the agent's questions and their answers; what the agent says and does follows it.
             transcript(Array(lines[...request]), busy: false, pin: pin)
-            BuildCard(project: project, progress: card)
+            BuildCard(project: project, progress: card, lines: Array(lines[(request + 1)...]))
                 .padding(.top, 16).padding(.bottom, 12)
                 .background(ChatLook.paper)
                 // Pinned: once it reaches the top of the chat it stays there, over the steps going by.
