@@ -42,6 +42,8 @@ enum Gallery {
         chat("Steps between messages", Array(beerTurn.dropLast(3)), activity: "Putting the pieces together"),
         // Over, each stretch folds where it came; the one before the answer is "Worked for…".
         chat("Steps between messages, over", beerTurn),
+        // Over, and each fold titled by the small model after the turn, with how long its steps took.
+        chat("Steps between messages, titled", titledBeerTurn),
         // An answer with every kind of markdown block: headings, a table, lists, a quote, a rule and code.
         chat("A reply with markdown", [
             LogLine(kind: .user, text: "which files are the biggest?"),
@@ -99,6 +101,18 @@ enum Gallery {
     ]
 
     private static func step(_ said: String) -> LogLine { LogLine(kind: .status, text: "Ran: true", said: said) }
+
+    /// The same turn as it's logged now, each line timed, with the titles `StepTitles` gives its folds.
+    private static var titledBeerTurn: [LogLine] {
+        let start = Date.now.addingTimeInterval(-400)
+        let seconds: [TimeInterval] = [0, 4, 9, 15, 22, 31, 70, 80, 120, 150, 230, 260, 300, 372, 373]
+        var lines = beerTurn
+        for index in lines.indices { lines[index].at = start.addingTimeInterval(seconds[min(index, seconds.count - 1)]) }
+        lines[2].foldTitle = "Looked over the shelf, its screens and saved entries"
+        lines[6].foldTitle = "Planned the taproom look and drew the icon"
+        lines[10].foldTitle = "Set up tasting records and their settings"
+        return lines
+    }
 
     private static let beerTurn: [LogLine] = [
         LogLine(kind: .user, text: "Turn Hot Shelf into a beer tracker"),
