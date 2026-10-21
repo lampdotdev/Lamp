@@ -54,6 +54,9 @@ struct FlaggedGame: Codable, Hashable {
     var finalScore: String?
     var highlights: Clip?
     var notified: Bool?
+    /// The game as the scoreboard last had it once it ended, kept (and saved) for "Just ended" and its highlights after
+    /// ESPN's scoreboard has moved on to the next day.
+    var game: Game?
 }
 
 // MARK: - Fetching
@@ -256,7 +259,12 @@ extension Watcher {
             flagged[game.id] = FlaggedGame(id: game.id, league: game.league.rawValue, title: game.title, flaggedAt: now)
             changed = true
         }
-        for game in games where game.state == .post && flagged[game.id] != nil { endedGames[game.id] = game }
+        for game in games where game.state == .post {
+            guard var flag = flagged[game.id], flag.game != game else { continue }
+            flag.game = game
+            flagged[game.id] = flag
+            changed = true
+        }
         for game in flaggedEnded {
             guard var flag = flagged[game.id] else { continue }
             if flag.endedAt == nil {
@@ -282,7 +290,6 @@ extension Watcher {
         let cutoff = now.addingTimeInterval(-2 * 86_400)
         let old = flagged.filter { $0.value.flaggedAt < cutoff }.map(\.key)
         for id in old { flagged[id] = nil; changed = true }
-        endedGames = endedGames.filter { flagged[$0.key] != nil }
         if changed { LampStore.save(flagged, to: "flagged") }
     }
 
@@ -290,7 +297,7 @@ extension Watcher {
     var flaggedEnded: [Game] {
         let here = games.filter { $0.state == .post && flagged[$0.id] != nil }
         let ids = Set(here.map(\.id))
-        return here + endedGames.values.filter { !ids.contains($0.id) && flagged[$0.id] != nil }
+        return here + flagged.values.compactMap(\.game).filter { !ids.contains($0.id) }
     }
 
     /// Flagged games that ended in the last twelve hours, newest first.

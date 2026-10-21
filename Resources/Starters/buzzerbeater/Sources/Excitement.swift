@@ -1,7 +1,7 @@
 import Foundation
 
 /// Why a game is worth watching right now, and how much.
-struct Buzz: Hashable {
+struct Buzz: Codable, Hashable {
     var score: Int          // 0–100
     var headline: String
     var details: String

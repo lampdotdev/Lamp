@@ -114,8 +114,8 @@ struct Team: Codable, Hashable {
     var city: String? = nil
 }
 
-struct Broadcast: Hashable {
-    enum Market: String { case national, home, away }
+struct Broadcast: Codable, Hashable {
+    enum Market: String, Codable { case national, home, away }
     var name: String
     var market: Market
 }
@@ -134,8 +134,8 @@ struct Line: Codable, Hashable {
     var moneyline: Int?    // favorite's moneyline, e.g. -250
 }
 
-struct Game: Identifiable, Hashable {
-    enum State: String { case pre, live, post }
+struct Game: Identifiable, Codable, Hashable {
+    enum State: String, Codable { case pre, live, post }
 
     var id: String
     var league: League
@@ -219,9 +219,6 @@ final class Watcher: ObservableObject {
     static let shared = Watcher()
 
     @Published var games: [Game] = []
-    /// The last scoreboard entry of each flagged game that has ended, kept for "Just ended" and its highlights after
-    /// ESPN's scoreboard has moved on to the next day.
-    var endedGames: [String: Game] = [:]
     @Published var lastUpdated: Date?
     @Published var isLoading = false
     @Published var error: String?
