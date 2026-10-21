@@ -10,6 +10,8 @@ struct PanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+                .frame(maxWidth: .infinity)
+                .overlay(alignment: .topTrailing) { LampPanelWand().padding(.top, 10).padding(.trailing, 10) }
             picture
             Divider()
             food

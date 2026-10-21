@@ -15481,6 +15481,46 @@ enum Template {
         }
     }
 
+    /// Customize with Lamp, in a menu bar app's panel: put it in the panel's header, beside the app's own buttons, as a
+    /// window has the wand in its title bar. Without it Lamp puts the wand in a strip of its own above the panel.
+    /// It shows only in the panel (the window the panel opens as has the wand in its title bar) and while Lamp is on:
+    ///
+    ///     HStack { Text("Buzzerbeater").font(.headline); Spacer(); refreshButton; LampPanelWand() }
+    struct LampPanelWand: View {
+        var size: CGFloat = 13
+        @Environment(\.lampInMenuBarPanel) private var inPanel
+
+        var body: some View {
+            Group {
+                if inPanel && LampMagic.isOn {
+                    Button { LampMenuBar.customize() } label: {
+                        LampGlyph.Mark(size: size).frame(minWidth: 20, minHeight: 20).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help("Customize this app with Lamp")
+                    .accessibilityLabel("Customize This App")
+                }
+            }
+            .preference(key: LampPanelWandPlaced.self, value: true)
+        }
+    }
+
+    /// Whether the panel's own code placed `LampPanelWand`, so the strip above it isn't needed.
+    struct LampPanelWandPlaced: PreferenceKey {
+        static let defaultValue = false
+        static func reduce(value: inout Bool, nextValue: () -> Bool) { value = value || nextValue() }
+    }
+
+    private struct LampInMenuBarPanelKey: EnvironmentKey { static let defaultValue = false }
+    extension EnvironmentValues {
+        /// The view is in a menu bar app's panel (`LampMenuBar`), not a window.
+        var lampInMenuBarPanel: Bool {
+            get { self[LampInMenuBarPanelKey.self] }
+            set { self[LampInMenuBarPanelKey.self] = newValue }
+        }
+    }
+
     /// An app that lives in the menu bar: an icon there, a panel that drops down from it, and no Dock icon.
     /// Use it as the app's scene, instead of SwiftUI's MenuBarExtra:
     ///
@@ -15568,7 +15608,7 @@ enum Template {
         /// Scenes can't be chosen with `if`, so both are there and only the one for the style is put in the menu bar.
         var body: some Scene {
             MenuBarExtra(isInserted: .constant(style == .panel)) {
-                content().background(SettingsOpener()).safeAreaInset(edge: .top, spacing: 0) { PanelWand() }
+                PanelHost(content: content())
             } label: {
                 label()
             }
@@ -15598,9 +15638,25 @@ enum Template {
             }
         }
 
+        /// The panel as the menu bar shows it: the app's content, told it's in the panel (`LampPanelWand` shows there and
+        /// not in the window the panel opens as, whose title bar has the wand), with a strip for the wand above it
+        /// unless the app's own code put one in its header.
+        private struct PanelHost: View {
+            let content: AnyView
+            @State private var placed = false
+
+            var body: some View {
+                content
+                    .environment(\.lampInMenuBarPanel, true)
+                    .background(SettingsOpener())
+                    .safeAreaInset(edge: .top, spacing: 0) { if !placed { PanelWand() } }
+                    .onPreferenceChange(LampPanelWandPlaced.self) { placed = $0 }
+            }
+        }
+
         /// The wand every window of a Lamp app has at the top right of its title bar, here at the top right of the
         /// panel, in a strip of its own above the app's content as a title bar would be, so it covers nothing the
-        /// app put in its corner.
+        /// app put in its corner. Only for a panel whose code doesn't place `LampPanelWand` itself.
         private struct PanelWand: View {
             var body: some View {
                 if LampMagic.isOn {
