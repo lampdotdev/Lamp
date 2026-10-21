@@ -197,7 +197,17 @@ extension LogLine {
     private static func said(_ lines: [LogLine]) -> [LogLine] {
         var out: [LogLine] = []
         for line in lines {
-            guard line.kind == .tool else { out.append(line); continue }
+            guard line.kind == .tool else {
+                // A command's row is logged once it's allowed or has run, which can be after file work Lamp already
+                // named after it (Claude Code's calls in one message, the command still running): that file work is
+                // part of the command's row too, not the same words once more above it.
+                if line.kind == .status, let said = line.said, ChatLook.ranCommand(in: line.text) != nil,
+                   let last = out.last, last.kind == .status, last.said == nil, last.text == said {
+                    out.removeLast()
+                }
+                out.append(line)
+                continue
+            }
             let call = ToolCall(line.text)
             guard call.action != .run else { continue }
             // The agent's own words for the step when it gave some, else what the live line said.

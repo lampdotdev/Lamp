@@ -465,7 +465,9 @@ public enum ChatLook {
                             Image(systemName: "chevron.right")
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(.tertiary)
-                                .rotationEffect(.degrees(expanded ? -90 : 0))
+                                // Right when folded and down when open, as every other fold in the chat turns
+                                // (the steps, "Worked for…"), so the line reads as one of them.
+                                .rotationEffect(.degrees(expanded ? 90 : 0))
                         }
                     }
                     .contentShape(Rectangle())
