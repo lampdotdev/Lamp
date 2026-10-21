@@ -1364,9 +1364,12 @@ enum LiveReload {
                             opaque?.names.append(!value.contains("@") ? value : place.stringByReplacingMatches(in: value, range: NSRange(value.startIndex..., in: value), withTemplate: ""))
                         }
                     }
-                    return
+                    // A type declared inside the member (`struct Value` a helper returns) is laid out like any other:
+                    // its lines go on to be read as such, while the member's own entry is still being made.
+                    if opaque?.inner == nil { return }
+                } else {
+                    closeOpaque()
                 }
-                closeOpaque()
             }
             if opens("pattern_binding_decl") { bindingConverts = nil; bindingBuilds = nil }
             if let at = bindingConverts, indent > at, bindingBuilds == nil, let m = typeOf.firstMatch(in: line.text, range: line.range) {
@@ -1486,7 +1489,7 @@ enum LiveReload {
             } else if opens("typealias"), let m = inferredAlias.firstMatch(in: line.text, range: line.range), let owner {
                 let name = String(line.text[Range(m.range(at: 2), in: line.text)!]), type = String(line.text[Range(m.range(at: 3), in: line.text)!])
                 if !type.contains("some ") { add(aliasGroup + "\t" + owner + "." + name + " = " + type) }
-            } else if opens("func_decl", "var_decl"), let m = opaqueMember.firstMatch(in: line.text, range: line.range),
+            } else if opaque == nil, opens("func_decl", "var_decl"), let m = opaqueMember.firstMatch(in: line.text, range: line.range),
                       case let name = String(line.text[Range(m.range(at: 3), in: line.text)!]), name != "__lampBody", !name.hasPrefix("$") {
                 opaqueIsPrivate = !line.has("readImpl=stored") && ["private", "fileprivate"].contains(String(line.text[Range(m.range(at: 5), in: line.text)!]))
                 // A view's body is wrapped by the live copy (`__lampBody`, read only by `body` beside it), so its type
@@ -1518,7 +1521,7 @@ enum LiveReload {
                 let global = held && line.isTopLevel
                 let name = String(line.text[Range(m.range(at: 2), in: line.text)!]), type = String(line.text[Range(m.range(at: 3), in: line.text)!])
                 if let owner = owner ?? (global ? "" : nil), rest.contains("readImpl=stored"), held || !rest.contains(" static") {
-                    let entry = owner + "\t" + name + ": " + SwiftSource.sugared(type)
+                    let entry = owner + "\t" + name + ": " + SwiftSource.sugared(type, except: names.types)
                     if seen.insert(entry).inserted { out.append(entry); ownershipPending = (indent, out.count - 1) }
                 } else if !rest.contains("readImpl=stored") {
                     declared(name + ": " + type)
@@ -1667,7 +1670,9 @@ enum LiveReload {
         // code they call: the new value would show only once the app opens again.
         if !constants.isEmpty, let after {
             let launchNames = Set(Group.launch.parts(in: after).compactMap { $0.first.map { String($0.prefix { $0 != ":" }).replacingOccurrences(of: "extension ", with: "") } })
+            // The launch types and their extensions, where an App's body is often written.
             let launch = declarations.types.filter { launchNames.contains(bare($0.key)) }.map(\.value)
+                + launchNames.flatMap { declarations.extensions[$0] ?? [] }
             if let read = constants.first(where: { key in
                 guard let variable = declarations.constants[key] else { return false }
                 let binding = declarations.bindings[variable.binding]

@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Card.make().Value in Model.swift changed what it holds (Card.make().Value in Model.swift.value: String))
+== run
+before: value=1
+RELOAD 1: REOPEN Card.make().Value@Model.swift changed what it holds (Card.make().Value@Model.swift.value: String)
+after1 (the kept value's local type now holds a String: want a reopen, or value=one): value=1
+before: value=one
+RELOAD 1: in the restart
+after1 (the kept value's local type now holds a String: want a reopen, or value=one): value=one

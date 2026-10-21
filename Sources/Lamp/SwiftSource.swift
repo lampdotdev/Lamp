@@ -434,17 +434,18 @@ enum SwiftSource {
 
     /// A type as Swift's short spellings write it (`Array<String>` is `[String]`, `Optional<Int>` is `Int?`,
     /// `Dictionary<K, V>` is `[K: V]`): the compiler prints a type as the code spells it, and the two are one type.
-    static func sugared(_ type: String) -> String {
+    static func sugared(_ type: String, except own: Set<String> = []) -> String {
         var text = type
-        let rules: [(String, (String, String) -> String)] = [
-            (#"\bArray<([^<>]*)>"#, { inner, _ in "[\(inner)]" }),
-            (#"\bOptional<([^<>]*)>"#, { inner, _ in inner.contains(where: { " -&,".contains($0) }) ? "(\(inner))?" : inner + "?" }),
-            (#"\bDictionary<([^<>,]*), ([^<>]*)>"#, { key, value in "[\(key): \(value)]" }),
+        let rules: [(name: String, pattern: String, write: (String, String) -> String)] = [
+            ("Array", #"(?<![\w.])Array<([^<>]*)>"#, { inner, _ in "[\(inner)]" }),
+            ("Optional", #"(?<![\w.])Optional<([^<>]*)>"#, { inner, _ in inner.contains(where: { " -&,".contains($0) }) ? "(\(inner))?" : inner + "?" }),
+            ("Dictionary", #"(?<![\w.])Dictionary<([^<>,]*), ([^<>]*)>"#, { key, value in "[\(key): \(value)]" }),
         ]
         var changed = true
         while changed {
             changed = false
-            for (pattern, write) in rules {
+            // Only Swift's own: a type of the app's by one of these names is another type.
+            for (name, pattern, write) in rules where !own.contains(name) {
                 guard let regex = try? NSRegularExpression(pattern: pattern), let m = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
                       let whole = Range(m.range, in: text) else { continue }
                 let first = String(text[Range(m.range(at: 1), in: text)!])
@@ -647,10 +648,14 @@ extension SwiftSource {
         /// asks the class's initializers about anything else).
         struct Names {
             var classes = Set<String>(), protocols = Set<String>()
+            /// Every type the app declares, by its simple name, and every typealias: a name such as `Array` that the
+            /// app gives a type of its own isn't Swift's.
+            var types = Set<String>()
         }
     }
 
     private static let walkTypeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|actor)_decl\b[^"]*"([^"]+)".*? access=(\w+)"#)
+    private static let walkAnyName = try! NSRegularExpression(pattern: #"^\s*\(\w+\b[^"]*"(\w+)""#)
     private static let walkGenericDecl = try! NSRegularExpression(pattern: #"^\s*\(\w+_decl\b[^"]*"[^"]+" "<([^"]*)>""#)
     private static let walkInherits = try! NSRegularExpression(pattern: #" inherits="([^"]*)""#)
     private static let walkExtensionDecl = try! NSRegularExpression(pattern: #"^(\s*)\(extension_decl\b[^"]*"([^"]+)""#)
@@ -661,8 +666,9 @@ extension SwiftSource {
     static func names(inDump dump: String) -> Walk.Names {
         var names = Walk.Names()
         for raw in lines(dump) {
-            guard let node = node(raw), node.opens("class_decl", "protocol") else { continue }
+            guard let node = node(raw), node.opens("class_decl", "protocol", "struct_decl", "enum_decl", "actor_decl", "typealias") else { continue }
             let line = String(raw), range = NSRange(line.startIndex..., in: line)
+            if !node.opens("protocol"), let m = walkAnyName.firstMatch(in: line, range: range) { names.types.insert(String(line[Range(m.range(at: 1), in: line)!])) }
             if node.opens("class_decl"), let m = walkClassName.firstMatch(in: line, range: range) { names.classes.insert(String(line[Range(m.range(at: 1), in: line)!])) }
             if node.opens("protocol"), let m = walkProtocolDecl.firstMatch(in: line, range: range) { names.protocols.insert(String(line[Range(m.range(at: 3), in: line)!])) }
         }

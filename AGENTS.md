@@ -850,7 +850,7 @@ layouts have one, so a layout an earlier Lamp kept says nothing of it. After a b
 `LiveReload.put`, the one pipeline from the layout check to the record of what the app now runs, acting on its
 `Outcome` (it went in, with what was done beyond the code; or why the app has to reopen): the change goes in when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.LaunchReader`, held to what the open app had as part of the layout; a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again, and one the change didn't touch is left out of a compile of every file when it names nothing newly declared, `LiveReload.addedNames`; a conformance, subscript or operator, which code reaches without naming it, or a declaration taken away keeps it in) or Lamp's own files, and leaves every type
 holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties (their types in Swift's short
-spellings, so `Array<String>` is `[String]`) and cases (with their raw values, which an `@objc` enum's values are and
+spellings, so `Array<String>` is `[String]`, only where the name is Swift's and no type of the app's) and cases (with their raw values, which an `@objc` enum's values are and
 a raw-value enum hashes by; a raw type given to an existing enum or taken from it reopens the app too),
 from `-dump-ast` of just the changed files, compared for the open app's sources and the new ones; no reading of the
 text; a typealias is printed as itself wherever it's used, so each is listed with what it names and one the open app has that now names something else reopens, `LiveReload.aliasGroup`, as does a name that was a
@@ -1099,7 +1099,8 @@ new value when that code changes, and its kept value is named by that text too, 
 value again. It follows an initializer or a case into its type's stored properties' starting values and
 its cases (`calledText(members:)`), so a constant made by `Settings()` changes with a default. One that can hold an
 object isn't remade (`static let shared = Store()`): the object is the app's state, kept like every other. A constant
-read by what runs only at launch, there or through what it calls (`SwiftSource.reaches`), reopens the app, and so does
+read by what runs only at launch (its types and their extensions), there or through what it calls
+(`SwiftSource.reaches`), reopens the app, and so does
 a constant of the app's own option set or raw-value type, which the open app's values of it are made of.
 
 A stored static or global `var` is made once too, the first time it's read, so a new starting value for one can't
