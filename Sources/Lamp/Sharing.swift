@@ -158,6 +158,10 @@ enum Sharing {
     /// Writes `<Name>.lampapp` to a temporary folder and returns its URL. `icon` is the drawn icon to carry
     /// (`sharedIcon`); without one, Lamp's own drawing of the same design goes in.
     static func export(_ project: LampProject, icon: Data? = nil) throws -> URL {
+        // A shared file carries Swift code for Lamp's own build; an Android app's Gradle project isn't that yet.
+        guard project.platform != .android else {
+            throw ImportError("\(project.name) can't be shared yet.", detail: "Lamp doesn't share Android apps yet.")
+        }
         let fm = FileManager.default
         let work = workFolder.appendingPathComponent("forge-share-\(UUID().uuidString)")
         let stage = work.appendingPathComponent("app")

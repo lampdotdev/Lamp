@@ -572,6 +572,39 @@ what the gateway would with the provider directly (chat completions with the JSO
 decisions, images). The prompt's fencing and dates are made in the library either way. What's spent this
 way isn't recorded in Lamp, and `/ai/computer` says it needs the Mac.
 
+## Android apps
+
+An app can be made for Android (`Platform.android`, chosen by the naming call when the wish names Android, a Pixel, a
+Samsung or Google Play, or by `make_app_for` with "android" alone: an Android app stands by itself, never one code
+with Apple's devices). It is Kotlin and Jetpack Compose in a Gradle project in the app's folder: Lamp owns what the
+build runs before the agent's code does (`build.sh`, `settings.gradle.kts`, the top-level `build.gradle.kts`,
+`gradle.properties` and `gradle/libs.versions.toml`, written afresh before every build by
+`Template.writeAndroidOwnedFiles`, with the versions Google's own project template pairs), and the agent owns `app/`
+(its build file, manifest, Kotlin and resources; the scaffold is `Template.fillAndroid`). There is no support
+library of Lamp's for Android yet: no LampStore, LampAI or connectors, and the rules say so (`Agent.androidPrompt`,
+`Rules.android…`), so the agent builds on Android's own; `AIStatus.line` tells it the same. Nothing of Google's is on
+a Mac by itself, so Lamp downloads what it needs the first time (`AndroidTools.install`, from the Android Setup
+window, `AndroidSetup`, which the first Android request, Play and Try On open through `AndroidTools.check`): a Java
+runtime, Google's command-line tools and Gradle, each checked against the checksum its maker publishes, and through
+Google's own package manager the platform tools, a build-tools, the platform and the emulator with one system image.
+They go in `Edition.sharedDeveloperFolder` (~/Library/Developer/Lamp), one copy for every Lamp on this Mac, which the
+agent's sandbox lets a build read and never write, so what Lamp runs from there as itself (adb, the emulator) is what
+Lamp put there; Gradle's cache is in `Edition.sharedCachesFolder`, which the sandbox opens for writing, and each app's
+Gradle daemon is its own (`-Dlamp.app`), since one started in another app's sandbox could read nothing of this one.
+The build runs build.sh in the app's sandbox like every build, with `AndroidTools.buildEnvironment`: its Android home is in the caches folder, since every debug build is signed with a key Gradle keeps there, while Lamp's own (adb's key to the person's devices, the emulators) stays in Lamp's folder. Where the
+app opens is Try On's choice (`TryOnChoices.androidChoices`): the emulator Lamp made (`Emulator`, one AVD,
+`AndroidTools.avdName`, started by Lamp as itself and shown as its own window) or one of the person's Android
+devices, which adb lists (`Adb.devices`, each a `Device` with its state: debugging allowed, or the next step) and which
+`LampProject.device` keeps by serial (`Store.setAndroidDevice`). Play and a look install the APK with adb and start
+the main activity (`Store.installOnAndroid`), with its log read into the app's log by `adb logcat` for the app's
+process; a look pictures the screen with `screencap`, scaled by the device's density so a pixel is a point, and reads
+it as text from `uiautomator dump` (`Adb.Screen`, the same line shape as the Mac's and the iPhone's);
+`use_app` taps, types, swipes and presses keys through `adb shell input` (`Adb.perform`), reading the screen again
+between actions. The chat stays in Lamp's window (no sidebar, no live reload: both are the Mac's). An Android app
+isn't shared as a `.lampapp` yet (`Sharing.export` says so). Converting to or from Android is a rewrite in the other
+language: `convert` puts the new kind's scaffold beside the old code and tells the agent to write the app again and
+delete the rest.
+
 ## Apps for both the Mac and the iPhone
 
 An app can be made for both (`Platform.universal`, the "Mac, iPhone & iPad" choice beside Mac and iPhone & iPad), as

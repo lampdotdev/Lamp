@@ -43,6 +43,14 @@ enum Edition {
     /// ~/Applications/Lamp (Dev) Apps: where built apps are installed.
     static let appsFolder = home.appendingPathComponent("Applications/\(name) Apps")
     static let logsFolder = home.appendingPathComponent("Library/Logs/\(name)")
+    /// ~/Library/Developer/Lamp: tools too large to keep a copy of for each Lamp (Android's SDK, a Java runtime),
+    /// shared by every Lamp on this Mac on purpose, as the app-signing keychain is. The agent's sandbox lets a
+    /// build read the person's developer folder and never write it, so what Lamp runs from here is what Lamp put
+    /// there.
+    static let sharedDeveloperFolder = home.appendingPathComponent("Library/Developer/Lamp")
+    /// ~/Library/Caches/Lamp: what a build fetches and may fetch again (Gradle's dependencies), shared the same way;
+    /// the sandbox opens the caches folder to every command.
+    static let sharedCachesFolder = home.appendingPathComponent("Library/Caches/Lamp")
 
     /// An instance's four ports come from its name, in a range of their own above the two fixed sets, so two
     /// worktrees' builds seldom collide; the apps learn them at install (`Template.installValues`).

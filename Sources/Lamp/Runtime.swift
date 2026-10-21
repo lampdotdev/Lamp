@@ -65,10 +65,14 @@ enum Runtime {
         // change for an app that has them (Store.intentsCanComeBack).
         // The same for a share extension, which a Mac app keeps only when it's signed for a team (Store.shareCanComeBack).
         if project.platform == .mac, Store.usesAppIntents(project) || Template.hasShare(project) { hasher.update(data: Data(Devices.team.utf8)) }
-        let roots = ["Sources", Template.widgetFolder, Template.shareFolder, Template.watchFolder, "Package.swift", "icon.json", "capabilities.json"].map { project.dir.appendingPathComponent($0) }
+        // An Android app's code is its `app` module, whose `build` folder is what the build makes, not what it's made from.
+        let names = project.platform == .android ? [Template.androidAppFolder, "icon.json"]
+            : ["Sources", Template.widgetFolder, Template.shareFolder, Template.watchFolder, "Package.swift", "icon.json", "capabilities.json"]
+        let roots = names.map { project.dir.appendingPathComponent($0) }
         for root in roots {
             let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? [])
                 .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
+                .filter { project.platform != .android || !$0.path.hasPrefix(root.appendingPathComponent("build").path + "/") }
             for file in ([root] + files).sorted(by: { $0.path < $1.path }) {
                 guard let data = try? Data(contentsOf: file) else { continue }
                 hasher.update(data: Data(file.path.dropFirst(project.dir.path.count).utf8))
@@ -85,13 +89,14 @@ enum Runtime {
 
     /// Starts a new log for a launch the simulator makes (a Mac app does this itself in LampRuntime.start):
     /// the last one becomes previous-log.txt.
+    /// Written on the app's folder's terms (`AppFolder`, `AppFile`): the runtime folder is the agent's to write, so a
+    /// link left there must not carry the log, or what was in it, anywhere else.
     static func startLog(_ project: LampProject) {
-        let fm = FileManager.default
-        try? fm.createDirectory(at: folder(project), withIntermediateDirectories: true)
         let log = logURL(project), previous = folder(project).appendingPathComponent("previous-log.txt")
-        try? fm.removeItem(at: previous)
-        try? fm.moveItem(at: log, to: previous)
-        fm.createFile(atPath: log.path, contents: nil)
+        try? AppFolder.createDirectory(folder(project), in: project.dir)
+        let last = AppFile.read(log, in: project) ?? Data()
+        try? AppFolder.write(last, to: previous, in: project.dir)
+        try? AppFolder.write(Data(), to: log, in: project.dir)
     }
 
     // MARK: - Launch
@@ -122,7 +127,9 @@ enum Runtime {
 
         /// `alive` is asked every tenth of a second; `died` says what's known once it's false, given whether it came
         /// `late` or while Lamp was closing the app (`retired`), and nil when the going doesn't count as a death after all.
-        init(opened: Date, alive: @escaping @MainActor () -> Bool,
+        /// `confirm`, when given, is asked once more as the window ends, for an app whose life is known only by asking
+        /// its device (Android's), so the verdict never rests on a reading taken before a death in the last moments.
+        init(opened: Date, alive: @escaping @MainActor () -> Bool, confirm: (@MainActor () async -> Bool)? = nil,
              died: @escaping @MainActor (_ late: Bool, _ retired: Bool) async -> String?) {
             self.opened = opened
             self.alive = alive
@@ -131,6 +138,7 @@ enum Runtime {
                 while alive(), clock.now - start < Runtime.launchWindow {
                     try? await Task.sleep(for: .milliseconds(100))
                 }
+                if alive(), let confirm { return !(await confirm()) }
                 return !alive()
             }
             self.window = window

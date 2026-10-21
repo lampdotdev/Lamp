@@ -1350,13 +1350,14 @@ struct WishDrag: NSViewRepresentable {
 /// Where a wish lives once it's made, read from its files: for its caption on the desk, and for what the desk
 /// says when it's used and nothing comes to the front to say so itself.
 enum WishPlace: Equatable {
-    case window, menuBar, widget, background, iPhone, iPhoneAndWatch, everywhere
+    case window, menuBar, widget, background, iPhone, iPhoneAndWatch, everywhere, android
 
     /// Reads the app's files: not on the main thread.
     static func of(_ project: LampProject) -> WishPlace {
         switch project.platform {
         case .iphone: return Template.hasWatch(project) ? .iPhoneAndWatch : .iPhone
         case .universal: return .everywhere
+        case .android: return .android
         case .mac: break
         }
         if Template.isWidgetOnly(project) { return .widget }
@@ -1388,6 +1389,7 @@ enum WishPlace: Equatable {
         case .iPhone: "iPhone"
         case .iPhoneAndWatch: "iPhone and watch"
         case .everywhere: "Mac and iPhone"
+        case .android: "Android"
         }
     }
 
@@ -1400,6 +1402,7 @@ enum WishPlace: Equatable {
         case .iPhone: "iphone"
         case .iPhoneAndWatch: "applewatch"
         case .everywhere: "laptopcomputer.and.iphone"
+        case .android: "smartphone"
         }
     }
 }
@@ -1617,7 +1620,7 @@ extension Store {
                 WishHUD.show(icon: icon, symbol: place.symbol, title: "\(project.name) is in your menu bar.")
             case .background:
                 WishHUD.show(icon: icon, symbol: place.symbol, title: "\(project.name) is running in the background.")
-            case .iPhone, .iPhoneAndWatch, .everywhere:
+            case .iPhone, .iPhoneAndWatch, .everywhere, .android:
                 if project.onIOS, project.device != nil {
                     WishHUD.show(icon: icon, symbol: "iphone", title: "\(project.name) is opening on your iPhone.")
                 }
