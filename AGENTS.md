@@ -711,8 +711,9 @@ when the app has no window to put it beside. In a window with a title bar the wa
 window whose content runs under a title bar with nothing in it (a game, `.hiddenTitleBar`) has no bar for it, and an
 accessory would give it one: there the wand floats at the top right over the content, level with the traffic
 lights, on a dark disc of its own so it shows over any content (`LampMagic.isFullBleed`, `float`, `FloatingWand`). The wand
-is wherever the app shows itself, so people can count on finding it: a menu bar app's panel has it at its top right,
-in a strip of its own above the app's content (`LampMenuBar.PanelWand`), and a menu has Customize with Lamp… with the
+is wherever the app shows itself, so people can count on finding it: a menu bar app's panel has it in its header beside the
+app's own buttons (`LampPanelWand`, which the menu bar rule asks for), or, in a panel whose code doesn't place it, in
+a strip of its own above the app's content (`LampMenuBar.PanelWand`), and a menu has Customize with Lamp… with the
 wand's symbol beside Settings… and Quit. Either opens the panel as a window of the app's (the one shown when the icon
 is hidden) with the chat beside it (`LampMenuBar.customize`, which Customize with Lamp… does too when there's no
 window), since a panel closes at any click elsewhere; a change that reopens the app opens that window and its chat

@@ -61,6 +61,7 @@ struct PanelView: View {
             .keyboardShortcut("n")
             .help("New Countdown (⌘N)")
             .accessibilityLabel("New Countdown")
+            LampPanelWand()
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)

@@ -655,7 +655,9 @@ enum Agent {
         no menus, so the panel needs its own Settings button, which calls `LampMenuBar.openSettings()` (never \
         `SettingsLink` or `openSettings`: from a menu bar app those open the window behind other apps, where it gets \
         lost), and its own Quit button (`NSApp.terminate(nil)`). `LampMenuBar.close()` closes the panel after an \
-        action in it. Give the panel a fixed width, and hand it its model inside the braces (`{ PanelView().environmentObject(model) }`), \
+        action in it. Put `LampPanelWand()` beside the panel's own buttons, at the right of its header (or of its footer, beside Settings and Quit, when the header has none), as a \
+        window has Lamp's wand in its title bar (without it, Lamp gives it a strip of its own above the panel). \
+        Give the panel a fixed width, and hand it its model inside the braces (`{ PanelView().environmentObject(model) }`), \
         never with a modifier on the scene, which crashes the panel. Pass `dockIcon: true` only when the app also has a main window. \
         For a menu instead of a panel: `LampMenuBar(menu: "Clipboard", systemImage: "list.clipboard") { Button(…); Toggle(…); \
         Divider() }`, which adds Settings… and Quit itself (`settings: false` when there's no Settings scene). For one \
