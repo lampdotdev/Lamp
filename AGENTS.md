@@ -54,7 +54,14 @@ A capability given to one engine must be given to all of them that can take it, 
   files); the step still going is the line itself and joins the list when the agent moves on (`ChatItem.live`), and a
   click folds the list. When the turn ends each stretch of steps folds where it came (`ChatItem.items`): the one just
   before the turn's last message into "Worked for…", above that message, any other to how many steps it was, or to
-  its one step. Whatever the agent writes as messages on the way is
+  its one step. Once the turn is over each fold is given a line saying what it did, with how long its steps took
+  ("Listed the shelf's saved entries · 12 s", `ChatItem.title(of:untitled:)`): one call for the whole turn to the small
+  model on the route that built it (`StepTitles`, `AppAI.fastModel`; a turn built on this Mac is titled by the model
+  on this Mac that built it, or not at all, whatever key is saved), made after the turn's summary and never waited on,
+  told only the steps' words and what was said around them, never a command or what it printed. A fold keeps its
+  words until the line comes, and for good when it doesn't. How long a fold took comes from when Lamp logged its
+  lines (`LogLine.at`), so a chat from before that shows no time; "Worked for…" stays the whole run's time, shown
+  until its fold is titled. Whatever the agent writes as messages on the way is
   treated the same, each shown as it's said and kept as it was (`LogLine.visible`), since models write such updates
   whether or not they're asked to use the tool: what the person has read never turns into a gray line among the
   steps or goes away. (A Lamp from before this folded them; `ChatLook.ProgressLine` and the status line marked with

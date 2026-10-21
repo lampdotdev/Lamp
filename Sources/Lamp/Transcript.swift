@@ -214,7 +214,7 @@ extension LogLine {
             let words = line.said ?? TurnProgress.activity(for: call)
             guard !words.isEmpty else { continue }
             if let last = out.last, last.kind == .status, (last.said ?? last.text) == words { continue }
-            out.append(LogLine(id: line.id, kind: .status, text: words))
+            out.append(LogLine(id: line.id, kind: .status, text: words, at: line.at, foldTitle: line.foldTitle))
         }
         return out
     }
@@ -311,48 +311,95 @@ enum ChatItem: Identifiable {
         return doing == (step.said ?? step.text) || looking
     }
 
-    /// A finished run's lines, each stretch of its steps folded where it came, between the things the agent said and
-    /// Lamp's lines (Reload), so the chat reads in the order things happened. The stretch just before the answer (the
-    /// run's last message) is its "Worked for…", above the answer, as ChatGPT and Codex show the work behind one; any
-    /// other stretch folds to how many steps it was, or is its one step, as Lamp's note after the answer that the app
-    /// is ready is. A run with no answer has its last stretch for "Worked for…". What the agent said on the way (its progress lines and
-    /// messages) stays where it was, a message like any other: what the person has read doesn't change form or go
-    /// when the turn ends, and only what was done goes into the folds.
-    private static func folded(_ run: [LogLine], summary: LogLine) -> [ChatItem] {
+    /// A stretch of a finished run's steps, between the things said around it: what folds into one line.
+    struct Fold {
+        /// The steps as the fold opens to them.
+        let steps: [LogLine]
+        /// The stretch's first line, which carries its title (`LogLine.foldTitle`) and names it.
+        let first: LogLine
+        /// The stretch just before the answer, whose fold is the run's "Worked for…".
+        let isAnswers: Bool
+        /// How long its steps took: from the first being logged to what came after it. Nil in a chat from before
+        /// lines were timed.
+        let seconds: TimeInterval?
+        /// Shown as a fold, not as its one step.
+        var folds: Bool { isAnswers || steps.count > 1 }
+    }
+
+    /// The stretches of a finished run's steps, and the run's other lines between them; stretch i
+    /// comes before others[i]. The answer's stretch is the last one with steps up to the run's last message.
+    static func folds(_ run: [LogLine], summary: LogLine) -> (folds: [Fold?], others: [LogLine]) {
         var stretches: [[LogLine]] = [[]]
-        var others: [[LogLine]] = []
+        var others: [LogLine] = []
         for line in run {
             if isStep(line) {
                 stretches[stretches.count - 1].append(line)
             } else {
-                others.append([line])
+                others.append(line)
                 stretches.append([])
             }
         }
-        // Stretch i comes before others[i]: the answer's stretch is the last one with steps up to it.
-        let answer = others.lastIndex { $0[0].kind == .agent } ?? others.count
+        let answer = others.lastIndex { $0.kind == .agent } ?? others.count
         let last = stretches[...min(answer, stretches.count - 1)].lastIndex { !$0.isEmpty } ?? stretches.lastIndex { !$0.isEmpty }
-        var result: [ChatItem] = []
-        for (index, stretch) in stretches.enumerated() {
-            if !stretch.isEmpty {
-                let steps = items(stretch).flatMap { item -> [LogLine] in
-                    switch item {
-                    case .statuses(let lines), .tools(let lines): lines
-                    case .line(let line): [line]
-                    case .work(_, _, let steps): steps
-                    }
-                }
-                if index == last {
-                    result.append(.work(id: summary.id, title: workedFor(summary.text), steps: steps))
-                } else if steps.count == 1 {
-                    result += items(steps)
-                } else {
-                    result.append(.work(id: stretch[0].id, title: "\(steps.count) steps", steps: steps))
+        let folds = stretches.enumerated().map { index, stretch -> Fold? in
+            guard let first = stretch.first else { return nil }
+            let steps = items(stretch).flatMap { item -> [LogLine] in
+                switch item {
+                case .statuses(let lines), .tools(let lines): lines
+                case .line(let line): [line]
+                case .work(_, _, let steps): steps
                 }
             }
-            if index < others.count { result += items(others[index]) }
+            let after = index < others.count ? others[index] : nil
+            let ended = (after ?? summary).at
+            let seconds = first.at.flatMap { start in ended.map { max(0, $0.timeIntervalSince(start)) } }
+            return Fold(steps: steps, first: first, isAnswers: index == last, seconds: seconds)
+        }
+        return (folds, others)
+    }
+
+    /// A finished run's lines, each stretch of its steps folded where it came, between the things the agent said and
+    /// Lamp's lines (Reload), so the chat reads in the order things happened. The stretch just before the answer (the
+    /// run's last message) is its "Worked for…", above the answer, as ChatGPT and Codex show the work behind one; any
+    /// other stretch folds to how many steps it was, or is its one step, as Lamp's note after the answer that the app
+    /// is ready is. A run with no answer has its last stretch for "Worked for…". Once the turn is over each fold is
+    /// given a line saying what it did (`StepTitles`), shown with how long it took in place of those words. What the
+    /// agent said on the way (its progress lines and messages) stays where it was, a message like any other: what the
+    /// person has read doesn't change form or go when the turn ends, and only what was done goes into the folds.
+    private static func folded(_ run: [LogLine], summary: LogLine) -> [ChatItem] {
+        let (folds, others) = folds(run, summary: summary)
+        var result: [ChatItem] = []
+        for (index, fold) in folds.enumerated() {
+            if let fold {
+                if fold.isAnswers {
+                    result.append(.work(id: summary.id, title: title(of: fold, untitled: workedFor(summary.text)), steps: fold.steps))
+                } else if !fold.folds {
+                    result += items(fold.steps)
+                } else {
+                    result.append(.work(id: fold.first.id, title: title(of: fold, untitled: "\(fold.steps.count) steps"), steps: fold.steps))
+                }
+            }
+            if index < others.count { result += items([others[index]]) }
         }
         return result
+    }
+
+    /// A fold's line: what it did and how long that took ("Listed the shelf's entries · 12 s"), or, until that's
+    /// known or when it couldn't be made, `untitled`. A fold from before lines were timed shows no time.
+    static func title(of fold: Fold, untitled: String) -> String {
+        guard let title = fold.first.foldTitle else { return untitled }
+        return fold.seconds.map { "\(title) · \(duration($0))" } ?? title
+    }
+
+    /// "12 s", "3 min", "1 min 5 s".
+    static func duration(_ seconds: TimeInterval) -> String {
+        let total = max(1, Int(seconds.rounded()))
+        let minutes = total / 60, rest = total % 60
+        switch (minutes, rest) {
+        case (0, _): return "\(rest) s"
+        case (_, 0): return "\(minutes) min"
+        default: return "\(minutes) min \(rest) s"
+        }
     }
 
     /// "Worked for 2 min 3 s", from a turn's summary ("Worked for 2m 3s · $0.12").

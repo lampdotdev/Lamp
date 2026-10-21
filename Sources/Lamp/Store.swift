@@ -205,6 +205,8 @@ struct LogLine: Identifiable, Codable, Equatable {
     var midTurn: Bool? = nil          // for a request: the agent took it while working on the one before (Store.handOver)
     var byLamp: Bool? = nil           // for a request: Lamp sent it, not the person (`Store.fixCrash`); the line before says so
     var said: String? = nil           // for a command Lamp let run ("Ran: …"): what the agent said it was for (`AgentEvent.naming`)
+    var at: Date? = nil               // when Lamp logged it, for how long a fold of steps took (`ChatItem.folds`); none in older chats
+    var foldTitle: String? = nil      // for the first step of a fold: what the fold did, in a line (`StepTitles`)
 
     /// The offer a setup card is about, for this line and for the older key card.
     var setupOffer: SetupOffer? {
@@ -958,8 +960,24 @@ final class Store: ObservableObject {
     func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil, retryPhone: String? = nil,
              offer: SetupOffer? = nil, noted: NoteReceipt? = nil, said: String? = nil) {
         logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone,
-                                                    offer: offer, noted: noted, said: said))
+                                                    offer: offer, noted: noted, said: said, at: Date()))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
+        saveChat(project)
+    }
+
+    /// What each fold of a finished turn's steps did (`StepTitles`), put on the fold's first step. A line gone since
+    /// (the chat went back to an earlier version) is passed over.
+    func setFoldTitles(_ titles: [UUID: String], in project: LampProject) {
+        guard !titles.isEmpty, var lines = logs[project.id] else { return }
+        var changed = false
+        for index in lines.indices {
+            if let title = titles[lines[index].id], lines[index].foldTitle != title {
+                lines[index].foldTitle = title
+                changed = true
+            }
+        }
+        guard changed else { return }
+        logs[project.id] = lines
         saveChat(project)
     }
 
@@ -1032,7 +1050,7 @@ final class Store: ObservableObject {
         guard let turn = turns[project.id] else { return }
         guard turn.writing != nil else {
             guard !piece.trimmed.isEmpty else { return }
-            let line = LogLine(kind: .agent, text: String(piece.drop(while: \.isWhitespace)))
+            let line = LogLine(kind: .agent, text: String(piece.drop(while: \.isWhitespace)), at: Date())
             logs[project.id, default: []].append(line)
             turn.writing = (line.id, "")
             noteAgent("Replying", for: project)
@@ -2913,6 +2931,8 @@ final class Store: ObservableObject {
             return false
         }
         let engine = Builder.engine
+        // What builds this turn, as it starts, for the titles of its steps after it (`StepTitles`).
+        let titleRoute = StepTitles.TurnRoute.current
         if engine == .pi && Builder.piProvider == Builder.localProvider {
             do {
                 try await LocalModels.shared.ensureServer(for: Builder.piModel)
@@ -3151,6 +3171,8 @@ final class Store: ObservableObject {
         turn.writing = nil
         // Pictures are already in the app's building cost (recordArt); the summary shows them with the rest.
         log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost + turn.artCost - artBefore))
+        // Each fold of the turn's steps gets a line saying what it did, made after the turn and never waited on.
+        StepTitles.start(for: project, turn: titleRoute)
         recordAgent(project, cost: cost)
         if turn.stopped {
             turn.stopped = false
@@ -4211,7 +4233,7 @@ final class Store: ObservableObject {
                 // The same once the first was answered in words while this turn was still ending: the
                 // agent hasn't had that answer yet, and a new card would be asking over it.
                 if turn.asked || Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
-                logs[project.id, default: []].append(LogLine(kind: .ask, text: ask.text, ask: ask))
+                logs[project.id, default: []].append(LogLine(kind: .ask, text: ask.text, ask: ask, at: Date()))
                 // A new app's card gives up its checklist in the same moment the questions arrive, not when
                 // the turn ends a little later: once there's something to click, nothing above it moves.
                 if progress[project.id]?.newApp == true { progress[project.id]?.asking = true }
@@ -4224,7 +4246,7 @@ final class Store: ObservableObject {
             case .failure(let trouble): return (400, ["error": trouble.text])
             case .success(nil): return (200, ["text": Talk.saidAlready])
             case .success(let text?):
-                logs[project.id, default: []].append(LogLine(kind: .progress, text: text))
+                logs[project.id, default: []].append(LogLine(kind: .progress, text: text, at: Date()))
                 // A new phase: the file work after it isn't what the last command or heading was for.
                 turns[project.id]?.naming = nil
                 saveChat(project)
