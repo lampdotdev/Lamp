@@ -1,5 +1,5 @@
 VERDICT 1: RELOAD (Added Pick.surprise)
 == run
 before: rice 1
-RELOAD 1: ok
+RELOAD 1 (whole): ok
 after1 (want in place: "rice 2 surprise"): rice 2 surprise

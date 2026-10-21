@@ -1,5 +1,5 @@
 VERDICT 1: RELOAD (Added Row@A.swift.b)
 == run
 before: 4 10
-RELOAD 1: ok
+RELOAD 1 (whole): ok
 after1 (want A.sum 4 with b's at 0, B.sum 10): 4 10

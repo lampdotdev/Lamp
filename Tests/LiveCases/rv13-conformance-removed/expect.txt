@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Item no longer conforms to CustomStringConvertible, and the open app's record that it does stays)
+== run
+before: item 1 named p1
+RELOAD 1: REOPEN Item no longer conforms to CustomStringConvertible, and the open app's record that it does stays
+after1 (want "Item(n: 1) plain", the conformances are gone): item 1 named p1
+before: Item(__lampSpare_Item: Case.LampSpare(value: nil), n: 1) plain
+RELOAD 1: in the restart
+after1 (want "Item(n: 1) plain", the conformances are gone): Item(__lampSpare_Item: Case.LampSpare(value: nil), n: 1) plain

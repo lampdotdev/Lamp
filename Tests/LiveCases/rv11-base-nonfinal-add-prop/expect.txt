@@ -1,5 +1,5 @@
 VERDICT 1: RELOAD (Added Base.c)
 == run
 before: a=1 b=2
-RELOAD 1: ok
+RELOAD 1 (whole): ok
 after1 (want a=1 b=2 c=30, in place or a reason naming Base before any compile): a=1 b=2 c=30

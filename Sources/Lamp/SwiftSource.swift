@@ -47,8 +47,8 @@ enum SwiftSource {
         var variables: [String: Variable] = [:]
         /// Static and global `let`s, by "Type<tab>name" ("<tab>name" for a global).
         var constants: [String: Variable] = [:]
-        /// Stored static and global `var`s with a starting value, keyed the same: the open app made each once and keeps
-        /// it, so a new starting value can't show without reopening.
+        /// Stored static and global `var`s with a starting value, and lazy properties, keyed the same: the open app made
+        /// each once (a lazy one once for each object) and keeps it, so a new starting value can't show without reopening.
         var stored: [String: Variable] = [:]
         /// The app's own classes, whose objects a constant may hold.
         var classes: Set<String> = []
@@ -287,6 +287,9 @@ enum SwiftSource {
                 out.variables[key] = Variable(name: name, position: r.start, type: String(line.text[Range(m.range(at: 3), in: line.text)!]),
                                               binding: index, attributes: [],
                                               special: rest.contains("with_observers") || rest.contains(" lazy "))
+                // A lazy property is made once too, by each object the first time it's read: a new starting value would
+                // show on some objects and not others.
+                if rest.contains(" lazy ") { out.stored[key] = out.variables[key] }
                 if rest.contains(" let ") { out.lets.insert(key) }
                 variable = (indent, key)
             }
@@ -381,7 +384,7 @@ enum SwiftSource {
     /// (`LiveSlots.fit`). Not part of what a type holds: the layout comparison passes over them.
     static func constantEntries(_ declarations: Declarations) -> [String] {
         startingValues(declarations.constants, declarations, group: .constant, withCalls: true)
-            + startingValues(declarations.stored, declarations, group: .stored) + hashEntries(declarations)
+            + startingValues(declarations.stored, declarations, group: .stored, withCalls: true) + hashEntries(declarations)
     }
 
     /// Each type's own `hash(into:)`, as "\u{11}hash<tab>Type: <digest of its text>": a set or dictionary the open app
@@ -434,8 +437,11 @@ enum SwiftSource {
             guard let start = text.offset(initial.start), let end = text.tokenEnd(initial.last), start < end else { return nil }
             // With its type: one whose type changed is another value, kept in other storage by the change's code.
             let own = digest(variable.type + "=" + text.slice(start, end))
-            // And for a constant, after a `+`, what it calls: made again, it's another value though its text is the same.
-            guard withCalls else { return group.entry(key + ": " + own) }
+            // And after a `+`, what it calls: made again, it's another value though its text is the same.
+            // A stored `var` holding one of the app's objects is its state, kept like every other object, whatever made it.
+            guard withCalls, group == .constant || !declarations.classes.contains(where: { SwiftText.mentions(identifier: $0, in: variable.type) }) else {
+                return group.entry(key + ": " + own)
+            }
             let binding = declarations.bindings[variable.binding]
             return group.entry(key + ": " + own + "+" + digest(calledText(from: binding.start, to: binding.last, in: declarations, files: &files)))
         }

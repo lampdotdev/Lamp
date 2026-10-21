@@ -210,8 +210,9 @@ final class LiveReloadTests: XCTestCase {
                         LiveReload.aliasGroup + "\tFeeling = Outer.Mood", LiveReload.aliasGroup + "\tChoice = Picky", LiveReload.aliasGroup + "\tLevel.RawValue = Int",
                         LiveReload.aliasGroup + "\tTone@Shapes.swift.Pair = (Tone, Tone)", LiveReload.aliasGroup + "\tTone@Shapes.swift.AllCases = [Tone]"])
         let declared = layout?.filter { $0.hasPrefix(LiveReload.declarationGroup) }.map { String($0.dropFirst(LiveReload.declarationGroup.count + 1)) } ?? []
-        XCTAssertEqual(Array(declared.prefix(5)), ["Square inherits Shape", "Square.area(): (Square) -> () -> Int", "Square inherits Hashable",
-                                                   "Square.key: Square.Key", "Square.grow(_:): (Square) -> (Int) -> Square"], "\(declared)")
+        // Stored properties too: one added can stand where a protocol extension's member of its name did.
+        XCTAssertEqual(Array(declared.prefix(5)), ["Square inherits Shape", "Square.side: Side", "Square.name: String",
+                                                   "Square.area(): (Square) -> () -> Int", "Square inherits Hashable"], "\(declared)")
         XCTAssertTrue(declared.contains("Optional inherits Boxed") && declared.contains("Outer.Mood inherits Shape"), "\(declared)")
         // A type's shape: its kind, an enum's @objc and indirect, a class's superclass (the first name it inherits
         // when that's a class, the app's own or a system one), a protocol's requirement signature; and a stored

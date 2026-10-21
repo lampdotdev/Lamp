@@ -1,5 +1,5 @@
 VERDICT 1: RELOAD (Added Item.limit)
 == run
 before: equal=true sameHash=true set=1
-RELOAD 1: ok
+RELOAD 1 (whole): ok
 after1 (want nil nil equal=true sameHash=true set=1): nil nil equal=true sameHash=true set=1 | both cleared: nil nil equal=true sameHash=true set=1

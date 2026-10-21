@@ -1,0 +1,13 @@
+VERDICT 1: RELOAD (Gave Game.speed its new value)
+VERDICT 2: REOPEN (Game.speed changed between let and var, and the open app keeps the value it made)
+== run
+before: 5
+RELOAD 1 (whole): ok
+after1 (want 10): 10
+RELOAD 2: REOPEN Game.speed changed between let and var, and the open app keeps the value it made
+after2 (want 10, now a var the app can change, or a reopen): 10
+before: 10
+RELOAD 1: in the restart
+after1 (want 10): 10
+RELOAD 2: in the restart
+after2 (want 10, now a var the app can change, or a reopen): 10

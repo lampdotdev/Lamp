@@ -7,5 +7,5 @@ RELOAD 1: REOPEN Game holds Mood as Mood?, which a new case would change
 after1 (want reopen): volume=1 score=-1
 RELOAD 2: REOPEN Game holds Mood as Mood?, which a new case would change
 after2 (want reopen): volume=1 score=-1
-RELOAD 3: ok
+RELOAD 3 (whole): ok
 after3 (want score=7): volume=1 score=7

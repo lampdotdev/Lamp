@@ -235,10 +235,9 @@ enum Agent {
     directly and stays as it was. A property added in place isn't saved until the app reopens. A method, computed property or \
     initializer added to a class that something subclasses needs the app reopened; a class nothing subclasses takes \
     methods and computed properties in place. A new starting value for a `static var` or global `var` needs the app \
-    reopened, since the open app made its value once; a `let`'s goes in place. A `let` made \
-    by calling a function (`static let table = build()`) is remade only when its own line changes, not when the \
-    function does. Mark a view \
-    that only its own file uses `private`, so a change to it compiles that file alone. \
+    reopened, since the open app made its value once; a `let`'s goes in place, and so does a `let` made by \
+    a function that changes (`static let table = build()`), unless it holds an object. Making a type or a static \
+    private, or no longer private, needs it reopened, and so does changing a type's hash(into:). \
     Any change to a file that declares a SwiftData @Model class needs it reopened. \
     A look shows the window as the person left it, with the change in it. To see the app start from the \
     beginning (how long it takes to open, what runs once at launch), look with `reopen`, which asks the person \

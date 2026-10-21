@@ -833,15 +833,15 @@ and `where` clauses, followed through typealiases): a final class keeps no metho
 property added to it goes in, where one added to a class with a table reopens the app; a class made final that
 something subclasses after all fails the build in the compiler's words, which `LiveSlots.brokeFinal` reads (unless
 the app's own code wrote that class `final`, when the error is the agent's), and the copy is made without the step
-from then on (`no-final`). A class's finality and its initializers (which have method descriptors, a final class's
-too; one in an extension is a convenience initializer and isn't) are held with the layout (`LiveReload.Group.inits`),
+from then on (`no-final`). A class's finality and its initializers (which have method descriptors, a final class's too; a convenience initializer, as any in an extension is, has none
+unless it's required) are held with the layout (`LiveReload.Group.inits`),
 so a subclass added, or an initializer added or changed, reopens the app with its reason rather than being refused
 by the runtime after the compile. So is each type's shape (`LiveReload.Group.shape`): struct, class, enum or actor, an
 enum's `@objc` and `indirect`, whether the type is generic (itself or declared inside a generic type, with its
 parameters, `generic<T>`), a class's superclass (the first name it inherits when
 that's one of the app's classes, or a system name the class's initializers show it inherits from: one of them
-overriding, the compiler's own included, or a `super` call; a system protocol such as `ObservableObject` is no superclass), and a protocol's requirement
-signature (`: AnyObject`, what it inherits, its associated types' constraints), each of which lays values, objects,
+overriding, the compiler's own included, or a `super` call; a system protocol such as `ObservableObject` is no superclass), and a protocol's requirement signature (`: AnyObject`, what it inherits, its associated types' constraints) and its
+`@objc` (whose values are one word where a Swift protocol's take two), each of which lays values, objects,
 method tables or witness tables out differently while the type holds the same fields; a stored reference's `weak`
 or `unowned` is part of its field's entry (`Owner<tab>weak helper: Helper?`). A shape is compared only where both
 layouts have one, so a layout an earlier Lamp kept says nothing of it. After a build, `Store.install` tries
@@ -862,7 +862,9 @@ with the types it was given (`padding [with … Self -> Text]`), which together 
 `.padding()` changes nothing, `.font()` after it does, and so does another overload (`padding()` to `padding(12)`),
 whose opaque result is another type even when it builds the same one: the open app's witness tables and callers were laid out for the type it had, and the
 compiler prints both as `some View`; a view's own body, wrapped by the live copy, and a private member that isn't stored are left out; a private type is listed with its file,
-`LiveReload.placeGroup`, since its mangled name carries it and one moved to another file is another type at run time,
+`LiveReload.placeGroup`, since its mangled name carries it and one moved to another file is another type at run time (so is a type, a
+static or a global made private or no longer private, which reopens the app too, as does a conformance taken
+away, whose record the open app keeps),
 and keyed with its file throughout the layout and the declarations (`Row@A.swift`, each part of a nested one; `LiveReload.bare`
 gives the name back where the code names it, as a field's type or a use in old code does, and `readable` says "Row in
 A.swift"), since two files may each declare a private type of one name and the two are two types with their own fields;
@@ -875,8 +877,8 @@ be keyed two ways by two readers) (`LiveReload.reloadable`, comparing with the s
 for the copy that took the last change: one opened again since, by the person or macOS, starts from what was installed,
 so it's forgotten and the change reopens the app, `LiveReload.tookChanges`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
 linked into a library. Every file is compiled when what's declared changed (a function, an initializer, a computed
-property, a conformance, a member's `@objc` and its selector, a stored property's observers, which turn every write
-into a call: `LiveReload.declarationGroup`, `declarationsChanged`), since an unchanged caller may then mean
+property, a conformance, a member's `@objc` and its selector, a stored property, which may stand where a protocol extension's member of its
+name did, and its observers, which turn every write into a call: `LiveReload.declarationGroup`, `declarationsChanged`), since an unchanged caller may then mean
 another one (a new overload, a method where a protocol's default stood in), and a file taken away while another
 arrives (one renamed) reopens the app, since what was private to it is named after its file and would start over.
 What's compiled is decided before anything is: the changed files are compiled alongside the layout's check, and that
@@ -909,7 +911,13 @@ a generic superclass) gets its method table from the app's description of it, wh
 copy starts the app through an entry of Lamp's (`__LampEntry`, added by the copy step before the App's own), which
 first points the runtime's call that fills such tables in (`swift_initClassMetadata2`, through the same symbol pointer
 as any call) at `LampLive.classMade`, which records every class made and points its table at the newest code, and a
-change points every table made so far the same way. A witness table (what a call through a protocol goes through) holds a
+change points every table made so far the same way. A key path to a computed property is told apart by its getter's address, and a change has a getter of its own, so a
+key path the change's code makes would be another than the app's, and observation keyed by the app's
+(`withObservationTracking`, an App's or a scene's body, which no change draws again) would stop hearing the
+property: every key path made goes through `LampLive.keyPathMade` too (a hook on `swift_getKeyPath`), which points
+each of a change's getters in it at the app's of the same name, or the first change's that had it. A method's
+place in a table moves to the new code whatever the method's access, a private class's and a private override's
+included, since every code symbol of a change is read, not only the exported ones. A witness table (what a call through a protocol goes through) holds a
 thunk for each requirement, which calls whichever method answers it, so one compiled when the protocol's own default
 answered goes on calling it after the change answers it in the type: the app's tables, and those the runtime makes
 (recorded through `swift_getWitnessTable` the same way, `tableMade`; a conformance with no table of its own in the
@@ -974,8 +982,7 @@ plain sources, which the copy step keeps), and the build is tried once more befo
 Left out is what a spare would break: SwiftData and Core Data models, `Sendable` classes, `Equatable` views (declared
 so, or made so in an extension, which the scan reports), a class under a class of the same simple name (whose spare
 places would clash), the App
-and its scenes, property wrappers, App Intents, OptionSets and RawRepresentable structs (declared so, or made so in an
-extension, which the copy step's scan reports), whose `init(rawValue:)` is the memberwise one, and every struct in an
+and its scenes, property wrappers, App Intents, OptionSets and RawRepresentable structs (declared so, or made so in an extension, which the copy step's scan reports), whose `init(rawValue:)` is the memberwise one, BitwiseCopyable structs, which can hold no spare, and every struct in an
 app any of whose own files lays memory out by hand (vertex data; the struct read as bytes may be declared in another;
 Lamp's own files always do and are told apart by name, `-own=`). When
 the only difference in layout is new stored properties in such types, `LiveSlots.fit` rewrites each one-line
@@ -997,9 +1004,8 @@ in an extension) reopens it too. `@State` is read in both forms the compiler has
 spare: its values keep their size (`LiveSlots.casesAdded`). Only while nothing the app keeps holds it but as itself or
 in a plain collection (an array, set or dictionary through any depth): Swift uses the numbers after the last case for `nil` in an optional of it and for other enums'
 cases that carry it, which a new case would take over. That's looked for in every stored field, static and global of
-the new code (`LiveReload.enumsHeld`), before the change goes in; a property added while the app was open keeps its
-value in a spare as any value, under the metadata the app's code had, which the grown enum's own no longer reads
-from, so one holding the enum or a carrier reopens the app; and a value type
+the new code (`LiveReload.enumsHeld`), before the change goes in; a property added while the app was open keeps its value in a spare as any value, under the enum's metadata, which
+stays the app's, so it's held to the same plain forms as a field; and a value type
 that carries the enum by value (a struct with a field of it, an enum with a payload of it) is held to the same plain
 forms, since its own optional and payload cases borrow the enum's numbers, unless it has a spare of Lamp's, whose
 `Any?` gives Swift more; an app that keeps
@@ -1048,8 +1054,8 @@ once the change is in (`LiveSlots.retire`), since the place still holds its valu
 for the app to set aside (`LampSpare.retired`: what it left neither reads nor counts in `==` or `hash`), and a name
 brought back gets a place of its own (a class's under a new index, a struct's or view's under its key, the type and
 name numbered by `Slot.generation`, `LiveSlots.spareKey`); what `fit` planned (the places, the constants remade) is written down only once the change is in
-(`LiveSlots.commit`), so a change refused leaves no record of places it never took: the
-whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built`, and that's what the open app runs
+(`LiveSlots.commit`), so a change refused leaves no record of places it never took: the whole build compiles the plain copy, keeps what it compiled in `.lamp/live/built` once it has built (a failed
+build's sources would name code no app runs), and that's what the open app runs
 once it's installed (`LiveReload.markRunning(from:)`). A spare never reaches saved data: `LampSpare` encodes as
 nothing, and a computed property isn't encoded. If spares ever keep an app from building, it's built again without
 them (`LiveSlots.giveUp`, `.lamp/live/no-spares`), so the agent only sees errors in its own code. Whether they were the
@@ -1075,8 +1081,10 @@ value again. One that can hold an object isn't (`static let shared = Store()`): 
 like every other.
 
 A stored static or global `var` is made once too, the first time it's read, so a new starting value for one can't
-show without reopening, and whether it seemed to would depend on whether it had been read: its starting value and its type are part of the layout as a digest as well (`LiveReload.Group.stored`), and one that changed reopens the app. So does a type's own `hash(into:)` changing, or
-what it reads (a constant, a helper, as far down as that goes) (`LiveReload.Group.hash`): the sets and dictionaries the open app keeps put each value
+show without reopening, and whether it seemed to would depend on whether it had been read: its starting value and its type are part of the layout as a digest as well (`LiveReload.Group.stored`), and one that changed reopens the app, as does one whose starting value calls code that changed, unless it holds one
+of the app's objects; a lazy property's is held the same way, since each object made it once. A static or global gone
+from `let` to `var` or back reopens it too. So does a type's own `hash(into:)` changing, being written or taken away,
+or what it reads changing (a constant, a helper, as far down as that goes) (`LiveReload.Group.hash`): the sets and dictionaries the open app keeps put each value
 where the old one said, and a lookup by the new one looks elsewhere.
 
 **The live cases** (`Tests/LiveCases`, run by `LiveCasesTests`) are the record of which side each kind of change

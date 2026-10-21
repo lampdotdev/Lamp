@@ -2,7 +2,7 @@ VERDICT 1: RELOAD (Added Item.tag)
 VERDICT 2: RELOAD (Added Item.seen)
 == run
 before: 2
-RELOAD 1: ok
+RELOAD 1 (whole): ok
 after1 (want "2 t"): 2 t 3 t
-RELOAD 2: ok
+RELOAD 2 (whole): ok
 after2 (Set<Int>() wanted in place): 2 t 0

@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (the starting value of Model.label changed, and the open app made it once and keeps it)
+== run
+before: a
+RELOAD 1: REOPEN the starting value of Model.label changed, and the open app made it once and keeps it
+after1 (want the same for both objects: "b b", or a reopen): a a
+before: b
+RELOAD 1: in the restart
+after1 (want the same for both objects: "b b", or a reopen): b b

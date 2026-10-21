@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Tag is no longer private, which gives it another name at run time than the one the open app's values and storage go by)
+== run
+before: cast=1 key=true
+RELOAD 1: REOPEN Tag is no longer private, which gives it another name at run time than the one the open app's values and storage go by
+after1 (want cast=1 key=true, the values the store holds): cast=1 key=true
+before: cast=1 key=true
+RELOAD 1: in the restart
+after1 (want cast=1 key=true, the values the store holds): cast=1 key=true

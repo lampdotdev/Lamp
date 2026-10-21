@@ -2,7 +2,7 @@ VERDICT 1: RELOAD
 VERDICT 2: RELOAD (Gave limit its new value)
 == run
 before: 5 1
-RELOAD 1: ok
+RELOAD 1 (whole): ok
 after1 (want "none 1"): none 1
 RELOAD 2 (whole): ok
 after2 (want "7 1"): 7 1

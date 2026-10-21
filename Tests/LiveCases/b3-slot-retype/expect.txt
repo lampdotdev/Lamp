@@ -3,9 +3,9 @@ VERDICT 2: RELOAD
 VERDICT 3: RELOAD (Added Game.score)
 == run
 before: level=1
-RELOAD 1: ok
+RELOAD 1 (whole): ok
 after1 (want score=42): level=2 score=42
-RELOAD 2: ok
+RELOAD 2 (whole): ok
 after2 (no score): level=2
-RELOAD 3: ok
+RELOAD 3 (whole): ok
 after3 (want score=0, fresh property): level=2 score=none fresh object: level=1 score=none

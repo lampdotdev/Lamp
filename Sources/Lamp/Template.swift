@@ -548,8 +548,9 @@ enum Template {
         \(liveCopySteps)
           # Lamp only wants the live copy, to put a change into the open app before building the whole of it.
           [[ "${LAMP_LIVE_COPY:-}" == 1 ]] && exit 0
-          # What this build compiles, which is what the app runs once it's installed (LiveReload.markRunning).
-          rsync -a --delete "$LIVE/Sources/" "$LIVE/built/"
+          # What this build compiles, which is what the app runs once it's installed (LiveReload.markRunning): kept
+          # aside, and the record only once the build has worked, or a failed one would name code no app runs.
+          rsync -a --delete "$LIVE/Sources/" "$LIVE/building/"
           mkdir -p "$LIVE/xcode"
           rsync -a --delete --exclude DerivedData .lamp/device/ "$LIVE/xcode/device/"
           ln -sfn ../../Assets "$LIVE/Assets"
@@ -562,6 +563,7 @@ enum Template {
         xcodebuild -project "$PROJECT/{{EXE}}.xcodeproj" -scheme "{{EXE}}" -configuration Release -destination "platform=macOS" \\
           -derivedDataPath "$PROJECT/DerivedData" CODE_SIGNING_ALLOWED=NO \\
           DEVELOPMENT_TEAM="$LAMP_TEAM" "OTHER_LDFLAGS=$RESTRICT_FLAGS" "${LIVE_SETTINGS[@]}" build 2>&1
+        if [[ "${LAMP_LIVE:-}" == 1 ]]; then rsync -a --delete "$LIVE/building/" "$LIVE/built/"; fi
         APP="build/{{EXE}}.app"
         rm -rf "$APP"
         mkdir -p build
@@ -4096,10 +4098,10 @@ enum Template {
             if let why = Self.reshapedMethods(defined + copies, against: kept) { return refuse(why) }
             // Each changed function's code before this change, for the class method tables that still hold it.
             var moved: [UnsafeRawPointer: UnsafeRawPointer] = [:], code: [(String, UnsafeRawPointer)] = []
-            // A protocol witness (the thunk a witness table holds, which calls whichever method answers the
-            // requirement, or for an async one the record of the thunk) is private to its file, so it's among
-            // every symbol, not the exported ones.
-            for (name, address) in defined + everything.filter({ $0.0.hasSuffix("TW") || $0.0.hasSuffix("TWTu") }) where Self.isCode(name) {
+            // Every symbol, not only the exported ones: a protocol witness (the thunk a witness table holds, or for an
+            // async one the record of the thunk) is private to its file, and so are the methods of a private class and
+            // a private override, whose places in a method table move to the new code too.
+            for (name, address) in everything where Self.isCode(name) {
                 if let before = latest[name] ?? original[name] { moved[before] = address }
                 latest[name] = address
                 code.append((name, address))
@@ -4369,8 +4371,11 @@ enum Template {
             lock.lock()
             if image == 0 { (descriptions, conformances, watching) = (allDescriptions, allConformances, true) }
             lock.unlock()
-            _ = rebind(image: image, to: ["_swift_initClassMetadata2": unsafeBitCast(classMade, to: UnsafeRawPointer.self),
-                                          "_swift_getWitnessTable": unsafeBitCast(tableMade, to: UnsafeRawPointer.self)])
+            if image != 0, let header = _dyld_get_image_header(image) { noteGetters(header, slide: _dyld_get_image_vmaddr_slide(image)) }
+            var hooks = ["_swift_initClassMetadata2": unsafeBitCast(classMade, to: UnsafeRawPointer.self),
+                         "_swift_getWitnessTable": unsafeBitCast(tableMade, to: UnsafeRawPointer.self)]
+            if getKeyPath != nil { hooks["_swift_getKeyPath"] = unsafeBitCast(keyPathMade, to: UnsafeRawPointer.self) }
+            _ = rebind(image: image, to: hooks)
             if image == 0, let header = _dyld_get_image_header(0) {
                 recordTables(of: definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(0), local: true).filter { $0.0.hasSuffix("Mc") }.map(\.1))
             }
@@ -4409,6 +4414,56 @@ enum Template {
                 lock.unlock()
             }
         }
+        /// A key path to a computed property is told apart by its getter's address (the id in its pattern), and a change
+        /// has a getter of its own for every property in the files it was compiled from: `\Model.count` made by its code
+        /// would be another key path than the app's, so observation keyed by the app's (`withObservationTracking`, an
+        /// App's or a scene's body, which a change doesn't draw again) would no longer hear the property change. Each key
+        /// path made is passed through here, and every getter of a change's in it is pointed at the getter of the same
+        /// name the app has, or the first change that had it: the id is only compared and hashed, never called.
+        nonisolated(unsafe) private static var getterIDs: [UInt: UInt] = [:]
+        nonisolated(unsafe) private static var firstGetters: [String: UInt]?
+        nonisolated(unsafe) private static var keyPathsSeen = Set<UnsafeMutableRawPointer>()
+        nonisolated(unsafe) private static let getKeyPath: UnsafeRawPointer? = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "swift_getKeyPath").map { UnsafeRawPointer($0) }
+
+        nonisolated private static func isGetter(_ name: String) -> Bool { name.hasPrefix("_$s") && (name.hasSuffix("vg") || name.hasSuffix("ig")) }
+
+        nonisolated private static func noteGetters(_ header: UnsafePointer<mach_header>, slide: Int) {
+            lock.lock()
+            defer { lock.unlock() }
+            if firstGetters == nil, let app = _dyld_get_image_header(0) {
+                firstGetters = Dictionary(definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0), local: true)
+                    .filter { isGetter($0.0) }.map { ($0.0, UInt(bitPattern: $0.1)) }, uniquingKeysWith: { first, _ in first })
+            }
+            for (name, address) in definedSymbols(header, slide: slide, local: true) where isGetter(name) {
+                let mine = UInt(bitPattern: address)
+                if let first = firstGetters?[name] { if first != mine { getterIDs[mine] = first } } else { firstGetters?[name] = mine }
+            }
+        }
+
+        /// Takes `swift_getKeyPath`'s two arguments (a pattern, its arguments) and returns the key path as the runtime's
+        /// does, with a change's getters in it pointed at the first of their name. A key path is a heap object whose
+        /// components follow a 32-bit header at byte 24, the header's low bits saying how many bytes they take; a
+        /// computed component's id is a whole word, and only a word equal to one of a change's getters is touched.
+        nonisolated private static let keyPathMade: @convention(c) (UnsafeRawPointer, UnsafeRawPointer?) -> UnsafeMutableRawPointer? = { pattern, arguments in
+            typealias Call = @convention(c) (UnsafeRawPointer, UnsafeRawPointer?) -> UnsafeMutableRawPointer?
+            guard let real = getKeyPath, let made = unsafeBitCast(real, to: Call.self)(pattern, arguments) else { return nil }
+            lock.lock()
+            defer { lock.unlock() }
+            guard !getterIDs.isEmpty, keyPathsSeen.insert(made).inserted else { return made }
+            let size = Int(made.load(fromByteOffset: 24, as: UInt32.self) & 0x00FF_FFFF)
+            guard size < 1 << 16 else { return made }
+            var offset = 28
+            while offset + 8 <= 32 + size {
+                if let first = getterIDs[made.loadUnaligned(fromByteOffset: offset, as: UInt.self)] {
+                    made.storeBytes(of: first, toByteOffset: offset, as: UInt.self)
+                    offset += 8
+                } else {
+                    offset += 4
+                }
+            }
+            return made
+        }
+
         /// The runtime's own `swift_initClassMetadata2` and `swift_getWitnessTable`, found by name.
         nonisolated(unsafe) private static let initClassMetadata: UnsafeRawPointer? = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "swift_initClassMetadata2").map { UnsafeRawPointer($0) }
         nonisolated(unsafe) private static let getWitnessTable: UnsafeRawPointer? = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "swift_getWitnessTable").map { UnsafeRawPointer($0) }
@@ -15915,8 +15970,9 @@ enum Template {
             $raw = 1 if !$own{(split m#/#, $file)[-1]} && $s =~ /MemoryLayout|withUnsafe|unsafeBitCast|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
             $s =~ s#/\*[\s\S]*?\*/# #g; $s =~ s#//[^\n]*##g;
             # A struct made an OptionSet or RawRepresentable in an extension: its memberwise initializer is the
-            # protocol's `init(rawValue:)`, which a spare's parameter would unfit.
-            while ($s =~ /\bextension\s+([\w.]+)\s*:[^{]*\b(?:OptionSet|RawRepresentable)\b/g) { $nospare{(split /\./, $1)[-1]} = 1 }
+            # protocol's `init(rawValue:)`, which a spare's parameter would unfit. One made BitwiseCopyable can hold
+            # nothing a spare is.
+            while ($s =~ /\bextension\s+([\w.]+)\s*:[^{]*\b(?:OptionSet|RawRepresentable|BitwiseCopyable)\b/g) { $nospare{(split /\./, $1)[-1]} = 1 }
             # A view made Equatable or Hashable in an extension: its state box isn't either, and the synthesized
             # conformance would fail as it does for one declared so (`spares` reads only the declaration's header).
             while ($s =~ /\bextension\s+([\w.]+)\s*:[^{]*\b(?:Equatable|Hashable)\b/g) { $equatable{(split /\./, $1)[-1]} = 1 }
@@ -15961,7 +16017,7 @@ enum Template {
             return $whole if $equatable{$name} || $header =~ /\b(?:Equatable|Hashable)\b/;
             return "${whole}${pad}\@State private var __lampState_${name} = LampStateBox();";
         }
-        return $whole if $raw || $nospare{$name} || $header =~ /\b(?:OptionSet|RawRepresentable)\b/;
+        return $whole if $raw || $nospare{$name} || $header =~ /\b(?:OptionSet|RawRepresentable|BitwiseCopyable)\b/;
         return "${whole}${pad}var __lampSpare_${name} = LampSpare(nil);";
     }
     for my $file (@files) {
@@ -16048,8 +16104,9 @@ enum Template {
       cmp -s Package.swift "$LIVE/Package.swift" || cp Package.swift "$LIVE/Package.swift"
       # Lamp only wants the live copy, to put a change into the open app before building the whole of it.
       [[ "${LAMP_LIVE_COPY:-}" == 1 ]] && exit 0
-      # What this build compiles, which is what the app runs once it's installed (LiveReload.markRunning).
-      rsync -a --delete "$LIVE/Sources/" "$LIVE/built/"
+      # What this build compiles, which is what the app runs once it's installed (LiveReload.markRunning): kept
+      # aside, and the record only once the build has worked, or a failed one would name code no app runs.
+      rsync -a --delete "$LIVE/Sources/" "$LIVE/building/"
       FLAGS=(-c debug --package-path "$LIVE" --scratch-path "$LIVE/.build" -Xswiftc -DLAMP_LIVE -Xswiftc -enable-testing -Xlinker -interposable "${RESTRICT[@]}")
     fi
     \(appIntentsSetup(ios: false))
@@ -16058,6 +16115,7 @@ enum Template {
     # binary until the link runs again. Take that binary away once, and it links again with the segment.
     if [ -f "$BIN" ] && ! otool -l "$BIN" 2>/dev/null | grep -qs __RESTRICT; then rm -f "$BIN"; fi
     swift build "${FLAGS[@]}" 2>&1
+    if [[ "${LAMP_LIVE:-}" == 1 ]]; then rsync -a --delete "$LIVE/building/" "$LIVE/built/"; fi
     APP="build/{{EXE}}.app"
     rm -rf "$APP"
     mkdir -p "$APP/Contents/MacOS"
