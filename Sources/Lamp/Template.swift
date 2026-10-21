@@ -6868,8 +6868,10 @@ enum Template {
             var windows = NSApp.orderedWindows.flatMap(withSheets)
             // Alerts and panels shown on their own.
             windows.insert(contentsOf: NSApp.windows.filter { $0 is NSPanel && !$0.isSheet && !windows.contains($0) }, at: 0)
-            // Not the clear windows a change's effect is drawn in (LampTransition): the pictures are of the app.
-            return windows.filter { $0.isVisible && !$0.isMiniaturized && $0.frame.width > 40 && $0.frame.height > 40 && !($0 is LampTransition.Glass) }
+            // Not the clear windows a change's effect is drawn in (LampTransition), nor the chat's panel beside a window,
+            // which another process draws and the app pictures as blank: the pictures are of the app.
+            return windows.filter { $0.isVisible && !$0.isMiniaturized && $0.frame.width > 40 && $0.frame.height > 40
+                && !($0 is LampTransition.Glass) && !($0 is LampSidebar.Beside) }
         }
 
         /// Picture pixels per window point: at most 1400 pixels on the long side, a size models see unscaled.
