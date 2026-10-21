@@ -854,7 +854,9 @@ inside it again, its views' state included, which `Agent.liveNote` tells the age
 `LAMP_LIVE` and `-Xlinker -interposable` (SwiftPM for a Mac app; Xcode for an app for both, from a copy of the
 device project, with its debug library off so the code is in the one binary). The copy is made by one
 perl pass over each file (`Template.livePerl`: the body wrap, a read of the generation in what SwiftUI keeps besides a body (a modifier's
-`body(content:)`, a style's `makeBody`, a layout, a representable's update; `LampLive.touch`), Lamp's entry, the spare places and the `final` below,
+`body(content:)`, a style's `makeBody`, a layout's methods, a representable's update; `LampLive.touch`, and for a
+`sizeThatFits` written as one expression `LampLive.touched`, which runs it after the read; a layout is asked again only
+when SwiftUI lays out again, which the read doesn't force), Lamp's entry, the spare places and the `final` below,
 with the stretches of strings and comments found once and never touched). It makes every class `final` that nothing
 in Sources subclasses (`live.pl scan` lists the names used as superclasses and as the bounds of generic parameters
 and `where` clauses, followed through typealiases): a final class keeps no method table, so a method or computed

@@ -669,7 +669,22 @@ enum LiveReload {
             binding.entries.contains { $0.name == "body" } && scopes.contains { SwiftSource.within(binding.start, $0) }
         }.map { (start: $0.start, last: $0.last) }
         var files: [String: SwiftSource.Text] = [:]
-        let allowed = bodies + bodies.flatMap { SwiftSource.called(from: $0.start, to: $0.last, in: declarations, files: &files) }
+        // What the bodies call, but only code nothing else calls: a factory a body calls and a hosting view's root
+        // also takes makes a value the open app keeps. Dropped until every caller left is a body or such code.
+        var helpers = bodies.flatMap { SwiftSource.called(from: $0.start, to: $0.last, in: declarations, files: &files) }
+        var dropped = true
+        while dropped {
+            dropped = false
+            let safe = bodies + helpers
+            helpers.removeAll { helper in
+                let outside = declarations.calls.contains { call in
+                    SwiftSource.within(call.to, helper) && !SwiftSource.within(call.at, helper) && !safe.contains { SwiftSource.within(call.at, $0) }
+                }
+                if outside { dropped = true }
+                return outside
+            }
+        }
+        let allowed = bodies + helpers
         let name = bare(view), short = String(name.split(separator: ".").last ?? "")
         return declarations.uses.contains { use in
             // The type itself or one of its initializers: reading a member of a view made elsewhere makes none.

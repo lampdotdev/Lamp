@@ -3936,6 +3936,8 @@ enum Template {
         static var generation: Int { shared.generation }
         /// Read by what SwiftUI keeps besides a body (the copy step adds it), on the main thread where SwiftUI asks.
         nonisolated static func touch() { if Thread.isMainThread { MainActor.assumeIsolated { _ = shared.generation } } }
+        /// The same around a value made by one expression, where a statement before it would stop it being returned.
+        nonisolated static func touched<T>(_ make: () -> T) -> T { touch(); return make() }
 
         static let start: Void = {
             DistributedNotificationCenter.default().addObserver(
@@ -16592,10 +16594,17 @@ enum Template {
         @skip = spans($s);
         $s =~ s{var\s+body\s*:\s*some\s+(?:SwiftUI\.)?View\s*\{}~ inside($-[0]) ? $& : "var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\n    \@ViewBuilder var __lampBody: some View {" ~ge;
         @skip = spans($s);
-        # What else SwiftUI keeps until something it reads changes: a modifier's and a style's body, a layout, a
-        # representable's update. Each reads the generation too, so a change draws it again with the new code. Only a
-        # declaration with a body (`[^{}]*` stops at a protocol's requirement, which has none).
-        $s =~ s{\bfunc\s+(?:body\s*\(\s*content|makeBody\s*\(\s*configuration|sizeThatFits\s*\(\s*proposal|placeSubviews\s*\(\s*in|update(?:NS|UI)View(?:Controller)?\s*\()[^{}]*\{}~ inside($-[0]) ? $& : "$&let _ = LampLive.touch(); " ~ge;
+        # What else SwiftUI keeps until something it reads changes: a modifier's and a style's body, a layout's
+        # placement, a representable's update. Each reads the generation too, so a change draws it again with the new
+        # code. Only what a statement can open without changing what it returns: the two bodies are view builders, and
+        # the others return nothing. Only a declaration with a body (`[^{}]*` stops at a protocol's requirement, which
+        # has none).
+        $s =~ s{\bfunc\s+(?:body\s*\(\s*content|makeBody\s*\(\s*configuration|placeSubviews\s*\(\s*in|update(?:NS|UI)View(?:Controller)?\s*\()[^{}]*\{}~ inside($-[0]) ? $& : "$&let _ = LampLive.touch(); " ~ge;
+        @skip = spans($s);
+        # A layout's `sizeThatFits` too, which is asked again only when what it read changes. Its body (matched brace
+        # for brace) opens with the read when it returns with `return`; one written as a single expression, which a
+        # statement before it would stop returning, is run inside a closure that reads it first.
+        $s =~ s{(\bfunc\s+sizeThatFits\s*\(\s*proposal[^{}]*\{)((?:[^{}]++|(\{(?:[^{}]++|(?3))*\}))*)\}}{ my ($head, $inner, $whole, $at) = ($1, $2, $&, $-[0]); inside($at) ? $whole : $inner =~ /\breturn\b/ ? "${head}let _ = LampLive.touch(); $inner" . chr(125) : "${head} LampLive.touched " . chr(123) . " $inner " . chr(125) . " " . chr(125) }ge;
         @skip = spans($s);
         my $main;
         $s =~ s{^([ \t]*(?:(?:\@\w+(?:\([^)]*\))?|public|internal|fileprivate|private|open|final)\s+)*)\@main((?:(?:\s|//[^\n]*|/\*[\s\S]*?\*/)+(?:\@\w+(?:\([^)]*\))?|public|internal|fileprivate|private|open|final))*(?:\s|//[^\n]*|/\*[\s\S]*?\*/)+(?:struct|class|enum|actor)\s+(\w+))}{ if (inside($-[0])) { $& } else { $main = $3; "$1$2" } }me;
