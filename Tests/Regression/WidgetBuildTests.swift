@@ -53,6 +53,9 @@ final class WidgetBuildTests: XCTestCase {
         let support = try text("Sources/LampSupport.swift", in: project)
         let start = try XCTUnwrap(support.range(of: "enum LampWidget {"))
         let end = try XCTUnwrap(support.range(of: "#endif", range: start.upperBound..<support.endIndex))
+        // How the app learns its port and secret: the real `LampInstall`, reading the Info.plist linked in below.
+        let installStart = try XCTUnwrap(support.range(of: "enum LampInstall {"))
+        let installEnd = try XCTUnwrap(support.range(of: "\n    }\n", range: installStart.upperBound..<support.endIndex))
         try ("""
         import Foundation
         import Network
@@ -61,6 +64,7 @@ final class WidgetBuildTests: XCTestCase {
         enum LampStore { static let folder = URL(fileURLWithPath: CommandLine.arguments[1]) }
         enum LampWidgetLinks { static let start: Void = () }
         struct Tide: Codable { var height: Double }
+        \(support[installStart.lowerBound..<installEnd.upperBound])
         \(support[start.lowerBound..<end.lowerBound])
         LampWidget.share(Tide(height: 2.5), as: "tide")
         RunLoop.main.run(until: Date().addingTimeInterval(Double(CommandLine.arguments[2])!))
@@ -90,7 +94,10 @@ final class WidgetBuildTests: XCTestCase {
         // a name of its own for this run, cleared afterwards, keeps one run's answer out of the next.
         let widget = "lamp-widget-test-\(UUID().uuidString)"
         defer { _ = try? run("defaults delete \(widget); rm -f ~/Library/Preferences/\(widget).plist", in: work) }
-        let built = try run(Shell.compatibleSDK + "xcrun swiftc -O -o \(widget) half.swift main.swift 2>&1; xcrun swiftc -O -o app app.swift 2>&1", in: work)
+        // Each half reads its port and secret from its own Info.plist, as Lamp installs them.
+        let appInstall = try InstallValues.linkerFlags(Template.installValues(for: project), in: work, named: "App-Info.plist")
+        let widgetInstall = try InstallValues.linkerFlags(Template.widgetInstallValues(for: project), in: work, named: "Widget-Info.plist")
+        let built = try run(Shell.compatibleSDK + "xcrun swiftc -O -o \(widget) half.swift main.swift \(widgetInstall) 2>&1; xcrun swiftc -O -o app app.swift \(appInstall) 2>&1", in: work)
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: work.appendingPathComponent("app").path), String(built.output.suffix(2000)))
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: work.appendingPathComponent(widget).path), String(built.output.suffix(2000)))
 

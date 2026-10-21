@@ -100,6 +100,7 @@ final class ServiceSignInTests: XCTestCase {
         import CryptoKit
         import Security
         enum LampRuntime { static let folder = URL(fileURLWithPath: "/nonexistent-lamp-runtime") }
+        enum LampInstall { static let token = "made-up-app-token" }
         var lampGateway = "http://127.0.0.1:1"
         \(support[secretsStart.upperBound..<secretsEnd.lowerBound])
         \(support[start.lowerBound..<end.lowerBound])
