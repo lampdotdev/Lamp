@@ -1403,12 +1403,14 @@ struct ImportReviewCard: View {
         let scrolling: CGFloat = considering == nil ? 1 : 2
         return room - fixed.values.reduce(0, +) - 48 - 16 * (CGFloat(fixed.count) + scrolling - 1)
     }
-    /// Things to consider is shown whole when it fits, and otherwise scrolls, leaving what the app can do at
-    /// least a few rows: a long list of concerns never pushes the buttons off the screen. Its first lines are
-    /// Lamp's own verdict, so they're the ones always in view.
-    private var considerLimit: CGFloat { max(60, min(considering ?? 0, budget - 120)) }
+    /// The two share what's left and never take more between them, whatever the screen: Things to consider is
+    /// shown whole when it fits, and otherwise scrolls, leaving what the app can do a few rows, or half when
+    /// there isn't room for that. A long list of concerns never pushes the buttons off the screen, and Lamp's
+    /// verdict, its first lines, is what stays in view. Below 48 points nothing could be read, so that's the floor.
+    private var shared: CGFloat { max(48, budget) }
+    private var considerLimit: CGFloat { min(considering ?? 0, max(shared - 120, shared / 2)) }
     /// How tall what the app can do may be: the height a long review always stopped at, or what's left.
-    private var limit: CGFloat { max(60, min(460, budget - (considering.map { min($0, considerLimit) } ?? 0))) }
+    private var limit: CGFloat { min(460, shared - (considering == nil ? 0 : considerLimit)) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
