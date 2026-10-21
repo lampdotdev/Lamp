@@ -591,6 +591,7 @@ final class LiveReloadTests: XCTestCase {
         return "import Combine\nimport Foundation\nimport CryptoKit\nimport MachO\nimport Observation\n" + install + text[start.lowerBound..<end.upperBound]
             .replacingOccurrences(of: "LampInstall.app + \"/.lamp/live/\"", with: "\"\(folder.path)/live/\"")
             .replacingOccurrences(of: "LampRuntime.folder.appendingPathComponent(\"reloaded.txt\")", with: "URL(fileURLWithPath: \"\(folder.path)/reloaded.txt\")")
+            .replacingOccurrences(of: "LampRuntime.folder.appendingPathComponent(\"plain-fields.txt\")", with: "URL(fileURLWithPath: \"\(folder.path)/plain-fields.txt\")")
             .replacingOccurrences(of: "private func load(", with: "func load(")
     }
 
