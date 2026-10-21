@@ -10,8 +10,7 @@ struct PracticeView: View {
     @StateObject private var speech = WeddingSpeech()
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("A seat next to Marco’s mother").font(.largeTitle.weight(.medium))
-            Text("Rehearsal dinner · warm company, real conversation, zero vocabulary quizzes.").foregroundStyle(.secondary)
+            PageHeading(script: "a tavola", title: "A seat next to Marco’s mother", subtitle: "Rehearsal dinner · warm company, real conversation, zero vocabulary quizzes.")
             Picker("Rehearse", selection: $coach.selected) {
                 ForEach(0..<3, id: \.self) { Text(WeddingCoach.milestones[$0]).tag($0) }
             }.pickerStyle(.menu).onChange(of: coach.selected) { _, value in
@@ -26,23 +25,32 @@ struct PracticeView: View {
                         Text("She’s getting her words together…").font(.headline)
                         Text("This can take a little while. Your turn comes after she speaks.").font(.callout).foregroundStyle(.secondary)
                     }
-                }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.terracotta.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                }.frame(maxWidth: .infinity, alignment: .leading).invitationCard(padding: 16, radius: 12)
             }
             if talk.turns.isEmpty {
-                ContentUnavailableView("Meet her here first", systemImage: "fork.knife", description: Text("She’ll speak Italian. You can ask for a slower repeat, make mistakes, and try again. This is a fictional rehearsal, not a prediction of her personality."))
-                    .frame(maxHeight: .infinity)
-                if !talk.busy {
-                    Button("Take my seat", systemImage: "bubble.left") { Task { await reply() } }.buttonStyle(.borderedProminent)
-                }
+                VStack(spacing: 14) {
+                    MaiolicaPlate().frame(width: 150, height: 150).padding(.bottom, 6)
+                    Text("Meet her here first").font(Look.serif(24))
+                    Text("She’ll speak Italian. You can ask for a slower repeat, make mistakes, and try again. This is a fictional rehearsal, not a prediction of her personality.")
+                        .foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 420)
+                    if !talk.busy {
+                        Button("Take my seat", systemImage: "chair") { Task { await reply() } }.buttonStyle(.borderedProminent).controlSize(.large).padding(.top, 4)
+                    }
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         ForEach(talk.turns) { turn in
+                            let mine = turn.who == "You"
                             VStack(alignment: .leading, spacing: 6) {
-                                Text(turn.who).font(.caption.bold()).foregroundStyle(.secondary)
-                                Text(turn.text).font(.title3).textSelection(.enabled)
-                            }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(turn.who == "You" ? Color.terracotta.opacity(0.08) : Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+                                Engraved(turn.who, size: 10)
+                                Text(turn.text).font(mine ? .title3 : Look.serif(20, italic: true)).textSelection(.enabled)
+                            }
+                            .padding(16)
+                            .background(mine ? Look.wash : Look.card, in: RoundedRectangle(cornerRadius: 14))
+                            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Look.ink.opacity(mine ? 0 : 0.15), lineWidth: 0.75))
+                            .frame(maxWidth: 620, alignment: mine ? .trailing : .leading)
+                            .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
                         }
                     }
                 }
@@ -58,12 +66,12 @@ struct PracticeView: View {
                         Label("Listen to her first", systemImage: "speaker.wave.2.fill").font(.headline)
                         Spacer()
                         Button("Skip audio") { speech.stopPlayback() }
-                    }.padding(16).background(Color.terracotta.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                    }.invitationCard(padding: 16, radius: 12)
                 } else if talk.awaitsHer && !talk.busy {
                     Button("Try again", systemImage: "arrow.clockwise") { Task { await reply() } }.buttonStyle(.borderedProminent)
                 } else if !talk.busy {
-                    if !feedback.isEmpty { Label(feedback, systemImage: "heart.text.clipboard").padding(14).background(Color.terracotta.opacity(0.06), in: RoundedRectangle(cornerRadius: 10)) }
-                    Text("Now it’s your turn").font(.headline)
+                    if !feedback.isEmpty { Label(feedback, systemImage: "heart.text.clipboard").frame(maxWidth: .infinity, alignment: .leading).invitationCard(padding: 14, radius: 12) }
+                    Engraved("Now it’s your turn")
                     SpeakingInput(speech: speech, text: $input)
                     Button("Send my reply", systemImage: "arrow.up.bubble") { let words = input; input = ""; Task { await reply(words) } }.buttonStyle(.borderedProminent).disabled(speech.listening || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
