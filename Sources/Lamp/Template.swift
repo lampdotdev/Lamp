@@ -4993,10 +4993,9 @@ enum Template {
                         }
                     }
                 }
-                // A change reopens the app: its window, as it was, is left for Lamp to show in its place
-                // meanwhile, and where it was, for the new copy to open there.
+                // A change reopens the app: where its window was is left for the new copy to open there.
                 center.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
-                    MainActor.assumeIsolated { leaveCover() }
+                    MainActor.assumeIsolated { leavePlace() }
                 }
                 // Lamp hands the chat over to the app (`LampSidebar.openForLamp`).
                 DistributedNotificationCenter.default().addObserver(
@@ -5033,24 +5032,17 @@ enum Template {
             }
         }()
 
-        private static var cover: URL { LampRuntime.folder.appendingPathComponent("cover.png") }
         private static var coverFrame: URL { LampRuntime.folder.appendingPathComponent("cover-frame.txt") }
-        /// Where the chat was beside the window, for Lamp to stand its own glass in until the new copy's chat is up.
-        private static var coverChatFrame: URL { LampRuntime.folder.appendingPathComponent("cover-chat-frame.txt") }
 
-        /// The front window's picture and place, as the app quits. Lamp shows the picture where the window was
-        /// until the new copy is up; the new copy opens its window in that place (`putBack`).
-        @MainActor private static func leaveCover() {
+        /// The front window's place, as the app quits: the new copy opens its window there (`putBack`).
+        @MainActor private static func leavePlace() {
             guard isOn, let window = NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible && ($0.isKeyWindow || $0.isMainWindow) })
                     ?? NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible })
                     ?? NSApp.windows.first(where: { isAppWindow($0) && $0.isMiniaturized }) else { return }
-            // Whether or not there's a picture to leave: a window in full screen or the Dock is still owed its width.
+            // A window in full screen or the Dock is still owed its width, though it has no place to hand on.
             LampSidebar.handOn(window)
-            guard !window.isMiniaturized, !window.styleMask.contains(.fullScreen),
-                  let picture = LampRuntime.picture(of: window) else { return }
-            try? picture.write(to: cover)
+            guard !window.isMiniaturized, !window.styleMask.contains(.fullScreen) else { return }
             try? NSStringFromRect(window.frame).write(to: coverFrame, atomically: true, encoding: .utf8)
-            try? NSStringFromRect(LampSidebar.panelFrame(of: window) ?? .zero).write(to: coverChatFrame, atomically: true, encoding: .utf8)
         }
 
         /// The first window of a copy started for a change goes where the last one was, once.
@@ -5841,7 +5833,7 @@ enum Template {
             coach(window)
         }
 
-        /// The width a window was made narrower by, handed on as the app quits for a change (`LampMagic.leaveCover`)
+        /// The width a window was made narrower by, handed on as the app quits for a change (`LampMagic.leavePlace`)
         /// to the window put back in its place (`LampMagic.putBack`), or the new copy's first window when none is put
         /// back, whose chat gives it back when it closes. Only that window takes it: another was never narrowed.
         @MainActor static func handOn(_ window: NSWindow) {
@@ -6342,13 +6334,6 @@ enum Template {
                     return event
                 }
             }
-        }
-
-        /// Where the chat beside a window is now, for the picture Lamp shows in the app's place while a change reopens
-        /// it (`LampMagic.leaveCover`); nothing when it's closed.
-        @MainActor static func panelFrame(of window: NSWindow) -> NSRect? {
-            guard let chat = chat(in: window), chat.inPanel, let panel = chat.panel else { return nil }
-            return panel.frame.insetBy(dx: Beside.shade, dy: Beside.shade)
         }
 
         /// The chat's paper, as the chat draws it (`ChatLook.paper`): a warm off-white, a warm near-black in the dark.
@@ -7158,7 +7143,7 @@ enum Template {
             override var canBecomeKey: Bool { false }
             override var canBecomeMain: Bool { false }
 
-            /// The colours the glow goes round, the same as Lamp's own copy on its cover (`TransitionGlow`).
+            /// The colours the glow goes round, the same as the light round a wish being built on the desk (`BuildingGlow`).
             static let hues: [NSColor] = [.systemBlue, .systemPurple, .systemOrange]
 
             /// The window's own rounding, so the glow follows its corners; macOS's usual when it doesn't say.

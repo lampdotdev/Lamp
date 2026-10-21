@@ -201,38 +201,16 @@ final class MagicPanel {
 
     private final class Following {
         var observers: [NSObjectProtocol] = []
-        var busyWatch: AnyCancellable?
-        var cover: NSWindow?
-        /// Glass where the app's chat was beside it, while the cover stands in for the app.
-        var chatCover: NSWindow?
-        var coverTimeout: DispatchWorkItem?
     }
     private var following: [String: Following] = [:]
 
-    /// What the app says and does while its sidebar is in use: its window's picture when it quits for a change,
-    /// its window's place once the new copy is up, and what was pointed at.
+    /// What the app says and does while its sidebar is in use: that it quit, and what was pointed at.
     func follow(_ id: String) {
         guard following[id] == nil else { return }
         let state = Following()
         following[id] = state
-        // The new copy said where its window is: the picture standing in for it fades into it.
-        state.observers.append(DistributedNotificationCenter.default().addObserver(
-            forName: Notification.Name(Edition.notificationPrefix + "windowFrame"), object: nil, queue: .main) { [weak self] note in
-            MainActor.assumeIsolated {
-                guard let current = Store.shared.projects.first(where: { $0.id == id }), note.object as? String == current.bundleID,
-                      let text = note.userInfo?["frame"] as? String, !text.isEmpty else { return }
-                self?.revealApp(id)
-            }
-        })
-        // The turn is over: if no copy came back, the picture standing in for it goes.
-        state.busyWatch = Store.shared.$busy.map { $0.contains(id) }.removeDuplicates().dropFirst()
-            .receive(on: RunLoop.main).sink { [weak self] busy in
-                MainActor.assumeIsolated {
-                    if !busy { DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self?.dropCoverIfAppGone(id) } }
-                }
-            }
-        // The app quit for a change: its picture stands where its window was until the new copy is up. Quit by
-        // the person, nothing more is followed until the sidebar opens again.
+        // The app quit for a change: it's followed on into the new copy. Quit by the person, nothing more is
+        // followed until the sidebar opens again.
         state.observers.append(NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             MainActor.assumeIsolated {
@@ -240,7 +218,7 @@ final class MagicPanel {
                       let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                       app.bundleIdentifier == current.bundleID
                         || app.bundleURL?.standardizedFileURL == current.installedURL.standardizedFileURL else { return }
-                if Store.shared.busy.contains(id) { return self.showCover(for: current) }
+                if Store.shared.busy.contains(id) { return }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                     guard Store.shared.macCopies(of: current).isEmpty, !Store.shared.busy.contains(id) else { return }
                     self.stopFollowing(id)
@@ -271,9 +249,6 @@ final class MagicPanel {
             NSWorkspace.shared.notificationCenter.removeObserver($0)
             DistributedNotificationCenter.default().removeObserver($0)
         }
-        state.coverTimeout?.cancel()
-        state.cover?.orderOut(nil)
-        state.chatCover?.orderOut(nil)
     }
 
     // MARK: Pointing
@@ -339,148 +314,6 @@ final class MagicPanel {
         if words.count > 40 { words = String(words.prefix(39)) + "…" }
         let name = [words, kind].filter { !$0.isEmpty }.joined(separator: " ")
         return name.isEmpty ? "Pointed at" : name.prefix(1).uppercased() + name.dropFirst()
-    }
-
-    // MARK: Standing in while the app reopens
-
-    /// The picture the app left of its window as it quit (`LampMagic.leaveCover`), where the window was, a
-    /// little dimmed with a note that it's updating. Only a fresh picture: one left by an earlier quit would be wrong.
-    private func showCover(for project: LampProject) {
-        guard let state = following[project.id] else { return }
-        let folder = Runtime.macFolder(project)
-        let picture = folder.appendingPathComponent("cover.png")
-        guard let made = (try? picture.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
-              Date().timeIntervalSince(made) < 10, let image = NSImage(contentsOf: picture),
-              let text = try? String(contentsOf: folder.appendingPathComponent("cover-frame.txt"), encoding: .utf8) else { return }
-        let frame = NSRectFromString(text)
-        guard frame.width > 0, frame.height > 0 else { return }
-        dropCover(project.id)
-        let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.hasShadow = true
-        window.ignoresMouseEvents = true
-        window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: CoverView(image: image) { CoverActivity(app: project.id) })
-        window.setFrame(frame, display: true)
-        window.orderFrontRegardless()
-        state.cover = window
-        state.chatCover = Self.chatCover(in: folder)
-        // Never for long: a build that fails or a turn that ends without the app leaves nothing standing.
-        let id = project.id
-        let timeout = DispatchWorkItem { [weak self] in self?.dropCover(id) }
-        state.coverTimeout = timeout
-        DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: timeout)
-    }
-
-    /// The chat had its own panel beside the window (`LampSidebar.panelFrame`): its blank paper stands where it was, so
-    /// the chat doesn't vanish from beside the app while it's away. The chat itself is the extension's to draw, so
-    /// nothing of it is pictured.
-    private static func chatCover(in folder: URL) -> NSWindow? {
-        guard let text = try? String(contentsOf: folder.appendingPathComponent("cover-chat-frame.txt"), encoding: .utf8) else { return nil }
-        let frame = NSRectFromString(text)
-        guard frame.width > 0, frame.height > 0 else { return nil }
-        let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.hasShadow = true
-        window.ignoresMouseEvents = true
-        window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: ChatCoverView())
-        window.setFrame(frame, display: true)
-        window.orderFrontRegardless()
-        return window
-    }
-
-    private func revealApp(_ id: String) {
-        guard let state = following[id], let cover = state.cover else { return }
-        let chatCover = state.chatCover
-        state.cover = nil
-        state.chatCover = nil
-        state.coverTimeout?.cancel()
-        // The chat beside the new copy takes a moment longer to come than its window.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.25
-                cover.animator().alphaValue = 0
-            }, completionHandler: { MainActor.assumeIsolated { cover.orderOut(nil) } })
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            guard let chatCover else { return }
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.25
-                chatCover.animator().alphaValue = 0
-            }, completionHandler: { MainActor.assumeIsolated { chatCover.orderOut(nil) } })
-        }
-    }
-
-    private func dropCover(_ id: String) {
-        guard let state = following[id] else { return }
-        state.coverTimeout?.cancel()
-        state.cover?.orderOut(nil)
-        state.cover = nil
-        state.chatCover?.orderOut(nil)
-        state.chatCover = nil
-    }
-
-    private func dropCoverIfAppGone(_ id: String) {
-        guard following[id]?.cover != nil, let project = Store.shared.projects.first(where: { $0.id == id }),
-              Store.shared.macCopies(of: project).isEmpty, !Store.shared.busy.contains(id) else { return }
-        dropCover(id)
-    }
-}
-
-/// The app's last picture of itself, standing in its window's place while a change goes in, with a note on it.
-struct CoverView<Note: View>: View {
-    let image: NSImage
-    @ViewBuilder let note: () -> Note
-
-    var body: some View {
-        Image(nsImage: image)
-            .resizable()
-            .overlay(Color.black.opacity(0.12))
-            // In the middle: an app's own buttons sit along its bottom and top edges, and a note there hid them.
-            .overlay { note().padding(.horizontal, 12) }
-            .overlay { TransitionGlow() }
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-}
-
-/// The cover's note for an app, from its turn as it goes. Its own view, so only the note is drawn again.
-private struct CoverActivity: View {
-    let app: String
-    @ObservedObject private var store = Store.shared
-
-    var body: some View { CoverNote(progress: store.progress[app]) }
-}
-
-/// What the app's turn is doing, as the chat says it (`Activity`), or "Updating…" once the turn is over and the
-/// app is still on its way.
-struct CoverNote: View {
-    let progress: TurnProgress?
-
-    var body: some View {
-        HStack(spacing: 8) {
-            ProgressView().controlSize(.small)
-            if let progress, progress.finished == nil {
-                ChatLook.ActivityText(progress.activity, since: progress.activitySince)
-            } else {
-                Text("Updating…")
-            }
-        }
-        .font(.callout.weight(.medium))
-        .lineLimit(1)
-        .padding(.horizontal, 14).padding(.vertical, 8)
-        .background(.regularMaterial, in: Capsule())
-    }
-}
-
-/// The chat's paper where the app's chat was beside it, while the app reopens for a change.
-private struct ChatCoverView: View {
-    var body: some View {
-        RoundedRectangle(cornerRadius: 20, style: .continuous)
-            .fill(ChatLook.paper)
-            .overlay { ProgressView().controlSize(.small) }
     }
 }
 
