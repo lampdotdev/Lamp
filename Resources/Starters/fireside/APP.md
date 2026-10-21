@@ -1,4 +1,7 @@
 Kind: collection
+Look: a worn campfire songbook. Grained paper with a coffee ring, taped index cards with painted pictures
+(`Assets/`, chosen by `SongArt`), rubber stamps, ticket stubs and guitar picks (`Theme.swift`), and a dark firelit
+stage with embers for practice. Another instrument or occasion gets pictures and words of its own.
 
 # Fireside
 
