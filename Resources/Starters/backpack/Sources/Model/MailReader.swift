@@ -43,22 +43,29 @@ enum MailReader {
                 continue
             }
             // An hour with more mail than one batch is drained from its newest end: each batch is followed by the
-            // one before its oldest email, until a batch is short. Only a second holding a whole batch of mail
-            // can't be got past, and is left to try again from there.
+            // one before its oldest email, until a batch is short.
             var batchOfMail = messages
             var before = window.to
             while true {
                 let whole = try await process(batchOfMail, settings: settings, seen: seen, list: &list, tally: &tally,
                                               status: status, learned: learned, keep: keep)
                 if !whole { gap = gap ?? window.from }
-                guard batchOfMail.count >= batch else { break }
+                guard batchOfMail.count >= batch, let oldest = batchOfMail.map(\.date).min() else { break }
                 // Up to and including the oldest one's second, so mail in that second isn't skipped; what's been
                 // read in it is passed over.
-                guard let oldest = batchOfMail.map(\.date).min(), oldest.addingTimeInterval(1) < before else {
-                    gap = gap ?? window.from
-                    break
+                var next = oldest.addingTimeInterval(1)
+                if next >= before {
+                    // A whole batch in one second (a bulk import, say): that second is read whole, however much
+                    // it holds, and the draining goes on from just before it.
+                    let second = Calendar.current.dateInterval(of: .second, for: oldest)?.start ?? oldest
+                    let tied = try await LampMail.inbox(limit: 100_000, since: second, before: second.addingTimeInterval(1))
+                    let whole = try await process(tied, settings: settings, seen: seen, list: &list, tally: &tally,
+                                                  status: status, learned: learned, keep: keep)
+                    if !whole { gap = gap ?? window.from }
+                    next = second
                 }
-                before = oldest.addingTimeInterval(1)
+                guard next > window.from else { break }
+                before = next
                 batchOfMail = try await LampMail.inbox(limit: batch, since: window.from, before: before)
             }
         }
