@@ -123,7 +123,7 @@ enum Template {
     /// the agent read, put in them ever runs: they're replaced, not checked. A failure to write any of them is
     /// a failure to build, since the old file would be what runs.
     static func writeOwnedFiles(for project: LampProject) throws {
-        // An Android app has no support library of Lamp's: its own files are the Gradle project's.
+        // An Android app's own files are the Gradle project's and its Kotlin building blocks.
         if project.platform == .android { try writeAndroidOwnedFiles(for: project); return }
         // Where an earlier Lamp kept the phone's secret, readable by the agent's commands; a new one is made in
         // Lamp's own folder (`phoneSecret(in:)`).
@@ -247,8 +247,8 @@ enum Template {
     /// Lamp owns LampSupport.swift and rewrites it before every agent turn and build,
     /// so existing apps pick up helper improvements automatically.
     static func writeSupport(for project: LampProject) throws {
-        // An Android app has no Swift, and no support library of Lamp's yet.
-        guard project.platform != .android else { return }
+        // An Android app's building blocks are Kotlin (`writeAndroidSupport`).
+        if project.platform == .android { try writeAndroidSupport(for: project); return }
         let contents = lampSupportSwift
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
         try put(contents, at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)

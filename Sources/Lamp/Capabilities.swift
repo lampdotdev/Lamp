@@ -331,8 +331,6 @@ struct SetupOffer: Codable, Equatable, Hashable {
 /// per conversation and again only when it changes, so most requests carry nothing.
 enum AIStatus {
     @MainActor static func line(for project: LampProject, offered: Set<SetupOffer>) -> String {
-        // An Android app has none of Lamp's building blocks yet, so none of this applies to it.
-        if project.platform == .android { return "- None: this Android app has no AI building blocks from Lamp yet." }
         var lines = Capability.allCases.filter { $0 != .browser || (BrowserBridge.enabled && project.platform.hasMac) }.map { capability in
             let resolution = AppAI.resolve(capability, for: project)
             var line = "- \(capability.title): \(AppAI.summary(resolution))"
@@ -342,6 +340,10 @@ enum AIStatus {
         if project.platform.hasIOS {
             let away = AppAI.resolve(.text, for: project, in: .phoneAway)
             lines.append("- On the person's phone away from this Mac: \(away.tier == .none ? "no AI" : "text, pictures and decisions through OpenRouter")")
+        }
+        if project.platform == .android {
+            // An Android device reaches AI only through this Mac, in the emulator or over the same Wi‑Fi.
+            lines.append("- On the person's Android device: the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, no AI")
         }
         return lines.joined(separator: "\n")
     }

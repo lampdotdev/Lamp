@@ -580,9 +580,21 @@ with Apple's devices). It is Kotlin and Jetpack Compose in a Gradle project in t
 build runs before the agent's code does (`build.sh`, `settings.gradle.kts`, the top-level `build.gradle.kts`,
 `gradle.properties` and `gradle/libs.versions.toml`, written afresh before every build by
 `Template.writeAndroidOwnedFiles`, with the versions Google's own project template pairs), and the agent owns `app/`
-(its build file, manifest, Kotlin and resources; the scaffold is `Template.fillAndroid`). There is no support
-library of Lamp's for Android yet: no LampStore, LampAI or connectors, and the rules say so (`Agent.androidPrompt`,
-`Rules.android…`), so the agent builds on Android's own; `AIStatus.line` tells it the same. Nothing of Google's is on
+(its build file, manifest, Kotlin and resources; the scaffold is `Template.fillAndroid`), all but Lamp's building
+blocks. Those are `LampSupport.kt` in the app's package (`Template.androidSupportKotlin`, AndroidSupport.swift, written
+by `writeSupport` before every turn and build like LampSupport.swift): `LampAI` (ask with `data` fencing, pictures,
+the decisions and their `each` forms), `LampStore` (values and collections as JSON on SQLite) and `LampAssets`, under
+the names and with the doc comments the Swift ones have, so a change to one of those is made to both. A Lamp-owned
+debug manifest beside it (`app/src/debug/AndroidManifest.xml`, merged into every build Lamp makes) adds the network
+and `LampInit`, a provider that hands the blocks the app's context before any of its code runs. There are no
+connectors yet, and the rules say so (`Agent.androidPrompt`, `Rules.androidAI`). The app's token is never built in:
+after each install Lamp writes what the app is told (`Template.androidInstallValues`: its token and the ways to the
+gateway) into the app's own storage on the device, on adb's input through `run-as` (`Adb.tellApp`), so the APK in the
+app's folder holds no secret. The emulator reaches the gateway at 10.0.2.2, naming this Mac as 127.0.0.1; a device
+reaches it over the Wi‑Fi, by the Mac's Bonjour name or else its addresses, always naming it by that name, which is
+what the gateway admits from the network, and the gateway listens there while an Android app is set to open on a
+device (`Store.syncLocalNetwork`). The blocks speak HTTP on a socket, since Android's own clients refuse plain HTTP
+without a change to the agent's manifest. Away from the Mac a device has no AI, and `AIStatus.line` says so. Nothing of Google's is on
 a Mac by itself, so Lamp downloads what it needs the first time (`AndroidTools.install`, from the Android Setup
 window, `AndroidSetup`, which the first Android request, Play and Try On open through `AndroidTools.check`): a Java
 runtime, Google's command-line tools and Gradle, each checked against the checksum its maker publishes, and through

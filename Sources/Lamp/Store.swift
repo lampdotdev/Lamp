@@ -1499,6 +1499,7 @@ final class Store: ObservableObject {
         changed.device = serial
         try? Template.saveMeta(changed)
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
+        syncLocalNetwork()   // the device reaches Lamp's gateway over the Wi‑Fi
         let name = devices.first(where: { $0.udid == serial })?.name
         let said = name.map { "\(changed.name) will open on \($0) from now on. Press Play to put it there." }
             ?? "\(changed.name) will open in the emulator from now on."
@@ -4179,7 +4180,9 @@ final class Store: ObservableObject {
         let protected = [".lamp", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/LampSupport.swift", Template.sceneSupportPath,
                          Template.widgetFolder + "/" + Template.widgetSupportFile, Template.shareFolder + "/" + Template.shareSupportFile] + Template.watchSupportPaths
         let lowered = relative.lowercased()
-        if protected.contains(where: { lowered == $0.lowercased() || lowered.hasPrefix($0.lowercased() + "/") }) {
+        if protected.contains(where: { lowered == $0.lowercased() || lowered.hasPrefix($0.lowercased() + "/") }) 
+            // An Android app's building blocks are Lamp's while it is one; made into a Swift app, the agent clears app/ away.
+            || (project.platform == .android && Template.isAndroidSupport(relative)) {
             return (400, ["error": "\(relative) belongs to Lamp and can't be deleted."])
         }
         let fm = FileManager.default
@@ -4355,7 +4358,7 @@ final class Store: ObservableObject {
         case .universal: Agent.Rules.universal + Agent.Rules.universalFrameworks + Agent.Rules.universalTry
         case .iphone: Agent.Rules.iPhoneFrameworks + Agent.Rules.iPhoneTry
         case .mac: Agent.Rules.macFrameworks
-        case .android: Agent.Rules.androidEdit + Agent.Rules.androidFrameworks + Agent.Rules.androidData + Agent.Rules.androidTry
+        case .android: Agent.Rules.androidEdit + Agent.Rules.androidFrameworks + Agent.Rules.androidAI + Agent.Rules.androidData + Agent.Rules.androidTry
         }
         // To or from Android the code is written over again in the other language: the scaffold of the new kind is
         // put in beside what's there, for the agent to move the app into.
@@ -5847,6 +5850,7 @@ final class Store: ObservableObject {
             }
             androidLeases[serial] = project.id
             try await Adb.install(project.builtURL, package: package, on: serial)
+            await Adb.tellApp(Template.androidInstallValues(for: project, onDevice: project.device != nil), package: package, on: serial)
             guard stillOwns() else { return "The app was deleted or stopped before it opened." }
             Runtime.startLog(project)
             let pid = try await Adb.launch(package, on: serial)
@@ -7352,10 +7356,10 @@ final class Store: ObservableObject {
         }
     }
 
-    /// The gateway answers on the local network only while an app is set to open on the person's own phone:
-    /// kept in step with the list of apps (Try On, deletion, rename, reload).
+    /// The gateway answers on the local network only while an app is set to open on the person's own phone or
+    /// tablet, Apple's or Android's: kept in step with the list of apps (Try On, deletion, rename, reload).
     func syncLocalNetwork() {
-        gateway?.setLocalNetwork(projects.contains { $0.platform.hasIOS && $0.device != nil })
+        gateway?.setLocalNetwork(projects.contains { ($0.platform.hasIOS || $0.platform == .android) && $0.device != nil })
     }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
