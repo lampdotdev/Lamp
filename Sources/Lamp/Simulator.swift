@@ -551,9 +551,9 @@ extension Simulator {
         /// carried out on whatever the simulator shows next. `aim` shows where each tap or swipe is about to
         /// happen (`Handover`), and returns once Lamp's fingertip is there.
         static func perform(_ actions: [Action], on screen: Screen, picture: URL,
-                            aim: @MainActor @Sendable (CGPoint, String?, Bool) async -> Void = { _, _, _ in },
+                            aim: @escaping @MainActor @Sendable (CGPoint, String?, Bool) async -> Void = { _, _, _ in },
                             tookOver: @MainActor @Sendable () -> Bool = { false },
-                            live: @MainActor @Sendable () -> Bool) async -> String {
+                            live: @escaping @MainActor @Sendable () -> Bool) async -> String {
             var lines: [String] = []
             var before = try? Data(contentsOf: picture)
             // Asked again after every wait inside an action too: the screen has to be this iPhone's each time.
@@ -578,13 +578,65 @@ extension Simulator {
                 if notAnswering {
                     lines[lines.count - 1] += " (\(screen.viewer) stopped answering Lamp during this, so it may not have happened; look at the picture)"
                 }
+                // The pause for the app to take the action up, and its picture. Lamp's fingertip goes on to the
+                // next action's spot meanwhile, so that action needn't wait for it: once the screen has had a
+                // moment to change, and only to show the way; the action finds its target afresh when its turn
+                // comes, and the press shows then.
+                let next = index + 1 < actions.count ? actions[index + 1] : nil
+                let ahead = Task {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    guard let next, await live(), let spot = spot(of: next, on: screen) else { return }
+                    await aim(spot.point, spot.doing, false)
+                }
                 try? await Task.sleep(for: .milliseconds(350))
                 _ = await Simulator.screenshot(on: screen.udid, to: picture)
                 let after = try? Data(contentsOf: picture)
                 if action.action != "wait", let before, let after, before == after { lines[lines.count - 1] += " (nothing changed on screen)" }
                 before = after
+                await ahead.value
             }
             return lines.joined(separator: "\n")
+        }
+
+        /// Where an action is about to happen and what it's doing, for Lamp's fingertip to go there during the
+        /// pause before it (`perform`). Reads the screen and changes nothing: the action finds its target again
+        /// when its turn comes. Nil for what happens nowhere in particular, or isn't on screen yet.
+        private static func spot(of action: Action, on screen: Screen) -> (point: CGPoint, doing: String)? {
+            var action = action
+            if let target = action.target?.trimmed, !target.isEmpty {
+                guard let items = items(on: screen), case .one(let index) = find(target, in: items) else { return nil }
+                action.x = items[index].frame.midX
+                action.y = items[index].frame.midY
+            }
+            let point = screen.point(action.x ?? 0, action.y ?? 0)
+            switch action.action {
+            case "click", "double_click", "right_click":
+                guard let hit = element(at: point, in: screen) else { return nil }
+                let element = isInteractive(hit) ? hit : (nearestInteractive(to: point, in: screen) ?? hit)
+                return (point, tapping(element, as: action.action))
+            case "type":
+                let field = action.target != nil ? textField(near: point, in: screen)
+                    : rememberedField(in: screen) ?? textField(near: point, in: screen) ?? onlyTextField(in: screen)
+                guard let field else { return nil }
+                let frame = frame(of: field)
+                return (CGPoint(x: frame.midX, y: frame.midY), typing(into: field))
+            case "scroll" where !screen.oneAtATime:
+                return (point, "scrolling")
+            case "swipe" where !screen.oneAtATime:
+                return (point, "swiping")
+            default:
+                return nil
+            }
+        }
+
+        /// What the cursor says beside a tap: "tapping Add", "double-tapping", "pressing Delete".
+        private static func tapping(_ element: AXUIElement, as action: String) -> String {
+            let verb = action == "right_click" ? "pressing" : action == "double_click" ? "double-tapping" : "tapping"
+            return shortName(element).map { verb + " " + $0 } ?? verb
+        }
+
+        private static func typing(into field: AXUIElement) -> String {
+            shortName(field).map { "typing into " + $0 } ?? "typing"
         }
 
         /// The app was relaunched: whatever field was remembered for the project is gone.
@@ -617,8 +669,7 @@ extension Simulator {
                 let element = isInteractive(hit) ? hit : (nearestInteractive(to: point, in: screen) ?? hit)
                 lastFields[screen.owner] = isTextInput(element) ? element : nil
                 let name = describe(element) + (element == hit ? "" : " (the nearest thing to tap; the point itself was \(describe(hit)))")
-                let verb = action.action == "right_click" ? "pressing" : action.action == "double_click" ? "double-tapping" : "tapping"
-                await aim(point, shortName(element).map { verb + " " + $0 } ?? verb, true)
+                await aim(point, tapping(element, as: action.action), true)
                 // Finding the target took a moment off the main thread, and Stop may have come meanwhile.
                 guard await live() else { return "stopped before the \(action.action == "right_click" ? "long press" : "tap") at \(at)" }
                 if action.action == "right_click" {
@@ -661,7 +712,7 @@ extension Simulator {
                 // The text replaces what the field holds: a tapped field on an iPhone shows its old value
                 // formatted ("0.00"), and typing after it would make nonsense of a number.
                 let spot = frame(of: field)
-                await aim(CGPoint(x: spot.midX, y: spot.midY), shortName(field).map { "typing into " + $0 } ?? "typing", true)
+                await aim(CGPoint(x: spot.midX, y: spot.midY), typing(into: field), true)
                 guard await live() else { return "stopped before typing" }
                 let result = call { AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, text as CFTypeRef) }
                 return result == .success ? "typed \"\(text)\" into \(describe(field)); it now holds that" : "couldn't type into \(describe(field))"

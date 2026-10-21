@@ -3615,17 +3615,19 @@ final class Store: ObservableObject {
             Self.signal(project, "useAppStop", ["id": id], signedAs: "lampUseAppStop", over: "stop\n\(id)")
         }
         if let window = Handover.frontWindow(of: app.processIdentifier) { trial.show(window: window) }
-        // Where each action is about to happen, from the app (`LampDriver.aimed`), for Lamp's cursor to go first.
+        // Where each action is about to happen and how long until it does, from the app (`LampDriver.aimed`), for
+        // Lamp's cursor to be there first: sent during the pause before the action, so nothing waits for the cursor.
         let steps = DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name(Edition.notificationPrefix + "useAppStep.\(project.id)"), object: nil, queue: .main) { note in
             guard let text = note.object as? String,
                   let step = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any], step["id"] as? String == id else { return }
             let window = (step["window"] as? Int).map { CGWindowID($0) }
             let doing = step["doing"] as? String, press = step["press"] as? Bool ?? false
+            let due = step["in"] as? Double ?? Template.useAppLead   // an app built before it said: it waits the lead
             MainActor.assumeIsolated {
                 if let window { trial.show(window: window) }
                 guard let x = step["x"] as? Double, let y = step["y"] as? Double else { return }   // the window alone, at the start
-                Task { await trial.aim(at: CGPoint(x: x, y: y), doing: doing, press: press, within: Template.useAppLead - 0.05) }
+                Task { await trial.aim(at: CGPoint(x: x, y: y), doing: doing, press: press, due: due) }
             }
         }
         defer {
@@ -3635,7 +3637,7 @@ final class Store: ObservableObject {
         // Signed with the app's token rather than carrying it: distributed notifications reach every process.
         Self.signal(project, "useApp", ["actions": json, "id": id], signedAs: "lampUseAppSignature", over: "\(id)\n\(json)")
         // Waits, and keys held down (a Mac app's `key` with `amount`), each up to 10 seconds, as the app takes them;
-        // and the moment Lamp's cursor takes to reach each spot.
+        // and the lead an action may give Lamp's cursor.
         let waits = actions.reduce(0.0) { total, action in
             switch action["action"] as? String {
             case "wait": total + min(action["amount"] as? Double ?? 1, 10)

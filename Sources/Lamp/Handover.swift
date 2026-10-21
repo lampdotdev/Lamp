@@ -44,10 +44,15 @@ final class Handover {
         overlay.focus(window: id, label: label, owner: owner, escape: true) { [weak self] in self?.take() }
     }
 
-    /// Lamp's cursor goes to where the next action happens, and presses there when it's a click or a tap.
-    func aim(at point: CGPoint, doing: String?, press: Bool, within: Double? = nil) async {
+    /// Lamp's cursor goes to where the next action happens, and presses there when it's a click or a tap. `due`
+    /// is how long until the action happens there (a Mac app says, having sent the spot ahead during the pause
+    /// before it): the glide is paced to arrive a hair before, and the press shows then, not on arrival.
+    func aim(at point: CGPoint, doing: String?, press: Bool, due: Double? = nil) async {
         guard !tookOver, !ended else { return }
-        await overlay.move(to: point, app: nil, owner: owner, caption: doing.map { "Lamp · " + $0 }, finger: finger, within: within)
+        let start = ContinuousClock.now
+        let arrival = due.map { max(0.1, $0 - 0.05) }
+        await overlay.move(to: point, app: nil, owner: owner, caption: doing.map { "Lamp · " + $0 }, finger: finger, within: arrival)
+        if let arrival { try? await Task.sleep(until: start + .seconds(arrival), clock: .continuous) }
         if press, !tookOver, !ended { overlay.click(at: point, owner: owner) }
     }
 

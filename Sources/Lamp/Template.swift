@@ -3189,9 +3189,10 @@ enum Template {
 
     """
 
-    /// How long a Mac app's driver waits for Lamp's cursor to reach the spot of an action before doing it
-    /// (`LampDriver.lead` in LampSupport.swift, which must say the same).
-    static let useAppLead = 0.45
+    /// How long a Mac app's driver waits for Lamp's cursor when an action's spot couldn't be shown ahead of it, the
+    /// first of a batch above all (`LampDriver.lead` in LampSupport.swift, which must say the same). Every other
+    /// action's spot is announced during the pause before it, with the time until it happens, so nothing waits.
+    static let useAppLead = 0.2
 
     static let lampSupportSwift = Connectors.fill(lampSupportTemplate) + "\n#if os(macOS)" + lampGlyphSwift + "#endif\n"
 
@@ -7991,7 +7992,8 @@ enum Template {
                       LampRuntime.picture(of: last.window) == last.picture else { return }
                 report[last.line] += " (nothing changed on screen)"
             }
-            func step(_ index: Int) {
+            /// `shown` is where Lamp's cursor was sent for this action during the pause before it, if anywhere.
+            func step(_ index: Int, shown: Aim?) {
                 guard batch.carriesOn else { return }
                 keepBarPanel()
                 note()
@@ -8008,13 +8010,32 @@ enum Template {
                 let action = actions[index]
                 let held = action.action == "key" ? min(action.amount ?? 0, 10) : 0
                 let pause = action.action == "wait" ? min(action.amount ?? 1, 10) : action.action == "bar_icon" ? 1 : held > 0 ? held + 0.2 : 0.35
-                // Where it happens is shown first: Lamp's cursor goes there, and the action follows once it has.
-                let aim = aimed(action)
-                if let aim { announce(id, aim) }
-                let lead = aim == nil ? 0 : Self.lead
+                // The cursor is on the spot already, sent there during the last pause. Where it couldn't be (the
+                // first action; a target that wasn't on screen yet; a window that has opened since), it goes now,
+                // and the action waits the lead for it.
+                var lead = 0.0
+                if shown == nil || shown?.window != LampRuntime.windowsOnScreen.first?.windowNumber, let aim = aimed(action) {
+                    announce(id, aim, in: Self.lead)
+                    lead = Self.lead
+                }
+                let due = lead + pause
                 // The next step is set up first: a click that opens a save panel or an alert doesn't return until
                 // that closes, and the steps after it are how it gets answered.
-                after(lead + pause) { step(index + 1) }
+                var next: Aim?
+                after(due) { step(index + 1, shown: next) }
+                // The next action's spot is shown while this one's pause runs, so the cursor is there when it's
+                // due and nothing waits for it: once the app has taken this action up (`settle`), and no sooner
+                // than the glide needs, so that after a long wait the screen is read late, not at its start.
+                if index + 1 < actions.count {
+                    let early = max(lead + Self.settle, due - 0.95)
+                    if due - early >= 0.2 {
+                        after(early) {
+                            guard batch.carriesOn, let aim = aimed(actions[index + 1]) else { return }
+                            next = aim
+                            announce(id, aim, in: due - early)
+                        }
+                    }
+                }
                 func act() {
                     guard batch.carriesOn else { return }
                     batch.done = index + 1
@@ -8032,17 +8053,25 @@ enum Template {
                 }
                 if lead > 0 { after(lead) { act() } } else { act() }
             }
-            after(0) { step(0) }
+            after(0) { step(0, shown: nil) }
         }
 
-        /// How long an action that happens at a spot waits for Lamp's cursor to get there (`aimed`).
-        static let lead = 0.45
+        /// How long an action waits for Lamp's cursor when it couldn't be sent ahead (`step`): the first of a
+        /// batch, or one whose spot wasn't there to be seen during the pause before it.
+        static let lead = 0.2
+        /// How long after an action the next one's spot is looked for: a press is taken up on the run loop's
+        /// next turn, so what it opened or changed is on screen by then.
+        static let settle = 0.1
+
+        /// Where an action happens on screen, what it's doing in a few words, which window that's in, and
+        /// whether it presses there, for the cursor Lamp shows going to each spot first.
+        typealias Aim = (point: CGPoint, doing: String, window: Int, press: Bool)
 
         /// Where an action happens on screen, what it's doing in a few words, and whether it presses there, for
         /// the cursor Lamp shows going to each spot first. Nil for what happens nowhere in particular (a key, a
         /// menu, a wait, typing into whatever has focus). The point is in screen points from the top left of the
         /// main display, as Lamp draws.
-        private static func aimed(_ action: Action) -> (point: CGPoint, doing: String, window: Int, press: Bool)? {
+        private static func aimed(_ action: Action) -> Aim? {
             let verbs = ["click": "clicking", "double_click": "double-clicking", "right_click": "right-clicking", "drag": "dragging",
                          "scroll": "scrolling", "type": "typing into", "key": "pressing a key in"]
             let named = action.target?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
@@ -8067,10 +8096,11 @@ enum Template {
                     ["click", "double_click", "right_click", "type"].contains(action.action))
         }
 
-        /// Tells Lamp where the next action happens, or just which window the actions are in. In the notification's
-        /// object, the one part a sandboxed app may send.
-        private static func announce(_ id: String, _ aim: (point: CGPoint, doing: String, window: Int, press: Bool)) {
-            announce(id, ["x": aim.point.x, "y": aim.point.y, "doing": aim.doing, "window": aim.window, "press": aim.press])
+        /// Tells Lamp where the next action happens and how long until it does (`in`, seconds: the cursor is paced
+        /// to arrive just before), or just which window the actions are in. In the notification's object, the
+        /// one part a sandboxed app may send.
+        private static func announce(_ id: String, _ aim: Aim, in seconds: Double) {
+            announce(id, ["x": aim.point.x, "y": aim.point.y, "doing": aim.doing, "window": aim.window, "press": aim.press, "in": seconds])
         }
 
         private static func announce(_ id: String, window: Int) { announce(id, ["window": window]) }

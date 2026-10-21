@@ -20,6 +20,8 @@ final class ComputerOverlay {
     /// What the cursor is now: an arrow over a Mac window, a fingertip over an iPhone's screen.
     private var cursorFinger = false
     private var cursorPosition: CGPoint?   // in the cursor window's own coordinates
+    /// When the glide under way ends: a move to the spot the cursor is already bound for waits for it to get there.
+    private var cursorArrival: ContinuousClock.Instant?
     private var glowWindow: NSWindow?
     private var glowTarget: CGWindowID?
     /// The stop control riding on the glow, and what it stops.
@@ -267,7 +269,7 @@ final class ComputerOverlay {
         let (window, layer) = ensureCursor(icon: icon, finger: finger)
         setCaption(caption, on: layer)
         let target = window.convertPoint(fromScreen: Self.cocoa(point))
-        guard let from = cursorPosition, !reduceMotion else {
+        guard let bound = cursorPosition, !reduceMotion else {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             layer.position = target
@@ -277,14 +279,21 @@ final class ComputerOverlay {
             try? await Task.sleep(for: .milliseconds(200))
             return
         }
-        let distance = hypot(target.x - from.x, target.y - from.y)
-        guard distance > 1 else { return }
+        let distance = hypot(target.x - bound.x, target.y - bound.y)
+        guard distance > 1 else {
+            // Already bound there, sent ahead of this action: it's there once that glide ends.
+            if let cursorArrival, cursorArrival > .now { try? await Task.sleep(until: cursorArrival, clock: .continuous) }
+            return
+        }
+        // From where it is now, a glide still under way included, so a new spot never makes it jump.
+        let from = layer.presentation()?.position ?? bound
+        let span = max(1, hypot(target.x - from.x, target.y - from.y))
         // Quick for a hop, slower across the screen, never sluggish.
-        let duration = min(within ?? 0.9, 0.9, max(0.3, 0.25 + Double(distance) / 1800))
+        let duration = min(within ?? 0.9, 0.9, max(0.3, 0.25 + Double(span) / 1800))
         // A gentle arc, bowed to one side like a hand's movement rather than a straight slide.
         let mid = CGPoint(x: (from.x + target.x) / 2, y: (from.y + target.y) / 2)
-        let normal = CGPoint(x: -(target.y - from.y) / distance, y: (target.x - from.x) / distance)
-        let bow = min(120, distance * 0.18)
+        let normal = CGPoint(x: -(target.y - from.y) / span, y: (target.x - from.x) / span)
+        let bow = min(120, span * 0.18)
         let control = CGPoint(x: mid.x + normal.x * bow, y: mid.y + normal.y * bow)
         let path = CGMutablePath()
         path.move(to: from)
@@ -300,6 +309,7 @@ final class ComputerOverlay {
         CATransaction.commit()
         layer.add(glide, forKey: "glide")
         cursorPosition = target
+        cursorArrival = .now + .seconds(duration)
         try? await Task.sleep(for: .seconds(duration))
     }
 
