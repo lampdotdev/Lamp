@@ -45,8 +45,8 @@ final class WidgetProcessTests: XCTestCase {
         let ended = await WidgetProcess.end(from: tally.file)
         XCTAssertTrue(ended)
         XCTAssertTrue(WidgetProcess.running(from: tally.file).isEmpty)
-        tally.process.waitUntilExit()
-        again.process.waitUntilExit()
+        TestShell.wait(for: tally.process, timeout: 10)
+        TestShell.wait(for: again.process, timeout: 10)
         XCTAssertFalse(tally.process.isRunning)
         XCTAssertFalse(again.process.isRunning)
         // The other app's widget was never touched.

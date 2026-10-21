@@ -69,7 +69,7 @@ final class DeviceBuildEntitlementsTests: XCTestCase {
         try command.run()
         defer {
             fm.createFile(atPath: project.dir.appendingPathComponent("stop").path, contents: nil)
-            command.waitUntilExit()
+            TestShell.wait(for: command, timeout: 30)
         }
 
         // What Lamp does when the person tries the app on their phone (`Store.installOnDevice`), with an ad hoc
@@ -95,7 +95,7 @@ final class DeviceBuildEntitlementsTests: XCTestCase {
         try await TeamSigning.sign(app, with: plan, in: planDir, identity: "-")
 
         fm.createFile(atPath: project.dir.appendingPathComponent("stop").path, contents: nil)
-        command.waitUntilExit()
+        TestShell.wait(for: command, timeout: 30)
         XCTAssertFalse(fm.fileExists(atPath: project.dir.appendingPathComponent("reached-lamps-folder").path),
                        "the agent's command could write Lamp's build folder")
 

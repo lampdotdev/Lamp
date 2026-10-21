@@ -21,17 +21,7 @@ final class SandboxTests: XCTestCase {
 
     private func run(_ command: String, in project: LampProject) throws -> (status: Int32, output: String) {
         let wrapped = try XCTUnwrap(Sandbox.wrap(command, for: project))
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = ["-c", wrapped]
-        process.currentDirectoryURL = project.dir
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+        return TestShell.run("/bin/bash", ["-c", wrapped], in: project.dir)
     }
 
     func testTheAppIsOpenAndTheRestIsClosed() throws {
@@ -85,7 +75,7 @@ final class SandboxTests: XCTestCase {
         try compile.run()
         stdin.fileHandleForWriting.write(Data("int main(void) { return 0; }".utf8))
         stdin.fileHandleForWriting.closeFile()
-        compile.waitUntilExit()
+        TestShell.wait(for: compile, timeout: 120)
         XCTAssertEqual(compile.terminationStatus, 0)
 
         let started = try run(Sandbox.quoted(program.path), in: project)

@@ -2,7 +2,7 @@
 name: Focus
 offer: Make Focus yours
 tweaks:
-  - cloud.rain: Play soft rain while I focus
+  - hourglass: Make the ring an hourglass
   - checklist: Log what I finished each session
-  - calendar: Fifty-minute sessions on weekdays
+  - figure.run: Turn it into a workout timer
 ---

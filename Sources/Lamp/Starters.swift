@@ -15,7 +15,8 @@ enum Starters {
     struct Starter: Equatable {
         let folder: URL
         let name: String
-        /// The first thing the app's chat offers: a line inviting a change, and three changes to choose from.
+        /// The first thing the app's chat offers: a line inviting a change, and three changes to choose from: a new look,
+        /// a new thing it does and a new subject, to show how far the app can go.
         let offer: String
         let tweaks: [Tweak]
     }

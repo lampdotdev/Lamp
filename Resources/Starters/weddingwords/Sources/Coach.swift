@@ -44,8 +44,10 @@ struct WeddingState: Codable {
     var days: Int { max(0, Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: Date()), to: Calendar.current.startOfDay(for: state.wedding)).day ?? 0) }
     var weakest: Int { (0..<4).min { (state.scores[$0] ?? 0) < (state.scores[$1] ?? 0) } ?? 0 }
     func status(_ i: Int) -> String {
-        guard let score = state.scores[i] else { return "Not rehearsed yet · let’s try it together" }
-        return "\(state.attempts[i] ?? 0) rehearsals · coach confidence \(score)/5"
+        // The coach's confidence is the lemons beside it.
+        guard state.scores[i] != nil else { return "Not rehearsed yet · let’s try it together" }
+        let attempts = state.attempts[i] ?? 0
+        return attempts == 1 ? "Rehearsed once" : "Rehearsed \(attempts) times"
     }
     func save() { LampStore.save(state, to: "wedding") }
     func record(_ i: Int, score: Int) {

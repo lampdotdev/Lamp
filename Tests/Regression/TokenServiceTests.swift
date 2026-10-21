@@ -126,6 +126,7 @@ final class TokenServiceTests: XCTestCase {
         import Foundation
         import SwiftUI
         import Security
+        enum LampInstall { static let token = "made-up-app-token" }
         var lampGateway = "http://127.0.0.1:1"
         \(support[secretsStart.upperBound..<secretsEnd.lowerBound])
         \(support[start.lowerBound..<end.lowerBound])
@@ -359,16 +360,6 @@ final class TokenServiceTests: XCTestCase {
     """#
 
     private func run(_ command: String, in directory: URL) throws -> (status: Int32, output: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", command]
-        process.currentDirectoryURL = directory
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+        TestShell.run(command, in: directory)
     }
 }

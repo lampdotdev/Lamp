@@ -108,7 +108,6 @@ enum Analytics {
         case .claude: "claude"
         case .chatGPT: "chatgpt"
         case .openRouter: "openrouter"
-        case .another: "another_provider"
         case .onThisMac: "on_this_mac"
         }
     }

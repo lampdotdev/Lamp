@@ -312,7 +312,7 @@ enum EngineInstall {
             throw Failure(message: "Lamp's built-in agent comes with Lamp.")
         case .claude:
             let stable = try await text(claudeReleases.appendingPathComponent("stable"))
-            guard isVersion(stable) else { throw Failure(message: "Claude Code's download page didn't say which version is current.") }
+            guard isVersion(stable) else { throw Failure(message: "Claude's download page didn't say which version is current.") }
             let version = hold.flatMap { isVersion($0) && isOlder($0, than: stable) ? $0 : nil } ?? stable
             return try await claudeRelease(version)
         case .codex:
@@ -330,7 +330,7 @@ enum EngineInstall {
               manifest["version"] as? String == version,
               let entry = (manifest["platforms"] as? [String: Any])?[platform] as? [String: Any],
               let checksum = entry["checksum"] as? String, checksum.range(of: #"^[0-9a-f]{64}$"#, options: .regularExpression) != nil
-        else { throw Failure(message: "Claude Code \(version) has no download for this Mac.") }
+        else { throw Failure(message: "Claude \(version) has no download for this Mac.") }
         let size = (entry["size"] as? NSNumber)?.int64Value
         return Release(version: version, url: base.appendingPathComponent(platform).appendingPathComponent("claude"),
                        sha256: checksum, size: size, isArchive: false)
@@ -343,19 +343,19 @@ enum EngineInstall {
         guard let release = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let tag = release["tag_name"] as? String, tag.hasPrefix("rust-v"),
               release["draft"] as? Bool != true, release["prerelease"] as? Bool != true
-        else { throw Failure(message: "ChatGPT Codex's release page didn't say which version is current.") }
+        else { throw Failure(message: "ChatGPT's release page didn't say which version is current.") }
         let found = String(tag.dropFirst("rust-v".count))
         guard isVersion(found), version == nil || version == found else {
-            throw Failure(message: "ChatGPT Codex's release page named a version Lamp doesn't recognise.")
+            throw Failure(message: "ChatGPT's release page named a version Lamp doesn't recognise.")
         }
         let name = "codex-package-\(isArm ? "aarch64" : "x86_64")-apple-darwin.tar.gz"
         guard let asset = (release["assets"] as? [[String: Any]])?.first(where: { $0["name"] as? String == name }),
               let link = (asset["browser_download_url"] as? String).flatMap(URL.init(string:)), link.scheme == "https",
               let digest = asset["digest"] as? String, digest.hasPrefix("sha256:")
-        else { throw Failure(message: "ChatGPT Codex \(found) has no download for this Mac.") }
+        else { throw Failure(message: "ChatGPT \(found) has no download for this Mac.") }
         let checksum = String(digest.dropFirst("sha256:".count))
         guard checksum.range(of: #"^[0-9a-f]{64}$"#, options: .regularExpression) != nil else {
-            throw Failure(message: "ChatGPT Codex \(found) has no checksum Lamp can check.")
+            throw Failure(message: "ChatGPT \(found) has no checksum Lamp can check.")
         }
         return Release(version: found, url: link, sha256: checksum, size: (asset["size"] as? NSNumber)?.int64Value, isArchive: true)
     }

@@ -33,7 +33,7 @@ struct InstalledModel: Identifiable, Hashable {
 /// - GGUF models run on the bundled llama.cpp server (router mode on 127.0.0.1:47812), which gets a folder
 ///   of symlinks into the cache, so nothing is copied.
 /// - MLX models (e.g. ones downloaded for Local) run on `mlx_lm.server` (127.0.0.1:47813) when it's installed.
-/// pi reaches both, plus any running Ollama / LM Studio, through providers Lamp writes into its `models.json`.
+/// pi reaches both through providers Lamp writes into its `models.json`.
 @MainActor
 final class LocalModels: ObservableObject {
     static let shared = LocalModels()
@@ -87,7 +87,6 @@ final class LocalModels: ObservableObject {
     @Published var errors: [String: String] = [:]
     @Published var serverRunning = false
     @Published var mlxModel: String?                         // the model mlx_lm.server is serving
-    @Published var external: [String: [String]] = [:]       // "ext-ollama" → model ids
 
     private var server: Process?
     private var mlxServer: Process?
@@ -104,13 +103,6 @@ final class LocalModels: ObservableObject {
     /// The pi provider for a local model: llama.cpp for GGUF, mlx_lm for MLX.
     nonisolated static func piProvider(for id: String) -> String {
         model(id)?.format == .mlx ? mlxProvider : Builder.localProvider
-    }
-
-    /// Model servers Lamp looks for: Ollama and LM Studio.
-    nonisolated static let externalIDs = ["ext-lmstudio", "ext-ollama"]   // alphabetical by name
-
-    nonisolated static func externalName(_ id: String) -> String {
-        id == "ext-ollama" ? "Ollama" : id == "ext-lmstudio" ? "LM Studio" : id
     }
 
     /// `mlx_lm.server`, if installed (`PythonTools` installs it from Settings).
@@ -489,24 +481,6 @@ final class LocalModels: ObservableObject {
         return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
-    // MARK: Ollama and LM Studio
-
-    /// Looks for Ollama (port 11434) and LM Studio (port 1234) and lists their models.
-    func detectExternal() async {
-        var found: [String: [String]] = [:]
-        for (id, port) in [("ext-ollama", 11434), ("ext-lmstudio", 1234)] {
-            var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/models")!)
-            request.timeoutInterval = 1
-            guard let (data, _) = try? await URLSession.shared.data(for: request),
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let models = obj["data"] as? [[String: Any]] else { continue }
-            let ids = models.compactMap { $0["id"] as? String }.filter { !$0.lowercased().contains("embed") }
-            if !ids.isEmpty { found[id] = ids }
-        }
-        external = found
-        writePiModels()
-    }
-
     /// Registers local models with Lamp's pi through `models.json` (OpenAI-compatible endpoints).
     func writePiModels() {
         var providers: [String: Any] = [:]
@@ -524,11 +498,6 @@ final class LocalModels: ObservableObject {
                 "baseUrl": "\(Self.mlxBaseURL)/v1", "api": "openai-completions", "apiKey": "local",
                 "models": mlx.map { ["id": $0.id, "contextWindow": 65536, "input": ["text"]] as [String: Any] },
             ]
-        }
-        for (id, models) in external {
-            let port = id == "ext-ollama" ? 11434 : 1234
-            providers[id] = ["baseUrl": "http://127.0.0.1:\(port)/v1", "api": "openai-completions", "apiKey": "local",
-                             "models": models.map { ["id": $0] }]
         }
         let dir = URL(fileURLWithPath: Agent.configDir)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

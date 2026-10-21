@@ -2,7 +2,7 @@
 name: Today
 offer: Make Today yours
 tweaks:
-  - list.number: Five priorities instead of three
+  - pencil.line: Give it a bullet journal look
   - drop: Add a water counter
-  - bell: Remind me to plan at 8
+  - heart: Turn it into a gratitude journal
 ---

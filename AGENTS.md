@@ -268,15 +268,17 @@ A capability given to one engine must be given to all of them that can take it, 
   (building, installing, opening, looking at the app, watching it move); when the look ends it's "Thinking". No clock
   is shown beside the activity, in the chat or the build card: the turn's whole time is its "Worked for…".
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
+  Lamp's providers are Claude Code, ChatGPT Codex, OpenRouter (pi builds through it; its key is the only one
+  Lamp keeps, `Provider.keyProviders`) and Native Mac AI (`LocalModels`: Lamp's own model servers, never another
+  app's such as Ollama). Don't add another provider without asking: fewer choices in setup was the point.
   Where an app's text AI goes is an `AppAI.TextRoute` (an OpenRouter model, the Claude Code or Codex sign-in,
-  pi with its key provider, or a model on this Mac), listed by `AppAI.textRoutes` for the pickers in
+  or a model on this Mac), listed by `AppAI.textRoutes` for the pickers in
   Settings → Apps (an app's info panel only shows what answers it), and dispatched by kind in `AppAI.dispatch`. The default
   (`AppAI.defaultRoute`) is the local model that builds apps when there is one, else Sonnet through
   OpenRouter with a key, else the builder's own sign-in. Settings → AI Providers lists each provider and
   sign-in with its state, not what it's used for: that's in the menus that choose it. Decisions
   (`AppAI.decisionModels`, `AppAI.decide`) go to Jev
-  through OpenRouter or TypeSafe, to OpenAI's Decisions API (`decideViaOpenAI`, the same questions in its
-  predicate/choice/score shape), to a Jev-class model on this Mac (`LocalModels.decisionCatalog`, run on the
+  through OpenRouter, to a Jev-class model on this Mac (`LocalModels.decisionCatalog`, run on the
   bundled llama-server; `decideLocally` does what the model's serving shim does: one forward pass per
   question, probabilities read off the label tokens at the "Answer:" slot), or by text through what answers
   apps (`decideByText`). A decision model is never offered for text or building (`LocalModels.isDecisionModel`).
@@ -373,8 +375,10 @@ preview.png, a picture of its window that the desk shows while the pointer is on
 with the app's about.json line beside it in large type, 90 characters at most (`WishStage`, `WishDesk.describedIn`; every
 Mac app saves a fresh one at each launch, `LampRuntime.preview`, and Lamp takes one of the simulator for an iPhone
 app, both at `Runtime.previewURL`), and starter.md, Lamp's own: the wish's name and what its chat offers to change first, a line and three changes, each
-with its tile's symbol (`- drop: Add a water counter`): changes the app doesn't do already, that the agent can make in
-one request with no key, account or pictures to draw. They
+with its tile's symbol (`- drop: Add a water counter`). The three show how far a starter can go, not small tweaks to
+it: one changes how it looks (Hot Shelf as a realistic kitchen cabinet), one what it does (ingredients on every tag),
+and one what it's about (Hot Shelf as a beer tracker), in that order. Each is something the app doesn't do already,
+that the agent can make in one request with no key or account, its look drawn in code rather than pictures. They
 are Mac apps that need no key or account, use the AI the person builds with when they use any, and come with
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
 
@@ -406,8 +410,9 @@ Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp). Into a new `Resource
 3. Write `APP.md` for the agent that changes it, in the shape the other starters' have (`Kind:`, what it does,
    Code, Data, Easy to change), from the code as it is, not the app's own APP.md.
 4. Write `starter.md`: `name`, `offer` ("Make <name> yours") and three tweaks of at most six words, each with an SF
-   Symbol. They're changes the app doesn't already make, that the agent can make in one request with no key,
-   account or pictures to draw.
+   Symbol: a new look, a new thing it does, and a new subject (as above), each big enough to show the person the
+   app can become their own rather than be adjusted. They're changes the app doesn't already make, that the agent
+   can make in one request with no key or account, drawn in code rather than pictures.
 5. Take `preview.png` as above (the app's own `.lamp/runtime/preview.png` is the picture when it shows only example
    content), paint and draw the icon with `LAMP_RENDER_STARTER_ICONS=<folder> LAMP_PAINT_STARTER_ART=1
    OPENROUTER_API_KEY=… swift test --filter StarterIconsTests` and look at the artwork it picked, then run
@@ -540,8 +545,7 @@ gateway also listens on the network while some app is set to open on a phone (`S
 requests, and admits them only to the app routes with the Mac's own name as Host (`Store.isMacHost`).
 Away from the Mac, a phone app answers for itself (`LampDirect` in LampSupport, device builds only): `post`
 first asks `/ai/keys` with a four-second timeout, at most every half minute; while the Mac answers, the
-call goes through Lamp as ever and the reply (the OpenRouter key, the TypeSafe key when decisions go there,
-and the app's model choices, served by `Store.keysForPhone` only for iPhone apps) is kept in the
+call goes through Lamp as ever and the reply (the OpenRouter key and the app's model choices, served by `Store.keysForPhone` only for iPhone apps) is kept in the
 phone's Keychain. The reply is sealed with a secret (`Template.phoneSecret(in:)`) kept in the phone's build folder
 and written only into the Info.plist there, which the app reads (`LampPhoneSecret`): the app's token is in its
 folder, where the agent's commands read it, so the secret must never be there too, nor in LampSupport.swift or the
@@ -1590,7 +1594,7 @@ card), check:
   chats, the main one prominent; never the small size, which in the wand's narrow panel was too slight to find.
   Where they don't fit beside a card's words they go under them (`ChatLook.OfferCard`).
 - **Same words for the same thing**, in every screen, Help and errors. Product names come from one place
-  (`Engine.title`: "ChatGPT Codex"), never a literal.
+  (`Engine.title`: "ChatGPT", "Claude": what people call them, not the coding tools' names), never a literal.
 
 ### The gallery
 
@@ -1605,7 +1609,7 @@ that reads `Store` in its drawing can't be listed: split it first.
 ### Settings
 
 Each tab has one job: **Building**, how Lamp builds apps; **Apps**, what apps use while they run; **AI
-Providers**, what's on this Mac, then cloud providers, with keys, sign-ins and downloads (other tabs' menus
+Providers**, the four providers in one list, with their sign-ins, key and downloads (other tabs' menus
 end in "Configure providers…", which leads here); **Memory**, what Lamp remembers and whether it does; **Experimental**, what the Lamp team is still working on, a tab that is there only while there is an experiment to show (`ExperimentalSettings.hasAny`; now Apps in Chrome, in Lamp Dev only).
 Lay out with the shared pieces in `Setup.swift`, and extend one rather than lay out by hand:
 `SettingsCheckboxes` (on/off is a checkbox, box first, never a switch), `.underCheckbox()`,

@@ -20,16 +20,8 @@ final class SharingTemporaryFilesTests: XCTestCase {
 
     @discardableResult
     private func run(_ tool: String, _ arguments: [String]) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: tool)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { throw NSError(domain: tool, code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: output]) }
+        let (status, output) = TestShell.run(tool, arguments)
+        guard status == 0 else { throw NSError(domain: tool, code: Int(status), userInfo: [NSLocalizedDescriptionKey: output]) }
         return output
     }
 

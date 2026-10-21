@@ -103,12 +103,8 @@ final class SharedFileLookTests: XCTestCase {
         NSRect(x: 0, y: 0, width: 1024, height: 1024).fill()
         NSGraphicsContext.restoreGraphicsState()
         try rep.representation(using: .png, properties: [:])!.write(to: set.appendingPathComponent("icon_512x512@2x.png"))
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
-        process.arguments = ["-c", "icns", set.path, "-o", url.path]
         try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try process.run()
-        process.waitUntilExit()
+        TestShell.run("/usr/bin/iconutil", ["-c", "icns", set.path, "-o", url.path])
     }
 
     func testAnythingElseIsNotALampFile() throws {
