@@ -7992,7 +7992,8 @@ enum Template {
                       LampRuntime.picture(of: last.window) == last.picture else { return }
                 report[last.line] += " (nothing changed on screen)"
             }
-            /// `shown` is where Lamp's cursor was sent for this action during the pause before it, if anywhere.
+            /// `shown` is where Lamp's cursor was sent for this action during the pause before it, if anywhere;
+            /// the spot is found again now that it's due, since the app may have moved it meanwhile.
             func step(_ index: Int, shown: Aim?) {
                 guard batch.carriesOn else { return }
                 keepBarPanel()
@@ -8010,11 +8011,11 @@ enum Template {
                 let action = actions[index]
                 let held = action.action == "key" ? min(action.amount ?? 0, 10) : 0
                 let pause = action.action == "wait" ? min(action.amount ?? 1, 10) : action.action == "bar_icon" ? 1 : held > 0 ? held + 0.2 : 0.35
-                // The cursor is on the spot already, sent there during the last pause. Where it couldn't be (the
-                // first action; a target that wasn't on screen yet; a window that has opened since), it goes now,
-                // and the action waits the lead for it.
+                // The cursor is on the spot already, sent there during the last pause. Where it isn't (the first
+                // action; a target that wasn't on screen yet; one that has moved since, or a window that has opened
+                // over it), it goes now, and the action waits the lead for it.
                 var lead = 0.0
-                if shown == nil || shown?.window != LampRuntime.windowsOnScreen.first?.windowNumber, let aim = aimed(action) {
+                if let aim = aimed(action), !(shown.map { $0.window == aim.window && hypot($0.point.x - aim.point.x, $0.point.y - aim.point.y) < 2 } ?? false) {
                     announce(id, aim, in: Self.lead)
                     lead = Self.lead
                 }

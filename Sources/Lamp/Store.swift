@@ -3637,7 +3637,8 @@ final class Store: ObservableObject {
         // Signed with the app's token rather than carrying it: distributed notifications reach every process.
         Self.signal(project, "useApp", ["actions": json, "id": id], signedAs: "lampUseAppSignature", over: "\(id)\n\(json)")
         // Waits, and keys held down (a Mac app's `key` with `amount`), each up to 10 seconds, as the app takes them;
-        // and the lead an action may give Lamp's cursor.
+        // and, per action, the pause after it and the lead apps built before the spot was sent ahead give the
+        // cursor before every one (0.45 s): such an app isn't rebuilt while it's open, and still has to answer.
         let waits = actions.reduce(0.0) { total, action in
             switch action["action"] as? String {
             case "wait": total + min(action["amount"] as? Double ?? 1, 10)
@@ -3645,7 +3646,7 @@ final class Store: ObservableObject {
             default: total
             }
         }
-        let wait = Double(actions.count) * (0.4 + Template.useAppLead) + waits + 5
+        let wait = Double(actions.count) * (0.4 + 0.45) + waits + 5
         // Once stopped, the app answers at once; one inside a dialog of its own can't until that closes, and isn't waited for.
         let answer = await Runtime.useReport(of: project, id: id, waiting: wait) {
             !app.isTerminated && (stoppedAt.map { Date().timeIntervalSince($0) < 2 } ?? true)
