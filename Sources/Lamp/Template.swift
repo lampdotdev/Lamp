@@ -16601,10 +16601,24 @@ enum Template {
         # has none).
         $s =~ s{\bfunc\s+(?:body\s*\(\s*content|makeBody\s*\(\s*configuration|placeSubviews\s*\(\s*in|update(?:NS|UI)View(?:Controller)?\s*\()[^{}]*\{}~ inside($-[0]) ? $& : "$&let _ = LampLive.touch(); " ~ge;
         @skip = spans($s);
-        # A layout's `sizeThatFits` too, which is asked again only when what it read changes. Its body (matched brace
-        # for brace) opens with the read when it returns with `return`; one written as a single expression, which a
-        # statement before it would stop returning, is run inside a closure that reads it first.
-        $s =~ s{(\bfunc\s+sizeThatFits\s*\(\s*proposal[^{}]*\{)((?:[^{}]++|(\{(?:[^{}]++|(?3))*\}))*)\}}{ my ($head, $inner, $whole, $at) = ($1, $2, $&, $-[0]); inside($at) ? $whole : $inner =~ /\breturn\b/ ? "${head}let _ = LampLive.touch(); $inner" . chr(125) : "${head} LampLive.touched " . chr(123) . " $inner " . chr(125) . " " . chr(125) }ge;
+        # A layout's `sizeThatFits` too, which is asked again only when what it read changes. Its body runs inside a
+        # closure that reads it first (`LampLive.touched`), which returns what the body returns, written as one
+        # expression or with `return`; a statement before it would stop a one-expression body returning. The body's
+        # end is found brace by brace outside strings and comments, from the last such method back.
+        @skip = spans($s);
+        my @layouts;
+        while ($s =~ /\bfunc\s+sizeThatFits\s*\(\s*proposal[^{}]*\{/g) { push @layouts, pos($s) - 1 unless inside($-[0]) }
+        for my $open (reverse @layouts) {
+            my ($depth, $close) = (0, -1);
+            for (my $i = $open; $i < length($s); $i++) {
+                next if inside($i);
+                my $c = substr($s, $i, 1);
+                if ($c eq chr(123)) { $depth++ } elsif ($c eq chr(125)) { $depth--; if ($depth == 0) { $close = $i; last } }
+            }
+            next if $close < 0;
+            substr($s, $close, 0) = " " . chr(125) . " ";
+            substr($s, $open + 1, 0) = " LampLive.touched " . chr(123) . " ";
+        }
         @skip = spans($s);
         my $main;
         $s =~ s{^([ \t]*(?:(?:\@\w+(?:\([^)]*\))?|public|internal|fileprivate|private|open|final)\s+)*)\@main((?:(?:\s|//[^\n]*|/\*[\s\S]*?\*/)+(?:\@\w+(?:\([^)]*\))?|public|internal|fileprivate|private|open|final))*(?:\s|//[^\n]*|/\*[\s\S]*?\*/)+(?:struct|class|enum|actor)\s+(\w+))}{ if (inside($-[0])) { $& } else { $main = $3; "$1$2" } }me;

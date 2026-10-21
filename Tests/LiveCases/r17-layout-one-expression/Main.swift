@@ -12,6 +12,6 @@ import AppKit
     print("before:", Log.take())
     reload(1)
     settle()
-    print("after1 (want it in place: a layout whose sizeThatFits is one expression still compiles; SwiftUI asks a layout again only when it lays out again, so nothing here shows it):", Log.take())
+    print("after1 (want it in place: each sizeThatFits still compiles, written as one expression, with a brace in a string or a comment, or a nested closure's return; SwiftUI asks a layout again only when it lays out again):", Log.take())
     _ = window
 }}}
