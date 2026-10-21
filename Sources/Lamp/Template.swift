@@ -5086,6 +5086,8 @@ enum Template {
                 glass.hasShadow = false
                 glass.isReleasedWhenClosed = false
                 glass.becomesKeyOnlyIfNeeded = false
+                // An alert the app runs while the person points would otherwise keep every click for itself.
+                glass.worksWhenModal = true
                 let picker = Picker(frame: NSRect(origin: .zero, size: window.frame.size))
                 picker.autoresizingMask = [.width, .height]
                 picker.items = LampDriver.elements(in: window).map(\.item)
@@ -5094,6 +5096,19 @@ enum Template {
                 glass.contentView = picker
                 window.addChildWindow(glass, ordered: .above)
                 glass.makeKeyAndOrderFront(nil)
+                picker.keepOnTop()
+                // A panel, sheet or alert of the app's, open already or opening while the person points, would
+                // cover the outline and take its clicks.
+                picker.observers = [NSApplication.didUpdateNotification, NSWindow.didBecomeKeyNotification,
+                                    NSApplication.didResignActiveNotification, NSApplication.didBecomeActiveNotification].map {
+                    NotificationCenter.default.addObserver(forName: $0, object: nil, queue: .main) { _ in
+                        MainActor.assumeIsolated { picker.keepOnTop() }
+                    }
+                } + [NSWindow.didMoveNotification, NSWindow.didResizeNotification].map {
+                    NotificationCenter.default.addObserver(forName: $0, object: window, queue: .main) { _ in
+                        MainActor.assumeIsolated { picker.keepOnTop() }
+                    }
+                }
                 picker.addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .activeAlways, .inVisibleRect, .cursorUpdate],
                                                       owner: picker, userInfo: nil))
                 picker.keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
@@ -5103,10 +5118,48 @@ enum Template {
                 current = picker
             }
 
+            private var observers: [NSObjectProtocol] = []
+
+            /// Keeps the glass over the app's own windows on the target, however high they float (a floating
+            /// panel, a modal panel or an alert), and over its sheets, but no higher: at the window's own level
+            /// when nothing of the app's is over it, so other apps' windows still cover it as they cover the app.
+            /// A child window is kept at its parent's level by AppKit, so the glass stops being the window's child
+            /// while something higher is over it, and follows the window's frame itself until then.
+            func keepOnTop() {
+                guard let glass = window, let target, glass.isVisible else { return }
+                // A floating panel goes when the app isn't in front (macOS hides it a moment after saying so).
+                let over = NSApp.windows.filter {
+                    $0 !== glass && $0 !== target && $0.isVisible && $0.frame.intersects(target.frame) && (NSApp.isActive || !$0.hidesOnDeactivate)
+                }
+                let level = over.map(\.level).filter { $0 < .popUpMenu }.reduce(target.level) { max($0, $1) }
+                if level > target.level {
+                    if glass.parent != nil { target.removeChildWindow(glass) }
+                    if glass.level != level { glass.level = level }
+                    if glass.frame != target.frame { glass.setFrame(target.frame, display: true) }
+                } else if glass.parent == nil {
+                    glass.level = target.level
+                    glass.setFrame(target.frame, display: true)
+                    target.addChildWindow(glass, ordered: .above)
+                }
+                // Front to back, this app's windows on the screen.
+                let order = NSWindow.windowNumbers(options: []) ?? []
+                func place(_ window: NSWindow) -> Int { order.firstIndex(of: NSNumber(value: window.windowNumber)) ?? .max }
+                guard let top = over.filter({ $0.level == level }).min(by: { place($0) < place($1) }), place(top) < place(glass) else { return }
+                if glass.parent != nil {
+                    // A sheet is the window's child as the glass is: the glass goes back in as its last child.
+                    target.removeChildWindow(glass)
+                    target.addChildWindow(glass, ordered: .above)
+                } else {
+                    glass.order(.above, relativeTo: top.windowNumber)
+                }
+            }
+
             /// `tell` is false when Lamp hears instead that something was picked, or pointing starts over.
             func stop(tell: Bool = true) {
                 keyMonitor.map(NSEvent.removeMonitor)
                 keyMonitor = nil
+                observers.forEach(NotificationCenter.default.removeObserver)
+                observers = []
                 if let glass = window {
                     glass.parent?.removeChildWindow(glass)
                     glass.orderOut(nil)

@@ -809,7 +809,7 @@ Image Playground. An app opened for its chat that never connects one (it couldn'
 window (`MagicPanel.showChatIfAppNeverComes`). The chat is drawn by another process, which AppKit's focus doesn't follow
 (what had the keyboard, a list say, keeps it through a click in the chat), so once a click in the chat has landed the
 keyboard goes to it (`LampSidebar.watchClicks`). Point at the Screen is an item of the + by the message box, beside
-Attach a File…, in both chats (`ChatLook.MessageBar`'s `point`, `PlusMenu`) while the app is open on this Mac (`MagicPanel.point`; from Lamp's window, Lamp comes back in front when it's done). It lets the person point at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), outlines the smallest named
+Attach a File…, in both chats (`ChatLook.MessageBar`'s `point`, `PlusMenu`) while the app is open on this Mac (`MagicPanel.point`; from Lamp's window, Lamp comes back in front when it's done). It lets the person point at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), kept above the app's own panels, sheets and alerts however high they float, but no higher, so other apps' windows still cover it (`Picker.keepOnTop`), outlines the smallest named
 thing under the pointer from its own accessibility tree (`LampDriver.elements`), a click where nothing is named (a game's
 ball, a drawing) takes the area around it, and a drag draws a box of the person's own; it then leaves a cropped
 picture in its runtime folder and says what it is (an area is named by where it is, "Top left area"); Lamp attaches that picture to the message, named after the
