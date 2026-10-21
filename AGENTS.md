@@ -516,7 +516,7 @@ are refused with the reason rather than reported as done. Its list holds the dev
 booted one, and it loses a device's display when the simulator restarts: both are told to the agent as they
 are. `SimulatorLiveTests` runs the driver against a real window when `LAMP_LIVE_UDID` is set.
 
-**The devices Lamp knows** (`Device`, Device.swift; the plan is `design/devices/README.md`): one record for every
+**The devices Lamp knows** (`Device`, Device.swift): one record for every
 device the person owns, read from the device itself and never guessed by a model: maker and exact model, model id,
 the person's name for it, OS and version, screens, input, the features that change what's built (a Dynamic Island,
 HealthKit), how Lamp reaches it, and where its setup stands (`Device.setup`: ready, or the one next step). This Mac
