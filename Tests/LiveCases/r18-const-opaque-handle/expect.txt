@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Store.handle would be made again for its new value, and a pointer names what the open app made once, which there would then be two of)
+== run
+before: opened=0 handle=4097
+RELOAD 1: REOPEN Store.handle would be made again for its new value, and a pointer names what the open app made once, which there would then be two of
+after1 (want a reopen: the handle was opened once, and a new one would leave the open app's first behind): opened=1 handle=4097
+before: opened=0 handle=4097
+RELOAD 1: in the restart
+after1 (want a reopen: the handle was opened once, and a new one would leave the open app's first behind): opened=1 handle=4097
