@@ -2,7 +2,7 @@
 name: Solitaire
 offer: Make this deck yours
 tweaks:
-  - suit.spade: Make it Spider Solitaire
+  - table.furniture: Play on a dark wooden table
   - dollarsign.circle: Score it the Vegas way
-  - cat: Draw a cat on card backs
+  - rectangle.on.rectangle: Turn it into a memory game
 ---

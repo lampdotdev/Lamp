@@ -2,7 +2,7 @@
 name: Fireside
 offer: Make Fireside yours
 tweaks:
+  - record.circle: Give it a vintage vinyl look
   - metronome: Add a metronome for practice
-  - music.note.list: Make a setlist for tonight
-  - arrow.up.arrow.down: Transpose songs for a capo
+  - guitars: Make it a ukulele songbook
 ---

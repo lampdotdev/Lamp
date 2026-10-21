@@ -373,8 +373,10 @@ preview.png, a picture of its window that the desk shows while the pointer is on
 with the app's about.json line beside it in large type, 90 characters at most (`WishStage`, `WishDesk.describedIn`; every
 Mac app saves a fresh one at each launch, `LampRuntime.preview`, and Lamp takes one of the simulator for an iPhone
 app, both at `Runtime.previewURL`), and starter.md, Lamp's own: the wish's name and what its chat offers to change first, a line and three changes, each
-with its tile's symbol (`- drop: Add a water counter`): changes the app doesn't do already, that the agent can make in
-one request with no key, account or pictures to draw. They
+with its tile's symbol (`- drop: Add a water counter`). The three show how far a starter can go, not small tweaks to
+it: one changes how it looks (Hot Shelf as a realistic kitchen cabinet), one what it does (ingredients on every tag),
+and one what it's about (Hot Shelf as a beer tracker), in that order. Each is something the app doesn't do already,
+that the agent can make in one request with no key or account, its look drawn in code rather than pictures. They
 are Mac apps that need no key or account, use the AI the person builds with when they use any, and come with
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
 
@@ -406,8 +408,9 @@ Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp). Into a new `Resource
 3. Write `APP.md` for the agent that changes it, in the shape the other starters' have (`Kind:`, what it does,
    Code, Data, Easy to change), from the code as it is, not the app's own APP.md.
 4. Write `starter.md`: `name`, `offer` ("Make <name> yours") and three tweaks of at most six words, each with an SF
-   Symbol. They're changes the app doesn't already make, that the agent can make in one request with no key,
-   account or pictures to draw.
+   Symbol: a new look, a new thing it does, and a new subject (as above), each big enough to show the person the
+   app can become their own rather than be adjusted. They're changes the app doesn't already make, that the agent
+   can make in one request with no key or account, drawn in code rather than pictures.
 5. Take `preview.png` as above (the app's own `.lamp/runtime/preview.png` is the picture when it shows only example
    content), paint and draw the icon with `LAMP_RENDER_STARTER_ICONS=<folder> LAMP_PAINT_STARTER_ART=1
    OPENROUTER_API_KEY=… swift test --filter StarterIconsTests` and look at the artwork it picked, then run
