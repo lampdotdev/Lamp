@@ -276,6 +276,21 @@ enum Gallery {
         build("Ready") { $0.finish(worked: true) },
         build("Didn't finish") { $0.finish(worked: false) },
         build("Asking first") { $0.wait() },
+        // A long first build: the steps so far behind one line under the plan, as "Worked for…" holds them after.
+        Entry(group: "Build card", name: "With its steps so far") {
+            var progress = TurnProgress(newApp: true)
+            progress.activity = "Building…"
+            progress.activitySince = Date().addingTimeInterval(-95)
+            progress.plan = [PlanPart(id: 0, title: "The big number and the + button", done: true, files: ["Counter.swift"]),
+                             PlanPart(id: 1, title: "Remembering the count after closing", done: true, files: ["Model.swift"])]
+            let steps = [LogLine(kind: .status, text: "Ran: cat APP.md", said: "Reading how the app is laid out"),
+                         LogLine(kind: .status, text: "Working on the interface"),
+                         LogLine(kind: .status, text: "Ran: ./gradlew assembleDebug", said: "Building the app"),
+                         LogLine(kind: .status, text: "Ran: ./gradlew assembleDebug", said: "Building the app again")]
+            return AnyView(BuildCardView(title: "Droid Lab", name: "Droid Lab", iconReady: false, progress: progress, steps: steps) {
+                BlueprintIcon(letter: "D", size: 44)
+            })
+        },
     ]
 
     private static func build(_ name: String, _ change: @escaping (inout TurnProgress) -> Void) -> Entry {

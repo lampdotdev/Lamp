@@ -68,7 +68,9 @@ A capability given to one engine must be given to all of them that can take it, 
   forward at the agent's first look. When no chat comes back beside the app after a pass reopens it (the reopen
   failed, it crashed, or the pass made it an app with no window), the chat goes back to Lamp's window
   (`MagicPanel.keepChatInSight`). The early build is settled before the turn lets go of the app, however it ends.
-  Result cards saved by an earlier Lamp still read and aren't shown (`LogLine.visible`). A new app's build card folds
+  Result cards saved by an earlier Lamp still read and aren't shown (`LogLine.visible`). A new app's first turn has the build card in
+  the live line's place: the agent's plan with ticks, and under it the turn's steps so far behind one line
+  (`BuildCardView.steps`, "4 steps so far"), folded, so a long first build reads without Agent Details. The card folds
   to its first line (its name, Ready) once the turn is over, with no picture of the app. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
   tool waits for the person: it returns at once, the agent ends its reply, and a click is sent as the
