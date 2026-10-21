@@ -145,6 +145,28 @@ final class WorkedForTests: XCTestCase {
         XCTAssertEqual(steps.first?.text, "Ran: ls Sources\ngrep heat")
     }
 
+    /// A command's row can be logged after file work named after it (calls made together, the command still
+    /// running): the file work is part of that row, so the name shows once, in the live line and in "Worked for…".
+    func testFileWorkBeforeItsCommandsRowIsThatRow() {
+        let lines = [LogLine(kind: .user, text: "make it a beer tracker"),
+                     LogLine(kind: .tool, text: "read Model.swift", said: "Reading how the shelf works"),
+                     LogLine(kind: .tool, text: "bash grep -rn label Sources", said: "Reading how labels and pictures are found"),
+                     LogLine(kind: .tool, text: "read Label.swift", said: "Reading how labels and pictures are found"),
+                     LogLine(kind: .status, text: "Ran: grep -rn label Sources", said: "Reading how labels and pictures are found"),
+                     LogLine(kind: .tool, text: "bash grep -rn hot Sources", said: "Finding every hot-sauce word and number"),
+                     LogLine(kind: .status, text: "Ran: grep -rn hot Sources", said: "Finding every hot-sauce word and number")]
+        let visible = LogLine.visible(lines, details: false)
+        let live = ChatItem.items(ChatItem.live(visible, doing: Activity.thinking).steps)
+        XCTAssertEqual(live.flatMap { item -> [String] in
+            guard case .statuses(let run) = item else { return [] }
+            return run.map { $0.said ?? $0.text }
+        }, ["Reading how the shelf works", "Reading how labels and pictures are found", "Finding every hot-sauce word and number"])
+        let done = visible + [LogLine(kind: .agent, text: "Done."), LogLine(kind: .summary, text: "Worked for 9s · $0")]
+        guard case .work(_, _, let steps)? = ChatItem.items(done, gather: true).last else { return XCTFail("no Worked for") }
+        XCTAssertEqual(steps.map { $0.said ?? $0.text },
+                       ["Reading how the shelf works", "Reading how labels and pictures are found", "Finding every hot-sauce word and number"])
+    }
+
     /// The step the turn is still on is what the line at the bottom says, not a step done yet: it joins the list above
     /// the line once the agent moves on (it writes, it thinks, it starts another step).
     func testTheStepGoingOnIsTheLineNotAStepDone() {

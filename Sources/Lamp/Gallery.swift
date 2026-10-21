@@ -295,6 +295,21 @@ enum Gallery {
                 ChatLook.RanCommand("ls Assets")
             })
         },
+        // The steps as the chat gathers them from what was logged: file work Lamp named after a command, logged before
+        // that command's own row (calls made together, the command still running), is one step with it.
+        Entry(group: "Activity", name: "File work before its command") {
+            let logged = [LogLine(kind: .user, text: "Turn this into a beer tracker"),
+                          LogLine(kind: .tool, text: "bash cat Sources/App.swift", said: "Reading how the shelf works"),
+                          LogLine(kind: .status, text: "Ran: cat Sources/App.swift", said: "Reading how the shelf works"),
+                          LogLine(kind: .tool, text: "bash grep -rn label Sources", said: "Reading how labels and pictures are found"),
+                          LogLine(kind: .tool, text: "read Sources/LabelView.swift", said: "Reading how labels and pictures are found"),
+                          LogLine(kind: .status, text: "Ran: grep -rn label Sources", said: "Reading how labels and pictures are found"),
+                          LogLine(kind: .tool, text: "bash grep -rn hot Sources", said: "Finding every hot-sauce word and number"),
+                          LogLine(kind: .status, text: "Ran: grep -rn hot Sources", said: "Finding every hot-sauce word and number")]
+            let steps = ChatItem.live(LogLine.visible(logged, details: false), doing: Activity.thinking).steps
+            return AnyView(ChatLook.ActivityLine("Mulling it over", started: Date().addingTimeInterval(-40),
+                                                 hasSteps: true) { StepList(steps: steps) })
+        },
         // A change waiting for Reload, under the answer that says so: the action line's symbol and words in the steps'
         // column, with "Worked for…" above and Undo Last Change below.
         Entry(group: "Activity", name: "Reload under a change") {
