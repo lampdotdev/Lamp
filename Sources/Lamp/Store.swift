@@ -5169,6 +5169,9 @@ final class Store: ObservableObject {
             var mac = current
             mac.chosen = .mac
             _ = await install(mac, inFront: true, fresh: true, reload: true, saysReady: false)
+            // A request paused for this Reload (`pause`) goes on once the app is given back: here when the turn is
+            // already over, else when it ends (`finish`).
+            startQueued(current)
             guard turns[project.id] === turn, !Runtime.waitsForReload(current) else { return }
             turn.reloadedByPerson = true
             log(current, .status, "Reopened \(current.name) with the change")
