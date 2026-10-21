@@ -78,6 +78,11 @@ enum SwiftSource {
         /// a constant's value is made by what it calls, as far down as that goes (`constantEntries`).
         var bodies: [(start: Position, last: Position)] = []
         var calls: [(at: Position, to: Position)] = []
+        /// Every use of the app's own declarations, where it's made and what it names, as the compiler resolved it:
+        /// its qualified name (`Mood.happy`, `Model.$count`), or for a type written out (the `Mood` of
+        /// `Mood.allCases`, `[Mood]`), that type's name. What code names is read from here, never from its text, so a
+        /// string, a comment or a local of the same name is no use of it.
+        var uses: [(at: Position, name: String)] = []
         /// Where each enum's cases are declared, with their raw values: what a use of a case is made of.
         var cases: [(start: Position, last: Position)] = []
         /// Each type's own `hash(into:)`, by its qualified name: sets and dictionaries the open app keeps were laid out
@@ -85,6 +90,24 @@ enum SwiftSource {
         var hashing: [String: (start: Position, last: Position)] = [:]
         /// The names of the app's own typealiases, which may stand for a system type's name (`typealias Color = Paint`).
         var aliases: Set<String> = []
+
+        /// Whether code in `ranges` names the type (its qualified name, as `bare` gives it): uses it as a type, or
+        /// uses one of its members. One of the `cases` alone (`.a`) is no use of the type as a whole: what's made
+        /// from it is the same however many cases there are.
+        func names(type: String, within ranges: [(start: Position, last: Position)], except cases: Set<String> = []) -> Bool {
+            let short = String(type.split(separator: ".").last ?? "")
+            return uses.contains { use in
+                guard ranges.contains(where: { SwiftSource.within(use.at, $0) }) else { return false }
+                if use.name == type || use.name == short || use.name.hasSuffix("." + short) { return true }
+                guard use.name.hasPrefix(type + ".") else { return false }
+                return !cases.contains(String(use.name.dropFirst(type.count + 1).prefix { $0 != "(" }))
+            }
+        }
+
+        /// Whether code in `ranges` uses what's declared at `position` (a constant, by its name's place).
+        func uses(_ position: Position, within ranges: [(start: Position, last: Position)]) -> Bool {
+            calls.contains { call in call.to == position && ranges.contains { SwiftSource.within(call.at, $0) } }
+        }
 
         /// Every name the app gives a type of its own, by its last part: the system's type of that name isn't what
         /// the app's code means by it.
@@ -190,6 +213,15 @@ enum SwiftSource {
         private var entryOpen = false
         private var variable: (indent: Int, key: String)?
         private var attribute: (start: Position, last: Position)?
+        // Where the last node read with a place starts: a type annotation's line has none.
+        private var lastAt: Position?
+
+        /// An attribute's quoted value on a line (`decl="…"`).
+        static func attribute(_ name: String, in line: String) -> Substring? {
+            guard let open = line.range(of: " \(name)=\"") else { return nil }
+            let rest = line[open.upperBound...]
+            return rest.firstIndex(of: "\"").map { rest[..<$0] }
+        }
 
         func take(_ line: Walk.Line) {
             let indent = line.indent, opens = line.opens
@@ -198,12 +230,28 @@ enum SwiftSource {
             }
             if opens("func_decl", "constructor_decl", "subscript_decl", "pattern_binding_decl"), !line.has(" implicit"),
                let r = SwiftSource.range(in: line.text) {
+                lastAt = r.start
                 out.bodies.append(r)
                 if opens("func_decl"), line.has(" \"hash(into:)\" "), let owner = line.owner { out.hashing[owner] = r }
             } else if opens("enum_case_decl"), let r = SwiftSource.range(in: line.text) {
                 out.cases.append(r)
-            } else if line.has(" decl=\""), let to = SwiftSource.declared(in: line.text), let at = SwiftSource.range(in: line.text)?.start {
-                out.calls.append((at, to))
+            } else if line.has(" decl=\""), let at = SwiftSource.range(in: line.text)?.start {
+                lastAt = at
+                if let to = SwiftSource.declared(in: line.text) { out.calls.append((at, to)) }
+                if let value = Self.attribute("decl", in: line.text), let name = SwiftSource.usedName(value) {
+                    out.uses.append((SwiftSource.location(in: line.text) ?? at, name))
+                }
+            }
+            // A type written out: as an expression (`Mood.allCases`), or in an annotation, whose line has no place of
+            // its own and is taken to be where the declaration around it starts.
+            // (Not one the compiler supplied: `.a`'s base is `Mood`, written nowhere.)
+            if line.has(" typerepr=\""), !line.has(" implicit "), let value = Self.attribute("typerepr", in: line.text),
+               let at = SwiftSource.location(in: line.text) ?? lastAt {
+                for word in value.split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "_" || $0 == ".") }) where !word.isEmpty {
+                    out.uses.append((at, String(word)))
+                }
+            } else if line.has(" bind=\""), let value = Self.attribute("bind", in: line.text), let name = SwiftSource.usedName(value), let at = lastAt {
+                out.uses.append((at, name))
             }
             if let open = binding, indent <= open.indent { binding = nil }
             if let open = variable, indent <= open.indent { variable = nil; attribute = nil }
@@ -458,6 +506,28 @@ enum SwiftSource {
     }
 
     static func before(_ a: Position, _ b: Position) -> Bool { a.line < b.line || (a.line == b.line && a.column <= b.column) }
+    static func within(_ p: Position, _ r: (start: Position, last: Position)) -> Bool { p.file == r.start.file && before(r.start, p) && before(p, r.last) }
+
+    /// The qualified name a `decl="…"` or `bind="…"` names, when it's the app's (it carries a place):
+    /// `App.(file).Shelf extension.$count@A.swift:3:6 [with …]` is `Shelf.$count`.
+    static func usedName(_ value: Substring) -> String? {
+        var text = value
+        if let with = text.range(of: " [with") { text = text[..<with.lowerBound] }
+        guard let at = text.range(of: "@") else { return nil }
+        text = text[..<at.lowerBound]
+        guard let file = text.range(of: ".(file).") else { return nil }
+        return text[file.upperBound...].replacingOccurrences(of: " extension", with: "")
+    }
+
+    /// Where a node's own token is (`location=A.swift:4:57`), which a member's range starts before (at its base).
+    static func location(in line: String) -> Position? {
+        guard let open = line.range(of: " location=") else { return nil }
+        let rest = line[open.upperBound...]
+        let value = rest.prefix { $0 != " " }
+        let parts = value.split(separator: ":")
+        guard parts.count >= 3, let row = Int(parts[parts.count - 2]), let column = Int(parts[parts.count - 1]) else { return nil }
+        return Position(file: parts.dropLast(2).joined(separator: ":"), line: row, column: column)
+    }
 
     /// The text of every declaration of the app's that a stretch of code calls, and of what those call, as far down
     /// as it goes, in a steady order: a constant made by `build()` is another value once `build()` says otherwise.
@@ -465,8 +535,21 @@ enum SwiftSource {
     /// for a constant, which Lamp makes again; a stored `var` is state, kept as any object keeps its values.
     static func calledText(from start: Position, to last: Position, in declarations: Declarations, files: inout [String: Text],
                            members followMembers: Bool = false) -> String {
+        let ranges = called(from: start, to: last, in: declarations, files: &files, members: followMembers)
+        return ranges.compactMap { r -> String? in
+            guard let file = files[r.start.file] ?? Text(path: r.start.file) else { return nil }
+            files[r.start.file] = file
+            guard let from = file.offset(r.start), let end = file.tokenEnd(r.last), from < end else { return nil }
+            return file.slice(from, end)
+        }.sorted().joined(separator: "\n")
+    }
+
+    /// The same declarations, by where each runs: what's asked of them (which types and constants they name) is
+    /// asked of the compiler's uses there (`Declarations.names`, `uses`), never of their text.
+    static func called(from start: Position, to last: Position, in declarations: Declarations, files: inout [String: Text],
+                       members followMembers: Bool = false) -> [(start: Position, last: Position)] {
         func within(_ p: Position, _ r: (start: Position, last: Position)) -> Bool { p.file == r.start.file && before(r.start, p) && before(p, r.last) }
-        var seen: Set<Int> = [], pending = [(start: start, last: last)], parts: [String] = [], typesSeen = Set<String>()
+        var seen: Set<Int> = [], pending = [(start: start, last: last)], parts: [(start: Position, last: Position)] = [], typesSeen = Set<String>()
         func text(_ r: (start: Position, last: Position)) -> String? {
             guard let file = files[r.start.file] ?? Text(path: r.start.file) else { return nil }
             files[r.start.file] = file
@@ -495,7 +578,7 @@ enum SwiftSource {
                    typesSeen.insert(type.key).inserted {
                     // And what each member's starting value calls, as far down as that goes (`var audio = Audio()`).
                     for member in members(of: type.value) {
-                        if let made = text(member) { parts.append(made) }
+                        parts.append(member)
                         pending.append(member)
                     }
                 }
@@ -504,14 +587,11 @@ enum SwiftSource {
                         .min(by: { before(declarations.bodies[$1].start, declarations.bodies[$0].start) }),
                       !seen.contains(index), case let body = declarations.bodies[index], !(body.start == start && body.last == last) else { continue }
                 seen.insert(index)
-                guard let text = files[body.start.file] ?? Text(path: body.start.file) else { continue }
-                files[body.start.file] = text
-                guard let from = text.offset(body.start), let end = text.tokenEnd(body.last), from < end else { continue }
-                parts.append(text.slice(from, end))
+                parts.append(body)
                 pending.append(body)
             }
         }
-        return parts.sorted().joined(separator: "\n")
+        return parts
     }
 
     /// Each one's starting value's digest, as an entry of `group`.

@@ -906,7 +906,10 @@ read in one pass, `SwiftSource.walk`, which keeps the scopes and keys every type
 type, a private one with its file, a local one with its function) for every reader of it: the layout (`LiveReload.Members`),
 where each property is declared (`SwiftSource.DeclarationsReader`), what's read at launch (`LaunchReader`) and what
 old code does (`LiveReload.OldCode`), all taking the same lines in one walk in `LiveReload.analysis`, so a type can't
-be keyed two ways by two readers) (`LiveReload.reloadable`, comparing with the sources the open app runs, kept in `.lamp/live/running`, which holds only
+be keyed two ways by two readers); what a stretch of code names (a constant, a type, a view's `$name`, a publisher) is the
+compiler's own resolution of it (`Declarations.uses`, from each reference's `decl`, each annotation's `bind` and each type
+written out), never a search of its text, so a string, a comment or another type's member of the same name is no use of
+it, and a case alone (`.a`) is no use of its enum as a whole (`LiveReload.reloadable`, comparing with the sources the open app runs, kept in `.lamp/live/running`, which holds only
 for the copy that took the last change: one opened again since, by the person or macOS, starts from what was installed,
 so it's forgotten and the change reopens the app, `LiveReload.tookChanges`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
 linked into a library. Every file is compiled when what's declared changed (a function, an initializer, a computed
