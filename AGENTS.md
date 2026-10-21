@@ -1036,7 +1036,8 @@ saved nor installed, as after any build that fails, and its errors ride with the
 the Reload button reloads the app: a message typed meanwhile waits in the same line (the chats say "Sent once you
 press Reload" under it, `ChatLook.waitingForReload`), since the chat is beside the app and a reopen takes the chat
 down with it, and nothing the agent did meanwhile could be seen. So the note asks for the changes that go in live
-first and the held ones last. The turn's end tallies them in a detail line (`Store.outcomeTally`), which is how often changes go in live,
+first and the held ones last, naming what's held (the icon, capabilities.json, a widget or Share item, what's read at launch, a Codable
+type's new stored properties), so a request ends with one Reload at most. The turn's end tallies them in a detail line (`Store.outcomeTally`), which is how often changes go in live,
 and says how long the person waited to see the turn's first change and the longest wait between changes after it
 (`Store.paceTally`, from `Turn.shown`), which is what the rules for showing work early are judged by. While
 the agent works, Lamp also puts each change it saves into the open app by itself (`Store.autoApply`: the sources read
