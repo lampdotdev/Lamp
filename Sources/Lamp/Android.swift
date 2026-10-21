@@ -535,13 +535,14 @@ enum Adb {
                 }
             case "type":
                 guard let text = action.text else { report.append("\(index + 1). type needs text."); continue }
-                // The field typed into: the target, else the one with the keyboard, read before anything is sent.
-                let field = action.target.flatMap { screen?.find($0) } ?? screen?.items.first { $0.kind == "field" && $0.focused }
                 if let (at, _) = point(action) {
                     let (x, y) = pixels(at)
                     _ = await run(["shell", "input", "tap", "\(x)", "\(y)"], on: serial, timeout: 30)
                     try? await Task.sleep(for: .milliseconds(300))
                 }
+                // The field typed into, read once the tap has landed: the one with the keyboard now, else the target.
+                let before = await Self.screen(on: serial, density: density)
+                let field = before?.items.first { $0.kind == "field" && $0.focused } ?? action.target.flatMap { before?.find($0) }
                 // In place of what the field held, as on the other devices: everything selected and deleted where the
                 // device takes a key combination (Android 11 and later); on an older one, to the end and back over
                 // every character the field was seen to hold, in calls of a hundred keys.
