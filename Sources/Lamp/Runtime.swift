@@ -415,10 +415,16 @@ enum Runtime {
     }
 
     /// Whether the app crashed since `date`: macOS wrote a report for it. Not a quit, which leaves none.
-    static func crashed(_ project: LampProject, since date: Date) -> Bool {
+    static func crashed(_ project: LampProject, since date: Date) -> Bool { crash(of: project, since: date) != nil }
+
+    /// What macOS's newest report of a crash since `date` says, whichever build it was of.
+    static func crash(of project: LampProject, since date: Date) -> String? {
         let files = (try? FileManager.default.contentsOfDirectory(at: reports, includingPropertiesForKeys: nil)) ?? []
-        return files.contains { $0.pathExtension == "ips" && $0.lastPathComponent.hasPrefix(project.exe + "-")
-            && (report($0, bundleID: project.bundleID)?.date ?? .distantPast) > date }
+        return files
+            .filter { $0.pathExtension == "ips" && $0.lastPathComponent.hasPrefix(project.exe + "-") }
+            .compactMap { report($0, bundleID: project.bundleID) }
+            .filter { $0.date > date }
+            .max { $0.date < $1.date }?.summary
     }
 
     /// Reads a macOS crash report (.ips): one line of JSON metadata, then the report as JSON.

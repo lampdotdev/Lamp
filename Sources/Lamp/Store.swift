@@ -2489,7 +2489,10 @@ final class Store: ObservableObject {
             guard let project = projects.first(where: { $0.id == id }) else { return false }
             // Not while an app for both points at iOS: its build there isn't the Mac app's, and what waits is
             // for the Mac. It stays waiting, and goes in when Try On is back on this Mac.
+            // Nor while a change that just went into it is watched: its going may be that change's crash, whose build
+            // mustn't replace the version the person had (`setAside`).
             return !project.onIOS && !isRunning(project) && FileManager.default.fileExists(atPath: project.builtURL.path)
+                && reloadWatches[id] == nil
         }
         for project in projects where due.contains(project.id) {
             guard begin(project) != nil else { continue }
@@ -3546,9 +3549,14 @@ final class Store: ObservableObject {
     /// A death in the first seconds of a launch a look went on from (`Runtime.LaunchWatch`), said once, ahead of the
     /// agent's next look or use_app; the turn's end takes it as a crash on launch too (`turn.look.crash`).
     private func withLateCrash(_ result: (Int, [String: Any]), of project: LampProject) -> (Int, [String: Any]) {
-        guard let turn = turns[project.id], let crash = lateCrash(of: turn) else { return result }
+        guard let turn = turns[project.id] else { return result }
+        let note: String
+        if let crash = lateCrash(of: turn) {
+            note = "Note from Lamp: the app quit a few seconds after it was last opened, so it isn't running.\n\n\(crash)"
+        } else if let aside = untoldSetAside(project) {
+            note = "Note from Lamp: your last saved change crashed the app. \(aside)\nFix the cause; the next change you save goes in again."
+        } else { return result }
         var (status, answer) = result
-        let note = "Note from Lamp: the app quit a few seconds after it was last opened, so it isn't running.\n\n\(crash)"
         if status == 200 { answer["text"] = note + "\n\n" + (answer["text"] as? String ?? "") }
         else { answer["error"] = note + "\n\n" + (answer["error"] as? String ?? "") }
         return (status, answer)
@@ -4938,7 +4946,9 @@ final class Store: ObservableObject {
                 guard let self, !Task.isCancelled, turns[project.id] === turn, !turn.stopped, turn.agent != nil,
                       !turn.look.inProgress, !turn.building, !turn.keptOpen, turn.applying == nil,
                       let current = current(project), LiveReload.eligible(current),
-                      isRunning(current), !Runtime.waitsForReload(current) else { continue }
+                      isRunning(current), !Runtime.waitsForReload(current),
+                      // A change that crashed the app waits for the agent to hear of it: what it saves meanwhile may crash it again.
+                      setAsideChanges[project.id]?.told != false else { continue }
                 let now = Runtime.fingerprint(current)
                 // Still being written: wait for a reading with nothing new in it.
                 if now != seen { seen = now; seenAt = Date(); continue }
@@ -4991,7 +5001,8 @@ final class Store: ObservableObject {
     /// the build goes on the usual way, and its install decides.
     private func reloadBeforeBuilding(_ project: LampProject, command: String, env: [String: String], fingerprint: String) async -> Bool {
         reloadedBeforeBuild.remove(project.id)
-        guard LiveReload.eligible(project), !macCopies(of: project).isEmpty, Self.binary(of: project, contains: "reloaded.txt") else { return false }
+        guard LiveReload.eligible(project), !macCopies(of: project).isEmpty, Self.binary(of: project, contains: "reloaded.txt"),
+              !isSetAside(project) else { return false }
         // The open app already runs these sources, and their whole build is on its way: nothing more to do.
         if liveBuilds[project.id] != nil, liveBuildRuns[project.id]?.fingerprint == fingerprint {
             reloadedBeforeBuild.insert(project.id)
@@ -5074,7 +5085,7 @@ final class Store: ObservableObject {
             return false
         }
         guard LiveReload.eligible(project), let app = macCopies(of: project).first,
-              Self.binary(of: project, contains: "reloaded.txt") else { return false }
+              Self.binary(of: project, contains: "reloaded.txt"), !isSetAside(project) else { return false }
         // The open copy isn't the one earlier changes went into (opened again since, outside Lamp): what Lamp knows
         // it runs isn't true of it, so the change reopens it, and the whole build is what it runs then.
         guard LiveReload.tookChanges(project, pid: app.processIdentifier, launched: app.launchDate) else {
@@ -5100,8 +5111,14 @@ final class Store: ObservableObject {
         // The open app's data as its old code left it, before the new code can touch it.
         await DataSnapshots.take(project)
         note("Updating \(project.name) in place…", for: project)
+        // Watched from before it's sent: a change can crash the app as it loads, before the app answers.
+        let watch = watchAfterReload(project, app: app, fingerprint: Runtime.fingerprint(project))
         switch await LiveReload.put(project, changed: changed, token: Template.token(for: project)) {
         case .reopen(let why):
+            // Gone as it took the change: what the watch makes of that (a crash sets the change aside) is waited
+            // for, so whoever asked finds it done (`installNow`).
+            if app.isTerminated { await watch.task.value; return false }
+            endWatch(project, watch.token)
             turns[project.id]?.reloadWhy = why
             if saysWhy { log(project, .detail, "\(project.name) has to reopen for this change: \(why).") }
             return false
@@ -5109,8 +5126,10 @@ final class Store: ObservableObject {
             for line in said { log(project, .detail, line + " without reopening \(project.name).") }
             LiveReload.noteProcess(project, pid: app.processIdentifier, launched: app.launchDate)
         }
+        // A change that went in replaces one set aside before it.
+        setAsideChanges[project.id] = nil
+        if reloadWatches[project.id]?.token == watch.token { reloadWatches[project.id]?.until = Date().addingTimeInterval(Self.crashWatch) }
         AppTransition.land(project)
-        watchAfterReload(project, app: app)
         turns[project.id]?.shown.append(Date())
         // The live library was made from the same sources as a build waiting for Reload, so that change is in too:
         // nothing is held from the app any more (the app's Reload button and the chat's line go, and `use_app` is
@@ -5133,38 +5152,104 @@ final class Store: ObservableObject {
         return true
     }
 
-    /// The safety net under a live change: if the app crashes within a few seconds of one going in, what it was
-    /// told to run didn't suit it after all. It's opened again from the full build, which goes in as it closes
-    /// (the install waiting for that), and the chat's details say so. Only a crash, which leaves macOS's report:
-    /// an app quit on purpose (its Quit, Lamp's Stop) stays closed.
-    private func watchAfterReload(_ project: LampProject, app: NSRunningApplication) {
-        let since = Date()
-        reloadsWatched.insert(project.id)
-        Task { [weak self] in
-            defer { self?.reloadsWatched.remove(project.id) }
-            for _ in 0..<16 {
-                try? await Task.sleep(for: .milliseconds(500))
-                guard app.isTerminated else { continue }
+    /// The safety net under a live change: if the app crashes as the change goes in, or in the half minute after, the
+    /// change didn't suit it, and it's set aside (`setAside`). Only a crash, which leaves macOS's report: an app quit on
+    /// purpose (its Quit, Lamp's Stop) stays closed. Begun before the change is sent and lasting until it's answered,
+    /// then for `crashWatch` more; a newer change's watch takes over from it.
+    private func watchAfterReload(_ project: LampProject, app: NSRunningApplication, fingerprint: String) -> (token: UUID, task: Task<Void, Never>) {
+        let since = Date(), token = UUID()
+        reloadWatches[project.id] = (token, nil)
+        let task = Task { [weak self] in
+            while let watch = self?.reloadWatches[project.id], watch.token == token, (watch.until ?? .distantFuture) > Date() {
+                guard app.isTerminated else {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    continue
+                }
                 // macOS writes the report after the process is gone, sometimes ten seconds or more later, and the
                 // crash is this watch's alone to answer (`appEnded` leaves it), so it waits as long as that does.
-                var crashed = false
-                for _ in 0..<60 where !crashed {
-                    crashed = Runtime.crashed(project, since: since)
-                    if !crashed { try? await Task.sleep(for: .milliseconds(500)) }
+                var crash: String?
+                for _ in 0..<60 where crash == nil {
+                    crash = Runtime.crash(of: project, since: since)
+                    if crash == nil { try? await Task.sleep(for: .milliseconds(500)) }
                 }
-                guard crashed, let self, let current = self.current(project) else { return }
-                self.log(current, .detail, "\(current.name) stopped right after a change went in without reopening it. Opening it again with the full build.")
-                LiveReload.forget(current)
-                // The full build goes in as the app closes (`installHeldIcons`); then it's opened.
-                for _ in 0..<60 where LiveReload.awaitsInstall(current) { try? await Task.sleep(for: .milliseconds(500)) }
-                await self.open(current)
-                return
+                if let crash { await self?.setAside(project, crash: crash, fingerprint: fingerprint) }
+                break
             }
+            self?.endWatch(project, token)
         }
+        return (token, task)
     }
 
-    /// Apps whose live change is being watched for a crash, which that watch answers by opening the full build.
-    private var reloadsWatched: Set<String> = []
+    /// How long after a change went into the open app a crash is taken for the change's.
+    private static let crashWatch: TimeInterval = 30
+
+    /// A watch is over: the app's close it held back gets what was waiting for it (`installHeldIcons`).
+    private func endWatch(_ project: LampProject, _ token: UUID) {
+        guard reloadWatches[project.id]?.token == token else { return }
+        reloadWatches[project.id] = nil
+        installHeldIcons(for: [project.id])
+    }
+
+    /// Each open app's watch on the change last put into it (`watchAfterReload`), and until when it lasts: nil while
+    /// the change is still going in. While one lasts, the app's going is the watch's to answer, and nothing waiting for
+    /// it to close is installed: that may be the build of the very change that crashed it.
+    private var reloadWatches: [String: (token: UUID, until: Date?)] = [:]
+
+    /// A change that crashed the open app, by the sources it was made from, and what the agent is told of it.
+    struct SetAside {
+        let fingerprint: String
+        let crash: String
+        /// The agent has heard of it: from its look, use_app or the turn's end, or Lamp asked for a fix.
+        var told = false
+    }
+    private var setAsideChanges: [String: SetAside] = [:]
+
+    /// Whether the app's sources are those of a change that crashed it, which aren't put into it again.
+    private func isSetAside(_ project: LampProject) -> Bool {
+        setAsideChanges[project.id]?.fingerprint == Runtime.fingerprint(project)
+    }
+
+    /// A change put into the open app crashed it. The copy in the apps folder, the last version the person had
+    /// working, opens again on the same data (what was unsaved in the crashed copy went with it), nothing of the change
+    /// is installed, and the person is told. The agent hears of it with its next look or use_app, or at the turn's end,
+    /// which tries its fix as a crash on launch is (`installNow`); after a turn that never told it, a fix starts
+    /// (`fixHeldCrash`). Until it has heard, no save of its is put into the app by itself (`autoApply`).
+    private func setAside(_ project: LampProject, crash: String, fingerprint: String) async {
+        guard let project = current(project) else { return }
+        // Its whole build, finished or not, isn't what the app is: ended, and nothing of it counts as built or waits to
+        // be installed.
+        await supersedeLiveBuild(of: project)
+        liveBuildFailed.insert(project.id)
+        reloadedBeforeBuild.remove(project.id)
+        Runtime.forgetBuilt(project)
+        LiveReload.installed(project)
+        heldInstalls.installed(project.id)
+        LiveReload.backToInstalled(project)
+        setAsideChanges[project.id] = SetAside(fingerprint: fingerprint, crash: "It crashed as the change went into the open app, "
+            + "so Lamp set the change aside and opened the version before it again.\n\n" + crash)
+        log(project, .error, ErrorMessages.setAside(project.name))
+        log(project, .detail, crash)
+        if !isRunning(project), FileManager.default.fileExists(atPath: project.installedURL.path) {
+            let config = NSWorkspace.OpenConfiguration()
+            config.arguments = ["-LampInFront", "YES"]   // see install
+            do {
+                _ = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
+                noteOpened(true, for: project)
+            } catch {
+                log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
+                noteOpened(false, for: project)
+            }
+            refreshOpenApps()
+        }
+        if turns[project.id] == nil { fixHeldCrash(project) }
+    }
+
+    /// The change set aside, for the agent, once.
+    private func untoldSetAside(_ project: LampProject) -> String? {
+        guard let aside = setAsideChanges[project.id], !aside.told else { return nil }
+        setAsideChanges[project.id]?.told = true
+        return aside.crash
+    }
 
     /// Installs and opens the app. Returns what's known about the failure if it died straight away.
     /// `inFront` is false for the agent's looks, which shouldn't pull the app in front of the user mid-turn.
@@ -5216,6 +5301,12 @@ final class Store: ObservableObject {
             await DataSnapshots.wentIn(project)
             prepareIconMeanwhile(project)
             return nil
+        }
+        // A change that crashed the open app as it went in isn't installed over the version the person has back. Its
+        // crash is the answer, as a crash on launch is: the turn's end has the agent fix it, a look tells it. Not when
+        // a fresh start is asked for: the crash may have been the change's going in, which a fresh start doesn't do.
+        if !fresh, !reload, isSetAside(project), let crash = untoldSetAside(project) ?? setAsideChanges[project.id]?.crash {
+            return crash
         }
         await prepareIcon(project)
         // A whole build after an early change may still be writing build/: what's installed is what it makes,
@@ -5733,6 +5824,8 @@ final class Store: ObservableObject {
     /// Called as the hold ends, before anything waiting starts: with a request already in line the agent hears of
     /// the crash with that, and the chat only says it crashed.
     private func fixHeldCrash(_ project: LampProject) {
+        // A change set aside that the turn's agent never heard of is fixed the same way.
+        if crashesAfterRelease[project.id] == nil, let aside = untoldSetAside(project) { crashesAfterRelease[project.id] = aside }
         guard let crash = crashesAfterRelease.removeValue(forKey: project.id) else { return }
         if !fixCrash(project, detail: crash) { log(project, .error, ErrorMessages.crashAfterLaunch(project.name)) }
     }
@@ -5774,7 +5867,7 @@ final class Store: ObservableObject {
     private func appEnded(_ app: NSRunningApplication) {
         guard let project = projects.first(where: { app.bundleIdentifier == $0.bundleID
                   || app.bundleURL?.standardizedFileURL == $0.installedURL.standardizedFileURL }),
-              !busy.contains(project.id), !reloadsWatched.contains(project.id) else { return }
+              !busy.contains(project.id), reloadWatches[project.id] == nil else { return }
         let since = app.launchDate ?? Date().addingTimeInterval(-5)
         Task { [weak self] in
             // macOS writes the report after the process is gone, sometimes ten seconds or more later (the time
@@ -6125,9 +6218,12 @@ final class Store: ObservableObject {
         LiveReload.installed(project)
         // The installed app's classes hold every property it was built with, and its spare places are empty.
         LiveSlots.clear(project)
+        // What's installed is what the app runs now, whatever was set aside before.
+        setAsideChanges[project.id] = nil
         if LiveReload.eligible(project) {
             let built = LiveReload.built(project)
             LiveReload.markRunning(project, from: FileManager.default.fileExists(atPath: built.path) ? built : nil)
+            LiveReload.keepInstalled(project)
         } else {
             LiveReload.forget(project)
         }
