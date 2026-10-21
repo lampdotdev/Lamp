@@ -1795,7 +1795,14 @@ enum LiveReload {
         var check = layoutProblem(before: before, after: after)
         // A constant made from an enum that grew (`Mood.allCases`) keeps the value the open app made: remade too.
         let grownEarly = before.flatMap { before in after.map { grownEnums(before: before, after: $0) } } ?? []
-        var constants = before.flatMap { before in after.map { LiveSlots.changedConstants(project, before: before, after: $0, declarations: declarations) } } ?? []
+        // The system types Lamp can't judge from the code that the constants a change remakes are made of, and which
+        // of them hold no object at all.
+        var plain = Set<String>()
+        if let before, let after {
+            let unsure = LiveSlots.unsureTypes(project, before: before, after: after, declarations: declarations)
+            if !unsure.isEmpty { plain = await plainTypes(unsure, in: project) }
+        }
+        var constants = before.flatMap { before in after.map { LiveSlots.changedConstants(project, before: before, after: $0, declarations: declarations, plain: plain) } } ?? []
         constants = Array(Set(constants + LiveSlots.constants(naming: grownEarly, in: declarations, layout: after ?? []))).sorted()
         // A constant read by what runs only at launch (the App, its scenes, its menu commands), there or through the
         // code they call: the new value would show only once the app opens again.
@@ -1834,7 +1841,7 @@ enum LiveReload {
         // one, and the change is compiled with them.
         var fitting: LiveSlots.Fit?
         if check.problem != nil || !constants.isEmpty, let before, let after {
-            fitting = LiveSlots.fitting(project, before: before, after: after, declarations: declarations, constants: constants)
+            fitting = LiveSlots.fitting(project, before: before, after: after, declarations: declarations, constants: constants, plain: plain)
         }
         if case .plan(let fitted) = fitting, let before {
             plan = fitted
@@ -2031,6 +2038,60 @@ enum LiveReload {
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name(Edition.notificationPrefix + "redraw"), object: project.bundleID,
             userInfo: ["at": at, "signature": signature], deliverImmediately: true)
+    }
+
+    /// Which of these system types hold no object at all: a value of one is copied as its bytes (`_isPOD`), so it
+    /// holds no reference to anything. What a type like `Font.Design` holds isn't public, so Lamp can't tell from the
+    /// code; it asks the system instead, with a small program naming each type, compiled with the app's SDK and run
+    /// on this Mac, in the app's sandbox like any compile of Lamp's there. The runtime it asks is the one the open app
+    /// runs on. A type the program can't find (from a framework it doesn't import, too new for the app's macOS) isn't
+    /// said to be plain. Asked only when a changed constant is made of such a type, and each type once while Lamp runs.
+    @MainActor private static var podKnown: [String: Bool] = [:]
+    /// Asked by the name the compiler resolved each to, with its module (`SwiftUICore.Font.Design`), so the program
+    /// can't take the name for anything else; answered by the name as the app's code writes it.
+    @MainActor static func plainTypes(_ names: [String: String], in project: LampProject) async -> Set<String> {
+        // Only a type's name, part by part: it's written into the program.
+        let valid = names.filter { $0.value.range(of: #"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$"#, options: .regularExpression) != nil }
+        let asking = Set(valid.values).filter { podKnown[$0] == nil }.sorted()
+        if !asking.isEmpty {
+            for (name, isPOD) in await probePOD(asking, in: project) { podKnown[name] = isPOD }
+        }
+        return Set(valid.filter { podKnown[$0.value] == true }.keys)
+    }
+
+    /// The program's answer for each name it could compile. A name it can't is left out and the rest compiled again.
+    @MainActor private static func probePOD(_ names: [String], in project: LampProject) async -> [String: Bool] {
+        let folder = folder(project).appendingPathComponent("plain-probe")
+        defer { AppFolder.remove(folder, in: project.dir) }
+        let header = ["import Foundation", "import SwiftUI", "import AppKit", "@main enum LampPlainProbe { static func main() {"]
+        var left = names
+        for _ in 0..<2 {
+            let source = (header + left.enumerated().map { "print(\"\($0.offset) \\(_isPOD(\($0.element).self))\")" } + ["} }", ""]).joined(separator: "\n")
+            guard (try? AppFolder.write(source, to: folder.appendingPathComponent("probe.swift"), in: project.dir)) != nil else { return [:] }
+            let script = Shell.compatibleSDK + #"SDK="${SDKROOT:-$(xcrun --sdk macosx --show-sdk-path)}""# + "\n" + """
+                cd \(quoted(folder.path)) && xcrun swiftc -parse-as-library -Onone -target arm64-apple-macosx\(Template.macMinimum(project)) -sdk "$SDK" probe.swift -o probe 2>&1 && ./probe
+                """
+            var output: [String] = []
+            let status = await Sandbox.run(script, for: project) { output.append($0) }
+            if status == 0 {
+                var answers: [String: Bool] = [:]
+                for line in output {
+                    let parts = line.split(separator: " ")
+                    guard parts.count == 2, let index = Int(parts[0]), left.indices.contains(index) else { continue }
+                    answers[left[index]] = parts[1] == "true"
+                }
+                return answers
+            }
+            // The compiler names the lines it couldn't take: those names go, once.
+            let bad = Set(output.compactMap { line -> Int? in
+                guard let at = line.range(of: #"probe\.swift:(\d+):"#, options: .regularExpression) else { return nil }
+                return Int(line[at].dropFirst("probe.swift:".count).dropLast()).map { $0 - header.count - 1 }
+            })
+            guard !bad.isEmpty else { return [:] }
+            left = left.enumerated().filter { !bad.contains($0.offset) }.map(\.element)
+            if left.isEmpty { return [:] }
+        }
+        return [:]
     }
 
     /// Asks the open app to load the library, signed with its token (only Lamp has it), and waits a moment for
@@ -2355,7 +2416,7 @@ enum LiveSlots {
     /// changed only in what it calls is given its new value too, unless it can hold an object: an object the open app
     /// made (`static let shared = Store()`) is its state, which the change keeps, as it keeps every other object.
     static func changedConstants(_ project: LampProject, before: [String], after: [String],
-                                 declarations: SwiftSource.Declarations? = nil) -> [String] {
+                                 declarations: SwiftSource.Declarations? = nil, plain: Set<String> = [], judging: Bool = true) -> [String] {
         func values(_ entries: [String]) -> [String: String] {
             Dictionary(LiveReload.Group.constant.parts(in: entries).compactMap { parts -> (String, String)? in
                 let field = parts.joined(separator: "\t")
@@ -2369,11 +2430,35 @@ enum LiveSlots {
         func own(_ value: String) -> Substring { value.prefix { $0 != "+" } }
         return Set(new.keys.filter { key in
             guard let was = old[key], let is_ = new[key], was != is_ else { return false }
-            if own(was) != own(is_) { return true }
+            if own(was) != own(is_) || !judging { return true }
             guard let variable = declarations?.constants[key] else { return false }
             var seen = Set<String>()
-            return !holdsObject(variable.type, classes: declarations?.classes ?? [], layout: layout, seen: &seen)
+            return !holdsObject(variable.type, classes: declarations?.classes ?? [], layout: layout, seen: &seen, plain: plain)
         } + earlier.filter { new[$0] != nil }).sorted()
+    }
+
+    /// The system types to ask about before judging the constants a change gives a new value (`LiveReload.plainTypes`):
+    /// those a changed constant's value, or one made from it, is made of that Lamp can't judge from the code, each
+    /// with the system declaration the compiler resolved its name to. Only a name the compiler resolved to one system
+    /// declaration and never to one of the app's (a typealias of the app's in the widget's shared code is the app's,
+    /// whatever system type has its name), so what's asked is what the field holds; never one of the app's own
+    /// classes, which hold an object whatever else they hold. None for most changes, which change no constant or only
+    /// plain ones.
+    static func unsureTypes(_ project: LampProject, before: [String], after: [String], declarations: SwiftSource.Declarations) -> [String: String] {
+        let all = changedConstants(project, before: before, after: after, declarations: declarations, plain: [], judging: false)
+        guard !all.isEmpty else { return [:] }
+        let layout = LiveReload.byType(LiveReload.bared(after)), own = declarations.ownTypeNames
+        var asked = Set<String>()
+        for key in withDependents(all, in: declarations) {
+            guard let variable = declarations.constants[key] else { continue }
+            var seen = Set<String>()
+            _ = objectHeld(in: variable.type, classes: declarations.classes, layout: layout, seen: &seen, unsure: { asked.insert($0) })
+        }
+        var named: [String: String] = [:]
+        for name in asked where own.isDisjoint(with: name.split(separator: ".").map(String.init)) && !declarations.ownResolved.contains(name) {
+            if let system = declarations.systemResolved[name], !system.isEmpty { named[name] = system }
+        }
+        return named
     }
 
     /// When every way the new code's types differ from the open app's is a stored property added to a type with a
@@ -2390,7 +2475,7 @@ enum LiveSlots {
     }
 
     static func fitting(_ project: LampProject, before: [String], after: [String], declarations: SwiftSource.Declarations,
-                        constants: [String] = []) -> Fit {
+                        constants: [String] = [], plain: Set<String> = []) -> Fit {
         let old = LiveReload.byType(before), new = LiveReload.byType(after)
         var map = whole(project)
         var cases: [String: Set<String>] = [:]
@@ -2568,14 +2653,16 @@ enum LiveSlots {
                 || (declarations.bindings[$0.binding].start.line == declarations.bindings[$1.binding].start.line
                     && declarations.bindings[$0.binding].start.column > declarations.bindings[$1.binding].start.column) }
             for edit in ordered {
-                let made = edit.constant.map { rewriteConstant($0, in: original, declarations: declarations, rewritten: Set(constants), layout: bareLayout) }
+                let made = edit.constant.map { rewriteConstant($0, in: original, declarations: declarations, rewritten: Set(constants), layout: bareLayout, plain: plain) }
                     ?? rewrite(declarations.bindings[edit.binding], items: edit.items, in: original, declarations: declarations, cases: cases)
                 guard let (range, text) = made else {
                     // A constant that can hold an object isn't made again: a second object would split the app's state.
                     if let key = edit.constant, let variable = declarations.constants[key] {
                         var seen = Set<String>()
-                        if holdsObject(variable.type, classes: declarations.classes, layout: bareLayout, seen: &seen) {
-                            return .refused("\(displayName(key)) would be made again for its new value, and its \(variable.type) can hold an object, which there would then be two of")
+                        if let held = objectHeld(in: variable.type, classes: declarations.classes, layout: bareLayout, seen: &seen, plain: plain) {
+                            // Which field, when it's one inside the value: the deepest one, which is where to look.
+                            let field = held.contains(" (a ") ? " in \(held)" : ""
+                            return .refused("\(displayName(key)) would be made again for its new value, and its \(variable.type) can hold an object\(field), which there would then be two of")
                         }
                     }
                     // A class's spare places take the class's actor, which a property written `nonisolated` can't read.
@@ -2691,7 +2778,7 @@ enum LiveSlots {
     /// for one that can hold an object, however wrapped (`[Model]`, `Session<Int>`, a struct holding one, a
     /// `LampAPI`): new objects there would split the app's state in two, so that reopens (`holdsObject`).
     private static func rewriteConstant(_ key: String, in text: SwiftSource.Text, declarations: SwiftSource.Declarations,
-                                        rewritten: Set<String>, layout: [String: [String]]) -> (Range<Int>, String)? {
+                                        rewritten: Set<String>, layout: [String: [String]], plain: Set<String>) -> (Range<Int>, String)? {
         guard let variable = declarations.constants[key] else { return nil }
         let binding = declarations.bindings[variable.binding]
         guard binding.entries.count == 1, let from = text.offset(binding.start), let end = text.tokenEnd(binding.last),
@@ -2701,7 +2788,7 @@ enum LiveSlots {
         guard let keyword = lead.range(of: #"\blet\b"#, options: [.regularExpression, .backwards]) else { return nil }
         let start = from + lead[..<keyword.lowerBound].utf8.count
         var seen = Set<String>()
-        guard !holdsObject(variable.type, classes: declarations.classes, layout: layout, seen: &seen) else { return nil }
+        guard !holdsObject(variable.type, classes: declarations.classes, layout: layout, seen: &seen, plain: plain) else { return nil }
         // Its own text, and those of the rewritten constants it's made from, however far back.
         // Walked and hashed in name order, each with its name, so the same inputs always give the same name.
         var sources: [String: String] = [key: initial], queue = [key]
@@ -2773,7 +2860,18 @@ enum LiveSlots {
     /// named in it that holds one, as far down as it goes, or any type that isn't a plain value Swift or SwiftUI has
     /// (an object of Lamp's building blocks, `LampAPI`, or of the system's). Made again, such an object would be a
     /// second one beside the one the open app already holds, and what's done to one wouldn't reach the other.
-    static func holdsObject(_ type: String, classes: Set<String>, layout: [String: [String]], seen: inout Set<String>) -> Bool {
+    /// `plain` names system types this Mac's runtime said hold no object at all (`LiveReload.plainTypes`).
+    static func holdsObject(_ type: String, classes: Set<String>, layout: [String: [String]], seen: inout Set<String>,
+                            plain: Set<String> = []) -> Bool {
+        objectHeld(in: type, classes: classes, layout: layout, seen: &seen, plain: plain) != nil
+    }
+
+    /// What in a value of this type may hold an object (`holdsObject`), as people read it: the field the type was
+    /// reached through, then the type that may hold one ("Look.Typeface.design (a Font.Design)"), or nil when nothing can.
+    /// With `unsure`, a system type Lamp can't judge (one it doesn't know, never one of the app's classes) is handed to
+    /// it and passed over, so every such type is found at once.
+    static func objectHeld(in type: String, classes: Set<String>, layout: [String: [String]], seen: inout Set<String>,
+                           plain: Set<String> = [], unsure: ((String) -> Void)? = nil) -> String? {
         let names = LiveReload.identifierWords
         for match in names.matches(in: type, range: NSRange(type.startIndex..., in: type)) {
             let range = Range(match.range, in: type)!
@@ -2786,21 +2884,28 @@ enum LiveSlots {
             // A metatype is a value, whatever it names.
             for suffix in [".Type", ".Protocol"] where name.hasSuffix(suffix) { name.removeLast(suffix.count) }
             let last = String(name.split(separator: ".").last ?? "")
-            if classes.contains(name) || classes.contains(last) { return true }
+            if classes.contains(name) || classes.contains(last) { return name }
             if let members = layout[name] ?? layout[last] {
                 guard seen.insert(name).inserted else { continue }
                 for member in members {
                     guard let colon = member.range(of: ": ") else { continue }
                     // Lamp's own spare places hold only properties moved into them, which the layout lists as the
                     // type's own fields with their own types.
-                    if member[..<colon.lowerBound].split(separator: "\t").last?.hasPrefix("__lamp") == true { continue }
-                    if holdsObject(String(member[colon.upperBound...]), classes: classes, layout: layout, seen: &seen) { return true }
+                    let field = member[..<colon.lowerBound].split(separator: "\t").last.map(String.init) ?? ""
+                    if field.hasPrefix("__lamp") { continue }
+                    if let held = objectHeld(in: String(member[colon.upperBound...]), classes: classes, layout: layout, seen: &seen,
+                                             plain: plain, unsure: unsure) {
+                        // The deepest field is the one that says why: an outer one only leads to it.
+                        return held.contains(" (a ") ? held : "\(name).\(field) (a \(held))"
+                    }
                 }
                 continue
             }
-            if !plainValues.contains(last) && !seen.contains(name) { return true }
+            if plainValues.contains(last) || plain.contains(name) || seen.contains(name) { continue }
+            if let unsure { unsure(name); continue }
+            return name
         }
-        return false
+        return nil
     }
 
     /// The system protocols a conformance to one of these brings with it.

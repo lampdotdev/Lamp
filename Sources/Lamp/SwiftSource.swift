@@ -93,6 +93,12 @@ enum SwiftSource {
         var hashing: [String: (start: Position, last: Position)] = [:]
         /// The names of the app's own typealiases, which may stand for a system type's name (`typealias Color = Paint`).
         var aliases: Set<String> = []
+        /// What each type name written in the app's code is, by the compiler's own resolution of it (`bind="…"`): a
+        /// system declaration by its module and name (`Font.Design` is `SwiftUICore.Font.Design`), or "" when the same
+        /// name was resolved to more than one. A name the app declares itself, wherever (a typealias in the widget's
+        /// shared code, a private type in another file), is in `ownResolved` instead.
+        var systemResolved: [String: String] = [:]
+        var ownResolved: Set<String> = []
 
         /// Whether code in `ranges` names the type (its qualified name, as `bare` gives it): uses it as a type, or
         /// uses one of its members. One of the `cases` alone (`.a`) is no use of the type as a whole: what's made
@@ -197,6 +203,18 @@ enum SwiftSource {
 
     /// Reads where each property is declared, line by line as `walk` gives them.
     final class DeclarationsReader {
+        /// One `bind="…"`: the app's own declaration carries its place (`App.(file).Order@Shared.swift:2:11`), a
+        /// system one doesn't (`SwiftUICore.(file).Font extension.Design`).
+        private func resolved(_ value: Substring) {
+            var text = value
+            if let with = text.range(of: " [with") { text = text[..<with.lowerBound] }
+            guard let file = text.range(of: ".(file).") else { return }
+            let name = text[file.upperBound...].replacingOccurrences(of: " extension", with: "")
+            if let at = name.firstIndex(of: "@") { out.ownResolved.insert(String(name[..<at])); return }
+            let qualified = text[..<file.lowerBound] + "." + name
+            out.systemResolved[name] = out.systemResolved[name].map { $0 == qualified ? $0 : "" } ?? qualified
+        }
+
         private let varDecl = try! NSRegularExpression(pattern: #"^(\s*)\(var_decl\b[^"]*"([^"]+)" interface_type="([^"]*)"(.*)$"#)
         private let named = try! NSRegularExpression(pattern: #"\(pattern_named\b.*"([^"]+)"\)*\s*$"#)
         private let identifier = try! NSRegularExpression(pattern: #"id="(\w+)""#)
@@ -262,6 +280,7 @@ enum SwiftSource {
             // A type written out: as an expression (`Mood.allCases`), or in an annotation, whose line has no place of
             // its own and is taken to be where the declaration around it starts.
             // (Not one the compiler supplied: `.a`'s base is `Mood`, written nowhere.)
+            if line.has(" bind=\""), let value = Self.attribute("bind", in: line.text) { resolved(value) }
             if line.has(" typerepr=\""), !line.has(" implicit "), let value = Self.attribute("typerepr", in: line.text),
                let at = SwiftSource.location(in: line.text) ?? lastAt {
                 for word in value.split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "_" || $0 == ".") }) where !word.isEmpty {

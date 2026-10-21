@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD (Gave Look.current, Look.taproom their new value)
+VERDICT 2: RELOAD
+== run
+before: wall=#801919FF design=serif heavy=false
+RELOAD 1 (whole): ok
+after1 (want amber in place: the typeface's font design, width and weight are plain values the app says hold no object): wall=#944F0FFF design=rounded heavy=true
+RELOAD 2: ok
+after2 (want brighter amber in place, the typeface kept): wall=#E6990FFF design=rounded heavy=true
