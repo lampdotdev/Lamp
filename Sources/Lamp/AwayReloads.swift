@@ -18,6 +18,9 @@ struct AwayReloads {
     /// Pressed by Lamp and not in yet: a Reload put off until the agent is between steps or its turn is over is
     /// still Lamp's when it lands, and is decided on then.
     private(set) var pressing: Set<String> = []
+    /// Of those, the ones whose install has begun: it clears the wait before the app has opened again and the Reload
+    /// has landed, so a missing wait says nothing about these until it has.
+    private(set) var installing: Set<String> = []
     /// Pressed by Lamp and still waiting after: not pressed again until the person has been back, so a Reload that
     /// can't go in isn't tried every few seconds. A later change waiting for Reload after one that went in isn't this.
     private(set) var failed: Set<String> = []
@@ -27,9 +30,9 @@ struct AwayReloads {
 
     /// The apps waiting for Reload that Lamp presses it for now, marked as pressed.
     mutating func toPress(waiting: [String], idle: Double) -> [String] {
-        // A press whose wait went some other way (a live change, the app closing, a crash set aside) has nothing
-        // left to land: it mustn't keep the app's later held changes from being pressed.
-        pressing.formIntersection(waiting)
+        // A press whose wait went some other way (a live change, the app closing, a crash set aside) before its
+        // install began has nothing left to land: it mustn't keep the app's later held changes from being pressed.
+        pressing = pressing.filter { waiting.contains($0) || installing.contains($0) }
         guard idle >= Self.after else { failed = []; return [] }
         let ids = waiting.filter { !pressing.contains($0) && !failed.contains($0) && !held.contains($0) }
         pressing.formUnion(ids)
@@ -39,13 +42,17 @@ struct AwayReloads {
     /// A Reload is over, whoever pressed it. True when it was Lamp's and the change went in, so the agent may be
     /// sent on (`carriesOn`).
     mutating func landed(_ id: String, stillWaits: Bool) -> Bool {
+        installing.remove(id)
         guard pressing.remove(id) != nil else { return false }
         if stillWaits { failed.insert(id); return false }
         return true
     }
 
+    /// The install of a Reload begins; it lands (`landed`) once the app has opened again.
+    mutating func installs(_ id: String) { if pressing.contains(id) { installing.insert(id) } }
+
     /// A Reload of Lamp's put off until later is given up without landing, its wait gone another way.
-    mutating func dropped(_ id: String) { pressing.remove(id) }
+    mutating func dropped(_ id: String) { pressing.remove(id); installing.remove(id) }
 
     /// Whether Lamp's own request to carry on may go to the agent: not once the person has stopped it, nor while a
     /// question of the agent's waits for their answer.
@@ -55,6 +62,7 @@ struct AwayReloads {
     /// at the Mac, and the Reload is theirs again.
     mutating func personStopped(_ id: String) -> Bool {
         held.insert(id)
+        installing.remove(id)
         return pressing.remove(id) != nil
     }
 

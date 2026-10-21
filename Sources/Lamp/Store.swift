@@ -741,6 +741,7 @@ final class Store: ObservableObject {
         // Taken now, before anything queued can start: otherwise kept until the turn that has the app ends.
         guard begin(project) != nil else { reloadWhenFree.insert(id); return }
         reloadWhenFree.remove(id)
+        away.installs(id)
         // The Mac copy's change, wherever Try On points now (an app for both may have moved it to a phone since).
         var mac = project
         mac.chosen = .mac
@@ -5406,6 +5407,7 @@ final class Store: ObservableObject {
               turn.answering == 0, let current = current(project) else { return }
         reloadWhenFree.remove(project.id)
         guard Runtime.waitsForReload(current) else { away.dropped(project.id); return }   // a live change put it in
+        away.installs(project.id)
         turn.reloading = true
         turn.applying = Task { [weak self] in
             defer { turn.applying = nil; turn.reloading = false }

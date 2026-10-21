@@ -84,6 +84,17 @@ final class AwayReloadTests: XCTestCase {
         XCTAssertEqual(reloads.toPress(waiting: ["app"], idle: away + 30), ["app"])
     }
 
+    /// The install clears the wait before the app has opened again: a tick in between keeps the press, so it still
+    /// lands as Lamp's and the agent is carried on.
+    func testAPressBeingInstalledIsKeptUntilItLands() {
+        var reloads = AwayReloads()
+        XCTAssertEqual(reloads.toPress(waiting: ["app"], idle: away), ["app"])
+        reloads.installs("app")
+        XCTAssertEqual(reloads.toPress(waiting: [], idle: away + 15), [])
+        XCTAssertTrue(reloads.landed("app", stillWaits: false))
+        XCTAssertTrue(reloads.carriesOn("app"))
+    }
+
     /// While the person is at the Mac nothing is pressed.
     func testNothingIsPressedWhileThePersonIsThere() {
         var reloads = AwayReloads()
