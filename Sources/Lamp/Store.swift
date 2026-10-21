@@ -745,6 +745,38 @@ final class Store: ObservableObject {
             finish(project)
         }
     }
+    /// How long the Mac has had no keyboard, mouse or trackpad input before Lamp takes it that the person has stepped
+    /// away. Long enough that someone reading the chat or watching the app isn't reloaded under, short enough that an
+    /// agent waiting on Reload doesn't sit there all afternoon.
+    static let awayAfter: TimeInterval = 180
+
+    /// Seconds since the person last typed, clicked or moved the pointer anywhere on this Mac, from the window server's
+    /// own count: no permission is needed, and a locked screen or a sleeping display counts as no input.
+    static var secondsSinceInput: TimeInterval {
+        CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+    }
+
+    /// The person stepped away while a request's change waits for Reload: Lamp presses it for them, so the agent can
+    /// go on. While they're at the Mac it stays theirs to press. A turn still at work puts the change in between its
+    /// steps; a turn that ended on it (paused, or the agent ended its reply asking for Reload, as models often do
+    /// rather than look again) is carried on the way a pause is, so the agent looks and finishes what was left.
+    private func reloadIfAway() {
+        guard Self.secondsSinceInput >= Self.awayAfter else { reloadedWhileAway = []; return }
+        // One that went in may wait again for a later change the agent made, and that one is reloaded too.
+        reloadedWhileAway = reloadedWhileAway.filter { id in projects.first { $0.id == id }.map(Runtime.waitsForReload) == true }
+        for project in projects where !reloadWhenFree.contains(project.id) && !reloadedWhileAway.contains(project.id)
+            && Runtime.waitsForReload(project) {
+            reloadedWhileAway.insert(project.id)
+            if turns[project.id] == nil { queueCarryOn(project) }
+            log(project, .status, "Reloaded \(project.name) while you were away")
+            reloadWaiting(project.id)
+        }
+    }
+
+    /// Apps Lamp reloaded while the person has been away: a Reload that didn't go in isn't tried again every few
+    /// seconds, only once they've been back.
+    private var reloadedWhileAway: Set<String> = []
+
     /// Reloads pressed while something else had the app: the agent's turn puts each in between its steps
     /// (`reloadInTurn`), other work when it's done, and the chat says so meanwhile (`ReloadLine.queued`), since
     /// nothing else would seem to happen.
@@ -3391,16 +3423,21 @@ final class Store: ObservableObject {
     /// The agent asked to see its change and can't until the person has pressed Reload: the turn is over whatever it
     /// does next (`endIfOver`), and Lamp's own request to carry on waits in line behind the Reload (`afterReload`),
     /// so the agent looks at its change before more is done to it. The person's own messages typed meanwhile wait in
-    /// the same line: nothing reloads the app but the button, and nothing is changed that they can't see.
+    /// the same line: nothing reloads the app but the button (or Lamp, once they're away: `reloadIfAway`), and nothing
+    /// is changed that they can't see.
     private func pause(_ turn: Turn, in project: LampProject, saying text: String, status: Int = 200) -> (Int, [String: Any]) {
         turn.paused = true
-        if !(queued[project.id] ?? []).contains(where: \.afterReload) {
-            // Messages queued before the pause came keep copies of their files too, now that the line outlives a relaunch.
-            queued[project.id] = [QueuedMessage(text: Agent.afterReload, byLamp: true, afterReload: true)]
-                + (queued[project.id] ?? []).map(keptForLater)
-            saveWaiting()
-        }
+        queueCarryOn(project)
         return (status, [status == 200 ? "text" : "error": text])
+    }
+
+    /// Lamp's own request to carry on after the held change is in (`Agent.afterReload`), first in line.
+    private func queueCarryOn(_ project: LampProject) {
+        guard !(queued[project.id] ?? []).contains(where: \.afterReload) else { return }
+        // Messages queued before it keep copies of their files too, now that the line outlives a relaunch.
+        queued[project.id] = [QueuedMessage(text: Agent.afterReload, byLamp: true, afterReload: true)]
+            + (queued[project.id] ?? []).map(keptForLater)
+        saveWaiting()
     }
 
     /// The request paused for Reload is over: the person went another way (Undo, an earlier version, the request sent
@@ -7419,6 +7456,9 @@ final class Store: ObservableObject {
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
             MainActor.assumeIsolated { Store.shared.refreshWidgetCards() }
         }
+        Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { _ in
+            MainActor.assumeIsolated { Store.shared.reloadIfAway() }
+        }
     }
 
     func refreshOpenApps() {
@@ -8452,7 +8492,7 @@ final class Store: ObservableObject {
         }
         if turn.reloadedByPerson {
             turn.reloadedByPerson = false
-            note += " The person pressed Reload while you worked, so the change that waited for it is on screen now; nothing waits for Reload."
+            note += " The app was reloaded while you worked, so the change that waited for Reload is on screen now; nothing waits for Reload."
         }
         var lead = ""
         if let prop, !prop.isEmpty, !screenshots.isEmpty {
