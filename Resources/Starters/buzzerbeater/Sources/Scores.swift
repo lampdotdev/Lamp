@@ -334,7 +334,6 @@ final class Watcher: ObservableObject {
             Alerts.consider(watchable ? hotGames.filter { $0.watchLink.isAvailable } : hotGames)
         }
         trackFlaggedGames()
-        shareWidget()
     }
 
     var favoriteTeamNames: [String] {

@@ -202,17 +202,6 @@ private struct HotGameCard: View {
                 }
                 .frame(width: 74, alignment: .trailing)
             }
-            if !ended, let points = detail?.winProbability, points.count >= 2 {
-                Button {
-                    NSWorkspace.shared.open(game.gamePage)
-                } label: {
-                    CardOddsChart(away: game.away, home: game.home, points: points.map(\.home),
-                                  played: game.state == .post ? 1 : Excitement.gameProgress(game))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Open the game on ESPN")
-            }
             if !ended, let more = game.buzz?.details, !more.isEmpty {
                 Text(more)
                     .font(.caption)
@@ -247,118 +236,6 @@ private struct HotGameCard: View {
 
     private var ended: Bool { game.state == .post }
     private var detail: GameDetail? { Watcher.shared.details[game.id] }
-}
-
-/// The win odds so far, drawn as ESPN does: the away team on top, the home team below,
-/// with the even line dashed across the whole game and the latest reading dotted.
-private struct CardOddsChart: View {
-    let away: Team
-    let home: Team
-    let points: [Double]
-    let played: Double
-
-    var body: some View {
-        let now = points.last ?? 0.5
-        let homeAhead = now >= 0.5
-        let pct = Int((max(now, 1 - now) * 100).rounded())
-        HStack(alignment: .center, spacing: 8) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text(away.abbr)
-                Spacer(minLength: 0)
-                Text(home.abbr)
-            }
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(.secondary)
-            .frame(width: 34, height: 30, alignment: .leading)
-
-            OddsLine(points: points, played: played, limit: 160, lineWidth: 1.5, dot: true)
-                .frame(height: 30)
-
-            Text("\((homeAhead ? home : away).abbr) \(pct)%")
-                .font(.caption2.weight(.semibold).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 58, alignment: .trailing)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Win chance so far: \((homeAhead ? home : away).name) now \(pct) percent")
-    }
-}
-
-/// The win odds line itself. The game runs left to right across the full width, so the line
-/// only reaches as far as the game has: halfway at halftime.
-private struct OddsLine: View {
-    let points: [Double]
-    let played: Double
-    var limit = 60
-    var lineWidth: CGFloat = 1.25
-    var dot = false
-
-    var body: some View {
-        let shown = Self.thinned(points, to: limit)
-        let reach = CGFloat(min(1, max(0.02, played)))
-        GeometryReader { proxy in
-            let w = proxy.size.width, h = proxy.size.height
-            let x = { (i: Int) in shown.count > 1 ? w * reach * CGFloat(i) / CGFloat(shown.count - 1) : w * reach }
-            let y = { (v: Double) in h * CGFloat(v) }
-            ZStack {
-                Path { p in
-                    p.move(to: CGPoint(x: 0, y: h / 2))
-                    p.addLine(to: CGPoint(x: w, y: h / 2))
-                }
-                .stroke(Color.secondary.opacity(0.4), style: StrokeStyle(lineWidth: 0.75, dash: [2, 2]))
-                Path { p in
-                    for (i, v) in shown.enumerated() {
-                        let pt = CGPoint(x: x(i), y: y(v))
-                        if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
-                    }
-                }
-                .stroke(Color.primary, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
-                if dot {
-                    Circle()
-                        .fill(Color.primary)
-                        .frame(width: 5, height: 5)
-                        .position(x: x(shown.count - 1), y: y(shown.last ?? 0.5))
-                }
-            }
-        }
-        .accessibilityHidden(true)
-    }
-
-    /// Every point when there are few, else an even spread that always keeps the latest.
-    static func thinned(_ values: [Double], to limit: Int) -> [Double] {
-        guard values.count > limit, limit > 1 else { return values }
-        let step = Double(values.count - 1) / Double(limit - 1)
-        return (0..<limit).map { values[min(values.count - 1, Int((Double($0) * step).rounded()))] }
-    }
-}
-
-/// The chance each side wins, as one thin bar: away on the left, home on the right.
-private struct WinBar: View {
-    let away: Team
-    let home: Team
-    let homeChance: Double
-
-    var body: some View {
-        let awayPct = Int(((1 - homeChance) * 100).rounded())
-        HStack(spacing: 6) {
-            Text("\(away.abbr) \(awayPct)%")
-                .frame(width: 64, alignment: .leading)
-            GeometryReader { proxy in
-                HStack(spacing: 1) {
-                    Capsule().fill(Color.orange)
-                        .frame(width: max(2, proxy.size.width * (1 - homeChance)))
-                    Capsule().fill(Color.secondary.opacity(0.35))
-                }
-            }
-            .frame(height: 5)
-            Text("\(100 - awayPct)% \(home.abbr)")
-                .frame(width: 64, alignment: .trailing)
-        }
-        .font(.caption2.monospacedDigit())
-        .foregroundStyle(.secondary)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Win chance: \(away.name) \(awayPct) percent, \(home.name) \(100 - awayPct) percent")
-    }
 }
 
 /// Opens the full game highlights once ESPN posts them.
@@ -460,22 +337,6 @@ private struct LiveRow: View {
                 .font(.callout.monospacedDigit())
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Group {
-                if let points = Watcher.shared.details[game.id]?.winProbability, points.count >= 2 {
-                    Button {
-                        NSWorkspace.shared.open(game.gamePage)
-                    } label: {
-                        OddsLine(points: points.map(\.home), played: Excitement.gameProgress(game))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("\(Self.chanceText(game, points.last?.home ?? 0.5)). Click for the game on ESPN.")
-                    .accessibilityLabel("Open \(game.title) on ESPN")
-                } else {
-                    Color.clear
-                }
-            }
-            .frame(width: 64, height: 16)
             Text(game.statusText)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
@@ -491,11 +352,6 @@ private struct LiveRow: View {
             .accessibilityLabel(game.watchLink.label)
         }
         .padding(.vertical, 5)
-    }
-
-    static func chanceText(_ game: Game, _ home: Double) -> String {
-        let team = home >= 0.5 ? game.home : game.away
-        return "\(team.name) \(Int((max(home, 1 - home) * 100).rounded()))% to win"
     }
 }
 

@@ -2,7 +2,7 @@
 name: Buzzer Beater
 offer: Make Buzzer Beater yours
 tweaks:
-  - rectangle.split.3x3.fill: Make it a stadium scoreboard
-  - moon.zzz.fill: Add quiet hours at night
-  - star.fill: Follow my favorite teams closely
+  - square.grid.2x2.fill: Add a scoreboard desktop widget
+  - bell.badge.fill: Remind me before big games
+  - tv.fill: Make it about reality TV
 ---

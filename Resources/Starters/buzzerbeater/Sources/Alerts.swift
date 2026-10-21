@@ -103,9 +103,6 @@ enum Alerts {
         LampNotifications.onAction { _, id in
             Alerts.open(id)
         }
-        LampWidget.onAction { name, payload in
-            if name == "open", let id = payload.decode(String.self) { Watcher.shared.openFromWidget(id) }
-        }
     }
 
     static func open(_ id: String) {

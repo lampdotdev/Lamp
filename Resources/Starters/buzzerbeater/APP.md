@@ -1,6 +1,6 @@
 Kind: companion, in the menu bar.
 Look: system colours and SF Symbols, a flame for a game worth watching and a basketball when none is; orange is kept
-for the Watch buttons and the flame. The win-odds lines are drawn as ESPN draws them.
+for the Watch buttons and the flame.
 
 # Buzzer Beater
 
@@ -13,22 +13,21 @@ or account.
 A click on the icon (a flame and the number of good games, or a basketball) opens a panel:
 
 - **Good games**: a card for each, with its headline ("Oilers up 1 with 6:53 left"), the latest key play, the
-  score, the clock, a win-odds line and a Watch button.
+  score, the clock and a Watch button.
 - **Just ended**: games it showed as good that have finished, with Highlights once ESPN posts the recap.
-- **Also live**: every other live game as a row (league, score, a small win-odds line, clock, a watch button).
+- **Also live**: every other live game as a row (league, score, clock, a watch button).
 - **Coming up**: when nothing is live, the next few games worth a look today and tomorrow, ranked from the
   pregame line, the teams' records, rankings and national TV.
 
 At the foot, Settings and Quit. Settings has the leagues (each with its own description of a good game, in
 plain words), notifications, where the person lives (for regional channels), the streaming services they have,
-alerts only for games they can watch, and Open at Login. A desktop widget lists the games worth watching right
-now.
+alerts only for games they can watch, and Open at Login.
 
 ## Code
 
 - `App.swift`: the `LampMenuBar` scene (the panel, the icon with the count) and the Settings scene.
-- `PanelView.swift`: the panel: header with refresh and Lamp's wand, good-game cards (`CardOddsChart`), Just ended
-  cards, the Also live list (`OddsLine`), Coming up (`UpcomingRow`), Settings and Quit.
+- `PanelView.swift`: the panel: header with refresh and Lamp's wand, good-game cards, Just ended
+  cards, the Also live list, Coming up (`UpcomingRow`), Settings and Quit.
 - `Scores.swift`: `League` (which leagues there are and which are on at first), `Game` and `Team`, `WatchSettings`
   (LampStore "settings"), and `Watcher`, the one model: it polls ESPN with `LampSchedule`, parses the scoreboard and
   keeps the pregame lines (LampStore "lines").
@@ -46,8 +45,6 @@ now.
 - `Streaming.swift`: the person's services and the channels each carries, the best link for the Watch button,
   and team cities for what's local (LampStore "teamCities").
 - `SettingsView.swift`: Settings.
-- `WidgetFeed.swift` and `Widget/Widget.swift`: what the widget shows (shared as "board" after every refresh) and
-  the widget itself; a row opens the game through the app.
 - `capabilities.json`: a background app, so alerts come while the panel is closed.
 
 ## Data
@@ -61,4 +58,4 @@ content: the games are live, and when there are none the panel says so and shows
 - What counts as tense, and the headlines: `Excitement.swift`.
 - The notification wording: `Alerts.swift` and `Summaries.swift`.
 - How often it checks: the schedule in `Watcher`.
-- What the panel and widget show: `PanelView.swift`, `Widget/Widget.swift`.
+- What the panel shows: `PanelView.swift`. The win probability behind each card is `GameDetail.winProbability`.
