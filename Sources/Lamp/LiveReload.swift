@@ -1213,11 +1213,32 @@ enum LiveReload {
     /// compiler's first read in a session is the slow one (it builds the modules it needs), and done here, while
     /// the agent is still reading, the first change goes in as quickly as the ones after it.
     @MainActor static func warm(_ project: LampProject) async {
-        guard AppFile.text(runningLayout(project), in: project) == nil, !swiftFiles(in: running(project)).isEmpty else { return }
-        if let made = await analysis(of: running(project), in: project, module: project.exe, macOS: Template.macMinimum(project)) {
-            keepLayout(made.layout, for: project)
+        guard !swiftFiles(in: running(project)).isEmpty else { return }
+        // And which system types the app's constants are made of hold no object: asked now, while the agent is still
+        // reading, rather than in front of the first change that gives one a new value. Kept apart from the layout,
+        // which may be saved already while the answers aren't (a macOS update, a layout saved by an earlier Lamp):
+        // done once for these sources on this macOS.
+        let macOS = Template.macMinimum(project)
+        let digest = Analyses.digest(of: running(project), module: project.exe, macOS: macOS)
+        let asked = digest + " " + podRuntime
+        let needsLayout = AppFile.text(runningLayout(project), in: project) == nil
+        let needsPlain = AppFile.text(plainAskedURL(project), in: project) != asked
+        guard needsLayout || needsPlain else { return }
+        let entry = analyses.entry(digest)
+        let made: (layout: [String], declarations: SwiftSource.Declarations)?
+        if let entry { made = (entry.layout, entry.declarations) }
+        else { made = await analysis(of: running(project), in: project, module: project.exe, macOS: macOS).map { ($0.layout, $0.declarations) } }
+        guard let made else { return }
+        if needsLayout { keepLayout(made.layout, for: project) }
+        if needsPlain {
+            let unsure = LiveSlots.unsureTypes(of: made.declarations.constants.keys.sorted(), layout: made.layout, declarations: made.declarations)
+            if !unsure.isEmpty { _ = await plainTypes(unsure, in: project) }
+            try? AppFolder.write(asked, to: plainAskedURL(project), in: project.dir)
         }
     }
+
+    /// Which sources, on which macOS, the plain-type answers were last asked ahead for (`warm`).
+    private static func plainAskedURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("plain-asked.txt") }
 
     static func keepLayout(_ layout: [String], for project: LampProject) {
         try? AppFolder.write(layout.joined(separator: "\n"), to: runningLayout(project), in: project.dir)
@@ -2103,7 +2124,16 @@ enum LiveReload {
     /// on this Mac, in the app's sandbox like any compile of Lamp's there. The runtime it asks is the one the open app
     /// runs on. A type the program can't find (from a framework it doesn't import, too new for the app's macOS) isn't
     /// said to be plain. Asked only when a changed constant is made of such a type, and each type once while Lamp runs.
-    @MainActor private static var podKnown: [String: Bool] = [:]
+    @MainActor private static var podKnown: [String: Bool] = {
+        let saved = (try? JSONDecoder().decode([String: [String: Bool]].self, from: Data(contentsOf: podURL))) ?? [:]
+        return saved[podRuntime] ?? [:]
+    }()
+    /// The answers, kept for the runtime they're true of: a macOS update may change what a system type holds.
+    private static let podURL = Edition.supportFolder.appendingPathComponent("plain-types.json")
+    static let podRuntime = ProcessInfo.processInfo.operatingSystemVersionString
+    @MainActor private static func savePOD() {
+        try? JSONEncoder().encode([podRuntime: podKnown]).write(to: podURL, options: .atomic)
+    }
     /// Asked by the name the compiler resolved each to, with its module (`SwiftUICore.Font.Design`), so the program
     /// can't take the name for anything else; answered by the name as the app's code writes it.
     @MainActor static func plainTypes(_ names: [String: String], in project: LampProject) async -> Set<String> {
@@ -2111,7 +2141,9 @@ enum LiveReload {
         let valid = names.filter { $0.value.range(of: #"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$"#, options: .regularExpression) != nil }
         let asking = Set(valid.values).filter { podKnown[$0] == nil }.sorted()
         if !asking.isEmpty {
-            for (name, isPOD) in await probePOD(asking, in: project) { podKnown[name] = isPOD }
+            let answers = await probePOD(asking, in: project)
+            for (name, isPOD) in answers { podKnown[name] = isPOD }
+            if !answers.isEmpty { savePOD() }
         }
         return Set(valid.filter { podKnown[$0.value] == true }.keys)
     }
@@ -2504,9 +2536,15 @@ enum LiveSlots {
     static func unsureTypes(_ project: LampProject, before: [String], after: [String], declarations: SwiftSource.Declarations) -> [String: String] {
         let all = changedConstants(project, before: before, after: after, declarations: declarations, plain: [], judging: false)
         guard !all.isEmpty else { return [:] }
+        return unsureTypes(of: withDependents(all, in: declarations), layout: after, declarations: declarations)
+    }
+
+    /// The same for these constants, whether they changed or not: every constant of the app's, asked ahead of the
+    /// first change (`LiveReload.warm`), so no change waits for the answer.
+    static func unsureTypes(of keys: [String], layout after: [String], declarations: SwiftSource.Declarations) -> [String: String] {
         let layout = LiveReload.byType(LiveReload.bared(after)), own = declarations.ownTypeNames
         var asked = Set<String>()
-        for key in withDependents(all, in: declarations) {
+        for key in keys {
             guard let variable = declarations.constants[key] else { continue }
             var seen = Set<String>()
             _ = objectHeld(in: variable.type, classes: declarations.classes, layout: layout, seen: &seen, unsure: { asked.insert($0) })
@@ -2719,6 +2757,10 @@ enum LiveSlots {
                         if let held = objectHeld(in: variable.type, classes: declarations.classes, layout: bareLayout, seen: &seen, plain: plain) {
                             // Which field, when it's one inside the value: the deepest one, which is where to look.
                             let field = held.contains(" (a ") ? " in \(held)" : ""
+                            // A pointer names what was opened or made once (a C library's handle, memory): said as that.
+                            if pointerValues.contains(String(held.split(separator: " ").last.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "()")) }?.split(separator: ".").last ?? "")) {
+                                return .refused("\(displayName(key)) would be made again for its new value, and a pointer\(field) names what the open app made once, which there would then be two of")
+                            }
                             return .refused("\(displayName(key)) would be made again for its new value, and its \(variable.type) can hold an object\(field), which there would then be two of")
                         }
                     }
@@ -2958,6 +3000,9 @@ enum LiveSlots {
                 }
                 continue
             }
+            // A pointer is plain bytes that name something (memory, a C library's handle, an object by identity): made
+            // again, it names something else, as a second object would, whatever the runtime says of its bytes.
+            if pointerValues.contains(last) { return name }
             if plainValues.contains(last) || plain.contains(name) || seen.contains(name) { continue }
             if let unsure { unsure(name); continue }
             return name
@@ -2972,6 +3017,13 @@ enum LiveSlots {
         "SetAlgebra": ["Equatable"], "OptionSet": ["SetAlgebra", "RawRepresentable", "Equatable"],
         "BidirectionalCollection": ["Collection", "Sequence"], "RandomAccessCollection": ["BidirectionalCollection", "Collection", "Sequence"],
         "Collection": ["Sequence"], "MutableCollection": ["Collection", "Sequence"], "RangeReplaceableCollection": ["Collection", "Sequence"],
+    ]
+
+    /// What's copied as plain bytes yet names something outside the value: never plain, whatever `_isPOD` says.
+    static let pointerValues: Set<String> = [
+        "OpaquePointer", "ObjectIdentifier", "Unmanaged", "UnsafePointer", "UnsafeMutablePointer", "UnsafeRawPointer",
+        "UnsafeMutableRawPointer", "UnsafeBufferPointer", "UnsafeMutableBufferPointer", "UnsafeRawBufferPointer",
+        "UnsafeMutableRawBufferPointer", "AutoreleasingUnsafeMutablePointer", "CVaListPointer",
     ]
 
     /// Value types a constant is made of that hold no object of their own.
