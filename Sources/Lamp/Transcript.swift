@@ -246,8 +246,8 @@ enum ChatItem: Identifiable {
     }
 
     /// With `gather` (the chat without Agent Details), each finished run's steps (what the agent ran, the app built
-    /// and opened) go into one line above its answer, as ChatGPT and Codex show the work behind an answer: the answer
-    /// is what's read, and the steps are a click away. Every finished run ends with its summary, so a run is what
+    /// and opened) fold where they came (`folded`), the ones before its answer into one line above it, as ChatGPT and
+    /// Codex show the work behind an answer: the answer is what's read, and the steps are a click away. Every finished run ends with its summary, so a run is what
     /// comes after the one before it up to its own: requests don't mark them, since a clicked answer to a card is left
     /// out of the chat and Lamp starts runs of its own (a build to fix). What comes after the last summary is a run
     /// still going, whose steps show as they come. Lamp's note that it reopened the app stays out, since it explains
@@ -274,20 +274,22 @@ enum ChatItem: Identifiable {
         (line.kind == .status && line.text != ChatLook.fixingCrash) || line.kind == .tool
     }
 
-    /// While a turn goes on its steps aren't rows of their own: they're inside the one line that says what it's doing
-    /// (`ActivityRow`, the sidebar's `workingSteps`), which opens to show them. `shown` is the chat without them,
-    /// `steps` what that line opens to. The turn still going is what comes after the last summary, from its
-    /// request on: a status left after the summary before it ("Hot Shelf is ready") belongs to that turn's end.
+    /// While a turn goes on, the steps since the last thing it said aren't rows of their own: they're inside the one
+    /// line at the bottom that says what it's doing (`ActivityRow`, the sidebar's `workingSteps`), which opens to show
+    /// them. Steps that came before something it said (a message, a progress line, Reload) stay rows where they came,
+    /// so the chat reads in the order things happened, newest at the bottom. `shown` is the chat without the live
+    /// line's steps, `steps` what that line opens to. The turn still going is what comes after the last summary, from
+    /// its request on: a status left after the summary before it ("Hot Shelf is ready") belongs to that turn's end.
     /// `doing` is what the line says the turn is doing now (`TurnProgress.activity`), and `looking` whether Lamp is
     /// looking at the app for the agent (`TurnProgress.looking`). The step the line is about is still going and isn't
     /// one of the steps done yet: it joins them once the agent moves on.
     static func live(_ lines: [LogLine], doing: String? = nil, looking: Bool = false) -> (shown: [LogLine], steps: [LogLine]) {
         let end = lines.lastIndex { $0.kind == .summary }.map { $0 + 1 } ?? lines.startIndex
         let start = lines[end...].firstIndex { $0.kind == .user } ?? end
-        var steps = Transcript.withoutStepInProgress(lines[start...].filter(isStep))
-        if let last = steps.last, isGoing(last, in: lines[start...], doing: doing, looking: looking) { steps.removeLast() }
-        let taken = Set(lines[start...].filter(isStep).map(\.id))
-        return (lines.filter { !taken.contains($0.id) }, steps)
+        let latest = lines[start...].lastIndex { !isStep($0) }.map { $0 + 1 } ?? start
+        var steps = Transcript.withoutStepInProgress(lines[latest...].filter(isStep))
+        if let last = steps.last, isGoing(last, in: lines[latest...], doing: doing, looking: looking) { steps.removeLast() }
+        return (Array(lines[..<latest]), steps)
     }
 
     /// Whether `step` is the one the turn is still on: nothing came after it but Lamp's own stages of it, and the line
@@ -301,23 +303,48 @@ enum ChatItem: Identifiable {
         return doing == (step.said ?? step.text) || looking
     }
 
-    /// A finished run's lines, its steps under one line at its end: the same place the live line had while it went
-    /// on, so that line turns into "Worked for…" without anything moving. What the agent said on the way (its
-    /// progress lines and messages) stays where it was, a message like any other: what the person has read
-    /// doesn't change form or go when the turn ends, and only what was done goes into the fold.
+    /// A finished run's lines, each stretch of its steps folded where it came, between the things the agent said and
+    /// Lamp's lines (Reload), so the chat reads in the order things happened. The stretch just before the answer (the
+    /// run's last message) is its "Worked for…", above the answer, as ChatGPT and Codex show the work behind one; any
+    /// other stretch folds to how many steps it was, or is its one step, as Lamp's note after the answer that the app
+    /// is ready is. A run with no answer has its last stretch for "Worked for…". What the agent said on the way (its progress lines and
+    /// messages) stays where it was, a message like any other: what the person has read doesn't change form or go
+    /// when the turn ends, and only what was done goes into the folds.
     private static func folded(_ run: [LogLine], summary: LogLine) -> [ChatItem] {
-        let steps = items(run.filter(isStep)).flatMap { item -> [LogLine] in
-            switch item {
-            case .statuses(let lines), .tools(let lines): lines
-            case .line(let line): [line]
-            case .work(_, _, let steps): steps
+        var stretches: [[LogLine]] = [[]]
+        var others: [[LogLine]] = []
+        for line in run {
+            if isStep(line) {
+                stretches[stretches.count - 1].append(line)
+            } else {
+                others.append([line])
+                stretches.append([])
             }
         }
-        // Reload, for a change waiting on it, under the answer that says so: the last thing in the run.
-        let reloads = run.filter { $0.kind == .reload }
-        let others = run.filter { !isStep($0) && $0.kind != .reload }
-        guard !steps.isEmpty else { return items(others) + items(reloads) }
-        return items(others) + [.work(id: summary.id, title: workedFor(summary.text), steps: steps)] + items(reloads)
+        // Stretch i comes before others[i]: the answer's stretch is the last one with steps up to it.
+        let answer = others.lastIndex { $0[0].kind == .agent } ?? others.count
+        let last = stretches[...min(answer, stretches.count - 1)].lastIndex { !$0.isEmpty } ?? stretches.lastIndex { !$0.isEmpty }
+        var result: [ChatItem] = []
+        for (index, stretch) in stretches.enumerated() {
+            if !stretch.isEmpty {
+                let steps = items(stretch).flatMap { item -> [LogLine] in
+                    switch item {
+                    case .statuses(let lines), .tools(let lines): lines
+                    case .line(let line): [line]
+                    case .work(_, _, let steps): steps
+                    }
+                }
+                if index == last {
+                    result.append(.work(id: summary.id, title: workedFor(summary.text), steps: steps))
+                } else if steps.count == 1 {
+                    result += items(steps)
+                } else {
+                    result.append(.work(id: stretch[0].id, title: "\(steps.count) steps", steps: steps))
+                }
+            }
+            if index < others.count { result += items(others[index]) }
+        }
+        return result
     }
 
     /// "Worked for 2 min 3 s", from a turn's summary ("Worked for 2m 3s · $0.12").
@@ -411,7 +438,7 @@ struct Transcript: View {
         let openAsk = Talk.open(in: lines)?.id
         // Answers clicked on a card are shown by the card, folded where it was: not again as a message.
         let shown = lines
-        // While the turn goes on, its steps are in the one line that says what it's doing, not rows of their own.
+        // While the turn goes on, its steps since it last said something are in the one line that says what it's doing.
         let items = ChatItem.items(progressShown ? (details ? Self.withoutStepInProgress(shown) : ChatItem.live(shown).shown) : shown,
                                    gather: !details)
         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in

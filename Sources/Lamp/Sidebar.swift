@@ -446,7 +446,7 @@ final class SidebarServer {
         let start = LogLine.recentStart(in: lines, atLeast: reach)
         let latestRequest = lines.last { $0.kind == .user }?.id
         let shown = Array(lines[start...])
-        // While the turn goes on, its steps are in the line that says what it's doing (`liveSteps`), not lines of their own.
+        // While the turn goes on, its steps since it last said something are in the line that says what it's doing (`liveSteps`).
         let items = ChatItem.items(progressShown ? (details ? Transcript.withoutStepInProgress(shown) : ChatItem.live(shown).shown) : shown,
                                    gather: !details)
         var out: [SidebarLine] = []

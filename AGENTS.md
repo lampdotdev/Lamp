@@ -44,15 +44,17 @@ A capability given to one engine must be given to all of them that can take it, 
   request came to is the agent's last message, in a sentence or two (`Agent.Rules.finish`), under the line that says
   the app is ready or updated; a card for it said no more than that message did and hid what it said beyond it.
   While longer work goes on, the agent says how it's going with `progress`: a line of 12 words at most, shown at once
-  in both chats as a message like any other, which stays one when the turn ends. A turn's steps belong to its one
-  live line (`ChatLook.ActivityLine`, `ChatItem.live`, the sidebar's `SidebarState.workingSteps`), which says what
-  it's doing now and changes in place. While the turn goes on the line is open, at the bottom under the steps done
-  so far, oldest first, so what's done reads in order and what's going on now is always last (a command by the name
+  in both chats as a message like any other, which stays one when the turn ends. The chat is one timeline: messages,
+  steps and Reload in the order they happened, the newest at the bottom, so steps never collect below what was said
+  after them. A turn's steps since it last said something belong to its one live line (`ChatLook.ActivityLine`,
+  `ChatItem.live`, the sidebar's `SidebarState.workingSteps`), which says what it's doing now and changes in place;
+  the steps before that stay rows where they came, between the messages. While the turn goes on the line is open, at
+  the bottom under its steps, oldest first, so what's going on now is always last (a command by the name
   the agent gave it, any other tool call in the words the line said while it ran, `LogLine.visible`, never its
   files); the step still going is the line itself and joins the list when the agent moves on (`ChatItem.live`), and a
-  click folds the list; when the turn ends the line and its
-  steps give way to "Worked for…" (`ChatItem.items`), folded, under the turn's last message, which opens to the same
-  steps. Whatever the agent writes as messages on the way is
+  click folds the list. When the turn ends each stretch of steps folds where it came (`ChatItem.items`): the one just
+  before the turn's last message into "Worked for…", above that message, any other to how many steps it was, or to
+  its one step. Whatever the agent writes as messages on the way is
   treated the same, each shown as it's said and kept as it was (`LogLine.visible`), since models write such updates
   whether or not they're asked to use the tool: what the person has read never turns into a gray line among the
   steps or goes away. (A Lamp from before this folded them; `ChatLook.ProgressLine` and the status line marked with
@@ -776,9 +778,9 @@ process of its own whose view the app hosts (`EXHostViewController`) but can't d
 the chat's content, never the app: the extension shows what Lamp sends and passes on what the person does
 (`SidebarWire`, one JSON value a line, in Sources/LampSidebarKit), so all the chat does stays in Lamp
 (`SidebarServer`: the lines as Lamp's window shows them without Agent Details, gathered and spaced as `Transcript`
-does, the draft, attachments, the open question card). Without Agent Details a finished turn's steps are one line above
-its answer, "Worked for 2 min 3 s" from the turn's summary, which opens to show them (`ChatItem.items(gather:)`,
-`ChatLook.Worked`); a turn still going shows its steps as they come. Both draw the chat with the same pieces, in
+does, the draft, attachments, the open question card). Without Agent Details a finished turn's steps fold where they came, those just
+before its answer into one line above it, "Worked for 2 min 3 s" from the turn's summary, which opens to show them
+(`ChatItem.items(gather:)`, `ChatLook.Worked`); a turn still going shows its steps as they come. Both draw the chat with the same pieces, in
 Sources/LampSidebarKit (`Composer`, the message box; `ChatLook`, the bubbles, statuses, progress line, Stop and Send),
 so a change to how Lamp's chat looks is made there and reaches both; the sidebar program is part of `BuildStamp`, so
 apps installed with an earlier one are built again when next opened. It reaches Lamp on this Mac's own address at `Edition.sidebarPort` (macOS keeps other apps, Lamp

@@ -37,6 +37,11 @@ enum Gallery {
                                   LogLine(kind: .ask, text: "", ask: Talk.Ask(layout: .steps, questions: [kind, when], answers: ["Habits", "Morning"])),
                                   LogLine(kind: .agent, text: "I'll make a habit tracker that reminds you each morning.")],
              activity: "Working on the interface"),
+        // What the agent said and did in the order it happened: the steps before each message stay above it, and
+        // only the steps since the latest are in the line at the bottom.
+        chat("Steps between messages", Array(beerTurn.dropLast(3)), activity: "Putting the pieces together"),
+        // Over, each stretch folds where it came; the one before the answer is "Worked for…".
+        chat("Steps between messages, over", beerTurn),
         // An answer with every kind of markdown block: headings, a table, lists, a quote, a rule and code.
         chat("A reply with markdown", [
             LogLine(kind: .user, text: "which files are the biggest?"),
@@ -91,6 +96,22 @@ enum Gallery {
         LogLine(kind: .status, text: "Today is ready"),
         LogLine(kind: .agent, text: "The app is more colorful now. Each card's heading has a colored icon, and each of the three priorities has its own color."),
         LogLine(kind: .summary, text: "Worked for 1m 11s · $0.12"),
+    ]
+
+    private static func step(_ said: String) -> LogLine { LogLine(kind: .status, text: "Ran: true", said: said) }
+
+    private static let beerTurn: [LogLine] = [
+        LogLine(kind: .user, text: "Turn Hot Shelf into a beer tracker"),
+        LogLine(kind: .agent, text: "I'll turn Hot Shelf into a beer journal, with brewery details and tasting notes."),
+        step("Understanding the current shelf and its design"), step("Finding the shelf screens and saved entries"),
+        step("Looking at your current shelf"),
+        LogLine(kind: .progress, text: "First, a warm taproom look with shelves grouped by beer style."),
+        step("Reading the shelf details for the beer conversion"), step("Preparing the taproom look and beer examples"),
+        step("Designing the icon"),
+        LogLine(kind: .agent, text: "The taproom look awaits Reload. Next, beer styles and tasting records."),
+        step("Setting up what your app remembers"), step("Working on the settings"),
+        LogLine(kind: .agent, text: "Hot Shelf is now a beer journal: shelves by style, with brewery and tasting notes."),
+        LogLine(kind: .summary, text: "Worked for 6m 12s · $0.41"),
     ]
 
     private static func chat(_ name: String, _ lines: [LogLine], group: String = "Chat", undo: Bool = false,
