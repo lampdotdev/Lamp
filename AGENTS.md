@@ -601,7 +601,12 @@ process; a look pictures the screen with `screencap`, scaled by the device's den
 it as text from `uiautomator dump` (`Adb.Screen`, the same line shape as the Mac's and the iPhone's);
 `use_app` taps, types, swipes and presses keys through `adb shell input` (`Adb.perform`), reading the screen again
 between actions. The chat stays in Lamp's window (no sidebar, no live reload: both are the Mac's). An Android app
-isn't shared as a `.lampapp` yet (`Sharing.export` says so). Converting to or from Android is a rewrite in the other
+is shared as a `.lampapp` of format 9 (`AndroidFiles`, SharingAndroid.swift): its `app/` whole (Kotlin, manifest,
+resources, `app/build.gradle.kts`), without `app/build`, hidden folders, `local.properties` or Lamp's own Gradle files,
+and `platform` "android" in `lamp-app.json`. The Mac that opens it writes Lamp's Gradle files and renames the code to
+its own package for the app (`Template.androidPackage`), which Lamp installs and launches it by. The review reads its
+manifests' `uses-permission` lines (INTERNET is going online, the rest said in plain words) and the libraries its build
+files bring in beyond Lamp's catalogue. Converting to or from Android is a rewrite in the other
 language: `convert` puts the new kind's scaffold beside the old code and tells the agent to write the app again and
 delete the rest.
 
