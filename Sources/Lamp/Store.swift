@@ -3619,12 +3619,12 @@ final class Store: ObservableObject {
         let steps = DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name(Edition.notificationPrefix + "useAppStep.\(project.id)"), object: nil, queue: .main) { note in
             guard let text = note.object as? String,
-                  let step = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any], step["id"] as? String == id,
-                  let x = step["x"] as? Double, let y = step["y"] as? Double else { return }
+                  let step = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any], step["id"] as? String == id else { return }
             let window = (step["window"] as? Int).map { CGWindowID($0) }
             let doing = step["doing"] as? String, press = step["press"] as? Bool ?? false
             MainActor.assumeIsolated {
                 if let window { trial.show(window: window) }
+                guard let x = step["x"] as? Double, let y = step["y"] as? Double else { return }   // the window alone, at the start
                 Task { await trial.aim(at: CGPoint(x: x, y: y), doing: doing, press: press, within: Template.useAppLead - 0.05) }
             }
         }

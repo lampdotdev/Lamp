@@ -7987,6 +7987,8 @@ enum Template {
                 report.append(why)
                 answer(stopped: true)
             }
+            // Which window the actions are for, before any of them: Lamp's glow goes round it from the start.
+            if let window = front { announce(id, window: window.windowNumber) }
             // The last action that should have changed something: its line, and how its window looked before.
             var last: (line: Int, window: NSWindow, picture: Data?)?
             func note() {
@@ -8070,9 +8072,16 @@ enum Template {
                     ["click", "double_click", "right_click", "type"].contains(action.action))
         }
 
-        /// Tells Lamp where the next action happens. In the notification's object, the one part a sandboxed app may send.
+        /// Tells Lamp where the next action happens, or just which window the actions are in. In the notification's
+        /// object, the one part a sandboxed app may send.
         private static func announce(_ id: String, _ aim: (point: CGPoint, doing: String, window: Int, press: Bool)) {
-            let step: [String: Any] = ["id": id, "x": aim.point.x, "y": aim.point.y, "doing": aim.doing, "window": aim.window, "press": aim.press]
+            announce(id, ["x": aim.point.x, "y": aim.point.y, "doing": aim.doing, "window": aim.window, "press": aim.press])
+        }
+
+        private static func announce(_ id: String, window: Int) { announce(id, ["window": window]) }
+
+        private static func announce(_ id: String, _ fields: [String: Any]) {
+            let step = fields.merging(["id": id]) { $1 }
             guard let data = try? JSONSerialization.data(withJSONObject: step) else { return }
             DistributedNotificationCenter.default().postNotificationName(
                 Notification.Name(LampInstall.note + "useAppStep." + LampInstall.slug), object: String(decoding: data, as: UTF8.self),

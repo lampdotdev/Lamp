@@ -718,7 +718,9 @@ posts itself. Either way the rest of the batch is dropped, keys held down are le
 brought forward again, the pill says "You have the app. Lamp stopped trying it.", the chat gets a "Trying it:
 stopped by you" line, and `use_app` answers how far it got and refuses further calls until the person's next
 message reaches the agent (`Turn.tookOver`). `UseAppStopTests` compiles the app's half out of the template and
-drives it with real events.
+drives it with real events. The pill's outline, and the approval card's, take no clicks (`allowsHitTesting(false)`):
+a capsule's stroke counts a click on the line through its middle as its own, which is where Stop's middle is, and a
+click the outline took in that panel never reached the button.
 
 A Mac app can be changed while it's in use (apps show the wand while the file `MagicPanel.flag`, which Lamp writes
 at launch, is beside their folders, checked each time a window comes forward): `LampMagic` in LampSupport.swift puts a

@@ -109,16 +109,19 @@ final class Handover {
         return window?.contains(location) == true
     }
 
-    /// The front window of an app on screen, in the order the window server stacks them.
+    /// The front window of an app on screen, in the order the window server stacks them: the first with a title,
+    /// since the app's chat beside its window is a panel of the app's own, in front of it and with none.
     nonisolated static func frontWindow(of pid: pid_t, containing point: CGPoint? = nil) -> CGWindowID? {
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        var untitled: CGWindowID?
         for info in windows where (info[kCGWindowOwnerPID as String] as? pid_t) == pid && (info[kCGWindowLayer as String] as? Int) == 0 {
             guard let bounds = info[kCGWindowBounds as String] as? NSDictionary,
                   let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary), rect.width > 40, rect.height > 40,
                   point.map(rect.contains) ?? true,
                   let id = info[kCGWindowNumber as String] as? CGWindowID else { continue }
-            return id
+            if (info[kCGWindowName as String] as? String)?.isEmpty == false { return id }
+            untitled = untitled ?? id
         }
-        return nil
+        return untitled
     }
 }

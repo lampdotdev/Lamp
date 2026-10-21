@@ -560,6 +560,10 @@ final class ComputerOverlay {
 }
 
 /// The stop control: whose task is running, and the button that ends it.
+///
+/// The outline around it is drawn over the content, so it would take a click as well: a capsule's stroke counts a
+/// click on the line through its middle as its own, which is exactly where Stop's middle is, and a click the outline
+/// takes in a panel of its own never reaches the button under it. So the outlines here take no clicks.
 private struct StopPill: View {
     let label: String
     var escape = false
@@ -583,7 +587,7 @@ private struct StopPill: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.secondary.opacity(0.5), lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.secondary.opacity(0.5), lineWidth: 1).allowsHitTesting(false))
                     .accessibilityLabel("or press Escape")
             }
         }
@@ -591,7 +595,7 @@ private struct StopPill: View {
         .padding(.trailing, 6)
         .padding(.vertical, 5)
         .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(Color(nsColor: ComputerOverlay.tint).opacity(0.6), lineWidth: 1))
+        .overlay(Capsule().strokeBorder(Color(nsColor: ComputerOverlay.tint).opacity(0.6), lineWidth: 1).allowsHitTesting(false))
         .fixedSize()
     }
 }
@@ -612,7 +616,7 @@ private struct HandBackPill: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(Color(nsColor: ComputerOverlay.tint).opacity(0.6), lineWidth: 1))
+        .overlay(Capsule().strokeBorder(Color(nsColor: ComputerOverlay.tint).opacity(0.6), lineWidth: 1).allowsHitTesting(false))
         .fixedSize()
     }
 }
