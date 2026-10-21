@@ -443,16 +443,18 @@ private extension View {
     func shimmering(_ active: Bool) -> some View { modifier(Shimmer(active: active)) }
 }
 
-/// A later turn's progress: one line saying what the agent is doing and for how long, which opens to the turn's steps
-/// so far (they aren't rows of their own while it goes on, `ChatItem.live`).
+/// A later turn's progress: one line saying what the agent is doing and for how long, which opens to the steps since
+/// it last said something (they aren't rows of their own while it goes on, `ChatItem.live`).
 struct ActivityRow: View {
     let progress: TurnProgress
     /// The chat's lines, for the steps the line opens to.
     var lines: [LogLine] = []
+    /// The app's folder: the steps are split from the chat as the transcript shows it (`ChatItem.live(_:dir:)`).
+    let dir: URL
     @AppStorage("showDetails") private var details = false
 
     var body: some View {
-        let steps = details ? [] : ChatItem.live(lines, doing: progress.activity, looking: progress.looking).steps
+        let steps = details ? [] : ChatItem.live(lines, dir: dir, doing: progress.activity, looking: progress.looking).steps
         ChatLook.ActivityLine(progress.activity, started: progress.started, since: progress.activitySince,
                               hasSteps: !steps.isEmpty) { StepList(steps: steps) }
     }
