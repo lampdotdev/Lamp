@@ -1191,9 +1191,9 @@ object isn't remade (`static let shared = Store()`): the object is the app's sta
 read by what runs only at launch (its types and their extensions), there or through what it calls
 (`SwiftSource.reaches`), reopens the app, and so does
 a constant of the app's own option set or raw-value type, which the open app's values of it are made of.
-So does a key's `defaultValue` (an environment value's, a preference's, computed too) or an `@Entry` value's, which
+So does a key's `defaultValue` (an environment value's, a preference's, computed too, in the type or an extension of it, with what its getter calls) or an `@Entry` value's, which
 SwiftUI reads once and keeps. A view's plain property given another starting value (`let columns = 2` to `3`, an
-`@AppStorage` default; `Group.defaults`) reopens the app when the view is made once (the window's root, a hosting
+`@AppStorage` default, or what it's made by: `initialColumns()`; `Group.defaults`, digested with the code it calls) reopens the app when the view is made once (the window's root, a hosting
 view's), which keeps what it started as; one a body makes is made again. A case's raw value is a value, never read
 as a type a constant holds. A `#Preview`'s code, and the type its macro writes, is no use of anything and no old code.
 

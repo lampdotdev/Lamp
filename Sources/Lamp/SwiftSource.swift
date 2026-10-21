@@ -501,7 +501,7 @@ enum SwiftSource {
             // An instance's plain properties (and what reads a stored default, `@AppStorage`), whose starting value
             // shows only in an instance made again; not state SwiftUI keeps (`@State`), which keeps its own anyway.
             + startingValues(declarations.variables.filter { $0.value.attributes.allSatisfy { ["AppStorage", "SceneStorage", "Entry"].contains($0.name) } },
-                             declarations, group: .defaults)
+                             declarations, group: .defaults, withCalls: true)
             + computedDefaults(declarations)
     }
 
@@ -672,12 +672,17 @@ enum SwiftSource {
     private static func computedDefaults(_ declarations: Declarations) -> [String] {
         var files: [String: Text] = [:]
         return declarations.bindings.compactMap { binding in
+            // Its owner: the type it's declared in, or the type an extension around it extends (`extension ShadeKey:
+            // EnvironmentKey { … }`), whichever is innermost.
+            let owners = declarations.types.map { ($0.key, $0.value) } + declarations.extensions.flatMap { name, ranges in ranges.map { (name, $0) } }
             guard binding.entries.count == 1, binding.entries[0].name == "defaultValue", binding.entries[0].initial == nil,
-                  let owner = declarations.types.filter({ within(binding.start, $0.value) }).min(by: { before($1.value.start, $0.value.start) })?.key,
+                  let owner = owners.filter({ within(binding.start, $0.1) }).min(by: { before($1.1.start, $0.1.start) })?.0,
                   let text = files[binding.start.file] ?? Text(path: binding.start.file) else { return nil }
             files[binding.start.file] = text
             guard let from = text.offset(binding.start), let end = text.tokenEnd(binding.last), from < end else { return nil }
-            return LiveReload.Group.defaults.entry(owner + "\tdefaultValue: " + digest(text.slice(from, end)))
+            // With what it calls, as far down as that goes: a getter returning `theme()` changes when `theme()` does.
+            let called = calledText(from: binding.start, to: binding.last, in: declarations, files: &files)
+            return LiveReload.Group.defaults.entry(owner + "\tdefaultValue: " + digest(text.slice(from, end)) + "+" + digest(called))
         }
     }
 
