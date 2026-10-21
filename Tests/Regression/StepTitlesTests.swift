@@ -88,4 +88,23 @@ final class StepTitlesTests: XCTestCase {
         XCTAssertTrue(groups.isEmpty)
         XCTAssertEqual(own, [lines[1].id: "Looking around"])
     }
+
+    private func route(_ id: String, _ kind: AppAI.TextRoute.Kind, available: Bool = true) -> AppAI.TextRoute {
+        AppAI.TextRoute(id: id, label: id, group: "", name: id, kind: kind, available: available)
+    }
+
+    /// A turn built on this Mac is titled on this Mac or not at all, whatever key is saved: the request and the
+    /// steps' words never go to the cloud for a turn that stayed here.
+    func testALocalTurnIsTitledOnThisMacOrNotAtAll() {
+        let openRouter = route("sonnet", .openRouter(model: AppAI.defaultOpenRouterModel))
+        let local = route("local:qwen", .localModel(provider: Builder.localProvider, model: "qwen"))
+        let routes = [openRouter, local, route("engine:claude:opus", .engine(.claude, model: "opus"))]
+        XCTAssertEqual(StepTitles.route(for: .local(model: "qwen"), among: routes)?.route.id, "local:qwen")
+        XCTAssertNil(StepTitles.route(for: .local(model: "gone"), among: routes))
+        XCTAssertNil(StepTitles.route(for: .local(model: "qwen"), among: [openRouter, route("local:qwen", local.kind, available: false)]))
+        // A turn through OpenRouter or a sign-in is titled there, by its small model where it has one.
+        XCTAssertEqual(StepTitles.route(for: .openRouter, among: routes)?.route.id, "sonnet")
+        XCTAssertEqual(StepTitles.route(for: .engine(.claude), among: routes)?.model, Builder.claudeFastModel)
+        XCTAssertNil(StepTitles.route(for: .openRouter, among: [local]))
+    }
 }

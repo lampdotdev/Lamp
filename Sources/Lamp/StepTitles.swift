@@ -8,7 +8,8 @@ import LampSidebarKit
 /// chat is already as it will be, and each fold takes its line when the answer comes. While the turn goes on its
 /// steps are open rows anyway, so a line made earlier would show no sooner, and one call per turn costs less than one
 /// per fold. The call goes to the small model on the route that built the turn (`AppAI.fastModel`: Haiku through
-/// Claude Code, Luna through Codex; for pi, OpenRouter's default with the key pi builds through). It is told the
+/// Claude Code, Luna through Codex; for pi, OpenRouter's default when it builds through OpenRouter, and the model on
+/// this Mac it built with when it builds there, never the cloud). It is told the
 /// person's request and each fold's steps in the words the chat shows, never what a command printed or a file held,
 /// and not what the agent said around a fold, which a model given it turns into claims the steps don't show (a plan
 /// it announced becomes something the fold did). When there's no such route, the call fails or its answer isn't fit
@@ -27,12 +28,12 @@ enum StepTitles {
     }
 
     /// Titles the folds of the run that just ended, out of the turn's way.
-    static func start(for project: LampProject, engine: Engine) {
+    static func start(for project: LampProject, turn: TurnRoute) {
         Task { @MainActor in
             let lines = LogLine.visible(Store.shared.logs[project.id] ?? [], details: false)
             let (request, groups, own) = Self.groups(in: lines)
             var titles = own
-            if !groups.isEmpty, let made = await ask(request: request, groups: groups, engine: engine) {
+            if !groups.isEmpty, let made = await ask(request: request, groups: groups, turn: turn) {
                 titles.merge(made) { $1 }
             }
             Store.shared.setFoldTitles(titles, in: project)
@@ -108,27 +109,43 @@ enum StepTitles {
         return text
     }
 
-    /// One call for all the groups, on the route that built the turn.
-    private static func ask(request: String?, groups: [Group], engine: Engine) async -> [UUID: String]? {
-        let prompt = prompt(request: request, groups: groups)
-        let reply: String
-        do {
-            switch engine {
-            case .claude, .codex:
-                guard let route = AppAI.allTextRoutes.first(where: {
-                    if case .engine(engine, _) = $0.kind { return $0.available }
-                    return false
-                }) else { return nil }
-                reply = try await AppAI.complete(prompt: prompt, images: [], system: system, json: true,
-                                                 engineModel: AppAI.fastModel(for: route), via: route).0
-            case .pi:
-                guard Provider.hasKey else { return nil }
-                reply = try await AppAI.complete(prompt: prompt, images: [], system: system, json: true,
-                                                 model: AppAI.defaultOpenRouterModel).0
+    /// What built a turn, taken as it starts: the engine and, for pi, whether through OpenRouter or a model on this
+    /// Mac, and which.
+    enum TurnRoute: Equatable {
+        case engine(Engine)
+        case openRouter
+        case local(model: String)
+
+        @MainActor static var current: TurnRoute {
+            switch Builder.engine {
+            case .pi: Builder.piProvider == Builder.localProvider ? .local(model: Builder.piModel) : .openRouter
+            case let engine: .engine(engine)
             }
-        } catch {
-            return nil
         }
+    }
+
+    /// The route the titles go along: the one that built the turn, with its small model where it has one. A turn
+    /// built on this Mac is titled on this Mac, by the model that built it, or not at all: a key saved for
+    /// OpenRouter is no leave to send what stayed on the Mac to the cloud.
+    nonisolated static func route(for turn: TurnRoute, among routes: [AppAI.TextRoute]) -> (route: AppAI.TextRoute, model: String?)? {
+        let found = routes.first { route in
+            guard route.available else { return false }
+            switch (turn, route.kind) {
+            case (.engine(let engine), .engine(let other, _)): return engine == other
+            case (.openRouter, .openRouter(let model)): return model == AppAI.defaultOpenRouterModel
+            case (.local(let model), .localModel(_, let other)): return model == other
+            default: return false
+            }
+        }
+        return found.map { ($0, AppAI.fastModel(for: $0)) }
+    }
+
+    /// One call for all the groups, on the route that built the turn.
+    private static func ask(request: String?, groups: [Group], turn: TurnRoute) async -> [UUID: String]? {
+        guard let (route, model) = route(for: turn, among: AppAI.allTextRoutes) else { return nil }
+        let prompt = prompt(request: request, groups: groups)
+        guard let (reply, _) = try? await AppAI.complete(prompt: prompt, images: [], system: system, json: true,
+                                                         engineModel: model, via: route) else { return nil }
         return read(reply, groups: groups)
     }
 }

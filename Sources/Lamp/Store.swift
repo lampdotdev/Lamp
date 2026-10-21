@@ -2884,6 +2884,8 @@ final class Store: ObservableObject {
             return false
         }
         let engine = Builder.engine
+        // What builds this turn, as it starts, for the titles of its steps after it (`StepTitles`).
+        let titleRoute = StepTitles.TurnRoute.current
         if engine == .pi && Builder.piProvider == Builder.localProvider {
             do {
                 try await LocalModels.shared.ensureServer(for: Builder.piModel)
@@ -3123,7 +3125,7 @@ final class Store: ObservableObject {
         // Pictures are already in the app's building cost (recordArt); the summary shows them with the rest.
         log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost + turn.artCost - artBefore))
         // Each fold of the turn's steps gets a line saying what it did, made after the turn and never waited on.
-        StepTitles.start(for: project, engine: engine)
+        StepTitles.start(for: project, turn: titleRoute)
         recordAgent(project, cost: cost)
         if turn.stopped {
             turn.stopped = false
