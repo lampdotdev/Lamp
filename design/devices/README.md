@@ -125,6 +125,86 @@ Other devices, in the same shape:
 | Android, Fire, frames | Developer options, wireless or USB debugging, accepting this Mac's key |
 | Dishwasher, washer | Connecting the account (SmartThings, ThinQ, Home Assistant) |
 
+## Integrations: devices as data
+
+The kits so far are written by hand: Apple's (Devices.swift, PhoneSetup.swift), Android's (Android.swift, AndroidSetup.swift) and the TVs' (TVs.swift, Sdb.swift, TizenSigning.swift, TVSetup.swift). Each finds its devices, reads their identity, walks the person through setup in a window of its own, and installs through its own bridge. Writing one per device doesn't reach "every device you own". The way out is the one connectors already took: a service that isn't listed is declared by the app's own code (`LampAPI.own`: its address, the page where the key is made, the steps, how the key is sent), and Lamp draws the Connect sheet and does the sending. A device Lamp doesn't know is declared the same way, by the model, as an **integration**: data that says how to find the device, read it, set it up, put software on it and look at it. Lamp checks the data, acts on it with a small set of primitives it owns, and draws every step's interface itself.
+
+### What an integration holds
+
+An integration is a JSON document, checked against a schema Lamp ships; nothing in it is code Lamp runs.
+
+- **Find.** How the device announces itself: an SSDP search target, a Bonjour service type, a USB vendor and product id, or an HTTP probe (a port, a path, what the answer must contain). A match is a found device, shown for the moment, never kept until a setup step has worked.
+- **Identity.** Where each field of the device record is read from the device's own answers ("model is `model-name` in the XML from `:8060/query/device-info`"). The model says where; Lamp reads the value. The record stays read from the device, never guessed.
+- **Setup steps.** Each has what the person does (short numbered lines, held to word limits as the chat's cards are), what's shown to them (this Mac's address, a code, a QR code), what they type (a passphrase or a PIN), what they accept (below), and a **check** Lamp runs with the primitives: a port that answers, a value in the device's answer, the bridge listing the device. A step is done when its check passes, never because the model or the person said so.
+- **Bridge.** Install, launch, look, use and logs, each a short sequence of primitives with placeholders Lamp fills (`{package}`, `{appID}`, `{address}`, a field the person typed), checked to a safe alphabet. The model never fills a placeholder.
+- **App kind.** What's built for it: one Lamp owns (Swift for Apple, Kotlin for Android, the TVs' web app), or one the integration declares: the scaffold's files, the rules the builder is given, and the package step, which runs in the app's sandbox like every build, so it may be any command. A kind with a preview on this Mac (the TVs' web app) is looked at there; one without is looked at through the bridge.
+- **Provenance.** How each part is known (below), and the device software version it was known on.
+
+### What Lamp acts with
+
+Every step and bridge is made of these and nothing else. Anything else fails the schema and goes back to the model with the reason.
+
+| Primitive | What it does | Held to |
+| --- | --- | --- |
+| `http` | A request to the device: GET, POST, a file uploaded as a form, digest or basic sign-in with a field the person typed; a value read from the answer by a JSON or XML path | Only the address the device was found at, in a private range; no redirects; answers cut off at a size |
+| `probe` | A TCP connect, an SSDP search, a Bonjour browse | Read only |
+| `stream` | A TCP connection read line by line, for a device's log | The device's address; read only, into the app's log |
+| `field` | A passphrase, PIN or password the person types | Kept in the Keychain under that device, sent only to it |
+| `show`, `qr` | A value or a QR code for the person | Lamp's own values (this Mac's address, a pairing code) |
+| `wait` | Hands on the device; Lamp runs the step's check until it passes | Polls only the step's own check |
+| `vendorSignIn` | The vendor's page in the browser, answered on a listener on this Mac's loopback | The card shows the page's domain before it opens |
+| `ssh` | A command on the device | Below |
+| `tool` | A program on this Mac | Below |
+| `link` | A page for the person to read | The only form a rooting step ever takes |
+| `bridge` | A bridge Lamp ships: `devicectl`, `adb`, `sdb`, Tizen signing, LG's key exchange | Code Lamp ships, reviewed like any other |
+
+**SSH**: the integration may compose commands for the device, because the device is the person's and so is the call. Each command template comes with the model's explanation in plain words, and before it first runs on a device the person approves it on a card like the shell approval card: the command, what it's for, and what they accept ("Runs on your TV. It can change or break the TV's software."). The approval is for that template's exact text on that device, so Play doesn't ask each time and a changed template asks again. Lamp's side stays fixed: only the device's address, its host key pinned the first time, no forwarding of ports or of an agent, and a key Lamp keeps in its own folder, which the agent's sandbox closes.
+
+**Tools on this Mac**: Lamp ships a list of tools it downloads and checks (a checksum and a signature, as it checks Claude Code and Codex, and as `updates/api/engines.js` holds them), and runs those as itself with the argument templates the list gives them. An integration may name a tool that isn't on the list; it's downloaded the same way but runs in a sandbox of its own (`sandbox-exec`: its folder, the network, temp, nothing of Lamp's or the person's), approved by the person as an SSH command is. What runs unconfined is only ever what Lamp shipped.
+
+### One setup window, drawn from the data
+
+The hand-written setup windows (Android Setup, TV Setup, and the iPhone's) become one window drawn from the integration's steps: the list of steps with done, next and not yet; the next step as a card with its numbered lines, the values shown large, its field or QR code, one button that runs its primitive, and a check line that goes from "Waiting for the TV…" to done by itself. The same card is what the chat shows when a wish needs a step, and what Settings → Your Devices opens. Each kind of card gets its entries in the gallery.
+
+**What you accept** is chosen, not written: an account, a risk to the device's software (it may stop working; the warranty), data wiped, updates that stop, protections turned off, a command run on the device. Lamp writes each sentence itself, so no integration can play a risk down. Each step also says how it's known: **Checked by Lamp** (its check passed on a device of this model and version), **Done by people** (it passed after hands on the device), or **Not tried yet** (written from what was read). A step not tried yet says so on its card.
+
+### Where an integration comes from
+
+A device with no integration is set up in either of two ways, and the person can start both:
+
+- **From the list.** A found device Lamp doesn't know shows in Settings → Your Devices with Set Up…, which starts the work.
+- **From a wish.** A wish that names a device Lamp doesn't know ("put this on my Roku") starts it before anything is built, as a device that isn't ready makes its setup the first card.
+
+Who writes it: by default the builder, in its own turn, through a new tool that hands Lamp the JSON; Lamp checks it and answers with what's wrong, as `ask` is turned away when it's too long. Optionally a **Research model**, chosen in Settings like the decision and image models: an open model with the web and the community's guides, which answers what the builder refuses and keeps the builder to writing apps. The researcher only writes data; it never touches the device.
+
+Once a step's check has passed it's kept with the integration, on this Mac, in Lamp's folder, beside the ones Lamp ships (`Resources/Devices/`, the kits' steps as data). Pooling what people's Lamps learn comes later; the format already carries what it needs (model, software version, how each step is known), so it can be added without changing it.
+
+### What the kits become
+
+| Kit | Becomes data | Stays code |
+| --- | --- | --- |
+| Apple | The steps: pairing, Developer Mode, a team | `devicectl`, Xcode, team signing, simulators, LampSupport |
+| Android | Finding (adb's list), identity (`getprop` paths), the steps (developer options, debugging, the Mac's key) | adb as a bridge, the tools' download, the emulator, the Android scaffold |
+| Samsung TV | SSDP, identity from `:8001/api/v2/`, developer mode, the connection | sdb's protocol, Tizen signing and Samsung's certificate sign-in, `config.xml` |
+| LG TV | SSDP, identity, Developer Mode, the passphrase | the key exchange and the session's renewal, or its commands as approved SSH once integrations can |
+
+The shipped ones are marked Checked by Lamp, and go through the same window and cards as any other.
+
+### Roku, the first one built this way
+
+Roku is the device to prove it on: everything it needs is HTTP and TCP on the local network, so its integration is data from end to end, with nothing new in code but the primitives. From Roku's developer documentation (each to confirm on a Roku):
+
+- **Find**: SSDP with the search target `roku:ecp`; the answer's location is its control API on port 8060.
+- **Identity**: `GET :8060/query/device-info`, XML: `model-name`, `model-number`, `software-version`, `ui-resolution`, `developer-enabled`.
+- **Setup**: developer mode, on the remote (Home three times, Up twice, Right, Left, Right, Left, Right), where the person sets a password for the developer installer; checked by `developer-enabled` being true and the installer on port 80 answering. The password is a `field`.
+- **Install and launch**: the package (a zip with a `manifest`, BrightScript and SceneGraph XML) uploaded to `:80/plugin_install` as a form, with digest sign-in as `rokudev`; it opens by itself, and `POST :8060/launch/dev` opens it again.
+- **Look**: `:80/plugin_inspect` asked for a screenshot, then the picture fetched; a real picture of the TV, which neither TV kit has.
+- **Use**: `POST :8060/keypress/<key>` with Roku's key names (Home, Up, Select, Back, …).
+- **Logs**: the debug console on port 8085, as a `stream`.
+- **App kind**: BrightScript, declared by the integration: a scaffold, the rules, and the package step (a zip, made in the app's sandbox). No preview on this Mac: Roku has none, so looks go to the TV.
+
+Roku's whole integration is written once by the model as a test of the schema, checked on a Roku, and shipped as the first entry that wasn't a kit.
+
 ## Wishes, Device Control and refusals
 
 **Wishes.** "Put our calendar on the Frame TV" names a device; "remind me when the laundry's done" names two (the washer, talked to; the phone, where the reminder runs). Lamp works out which devices from the list, as it picks Mac or iPhone today, and passes the exact devices to the agent with the request. A device not yet ready makes its next setup step the first card.
@@ -135,13 +215,15 @@ Other devices, in the same shape:
 
 ## Order of work
 
-1. **The device record and list, for what Lamp already supports.** Exact identity for Mac, iPhone, iPad and Watch (watches stop being dropped), shown in one list. Small, and it sets the shape everything after uses.
-2. **The Samsung kit, end to end on one Frame TV.** Setup checks with the certificate step, a Tizen scaffold and rules, build, install, a screenshot for looking, the remote for using. Today or Buzzer Beater on the TV is the demo.
-3. **Device Control as a starter**, once there is something set up to show.
-4. **LG**, nearly free: the same web kit, a different manifest and bridge.
-5. **Android**, which covers Google TV, Fire tablets and the Android photo frames in one kit.
-6. **Talked-to devices** through accounts (SmartThings, ThinQ, Home Assistant), as connectors.
-7. **Roku and Apple TV**, if people ask.
+1. **The device record and list, for what Lamp already supports.** Exact identity for Mac, iPhone, iPad and Watch (watches stop being dropped), shown in one list. Done.
+2. **Hand-written kits for Android, Samsung and LG**, to learn what a kit needs before generalising it. Android is merged; the TVs are on their way (Samsung tried on a Frame TV, LG written from LG's tools and untried).
+3. **The integration schema and its primitives**, with the one setup window and its cards drawn from data, and the approval card for SSH and tools.
+4. **Roku as the first integration that isn't a kit**: written by the model through the new tool, checked on a Roku, shipped.
+5. **The kits' steps as data**, Android's and the TVs' first, then Apple's, so every device's setup is the same window and cards.
+6. **The Research model** as an optional route in Settings.
+7. **Device Control as a starter**, once there is something set up to show.
+8. **Talked-to devices** through accounts (SmartThings, ThinQ, Home Assistant), as connectors.
+9. **Pooling** what people's Lamps learn, later.
 
 Meanwhile, as agreed at the sync, everyone tries a cheap device and notes how its setup went; those notes become each kit's setup steps.
 
@@ -153,15 +235,15 @@ That makes two model jobs, kept apart: the builder, only ever asked to write an 
 
 Research proposes; Lamp's checks and the person's hands decide. A discovered step is held to the same lines as a written one: what defeats a device's protections stays the owner's own step, and analysis runs only on the person's own devices.
 
-Kept once is one person's; the point is to pool it. What Lamp learns should accumulate in one place, keyed by what the record already holds (maker, model, the exact software version: a firmware release moves menus and breaks bridges, and a step verified on Tizen 6.5 is a guess on 7.0), and shipped with Lamp the way skills are: bundled, versioned, read from the app's own copy, so a person's first run of a device finds steps someone else already walked. A device that drifted from the version a step was verified on gets research, not a quiet failure. What a person's Lamp learns flows back the same way, with their say-so: model, version, step and outcome, never a device's name, never the network it sat on.
+Kept once is one person's; the point, later, is to pool it. What Lamp learns should accumulate in one place, keyed by what the record already holds (maker, model, the exact software version: a firmware release moves menus and breaks bridges, and a step verified on Tizen 6.5 is a guess on 7.0), and shipped with Lamp the way skills are: bundled, versioned, read from the app's own copy, so a person's first run of a device finds steps someone else already walked. A device that drifted from the version a step was verified on gets research, not a quiet failure. What a person's Lamp learns would flow back the same way, with their say-so: model, version, step and outcome, never a device's name, never the network it sat on. For now integrations are kept on each Mac (Integrations, above), in the format pooling will need.
 
 Every entry carries how it's known: Lamp checked it, a person's hands completed it, or it was read somewhere and never tried. The mark travels with the step, so what a person is shown says what it is, and a step that fails for a few people in a row goes back to research rather than staying on the list. What's possible is the same base as how to set up: whether `sdb` takes a screenshot on this Tizen version, which remote keys webOS forwards, whether Art Mode accepts writes: the open questions below are its first entries.
 
 ## Open questions
 
-- [ ] What the research pass runs on: an open model through OpenRouter, a local model, or whatever engine is in use, and what each may read?
-- [ ] How a researched step is shown, so the person can tell a guess from a checked step, and where a path that worked is kept so the next person gets it?
-- [ ] What a person's Lamp reports back so others get its steps (model, version and outcome only), and with what say-so?
+- [x] What the research pass runs on: the builder by default, or an optional Research model chosen in Settings (Integrations, above).
+- [x] How a researched step is shown: Checked by Lamp, Done by people or Not tried yet, on its card; kept on this Mac for now.
+- [ ] What a person's Lamp reports back so others get its steps (model, version and outcome only), and with what say-so? Later, with pooling.
 - [ ] How much of setup lives in evidence at all: many steps are remote-menu presses and account flows found in forum posts, not in binaries?
 - [ ] Can the Samsung distributor certificate be made without Tizen Studio's window, from the CLI and a browser sign-in?
 - [ ] Does `sdb` take a screenshot, or does looking at a Samsung app need the emulator?
@@ -172,3 +254,6 @@ Every entry carries how it's known: Lamp checked it, a person's hands completed 
 - [ ] Can a dev-mode TV app load from an address the Mac serves, so passes don't wait on packaging, or only from an installed package?
 - [ ] Does the Tizen SDK write to Art Mode at all, or is putting a person's art on the Frame only Samsung's own path?
 - [ ] Where the device list lives in the interface: a tab of its own, part of Building, or only inside wishes?
+- [ ] Which Roku models still allow the control API's key presses from the network by default, and what the setup step says when one doesn't?
+- [ ] Does the integration's own app kind (scaffold, rules, package step) stay data, or does a kind that proves itself (BrightScript) become code Lamp owns, as the web TV kit is?
+- [ ] How an approved SSH command is shown again later, so the person can see and take back what they allowed on each device?
