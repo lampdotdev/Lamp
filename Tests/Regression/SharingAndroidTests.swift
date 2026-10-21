@@ -23,7 +23,7 @@ final class SharingAndroidTests: XCTestCase {
         try write("{}", to: "app/.lamp/state.json", in: sender.dir)
         let manifest = "app/src/main/AndroidManifest.xml"
         let text = try String(contentsOf: sender.dir.appendingPathComponent(manifest), encoding: .utf8)
-        try write(text.replacingOccurrences(of: "<application", with: "<uses-permission android:name=\"android.permission.INTERNET\" />\n<uses-permission android:name=\"android.permission.READ_SMS\" />\n<application"),
+        try write(text.replacingOccurrences(of: "<application", with: "<uses-permission android:name=\"android.permission.INTERNET\" />\n<uses-permission xmlns:a=\"http://schemas.android.com/apk/res/android\" a:name='android.permission.READ_SMS' />\n<application"),
                   to: manifest, in: sender.dir)
         let build = sender.dir.appendingPathComponent("app/build.gradle.kts")
         try (String(contentsOf: build, encoding: .utf8).replacingOccurrences(of: "dependencies {", with: "dependencies {\n    implementation(\"com.squareup.retrofit2:retrofit:2.11.0\")"))

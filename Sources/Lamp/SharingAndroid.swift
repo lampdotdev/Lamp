@@ -95,9 +95,10 @@ enum AndroidFiles {
         return relative
     }
 
-    /// The id Android installs the app under is this Mac's for the app, whatever the sender's said.
+    /// The id Android installs the app under is this Mac's for the app, whatever the sender's said and however
+    /// they said it (a literal, a variable): the whole assignment is replaced.
     private static func settingApplicationID(in text: String, to id: String) -> String {
-        text.replacing(#/applicationId\s*=\s*"[^"]*"/#) { _ in "applicationId = \"\(id)\"" }
+        text.replacing(#/applicationId\s*=[^\n]*/#) { _ in "applicationId = \"\(id)\"" }
     }
 
     // MARK: - The review
@@ -106,20 +107,21 @@ enum AndroidFiles {
     /// manifests ask Android for, what its Kotlin and Java do that the build file and manifest can't show, and the
     /// libraries its build files bring in beyond the ones Lamp's catalogue offers.
     static func detected(in package: Sharing.Package) -> [Sharing.Capability] {
-        var manifests = "", kotlin = "", gradle = ""
+        var manifests: [String] = [], kotlin = "", gradle = ""
         for file in package.sources {
             guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
             switch file.pathExtension.lowercased() {
             case "kt", "java": kotlin += text + "\n"
             case "kts", "gradle": gradle += text + "\n"
-            case "xml" where file.lastPathComponent == "AndroidManifest.xml": manifests += text + "\n"
+            case "xml" where file.lastPathComponent == "AndroidManifest.xml": manifests.append(text)
             default: break
             }
         }
         var found: [Sharing.Capability] = []
         func add(_ item: Sharing.Capability) { if !found.contains(where: { $0.label == item.label }) { found.append(item) } }
         for permission in permissions(in: manifests) { add(capability(for: permission)) }
-        for item in kotlinChecks where item.patterns.contains(where: kotlin.contains) { add(item) }
+        // The build files run on this Mac while the app builds, so they're held to the same checks as the app's code.
+        for item in kotlinChecks where item.patterns.contains(where: { kotlin.contains($0) || gradle.contains($0) }) { add(item) }
         let outside = libraries(in: gradle)
         if !outside.isEmpty {
             let named = outside.prefix(4).joined(separator: ", ") + (outside.count > 4 ? " and \(outside.count - 4) more" : "")
@@ -128,14 +130,40 @@ enum AndroidFiles {
         return found
     }
 
-    /// The permissions the manifests ask for, by their short name ("CAMERA"), in the order they're written.
-    static func permissions(in manifests: String) -> [String] {
+    /// The permissions the manifests ask for, by their short name ("CAMERA"), in the order they're written. Read as
+    /// XML, so any quoting and any prefix bound to Android's namespace count, and nothing outside the file is fetched.
+    static func permissions(in manifests: [String]) -> [String] {
         var names: [String] = []
-        for match in manifests.matches(of: #/<uses-permission(?:-sdk-23)?\b[^>]*?android:name\s*=\s*"([^"]+)"/#) {
-            let name = String(match.1.split(separator: ".").last ?? match.1)
-            if !names.contains(name) { names.append(name) }
+        for manifest in manifests {
+            let reader = PermissionReader()
+            let parser = XMLParser(data: Data(manifest.utf8))
+            parser.shouldProcessNamespaces = true
+            parser.shouldReportNamespacePrefixes = true
+            parser.shouldResolveExternalEntities = false
+            parser.delegate = reader
+            parser.parse()
+            for name in reader.names where !names.contains(name) { names.append(name) }
         }
         return names
+    }
+
+    private final class PermissionReader: NSObject, XMLParserDelegate {
+        static let android = "http://schemas.android.com/apk/res/android"
+        var names: [String] = []
+        private var prefixes: [String: [String]] = [:]
+        func parser(_ parser: XMLParser, didStartMappingPrefix prefix: String, toURI namespaceURI: String) {
+            prefixes[prefix, default: []].append(namespaceURI)
+        }
+        func parser(_ parser: XMLParser, didEndMappingPrefix prefix: String) { _ = prefixes[prefix]?.popLast() }
+        func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName: String?,
+                    attributes: [String: String] = [:]) {
+            guard elementName == "uses-permission" || elementName == "uses-permission-sdk-23" else { return }
+            for (key, value) in attributes {
+                let parts = key.split(separator: ":", maxSplits: 1).map(String.init)
+                guard parts.count == 2, parts[1] == "name", prefixes[parts[0]]?.last == Self.android else { continue }
+                names.append(String(value.split(separator: ".").last ?? Substring(value)))
+            }
+        }
     }
 
     private static func listed(_ label: String) -> Sharing.Capability {
@@ -192,9 +220,9 @@ enum AndroidFiles {
     /// What Kotlin or Java does that a manifest doesn't declare, in the Mac's lines for the same thing.
     private static let kotlinChecks: [Sharing.Capability] = [
         Sharing.Capability(label: "Runs other programs or shell commands", icon: "terminal", level: .powerful,
-                           patterns: ["Runtime.getRuntime().exec", "ProcessBuilder("]),
+                           patterns: ["Runtime.getRuntime().exec", "ProcessBuilder(", "exec {", "exec(", "providers.exec", "commandLine("]),
         Sharing.Capability(label: "Loads code at runtime (can hide what it does)", icon: "eye.slash", level: .sensitive,
-                           patterns: ["DexClassLoader", "PathClassLoader", "System.loadLibrary", "System.load(", "Class.forName"]),
+                           patterns: ["DexClassLoader", "PathClassLoader", "URLClassLoader", "System.loadLibrary", "System.load(", "Class.forName"]),
     ]
 
     /// Libraries and build plugins the build files name that Lamp's catalogue doesn't offer, by their short name

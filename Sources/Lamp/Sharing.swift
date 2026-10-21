@@ -429,14 +429,21 @@ enum Sharing {
         // Assets/, or Attachments/ from a Lamp that bundled the chat's files: either way the app's own now.
         let attachments = filesUnder(folder.appendingPathComponent(Assets.folder))
             + filesUnder(folder.appendingPathComponent(Attachments.folder))
-        opened = true
-        return Package(name: name(from: manifest.name), identity: identity(from: manifest.app),
+        let package = Package(name: name(from: manifest.name), identity: identity(from: manifest.app),
                        description: manifest.description.flatMap(AppDescription.valid),
                        capabilities: Template.Capabilities.load(folder.appendingPathComponent(Template.Capabilities.file)).checked,
                        browser: BrowserCompanions.Declaration.load(folder.appendingPathComponent(BrowserCompanions.Declaration.file)),
                        platform: platform, family: manifest.family ?? .iphone,
                        folder: folder, sources: sources,
                        attachments: attachments, androidData: android?.data ?? [], fileCount: all)
+        // Lamp opens an Android app by its package, which it moves to this Mac's own on the way in: one whose build
+        // file doesn't name it plainly would build here and never open, so it's refused before anything is replaced.
+        if android != nil, AndroidFiles.senderPackage(in: package) == nil {
+            throw ImportError("Lamp can't open this Android app.",
+                              detail: "Its build file doesn't name the app's package in a way Lamp can read.")
+        }
+        opened = true
+        return package
     }
 
     /// A file's name on one line: a file can be edited by hand, and line breaks or runs of space in its
