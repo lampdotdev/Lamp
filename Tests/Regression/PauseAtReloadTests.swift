@@ -52,6 +52,18 @@ extension PauseAtReloadTests {
         XCTAssertTrue(back.byLamp)
         XCTAssertEqual(back.text, Agent.afterReload)
         XCTAssertFalse(QueuedMessage(saved: typed.saved, attachments: []).afterReload)
+        // What a message points at ("Make this darker") comes back with it, picture and all, while the picture is there.
+        let picture = FileManager.default.temporaryDirectory.appendingPathComponent("pointed-\(UUID().uuidString).png")
+        FileManager.default.createFile(atPath: picture.path, contents: Data([0x89, 0x50]))
+        defer { try? FileManager.default.removeItem(at: picture) }
+        let pointing = QueuedMessage(text: "Make this darker",
+                                     pointed: PointedAt(title: "Shelf title", detail: "The Hot Shelf", picture: picture.path))
+        let pointedBack = QueuedMessage(saved: pointing.saved, attachments: [])
+        XCTAssertEqual(pointedBack.pointed?.title, "Shelf title")
+        XCTAssertEqual(pointedBack.pointed?.detail, "The Hot Shelf")
+        XCTAssertEqual(pointedBack.pointed?.url, picture)
+        try? FileManager.default.removeItem(at: picture)
+        XCTAssertNil(QueuedMessage(saved: pointing.saved, attachments: []).pointed)
         XCTAssertTrue(Store.keptAcrossRelaunch([carryOn, typed], setupReady: true))
         XCTAssertFalse(Store.keptAcrossRelaunch([typed], setupReady: true))
         XCTAssertTrue(Store.keptAcrossRelaunch([typed], setupReady: false))

@@ -997,7 +997,8 @@ and end, the turn is over whatever it does next (an agent that calls another too
 (`Agent.afterReload`, a `QueuedMessage` marked `afterReload`, hidden in the chat as a crash fix's request is, with
 `ChatLook.carryingOn` above it) waits in line until the held change is in (`Store.startsNow`): the person's Reload,
 or the app closing, puts it in and the agent goes on in the same conversation on every engine. The paused queue is
-kept across a relaunch like one waiting for setup (`Store.keptAcrossRelaunch`, `QueuedMessage.saved` with its flags),
+kept across a relaunch like one waiting for setup (`Store.keptAcrossRelaunch`, `QueuedMessage.saved` with its flags and
+what each message points at, its files copied aside as a request waiting for setup has them, `Store.keptForLater`),
 since the held build outlives Lamp too; Undo, an earlier version and a request sent again drop it
 (`Store.dropPausedRequest`). A file the agent wrote in the moment before Lamp ended it that doesn't build is neither
 saved nor installed, as after any build that fails, and its errors ride with the carry-on request (`Store.carry`). Only

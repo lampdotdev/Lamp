@@ -319,15 +319,27 @@ extension QueuedMessage {
         if let card { saved["card"] = card.uuidString }
         if byLamp { saved["byLamp"] = true }
         if afterReload { saved["afterReload"] = true }
+        if let pointed, let picture = pointed.url {
+            var target: [String: Any] = ["title": pointed.title, "picture": picture.path]
+            if let detail = pointed.detail { target["detail"] = detail }
+            saved["pointed"] = target
+        }
         return saved
     }
 
     /// `ask` is what the card was called in a request kept by an earlier Lamp: read, so that an answer
     /// still waiting from then can be taken back and its card opens again.
+    /// What was pointed at comes back only with its picture still on disk: without the picture the agent would be told
+    /// of a part it can't see.
     init(saved: [String: Any], attachments: [URL]) {
+        var pointed: PointedAt?
+        if let target = saved["pointed"] as? [String: Any], let title = target["title"] as? String,
+           let picture = target["picture"] as? String, FileManager.default.fileExists(atPath: picture) {
+            pointed = PointedAt(title: title, detail: target["detail"] as? String, picture: picture)
+        }
         self.init(text: saved["text"] as? String ?? "", attachments: attachments,
                   card: ((saved["card"] ?? saved["ask"]) as? String).flatMap(UUID.init(uuidString:)),
-                  byLamp: saved["byLamp"] as? Bool ?? false, afterReload: saved["afterReload"] as? Bool ?? false)
+                  pointed: pointed, byLamp: saved["byLamp"] as? Bool ?? false, afterReload: saved["afterReload"] as? Bool ?? false)
     }
 }
 
@@ -2128,15 +2140,12 @@ final class Store: ObservableObject {
     /// Sends a message, or queues it while the app is busy. Everything queued goes out together
     /// as the next turn, so several quick follow-ups cost one agent run and one rebuild.
     func send(_ prompt: String, attachments: [URL] = [], pointed: PointedAt? = nil, answering card: UUID? = nil, to project: LampProject) {
-        // Waiting for setup can outlast this run, and the files may be temporary (a pasted screenshot):
-        // keep copies, so the request still has them after a relaunch. What was pointed at goes as a plain
-        // picture then, since waiting requests are kept as words and files.
-        var attachments = attachments, pointed = pointed
-        if !setup.ready, let picture = pointed?.url {
-            attachments.append(picture)
-            pointed = nil
-        }
-        let files = setup.ready ? attachments : keepForLater(attachments)
+        // Waiting for setup, or for the person's Reload (`pause`), can outlast this run, and the files may be
+        // temporary (a pasted screenshot, the picture of what was pointed at): copies are kept, so the request still
+        // has them after a relaunch.
+        var message = QueuedMessage(text: prompt, attachments: attachments, pointed: pointed)
+        if !setup.ready || queueWaitsForReload(in: project) { message = keptForLater(message) }
+        let files = message.attachments, pointed = message.pointed
         // Typed while a card waits, the message is its answer, even if it has to wait behind the agent's
         // turn: the card folds as it's sent, so it can't be answered a second time by a click meanwhile.
         var card = card
@@ -2157,6 +2166,18 @@ final class Store: ObservableObject {
 
     /// Where waiting requests' files are kept until their build starts.
     private var waitingFiles: URL { root.deletingLastPathComponent().appendingPathComponent("Waiting") }
+
+    /// A waiting message with copies of its files, the picture of what it points at included, where they aren't copies
+    /// already: one that was queued before its line turned out to wait across a relaunch (the pause came after it).
+    private func keptForLater(_ message: QueuedMessage) -> QueuedMessage {
+        var kept = message
+        let waiting = waitingFiles.standardizedFileURL.path
+        kept.attachments = message.attachments.map { $0.standardizedFileURL.path.hasPrefix(waiting) ? $0 : keepForLater([$0])[0] }
+        if let picture = message.pointed?.url, !picture.standardizedFileURL.path.hasPrefix(waiting) {
+            kept.pointed?.picture = keepForLater([picture])[0].path
+        }
+        return kept
+    }
 
     /// Each file gets a folder of its own, so two with the same name (two "Dropped image.png") both keep a copy.
     private func keepForLater(_ files: [URL]) -> [URL] {
@@ -2195,7 +2216,9 @@ final class Store: ObservableObject {
                 queued[id] = messages.map { message in
                     let files = (message["attachments"] as? [String] ?? []).filter { FileManager.default.fileExists(atPath: $0) }
                     kept.formUnion(files.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path })
-                    return QueuedMessage(saved: message, attachments: files.map(URL.init(fileURLWithPath:)))
+                    let restored = QueuedMessage(saved: message, attachments: files.map(URL.init(fileURLWithPath:)))
+                    if let picture = restored.pointed?.url { kept.insert(picture.deletingLastPathComponent().path) }
+                    return restored
                 }
             }
         }
@@ -3226,7 +3249,9 @@ final class Store: ObservableObject {
     private func pause(_ turn: Turn, in project: LampProject, saying text: String, status: Int = 200) -> (Int, [String: Any]) {
         turn.paused = true
         if !(queued[project.id] ?? []).contains(where: \.afterReload) {
-            queued[project.id, default: []].insert(QueuedMessage(text: Agent.afterReload, byLamp: true, afterReload: true), at: 0)
+            // Messages queued before the pause came keep copies of their files too, now that the line outlives a relaunch.
+            queued[project.id] = [QueuedMessage(text: Agent.afterReload, byLamp: true, afterReload: true)]
+                + (queued[project.id] ?? []).map(keptForLater)
             saveWaiting()
         }
         return (status, [status == 200 ? "text" : "error": text])
