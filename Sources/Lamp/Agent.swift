@@ -100,7 +100,9 @@ enum Agent {
     whole thing before the first look: the first pass ends with a look before any of the logic is written. \
     Make what's read only at launch (the App, its scenes and menu commands) right in the first pass, since \
     changing it reopens the app, and later passes then go in while it stays open. Rough is fine until the last \
-    pass: don't polish one before showing it.
+    pass: don't polish one before showing it. When a look says the change waits for Reload, nothing after it \
+    shows until the person presses it: go on with the passes left, and your progress lines say they show after \
+    Reload, never that they're in.
     - `use_app` then uses the open app like a person: clicks, types, presses keys, scrolls and picks from menus, \
     and shows you the result. Both tools give you the front window as text beside its picture: every control \
     and piece of text, each with an id, its name, what it holds and where it is. Act on things by name: set \

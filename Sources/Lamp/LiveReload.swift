@@ -567,7 +567,7 @@ enum LiveReload {
                 if what.hasPrefix("model ") { return ("the file of the SwiftData model \(what.dropFirst(6).prefix { $0 != "@" }) changed, and its data is found by key paths the open app made", nil) }
                 return ("what the app reads only at launch changed (\(what))", nil)
             }
-            if current != members, !LiveSlots.casesAdded(type, members, current) {
+            if current != members, !LiveSlots.casesAdded(type, members, current), !viewRetyped(type, members, current, before: before, after: now) {
                 // A case whose raw value alone changed, said as such.
                 func withoutRaw(_ entry: String) -> String { entry.contains("\tcase ") ? String(entry.components(separatedBy: " = ")[0]) : entry }
                 if current.map(withoutRaw) == members.map(withoutRaw), let changed = zip(members, current).first(where: { $0 != $1 }) {
@@ -596,6 +596,63 @@ enum LiveReload {
             return !subjects.contains(key)
         }
         return (nil, kept)
+    }
+
+    /// A plain value's size and how its optional is laid out ("8", "8?", "1"), for the fields `viewRetyped` lets change
+    /// type: each has no references to count and takes as many bytes as the other, so the open app's value witnesses
+    /// (copy, destroy, compare) do right by a value of either. Nil for anything else.
+    static func plainLayout(_ kind: String) -> String? {
+        let optional = kind.hasSuffix("?"), name = optional ? String(kind.dropLast()) : kind
+        let sizes: [String: Int] = ["Int": 8, "UInt": 8, "Int64": 8, "UInt64": 8, "Double": 8, "CGFloat": 8, "TimeInterval": 8, "Date": 8,
+                                    "Float": 4, "Int32": 4, "UInt32": 4, "Int16": 2, "UInt16": 2, "Bool": 1, "Int8": 1, "UInt8": 1]
+        guard let size = sizes[name] else { return nil }
+        // A Bool's optional takes no byte of its own: its spare bits hold nil.
+        return "\(size)" + (optional && name != "Bool" ? "?" : "")
+    }
+
+    /// Whether a type's fields changed only in what plain value one of its stored parameters holds
+    /// (`heat: Int?` to `heat: Double?`), in a view nothing else holds by value. A view's value lives only until its
+    /// next draw: SwiftUI makes it again from its parent, with the new code, so the field changes nothing the open app
+    /// keeps. Its wrappers (`_count: State<Int>`, a binding, the environment) are no plain values, so their storage,
+    /// which SwiftUI does keep, never passes. What old code may still do with such a view, and a view made by what
+    /// runs only at launch, which is never made again, are judged with the rest of the change (`retypedViews`).
+    /// A name of the app's own (a type, or a typealias such as `typealias Date = String`) is what the app declares,
+    /// whatever its spelling, so a field of it is no plain value, in the open app's layout or the new one.
+    static func viewRetyped(_ type: String, _ was: [String], _ is_: [String], before: [String], after: [String]) -> Bool {
+        guard was.count == is_.count, was != is_ else { return false }
+        let old = conformances(inLayout: before), conformed = conformances(inLayout: after)
+        func own(_ kind: String) -> Bool {
+            let name = kind.hasSuffix("?") ? String(kind.dropLast()) : kind
+            return [old, conformed].contains { $0.types.contains(name) || $0.aliases[name] != nil }
+        }
+        for (a, b) in zip(was, is_) where a != b {
+            guard let x = a.range(of: ": "), let y = b.range(of: ": "), a[..<x.lowerBound] == b[..<y.lowerBound] else { return false }
+            let from = String(a[x.upperBound...]), to = String(b[y.upperBound...])
+            guard !own(from), !own(to), let layout = plainLayout(from), layout == plainLayout(to) else { return false }
+        }
+        guard conformed.of[type]?.contains("View") == true, conformed.kinds[type].map({ $0 == ["struct"] }) ?? true else { return false }
+        // Held by value elsewhere (a struct keeping a view, an array of them, a class's field), it's laid out in what
+        // holds it, which the open app keeps. A field's type may name it through a typealias: followed to what it names.
+        let short = bare(type), word = LiveReload.identifierWords
+        func names(_ kind: String, _ depth: Int = 0) -> [String] {
+            word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).flatMap { m -> [String] in
+                let name = String(kind[Range(m.range, in: kind)!])
+                guard depth < 8, !conformed.types.contains(name), let target = conformed.aliases[name], target != name else { return [name] }
+                return [name] + names(target, depth + 1)
+            }
+        }
+        return !conformed.fields.contains { owner, kinds in
+            owner != type && bare(owner) != short && kinds.contains { names($0).contains { $0 == short || $0.split(separator: ".").last.map(String.init) == short } }
+        }
+    }
+
+    /// The views whose fields `viewRetyped` let through.
+    static func retypedViews(before: [String], after: [String]) -> [String] {
+        let old = byType(before), new = byType(after)
+        return old.keys.sorted().filter { type in
+            guard !isGroup(type), let was = old[type], let current = new[type], current != was else { return false }
+            return viewRetyped(type, was, current, before: before, after: after)
+        }
     }
 
     /// The enums that only gained cases at the end (`LiveSlots.casesAdded`), which the layout check let through.
@@ -1835,6 +1892,28 @@ enum LiveReload {
                 return (bare(parts[0]), kind == "struct" ? "V" : kind == "enum" ? "O" : "C")
             }, uniquingKeysWith: { first, _ in first })
             keep = grown.map { LiveObject.mangledType(bare($0), module: project.exe, kind: "O", kinds: kinds) }
+        }
+        // A view's plain field that holds another plain value now goes in when every value of the view is made again
+        // by the new code before it's drawn: not one made by what runs only at launch (an App's scene, never made
+        // again), nor one that code still running has in hand (a timer's closure, a task), which would hand it to the
+        // new code as the old code laid it out. Every file is compiled again, so every caller makes it the new way.
+        if let before, let layout = check.layout, case let views = retypedViews(before: before, after: layout), !views.isEmpty {
+            let launchNames = Set(Group.launch.parts(in: layout).compactMap { $0.first.map { String($0.prefix { $0 != ":" }).replacingOccurrences(of: "extension ", with: "") } })
+            let launch = declarations.types.filter { launchNames.contains(bare($0.key)) }.map(\.value) + launchNames.flatMap { declarations.extensions[$0] ?? [] }
+            // Made there, or by the app's code what runs at launch calls (`WindowGroup { makeRoot() }`).
+            let reached = SwiftSource.reached(from: launch, in: declarations)
+            if let made = views.first(where: { declarations.names(type: bare($0), within: reached) }) {
+                return .reopen(why: "\(readable(made)) changed what a field holds, and what the app reads only at launch makes it, which is never made again")
+            }
+            guard let running = await oldCodeUsesOfRunning(project) else { return .reopen(why: "the compiler couldn't say where the open app uses \(readable(views[0]))") }
+            let names = Set(views.map(bare) + views.map { String(bare($0).split(separator: ".").last ?? "") })
+            for use in oldCodeRecorded(project) + running {
+                let parts = use.split(separator: "\t", maxSplits: 2).map(String.init)
+                guard parts.count == 3, names.contains(parts[0]) || names.contains(String(parts[0].dropLast())) && parts[0].hasSuffix("?") else { continue }
+                return .reopen(why: "\(parts[0]) changed what a field holds, and \(parts[1]) has one in code that may still be running (a loop, a timer, a task, an observer), laid out the old way")
+            }
+            changed = appFiles(project)
+            said.append("Gave \(views.map(readable).joined(separator: ", ")) \(views.count == 1 ? "its" : "their") new field types")
         }
         if let after, let gone = LiveSlots.retiredFromValue(project, keeping: after) {
             return .reopen(why: "\(gone) was added while the app was open and is taken away now, which changes how the open app's values of it compare and hash")
