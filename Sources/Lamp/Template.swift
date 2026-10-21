@@ -5072,7 +5072,8 @@ enum Template {
             private var inWindow: [Int] = []
             /// The app's own windows over the target (`windowsOver`), front to back, in this view's points.
             private var covers: [NSRect] = []
-            private var coverNumbers: [Int]?
+            /// The windows and frames `covers` and the items were worked out for.
+            private var coverKey: [String]?
             /// The target's own named things, read before the glass is up: the accessibility API finds a window by
             /// its frame, which the glass shares.
             private var targetItems: [LampScreen.Item] = []
@@ -5157,7 +5158,9 @@ enum Template {
                 guard let glass = window, glass.isVisible else { return }
                 guard let target, target.isVisible, !target.isMiniaturized else { return stop() }
                 let over = Self.windowsOver(target)
-                if coverNumbers != over.map(\.windowNumber) { gather(target, over) }
+                // Again when one of them, or the window, moved or changed size: the places are relative to the window.
+                let key = ([target] + over).map { "\($0.windowNumber) \(NSStringFromRect($0.frame))" }
+                if coverKey != key { coverKey = key; gather(target, over) }
                 guard let top = over.first else {
                     if glass.parent == nil {
                         glass.level = target.level
@@ -5179,7 +5182,6 @@ enum Template {
             /// What can be pointed at: the named things in the target and in each of the app's windows over it,
             /// all in the target's picture's pixels. Where a panel covers the target, only the panel's count.
             private func gather(_ target: NSWindow, _ over: [NSWindow]) {
-                coverNumbers = over.map(\.windowNumber)
                 covers = over.map { NSRect(x: $0.frame.minX - target.frame.minX, y: target.frame.maxY - $0.frame.maxY,
                                            width: $0.frame.width, height: $0.frame.height) }
                 var found = targetItems
