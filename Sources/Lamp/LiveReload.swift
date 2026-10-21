@@ -567,7 +567,7 @@ enum LiveReload {
                 if what.hasPrefix("model ") { return ("the file of the SwiftData model \(what.dropFirst(6).prefix { $0 != "@" }) changed, and its data is found by key paths the open app made", nil) }
                 return ("what the app reads only at launch changed (\(what))", nil)
             }
-            if current != members, !LiveSlots.casesAdded(type, members, current), !viewRetyped(type, members, current, in: now) {
+            if current != members, !LiveSlots.casesAdded(type, members, current), !viewRetyped(type, members, current, before: before, after: now) {
                 // A case whose raw value alone changed, said as such.
                 func withoutRaw(_ entry: String) -> String { entry.contains("\tcase ") ? String(entry.components(separatedBy: " = ")[0]) : entry }
                 if current.map(withoutRaw) == members.map(withoutRaw), let changed = zip(members, current).first(where: { $0 != $1 }) {
@@ -616,21 +616,33 @@ enum LiveReload {
     /// keeps. Its wrappers (`_count: State<Int>`, a binding, the environment) are no plain values, so their storage,
     /// which SwiftUI does keep, never passes. What old code may still do with such a view, and a view made by what
     /// runs only at launch, which is never made again, are judged with the rest of the change (`retypedViews`).
-    static func viewRetyped(_ type: String, _ before: [String], _ after: [String], in layout: [String]) -> Bool {
-        guard before.count == after.count, before != after else { return false }
-        for (was, is_) in zip(before, after) where was != is_ {
-            guard let a = was.range(of: ": "), let b = is_.range(of: ": "), was[..<a.lowerBound] == is_[..<b.lowerBound],
-                  let old = plainLayout(String(was[a.upperBound...])), old == plainLayout(String(is_[b.upperBound...])) else { return false }
+    /// A name of the app's own (a type, or a typealias such as `typealias Date = String`) is what the app declares,
+    /// whatever its spelling, so a field of it is no plain value, in the open app's layout or the new one.
+    static func viewRetyped(_ type: String, _ was: [String], _ is_: [String], before: [String], after: [String]) -> Bool {
+        guard was.count == is_.count, was != is_ else { return false }
+        let old = conformances(inLayout: before), conformed = conformances(inLayout: after)
+        func own(_ kind: String) -> Bool {
+            let name = kind.hasSuffix("?") ? String(kind.dropLast()) : kind
+            return [old, conformed].contains { $0.types.contains(name) || $0.aliases[name] != nil }
         }
-        let conformed = conformances(inLayout: layout)
+        for (a, b) in zip(was, is_) where a != b {
+            guard let x = a.range(of: ": "), let y = b.range(of: ": "), a[..<x.lowerBound] == b[..<y.lowerBound] else { return false }
+            let from = String(a[x.upperBound...]), to = String(b[y.upperBound...])
+            guard !own(from), !own(to), let layout = plainLayout(from), layout == plainLayout(to) else { return false }
+        }
         guard conformed.of[type]?.contains("View") == true, conformed.kinds[type].map({ $0 == ["struct"] }) ?? true else { return false }
-        // Held by value elsewhere (a struct keeping a view, an array of them), it's laid out in what holds it, which
-        // the open app keeps.
+        // Held by value elsewhere (a struct keeping a view, an array of them, a class's field), it's laid out in what
+        // holds it, which the open app keeps. A field's type may name it through a typealias: followed to what it names.
         let short = bare(type), word = LiveReload.identifierWords
-        return !conformed.fields.contains { owner, kinds in
-            owner != type && bare(owner) != short && kinds.contains { kind in
-                word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).contains { String(kind[Range($0.range, in: kind)!]) == short }
+        func names(_ kind: String, _ depth: Int = 0) -> [String] {
+            word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).flatMap { m -> [String] in
+                let name = String(kind[Range(m.range, in: kind)!])
+                guard depth < 8, !conformed.types.contains(name), let target = conformed.aliases[name], target != name else { return [name] }
+                return [name] + names(target, depth + 1)
             }
+        }
+        return !conformed.fields.contains { owner, kinds in
+            owner != type && bare(owner) != short && kinds.contains { names($0).contains { $0 == short || $0.split(separator: ".").last.map(String.init) == short } }
         }
     }
 
@@ -639,7 +651,7 @@ enum LiveReload {
         let old = byType(before), new = byType(after)
         return old.keys.sorted().filter { type in
             guard !isGroup(type), let was = old[type], let current = new[type], current != was else { return false }
-            return viewRetyped(type, was, current, in: after)
+            return viewRetyped(type, was, current, before: before, after: after)
         }
     }
 
@@ -1888,7 +1900,9 @@ enum LiveReload {
         if let before, let layout = check.layout, case let views = retypedViews(before: before, after: layout), !views.isEmpty {
             let launchNames = Set(Group.launch.parts(in: layout).compactMap { $0.first.map { String($0.prefix { $0 != ":" }).replacingOccurrences(of: "extension ", with: "") } })
             let launch = declarations.types.filter { launchNames.contains(bare($0.key)) }.map(\.value) + launchNames.flatMap { declarations.extensions[$0] ?? [] }
-            if let made = views.first(where: { declarations.names(type: bare($0), within: launch) }) {
+            // Made there, or by the app's code what runs at launch calls (`WindowGroup { makeRoot() }`).
+            let reached = SwiftSource.reached(from: launch, in: declarations)
+            if let made = views.first(where: { declarations.names(type: bare($0), within: reached) }) {
                 return .reopen(why: "\(readable(made)) changed what a field holds, and what the app reads only at launch makes it, which is never made again")
             }
             guard let running = await oldCodeUsesOfRunning(project) else { return .reopen(why: "the compiler couldn't say where the open app uses \(readable(views[0]))") }

@@ -1149,9 +1149,10 @@ where the old one said, and a lookup by the new one looks elsewhere.
 A view's stored parameter that changes from one plain value to another of the same size (`heat: Int?` to `Double?`,
 `LiveReload.viewRetyped`, `plainLayout`) goes in too, with the app's own metadata: a view's value lives only until its
 next draw, when its parent makes it again with the new code, and two such fields copy, destroy and compare alike, so
-the open app's value witnesses do right by either. Not a view something holds by value (it's laid out in that), nor
-its wrappers (`State`, a binding, the environment, which SwiftUI keeps), nor one the App's scenes make, never made
-again, nor one that code still running has in hand (`retypedViews` in `attempt`, read like a grown enum's old code);
+the open app's value witnesses do right by either. Not a name the app declares itself (`typealias Date = String`), in
+either layout, nor a view something holds by value, through a typealias too (it's laid out in that), nor its wrappers
+(`State`, a binding, the environment, which SwiftUI keeps), nor one the App's scenes make, there or in code they call
+(`SwiftSource.reached`), never made again, nor one that code still running has in hand (`retypedViews` in `attempt`, read like a grown enum's old code);
 every file is compiled again so every caller makes it the new way.
 
 **The live cases** (`Tests/LiveCases`, run by `LiveCasesTests`) are the record of which side each kind of change

@@ -1,13 +1,23 @@
 VERDICT 1: RELOAD (Gave RailText its new field types)
-VERDICT 2: REOPEN (RailText changed what it holds (RailText.heat: String?))
+VERDICT 2: REOPEN (RailText changed what it holds (RailText.heat: Int?))
+VERDICT 3: REOPEN (RailText changed what it holds (RailText.heat: UInt64?))
 == run
 before: IPA heat=3
 RELOAD 1 (whole): ok
 after1 (want it in without reopening: a view's Int? field holding a Double? now is made again at the next draw): IPA heat=6.5
-RELOAD 2: REOPEN RailText changed what it holds (RailText.heat: String?)
-after2 (want a reopen: a String takes a reference the open app's view doesn't lay out): IPA heat=6.5
+RELOAD 2: REOPEN RailText changed what it holds (RailText.heat: Int?)
+after2 (want a reopen: a class keeps the view through a typealias, and its value isn't made again): IPA heat=6.5
+before: IPA heat=7 kept heat=2
+RELOAD 1: in the restart
+after1 (want it in without reopening: a view's Int? field holding a Double? now is made again at the next draw): IPA heat=7 kept heat=2
+RELOAD 2: in the restart
+after2 (want a reopen: a class keeps the view through a typealias, and its value isn't made again): IPA heat=7 kept heat=2
+RELOAD 3: REOPEN RailText changed what it holds (RailText.heat: UInt64?)
+after3 (want a reopen: UInt64 is the app's own alias for String, no plain value): IPA heat=7 kept heat=2
 before: IPA heat=hot
 RELOAD 1: in the restart
 after1 (want it in without reopening: a view's Int? field holding a Double? now is made again at the next draw): IPA heat=hot
 RELOAD 2: in the restart
-after2 (want a reopen: a String takes a reference the open app's view doesn't lay out): IPA heat=hot
+after2 (want a reopen: a class keeps the view through a typealias, and its value isn't made again): IPA heat=hot
+RELOAD 3: in the restart
+after3 (want a reopen: UInt64 is the app's own alias for String, no plain value): IPA heat=hot

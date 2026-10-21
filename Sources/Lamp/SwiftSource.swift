@@ -497,6 +497,22 @@ enum SwiftSource {
         return false
     }
 
+    /// The app's code that code in `from` calls, as far down as that goes: each declaration's body, `from` itself
+    /// included, so what's made there can be read off its uses (`Declarations.names`).
+    static func reached(from: [(start: Position, last: Position)], in declarations: Declarations) -> [(start: Position, last: Position)] {
+        func within(_ p: Position, _ r: (start: Position, last: Position)) -> Bool { p.file == r.start.file && before(r.start, p) && before(p, r.last) }
+        var pending = from, seen = Set<Int>(), out = from
+        while let r = pending.popLast() {
+            for call in declarations.calls where within(call.at, r) {
+                guard let index = declarations.bodies.indices.filter({ within(call.to, declarations.bodies[$0]) })
+                        .min(by: { before(declarations.bodies[$1].start, declarations.bodies[$0].start) }), seen.insert(index).inserted else { continue }
+                pending.append(declarations.bodies[index])
+                out.append(declarations.bodies[index])
+            }
+        }
+        return out
+    }
+
     /// A type as Swift's short spellings write it (`Array<String>` is `[String]`, `Optional<Int>` is `Int?`,
     /// `Dictionary<K, V>` is `[K: V]`): the compiler prints a type as the code spells it, and the two are one type.
     static func sugared(_ type: String, except own: Set<String> = []) -> String {
