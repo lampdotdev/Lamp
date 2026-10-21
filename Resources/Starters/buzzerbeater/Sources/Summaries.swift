@@ -220,6 +220,17 @@ extension Watcher {
             let last = details[game.id]?.fetched ?? .distantPast
             if now.timeIntervalSince(ended) < 24 * 3600, now.timeIntervalSince(last) > 4 * 60 { wanted.append(game) }
         }
+        // The other live games too, less often: a swing in win probability (`Excitement.winMoments`, from 40% of
+        // the way through) makes a game tense before the score or clock does.
+        let picked = Set(wanted.map(\.id))
+        let others = games.filter { game in
+            guard game.state == .live, !picked.contains(game.id), Excitement.gameProgress(game) >= 0.4,
+                  [.basketball, .football, .baseball].contains(game.league.sport) else { return false }
+            guard let last = details[game.id] else { return true }
+            let wait: TimeInterval = last.winProbability.isEmpty ? 10 * 60 : 3 * 60
+            return now.timeIntervalSince(last.fetched) > wait
+        }
+        wanted += others.prefix(20)
         guard !wanted.isEmpty else { return }
 
         let fetched: [(String, GameDetail)] = await withTaskGroup(of: (String, GameDetail)?.self) { group in
