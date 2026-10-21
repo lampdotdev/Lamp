@@ -1360,7 +1360,8 @@ struct ImportReviewView: View {
     var body: some View {
         ImportReviewCard(name: pending.package.name, description: pending.package.description, icon: icon,
                          review: pending.review, existing: pending.existing?.name, room: room,
-                         cancel: store.cancelImport, open: store.confirmImport, update: store.confirmUpdate)
+                         cancel: store.cancelImport, open: store.confirmImport, update: store.confirmUpdate,
+                         android: pending.package.platform == .android)
             .task { icon = await Sharing.icon(of: pending.package) }
             .background(WindowFinder { sheet = $0; fit() })
             // The window can be moved with the sheet down, and the Dock can come and go.
@@ -1395,6 +1396,8 @@ struct ImportReviewCard: View {
     let cancel: () -> Void
     let open: () -> Void
     let update: () -> Void
+    /// An Android app's reach is the phone's, not the Mac's.
+    var android = false
 
     /// The heights of what stays put, measured as laid out: the app's name and description at the top, the
     /// review's summary, the line about the copy already here when there is one, and the buttons.
@@ -1467,7 +1470,8 @@ struct ImportReviewCard: View {
                     .fixedSize(horizontal: false, vertical: true)
                 }
                 ScrollView {
-                    section("What it can do on your Mac") { capabilities(review) }
+                    // An Android app runs on the emulator or the person's phone, never on the Mac itself.
+                    section(android ? "What it can do" : "What it can do on your Mac") { capabilities(review) }
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: limit)

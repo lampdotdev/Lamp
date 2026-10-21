@@ -442,6 +442,13 @@ enum Gallery {
                                             capabilities: [], concerns: [], risk: .low,
                                             reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true, detected: []),
                app: "Plant Care", existing: "Balcony Plants"),
+        review("Android app", ImportReview(summary: "Counts your taps on one screen and remembers the count after closing.",
+                                           capabilities: [], concerns: [], risk: .low,
+                                           reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true,
+                                           detected: ["INTERNET", "POST_NOTIFICATIONS"].map(AndroidFiles.capability(for:))
+                                               + [Sharing.Capability(label: "Builds in code from outside Lamp (retrofit)", icon: "shippingbox",
+                                                                     level: .powerful, patterns: [])]),
+               app: "Tap Count", android: true),
     ]
 
     private static func found(_ labels: String...) -> [Sharing.Capability] {
@@ -449,10 +456,10 @@ enum Gallery {
     }
 
     private static func review(_ name: String, _ review: ImportReview?, app: String = "Drive Anywhere", description: String? = nil,
-                               existing: String? = nil) -> Entry {
+                               existing: String? = nil, android: Bool = false) -> Entry {
         Entry(group: "Shared wish", name: name) {
             AnyView(ImportReviewCard(name: app, description: description,
-                                     icon: nil, review: review, existing: existing, cancel: {}, open: {}, update: {})
+                                     icon: nil, review: review, existing: existing, cancel: {}, open: {}, update: {}, android: android)
                 .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
