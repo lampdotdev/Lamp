@@ -51,7 +51,7 @@ final class SharingAndroidTests: XCTestCase {
         let activity = receiver.dir.appendingPathComponent("app/src/main/kotlin/\(ours.replacingOccurrences(of: ".", with: "/"))/MainActivity.kt")
         XCTAssertTrue(try String(contentsOf: activity, encoding: .utf8).contains("package \(ours)\n"))
         let received = try String(contentsOf: receiver.dir.appendingPathComponent("app/build.gradle.kts"), encoding: .utf8)
-        XCTAssertTrue(received.contains("applicationId = \"\(ours)\"") && received.contains("namespace = \"\(ours)\""))
+        XCTAssertTrue(received.hasSuffix("android { defaultConfig { applicationId = \"\(ours)\" } }\n") && received.contains("namespace = \"\(ours)\""))
         XCTAssertFalse(FileManager.default.fileExists(atPath: receiver.dir.appendingPathComponent("app/src/main/kotlin/\(Template.androidPackage(for: sender).replacingOccurrences(of: ".", with: "/"))").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: receiver.dir.appendingPathComponent("settings.gradle.kts").path))
     }

@@ -96,9 +96,12 @@ enum AndroidFiles {
     }
 
     /// The id Android installs the app under is this Mac's for the app, whatever the sender's said and however
-    /// they said it (a literal, a variable): the whole assignment is replaced.
+    /// they said it. Set by a block of its own at the end of the file, which Gradle runs after the sender's, so
+    /// nothing of theirs is rewritten (a one-line `defaultConfig { … }` keeps its other settings and its braces).
     private static func settingApplicationID(in text: String, to id: String) -> String {
-        text.replacing(#/applicationId\s*=[^\n]*/#) { _ in "applicationId = \"\(id)\"" }
+        text + (text.hasSuffix("\n") ? "" : "\n")
+            + "\n// Set by Lamp when the app was opened from a shared file: the id Lamp installs and opens it by.\n"
+            + "android { defaultConfig { applicationId = \"\(id)\" } }\n"
     }
 
     // MARK: - The review
