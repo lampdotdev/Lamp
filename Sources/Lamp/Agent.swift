@@ -86,9 +86,9 @@ enum Agent {
     private static let lookRules = """
 
     - `look_at_app` puts what you've written into the app and shows you its windows, what it printed and any \
-    build errors or crash, so you can check your work instead of guessing. It's also the only way a change \
-    reaches the person before you finish: nothing you write shows until a look puts it in. While the app is \
-    open a look is quick, since only the files you changed are compiled. Fix what you see before finishing.
+    build errors or crash, so you can check your work instead of guessing. What you save goes into the open app \
+    by itself when it can; a look shows you what the person sees. While the app is open a look is quick, since \
+    only the files you changed are compiled. Fix what you see before finishing.
     - Show the change early and bit by bit. The person is waiting beside the app, and a minute of nothing feels \
     long: your first look comes as soon as there's one thing to see, before you've read more than that one thing \
     needs, and a change with several parts goes in part by part, each with a look, in the order they'd notice \

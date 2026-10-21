@@ -989,8 +989,8 @@ agent what goes in without reopening. The note opens by saying the person is wat
 sees a live change at once and a held one not until Reload, so the agent works in small shown steps. Each look then
 tells the agent which way its change went (`ChangeOutcome`): into the open app, waiting for Reload with LiveReload's
 reason and, where there's a known shape that would have gone in, that shape (`LiveReload.advice`), or reopened or
-opened; and how long the look took, since a look is what puts a change in front of the person before the turn
-ends, and the agent puts looks off when it's only told they take a while. A change held for Reload holds every
+opened; and how long the look took, since a look is how the agent sees what the person sees, and it puts looks off
+when it's only told they take a while. A change held for Reload holds every
 look after it in the request, so the note asks for the changes that go in live first and the held ones last. The turn's end tallies them in a detail line (`Store.outcomeTally`), which is how often changes go in live,
 and says how long the person waited to see the turn's first change and the longest wait between changes after it
 (`Store.paceTally`, from `Turn.shown`), which is what the rules for showing work early are judged by. While
