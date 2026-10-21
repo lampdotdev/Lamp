@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: size v1, } v1
+RELOAD 1: ok
+after1 (want it in place: each sizeThatFits still compiles, written as one expression, with a brace in a string or a comment, or a nested closure's return; SwiftUI asks a layout again only when it lays out again): 

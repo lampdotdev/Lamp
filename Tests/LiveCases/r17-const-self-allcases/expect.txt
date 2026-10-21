@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Gave Mood.all, Mood.count, Mood.names, Picker.choices their new value)
+== run
+before: all=2 count=2 names=2 alias=2 live=2
+RELOAD 1 (whole): ok
+after1 (want 3 everywhere, like live, or a reopen): all=3 count=3 names=3 alias=3 live=3

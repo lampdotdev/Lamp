@@ -3934,6 +3934,10 @@ enum Template {
         static let shared = LampLive()
         var generation = 0
         static var generation: Int { shared.generation }
+        /// Read by what SwiftUI keeps besides a body (the copy step adds it), on the main thread where SwiftUI asks.
+        nonisolated static func touch() { if Thread.isMainThread { MainActor.assumeIsolated { _ = shared.generation } } }
+        /// The same around a value made by one expression, where a statement before it would stop it being returned.
+        nonisolated static func touched<T>(_ make: () -> T) -> T { touch(); return make() }
 
         static let start: Void = {
             DistributedNotificationCenter.default().addObserver(
@@ -16589,6 +16593,32 @@ enum Template {
         my $raw = $rawAll || $s =~ /MemoryLayout|withUnsafe|unsafeBitCast|makeBuffer|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
         @skip = spans($s);
         $s =~ s{var\s+body\s*:\s*some\s+(?:SwiftUI\.)?View\s*\{}~ inside($-[0]) ? $& : "var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\n    \@ViewBuilder var __lampBody: some View {" ~ge;
+        @skip = spans($s);
+        # What else SwiftUI keeps until something it reads changes: a modifier's and a style's body, a layout's
+        # placement, a representable's update. Each reads the generation too, so a change draws it again with the new
+        # code. Only what a statement can open without changing what it returns: the two bodies are view builders, and
+        # the others return nothing. Only a declaration with a body (`[^{}]*` stops at a protocol's requirement, which
+        # has none).
+        $s =~ s{\bfunc\s+(?:body\s*\(\s*content|makeBody\s*\(\s*configuration|placeSubviews\s*\(\s*in|update(?:NS|UI)View(?:Controller)?\s*\()[^{}]*\{}~ inside($-[0]) ? $& : "$&let _ = LampLive.touch(); " ~ge;
+        @skip = spans($s);
+        # A layout's `sizeThatFits` too, which is asked again only when what it read changes. Its body runs inside a
+        # closure that reads it first (`LampLive.touched`), which returns what the body returns, written as one
+        # expression or with `return`; a statement before it would stop a one-expression body returning. The body's
+        # end is found brace by brace outside strings and comments, from the last such method back.
+        @skip = spans($s);
+        my @layouts;
+        while ($s =~ /\bfunc\s+sizeThatFits\s*\(\s*proposal[^{}]*\{/g) { push @layouts, pos($s) - 1 unless inside($-[0]) }
+        for my $open (reverse @layouts) {
+            my ($depth, $close) = (0, -1);
+            for (my $i = $open; $i < length($s); $i++) {
+                next if inside($i);
+                my $c = substr($s, $i, 1);
+                if ($c eq chr(123)) { $depth++ } elsif ($c eq chr(125)) { $depth--; if ($depth == 0) { $close = $i; last } }
+            }
+            next if $close < 0;
+            substr($s, $close, 0) = " " . chr(125) . " ";
+            substr($s, $open + 1, 0) = " LampLive.touched " . chr(123) . " ";
+        }
         @skip = spans($s);
         my $main;
         $s =~ s{^([ \t]*(?:(?:\@\w+(?:\([^)]*\))?|public|internal|fileprivate|private|open|final)\s+)*)\@main((?:(?:\s|//[^\n]*|/\*[\s\S]*?\*/)+(?:\@\w+(?:\([^)]*\))?|public|internal|fileprivate|private|open|final))*(?:\s|//[^\n]*|/\*[\s\S]*?\*/)+(?:struct|class|enum|actor)\s+(\w+))}{ if (inside($-[0])) { $& } else { $main = $3; "$1$2" } }me;

@@ -863,10 +863,14 @@ Whether the change was asked for beside the app or in Lamp's window, a change go
 Mac app, or the Mac half of an app for both while Try On points at this Mac, is
 built live (a widget or share extension is built from the same copy, and a change to one reopens the app): build.sh with `LAMP_LIVE=1` copies Sources into `.lamp/live` with each `var body: some View` wrapped
 (`Template.liveCopySteps`: the body becomes `AnyView` and reads `LampLive.generation`, so its type never changes and
-every view draws again on a reload with its state kept), and builds that copy unoptimized, testable, with
+every view draws again on a reload with its state kept, except where a body's structure changed: SwiftUI builds what's
+inside it again, its views' state included, which `Agent.liveNote` tells the agent), and builds that copy unoptimized, testable, with
 `LAMP_LIVE` and `-Xlinker -interposable` (SwiftPM for a Mac app; Xcode for an app for both, from a copy of the
 device project, with its debug library off so the code is in the one binary). The copy is made by one
-perl pass over each file (`Template.livePerl`: the body wrap, Lamp's entry, the spare places and the `final` below,
+perl pass over each file (`Template.livePerl`: the body wrap, a read of the generation in what SwiftUI keeps besides a body (a modifier's
+`body(content:)`, a style's `makeBody`, a layout's methods, a representable's update; `LampLive.touch`, and for a
+`sizeThatFits` written as one expression `LampLive.touched`, which runs it after the read; a layout is asked again only
+when SwiftUI lays out again, which the read doesn't force), Lamp's entry, the spare places and the `final` below,
 with the stretches of strings and comments found once and never touched). It makes every class `final` that nothing
 in Sources subclasses (`live.pl scan` lists the names used as superclasses and as the bounds of generic parameters
 and `where` clauses, followed through typealiases): a final class keeps no method table, so a method or computed
@@ -929,7 +933,8 @@ which Lamp keeps beside it (`.lamp/live/installed`), so the change is judged aga
 `backToInstalled`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
 linked into a library. Every file is compiled when what's declared changed (a function, an initializer, a computed
 property, a conformance, a member's `@objc` and its selector, a stored property, which may stand where a protocol extension's member of its
-name did, and its observers, which turn every write into a call, a typealias, and a private member made visible: `LiveReload.declarationGroup`, `declarationsChanged`), since an unchanged caller may then mean
+name did, and its observers, which turn every write into a call, a typealias, and a private member made visible: `LiveReload.declarationGroup`, `declarationsChanged`; not a type a freestanding
+macro writes, such as `#Preview`'s, which is named after its line and which nothing in the app uses), since an unchanged caller may then mean
 another one (a new overload, a method where a protocol's default stood in), and a file taken away while another
 arrives (one renamed) is compiled like any other: what was private to it is named after its file and would start
 over, which the layout's check says for each type, static or global that moved.
@@ -1109,7 +1114,8 @@ own (`LiveReload.compile(keep:)`, renamed `$lampown` so `LampLive` binds every l
 don't know the new cases; its metadata stays the app's, so a value boxed before the change and one boxed after are the
 same type to a cast, and the app's metadata is pointed at the change's description and value witnesses (`LampLive.load`,
 two pointers), so the app's field records, the runtime's asks (printing, Codable, hashing, a cast) and code compiled
-before still read the new cases. A constant made from the enum (`Mood.allCases`), or by code that names it (`countMoods()`), is remade like one whose
+before still read the new cases. A constant made from the enum (`Mood.allCases`, or `allCases` written inside it, or through a typealias: the compiler's own
+`allCases` is recorded as a use), or by code that names it (`countMoods()`), is remade like one whose
 text changed (`LiveSlots.constants(naming:)`; one holding an object isn't, the object being state like any other); a stored static, global or lazy property made so reopens the app, since
 the open app made it once (`LiveSlots.stored(naming:)`). SwiftUI keeps the last value a few of its modifiers were given
 (`onChange(of:)`, `task(id:)`, `animation(_:value:)`, `id`, `tag`), made by the open app's code: an optional of the
@@ -1177,6 +1183,7 @@ object isn't remade (`static let shared = Store()`): the object is the app's sta
 read by what runs only at launch (its types and their extensions), there or through what it calls
 (`SwiftSource.reaches`), reopens the app, and so does
 a constant of the app's own option set or raw-value type, which the open app's values of it are made of.
+So does a key's `defaultValue` (an environment value's, a preference's), which SwiftUI reads once and keeps.
 
 A stored static or global `var` is made once too, the first time it's read, so a new starting value for one can't
 show without reopening, and whether it seemed to would depend on whether it had been read: its starting value and its type are part of the layout as a digest as well (`LiveReload.Group.stored`), and one that changed reopens the app, as does one whose starting value calls code that changed, unless it holds one
@@ -1190,7 +1197,10 @@ where the old one said, and a lookup by the new one looks elsewhere.
 A view's stored parameter that changes from one plain value to another of the same size (`heat: Int?` to `Double?`,
 `LiveReload.viewRetyped`, `plainLayout`) goes in too, with the app's own metadata: a view's value lives only until its
 next draw, when its parent makes it again with the new code, and two such fields copy, destroy and compare alike, so
-the open app's value witnesses do right by either. Not a name the app declares itself (`typealias Date = String`), in
+the open app's value witnesses do right by either (a `Bool`, a `Bool?` and a one-byte number are three layouts:
+their spare bit patterns, which Swift uses for `nil`, differ). Only when every place the app's code makes one is a
+view's own `var body` or code such a body calls (`LiveReload.madeOutsideBodies`): what a modifier's or a style's
+body, a hosting view's root or a stored property made is kept as the open app laid it out. Not a name the app declares itself (`typealias Date = String`), in
 either layout, nor a view something holds by value, through a typealias too (it's laid out in that), nor its wrappers
 (`State`, a binding, the environment, which SwiftUI keeps), nor one the App's scenes make, there or in code they call
 (`SwiftSource.reached`), never made again, nor one that code still running has in hand (`retypedViews` in `attempt`, read like a grown enum's old code);

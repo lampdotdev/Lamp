@@ -565,8 +565,9 @@ enum SwiftSource {
     static func usedName(_ value: Substring) -> String? {
         var text = value
         if let with = text.range(of: " [with") { text = text[..<with.lowerBound] }
-        guard let at = text.range(of: "@") else { return nil }
-        text = text[..<at.lowerBound]
+        // What the compiler wrote has no place, an enum's `allCases` included: that one is recorded all the same,
+        // since what's made from it depends on every case (`static let count = allCases.count`, through a typealias).
+        if let at = text.range(of: "@") { text = text[..<at.lowerBound] } else if !text.hasSuffix(".allCases") { return nil }
         guard let file = text.range(of: ".(file).") else { return nil }
         return text[file.upperBound...].replacingOccurrences(of: " extension", with: "")
     }
