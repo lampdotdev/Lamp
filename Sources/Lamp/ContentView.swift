@@ -1392,13 +1392,23 @@ struct ImportReviewCard: View {
     let update: () -> Void
 
     /// The heights of what stays put, measured as laid out: the app's name and description at the top, the
-    /// review's summary and what to weigh, the line about the copy already here when there is one, and the buttons.
+    /// review's summary, the line about the copy already here when there is one, and the buttons.
     @State private var fixed: [Part: CGFloat] = [:]
-    private enum Part { case name, summary, considerations, existing, buttons }
-    /// How tall the scrolling middle may be: the height a long review always stopped at, or less when the
-    /// screen below the sheet's top is shorter than that. Taken off besides the fixed parts: the sheet's
-    /// padding (48) and a 16-point gap after each part but the last.
-    private var limit: CGFloat { max(60, min(460, room - fixed.values.reduce(0, +) - 48 - 16 * CGFloat(fixed.count))) }
+    private enum Part { case name, summary, existing, buttons }
+    /// The height of Things to consider as laid out in full; nil when there's nothing to consider.
+    @State private var considering: CGFloat?
+    /// What the two scrolling parts share: the room under the sheet's top less the fixed parts, the sheet's
+    /// padding (48) and a 16-point gap after each part but the last (the fixed ones, and the two that scroll).
+    private var budget: CGFloat {
+        let scrolling: CGFloat = considering == nil ? 1 : 2
+        return room - fixed.values.reduce(0, +) - 48 - 16 * (CGFloat(fixed.count) + scrolling - 1)
+    }
+    /// Things to consider is shown whole when it fits, and otherwise scrolls, leaving what the app can do at
+    /// least a few rows: a long list of concerns never pushes the buttons off the screen. Its first lines are
+    /// Lamp's own verdict, so they're the ones always in view.
+    private var considerLimit: CGFloat { max(60, min(considering ?? 0, budget - 120)) }
+    /// How tall what the app can do may be: the height a long review always stopped at, or what's left.
+    private var limit: CGFloat { max(60, min(460, budget - (considering.map { min($0, considerLimit) } ?? 0))) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1426,8 +1436,8 @@ struct ImportReviewCard: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.name] = $0 }
 
             if let review {
-                // What it does and what to weigh stay in view, however short the screen, so a warning is never
-                // scrolled away beside the button that opens the app; only what it can do scrolls.
+                // What it does and the start of what to weigh stay in view, however short the screen, so Lamp's
+                // verdict is never scrolled away beside the button that opens the app.
                 if !review.summary.isEmpty {
                     section("What it does") {
                         // The reviewer is asked for a sentence or two: a few lines here, the whole of it on hover.
@@ -1437,12 +1447,17 @@ struct ImportReviewCard: View {
                 }
                 let considerations = Self.considerations(review)
                 if !considerations.isEmpty {
-                    section("Things to consider") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(considerations) { consideration($0) }
+                    ScrollView {
+                        section("Things to consider") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(considerations) { consideration($0) }
+                            }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { considering = $0 }
                     }
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.considerations] = $0 }
+                    .frame(maxHeight: considerLimit)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 ScrollView {
                     section("What it can do on your Mac") { capabilities(review) }
