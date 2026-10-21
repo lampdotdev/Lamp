@@ -1213,15 +1213,32 @@ enum LiveReload {
     /// compiler's first read in a session is the slow one (it builds the modules it needs), and done here, while
     /// the agent is still reading, the first change goes in as quickly as the ones after it.
     @MainActor static func warm(_ project: LampProject) async {
-        guard AppFile.text(runningLayout(project), in: project) == nil, !swiftFiles(in: running(project)).isEmpty else { return }
-        if let made = await analysis(of: running(project), in: project, module: project.exe, macOS: Template.macMinimum(project)) {
-            keepLayout(made.layout, for: project)
-            // And which system types the app's constants are made of hold no object: asked now, while the agent is
-            // still reading, rather than in front of the first change that gives one a new value.
+        guard !swiftFiles(in: running(project)).isEmpty else { return }
+        // And which system types the app's constants are made of hold no object: asked now, while the agent is still
+        // reading, rather than in front of the first change that gives one a new value. Kept apart from the layout,
+        // which may be saved already while the answers aren't (a macOS update, a layout saved by an earlier Lamp):
+        // done once for these sources on this macOS.
+        let macOS = Template.macMinimum(project)
+        let digest = Analyses.digest(of: running(project), module: project.exe, macOS: macOS)
+        let asked = digest + " " + podRuntime
+        let needsLayout = AppFile.text(runningLayout(project), in: project) == nil
+        let needsPlain = AppFile.text(plainAskedURL(project), in: project) != asked
+        guard needsLayout || needsPlain else { return }
+        let entry = analyses.entry(digest)
+        let made: (layout: [String], declarations: SwiftSource.Declarations)?
+        if let entry { made = (entry.layout, entry.declarations) }
+        else { made = await analysis(of: running(project), in: project, module: project.exe, macOS: macOS).map { ($0.layout, $0.declarations) } }
+        guard let made else { return }
+        if needsLayout { keepLayout(made.layout, for: project) }
+        if needsPlain {
             let unsure = LiveSlots.unsureTypes(of: made.declarations.constants.keys.sorted(), layout: made.layout, declarations: made.declarations)
             if !unsure.isEmpty { _ = await plainTypes(unsure, in: project) }
+            try? AppFolder.write(asked, to: plainAskedURL(project), in: project.dir)
         }
     }
+
+    /// Which sources, on which macOS, the plain-type answers were last asked ahead for (`warm`).
+    private static func plainAskedURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("plain-asked.txt") }
 
     static func keepLayout(_ layout: [String], for project: LampProject) {
         try? AppFolder.write(layout.joined(separator: "\n"), to: runningLayout(project), in: project.dir)
@@ -2113,7 +2130,7 @@ enum LiveReload {
     }()
     /// The answers, kept for the runtime they're true of: a macOS update may change what a system type holds.
     private static let podURL = Edition.supportFolder.appendingPathComponent("plain-types.json")
-    private static let podRuntime = ProcessInfo.processInfo.operatingSystemVersionString
+    static let podRuntime = ProcessInfo.processInfo.operatingSystemVersionString
     @MainActor private static func savePOD() {
         try? JSONEncoder().encode([podRuntime: podKnown]).write(to: podURL, options: .atomic)
     }
