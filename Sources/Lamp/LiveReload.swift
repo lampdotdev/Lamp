@@ -81,6 +81,32 @@ enum LiveReload {
         }.joined(separator: "\n")
     }
 
+    /// What the copy in the apps folder was built from, kept as it's installed: when a change put into the open app
+    /// crashes it, that copy is opened again (`Store.setAside`), and what it runs is this, so the next change can
+    /// still go into it as it runs.
+    private static func installedSources(_ project: LampProject) -> URL { folder(project).appendingPathComponent("installed") }
+    private static func installedInputs(_ project: LampProject) -> URL { folder(project).appendingPathComponent("installed-inputs.txt") }
+    static func keepInstalled(_ project: LampProject) {
+        guard FileManager.default.fileExists(atPath: running(project).path),
+              let inputs = AppFile.text(runningInputs(project), in: project) else {
+            AppFolder.remove(installedSources(project), in: project.dir)
+            return
+        }
+        try? AppFolder.copy(running(project), to: installedSources(project), in: project.dir)
+        try? AppFolder.write(inputs, to: installedInputs(project), in: project.dir)
+    }
+
+    /// The copy in the apps folder is what's opened next, none of the changes since it was installed in it.
+    /// Without a record of what it was built from (installed by an older Lamp), nothing is known of it, and the
+    /// next change reopens it.
+    static func backToInstalled(_ project: LampProject) {
+        guard FileManager.default.fileExists(atPath: installedSources(project).path),
+              let inputs = AppFile.text(installedInputs(project), in: project) else { return forget(project) }
+        markRunning(project, from: installedSources(project))
+        try? AppFolder.write(inputs, to: runningInputs(project), in: project.dir)
+        LiveSlots.clear(project)
+    }
+
     static func forget(_ project: LampProject) {
         AppFolder.remove(running(project), in: project.dir)
         AppFolder.remove(oldCodeURL(project), in: project.dir)
