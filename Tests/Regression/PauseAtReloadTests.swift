@@ -1,12 +1,21 @@
 import XCTest
 @testable import Lamp
 
-/// A change the person hasn't seen yet pauses the request (`Store.pause`): the agent's turn is over at its next tool
-/// call, and the request carries on only once the change is in. One run went on for eleven minutes and a hundred tool
-/// calls after a look said its change waited for Reload, with nothing reaching the screen; the rule here is what stops
-/// that, the same for every engine.
+/// An agent whose change waits for Reload goes on with what's left, but a look after it has been told, or any
+/// `use_app`, is it asking to see an app that doesn't show its change: the turn stops there (`Store.pause`), is over
+/// at its next tool call, and carries on only once the change is in. One run went on for eleven minutes and a hundred
+/// tool calls after a look said its change waited for Reload, then said the result was in; the rules here are what
+/// hold that to a stop and a sentence, the same for every engine.
 @MainActor
 final class PauseAtReloadTests: XCTestCase {
+    /// The first look that finds the change held tells the agent and lets it go on; the next look stops it, and
+    /// `use_app` stops it at once, since nothing can be tried in an app that doesn't show the change.
+    func testALookAfterBeingToldStopsTheTurnAndUseAppAlwaysDoes() {
+        XCTAssertFalse(Store.stopsToSee(told: false, using: false))
+        XCTAssertTrue(Store.stopsToSee(told: true, using: false))
+        XCTAssertTrue(Store.stopsToSee(told: false, using: true))
+    }
+
     /// After a look answered that the change waits for Reload, the agent's next edit ended its turn.
     func testAnyToolCallEndsAPausedTurn() {
         XCTAssertTrue(Store.endsAgent(asked: false, paused: true, before: "Edit"))
