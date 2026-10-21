@@ -5919,7 +5919,12 @@ final class Store: ObservableObject {
             return (400, ["error": "use_app needs a list of actions."])
         }
         // In plain sight, with Stop and Esc, and the person's own click or key in the preview taking it back.
-        let trial = Handover(label: "\(Self.lampName) is trying it on the TV", lampWindow: TVPreview.window(project))
+        // Taking over is remembered for the turn the moment it happens, whatever this call is waiting on then.
+        let trial = Handover(label: "\(Self.lampName) is trying it on the TV", lampWindow: TVPreview.window(project)) { [weak self] in
+            guard let self, !owner.tookOver else { return }
+            owner.tookOver = true
+            log(project, .status, Self.stoppedByYou)
+        }
         if let window = TVPreview.window(project) { trial.show(window: CGWindowID(window.windowNumber)) }
         defer { trial.end() }
         let report = await TVPreview.perform(decoded, on: project) { [weak self] in
@@ -5927,13 +5932,7 @@ final class Store: ObservableObject {
             return exists(project) && turns[project.id] === owner && !owner.stopped && !trial.tookOver && TVPreview.isOpen(project)
         }
         var text = "What happened:\n\(report)"
-        if trial.tookOver {
-            if !owner.tookOver {
-                owner.tookOver = true
-                log(project, .status, Self.stoppedByYou)
-            }
-            return (200, ["text": text + "\n\n" + Self.tookOverNote])
-        }
+        if owner.tookOver { return (200, ["text": text + "\n\n" + Self.tookOverNote]) }
         if Runtime.sourcesChanged(project) {
             text += "\n\nThis is the app as last opened: it doesn't have the changes you've made to the code since. Call look_at_app to open them."
         }
@@ -5945,6 +5944,8 @@ final class Store: ObservableObject {
             text += "\n\nA picture of the screen follows. Points for the next use_app are pixels in it."
         }
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n" + tail }
+        // Taken back during the reads above: the agent is told now, not at its next call.
+        if owner.tookOver { text += "\n\n" + Self.tookOverNote }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
     }
 
