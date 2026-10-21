@@ -146,7 +146,9 @@ struct LampProject: Identifiable, Hashable {
     /// name Lamp or the person gives it takes over everywhere at once.
     var title: String { !untitled ? name : fromWish ? "Your wish" : finding ? "Finding a wish" : "New wish" }
     /// False for a draft (Template.draft): a new app whose scaffold isn't written yet.
-    var scaffolded: Bool { FileManager.default.fileExists(atPath: dir.appendingPathComponent("Package.swift").path) }
+    var scaffolded: Bool {
+        FileManager.default.fileExists(atPath: dir.appendingPathComponent("Package.swift").path) || Template.isAndroid(dir)
+    }
 }
 
 struct ProjectMeta: Codable {
@@ -1398,9 +1400,14 @@ final class Store: ObservableObject {
     /// changes it by asking (`convert`, the agent's `make_app_for`).
     func chooseKind(_ project: LampProject, _ kind: Platform, said: Bool, watch: Bool = false) async -> LampProject {
         guard !project.scaffolded, kind != project.platform else { return project }
-        if kind == .android, !said, !AndroidTools.isReady {
-            log(project, .iphoneSetup, kind.rawValue)
-            return project
+        if kind == .android, !AndroidTools.isReady {
+            // Not asked for: a Mac app, with the setup a button away. Asked for: an Android app, and the setup
+            // window opens now, since the build can't go on without the tools (`androidToolsProblem`).
+            guard said else {
+                log(project, .iphoneSetup, kind.rawValue)
+                return project
+            }
+            AndroidSetup.shared.show()
         }
         if kind.hasIOS, !said {
             let both = kind == .universal
@@ -3676,7 +3683,7 @@ final class Store: ObservableObject {
     /// nothing installed yet (or the installed copy was deleted).
     func open(_ project: LampProject) async {
         if project.onAndroid {
-            if let running = androidApps[project.id], running.log?.isRunning == true, await Adb.pid(of: Template.androidPackage(for: project), on: running.serial) != nil {
+            if await isAndroidRunning(project) {
                 await Emulator.bringForward()
                 return
             }
@@ -5051,6 +5058,12 @@ final class Store: ObservableObject {
             log(project, .error, problem)
             return problem
         }
+        // Android's tools aren't here: nothing to build with, said once for a request, with the window to get them open.
+        if let problem = androidToolsProblem(project) {
+            let said = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }.contains { $0.kind == .error && $0.text == problem }
+            if !said { log(project, .error, problem); AndroidSetup.shared.show() }
+            return problem
+        }
         // Xcode would get as far as signing and fail there: said first, in the person's words, and once for
         // a request, however many times the request tries to build.
         if let problem = macMembershipProblem(project) {
@@ -5744,9 +5757,28 @@ final class Store: ObservableObject {
 
     /// The iPhone counterpart of `install`: the built app goes into the booted simulator and is launched there,
     /// with what it prints going to the same log the Mac apps use. Returns what's known if it died at once.
-    /// The Android apps open now: where each runs (the emulator's or the device's serial), its process on the
-    /// device, and the log Lamp reads from it, which ends when the app does.
-    private var androidApps: [String: (serial: String, pid: Int32, log: Process?)] = [:]
+    /// One Android app as opened: where it runs (the emulator's or the device's serial), its process on the device,
+    /// and the log Lamp reads from it. `alive` is kept by a watch that asks the device for the process every couple
+    /// of seconds, since the log reader doesn't end when the app does.
+    @MainActor final class AndroidRun {
+        let serial: String
+        let pid: Int32
+        var log: Process?
+        var alive = true
+        var watch: Task<Void, Never>?
+        init(serial: String, pid: Int32, log: Process?) { self.serial = serial; self.pid = pid; self.log = log }
+        func end() {
+            alive = false
+            watch?.cancel()
+            if let log, log.isRunning { log.terminate() }
+        }
+    }
+    /// The Android apps open now, by project.
+    private var androidApps: [String: AndroidRun] = [:]
+    /// Which project each Android device's screen belongs to: the last launched there. A look or `use_app` by
+    /// another project whose app is still alive in the background is refused the screen, as the simulator's
+    /// leases do it.
+    private var androidLeases: [String: String] = [:]
     /// The screen density of the device each Android app is open on, for its pictures (`Adb.screenshot`).
     private var androidDensities: [String: Int] = [:]
 
@@ -5777,20 +5809,39 @@ final class Store: ObservableObject {
             guard stillOwns() else { return "The app was deleted or stopped before it opened." }
             note("Opening \(project.name) on \(project.device == nil ? "the emulator" : "your device")…", for: project)
             retireLaunches(of: project)
-            if let previous = androidApps[project.id]?.log, previous.isRunning { previous.terminate() }
+            androidApps[project.id]?.end()
+            // One Lamp app per device: another project's app there is closed first, so the screen is this app's.
+            for (other, run) in androidApps where other != project.id && run.serial == serial {
+                if let theirs = projects.first(where: { $0.id == other }) {
+                    retireLaunches(of: theirs)
+                    await Adb.stop(Template.androidPackage(for: theirs), on: serial)
+                }
+                run.end()
+                androidApps[other] = nil
+            }
+            androidLeases[serial] = project.id
             try await Adb.install(project.builtURL, package: package, on: serial)
             guard stillOwns() else { return "The app was deleted or stopped before it opened." }
             Runtime.startLog(project)
             let pid = try await Adb.launch(package, on: serial)
-            let logcat = try? Adb.logcat(pid: pid, on: serial, log: Runtime.logURL(project))
-            androidApps[project.id] = (serial, pid, logcat)
+            let logcat = (try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)).flatMap { try? Adb.logcat(pid: pid, on: serial, log: $0) }
+            let run = AndroidRun(serial: serial, pid: pid, log: logcat)
+            androidApps[project.id] = run
+            run.watch = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(2))
+                    guard let self, androidApps[project.id] === run else { return }
+                    if await Adb.pid(of: package, on: serial) != pid {
+                        run.end()
+                        refreshOpenApps()
+                        return
+                    }
+                }
+            }
             if inFront, project.device == nil { await Emulator.bringForward() }
             let opened = Date()
-            _ = watchLaunch(project, owner: owner, opened: opened, alive: { [weak self] in
-                self?.androidApps[project.id]?.log?.isRunning == true
-            }, report: { [weak self] in
-                guard let self else { return "" }
-                return Runtime.logTail(project, lines: 40) ?? "The app quit right after opening, and printed nothing."
+            _ = watchLaunch(project, owner: owner, opened: opened, alive: { run.alive }, report: {
+                Runtime.logTail(project, lines: 40) ?? "The app quit right after opening, and printed nothing."
             })
             refreshOpenApps()
             return nil
@@ -5821,7 +5872,8 @@ final class Store: ObservableObject {
         try? await Task.sleep(for: Self.simulatorFirstScreen)
         var screenshots: [URL] = []
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
-        if await Adb.screenshot(on: open.serial, to: picture, density: androidDensities[project.id]) { screenshots = [picture] }
+        if let data = await Adb.screenshot(on: open.serial, density: androidDensities[project.id]),
+           (try? AppFolder.write(data, to: picture, in: project.dir)) != nil { screenshots = [picture] }
         let place = project.device == nil ? "the Android emulator (\(AndroidTools.avdName))" : "the person's Android device"
         var text = summary + " It's open on \(place). " + (screenshots.isEmpty ? "No picture of the screen could be taken."
             : Privacy.sharesPictures ? "A picture of its screen follows. Points for use_app are pixels in it." : Privacy.picturesOff)
@@ -5831,9 +5883,16 @@ final class Store: ObservableObject {
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
     }
 
+    /// Open, still this project's screen (no other app of Lamp's launched on that device since), and alive on the device.
     private func isAndroidRunning(_ project: LampProject) async -> Bool {
-        guard let open = androidApps[project.id] else { return false }
+        guard let open = androidApps[project.id], open.alive, androidLeases[open.serial] == project.id else { return false }
         return await Adb.pid(of: Template.androidPackage(for: project), on: open.serial) == open.pid
+    }
+
+    /// Why an Android app can't be built now, or nil: Google's tools aren't on this Mac yet.
+    private func androidToolsProblem(_ project: LampProject) -> String? {
+        guard project.platform == .android, !AndroidTools.isReady else { return nil }
+        return "Android's tools aren't on this Mac yet. Download them in the Android Setup window (also under Settings → Building), then try again."
     }
 
     /// `use_app` for an Android app: the actions carried out with adb, the screen read between them.
@@ -5864,7 +5923,8 @@ final class Store: ObservableObject {
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         if Privacy.sharesPictures {
             if let after = await Adb.screen(on: open.serial, density: density) { text += "\n\n" + after.text }
-            if await Adb.screenshot(on: open.serial, to: picture, density: density) { screenshots = [picture] }
+            if let data = await Adb.screenshot(on: open.serial, density: density),
+               (try? AppFolder.write(data, to: picture, in: project.dir)) != nil { screenshots = [picture] }
             text += "\n\nA picture of the screen follows. Points for the next use_app are pixels in it."
         }
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nLast lines it logged:\n" + tail }
@@ -7145,8 +7205,8 @@ final class Store: ObservableObject {
         }
         simulatorApps = simulatorApps.filter { Simulator.isRunning(pid: $0.value.pid) }
         deviceApps = deviceApps.filter { $0.value.isRunning }
-        // An Android app is open while the log Lamp reads from it runs (it ends with the app).
-        androidApps = androidApps.filter { $0.value.log?.isRunning == true }
+        // An Android app is open while its process is, which `AndroidRun` watches.
+        androidApps = androidApps.filter { $0.value.alive }
         let onIOS = Array(simulatorApps.keys) + Array(deviceApps.keys) + Array(androidApps.keys)
         // A build or icon held for a Mac copy goes in when that copy closes, even with its iPhone copy still open.
         let closedOnMac = openOnMac.subtracting(onMac)
@@ -7196,7 +7256,8 @@ final class Store: ObservableObject {
         if project.platform == .android {
             if let running = androidApps[project.id] {
                 await Adb.stop(Template.androidPackage(for: project), on: running.serial)
-                if let log = running.log, log.isRunning { log.terminate() }
+                running.end()
+                if androidLeases[running.serial] == project.id { androidLeases[running.serial] = nil }
             }
             androidApps[project.id] = nil
             refreshOpenApps()
@@ -8012,6 +8073,9 @@ final class Store: ObservableObject {
         try? await writeOwnFiles(project, all: false)
         let changed = Runtime.sourcesChanged(project)
         if changed, let errors = await build(project, inPlace: !reopen) {
+            if errors == androidToolsProblem(project) {
+                return (200, ["text": "The app can't be built yet, and Lamp has told the person why: \(errors)\n\nThis isn't a mistake in the code. Finish what was asked without a look, and tell the person in a sentence that you'll build it once the tools are there."])
+            }
             if errors == macMembershipProblem(project) {
                 return (200, ["text": "The app can't be built for this Mac, and Lamp has told the person why: \(errors)\n\nThis isn't a mistake in the code. Don't take iCloud out unless the person asked for that; finish what was asked without a look."])
             }

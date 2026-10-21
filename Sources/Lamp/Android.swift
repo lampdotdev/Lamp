@@ -361,16 +361,14 @@ enum Adb {
         _ = await run(["shell", "am", "force-stop", package], on: serial, timeout: 30)
     }
 
-    /// The app's own log lines, into `log`, as the simulator's output goes there: a process that runs as long as the
-    /// app does, kept so a later launch or Stop can end it.
-    static func logcat(pid: Int32, on serial: String, log: URL) throws -> Process {
+    /// The app's own log lines, into `log` (a handle the caller opened on the app's folder's terms, `AppFolder`), as
+    /// the simulator's output goes there: a process kept so a later launch or Stop can end it. It reads log records
+    /// and doesn't end when the app does, so the app's life is watched apart from it.
+    static func logcat(pid: Int32, on serial: String, log handle: FileHandle) throws -> Process {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: AndroidTools.adb)
         process.arguments = ["-s", serial, "logcat", "--pid=\(pid)", "-v", "brief", "-T", "1"]
         process.environment = ProcessInfo.processInfo.environment.merging(AndroidTools.environment) { $1 }
-        if !FileManager.default.fileExists(atPath: log.path) { FileManager.default.createFile(atPath: log.path, contents: nil) }
-        let handle = try FileHandle(forWritingTo: log)
-        handle.seekToEndOfFile()
         process.standardOutput = handle
         process.standardError = handle
         process.standardInput = FileHandle.nullDevice
@@ -379,17 +377,20 @@ enum Adb {
     }
 
     /// A picture of the screen as a PNG, scaled down by the device's density so a pixel in it is a point on the
-    /// screen (as the simulator's pictures are), and the scale that was applied.
-    static func screenshot(on serial: String, to file: URL, density: Int?) async -> Bool {
+    /// screen (as the simulator's pictures are). Made in Lamp's own temporary folder, for the caller to put in the
+    /// app's folder on that folder's terms (`AppFolder`), never written there through a path a command may have linked.
+    static func screenshot(on serial: String, density: Int?) async -> Data? {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-android-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: file) }
         let result = await Subprocess.run("/bin/sh", ["-c", "\"$LAMP_ADB\" -s \"$LAMP_SERIAL\" exec-out screencap -p > \"$LAMP_FILE\""],
                                           env: AndroidTools.environment.merging(["LAMP_ADB": AndroidTools.adb, "LAMP_SERIAL": serial, "LAMP_FILE": file.path]) { $1 },
                                           timeout: 60)
-        guard result.ok, let image = NSImage(contentsOf: file), image.size.width > 0 else { return false }
+        guard result.ok, let image = NSImage(contentsOf: file), image.size.width > 0 else { return nil }
         let scale = Self.scale(density: density)
         if scale > 1, let width = (image.representations.first?.pixelsWide).map({ Double($0) / scale }) {
             _ = await Subprocess.run("/usr/bin/sips", ["--resampleWidth", String(Int(width.rounded())), file.path], timeout: 30)
         }
-        return true
+        return try? Data(contentsOf: file)
     }
 
     /// Android's own scale: 160 dpi is one pixel a point.
@@ -536,11 +537,11 @@ enum Adb {
                     let (x, y) = pixels(at)
                     _ = await run(["shell", "input", "tap", "\(x)", "\(y)"], on: serial, timeout: 30)
                     try? await Task.sleep(for: .milliseconds(300))
-                    // In place of what the field held, as on the other devices.
-                    _ = await run(["shell", "input", "keyevent", "KEYCODE_MOVE_END"], on: serial, timeout: 30)
-                    _ = await run(["shell", "input", "keyevent", "--longpress", "KEYCODE_DEL"], on: serial, timeout: 30)
-                    for _ in 0..<3 { _ = await run(["shell", "input", "keyevent", "--longpress", "KEYCODE_DEL"], on: serial, timeout: 30) }
                 }
+                // In place of what the field held, as on the other devices: to the end, then back over it, one
+                // delete per character up to what a field is likely to hold, all in one call.
+                _ = await run(["shell", "input", "keyevent", "KEYCODE_MOVE_END"], on: serial, timeout: 30)
+                _ = await run(["shell", "input", "keyevent"] + Array(repeating: "KEYCODE_DEL", count: 120), on: serial, timeout: 60)
                 // `input text` takes no spaces and reads % and some punctuation its own way: each is escaped as adb's shell wants.
                 let escaped = text.map { character -> String in
                     switch character {

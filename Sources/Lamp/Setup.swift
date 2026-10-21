@@ -852,7 +852,6 @@ struct PhoneSigningSection: View {
                             if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
                         }
                     }
-                    if phoneApps { Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show() } }
                 }
             }
         }
@@ -883,8 +882,9 @@ struct DevicesSection: View {
             }
             HStack {
                 Spacer()
-                // Android's tools are a download Lamp makes; the window says what's there and what's next.
-                Button(AndroidTools.isReady ? "Android Setup…" : "Set Up Android…") { AndroidSetup.shared.show() }.controlSize(.small)
+                // Each kind of device has a setup of its own, checked and taken further from its window.
+                Button("iPhone & iPad Setup…") { PhoneSetup.shared.show() }.controlSize(.small)
+                Button("Android Setup…") { AndroidSetup.shared.show() }.controlSize(.small)
                 Button("Look for Devices Again") { store.refreshDevices() }.controlSize(.small)
             }
         }

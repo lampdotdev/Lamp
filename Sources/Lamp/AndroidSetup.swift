@@ -48,10 +48,11 @@ final class AndroidSetup: NSObject, ObservableObject, NSWindowDelegate {
         refresh()
     }
 
-    func refresh() {
+    /// `keepingProblem`: after a download that failed, the reason stays on screen through the look at what's there.
+    func refresh(keepingProblem: Bool = false) {
         guard !checking, installing == nil else { return }
         checking = true
-        problem = nil
+        if !keepingProblem { problem = nil }
         let device = self.device
         Task {
             let result = await AndroidTools.check(device: device)
@@ -84,8 +85,9 @@ final class AndroidSetup: NSObject, ObservableObject, NSWindowDelegate {
                 } catch {
                     problem = error.localizedDescription
                 }
+                let failed = problem != nil
                 installing = nil
-                refresh()
+                refresh(keepingProblem: failed)
             }
         }
     }
