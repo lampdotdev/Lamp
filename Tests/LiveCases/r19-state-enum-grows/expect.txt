@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: tab=today tabs=2
+RELOAD 1 (whole): ok
+after1 (want it in, tabs=3: a tab added at the end of the enum a view keeps in @State, nothing else holding it): tab=today tabs=3

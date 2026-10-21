@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD (Gave Board.order its new value)
+VERDICT 2: RELOAD
+== run
+before: badge size=12 order: [1, 2, 3]
+RELOAD 1 (whole): ok
+after1 (want order [3, 2, 1], or a reopen: a constant made by a generic function of the app's, whose body changed): badge size=12 order: [1, 2, 3]
+RELOAD 2: ok
+after2 (want it in, badge size=14: a view made only in the body of a generic card view, its starting value changed): badge size=14

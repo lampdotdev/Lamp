@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (ContentView.standard starts as something else now, and the open app made ContentView once (at launch, or outside a view's body), which keeps what it started as)
+== run
+before: card theme=orange standard=orange, root theme=orange standard=orange
+RELOAD 1: REOPEN ContentView.standard starts as something else now, and the open app made ContentView once (at launch, or outside a view's body), which keeps what it started as
+after1 (want teal everywhere, or a reopen: the root view keeps Themes made from their members' starting values, which changed, and Theme.standard itself is given its new value): 
+before: card theme=teal standard=teal, root theme=teal standard=teal
+RELOAD 1: in the restart
+after1 (want teal everywhere, or a reopen: the root view keeps Themes made from their members' starting values, which changed, and Theme.standard itself is given its new value): 

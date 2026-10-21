@@ -2,6 +2,7 @@ VERDICT 1: REOPEN (body(content:) switches over Mood in code that may still be r
 == run
 before: tick 1 calm v1
 RELOAD 1: REOPEN body(content:) switches over Mood in code that may still be running (a loop, a timer, a task, an observer), which doesn't know the new cases
+after1 (want 'away' heard by the handler, or a reopen; never a crash or another case's arm): tick 2 calm v1
 before: tick 1 calm v2
 RELOAD 1: in the restart
 after1 (want 'away' heard by the handler, or a reopen; never a crash or another case's arm): tick 2 away v2

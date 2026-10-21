@@ -873,7 +873,7 @@ inside it again, its views' state included, which `Agent.liveNote` tells the age
 `LAMP_LIVE` and `-Xlinker -interposable` (SwiftPM for a Mac app; Xcode for an app for both, from a copy of the
 device project, with its debug library off so the code is in the one binary). The copy is made by one
 perl pass over each file (`Template.livePerl`: the body wrap, a read of the generation in what SwiftUI keeps besides a body (a modifier's
-`body(content:)`, a style's `makeBody`, a layout's methods; `LampLive.touch`, matched only up to the declaration's own
+`body(content:)`, a style's `makeBody`, a layout's methods, the body of content that isn't a view (a toolbar's, a chart's, a map's, a tab's); `LampLive.touch`, matched only up to the declaration's own
 `{`, never across another declaration; and for a
 `sizeThatFits` written as one expression `LampLive.touched`, which runs it after the read; a layout is asked again only
 when SwiftUI lays out again, which the read doesn't force; a representable's make and update aren't given the read,
@@ -901,7 +901,7 @@ not the app's. A shape is compared only where both
 layouts have one, so a layout an earlier Lamp kept says nothing of it. After a build, `Store.install` tries
 `reloadInPlace` first, which decides the app is open and built live, takes the verdict and hands the changed files to
 `LiveReload.put`, the one pipeline from the layout check to the record of what the app now runs, acting on its
-`Outcome` (it went in, with what was done beyond the code; or why the app has to reopen): the change goes in when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.LaunchReader`, held to what the open app had as part of the layout; a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again, and one the change didn't touch is left out of a compile of every file when it names nothing newly declared, `LiveReload.addedNames`; a conformance, subscript or operator, which code reaches without naming it, or a declaration taken away keeps it in) or Lamp's own files, and leaves every type
+`Outcome` (it went in, with what was done beyond the code; or why the app has to reopen): the change goes in when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.LaunchReader`, held to what the open app had as part of the layout, with the code they call, as far down as that goes but not their actions', `LiveReload.launchCalls`, since it ran once too; a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again, and one the change didn't touch is left out of a compile of every file when it names nothing newly declared, `LiveReload.addedNames`; a conformance, subscript or operator, which code reaches without naming it, or a declaration taken away keeps it in) or Lamp's own files, and leaves every type
 holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties (their types in Swift's short
 spellings, so `Array<String>` is `[String]`, only where the name is Swift's and no type of the app's) and cases (with their raw values, which an `@objc` enum's values are and
 a raw-value enum hashes by; a raw type given to an existing enum or taken from it reopens the app too),
@@ -910,7 +910,7 @@ text; a typealias is printed as itself wherever it's used, so each is listed wit
 typealias and is now a type of its own, or the other way round; a case is listed with whether it's `indirect`; an associated type the compiler inferred, such
 as Identifiable's `ID` or a Sequence's `Iterator`, is a typealias it declares itself and is listed the same; a member
 returning `some …`, a modifier's `body(content:)` or a style's `makeBody`, whose type is what it builds, is listed by that
-type as the compiler prints it where the body's value becomes the opaque one, `LiveReload.opaqueGroup`, so `1` may
+type as the compiler prints it where the body's value becomes the opaque one, `LiveReload.opaqueGroup`, except a view's own `some View` helper that no protocol requires and only views' bodies use, whose value is made again at every draw: it goes in with every file compiled again, `LiveReload.freeOpaque`; so `1` may
 become `1.5` only if the member returns a Double now, and `Text("a")` may become `Text("a").bold()`; where that type is
 opaque too (a modifier's `some View`) it's listed by a digest of every node in its body whose type involves an opaque
 one, by that type (`(some Equatable, Int)`, so a tuple's or array's plain parts count) and by the declaration it calls
@@ -935,7 +935,7 @@ old code does (`LiveReload.OldCode`), all taking the same lines in one walk in `
 be keyed two ways by two readers); what a stretch of code names (a constant, a type, a view's `$name`, a publisher) is the
 compiler's own resolution of it (`Declarations.uses`, from each reference's `decl`, each annotation's `bind` and each type
 written out), never a search of its text, so a string, a comment or another type's member of the same name is no use of
-it, and a case alone (`.a`) is no use of its enum as a whole (`LiveReload.reloadable`, comparing with the sources the open app runs, kept in `.lamp/live/running`, which holds only
+it, and a case alone (`.a`) is no use of its enum as a whole (`LiveReload.verdict`, comparing with the sources the open app runs, kept in `.lamp/live/running`, which holds only
 for the copy that took the last change: one opened again since, by the person or macOS, runs what was installed,
 which Lamp keeps beside it (`.lamp/live/installed`), so the change is judged against that, `LiveReload.tookChanges`,
 `backToInstalled`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
@@ -1110,7 +1110,7 @@ so `any Collection` may hold `[Mood?]`), or `any P` for one of the app's own whe
 in an extension or through a protocol that inherits P, or an extension of a system type does and could wrap it
 (`LiveReload.existential`); a model keeping `any Shape` is no reason to reopen for a Mood that is no Shape. When an enum
 grew, every file of the app's is compiled again, so no code of the open app's meets a case it never knew (a switch over
-it, or printing it, reads past what its metadata describes); code already running keeps the version it started with,
+it, or printing it, reads past what its metadata describes); code already running keeps the version it started with (not what the `@State` macro writes, whose closure SwiftUI calls only to make a new view's first value),
 so the sources the open app runs, and those of every change that went in since it opened (`.lamp/live/old-code.txt`,
 `LiveReload.recordOldCode`: what an earlier change's code started may still be running), are read for a switch over the
 enum, or an interpolation of it, in a loop (one that may never end), or in an escaping closure that outlives a draw (one made outside a view's body or a

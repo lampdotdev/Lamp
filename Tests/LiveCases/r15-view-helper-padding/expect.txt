@@ -1,7 +1,7 @@
-VERDICT 1: REOPEN (Card.header: some View returns another kind of value now (some …), which what the open app made can't take)
+VERDICT 1: REOPEN (Framed.body(content:): (Framed) -> (Framed.Content) -> some View returns another kind of value now (some …), which what the open app made can't take)
 == run
 before: v0
-RELOAD 1: REOPEN Card.header: some View returns another kind of value now (some …), which what the open app made can't take
+RELOAD 1: REOPEN Framed.body(content:): (Framed) -> (Framed.Content) -> some View returns another kind of value now (some …), which what the open app made can't take
 after1 (want live: a modifier added to a view's helper, and to a ViewModifier's body): v0
 before: v1
 RELOAD 1: in the restart

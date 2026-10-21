@@ -1,0 +1,32 @@
+VERDICT 1: RELOAD
+VERDICT 2: RELOAD (Added Store.clearedCount)
+VERDICT 3: RELOAD
+VERDICT 4: RELOAD
+VERDICT 5: RELOAD
+VERDICT 6: RELOAD
+VERDICT 7: RELOAD (Added ListView.showingInfo)
+VERDICT 8: RELOAD (Gave Style.rowPadding its new value)
+VERDICT 9: RELOAD
+VERDICT 10: RELOAD (Added Item.note)
+== run
+before: list filter=all cases=3, row Eggs done=true pad=4.0, row Milk done=false pad=4.0
+RELOAD 1 (whole): ok
+after1 (want it in, every line at v1 where that part changed: a method added to the store, called by a new button): row Eggs done=true pad=4.0, row Milk done=false pad=4.0, v1 list filter=all cases=3
+RELOAD 2 (whole): ok
+after2 (want it in, every line at v2 where that part changed: a stored property added to the store): row Eggs done=true pad=4.0, row Milk done=false pad=4.0, v2 list cleared=0 filter=all cases=3
+RELOAD 3 (whole): ok
+after3 (want it in, every line at v3 where that part changed: a case added at the end of the filter): row Eggs done=true pad=4.0, row Milk done=false pad=4.0, v3 list cleared=0 filter=all cases=4
+RELOAD 4 (whole): ok
+after4 (want it in, every line at v4 where that part changed: a computed property added to Item, read by the row): v3 list cleared=0 filter=all cases=4, v4 row Milk done=false pad=4.0, v4 row done: Eggs done=true pad=4.0
+RELOAD 5: ok
+after5 (want it in, every line at v5 where that part changed: the row's body changed): v3 list cleared=0 filter=all cases=4, v5 row Milk done=false pad=4.0, v5 row done: Eggs done=true pad=4.0
+RELOAD 6 (whole): ok
+after6 (want it in, every line at v6 where that part changed: a new view shown by the list): v3 list cleared=0 filter=all cases=4, v5 row Milk done=false pad=4.0, v5 row done: Eggs done=true pad=4.0, v6 header 2
+RELOAD 7 (whole): ok
+after7 (want it in, every line at v7 where that part changed: @State and a sheet added to the list): v5 row Milk done=false pad=4.0, v5 row done: Eggs done=true pad=4.0, v6 header 2, v7 list info=false cleared=0 filter=all cases=4
+RELOAD 8 (whole): ok
+after8 (want it in, every line at v8 where that part changed: a constant's value changed (pad=8.0)): v6 header 2, v7 list info=false cleared=0 filter=all cases=4, v8 row Milk done=false pad=8.0, v8 row done: Eggs done=true pad=8.0
+RELOAD 9 (whole): ok
+after9 (want it in, every line at v9 where that part changed: a store method renamed with its caller): v6 header 2, v8 row Milk done=false pad=8.0, v8 row done: Eggs done=true pad=8.0, v9 list info=false cleared=0 filter=all cases=4
+RELOAD 10 (whole): ok
+after10 (want it in, every line at v10 where that part changed: a stored property added to Item, a plain struct (note=[])): v10 row Milk note=[] done=false pad=8.0, v10 row done: Eggs note=[] done=true pad=8.0, v6 header 2, v9 list info=false cleared=0 filter=all cases=4

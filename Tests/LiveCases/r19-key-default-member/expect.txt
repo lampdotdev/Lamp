@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (ThemeKey.defaultValue changed, and SwiftUI keeps the default it first read)
+== run
+before: card accent=orange
+RELOAD 1: REOPEN ThemeKey.defaultValue changed, and SwiftUI keeps the default it first read
+after1 (want accent=teal, or a reopen: the key's default is made by Theme(), whose member's starting value changed, as with `static let defaultValue = Theme()`): 
+before: card accent=teal
+RELOAD 1: in the restart
+after1 (want accent=teal, or a reopen: the key's default is made by Theme(), whose member's starting value changed, as with `static let defaultValue = Theme()`): 

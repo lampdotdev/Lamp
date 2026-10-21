@@ -83,8 +83,9 @@ enum SwiftSource {
         /// `Mood.allCases`, `[Mood]`), that type's name. What code names is read from here, never from its text, so a
         /// string, a comment or a local of the same name is no use of it.
         var uses: [(at: Position, name: String)] = []
-        /// Where each closure that returns nothing runs (an action, a handler: `.onAppear { … }`, a Button's): code in
-        /// one runs when it's called, not each time a body is drawn.
+        /// Where each escaping closure that returns nothing runs (an action, a handler: `.onAppear { … }`, a Button's):
+        /// code in one runs when it's called, not each time a body is drawn, nor where it's written. One that doesn't
+        /// escape (`withAnimation { … }`, `MainActor.assumeIsolated { … }`) runs there and then.
         var actions: [(start: Position, last: Position)] = []
         /// The uses that are a key path's components (`\.$count`), which have no place of their own: in `uses` at the
         /// key path's start, and here with the key path's whole span, where the token is.
@@ -179,7 +180,10 @@ enum SwiftSource {
     /// the system's declarations carry no place.
     static func declared(in line: String) -> Position? {
         guard let open = line.range(of: " decl=\""), let close = line[open.upperBound...].firstIndex(of: "\""),
-              case let value = line[open.upperBound..<close], let at = value.lastIndex(of: "@") else { return nil }
+              case var value = line[open.upperBound..<close] else { return nil }
+        // A generic one's substitutions follow its place (`@A.swift:3:6 [with (substitution_map …)]`).
+        if let with = value.range(of: " [with") { value = value[..<with.lowerBound] }
+        guard let at = value.lastIndex(of: "@") else { return nil }
         let place = value[value.index(after: at)...].split(separator: ":")
         guard place.count >= 3, let row = Int(place[place.count - 2]), let column = Int(place[place.count - 1]) else { return nil }
         let file = place.dropLast(2).joined(separator: ":")
@@ -267,7 +271,7 @@ enum SwiftSource {
                 if opens("func_decl"), line.has(" \"hash(into:)\" "), let owner = line.owner { out.hashing[owner] = r }
             } else if opens("enum_case_decl"), let r = SwiftSource.range(in: line.text) {
                 out.cases.append(r)
-            } else if opens("closure_expr"), line.has("-> ()\"") || line.has("-> Void\""), let r = SwiftSource.range(in: line.text) {
+            } else if opens("closure_expr"), line.has("-> ()\"") || line.has("-> Void\""), line.has(" escaping"), let r = SwiftSource.range(in: line.text) {
                 out.actions.append(r)
             } else if line.has(" decl=\""), let at = SwiftSource.range(in: line.text)?.start {
                 lastAt = at
@@ -594,7 +598,8 @@ enum SwiftSource {
     static func location(in line: String) -> Position? {
         guard let open = line.range(of: " location=") else { return nil }
         let rest = line[open.upperBound...]
-        let value = rest.prefix { $0 != " " }
+        // Up to the attribute after it: a path may hold spaces (`Application Support`).
+        let value = rest.range(of: " range=").map { rest[..<$0.lowerBound] } ?? rest.prefix { $0 != " " }
         let parts = value.split(separator: ":")
         guard parts.count >= 3, let row = Int(parts[parts.count - 2]), let column = Int(parts[parts.count - 1]) else { return nil }
         return Position(file: parts.dropLast(2).joined(separator: ":"), line: row, column: column)
@@ -620,8 +625,15 @@ enum SwiftSource {
     static func called(from start: Position, to last: Position, in declarations: Declarations, files: inout [String: Text],
                        members followMembers: Bool = false,
                        skipping: [(start: Position, last: Position)] = []) -> [(start: Position, last: Position)] {
+        called(fromAll: [(start, last)], in: declarations, files: &files, members: followMembers, skipping: skipping)
+    }
+
+    /// The same from several stretches at once (every view's body), each declaration once however many reach it.
+    static func called(fromAll starts: [(start: Position, last: Position)], in declarations: Declarations, files: inout [String: Text],
+                       members followMembers: Bool = false,
+                       skipping: [(start: Position, last: Position)] = []) -> [(start: Position, last: Position)] {
         func within(_ p: Position, _ r: (start: Position, last: Position)) -> Bool { p.file == r.start.file && before(r.start, p) && before(p, r.last) }
-        var seen: Set<Int> = [], pending = [(start: start, last: last)], parts: [(start: Position, last: Position)] = [], typesSeen = Set<String>()
+        var seen: Set<Int> = [], pending = starts, parts: [(start: Position, last: Position)] = [], typesSeen = Set<String>()
         func text(_ r: (start: Position, last: Position)) -> String? {
             guard let file = files[r.start.file] ?? Text(path: r.start.file) else { return nil }
             files[r.start.file] = file
@@ -637,15 +649,24 @@ enum SwiftSource {
             return (declarations.bindings.map { ($0.start, $0.last) } + declarations.cases)
                 .filter { member in within(member.start, type) && !inside.contains { within(member.start, $0) } }
         }
+        // Looked up once each: the calls by the file they're made in, and the innermost declaration holding each place
+        // a call names.
+        let callsIn = Dictionary(grouping: declarations.calls, by: \.at.file)
+        var innermost: [Position: Int?] = [:]
+        func inner(_ place: Position) -> Int? {
+            if let known = innermost[place] { return known }
+            let found = declarations.bodies.indices.filter { within(place, declarations.bodies[$0]) }
+                .min(by: { before(declarations.bodies[$1].start, declarations.bodies[$0].start) })
+            innermost[place] = found
+            return found
+        }
         let initializer = try! NSRegularExpression(pattern: #"^\s*(?:@\w+\s+|\w+\s+)*init\b"#)
         while let r = pending.popLast() {
-            for call in declarations.calls where within(call.at, r) && !skipping.contains(where: { within(call.at, $0) }) {
+            for call in callsIn[r.start.file] ?? [] where within(call.at, r) && !skipping.contains(where: { within(call.at, $0) }) {
                 // What it names may be no body of its own (an initializer the compiler wrote, a case) or an
                 // initializer: the type around it, by its members.
-                let inner = declarations.bodies.indices.filter { within(call.to, declarations.bodies[$0]) }
-                    .min(by: { before(declarations.bodies[$1].start, declarations.bodies[$0].start) })
-                let bodyText = inner.flatMap { text(declarations.bodies[$0]) }
-                if followMembers, inner == nil || bodyText.map({ initializer.firstMatch(in: $0, range: NSRange($0.startIndex..., in: $0)) != nil }) == true,
+                let index = inner(call.to)
+                if followMembers, index == nil || index.flatMap({ text(declarations.bodies[$0]) }).map({ initializer.firstMatch(in: $0, range: NSRange($0.startIndex..., in: $0)) != nil }) == true,
                    let type = declarations.types.filter({ within(call.to, $0.value) }).min(by: { before($1.value.start, $0.value.start) }),
                    typesSeen.insert(type.key).inserted {
                     // And what each member's starting value calls, as far down as that goes (`var audio = Audio()`).
@@ -655,9 +676,8 @@ enum SwiftSource {
                     }
                 }
                 // The innermost declaration holding the place it names.
-                guard let index = declarations.bodies.indices.filter({ within(call.to, declarations.bodies[$0]) })
-                        .min(by: { before(declarations.bodies[$1].start, declarations.bodies[$0].start) }),
-                      !seen.contains(index), case let body = declarations.bodies[index], !(body.start == start && body.last == last) else { continue }
+                guard let index, !seen.contains(index), case let body = declarations.bodies[index],
+                      !starts.contains(where: { body.start == $0.start && body.last == $0.last }) else { continue }
                 seen.insert(index)
                 parts.append(body)
                 pending.append(body)
@@ -681,7 +701,7 @@ enum SwiftSource {
             files[binding.start.file] = text
             guard let from = text.offset(binding.start), let end = text.tokenEnd(binding.last), from < end else { return nil }
             // With what it calls, as far down as that goes: a getter returning `theme()` changes when `theme()` does.
-            let called = calledText(from: binding.start, to: binding.last, in: declarations, files: &files)
+            let called = calledText(from: binding.start, to: binding.last, in: declarations, files: &files, members: true)
             return LiveReload.Group.defaults.entry(owner + "\tdefaultValue: " + digest(text.slice(from, end)) + "+" + digest(called))
         }
     }
@@ -704,7 +724,7 @@ enum SwiftSource {
                 return group.entry(key + ": " + own)
             }
             let binding = declarations.bindings[variable.binding]
-            return group.entry(key + ": " + own + "+" + digest(calledText(from: binding.start, to: binding.last, in: declarations, files: &files, members: group == .constant)))
+            return group.entry(key + ": " + own + "+" + digest(calledText(from: binding.start, to: binding.last, in: declarations, files: &files, members: group == .constant || group == .defaults)))
         }
     }
 

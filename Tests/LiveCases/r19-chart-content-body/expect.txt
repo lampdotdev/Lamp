@@ -1,0 +1,6 @@
+VERDICT 1: RELOAD
+== run
+Charts: Custom UnitPoint values are not supported in AxisValueLabel's anchor property. Please use leading, topLeading, center, etc.
+before: marks=Orders, title=Orders
+RELOAD 1: ok
+after1 (want marks=Sales and the view's own title=Sales, or a reopen: only a word in the chart content's body and the view's changed): marks=Sales, title=Sales

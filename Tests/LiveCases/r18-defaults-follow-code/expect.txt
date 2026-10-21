@@ -3,10 +3,12 @@ VERDICT 2: REOPEN (ShadeKey.defaultValue changed, and SwiftUI keeps the default 
 == run
 before: columns=2 shade=light
 RELOAD 1: REOPEN ContentView.columns starts as something else now, and the open app made ContentView once (at launch, or outside a view's body), which keeps what it started as
+after1 (want columns=3, or a reopen: only the function the root's starting value comes from changed): 
 before: columns=3 shade=light
 RELOAD 1: in the restart
 after1 (want columns=3, or a reopen: only the function the root's starting value comes from changed): 
 RELOAD 2: REOPEN ShadeKey.defaultValue changed, and SwiftUI keeps the default it first read
+after2 (want shade=dark, or a reopen: a key declared in an extension, whose default calls a helper that changed): 
 before: columns=3 shade=dark
 RELOAD 1: in the restart
 after1 (want columns=3, or a reopen: only the function the root's starting value comes from changed): 
