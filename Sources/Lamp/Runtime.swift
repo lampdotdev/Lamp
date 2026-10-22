@@ -239,6 +239,16 @@ enum Runtime {
         guard Privacy.sharesPictures, let built = modified(builtURL(project)),
               let taken = modified(folder(project).appendingPathComponent("screenshot.png")), taken > built
         else { return "" }
+        // A TV app's picture is the last look at the TV preview, and the person's TV is never pictured.
+        if project.onTV {
+            return """
+
+
+            Note from Lamp: \(folderPath(project))/screenshot.png is a picture of the TV preview on this Mac (not the \
+            user's TV), taken at \(taken.formatted(date: .omitted, time: .shortened)). If you can view images, look at it \
+            when this request is about how the app looks or behaves.
+            """
+        }
         let more = (2...3).map { "screenshot-\($0).png" }
             .filter { modified(folder(project).appendingPathComponent($0)).map { $0 > built } ?? false }
         return """

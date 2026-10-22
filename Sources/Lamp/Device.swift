@@ -308,7 +308,7 @@ enum DeviceNote {
         }
         if project.onTV {
             let tvs = store.devices.filter { $0.kind.isTV }
-            var line = "Your looks are in the TV preview on this Mac, 1920×1080 with a remote's keys."
+            var line = "Your looks are in the TV preview, a window on this Mac at a TV's 1920×1080 with a remote's keys: it is not one of the person's TVs, and much faster than one."
             if let id = project.device {
                 line += tvs.first(where: { $0.udid == id }).map { " Play puts the app on the person's \($0.name): \($0.forAgent)." }
                     ?? " Try On points at one of the person's TVs, which isn't on the network now."

@@ -6223,14 +6223,14 @@ final class Store: ObservableObject {
 
     /// `look_at_app` for a TV app: the preview pictured at half the TV's size and read as text, with what it printed.
     private func lookOnTV(_ project: LampProject, turn: Turn, changed: Bool, reopen: Bool) async -> (Int, [String: Any]) {
-        var summary = "The app is open in the TV preview."
+        var summary = "The app is open in the TV preview on this Mac."
         if changed || !TVPreview.isOpen(project) || reopen {
             let problem = await install(project, inFront: false, early: true)
             turn.look.installed = true
-            if let problem { return (200, ["text": "The app didn't open in the TV preview.\n\n\(problem)"]) }
-            summary = changed ? "The app was opened again in the TV preview with your changes." : "The app was opened again in the TV preview, so it started fresh."
+            if let problem { return (200, ["text": "The app didn't open in the TV preview on this Mac.\n\n\(problem)"]) }
+            summary = changed ? "The app was opened again in the TV preview on this Mac with your changes." : "The app was opened again in the TV preview on this Mac, so it started fresh."
         } else {
-            summary = "The app is open in the TV preview with your latest code; nothing needed opening again."
+            summary = "The app is open in the TV preview on this Mac with your latest code; nothing needed opening again."
         }
         note("Looking at \(project.name)", for: project)
         if progress[project.id]?.newApp == true, !turn.look.presented {
@@ -6240,13 +6240,17 @@ final class Store: ObservableObject {
         var screenshots: [URL] = []
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         if let data = await TVPreview.picture(project), (try? AppFolder.write(data, to: picture, in: project.dir)) != nil { screenshots = [picture] }
-        var text = summary + " It's a 1920×1080 TV screen pictured at half size: a pixel in the picture is two of the page's. "
-            + (screenshots.isEmpty ? "No picture of it could be taken." : Privacy.sharesPictures ? "A picture of it follows. Points for use_app are pixels in it." : Privacy.picturesOff)
+        var text = summary + " " + Self.notTheTV + " It shows the 1920×1080 page at half size: a pixel in the picture is two of the page's. "
+            + (screenshots.isEmpty ? "No picture of it could be taken." : Privacy.sharesPictures ? "A picture of the TV preview follows. Points for use_app are pixels in it." : Privacy.picturesOff)
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesPictures { text += "\n\n" + TVPreview.text(await TVPreview.items(project)) }
-        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
+        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat the TV preview's console printed:\n\(tail)" }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
     }
+
+    /// Said with every look at a TV app: a preview at the TV's size reads like the TV itself, and the agent would tell
+    /// the person how the app runs on a TV it has never seen, which is far slower than the Mac the preview runs on.
+    static let notTheTV = "This is the TV preview, a window on this Mac, not the person's TV: it runs in the Mac's browser, many times faster than a TV, so it says nothing about how the app runs on the TV."
 
     /// `use_app` for a TV app: the remote's keys and clicks on the preview, the screen read between them.
     private func useOnTV(_ project: LampProject, actions: [[String: Any]], json: String) async -> (Int, [String: Any]) {
@@ -6258,7 +6262,7 @@ final class Store: ObservableObject {
         }
         // In plain sight, with Stop and Esc, and the person's own click or key in the preview taking it back.
         // Taking over is remembered for the turn the moment it happens, whatever this call is waiting on then.
-        let trial = Handover(label: "\(Self.lampName) is trying it on the TV", lampWindow: TVPreview.window(project)) { [weak self] in
+        let trial = Handover(label: "\(Self.lampName) is trying it in the TV preview", lampWindow: TVPreview.window(project)) { [weak self] in
             guard let self, !owner.tookOver else { return }
             owner.tookOver = true
             log(project, .status, Self.stoppedByYou)
@@ -6269,7 +6273,7 @@ final class Store: ObservableObject {
             guard let self else { return false }
             return exists(project) && turns[project.id] === owner && !owner.stopped && !trial.tookOver && TVPreview.isOpen(project)
         }
-        var text = "What happened:\n\(report)"
+        var text = "What happened in the TV preview on this Mac, not on the person's TV:\n\(report)"
         if owner.tookOver { return (200, ["text": text + "\n\n" + Self.tookOverNote]) }
         if Runtime.sourcesChanged(project) {
             text += "\n\nThis is the app as last opened: it doesn't have the changes you've made to the code since. Call look_at_app to open them."
@@ -6279,9 +6283,9 @@ final class Store: ObservableObject {
         if Privacy.sharesPictures {
             text += "\n\n" + TVPreview.text(await TVPreview.items(project))
             if let data = await TVPreview.picture(project), (try? AppFolder.write(data, to: picture, in: project.dir)) != nil { screenshots = [picture] }
-            text += "\n\nA picture of the screen follows. Points for the next use_app are pixels in it."
+            text += "\n\nA picture of the TV preview follows. Points for the next use_app are pixels in it."
         }
-        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n" + tail }
+        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat the TV preview's console printed:\n" + tail }
         // Taken back during the reads above: the agent is told now, not at its next call.
         if owner.tookOver { text += "\n\n" + Self.tookOverNote }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
