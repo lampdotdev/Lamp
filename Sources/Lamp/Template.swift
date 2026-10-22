@@ -16653,8 +16653,9 @@ enum Template {
         return $whole if $header =~ /\@propertyWrapper|\@frozen|\b(?:App|Scene|Commands|DynamicProperty|AppIntent|\w*Intent|AppEntity|\w*Query|TimelineProvider|TimelineEntry|Widget\w*)\b/;
         if ($header =~ /\bView\b/) {
             return $whole if $equatable{$name} || $header =~ /\b(?:Equatable|Hashable)\b/;
-            # Its state's box, and a place for new parameters, private so the initializer Swift makes is the same.
-            return "${whole}${pad}\@State private var __lampState_${name} = LampStateBox();${pad}private var __lampSpare_${name} = LampSpare(nil);";
+            # Its state's box, a place for new parameters, and its environment, which a new `@Environment(\.key)` reads:
+            # private, so the initializer Swift makes is the same.
+            return "${whole}${pad}\@State private var __lampState_${name} = LampStateBox();${pad}private var __lampSpare_${name} = LampSpare(nil);${pad}\@Environment(\\.self) private var __lampEnv_${name};";
         }
         return $whole if $raw || $nospare{$name} || $header =~ /\b(?:OptionSet|RawRepresentable|BitwiseCopyable)\b/;
         my $mirrored = !$noMirror && !$reflects{$name} && $header !~ /\bCustomReflectable\b|~\s*(?:Copyable|Escapable)/ ? conform($whole, $name) : undef;

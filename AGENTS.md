@@ -1235,8 +1235,12 @@ plain in an `ObservableObject` too, so only a moved `@Published` property announ
 `LampSpare.announce`), every view one `@State` box (`__lampState_<View>`, a
 `LampStateBox`, which keeps new `@State`, and new `@AppStorage` in the standard defaults under its own key, drawing the
 views that read it again when the defaults change, from anywhere; not in an app that gives views a store of its own,
-`defaultAppStorage`, which Lamp can't tell a view reads from) and one private spare for new parameters
-(`__lampSpare_<View>`, private so the initializer Swift makes for the view stays the same), and every other struct one place holding any number of properties by name (`__lampSpare_<Struct>`, not optional,
+`defaultAppStorage`, which Lamp can't tell a view reads from), one private spare for new parameters
+(`__lampSpare_<View>`, private so the initializer Swift makes for the view stays the same), and its environment
+(`@Environment(\.self) private var __lampEnv_<View>`), from which a new `@Environment(\.key)` is read as a computed
+property: SwiftUI hands the whole environment to the view at each draw, and draws a view that keeps it again only when
+something in it changes, which costs little. One read by its type (`@Environment(Store.self)`) reopens the app, since
+the environment can't be asked for it by type. And every other struct one place holding any number of properties by name (`__lampSpare_<Struct>`, not optional,
 so its own `==` and hash run: they take a property never set as its starting value; saved data leaves it out
 through two overloads of the keyed coding containers, which the compiler's Codable code takes over the general ones). A struct's moved properties drop out of the initializer Swift makes for it, which the new code may call with them,
 so `LiveSlots.memberwiseInitializers` makes that one again in an extension in the struct's file, from the labels and types
@@ -1253,8 +1257,10 @@ draws, so one with no starting value reads, until then, as its type's empty valu
 0, "", an empty collection, an action that does nothing), which nothing sees; a type with none reopens the app, and so does a starting value that may differ from one read to
 the next (`UUID()`), since a call that leaves the parameter out never sets it. A view
 made elsewhere (the window's root, a hosting view's) keeps what the open app made, so a new property of it goes in only
-as a literal, which it then always is, and one its maker passes reopens the app. Another wrapper (`@Environment`,
-`@Binding`) reopens it too: SwiftUI fills a wrapper in only where the view stored it when the app opened. A struct or view declared inside a function can't be extended, so a
+as a literal, which it then always is, and one its maker passes reopens the app. A new `@Binding` is a parameter the
+same way, its binding kept in the spare under its `$name` (`__lampBinding_<name>`), which the property reads and writes
+through; SwiftUI hears it as it hears any binding read in a body. Any other wrapper reopens the app: SwiftUI fills a
+wrapper in only where the view stored it when the app opened. A struct or view declared inside a function can't be extended, so a
 property added to one reopens the app with that reason. A class's moved property is a `final` computed one, so a
 class something subclasses keeps the method table the open app laid out. The spare itself is a parameter
 of that initializer too, with a default, which a call never notices but a reference to the initializer as a value

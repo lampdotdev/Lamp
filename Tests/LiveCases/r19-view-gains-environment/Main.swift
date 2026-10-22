@@ -13,6 +13,6 @@ import AppKit
     print("before:", Log.take())
     reload(1)
     settle()
-    print("after1 (want a plain reason: @Environment(\\.openURL) added to an existing view, which SwiftUI fills in only where the view stored it at launch):", Log.take())
+    print("after1 (want it in, help: @Environment(\\.openURL) added to an existing view for a new button):", Log.take())
     _ = window
 }}}

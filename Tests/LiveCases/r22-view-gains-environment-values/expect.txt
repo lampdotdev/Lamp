@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Row.limit, Row.scheme)
+== run
+before: row Milk
+RELOAD 1 (whole): ok
+after1 (want it in, limit=2 scheme=dark: a row gains environment values its body reads, both set by its parent): row Milk limit=2 scheme=dark
