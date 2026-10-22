@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: count=7 gone=x, total=3 dropped=1.5
+RELOAD 1 (whole): ok
+after1 (want it in, count=7 total=3: fields go before one with a comment on its line, and one whose private is on a line above): count=7, total=3

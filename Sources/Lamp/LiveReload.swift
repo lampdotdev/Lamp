@@ -3147,12 +3147,8 @@ enum LiveSlots {
             // Several at one place go in last first, so they end up in the open app's order.
             for field in kept.filter({ $0.at.file == file }).sorted(by: { ($0.at.line, $0.at.column, $0.order) > ($1.at.line, $1.at.column, $1.order) }) {
                 guard var offset = field.after ? original.tokenEnd(field.at) : original.offset(field.at) else { return .refused(nil) }
-                // Before the whole declaration, its modifiers (`private`, `static`) included: back to where the line, or
-                // the member before it, ends.
-                if !field.after {
-                    while offset > 0, ![UInt8(ascii: "\n"), UInt8(ascii: ";"), UInt8(ascii: "{"), UInt8(ascii: "}")].contains(original.bytes[offset - 1]) { offset -= 1 }
-                    while offset < original.bytes.count, [UInt8(ascii: " "), UInt8(ascii: "\t")].contains(original.bytes[offset]) { offset += 1 }
-                }
+                // Before the whole declaration, its modifiers (`private`, `static`) included.
+                if !field.after { offset = declarationStart(offset, in: original) }
                 let at = shifted(offset) + places.keys.filter { $0 < offset }.count * grew
                 var insert: String
                 if field.after {
@@ -3247,6 +3243,40 @@ enum LiveSlots {
             }
         }
         return out
+    }
+
+    /// Where a declaration starts, its modifiers included: back from its keyword (or first attribute) over the modifier
+    /// words before it on its line, and over lines above that hold nothing but modifiers (`private` on a line of its
+    /// own). Only those words: a comment or anything else stops it, so nothing goes inside a comment.
+    private static let modifierWords: Set<String> = ["private", "fileprivate", "internal", "public", "open", "static", "class",
+        "final", "lazy", "weak", "unowned", "nonisolated", "override", "dynamic", "required", "convenience", "mutating", "nonmutating"]
+    static func declarationStart(_ offset: Int, in text: SwiftSource.Text) -> Int {
+        let bytes = text.bytes
+        func isWord(_ b: UInt8) -> Bool { b == UInt8(ascii: "_") || (b >= 48 && b <= 57) || (b | 0x20 >= 97 && b | 0x20 <= 122) }
+        func isSpace(_ b: UInt8) -> Bool { b == UInt8(ascii: " ") || b == UInt8(ascii: "\t") }
+        var start = offset
+        // The modifier words just before it on its line.
+        while true {
+            var end = start
+            while end > 0, isSpace(bytes[end - 1]) { end -= 1 }
+            var from = end
+            while from > 0, isWord(bytes[from - 1]) { from -= 1 }
+            guard from < end, modifierWords.contains(text.slice(from, end)) else { break }
+            start = from
+        }
+        // Lines above of modifiers alone, while nothing but space comes before the declaration on its line.
+        while true {
+            var lineStart = start
+            while lineStart > 0, bytes[lineStart - 1] != UInt8(ascii: "\n") { lineStart -= 1 }
+            guard lineStart > 0, text.slice(lineStart, start).allSatisfy({ $0 == " " || $0 == "\t" }) else { break }
+            var previous = lineStart - 1
+            while previous > 0, bytes[previous - 1] != UInt8(ascii: "\n") { previous -= 1 }
+            let words = text.slice(previous, lineStart - 1).split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+            guard !words.isEmpty, words.allSatisfy(modifierWords.contains) else { break }
+            start = previous
+            while start < lineStart - 1, isSpace(bytes[start]) { start += 1 }
+        }
+        return start
     }
 
     /// A stored property taken out of the code, kept in the live copy: its declaration, and where it goes (before the
