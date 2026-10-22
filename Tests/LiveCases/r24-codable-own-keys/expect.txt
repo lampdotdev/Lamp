@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Item.aisle)
+== run
+before: saved {"qty":1,"title":"Milk"}
+RELOAD 1 (whole): ok
+after1 (want it in, saved with qty 1, row 3 and title Milk, read aisle=7: a Codable struct with its own CodingKeys gains a property and its key): read aisle=7, saved {"qty":1,"row":3,"title":"Milk"}

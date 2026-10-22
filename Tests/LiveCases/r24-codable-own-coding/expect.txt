@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Item.starred)
+== run
+before: saved "Milk"
+RELOAD 1 (whole): ok
+after1 (want it in, saved Milk as a bare string, starred=false: a struct that codes itself gains a property its coding leaves out): saved "Milk" starred=false
