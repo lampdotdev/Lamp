@@ -20,13 +20,23 @@ final class Gateway: @unchecked Sendable {
         var peerAddress: String?
     }
 
+    /// A file the gateway hands out as it is, not JSON: a TV app's phone page (`Store.phonePage`).
+    struct Page {
+        var status: Int
+        var type = "text/plain; charset=utf-8"
+        var body = Data()
+        var location: String?
+    }
+
     private var listener: NWListener?
     private var networkListener: NWListener?
     private let queue = DispatchQueue(label: "dev.lamp.gateway")
     private let handler: @Sendable (Request) async -> (Int, [String: Any])
+    private let pages: @Sendable (Request) async -> Page
 
-    init(handler: @escaping @Sendable (Request) async -> (Int, [String: Any])) {
+    init(handler: @escaping @Sendable (Request) async -> (Int, [String: Any]), pages: @escaping @Sendable (Request) async -> Page) {
         self.handler = handler
+        self.pages = pages
     }
 
     func start() throws {
@@ -87,6 +97,14 @@ final class Gateway: @unchecked Sendable {
                     self.respond(connection, status: 204, json: [:], crossOrigin: true)
                     return
                 }
+                // A phone opening a TV app's page: plain files, read by a browser that came by following a link.
+                if request.method == "GET" || request.method == "HEAD", request.path == "/phone" || request.path.hasPrefix("/phone/") {
+                    Task {
+                        let page = await self.pages(request)
+                        self.respond(connection, page: page, head: request.method == "HEAD")
+                    }
+                    return
+                }
                 Task {
                     let (status, json) = await self.handler(request)
                     self.respond(connection, status: status, json: json, crossOrigin: fromNetwork)
@@ -108,6 +126,17 @@ final class Gateway: @unchecked Sendable {
         let cors = crossOrigin ? "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST\r\nAccess-Control-Allow-Headers: Authorization, Content-Type\r\nAccess-Control-Max-Age: 600\r\n" : ""
         var response = Data("HTTP/1.1 \(status) \(reason)\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\n\(cors)Connection: close\r\n\r\n".utf8)
         response.append(body)
+        connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+    }
+
+    /// A page as it is. Never cached, since the app's files change with every build, and never read as another type
+    /// than the one given.
+    private func respond(_ connection: NWConnection, page: Page, head: Bool) {
+        let reason = HTTPURLResponse.localizedString(forStatusCode: page.status).capitalized
+        let location = page.location.map { "Location: \($0)\r\n" } ?? ""
+        var response = Data(("HTTP/1.1 \(page.status) \(reason)\r\nContent-Type: \(page.type)\r\nContent-Length: \(page.body.count)\r\n\(location)"
+            + "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n").utf8)
+        if !head { response.append(page.body) }
         connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
     }
 

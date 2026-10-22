@@ -6202,6 +6202,7 @@ final class Store: ObservableObject {
         note("Opening \(project.name) in the TV preview…", for: project)
         let problem = await TVPreview.show(project, staged: staged, inFront: inFront)
         refreshOpenApps()
+        syncLocalNetwork()   // its phone page reaches phones over the Wi‑Fi
         return problem
     }
 
@@ -8100,7 +8101,8 @@ final class Store: ObservableObject {
     // MARK: - AI gateway for generated apps
 
     private func startGateway() {
-        let gateway = Gateway { request in await Store.shared.handleAI(request) }
+        let gateway = Gateway(handler: { request in await Store.shared.handleAI(request) },
+                              pages: { request in await Store.shared.phonePage(request) })
         do {
             try gateway.start()
             self.gateway = gateway
@@ -8112,11 +8114,68 @@ final class Store: ObservableObject {
 
     /// The gateway answers on the local network only while an app is set to open on the person's own phone or
     /// tablet, Apple's or Android's, or on a TV, or is an app for a device (which always opens on one) that takes Lamp's
-    /// building blocks: kept in step with the list of apps (Try On, deletion, rename, reload).
+    /// building blocks, or is a TV app open in the preview with a page for a phone: kept in step with the list of apps
+    /// (Try On, deletion, rename, reload) and with the TV preview.
     func syncLocalNetwork() {
         gateway?.setLocalNetwork(projects.contains {
             (($0.platform.hasIOS || $0.platform.hasAndroid || $0.platform == .tv) && $0.device != nil) || ($0.platform == .device && !DeviceSupport.libraries(for: $0).isEmpty)
+                || Self.servesPhonePage($0)
         })
+    }
+
+    /// Whether a TV app's phone page is handed out now: while the app runs, in the preview, or on a TV, which Lamp
+    /// can't watch, for as long as it's the TV the app opens on. Lamp serves it so the agent never has to start a
+    /// server of its own, which would outlive the app.
+    static func servesPhonePage(_ project: LampProject) -> Bool {
+        project.platform == .tv && (project.device != nil || TVPreview.window(project) != nil) && TVs.hasPhonePage(project)
+    }
+
+    /// A TV app's phone page (`TVTemplate.phoneFolder`, as staged): GET /phone/<app>/<file>, from a phone on the
+    /// network by this Mac's name or address, or on this Mac by a loopback name, like the rest of the gateway. No token:
+    /// a browser opening a QR code's link has none, so the page is only ever the app's own files, which the agent is
+    /// told anyone on the network can read while the app runs.
+    func phonePage(_ request: Gateway.Request) -> Gateway.Page {
+        let missing = Gateway.Page(status: 404, body: Data("Nothing here. Open the app on the TV first.".utf8))
+        let host = request.headers["host"]
+        guard request.fromNetwork ? Self.isMacHost(host) : Self.isLocalHost(host) else {
+            return Gateway.Page(status: 403, body: Data("Not for this host.".utf8))
+        }
+        let path = request.path.split(separator: "?", maxSplits: 1).first.map(String.init) ?? ""
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false).dropFirst(2).map { $0.removingPercentEncoding ?? "" }
+        guard let id = parts.first, !id.isEmpty, let project = projects.first(where: { $0.id == id }), Self.servesPhonePage(project) else { return missing }
+        // The page's own links are relative, so its address has to end in a slash.
+        if parts.count == 1 { return Gateway.Page(status: 301, location: path + "/") }
+        var names = Array(parts.dropFirst())
+        if names.last == "" { names[names.count - 1] = "index.html" }
+        // Only the staged copy's own files: no step up, nothing hidden, no empty name, nothing that isn't a plain file.
+        guard names.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") && !$0.contains("/") && !$0.contains("\0") }) else { return missing }
+        let file = names.reduce(TVs.phoneFolder(for: project)) { $0.appendingPathComponent($1) }
+        let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+        guard values?.isRegularFile == true, values?.isSymbolicLink != true, (values?.fileSize ?? 0) <= 64 << 20,
+              let data = try? Data(contentsOf: file) else { return missing }
+        return Gateway.Page(status: 200, type: Self.pageType(file.pathExtension), body: data)
+    }
+
+    nonisolated static func pageType(_ ext: String) -> String {
+        switch ext.lowercased() {
+        case "html", "htm": "text/html; charset=utf-8"
+        case "js", "mjs": "text/javascript; charset=utf-8"
+        case "css": "text/css; charset=utf-8"
+        case "json", "webmanifest": "application/json"
+        case "svg": "image/svg+xml"
+        case "png": "image/png"
+        case "jpg", "jpeg": "image/jpeg"
+        case "gif": "image/gif"
+        case "webp": "image/webp"
+        case "ico": "image/x-icon"
+        case "woff2": "font/woff2"
+        case "woff": "font/woff"
+        case "mp3": "audio/mpeg"
+        case "wav": "audio/wav"
+        case "mp4": "video/mp4"
+        case "txt": "text/plain; charset=utf-8"
+        default: "application/octet-stream"
+        }
     }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {

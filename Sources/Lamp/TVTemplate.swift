@@ -8,6 +8,11 @@ import Foundation
 enum TVTemplate {
     static let webFolder = "Web"
     static let supportFile = "Web/lamp.js"
+    /// A page for a phone, as a controller or a companion to the TV app, which Lamp hands out from this Mac while the app
+    /// runs (`Store.phonePage`). It never goes on the TV.
+    static let phoneFolder = "Phone"
+    /// Where Lamp writes the phone page's address into the staged copy of lamp.js (`TVs.stage`).
+    static let phoneMarker = "/*LAMP_PHONE*/null"
 
     /// Whether an app's folder is a TV app, read off what every version keeps: Lamp's script in `Web/`. A device app
     /// whose integration takes the web building blocks may keep them at the same path (an Xbox's), so its own marker
@@ -162,6 +167,8 @@ enum TVTemplate {
          * Lamp.navigation = false                                   turn off moving focus with the arrows (a game)
          * Lamp.store   LampStore, under the name it had first
          * Lamp.platform   "tizen", "webos" or "browser" (the preview on the Mac)
+         * Lamp.phonePage(hash)   the address of the app's Phone/ page for a phone on the Mac's Wi-Fi (for a QR code),
+         *   with "#" + hash after it when given; null when the app has no Phone/index.html
          *
          * The arrows move focus between what can take it (buttons, links, fields, and anything with data-focus),
          * to the nearest in that direction; OK clicks what has it.
@@ -229,6 +236,8 @@ enum TVTemplate {
             } catch (e) {}
           }
           var store = window.LampStore;
+          // Filled in by Lamp in the copy it opens or packages, while the app has a phone page.
+          var phone = \(phoneMarker);
 
           document.addEventListener('keydown', function (event) {
             var name = names[event.keyCode];
@@ -274,7 +283,8 @@ enum TVTemplate {
             focus: function (el) { give(typeof el === 'string' ? document.querySelector(el) : el); },
             focusFirst: function () { var list = focusables(); if (list.length) give(list[0]); },
             move: move,
-            exit: exit
+            exit: exit,
+            phonePage: function (hash) { return phone ? phone + (hash ? '#' + hash : '') : null; }
           };
           document.addEventListener('DOMContentLoaded', function () {
             setTimeout(function () { if (!document.activeElement || document.activeElement === document.body) Lamp.focusFirst(); }, 0);
@@ -287,7 +297,7 @@ enum TVTemplate {
 extension Agent {
     /// The rules for a TV app, in the same shape as the others' and said for the web on a TV.
     static func tvPrompt() -> String {
-        let rules = [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.webAI,
+        let rules = [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI,
                      Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
         return (Rules.tvHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "TV")
@@ -341,6 +351,17 @@ extension Agent.Rules {
     (put, get, all, delete), JSON kept on the TV. People rely on their data through every change you make, so once \
     something is saved, only ever add to it: a new field gets a default where it's read, and never rename or retype a \
     saved one. The app's own files (pictures, data) come in its package: `LampAssets.url(name)`, `.json(name)`.
+    """
+
+    static let tvPhone = """
+    - When the app wants a phone as a controller or a companion (a wheel, a buzzer, a second screen), its page goes in \
+    Phone/: index.html and the files beside it, loaded with relative paths, for the phone's own modern browser. Lamp \
+    hands it out from the Mac while the app runs, in the preview or on the TV, to phones on the same Wi‑Fi: the TV \
+    page gets its address from `Lamp.phonePage(hash)`, to show as a QR code or in words. Never start a server, a \
+    login item or anything else that keeps running to serve it, and never share it any other way: Lamp is what \
+    serves it. Lamp hands out only the files: it carries nothing between the phone and the TV. It's plain http, \
+    which phones' browsers don't give a page's motion sensors or camera, and anyone on the network can open it \
+    while the app runs, so nothing secret goes there.
     """
 
     /// Lamp's AI in a web app on a device (`DeviceSupport.webJS`): the TV kit's and a declared web kind's.

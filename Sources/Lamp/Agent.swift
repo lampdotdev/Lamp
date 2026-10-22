@@ -536,7 +536,7 @@ enum Agent {
         run it yourself, and build it only where a rule here says to check that it compiles. When you finish, Lamp \
         {{RELAUNCH}}, and if the build fails your next message will contain the compiler errors to fix. If \
         something you need is denied or unavailable, say plainly what you need (for \
-        example "attach the files" or "allow the clone"). To read a GitHub repo, clone it shallowly into \
+        example "attach the files"); a refused command is final, so never say the user will be asked to approve it. To read a GitHub repo, clone it shallowly into \
         .lamp/reference/ (`gh repo clone owner/name .lamp/reference/name -- --depth 1` when gh is installed, which \
         also works for private repos; otherwise `git clone --depth 1`); it's reference only, not part of the app. \
         Never tell the user to approve prompts or change \

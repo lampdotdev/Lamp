@@ -287,28 +287,65 @@ enum TVs {
 
     /// Copies the app's web files into Lamp's folder, as Devices.stage does for a phone: by a command under the app's
     /// own sandbox, so it reads only the app's folder, links kept as links, then none allowed. What the preview shows and
-    /// what goes on a TV are only the app's own files. Gives back the copy.
+    /// what goes on a TV are only the app's own files. Its phone page, if it has one, is copied beside them the same way
+    /// and never goes in a package. Gives back the copy of the web files.
     static func stage(_ project: LampProject) async throws -> URL {
         let fm = FileManager.default
         let dir = stagingFolder(for: project)
         let files = dir.appendingPathComponent("web")
+        let phone = phoneFolder(for: project)
         try? fm.removeItem(at: files)
+        try? fm.removeItem(at: phone)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let page = Sandbox.quoted(TVTemplate.phoneFolder)
         let copy = "cd \"$LAMP_FROM\" && /bin/cp -Rp \(Sandbox.quoted(TVTemplate.webFolder)) \"$LAMP_TO\""
+            + " && if [ -e \(page) ] || [ -L \(page) ]; then /bin/cp -Rp \(page) \"$LAMP_PHONE\"; fi"
         guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [dir.path]) else { throw Failure(message: "Lamp couldn't copy the app's files.") }
         var output: [String] = []
-        let status = await Shell.run(confined, cwd: dir, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": files.path], login: false) { output.append($0) }
+        let status = await Shell.run(confined, cwd: dir, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": files.path, "LAMP_PHONE": phone.path],
+                                     login: false) { output.append($0) }
         guard status == 0 else { throw Failure(message: "Lamp couldn't copy the app's files.\n\n" + output.suffix(4).joined(separator: "\n")) }
-        let linked = (fm.enumerator(at: files, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? [])
-            .contains { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
-        if linked {
+        func linked(_ folder: URL) -> Bool {
+            ([folder] + (fm.enumerator(at: folder, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? []))
+                .contains { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
+        }
+        if linked(files) || linked(phone) {
             try? fm.removeItem(at: files)
+            try? fm.removeItem(at: phone)
             throw Failure(message: "Some of the app's files are shortcuts to other files. Put the files themselves in their place.")
         }
         guard fm.fileExists(atPath: files.appendingPathComponent("index.html").path) else {
             throw Failure(message: "The app has no \(TVTemplate.webFolder)/index.html yet.")
         }
+        // The TV page learns where its phone page is from Lamp's own script, in the copy only: the address is this
+        // Mac's on the network now, which isn't the app's to keep.
+        let script = files.appendingPathComponent("lamp.js")
+        if hasPhonePage(project), let text = try? String(contentsOf: script, encoding: .utf8), text.contains(TVTemplate.phoneMarker),
+           let address = try? JSONSerialization.data(withJSONObject: [phonePage(for: project)], options: [.withoutEscapingSlashes]) {
+            let value = String(decoding: address, as: UTF8.self).dropFirst().dropLast()
+            try Data(text.replacingOccurrences(of: TVTemplate.phoneMarker, with: "/*LAMP_PHONE*/" + value).utf8).write(to: script)
+        }
         return files
+    }
+
+    // MARK: The phone page
+
+    /// Where an app's phone page is copied (its Phone/ folder), beside its web files.
+    static func phoneFolder(for project: LampProject) -> URL {
+        stagingFolder(for: project).appendingPathComponent("phone")
+    }
+
+    /// Whether the app's last copy has a phone page to hand out.
+    static func hasPhonePage(_ project: LampProject) -> Bool {
+        FileManager.default.fileExists(atPath: phoneFolder(for: project).appendingPathComponent("index.html").path)
+    }
+
+    /// The phone page's address for a phone on the same network as this Mac, by its address there, which a phone
+    /// reaches whether or not it resolves the Mac's Bonjour name. Lamp's gateway hands it out (`Store.phonePage`).
+    static func phonePage(for project: LampProject) -> String {
+        let host = Devices.localAddresses.first ?? Devices.macHost
+        let id = project.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? project.id
+        return "http://\(host):\(Gateway.port)/phone/\(id)/"
     }
 }
 

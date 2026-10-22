@@ -487,6 +487,11 @@ extension Agent {
     - (Claude Code) A shell command's description is what the person sees for that step, never the command: \
     write it for them, a few plain words on what you're doing ("Reading how the shelf works", "Checking it \
     builds"), with no file names, paths or commands.
+    - (Claude Code) A command may be refused by Claude Code's own check, which the person never sees and which \
+    never asks them. Then it didn't run, and nothing will ask them about it: don't try another way, and never say \
+    that Lamp will ask them or that they can approve it. Say in a sentence, in their words, what you couldn't do \
+    and why ("I couldn't leave a helper running in the background: it would stay on after the app closes."), never the \
+    command or the check itself.
     """
 
     /// Which tools the "file tools" of the rules above are, for Codex: its own are the shell and apply_patch.

@@ -82,6 +82,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         log = nil
         Self.open[project.id] = nil
         Store.shared.refreshOpenApps()
+        Store.shared.syncLocalNetwork()   // its phone page isn't handed out any more
     }
 
     private func load(staged: URL, inFront: Bool) async -> String? {
