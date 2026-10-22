@@ -114,20 +114,10 @@ enum MSIX {
         """
     }
 
-    /// The app's icon centred on its tile's colour at a logo's size, or the colour alone.
+    /// The app's icon centred on its tile's colour at a logo's size, or the colour alone: the same picture a declared
+    /// kind's icons are (`DeviceSupport.iconPNG`).
     private static func logo(_ icon: NSImage?, width: Int, height: Int) -> Data {
-        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
-                                         hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return Data() }
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-        NSColor(red: 0.106, green: 0.106, blue: 0.227, alpha: 1).setFill()
-        NSRect(x: 0, y: 0, width: width, height: height).fill()
-        if let icon {
-            let side = CGFloat(min(width, height)) * 0.8
-            icon.draw(in: NSRect(x: (CGFloat(width) - side) / 2, y: (CGFloat(height) - side) / 2, width: side, height: side))
-        }
-        NSGraphicsContext.restoreGraphicsState()
-        return rep.representation(using: .png, properties: [:]) ?? Data()
+        DeviceSupport.iconPNG(icon, width: width, height: height)
     }
 
     // MARK: The container

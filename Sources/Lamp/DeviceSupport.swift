@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// Lamp's building blocks for apps on devices that run neither Swift nor Kotlin: TVs (Samsung's and LG's, in the TV
 /// kit's `Web/lamp.js`), and the app kinds integrations declare (an Xbox's web app, a Roku's BrightScript channel). They
@@ -43,6 +43,40 @@ enum DeviceSupport {
     static func paths(for project: LampProject) -> [String] {
         if project.platform == .tv { return [TVTemplate.supportFile] }
         return libraries(for: project).flatMap { entry in entry.library.files.map { $0.name.isEmpty ? entry.path : entry.path + "/" + $0.name } }
+            + icons(for: project).map(\.path)
+    }
+
+    /// The icons a declared kind asks for (`app.declared.icons`), checked: a PNG at a plain path, at a size in pixels.
+    static func icons(for project: LampProject) -> [(path: String, width: Int, height: Int)] {
+        guard project.platform == .device, let icons = DeviceApps.integration(for: project)?.app?.declared?.icons else { return [] }
+        return icons.compactMap { path, size in
+            guard IntegrationCheck.isAppPath(path), path.lowercased().hasSuffix(".png"), let (width, height) = iconSize(size) else { return nil }
+            return (path, width, height)
+        }.sorted { $0.path < $1.path }
+    }
+
+    /// "336x210" as a width and a height, each 16 to 4096 pixels.
+    static func iconSize(_ text: String) -> (Int, Int)? {
+        let parts = text.lowercased().split(separator: "x").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 2, parts.allSatisfy({ (16...4096).contains($0) }) else { return nil }
+        return (parts[0], parts[1])
+    }
+
+    /// The app's icon centred on a dark tile at a size, or the tile alone: what a device shows for the app, from the
+    /// icon Lamp made for it (`Icons.squareURL`), so every kind of app has the same one.
+    static func iconPNG(_ icon: NSImage?, width: Int, height: Int) -> Data {
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+                                         hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return Data() }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSColor(red: 0.106, green: 0.106, blue: 0.227, alpha: 1).setFill()
+        NSRect(x: 0, y: 0, width: width, height: height).fill()
+        if let icon {
+            let side = CGFloat(min(width, height)) * 0.8
+            icon.draw(in: NSRect(x: (CGFloat(width) - side) / 2, y: (CGFloat(height) - side) / 2, width: side, height: side))
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        return rep.representation(using: .png, properties: [:]) ?? Data()
     }
 
     /// Whether a path in an app's folder is one of Lamp's own there.
@@ -57,6 +91,12 @@ enum DeviceSupport {
                 let path = file.name.isEmpty ? entry.path : entry.path + "/" + file.name
                 try Template.put(file.contents, at: project.dir.appendingPathComponent(path), for: project)
             }
+        }
+        // The icons only once Lamp has drawn one: until then the device shows its own placeholder.
+        let wanted = icons(for: project)
+        guard !wanted.isEmpty, let icon = AppFile.read(Icons.squareURL(project), in: project).flatMap(NSImage.init(data:)) else { return }
+        for entry in wanted {
+            try Template.put(iconPNG(icon, width: entry.width, height: entry.height), at: project.dir.appendingPathComponent(entry.path), for: project)
         }
     }
 
