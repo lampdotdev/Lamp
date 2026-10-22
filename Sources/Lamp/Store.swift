@@ -6287,7 +6287,7 @@ final class Store: ObservableObject {
         }
         guard let run = deviceRuns[project.id] else { return (200, ["text": summary]) }
         note("Looking at \(project.name)", for: project)
-        var text = summary + " " + (await deviceAppPicture(project, on: run.device))
+        var text = summary + " " + (await deviceAppPicture(project, run: run))
         if let answer = run.installAnswer, !answer.isEmpty { text += "\n\nWhat the \(name) answered when the app was put on it:\n\(answer)" }
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesLog, let tail = Runtime.logTail(project, lines: 60) { text += "\n\nWhat it printed (the device's log):\n\(tail)" }
@@ -6296,12 +6296,15 @@ final class Store: ObservableObject {
     }
 
     /// Takes the device's picture of its screen into the app's runtime folder, and says what it is.
-    private func deviceAppPicture(_ project: LampProject, on device: Device) async -> String {
+    private func deviceAppPicture(_ project: LampProject, run: DeviceApps.Run) async -> String {
+        let device = run.device
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         AppFolder.remove(picture, in: project.dir)
         guard Privacy.sharesPictures else { return Privacy.picturesOff }
         do {
             let data = try await DeviceApps.picture(project, on: device)
+            // Another app put on the device while the picture was taken would be in it: it isn't this app's screen.
+            guard deviceRuns[project.id] === run else { return "\(device.name) shows another app now, so no picture of this one could be taken." }
             guard let png = DeviceApps.png(data), (try? AppFolder.write(png.data, to: picture, in: project.dir)) != nil else {
                 return "\(device.name)'s picture of its screen couldn't be read."
             }
@@ -6351,7 +6354,7 @@ final class Store: ObservableObject {
             text += "\n\nThis is the app as last put on the \(name): it doesn't have the changes you've made to the code since. Call look_at_app to put them there."
         }
         guard deviceRuns[project.id] === run else { return (200, ["text": text + "\n\nThe \(name) shows another app now. Call look_at_app to put this one back."]) }
-        text += "\n\n" + (await deviceAppPicture(project, on: run.device))
+        text += "\n\n" + (await deviceAppPicture(project, run: run))
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n" + tail }
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         return (200, ["text": text, "screenshots": Self.agentPictures(FileManager.default.fileExists(atPath: picture.path) ? [picture] : [], in: project)])
