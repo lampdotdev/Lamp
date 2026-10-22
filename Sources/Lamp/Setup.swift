@@ -396,7 +396,8 @@ private struct SettingsPane: ViewModifier {
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeScreenNotification)) { note in
             if (note.object as? NSWindow) === window { screenChanges += 1 }
         }
-        .onChange(of: height) { keepOnScreen() }
+        // The pane's height as drawn, which a move to another screen changes too (its cap is that screen's).
+        .onChange(of: min(height, maxHeight)) { keepOnScreen() }
     }
 
     /// The window keeps its top where it is as the pane grows, as Settings windows do, so one opened low on the
