@@ -935,9 +935,10 @@ struct AddDeviceSheet: View {
     @EnvironmentObject private var store: Store
     @Environment(\.dismiss) private var dismiss
 
-    /// Found on the network and not set up: the TVs and the devices an integration finds or nothing knows yet.
+    /// Found on the network and not set up: the TVs and the devices an integration finds or nothing knows yet. Phones
+    /// and tablets have their own rows above, whose setup windows take each one further, so a wireless one isn't here.
     private var waiting: [Device] {
-        store.devices.filter { $0.reach == .network && $0.kind != .watch && $0.setup() != .ready }
+        store.devices.filter { ($0.kind.isTV || $0.kind == .other) && $0.reach == .network && $0.setup() != .ready }
     }
 
     var body: some View {
