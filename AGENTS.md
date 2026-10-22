@@ -292,7 +292,9 @@ A capability given to one engine must be given to all of them that can take it, 
   which says what the work after it is for, names that work too (`Store.stepName`). A step that was tried and didn't
   work says so after its words, "(failed)" (`LogLine.failed`, `LogLine.withOutcome`): each engine reports how a call
   ended by its id (`AgentEvent.ended`: pi's `tool_execution_end`, Claude Code's `tool_result`, Codex's `mcp_tool_call`
-  and `file_change`, and its commands' status in `AgentEvent.ran`), and a command's row is the one marked. A
+  and `file_change`, and its commands' status in `AgentEvent.ran`), and a command's row is the one marked, found by
+  that id, which the approval carries (pi's extension sends it, Claude Code's hooks give `tool_use_id`; `LogLine.call`,
+  `Store.failedRows`). A
   command a reviewer or classifier stopped is the same row, with "(not run)" beside it only once the row is opened, and
   one allowed on Lamp's card is a row like one that needed no card (`Store.approveCommand`); one the person declines leaves none. pi's bash takes only the
   command, so Lamp's extension replaces it, as pi's extension docs allow, with pi's own bash and a `description`

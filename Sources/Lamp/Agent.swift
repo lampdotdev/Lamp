@@ -48,7 +48,7 @@ enum AgentEvent {
     /// A shell command Codex finished, or that was refused before it ran (`refused`), as the agent wrote it, and
     /// whether it failed. The step the person reads is named by `naming`; the command is shown only when the step is
     /// opened.
-    case ran(String, refused: Bool, failed: Bool = false)
+    case ran(String, refused: Bool, failed: Bool = false, id: String? = nil)
 }
 
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.

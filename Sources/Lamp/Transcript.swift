@@ -465,10 +465,11 @@ enum ChatItem: Identifiable {
                     continue
                 }
                 // Commands the agent gave one name to are one step: the name once, their commands under it.
-                // Each command keeps its own "(not run)", whichever came first.
+                // Each command keeps its own "(not run)", whichever came first, and the step whether none of them ran.
                 if let said = line.said, let last = kept.last, last.said == said,
                    let command = ChatLook.ranCommand(in: line.text), let before = ChatLook.ranCommand(in: last.text) {
                     kept[kept.count - 1].text = "Ran: " + before + "\n" + command
+                    kept[kept.count - 1].notRun = last.wasNotRun && line.wasNotRun
                     items[items.count - 1] = .statuses(kept)
                 } else {
                     items[items.count - 1] = .statuses(kept + [line])

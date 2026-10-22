@@ -705,7 +705,7 @@ extension Agent {
             let command = item["command"] as? String ?? ""
             let failed = item["status"] as? String == "failed" || (item["exit_code"] as? Int).map { $0 != 0 } == true
             return [.step("")] + (command.isEmpty ? [] : [.ran(Self.unwrapped(command), refused: item["status"] as? String == "declined",
-                                                               failed: failed)])
+                                                               failed: failed, id: item["id"] as? String)])
         case ("item.completed", "mcp_tool_call"):
             return [.step("")] + ((item["id"] as? String).map { [.ended($0, failed: item["status"] as? String == "failed")] } ?? [])
         case ("item.started", "mcp_tool_call"):

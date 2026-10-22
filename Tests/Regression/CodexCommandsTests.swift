@@ -12,7 +12,7 @@ final class CodexCommandsTests: XCTestCase {
     static let doubleQuoted = #"{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc \"curl --fail-with-body --show-error --form 'file=@upload.txt' http://127.0.0.1:63441/upload\"","aggregated_output":"","exit_code":null,"status":"declined"}}"#
 
     private func ran(_ line: String) -> (String, Bool)? {
-        for event in Agent.parseCodex(line) { if case .ran(let command, let refused, _) = event { return (command, refused) } }
+        for event in Agent.parseCodex(line) { if case .ran(let command, let refused, _, _) = event { return (command, refused) } }
         return nil
     }
 

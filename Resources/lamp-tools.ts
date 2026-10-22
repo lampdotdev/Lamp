@@ -302,14 +302,15 @@ const writeWithDoing = () => withWords(createWriteTool(process.cwd()), "doing", 
 
 /** Asks Lamp to approve a shell command: a reason when it isn't approved, else the command to run (Lamp hands
  * it back confined to the app's folder, see Sandbox). */
-async function askLamp(command: string, description: string | undefined, signal?: AbortSignal): Promise<{ reason?: string; command?: string }> {
+async function askLamp(command: string, description: string | undefined, call: string | undefined, signal?: AbortSignal): Promise<{ reason?: string; command?: string }> {
 	const url = process.env.LAMP_APPROVE_URL;
 	if (!url) return { reason: "Shell commands need approval in Lamp, and Lamp isn't available." };
 	try {
 		const response = await fetch(url, {
 			method: "POST",
 			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
-			body: JSON.stringify({ command, description }),
+			// The call's id ties the command's row in the chat to this call, whose outcome comes back by it.
+			body: JSON.stringify({ command, description, call }),
 			// The user may take a while to answer; Lamp itself never times out on their behalf.
 			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(3_600_000)]) : AbortSignal.timeout(3_600_000),
 		});
@@ -641,7 +642,7 @@ export default function (pi: ExtensionAPI) {
 		if (event.toolName !== "bash") return undefined;
 		const input = event.input as { command?: unknown; description?: unknown };
 		const said = typeof input.description === "string" ? input.description : undefined;
-		const answer = await askLamp(String(input.command ?? ""), said, ctx.signal);
+		const answer = await askLamp(String(input.command ?? ""), said, event.toolCallId, ctx.signal);
 		if (answer.reason) return { block: true, reason: answer.reason };
 		if (answer.command) input.command = answer.command;   // the hook may change the input before it runs
 		return undefined;

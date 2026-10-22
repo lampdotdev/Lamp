@@ -426,12 +426,15 @@ public enum ChatLook {
     /// engine: its line was already showing while it was judged, and only opening the step says it didn't run.
     public static func ranCommand(in status: String) -> String? {
         if status.hasPrefix("Ran: ") { return String(status.dropFirst(5)) }
-        if status.hasPrefix(notRun) { return String(status.dropFirst(notRun.count)) + "  (not run)" }
+        if status.hasPrefix(notRun) { return String(status.dropFirst(notRun.count)) + notRunMark }
         return nil
     }
 
     /// How a status line says a command was stopped before it ran.
     public static let notRun = "Not run: "
+
+    /// What a stopped command says after it once its step is opened, and keeps when commands of one name are one row.
+    public static let notRunMark = "  (not run)"
 
     /// A turn's progress: one line saying what the agent is doing, with no clock beside it, which changes in place
     /// as it moves from one thing to the next. `since` is when the activity began, which a long think or build is

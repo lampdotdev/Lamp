@@ -122,11 +122,14 @@ enum StepTitles {
     }
 
     /// A step as the chat names it: the agent's words for a command, never the command itself, with whether it failed
-    /// (`LogLine.withOutcome`) or was stopped before it ran, which the chat says only once the step is opened.
+    /// (`LogLine.withOutcome`) or was stopped before it ran, which the chat says only once the step is opened. Commands of
+    /// one name are one step (`ChatItem.items`): it wasn't run when none of them ran, and some of it wasn't when one of
+    /// them was stopped, its mark kept in the step's commands.
     nonisolated static func words(_ step: LogLine) -> String {
-        guard ChatLook.ranCommand(in: step.text) != nil else { return step.said ?? step.text }
+        guard let commands = ChatLook.ranCommand(in: step.text) else { return step.said ?? step.text }
         let said = step.said ?? ChatLook.unnamedStep
-        return step.text.hasPrefix(ChatLook.notRun) ? said + " (not run)" : said
+        if step.wasNotRun { return said + " (not run)" }
+        return commands.contains(ChatLook.notRunMark) ? said + " (some not run)" : said
     }
 
     nonisolated static let system = """

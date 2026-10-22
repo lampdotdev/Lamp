@@ -50,4 +50,38 @@ final class StepOutcomesTests: XCTestCase {
         XCTAssertEqual(Store.stepName(of: read, said: nil, naming: naming, engine: .codex), naming)
         XCTAssertEqual(Store.stepName(of: read, said: "Reading the wheel", naming: naming, engine: .claude), "Reading the wheel")
     }
+
+    /// Commands the agent gave one name are one step; when every one of them was stopped, the title model is still told
+    /// the step didn't run, both for a fold of several steps and for the answer's fold of that one step.
+    @MainActor func testGroupedStoppedCommandsStayNotRun() {
+        let stopped = [LogLine(kind: .status, text: ChatLook.notRun + "rm -rf build", said: "Clearing out the old build"),
+                       LogLine(kind: .status, text: ChatLook.notRun + "rm -rf .build", said: "Clearing out the old build")]
+        let request = LogLine(kind: .user, text: "Clean up the old builds")
+        let end = [LogLine(kind: .agent, text: "I wasn't allowed to delete them."), LogLine(kind: .summary, text: "Worked for 9s · $0")]
+        let listed = LogLine(kind: .status, text: "Ran: ls", said: "Listing the app folder")
+        let (_, groups, _) = StepTitles.groups(in: LogLine.visible([request] + stopped + [listed] + end, details: false))
+        XCTAssertEqual(groups.map(\.steps), [["Clearing out the old build (not run)", "Listing the app folder"]])
+        let (_, _, own) = StepTitles.groups(in: LogLine.visible([request] + stopped + end, details: false))
+        XCTAssertEqual(own, [stopped[0].id: "Clearing out the old build (not run)"])
+        // One of them stopped and one run: the step says only some of it wasn't.
+        let mixed = [stopped[0], LogLine(kind: .status, text: "Ran: rm -rf .build", said: "Clearing out the old build")]
+        let (_, _, partly) = StepTitles.groups(in: LogLine.visible([request] + mixed + end, details: false))
+        XCTAssertEqual(partly, [stopped[0].id: "Clearing out the old build (some not run)"])
+    }
+
+    /// Two calls of the same command, each with its row: the call that failed marks its own row, by the engine's id for
+    /// it, not the latest row of that command.
+    func testAFailedCallMarksItsOwnRowOfTheSameCommand() {
+        let first = LogLine(kind: .tool, text: "Bash: rm -rf build"), second = LogLine(kind: .tool, text: "Bash: rm -rf build")
+        var firstRow = LogLine(kind: .status, text: "Ran: rm -rf build", said: "Clearing the build")
+        firstRow.call = "toolu_A"
+        var secondRow = LogLine(kind: .status, text: "Ran: rm -rf build", said: "Clearing it again")
+        secondRow.call = "toolu_B"
+        let lines = [LogLine(kind: .user, text: "Clean up"), first, second, firstRow, secondRow]
+        XCTAssertEqual(Store.failedRows(in: lines, line: first.id, id: "toolu_A", command: "rm -rf build"), [1, 3])
+        XCTAssertEqual(Store.failedRows(in: lines, line: second.id, id: "toolu_B", command: "rm -rf build"), [2, 4])
+        // Rows an engine gave no id are found by their command, the latest since the call.
+        let untied = [LogLine(kind: .user, text: "Clean up"), first, LogLine(kind: .status, text: "Ran: rm -rf build")]
+        XCTAssertEqual(Store.failedRows(in: untied, line: first.id, id: "toolu_A", command: "rm -rf build"), [1, 2])
+    }
 }
