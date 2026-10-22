@@ -178,8 +178,10 @@ struct Device: Identifiable, Hashable {
 
     /// The device as the agent is told it: "iPhone 16 Pro Max, iOS 27, Dynamic Island".
     var forAgent: String {
-        // A TV's software version is told whole (Tizen 6.5): its apps differ by the point release.
-        var parts = ["\(kind.isTV ? maker + " " + model : model), \(os) \(kind.isTV ? osVersion : osMajor)"]
+        // A TV's software version is told whole (Tizen 6.5): its apps differ by the point release. An LG TV's is read
+        // only once Lamp can reach it, so until then it's said to be unknown rather than left out.
+        let version = kind.isTV ? (osVersion.isEmpty ? "version unknown" : osVersion) : osMajor
+        var parts = ["\(kind.isTV ? maker + " " + model : model), \(os) \(version)"]
         parts += features
         for screen in screens { parts.append("screen \(screen.words)") }
         return parts.joined(separator: ", ")

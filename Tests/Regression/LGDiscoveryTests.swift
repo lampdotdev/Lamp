@@ -63,7 +63,7 @@ final class LGDiscoveryTests: XCTestCase {
         let line = DeviceNote.tv(previewOpen: true, chosen: tv.udid, tvs: [tv],
                                  onTV: [tv.udid: Runtime.OnTV(at: put, fingerprint: "old")], current: "new")
         XCTAssertTrue(line.contains("The TV preview, a window on this Mac with a remote's keys, is open now"))
-        XCTAssertTrue(line.contains("screen size unknown"))
+        XCTAssertTrue(line.contains("webOS version unknown, screen size unknown"))
         XCTAssertTrue(line.contains("is chosen under Try On"))
         XCTAssertTrue(line.contains("Lamp finds it on the network now"))
         XCTAssertTrue(line.contains("at \(put.formatted(date: .abbreviated, time: .shortened)), and the code has changed since"))
