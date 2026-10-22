@@ -5178,6 +5178,8 @@ final class Store: ObservableObject {
     /// (`fileWrites`), so deleting or remaking its folder waits for them (`settleFiles`): one finishing afterwards
     /// would make parts of the folder again.
     private func writeOwnFiles(_ project: LampProject, all: Bool) async throws {
+        // A device's setup conversation has no app for Lamp's files to be part of.
+        if project.isDeviceSetup { return }
         let before = fileWrites[project.id]
         let write = Task.detached(priority: .userInitiated) {
             _ = await before?.result
@@ -7114,6 +7116,7 @@ final class Store: ObservableObject {
         await iconDesigns[project.id]?.value
         var spec = Icons.load(project)
         if spec == nil && project.untitled { return }   // keeps its placeholder until the first message
+        if project.isDeviceSetup { return }   // a device's setup is shown with the device's own symbol, not an app's icon
         if spec == nil {
             log(project, .status, "Designing an icon…")
             spec = await Icons.design(for: project)
