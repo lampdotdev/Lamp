@@ -378,6 +378,13 @@ enum Adb {
         if !result.ok { NSLog("Lamp couldn't tell \(package) where Lamp is: \((result.output + result.errors).trimmed)") }
     }
 
+    /// Asks the running app to save where the person is (`LampState` in LampSupport.kt), so the copy installed next
+    /// opens there. Sent by adb's shell, the only sender the app takes it from; true once the app says it saved.
+    static func saveState(_ package: String, on serial: String) async -> Bool {
+        let result = await run(["shell", "am", "broadcast", "-a", "\(package).LAMP_SAVE_STATE", "-p", package], on: serial, timeout: 10)
+        return result.ok && result.output.contains("data=\"saved\"")
+    }
+
     /// Starts the app's main activity afresh, and gives back its process id once it's running.
     static func launch(_ package: String, on serial: String) async throws -> Int32 {
         _ = await run(["shell", "am", "force-stop", package], on: serial, timeout: 30)
@@ -390,6 +397,15 @@ enum Adb {
             try? await Task.sleep(for: .milliseconds(250))
         }
         throw AndroidTools.Failure(message: "The app started and quit at once.")
+    }
+
+    /// Whether the process launched as `pid` is gone within its first two seconds.
+    static func quitSoon(_ pid: Int32, package: String, on serial: String) async -> Bool {
+        for _ in 0..<8 {
+            try? await Task.sleep(for: .milliseconds(250))
+            if await self.pid(of: package, on: serial) != pid { return true }
+        }
+        return false
     }
 
     static func pid(of package: String, on serial: String) async -> Int32? {

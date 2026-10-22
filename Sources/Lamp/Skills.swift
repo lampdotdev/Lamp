@@ -47,9 +47,10 @@ enum Skills {
 
     /// The skills a prompt offers. 3D scenes need a Mac app on a Mac that can run RealityView, and a real place
     /// from map data is built as one. The Chrome sidebar's page is offered where the prompt has the sidebar's rule.
+    /// An Android app's design is offered to its prompt alone.
     /// `device-integrations` isn't listed: every prompt's rule for devices (`Agent.deviceRules`) names it.
-    static func offered(mac: Bool, sidebar: Bool = false) -> [String] {
-        (mac && Agent.Rules.scenes ? ["scene-3d", "maps"] : []) + (sidebar ? ["chrome-sidebar"] : [])
+    static func offered(mac: Bool, sidebar: Bool = false, android: Bool = false) -> [String] {
+        (mac && Agent.Rules.scenes ? ["scene-3d", "maps"] : []) + (sidebar ? ["chrome-sidebar"] : []) + (android ? ["android-design"] : [])
     }
 
     /// The rule that lists a prompt's skills; empty when it offers none.

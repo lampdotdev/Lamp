@@ -263,7 +263,6 @@ extension Template {
     package {{PACKAGE}}
 
     import android.os.Bundle
-    import androidx.activity.ComponentActivity
     import androidx.activity.compose.setContent
     import androidx.activity.enableEdgeToEdge
     import androidx.compose.foundation.layout.fillMaxSize
@@ -277,7 +276,7 @@ extension Template {
     import androidx.compose.foundation.layout.Box
     import androidx.compose.ui.unit.dp
 
-    class MainActivity : ComponentActivity() {
+    class MainActivity : LampActivity() {
         override fun onCreate(savedInstanceState: Bundle?) {
             super.onCreate(savedInstanceState)
             enableEdgeToEdge()
@@ -395,7 +394,8 @@ extension Agent {
     static func androidPrompt() -> String {
         let rules = [Rules.androidEdit, Rules.ask, Rules.shell, Rules.androidFrameworks, Rules.androidAI, Rules.androidData, Rules.androidPermissions,
                      Rules.androidKinds, Rules.androidDesign, Rules.androidGenerated, Rules.icon, Rules.about, Rules.androidAttachments,
-                     Rules.androidLogs, Rules.androidTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
+                     Rules.androidLogs, Rules.androidTry, Skills.index(Skills.offered(mac: false, android: true)),
+                     Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
         return (Rules.androidHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Android")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "an Android phone")
@@ -471,13 +471,17 @@ extension Agent.Rules {
     edge to edge with `Scaffold` and its padding, a top app bar only when the screen has a title or actions, a \
     bottom navigation bar for three to five top-level screens, a floating action button for the one main thing \
     to add, cards and list items from Material, large touch targets, and text from `MaterialTheme.typography`. \
-    Respect the system's dark mode. No hard-coded colors but an accent the app is about.
+    Respect the system's dark mode. No hard-coded colors but an accent the app is about. Before designing a new \
+    app's screens or restyling an app, open the android-design skill.
     """
 
     static let androidGenerated = """
-    - The app opens in the emulator, an Android phone on the user's Mac, and Lamp reopens it with every change: \
-    keep what the person was looking at (the selected item or tab) with `rememberSaveable`, and their data \
-    saved as above, so it comes back as they left it.
+    - The app opens in the emulator, an Android phone on the user's Mac, and Lamp reopens it with every change, \
+    where the person was: it saves the app's state just before and the new copy starts from it, as after Android \
+    closed it in the background. So keep MainActivity a `LampActivity` (from LampSupport.kt, in place of \
+    ComponentActivity), keep what the person was looking at (the screen, the selected item or tab, what they were \
+    typing) with `rememberSaveable`, the back stack with Navigation 3's `rememberNavBackStack`, and a ViewModel's \
+    with its `SavedStateHandle`, and their data saved as above. `look_at_app` with `reopen` starts it fresh.
     """
 
     static let androidAttachments = """

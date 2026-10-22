@@ -71,21 +71,33 @@ extension Template {
 
     static let androidSupportKotlin = #"""
     // Written by Lamp before every build; don't edit. Lamp's building blocks for this app: LampAI, LampStore and LampAssets.
-    @file:Suppress("unused", "MemberVisibilityCanBePrivate")
+    @file:Suppress("unused", "MemberVisibilityCanBePrivate", "DEPRECATION")
 
     package {{PACKAGE}}
 
+    import android.app.Activity
+    import android.app.Application
+    import android.app.Instrumentation
+    import android.content.BroadcastReceiver
     import android.content.ContentProvider
     import android.content.ContentValues
     import android.content.Context
+    import android.content.Intent
+    import android.content.IntentFilter
     import android.database.Cursor
     import android.database.sqlite.SQLiteCursor
     import android.database.sqlite.SQLiteDatabase
     import android.graphics.Bitmap
     import android.graphics.BitmapFactory
     import android.net.Uri
+    import android.os.Bundle
+    import android.os.Parcel
+    import android.util.SparseArray
     import android.util.Base64
     import android.util.Log
+    import androidx.activity.ComponentActivity
+    import androidx.core.content.ContextCompat
+    import androidx.lifecycle.LifecycleRegistry
     import kotlinx.coroutines.CancellationException
     import kotlinx.coroutines.CoroutineStart
     import kotlinx.coroutines.awaitCancellation
@@ -112,6 +124,7 @@ extension Template {
     import java.io.File
     import java.io.IOException
     import java.io.InputStream
+    import java.lang.ref.WeakReference
     import java.net.InetSocketAddress
     import java.net.Socket
     import java.security.MessageDigest
@@ -137,7 +150,10 @@ extension Template {
     /** Started by Android before any of the app's own code, so the building blocks have the app's context without being handed it. */
     class LampInit : ContentProvider() {
         override fun onCreate(): Boolean {
-            context?.applicationContext?.let { LampInstall.context = it }
+            context?.applicationContext?.let {
+                LampInstall.context = it
+                (it as? Application)?.let(LampState::start)
+            }
             return true
         }
         override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? = null
@@ -145,6 +161,138 @@ extension Template {
         override fun insert(uri: Uri, values: ContentValues?): Uri? = null
         override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int = 0
         override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = 0
+    }
+
+    /**
+     * The app's activity, so a change Lamp puts on the device opens where the person was. Just before Lamp replaces
+     * the running app, it asks it to save its state, as Android does when it closes an app in the background (what
+     * `rememberSaveable`, `rememberNavBackStack` and a ViewModel's `SavedStateHandle` keep), and the new copy starts
+     * from that state. Extend it in place of ComponentActivity: `class MainActivity : LampActivity()`.
+     */
+    open class LampActivity : ComponentActivity() {
+        override fun onCreate(savedInstanceState: Bundle?) {
+            super.onCreate(savedInstanceState ?: LampState.take(this))
+        }
+
+        override fun onSaveInstanceState(outState: Bundle) {
+            super.onSaveInstanceState(outState)
+            LampState.saved(this, outState)
+        }
+    }
+
+    /**
+     * Carries a LampActivity's saved state across Lamp's reinstall: saved to the app's own storage when Lamp asks (a
+     * broadcast only adb's shell can send, holding DUMP), taken back once by the same activity in the copy installed
+     * after it. Anything that doesn't fit (another activity, no install since, state the new code can't read) starts
+     * the app fresh, as a launch from the home screen would.
+     */
+    internal object LampState {
+        private const val FILE = "lamp-state.bin"
+        private const val VERSION = 1
+        private var resumed: WeakReference<Activity>? = null
+        /** The last state Android had the app save, for when Lamp asks while it's in the background. */
+        private var lastSaved: Pair<String, Bundle>? = null
+
+        /** Kept once AndroidX has added its own (what `rememberSaveable` and the back stack keep), which it does after the framework's callbacks. */
+        fun saved(activity: LampActivity, outState: Bundle) {
+            lastSaved = activity.javaClass.name to Bundle(outState)
+        }
+
+        fun start(app: Application) {
+            app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+                override fun onActivityResumed(activity: Activity) { resumed = WeakReference(activity) }
+                override fun onActivityPaused(activity: Activity) { if (resumed?.get() === activity) resumed = null }
+                override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+                override fun onActivityDestroyed(activity: Activity) {
+                    if (activity.isFinishing && lastSaved?.first == activity.javaClass.name) lastSaved = null
+                }
+                override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+                override fun onActivityStarted(activity: Activity) {}
+                override fun onActivityStopped(activity: Activity) {}
+            })
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    val saved = save(context)
+                    if (isOrderedBroadcast) resultData = if (saved) "saved" else "nothing"
+                }
+            }
+            ContextCompat.registerReceiver(app, receiver, IntentFilter(app.packageName + ".LAMP_SAVE_STATE"),
+                                           "android.permission.DUMP", null, ContextCompat.RECEIVER_EXPORTED)
+        }
+
+        private fun save(context: Context): Boolean {
+            val activity = resumed?.get() as? LampActivity
+            val (name, state) = if (activity != null) {
+                // Saving moves a ComponentActivity's lifecycle to CREATED; it's put back, since the app goes on
+                // running if the install that follows fails.
+                val lifecycle = activity.lifecycle as? LifecycleRegistry
+                val before = lifecycle?.currentState
+                val out = Bundle()
+                try {
+                    Instrumentation().callActivityOnSaveInstanceState(activity, out)
+                } catch (e: Exception) {
+                    Log.w("Lamp", "Couldn't save where you were before the change: $e")
+                    return false
+                } finally {
+                    if (lifecycle != null && before != null) lifecycle.currentState = before
+                }
+                activity.javaClass.name to out
+            } else lastSaved ?: return false
+            val parcel = Parcel.obtain()
+            return try {
+                parcel.writeInt(VERSION)
+                parcel.writeString(name)
+                parcel.writeLong(System.currentTimeMillis())
+                parcel.writeBundle(state)
+                val part = File(context.filesDir, "$FILE.part")
+                part.writeBytes(parcel.marshall())
+                part.renameTo(File(context.filesDir, FILE))
+            } catch (e: Exception) {
+                Log.w("Lamp", "Couldn't save where you were before the change: $e")
+                false
+            } finally {
+                parcel.recycle()
+            }
+        }
+
+        fun take(activity: Activity): Bundle? {
+            val file = File(activity.filesDir, FILE)
+            if (!file.exists()) return null
+            val bytes = try { file.readBytes() } catch (e: IOException) { null } finally { file.delete() }
+            if (bytes == null) return null
+            val parcel = Parcel.obtain()
+            return try {
+                parcel.unmarshall(bytes, 0, bytes.size)
+                parcel.setDataPosition(0)
+                if (parcel.readInt() != VERSION) return null
+                if (parcel.readString() != activity.javaClass.name) return null
+                val savedAt = parcel.readLong()
+                // Only across Lamp's install: a launch from the home screen later, or one with no install since, starts fresh.
+                val installed = activity.packageManager.getPackageInfo(activity.packageName, 0).lastUpdateTime
+                if (installed < savedAt || System.currentTimeMillis() - savedAt > 10 * 60_000L) return null
+                val state = parcel.readBundle(activity.classLoader) ?: return null
+                read(state)
+                Log.i("Lamp", "Opened where you were before the change.")
+                state
+            } catch (e: Throwable) {
+                Log.w("Lamp", "Started fresh: the state saved before the change doesn't fit the new code ($e)")
+                null
+            } finally {
+                parcel.recycle()
+            }
+        }
+
+        /** Reads every value now, so state the new code's classes can't read fails here rather than in onCreate. */
+        private fun read(value: Any?, depth: Int = 0) {
+            if (depth > 40) return
+            when (value) {
+                is Bundle -> { value.classLoader = LampInstall.context.classLoader; value.keySet().forEach { read(value.get(it), depth + 1) } }
+                is Iterable<*> -> value.forEach { read(it, depth + 1) }
+                is Map<*, *> -> value.values.forEach { read(it, depth + 1) }
+                is Array<*> -> value.forEach { read(it, depth + 1) }
+                is SparseArray<*> -> (0 until value.size()).forEach { read(value.valueAt(it), depth + 1) }
+            }
+        }
     }
 
     /**

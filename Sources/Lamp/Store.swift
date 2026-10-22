@@ -6403,6 +6403,8 @@ final class Store: ObservableObject {
     private var androidLeases: [String: String] = [:]
     /// The screen density of the device each Android app is open on, for its pictures (`Adb.screenshot`).
     private var androidDensities: [String: Int] = [:]
+    /// Projects whose next Android launch starts fresh rather than where the person was (a look with `reopen`).
+    private var androidFresh: Set<String> = []
 
     /// The launch in progress on each Android device, for the next one to wait for: as on a simulator, launches
     /// on one device go one after another, so two apps can't be racing onto the same screen.
@@ -6468,11 +6470,29 @@ final class Store: ObservableObject {
                 androidApps[other] = nil
             }
             androidLeases[serial] = project.id
+            // Where the person was goes with the change: the running copy saves its state, and the new one opens from it.
+            let fresh = androidFresh.remove(project.id) != nil
+            var kept = false
+            if !fresh, await Adb.pid(of: package, on: serial) != nil { kept = await Adb.saveState(package, on: serial) }
             try await Adb.install(project.builtURL, package: package, on: serial)
             await Adb.tellApp(Template.androidInstallValues(for: project, onDevice: project.device != nil), package: package, on: serial)
             guard stillOwns() else { return "The app was deleted or stopped before it opened." }
             Runtime.startLog(project)
-            let pid = try await Adb.launch(package, on: serial)
+            // State the new code can't take may end it at once, before or after it's seen running; the app has used
+            // the state up by then, so it opens fresh.
+            var pid: Int32
+            if kept {
+                let restored = try? await Adb.launch(package, on: serial)
+                if let restored, !(await Adb.quitSoon(restored, package: package, on: serial)) {
+                    pid = restored
+                } else {
+                    log(project, .detail, "The app couldn't open where it was after the change, so it was opened fresh.")
+                    Runtime.startLog(project)
+                    pid = try await Adb.launch(package, on: serial)
+                }
+            } else {
+                pid = try await Adb.launch(package, on: serial)
+            }
             let logcat = (try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)).flatMap { try? Adb.logcat(pid: pid, on: serial, log: $0) }
             let run = AndroidRun(serial: serial, pid: pid, log: logcat)
             androidApps[project.id] = run
@@ -6516,6 +6536,7 @@ final class Store: ObservableObject {
         var summary = "The app built and is running."
         let running = await isAndroidRunning(project)
         if changed || !running || reopen {
+            if reopen { androidFresh.insert(project.id) }
             let crash = await install(project, inFront: false, early: true)
             turn.look.installed = true
             turn.look.crash = crash
