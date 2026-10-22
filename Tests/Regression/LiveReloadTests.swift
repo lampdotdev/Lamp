@@ -551,9 +551,9 @@ final class LiveReloadTests: XCTestCase {
             """.write(to: sources.appendingPathComponent("Moods.swift"), atomically: true, encoding: .utf8)
         let dumped = await LiveReload.dump(of: sources, in: project, module: project.exe, macOS: "14.0")
         let dump = try XCTUnwrap(dumped)
-        XCTAssertEqual(LiveReload.oldCode(meeting: ["Mood"], inDump: dump),
+        XCTAssertEqual(LiveReload.oldCode(meeting: ["Mood"], uses: LiveReload.oldCodeUses(inDump: dump)),
                        "Model switches over Mood in code that may still be running (a loop, a timer, a task, an observer), which doesn't know the new cases")
-        XCTAssertNil(LiveReload.oldCode(meeting: ["Other"], inDump: dump))
+        XCTAssertNil(LiveReload.oldCode(meeting: ["Other"], uses: LiveReload.oldCodeUses(inDump: dump)))
         // A closure a body hands to Foundation (a Timer's, in onAppear) is kept by it, unlike a Button's action.
         // A closure set into a property or given as a property's value is kept too, inside a body or not; what a
         // view helper returning `some View` hands SwiftUI (a Button's action) is made again at the next draw.

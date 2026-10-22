@@ -104,7 +104,7 @@ enum LiveObject {
         return out
     }
 
-    private struct Section { var name: String; var offset: Int; var size: Int; var reloff: Int; var nreloc: Int; var index: Int; var header: Int }
+    private struct Section { var name: String; var offset: Int; var size: Int; var reloff: Int; var nreloc: Int; var header: Int }
 
     static func rewrite(_ bytes: inout [UInt8], kept: [String], matched: inout Set<String>) -> String? {
         func u32(_ at: Int) -> UInt32 { bytes.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: at, as: UInt32.self) } }
@@ -131,7 +131,7 @@ enum LiveObject {
                     // is kept as data the linker leaves alone, and `LampLive` attaches them once the change fits.
                     if name == "__objc_catlist" { bytes.replaceSubrange(section..<(section + 16), with: Array("__lamp_catlist".utf8) + [0, 0]) }
                     sections.append(Section(name: segment + "," + name, offset: Int(u32(section + 48)), size: Int(u64(section + 40)),
-                                            reloff: Int(u32(section + 56)), nreloc: Int(u32(section + 60)), index: sections.count + 1, header: section))
+                                            reloff: Int(u32(section + 56)), nreloc: Int(u32(section + 60)), header: section))
                     section += MemoryLayout<section_64>.size
                 }
             case UInt32(LC_SYMTAB):
