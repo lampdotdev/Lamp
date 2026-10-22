@@ -109,7 +109,11 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         if let carried { webView.configuration.userContentController.addUserScript(Self.restoreScript(carried)) }
         await navigate { $0.load(URLRequest(url: Self.home)) }
         if carried != nil {
-            UserDefaults.standard.set(true, forKey: Self.carriedKey(project))
+            // Marked done only once the app's page says it has the saves: a load that failed, timed out or was closed
+            // ran no script, and the next opening tries again.
+            if Self.open[project.id] === self, (try? await webView.evaluateJavaScript("window.lampRestored === true", in: nil, contentWorld: Self.restoreWorld)) as? Bool == true {
+                UserDefaults.standard.set(true, forKey: Self.carriedKey(project))
+            }
             webView.configuration.userContentController.removeAllUserScripts()
             webView.configuration.userContentController.addUserScript(WKUserScript(source: Self.consoleScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         }
@@ -148,10 +152,18 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
 
     private static func carriedKey(_ project: LampProject) -> String { "tvPreviewCarriedSaves." + project.id }
 
-    /// Puts back what was handed over, before the app's own scripts run, leaving alone anything already saved here.
+    /// Puts back what was handed over, before the app's own scripts run, leaving alone anything already saved here, and
+    /// says it did in a world of its own, which the app's scripts can't see or set.
+    private static let restoreWorld = WKContentWorld.world(name: "lampRestore")
     private static func restoreScript(_ saved: String) -> WKUserScript {
-        WKUserScript(source: "(function () { var s = \(saved); for (var k in s) if (localStorage.getItem(k) === null) localStorage.setItem(k, s[k]); })();",
-                     injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        WKUserScript(source: """
+            (function () {
+              if (location.protocol !== '\(scheme):') return;
+              var s = \(saved);
+              for (var k in s) if (localStorage.getItem(k) === null) localStorage.setItem(k, s[k]);
+              window.lampRestored = true;
+            })();
+            """, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: restoreWorld)
     }
 
     private func finishLoading() {
@@ -412,7 +424,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
 /// is compiled as it arrives only when it says it's WebAssembly) and a part of one when asked (sound and video ask for
 /// theirs in parts). Not kept in WebKit's cache, so an opening after a change has the files as they are now.
 @MainActor
-private final class StagedFiles: NSObject, WKURLSchemeHandler {
+final class StagedFiles: NSObject, WKURLSchemeHandler {
     var folder: URL?
 
     private static let types = ["html": "text/html", "htm": "text/html", "js": "text/javascript", "mjs": "text/javascript",
@@ -460,7 +472,7 @@ private final class StagedFiles: NSObject, WKURLSchemeHandler {
         let bounds = header.dropFirst(6).split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).map { Int($0.trimmingCharacters(in: .whitespaces)) }
         guard bounds.count == 2 else { return nil }
         switch (bounds[0], bounds[1]) {
-        case let (start?, end?) where start <= end && start < size: return start..<min(end + 1, size)
+        case let (start?, end?) where start <= end && start < size: return start..<(min(end, size - 1) + 1)
         case let (start?, nil) where start < size: return start..<size
         case let (nil, last?) where last > 0: return max(0, size - last)..<size
         default: return nil

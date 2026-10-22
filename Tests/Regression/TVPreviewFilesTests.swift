@@ -44,4 +44,13 @@ final class TVPreviewFilesTests: XCTestCase {
         XCTAssertTrue(log.contains("xhr 200 3000000"), log)
         XCTAssertTrue(log.contains("missing 404"), log)
     }
+
+    /// A page may ask for any range; one ending at the largest number there is still gets the file's bytes.
+    func testARangeToTheLargestNumberStaysInTheFile() {
+        XCTAssertEqual(StagedFiles.part("bytes=0-\(Int.max)", of: 10), 0..<10)
+        XCTAssertEqual(StagedFiles.part("bytes=4-\(Int.max)", of: 10), 4..<10)
+        XCTAssertEqual(StagedFiles.part("bytes=2-5", of: 10), 2..<6)
+        XCTAssertEqual(StagedFiles.part("bytes=-\(Int.max)", of: 10), 0..<10)
+        XCTAssertNil(StagedFiles.part("bytes=\(Int.max)-", of: 10))
+    }
 }
