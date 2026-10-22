@@ -347,7 +347,14 @@ final class CityGeometry {
         } else if !sport.contains("tennis") {
             // The centre circle.
             let r = min(hw * 0.35, sport.contains("basketball") ? 1.8 : 9.15)
-            ribbon("white", (0...24).map { c + u * cos(Float($0) / 24 * 2 * .pi) * r + v * sin(Float($0) / 24 * 2 * .pi) * r }, half: 0.05, h: h)
+            // Spelt out step by step: as one expression, an older compiler gave up type-checking it.
+            let circle: [SIMD2<Float>] = (0...24).map { (i: Int) -> SIMD2<Float> in
+                let a: Float = Float(i) / 24 * 2 * .pi
+                let across: SIMD2<Float> = u * (cos(a) * r)
+                let along: SIMD2<Float> = v * (sin(a) * r)
+                return c + across + along
+            }
+            ribbon("white", circle, half: 0.05, h: h)
         }
     }
 
