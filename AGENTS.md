@@ -368,7 +368,7 @@ send. Until that message, nothing is named, scaffolded, built or saved (`startQu
 becomes may be an iPhone app, which a scaffold already written as a Mac app would rule out. The message that
 isn't an answer to a card names it like any first request and ends `finding`.
 
-A new person's desk isn't empty: Lamp comes with nine wishes (`Starters`, from `Resources/Starters`), working
+A new person's desk isn't empty: Lamp comes with ten wishes (`Starters`, from `Resources/Starters`), working
 apps to use as they are and to change into their own, which shows what Lamp does better than a question about
 what to make. So the welcome is the hello and setup, and ends on the desk (a wish from the site is still made
 once setup is done). They're copied once, on the first launch, each saved as its first version ("From Lamp"),
@@ -398,6 +398,9 @@ and one what it's about (Hot Shelf as a beer tracker), in that order. Each is so
 that the agent can make in one request with no key or account, its look drawn in code rather than pictures. They
 are Mac apps that need no key or account, use the AI the person builds with when they use any, and come with
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
+A starter whose code imports RealityKit (Drive Anywhere) gets LampScene.swift and macOS 15 like any app with a 3D scene
+(`Template.withScene`), and check-starters.sh type-checks it that way; on a Mac below macOS 15 it isn't put on the desk
+or offered at all (`Starters.runsHere`), and it's offered once the Mac is updated.
 
 Starters not on the desk (never added, or deleted since; `Starters.missing`) are offered at its end as one dashed
 tile, Starter wishes (`MoreFromLamp`): up to four of their icons and how many there are, and a click lists them with
