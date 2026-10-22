@@ -9,9 +9,11 @@ enum TVTemplate {
     static let webFolder = "Web"
     static let supportFile = "Web/lamp.js"
 
-    /// Whether an app's folder is a TV app, read off what every version keeps: Lamp's script in `Web/`.
+    /// Whether an app's folder is a TV app, read off what every version keeps: Lamp's script in `Web/`. A device app
+    /// whose integration takes the web building blocks may keep them at the same path (an Xbox's), so its own marker
+    /// says it's that instead.
     static func isTV(_ dir: URL) -> Bool {
-        FileManager.default.fileExists(atPath: dir.appendingPathComponent(supportFile).path)
+        FileManager.default.fileExists(atPath: dir.appendingPathComponent(supportFile).path) && !DeviceApps.isScaffolded(dir)
     }
 
     static func writeOwnedFiles(for project: LampProject) throws {

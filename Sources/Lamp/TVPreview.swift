@@ -123,7 +123,12 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     /// no token for the page to hold and no network between them. Only the AI routes an app uses.
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage,
                                replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
-        guard let call = message.body as? [String: Any], let path = call["path"] as? String,
+        // Only the app's own page, from its staged copy: never a frame inside it or a page it went on to, which could be
+        // anyone's and would use AI as the app.
+        let staged = TVs.stagingFolder(for: project).appendingPathComponent("web").standardizedFileURL.path + "/"
+        guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url, page.isFileURL,
+              page.standardizedFileURL.path.hasPrefix(staged),
+              let call = message.body as? [String: Any], let path = call["path"] as? String,
               ["/ai", "/ai/status", "/ai/image", "/ai/decide"].contains(path),
               let current = Store.shared.projects.first(where: { $0.id == project.id }) else {
             replyHandler(["status": 404, "body": #"{"error":"Not found"}"#], nil)

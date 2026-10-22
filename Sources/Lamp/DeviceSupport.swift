@@ -847,10 +847,21 @@ enum DeviceSupport {
         return { type: "score", instructions: question, criteria: levels }
     end function
 
+    ' Where Lamp is and who this app is to it: filled in by Lamp in the package it puts on the Roku. Never the app's
+    ' token, which the app asks Lamp for once, just after Lamp has put it here, and keeps.
+    function lampInstall() as Dynamic
+        lampInstalled = invalid ' LAMP_INSTALL
+        return lampInstalled
+    end function
+
     ' LampStore
 
+    ' Every app Lamp puts on a Roku is its one developer channel, which keeps one registry, so each app's data is under
+    ' its own id there: a wish put on the Roku after another doesn't read or overwrite the other's.
     function LampStore_section() as Object
-        return CreateObject("roRegistrySection", "lamp-store")
+        installed = lampInstall()
+        if installed = invalid then return CreateObject("roRegistrySection", "lamp-store")
+        return CreateObject("roRegistrySection", "lamp-store:" + installed.app)
     end function
 
     function LampStore_load(key as String, fallback as Dynamic) as Dynamic
@@ -1110,24 +1121,18 @@ enum DeviceSupport {
 
     ' Reaching Lamp
 
-    ' Where Lamp is: filled in by Lamp in the package it puts on the Roku. Never the app's token, which the app asks Lamp
-    ' for once, just after Lamp has put it here, and keeps.
-    function lampInstall() as Dynamic
-        lampInstalled = invalid ' LAMP_INSTALL
-        return lampInstalled
-    end function
-
     function lampToken(installed as Object, routes as Object) as Object
         section = CreateObject("roRegistrySection", "lamp-install")
+        key = "token:" + installed.app
         kept = invalid
-        if section.Exists("token") then kept = ParseJson(section.Read("token"))
+        if section.Exists(key) then kept = ParseJson(section.Read(key))
         if kept <> invalid and kept.app = installed.app then return { token: kept.token }
         answer = lampSend(routes, "/app/claim", { app: installed.app }, "", 10000)
         if answer.status <> 200 or answer.reply.token = invalid then
             if answer.status = 0 then return { error: answer.error }
             return { error: "This app needs Lamp to put it on this Roku once more before it can use AI: press Play in Lamp on your Mac." }
         end if
-        section.Write("token", FormatJson({ app: installed.app, token: answer.reply.token }))
+        section.Write(key, FormatJson({ app: installed.app, token: answer.reply.token }))
         section.Flush()
         return { token: answer.reply.token }
     end function
@@ -1140,7 +1145,7 @@ enum DeviceSupport {
         answer = lampSend(installed.routes, path, body, token.token, timeout)
         if answer.status = 401 then
             section = CreateObject("roRegistrySection", "lamp-install")
-            section.Delete("token")
+            section.Delete("token:" + installed.app)
             section.Flush()
             token = lampToken(installed, installed.routes)
             if token.error <> invalid then return { error: token.error }
