@@ -450,12 +450,19 @@ enum Adb {
 
     /// The screen as text (`Screen.text`), from the system's own view of what's on it.
     static func screen(on serial: String, density: Int?) async -> Screen? {
-        var result = await run(["exec-out", "uiautomator", "dump", "/dev/tty"], on: serial, timeout: 60)
+        await screen(density: density) { await run($0, on: serial, timeout: $1) }
+    }
+
+    /// Commands for one device: adb's arguments after the serial, and how long to give them.
+    typealias Commands = ([String], TimeInterval) async -> Subprocess.Result
+
+    static func screen(density: Int?, adb: Commands) async -> Screen? {
+        var result = await adb(["exec-out", "uiautomator", "dump", "/dev/tty"], 60)
         // A screen asleep, or one the system is still laying out, answers nothing: woken and asked once more.
         if !result.output.contains("</hierarchy>") {
-            _ = await run(["shell", "input", "keyevent", "KEYCODE_WAKEUP"], on: serial, timeout: 20)
+            _ = await adb(["shell", "input", "keyevent", "KEYCODE_WAKEUP"], 20)
             try? await Task.sleep(for: .seconds(1))
-            result = await run(["exec-out", "uiautomator", "dump", "/dev/tty"], on: serial, timeout: 60)
+            result = await adb(["exec-out", "uiautomator", "dump", "/dev/tty"], 60)
         }
         guard let start = result.output.range(of: "<?xml"), let end = result.output.range(of: "</hierarchy>") else { return nil }
         let xml = String(result.output[start.lowerBound..<end.upperBound])
@@ -562,7 +569,9 @@ enum Adb {
     static func perform(_ actions: [Simulator.Driver.Action], on serial: String, density: Int?, screen first: Screen?,
                         aim: @escaping @MainActor (CGPoint, String?, Bool) async -> Void = { _, _, _ in },
                         tookOver: @MainActor () -> Bool = { false },
+                        adb commands: Commands? = nil,
                         stillMine: @escaping @MainActor () async -> Bool) async -> String {
+        let adb: Commands = commands ?? { await run($0, on: serial, timeout: $1) }
         var screen = first
         var report: [String] = []
         let scale = scale(density: density)
@@ -593,47 +602,58 @@ enum Adb {
                 return nil
             }
         }
-        for (index, action) in actions.enumerated() {
-            guard await stillMine() else {
-                report.append(await tookOver()
-                    ? "Stopped after \(index) of \(actions.count) action\(actions.count == 1 ? "" : "s"): the person took the app over. Nothing after that was done."
-                    : "Stopped before action \(index + 1).")
-                break
+        // Every input goes through here. The person may take the app back at any moment, the fingertip's glide, a
+        // pause and a screen read included, and nothing more of Lamp's reaches the device once they have.
+        var stopped: Int?
+        var current = 0
+        var begun = false   // some of the current action's input went out, so it was cut short rather than not done
+        func send(_ arguments: [String], _ timeout: TimeInterval) async -> Bool {
+            guard stopped == nil, await stillMine() else {
+                stopped = stopped ?? current
+                return false
             }
+            _ = await adb(arguments, timeout)
+            begun = true
+            return true
+        }
+        actions: for (index, action) in actions.enumerated() {
+            current = index
+            begun = false
+            guard await stillMine() else { stopped = index; break }
             if let spot = spot(of: action, on: screen) { await aim(spot.point, spot.doing, spot.press) }
             switch action.action {
             case "click", "tap", "left_click", "double_click", "right_click", "long_press":
                 guard let (at, what, _) = point(action, on: screen) else { report.append("\(index + 1). Nothing on screen matches \"\(action.target ?? "")\"."); continue }
                 let (x, y) = pixels(at)
                 if action.action == "right_click" || action.action == "long_press" {
-                    _ = await run(["shell", "input", "swipe", "\(x)", "\(y)", "\(x)", "\(y)", "800"], on: serial, timeout: 30)
+                    guard await send(["shell", "input", "swipe", "\(x)", "\(y)", "\(x)", "\(y)", "800"], 30) else { break actions }
                     report.append("\(index + 1). Long-pressed \(what).")
                 } else {
-                    _ = await run(["shell", "input", "tap", "\(x)", "\(y)"], on: serial, timeout: 30)
-                    if action.action == "double_click" { _ = await run(["shell", "input", "tap", "\(x)", "\(y)"], on: serial, timeout: 30) }
+                    guard await send(["shell", "input", "tap", "\(x)", "\(y)"], 30) else { break actions }
+                    if action.action == "double_click" { guard await send(["shell", "input", "tap", "\(x)", "\(y)"], 30) else { break actions } }
                     report.append("\(index + 1). Tapped \(what).")
                 }
             case "type":
                 guard let text = action.text else { report.append("\(index + 1). type needs text."); continue }
                 if let (at, _, _) = point(action, on: screen) {
                     let (x, y) = pixels(at)
-                    _ = await run(["shell", "input", "tap", "\(x)", "\(y)"], on: serial, timeout: 30)
+                    guard await send(["shell", "input", "tap", "\(x)", "\(y)"], 30) else { break actions }
                     try? await Task.sleep(for: .milliseconds(300))
                 }
                 // The field typed into, read once the tap has landed: the one with the keyboard now, else the target.
-                let before = await Self.screen(on: serial, density: density)
+                let before = await Self.screen(density: density, adb: adb)
                 let field = before?.items.first { $0.kind == "field" && $0.focused } ?? action.target.flatMap { before?.find($0) }
                 // In place of what the field held, as on the other devices: everything selected and deleted where the
                 // device takes a key combination (Android 11 and later); on an older one, to the end and back over
                 // every character the field was seen to hold, in calls of a hundred keys.
-                _ = await run(["shell", "input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_A"], on: serial, timeout: 30)
-                _ = await run(["shell", "input", "keyevent", "KEYCODE_DEL"], on: serial, timeout: 30)
+                guard await send(["shell", "input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_A"], 30) else { break actions }
+                guard await send(["shell", "input", "keyevent", "KEYCODE_DEL"], 30) else { break actions }
                 var remaining = (field?.value.count ?? 0) + 2
-                if let field, (await Self.screen(on: serial, density: density))?.find(field.id)?.value.isEmpty == false, remaining > 0 {
-                    _ = await run(["shell", "input", "keyevent", "KEYCODE_MOVE_END"], on: serial, timeout: 30)
+                if let field, (await Self.screen(density: density, adb: adb))?.find(field.id)?.value.isEmpty == false, remaining > 0 {
+                    guard await send(["shell", "input", "keyevent", "KEYCODE_MOVE_END"], 30) else { break actions }
                     while remaining > 0 {
                         let batch = min(remaining, 100)
-                        _ = await run(["shell", "input", "keyevent"] + Array(repeating: "KEYCODE_DEL", count: batch), on: serial, timeout: 60)
+                        guard await send(["shell", "input", "keyevent"] + Array(repeating: "KEYCODE_DEL", count: batch), 60) else { break actions }
                         remaining -= batch
                     }
                 }
@@ -646,7 +666,7 @@ enum Adb {
                     default: return String(character)
                     }
                 }.joined()
-                _ = await run(["shell", "input", "text", escaped], on: serial, timeout: 60)
+                guard await send(["shell", "input", "text", escaped], 60) else { break actions }
                 report.append("\(index + 1). Typed \"\(text)\".")
             case "key":
                 let keys = ["return": "KEYCODE_ENTER", "enter": "KEYCODE_ENTER", "escape": "KEYCODE_BACK", "back": "KEYCODE_BACK",
@@ -656,7 +676,7 @@ enum Adb {
                     report.append("\(index + 1). Unknown key \"\(action.key ?? "")\"; the keys are \(keys.keys.sorted().joined(separator: ", ")).")
                     continue
                 }
-                _ = await run(["shell", "input", "keyevent", code], on: serial, timeout: 30)
+                guard await send(["shell", "input", "keyevent", code], 30) else { break actions }
                 report.append("\(index + 1). Pressed \(key).")
             case "scroll", "swipe":
                 let (from, what) = point(action, on: screen).map { ($0.0, $0.1) } ?? (middle, "the middle of the screen")
@@ -674,17 +694,17 @@ enum Adb {
                 // The fingertip follows the finger, from where it went down to where it lifts.
                 let lifted = to
                 async let followed: Void = aim(lifted, nil, false)
-                _ = await run(["shell", "input", "swipe", "\(x1)", "\(y1)", "\(x2)", "\(y2)", "300"], on: serial, timeout: 30)
+                guard await send(["shell", "input", "swipe", "\(x1)", "\(y1)", "\(x2)", "\(y2)", "300"], 30) else { break actions }
                 await followed
                 report.append("\(index + 1). \(action.action == "scroll" ? "Scrolled" : "Swiped") \(action.direction ?? "down") at \(what).")
                 if action.action == "swipe", let item = action.item {
                     try? await Task.sleep(for: .milliseconds(500))
-                    screen = await Self.screen(on: serial, density: density)
+                    screen = await Self.screen(density: density, adb: adb)
                     if let found = screen?.find(item) {
                         let spot = CGPoint(x: found.frame.midX, y: found.frame.midY)
                         await aim(spot, tapping(found, as: "tap"), true)
                         let (x, y) = pixels(spot)
-                        _ = await run(["shell", "input", "tap", "\(x)", "\(y)"], on: serial, timeout: 30)
+                        guard await send(["shell", "input", "tap", "\(x)", "\(y)"], 30) else { break actions }
                         report.append("\(index + 1). Then tapped \"\(found.name)\".")
                     } else {
                         report.append("\(index + 1). The swipe uncovered nothing named \"\(item)\".")
@@ -703,8 +723,15 @@ enum Adb {
             let next = index + 1 < actions.count ? spot(of: actions[index + 1], on: screen) : nil
             async let ahead: Void = { if let next { await aim(next.point, next.doing, false) } }()
             try? await Task.sleep(for: .milliseconds(600))
-            screen = await Self.screen(on: serial, density: density)
+            screen = await Self.screen(density: density, adb: adb)
             await ahead
+        }
+        if let stopped {
+            let place = begun ? "partway through action \(stopped + 1) of \(actions.count)"
+                : "after \(stopped) of \(actions.count) action\(actions.count == 1 ? "" : "s")"
+            report.append(await tookOver()
+                ? "Stopped \(place): the person took the app over. Nothing after that was done."
+                : "Stopped \(place).")
         }
         return report.joined(separator: "\n")
     }

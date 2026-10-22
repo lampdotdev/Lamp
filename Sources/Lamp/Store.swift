@@ -6559,7 +6559,10 @@ final class Store: ObservableObject {
             shown = await Emulator.glass(size: CGSize(width: size.width / scale, height: size.height / scale))
         }
         let glass = shown
-        let trial = glass.map { Handover(label: "\(Self.lampName) is trying it on Android", finger: true, simulator: $0.pid) }
+        // Driving the emulator needs no permission, so none is asked for just to hear Esc: without it the pill offers
+        // Stop, and the person's own click in the emulator still takes it back.
+        let trial = glass.map { Handover(label: "\(Self.lampName) is trying it on Android", finger: true, simulator: $0.pid,
+                                         escape: Simulator.Driver.isAllowed) }
         if let glass { trial?.show(window: glass.window) }
         defer { trial?.end() }
         let report = await Adb.perform(decoded, on: open.serial, density: density, screen: screen, aim: { point, doing, press in

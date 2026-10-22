@@ -627,7 +627,11 @@ it as text from `uiautomator dump` (`Adb.Screen`, the same line shape as the Mac
 `use_app` taps, types, swipes and presses keys through `adb shell input` (`Adb.perform`), reading the screen again
 between actions. On the emulator it happens in plain sight as on the simulator (`Handover`): its window glows, Lamp's
 fingertip goes to each spot, placed by the device's screen size in the window as it is now (`Emulator.Glass`), and the
-person's own click in that window takes the app back. A look leaves the emulator hidden, so `use_app` brings its window
+person's own click in that window takes the app back, and so does Esc where Lamp hears it (`Handover`'s `escape`: other
+apps' keys reach Lamp only once it's allowed to control the computer, which driving the emulator doesn't need, so it
+isn't asked for and the pill then offers Stop alone). Every input goes out only while the app is still Lamp's to use,
+checked again right before each one (`Adb.perform`'s `send`), so a takeover during the fingertip's glide or a screen
+read stops the rest (`AndroidHandoverTests`). A look leaves the emulator hidden, so `use_app` brings its window
 back first (`Emulator.unhide`), without taking the keyboard. A device of the person's has nothing on the Mac to show it on. The chat stays in Lamp's window (no sidebar, no live reload: both are the Mac's). An Android app
 is shared as a `.lampapp` of format 9 (`AndroidFiles`, SharingAndroid.swift): its `app/` whole (Kotlin, manifest,
 resources, `app/build.gradle.kts`), without `app/build`, hidden folders, `local.properties` or Lamp's own Gradle files,
