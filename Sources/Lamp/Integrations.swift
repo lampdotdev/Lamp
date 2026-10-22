@@ -252,6 +252,34 @@ enum Integrations {
         return device
     }
 
+    /// A device that answered the scan, from the UPnP descriptions its answers point at. A device often answers for
+    /// several services, each with a description of its own, and the first to answer may say nothing of the device
+    /// (a TV's Netflix service answers a few bytes of "status=ok"), so each is tried until one names it. `send` is how
+    /// a description is read; tests answer with recorded ones.
+    static func described(_ address: String, answers: [DeviceProbe.SSDPAnswer],
+                          send: (Request, String) async -> DeviceHTTP.Answer? = { try? await DeviceHTTP.send($0, to: $1, values: [:]) }) async -> Device? {
+        var locations: [String] = []
+        for location in answers.compactMap(\.location) where !locations.contains(location) && URL(string: location)?.host == address { locations.append(location) }
+        for location in locations {
+            guard let url = URL(string: location), url.scheme == "http",
+                  let answer = await send(Request(port: url.port ?? 80, path: url.path.isEmpty ? "/" : url.path + (url.query.map { "?" + $0 } ?? "")), address),
+                  answer.ok else { continue }
+            let name = DeviceHTTP.xml("friendlyName", in: answer.body)
+            let maker = DeviceHTTP.xml("manufacturer", in: answer.body) ?? ""
+            let model = DeviceHTTP.xml("modelName", in: answer.body) ?? DeviceHTTP.xml("modelDescription", in: answer.body) ?? ""
+            let type = DeviceHTTP.xml("deviceType", in: answer.body) ?? ""
+            // Routers and other plumbing answer every scan; nobody makes apps for them.
+            if type.contains("InternetGatewayDevice") || type.contains("WANDevice") || type.contains("WFADevice") { return nil }
+            guard let name, !maker.isEmpty || !model.isEmpty else { continue }
+            var device = Device(id: "found:\(address)", kind: .other, maker: maker, model: model.isEmpty ? maker : model,
+                                modelID: DeviceHTTP.xml("modelNumber", in: answer.body) ?? "", name: name, os: "", osVersion: "", reach: .network)
+            device.address = address
+            device.discovery = answers.map { "\($0.searchTarget) (\($0.server))" }.joined(separator: "; ")
+            return device
+        }
+        return nil
+    }
+
     /// The devices that answered the scan and that nothing Lamp has knows: each read from its own UPnP description
     /// when it has one, shown for the moment with Set Up…, and never kept.
     static func unknown(_ scan: Scan, except taken: Set<String>) async -> [Device] {
@@ -263,22 +291,7 @@ enum Integrations {
         for address in TVs.macAddresses() { byAddress[address] = nil }
         var devices: [Device] = []
         for (address, answers) in byAddress {
-            guard let location = answers.compactMap(\.location).first(where: { URL(string: $0)?.host == address }),
-                  let url = URL(string: location), url.scheme == "http",
-                  let answer = try? await DeviceHTTP.send(Request(port: url.port ?? 80, path: url.path.isEmpty ? "/" : url.path + (url.query.map { "?" + $0 } ?? "")),
-                                                          to: address, values: [:]), answer.ok else { continue }
-            let name = DeviceHTTP.xml("friendlyName", in: answer.body)
-            let maker = DeviceHTTP.xml("manufacturer", in: answer.body) ?? ""
-            let model = DeviceHTTP.xml("modelName", in: answer.body) ?? DeviceHTTP.xml("modelDescription", in: answer.body) ?? ""
-            let type = DeviceHTTP.xml("deviceType", in: answer.body) ?? ""
-            // Routers and other plumbing answer every scan; nobody makes apps for them.
-            if type.contains("InternetGatewayDevice") || type.contains("WANDevice") || type.contains("WFADevice") { continue }
-            guard let name, !maker.isEmpty || !model.isEmpty else { continue }
-            var device = Device(id: "found:\(address)", kind: .other, maker: maker, model: model.isEmpty ? maker : model,
-                                modelID: DeviceHTTP.xml("modelNumber", in: answer.body) ?? "", name: name, os: "", osVersion: "", reach: .network)
-            device.address = address
-            device.discovery = answers.map { "\($0.searchTarget) (\($0.server))" }.joined(separator: "; ")
-            devices.append(device)
+            if let device = await described(address, answers: answers) { devices.append(device) }
         }
         return devices.sorted { $0.name < $1.name }
     }
