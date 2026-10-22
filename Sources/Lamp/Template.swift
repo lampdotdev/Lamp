@@ -5197,6 +5197,9 @@ enum Template {
                 glass.hasShadow = false
                 glass.isReleasedWhenClosed = false
                 glass.becomesKeyOnlyIfNeeded = false
+                // It has the window's frame, so the window's own read of itself (`LampDriver.elements`) could take it
+                // for the window, and it has nothing in it to read.
+                glass.setAccessibilityElement(false)
                 // An alert the app runs while the person points would otherwise keep every click for itself.
                 glass.worksWhenModal = true
                 let picker = Picker(frame: NSRect(origin: .zero, size: window.frame.size))
@@ -7358,6 +7361,9 @@ enum Template {
                 isReleasedWhenClosed = false
                 hidesOnDeactivate = false
                 animationBehavior = .none
+                // Its frame is the window's, so the app's own read of the window (`LampDriver.elements`) would take
+                // this empty panel for it while a change goes in.
+                setAccessibilityElement(false)
                 look.cornerRadius = Self.cornerRadius(of: window)
                 contentView = look
                 window.addChildWindow(self, ordered: .above)
@@ -8731,7 +8737,11 @@ enum Template {
                     && abs(size.width - window.frame.width) < 2 && abs(size.height - window.frame.height) < 2
             }
             let windows = axAttribute(AXUIElementCreateApplication(getpid()), kAXWindowsAttribute) as? [AXUIElement] ?? []
-            if let found = windows.first(where: matches) { return found }
+            // A clear window laid over this one (an overlay of the app's own) has its frame too, and nothing in it.
+            let matching = windows.filter(matches)
+            if let found = matching.first(where: { (axAttribute($0, kAXChildrenAttribute) as? [AXUIElement])?.isEmpty == false }) ?? matching.first {
+                return found
+            }
             for parent in windows {
                 for child in axAttribute(parent, kAXChildrenAttribute) as? [AXUIElement] ?? [] where axAttribute(child, kAXRoleAttribute) as? String == kAXSheetRole {
                     if matches(child) { return child }
