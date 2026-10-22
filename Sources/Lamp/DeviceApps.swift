@@ -103,15 +103,39 @@ enum DeviceApps {
         try FileManager.default.createDirectory(at: buildFolder(for: project), withIntermediateDirectories: true)
         if declared.wrap == "msix" {
             try wrapMSIX(data, for: project, start: declared.start ?? "index.html")
+        } else if !DeviceSupport.libraries(for: project).isEmpty, declared.output.lowercased().hasSuffix(".zip") {
+            try await withFilledSupport(data, for: project).write(to: packageURL(for: project), options: .atomic)
         } else {
             try data.write(to: packageURL(for: project), options: .atomic)
         }
     }
 
+    /// The package step's zip with Lamp's own files filled in with where Lamp is (`DeviceSupport.fill`), zipped again in
+    /// Lamp's temporary folder; unchanged when none of them is in it.
+    private static func withFilledSupport(_ zip: Data, for project: LampProject) async throws -> Data {
+        let files = try MSIX.files(inZip: zip)
+        let filled = DeviceSupport.fill(files, for: project)
+        guard Swift.zip(filled, files).contains(where: { $0.0.data != $0.1.data }) else { return zip }
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-package-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: work) }
+        let tree = work.appendingPathComponent("package")
+        for (path, data) in filled {
+            guard IntegrationCheck.isAppPath(path) else { throw Failure(message: "The package holds a file Lamp can't send: \(path).") }
+            let url = tree.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url)
+        }
+        let out = work.appendingPathComponent("package.zip")
+        let result = await Subprocess.run("/usr/bin/zip", ["-X", "-q", out.path] + filled.map(\.path), cwd: tree, timeout: 120)
+        guard result.ok else { throw Failure(message: "Lamp couldn't put where it is into the package.") }
+        return try Data(contentsOf: out)
+    }
+
+
     /// The Windows package Lamp makes of the package step's zip: its own manifest, the app's icon as its logos, and
     /// Lamp's signature, beside the certificate the device installs with it and the identity the bridge launches by.
     private static func wrapMSIX(_ zip: Data, for project: LampProject, start: String) throws {
-        let files = try MSIX.files(inZip: zip)
+        let files = DeviceSupport.fill(try MSIX.files(inZip: zip), for: project)
         let folder = buildFolder(for: project)
         let previous = (try? Data(contentsOf: folder.appendingPathComponent("identity.json"))).flatMap { try? JSONDecoder().decode(MSIX.Identity.self, from: $0) }
         let identity = MSIX.Identity(name: MSIX.identityName(for: project.id), publisher: MSIX.publisher, version: MSIX.version(after: previous?.version))
@@ -166,6 +190,10 @@ enum DeviceApps {
             log?.write(Data((line + "\n").utf8))
         })
         let run = Run(device: device)
+        // The app opened by this install asks for its token, which isn't in its package.
+        if !DeviceSupport.libraries(for: project).isEmpty, let address = device.address {
+            DeviceSupport.Claims.shared.open(project.id, from: address)
+        }
         if let logs = bridge.logs, !logs.isEmpty {
             // A device with nothing listening on its log's port still takes the app.
             run.streams = (try? await runner.run(logs).streams) ?? []
@@ -243,7 +271,7 @@ extension Agent {
     static func devicePrompt(for project: LampProject) -> String {
         let integration = DeviceApps.integration(for: project)
         let name = integration?.name ?? "the device"
-        let rules = [Rules.deviceEdit, Rules.ask, Rules.shell, Rules.deviceKind(integration), Rules.icon, Rules.about,
+        let rules = [Rules.deviceEdit, Rules.ask, Rules.shell, Rules.deviceKind(integration), Rules.deviceBlocks(project), Rules.icon, Rules.about,
                      Rules.deviceAttachments, Rules.deviceTry(project), Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
         return (Rules.deviceHeader(integration) + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: name)
@@ -273,6 +301,34 @@ extension Agent.Rules {
     static func deviceKind(_ integration: Integration?) -> String {
         guard let rules = integration?.app?.declared?.rules.trimmed, !rules.isEmpty else { return "" }
         return "- Writing for \(integration?.name ?? "the device"): " + rules + "\n"
+    }
+
+    /// Lamp's building blocks the integration asks for, where they are, and how to use them.
+    static func deviceBlocks(_ project: LampProject) -> String {
+        let libraries = DeviceSupport.libraries(for: project)
+        guard !libraries.isEmpty else {
+            return "- Lamp has no building blocks for this device: the app has no AI of Lamp's and keeps its data its own way.\n"
+        }
+        var rule = "- Lamp's building blocks are in "
+            + libraries.map { "\($0.path)" }.joined(separator: " and ")
+            + ": Lamp writes them before every build, so never edit or delete them. "
+        for entry in libraries {
+            switch entry.library {
+            case .web:
+                rule += "Load \(entry.path) before the app's own scripts. It has `LampStore` (saved data: `load(key, fallback)`, "
+                    + "`save(value, key)`, `collection(name)` with put, get, all, delete), `LampAssets` (the package's own files) and `LampAI`. "
+                    + webAI.dropFirst(2).replacingOccurrences(of: "\n", with: "")
+                    + " "
+            case .brightscript:
+                rule += "Include \(entry.path)/Lamp.brs in a component's XML (`<script type=\"text/brightscript\" uri=\"pkg:/\(entry.path)/Lamp.brs\" />`) "
+                    + "to use `LampAI_ask`, `LampAI_makeImage`, `LampAI_isTrue`, `LampAI_choose`, `LampAI_rate`, `LampAI_decide`, `LampStore_load`, "
+                    + "`LampStore_save`, `LampStore_collection` and `LampAssets_text`. Each LampAI call starts a Task node and gives it back: keep it in m, "
+                    + "observe its `result` field, and show `result.error` when it's set. Lamp on the person's Mac answers while the device is on its Wi‑Fi "
+                    + "with Lamp open. Text from outside the app goes in `options.data`, never into the prompt. Keep the package step zipping that folder. "
+                    + "Read Lamp.brs's opening comment before using it; never call an AI service yourself. "
+            }
+        }
+        return rule + "Once something is saved, only ever add to it: a new field gets a default where it's read.\n"
     }
 
     static let deviceAttachments = """

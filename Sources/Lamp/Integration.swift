@@ -180,6 +180,9 @@ struct Integration: Codable, Hashable {
             var wrap: String?
             /// The file the app starts at, in a wrapped package: "index.html" unless said.
             var start: String?
+            /// Lamp's building blocks the app takes, by library ("web", "brightscript") to where they go in its folder:
+            /// Lamp's own files there, written afresh before every turn and build (`DeviceSupport`).
+            var support: [String: String]?
         }
     }
 }
@@ -431,7 +434,7 @@ enum IntegrationCheck {
             ])),
             "bridge": .object(["install": .array(action), "launch": .array(action), "look": .array(action),
                                "use": .array(action), "logs": .array(action), "keys": .map]),
-            "app": .object(["lamp": .leaf, "declared": .object(["files": .map, "rules": .leaf, "package": .leaf, "output": .leaf, "wrap": .leaf, "start": .leaf])]),
+            "app": .object(["lamp": .leaf, "declared": .object(["files": .map, "rules": .leaf, "package": .leaf, "output": .leaf, "wrap": .leaf, "start": .leaf, "support": .map])]),
         ])
     }
 
@@ -574,6 +577,15 @@ enum IntegrationCheck {
                     if !declared.output.lowercased().hasSuffix(".zip") { say("app.declared.output must be a .zip of the app's files when Lamp wraps it.") }
                 }
                 if let start = declared.start, !isAppPath(start) { say("app.declared.start must be a plain path inside the package.") }
+                for (library, path) in declared.support ?? [:] {
+                    if DeviceSupport.Library(rawValue: library) == nil {
+                        say("app.declared.support: \"\(library)\" isn't one of Lamp's libraries: \(DeviceSupport.Library.allCases.map { "\"\($0.rawValue)\"" }.joined(separator: ", ")).")
+                    } else if !isAppPath(path) {
+                        say("app.declared.support: \"\(path)\" must be a plain path inside the app's folder, not in .lamp.")
+                    } else if declared.files.keys.contains(where: { $0 == path || $0.hasPrefix(path + "/") }) {
+                        say("app.declared.support: \"\(path)\" is Lamp's, so the scaffold's files can't be there.")
+                    }
+                }
             }
             if integration.bridge?.install == nil { say("app is set, so bridge.install must say how it goes on the device.") }
         }

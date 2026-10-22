@@ -6,7 +6,7 @@ import WebKit
 /// simulator; the person can use it with the keyboard's arrows, Return and Escape. What the page prints goes to the
 /// app's log.
 @MainActor
-final class TVPreview: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSWindowDelegate {
+final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerWithReply, WKNavigationDelegate, NSWindowDelegate {
     private static var open: [String: TVPreview] = [:]
 
     private let project: LampProject
@@ -54,6 +54,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKNavigationDelegate, N
                           backing: .buffered, defer: false)
         super.init()
         controller.add(self, name: "lampConsole")
+        controller.addScriptMessageHandler(self, contentWorld: .page, name: "lampGateway")
         webView.navigationDelegate = self
         window.title = "\(project.name) on TV"
         window.contentView = webView
@@ -78,6 +79,10 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKNavigationDelegate, N
         try? log?.close()
         log = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)
         let index = staged.appendingPathComponent("index.html")
+        // WebKit keeps the scripts and styles a page loaded and serves them again for the same file's address, so an
+        // opening after a change would run the app's code as it first was. Its saved data stays: only the caches go.
+        await webView.configuration.websiteDataStore.removeData(ofTypes: [WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeDiskCache],
+                                                                modifiedSince: .distantPast)
         await withCheckedContinuation { continuation in
             loaded = continuation
             webView.loadFileURL(index, allowingReadAccessTo: staged)
@@ -113,6 +118,31 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKNavigationDelegate, N
     }
 
     private func write(_ line: String) { log?.write(Data((line + "\n").utf8)) }
+
+    /// LampAI in the preview (`DeviceSupport.webJS`): its calls are answered by Lamp in this process, as the app, with
+    /// no token for the page to hold and no network between them. Only the AI routes an app uses.
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage,
+                               replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
+        // Only the app's own page, from its staged copy: never a frame inside it or a page it went on to, which could be
+        // anyone's and would use AI as the app.
+        let staged = TVs.stagingFolder(for: project).appendingPathComponent("web").standardizedFileURL.path + "/"
+        guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url, page.isFileURL,
+              page.standardizedFileURL.path.hasPrefix(staged),
+              let call = message.body as? [String: Any], let path = call["path"] as? String,
+              ["/ai", "/ai/status", "/ai/image", "/ai/decide"].contains(path),
+              let current = Store.shared.projects.first(where: { $0.id == project.id }) else {
+            replyHandler(["status": 404, "body": #"{"error":"Not found"}"#], nil)
+            return
+        }
+        let request = Gateway.Request(method: "POST", path: path,
+                                      headers: ["authorization": "Bearer " + Template.token(for: current), "host": "127.0.0.1:\(Gateway.port)"],
+                                      body: Data((call["body"] as? String ?? "{}").utf8))
+        Task { @MainActor in
+            let (status, json) = await Store.shared.handleAI(request)
+            let body = (try? JSONSerialization.data(withJSONObject: json)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            replyHandler(["status": status, "body": body], nil)
+        }
+    }
 
     private static let consoleScript = """
         (function () {

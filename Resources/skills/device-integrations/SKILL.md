@@ -193,6 +193,12 @@ never anything to download; `output` is where it leaves it, which `"@{package}"`
 
 The package step runs in the app's sandbox like every build.
 
+`"support"` gives the app Lamp's building blocks (AI through the person's Mac, saved data, the package's own files),
+by library to where they go in the app's folder: `"web": "Web/lamp.js"` for an app that's a web page (a script its
+`index.html` loads before the app's own), `"brightscript": "components/Lamp"` for a Roku channel (a folder its
+components include). Lamp writes them before every build, so keep them out of `files`, and make sure the package step
+takes them into the package. Lamp tells the app where it is and gives it its token on the device itself.
+
 `"wrap": "msix"` is for a device that takes Windows app packages (an Xbox in Developer Mode, through its Device
 Portal): the package step leaves a `.zip` of the app's files, and Lamp makes the package itself, writing its manifest
 (started at `start`, `index.html` unless said), its logos from the app's icon, and its signature with a certificate of

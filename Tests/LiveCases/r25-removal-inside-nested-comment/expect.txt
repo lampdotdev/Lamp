@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (ContentView changed what it holds (no longer ContentView.__removed: LazyState<String>); ContentView lost a field beside a comment Lamp can't read its way around, so it can't put it back in its place)
+== run
+before: count=7 removed=x
+RELOAD 1: REOPEN ContentView changed what it holds (no longer ContentView.__removed: LazyState<String>); ContentView lost a field beside a comment Lamp can't read its way around, so it can't put it back in its place
+after1 (want a plain reason: the field after it has a nested comment holding a modifier on its line): 
+before: count=7
+RELOAD 1: in the restart
+after1 (want a plain reason: the field after it has a nested comment holding a modifier on its line): 
