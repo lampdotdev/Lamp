@@ -3,7 +3,7 @@ import SwiftUI
 import AppKit
 @main struct Main { static func main() { MainActor.assumeIsolated {
     setvbuf(stdout, nil, _IONBF, 0)
-    UserDefaults.standard.removeObject(forKey: "r19-hide-done")
+    UserDefaults.standard.removeObject(forKey: "r19-view-gains-environment-hide")
     NSApplication.shared.setActivationPolicy(.prohibited)
     let host = NSHostingView(rootView: ContentView())
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [.borderless], backing: .buffered, defer: false)
@@ -13,6 +13,6 @@ import AppKit
     print("before:", Log.take())
     reload(1)
     settle()
-    print("after1 (want it in: @Environment(\\.openURL) added to an existing view for a new button):", Log.take())
+    print("after1 (want a plain reason: @Environment(\\.openURL) added to an existing view, which SwiftUI fills in only where the view stored it at launch):", Log.take())
     _ = window
 }}}

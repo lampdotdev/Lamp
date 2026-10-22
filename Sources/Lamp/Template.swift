@@ -3920,7 +3920,7 @@ enum Template {
     /// A view's spare state (LiveSlots): `@State` added to a view while the app is open is kept here by name, so the
     /// view holds what it did. A starting value is worked out on the first read and kept without redrawing anything;
     /// a change redraws the views that read any of it.
-    @Observable final class LampStateBox {
+    @Observable final class LampStateBox: @unchecked Sendable {
         @ObservationIgnored private var values: [String: Any] = [:]
         private var changes = 0
         func get<T>(_ name: String, _ initial: () -> T) -> T {
@@ -3937,6 +3937,52 @@ enum Template {
         func set<T>(_ name: String, _ value: T) {
             values[name] = value
             changes += 1
+        }
+
+        /// A view's `@AppStorage` added while the app is open: read from and written to the defaults as AppStorage
+        /// does, and the views that read it drawn again when it changes, whether here or anywhere else in the app.
+        @ObservationIgnored private var seen: [String: NSObject] = [:]
+        @ObservationIgnored private var observer: NSObjectProtocol?
+        private var stored = 0
+        private func watch(_ key: String) {
+            _ = stored
+            if observer == nil {
+                observer = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: UserDefaults.standard,
+                                                                  queue: .main) { [weak self] _ in self?.recheck() }
+            }
+            if seen.index(forKey: key) == nil { seen[key] = UserDefaults.standard.object(forKey: key) as? NSObject ?? NSNull() }
+        }
+        private func recheck() {
+            var changed = false
+            for (key, before) in seen {
+                let now = UserDefaults.standard.object(forKey: key) as? NSObject ?? NSNull()
+                if !now.isEqual(before) { seen[key] = now; changed = true }
+            }
+            if changed { stored += 1 }
+        }
+        deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+        func defaults<T>(_ key: String, _ initial: T) -> T {
+            watch(key)
+            return UserDefaults.standard.object(forKey: key) as? T ?? initial
+        }
+        func defaults<T: RawRepresentable>(_ key: String, _ initial: T) -> T {
+            watch(key)
+            return (UserDefaults.standard.object(forKey: key) as? T.RawValue).flatMap(T.init(rawValue:)) ?? initial
+        }
+        func defaults(_ key: String, _ initial: URL) -> URL { watch(key); return UserDefaults.standard.url(forKey: key) ?? initial }
+        func defaults(_ key: String, _ initial: URL?) -> URL? { watch(key); return UserDefaults.standard.url(forKey: key) ?? initial }
+        func setDefaults<T>(_ key: String, _ value: T) { UserDefaults.standard.set(Self.unwrapped(value), forKey: key); defaultsSet(key) }
+        func setDefaults<T: RawRepresentable>(_ key: String, _ value: T) { UserDefaults.standard.set(value.rawValue, forKey: key); defaultsSet(key) }
+        func setDefaults(_ key: String, _ value: URL?) { UserDefaults.standard.set(value, forKey: key); defaultsSet(key) }
+        private func defaultsSet(_ key: String) {
+            seen[key] = UserDefaults.standard.object(forKey: key) as? NSObject ?? NSNull()
+            stored += 1
+        }
+        /// An optional's value, or nil, which the defaults take as taking the key away (an optional boxed as Any isn't nil).
+        private static func unwrapped(_ value: Any) -> Any? {
+            let mirror = Mirror(reflecting: value)
+            guard mirror.displayStyle == .optional else { return value }
+            return mirror.children.first.flatMap { unwrapped($0.value) }
         }
     }
 
@@ -16596,7 +16642,8 @@ enum Template {
         return $whole if $header =~ /\@propertyWrapper|\@frozen|\b(?:App|Scene|Commands|DynamicProperty|AppIntent|\w*Intent|AppEntity|\w*Query|TimelineProvider|TimelineEntry|Widget\w*)\b/;
         if ($header =~ /\bView\b/) {
             return $whole if $equatable{$name} || $header =~ /\b(?:Equatable|Hashable)\b/;
-            return "${whole}${pad}\@State private var __lampState_${name} = LampStateBox();";
+            # Its state's box, and a place for new parameters, private so the initializer Swift makes is the same.
+            return "${whole}${pad}\@State private var __lampState_${name} = LampStateBox();${pad}private var __lampSpare_${name} = LampSpare(nil);";
         }
         return $whole if $raw || $nospare{$name} || $header =~ /\b(?:OptionSet|RawRepresentable|BitwiseCopyable)\b/;
         my $mirrored = !$noMirror && !$reflects{$name} && $header !~ /\bCustomReflectable\b|~\s*(?:Copyable|Escapable)/ ? conform($whole, $name) : undef;

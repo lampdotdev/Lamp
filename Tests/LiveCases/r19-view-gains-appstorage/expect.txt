@@ -1,8 +1,6 @@
-VERDICT 1: REOPEN (ListView changed what it holds (ListView._hideDone: AppStorage<Bool>); ListView.hideDone is @AppStorage, and a view's spare keeps only @State)
+VERDICT 1: RELOAD (Added ListView.hideDone)
 == run
 before: list, row Milk
-RELOAD 1: REOPEN ListView changed what it holds (ListView._hideDone: AppStorage<Bool>); ListView.hideDone is @AppStorage, and a view's spare keeps only @State
-after1 (want it in: a setting added to an existing view with @AppStorage, as agents add settings): 
-before: list hideDone=false, row Milk
-RELOAD 1: in the restart
-after1 (want it in: a setting added to an existing view with @AppStorage, as agents add settings): 
+RELOAD 1 (whole): ok
+after1 (want it in: a setting added to an existing view with @AppStorage, as agents add settings): list hideDone=false, row Milk
+after1, set elsewhere (want hideDone=true: the view hears the defaults change): list hideDone=true
