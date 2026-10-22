@@ -748,6 +748,9 @@ enum DeviceSupport {
       // Opened by Lamp's install, the app asks for its token now, while Lamp is waiting for it, not at its first call.
       if (installed && !bridge) token().then(null, function () {});
 
+      // Lamp's own route for a TV app's phone controllers (Lamp.controllers), the way LampAI's calls go.
+      Object.defineProperty(LampAI, '_post', { value: post });
+
       window.LampAI = LampAI;
       window.LampQuestion = LampQuestion;
       window.LampStore = LampStore;

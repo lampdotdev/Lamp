@@ -8182,7 +8182,7 @@ final class Store: ObservableObject {
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim", "/app/controller"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -8249,8 +8249,22 @@ final class Store: ObservableObject {
         if route == "/ai/status" { return await aiStatus(for: project) }
         if route == "/app/secrets" { return appSecrets(request, for: project) }
         if route == "/app/share" { return await appShare(request, for: project) }
+        if route == "/app/controller" { return await controllerSession(for: project) }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
+    }
+
+    /// A TV app on a TV opening a game for phone controllers (`Lamp.controllers` in lamp.js): Lamp opens the session
+    /// at the relay with the app's phone page and hands the TV the relay's own host credential for it, never anything
+    /// of Lamp's. The preview joins through Lamp instead (`TVPreview`).
+    private func controllerSession(for project: LampProject) async -> (Int, [String: Any]) {
+        guard project.platform == .tv else { return (403, ["error": "Only TV apps take phone controllers."]) }
+        do {
+            let session = try await ControllerRelay.shared.open(for: project)
+            return (200, ["session": session.session, "host": session.host, "socket": session.socket])
+        } catch {
+            return (503, ["error": error.localizedDescription])
+        }
     }
 
     /// File ▸ Share… in a Mac app (`LampShareApp`): the app as a file to open with Lamp, the same one Lamp's own Share…

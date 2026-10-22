@@ -54,6 +54,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
                           backing: .buffered, defer: false)
         super.init()
         controller.add(self, name: "lampConsole")
+        controller.add(self, name: "lampController")
         controller.addScriptMessageHandler(self, contentWorld: .page, name: "lampGateway")
         webView.navigationDelegate = self
         window.title = "\(project.name) on TV"
@@ -68,6 +69,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     func windowDidResize(_ notification: Notification) { webView.pageZoom = webView.bounds.width / 1920 }
 
     func windowWillClose(_ notification: Notification) {
+        ControllerRelay.shared.disconnectPreview(project)
         // Closing the window doesn't end the page: WebKit runs it, its sound and timers included, for as long as the web
         // view lives, and the web view's script handlers hold on to this preview, which holds the web view. So the app's
         // page is swapped for an empty one and the handlers let go, and the web view goes with the window.
@@ -128,11 +130,48 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "lampController" { return controller(message) }
         guard let text = message.body as? String else { return }
         write(String(text.prefix(4000)))
     }
 
     private func write(_ line: String) { log?.write(Data((line + "\n").utf8)) }
+
+    /// Phones as controllers in the preview (`Lamp.controllers` in lamp.js): Lamp joins the relay for the page and
+    /// passes what comes to it, since the page is a file on this Mac. Only the app's own page, as for its AI.
+    private func controller(_ message: WKScriptMessage) {
+        guard isOwnPage(message), let call = message.body as? [String: Any], let op = call["op"] as? String else { return }
+        switch op {
+        case "start":
+            Task { @MainActor in
+                do {
+                    try await ControllerRelay.shared.connectPreview(project) { [weak self] text in self?.deliverController(text) }
+                } catch {
+                    let failure = ["t": "error", "message": error.localizedDescription]
+                    deliverController(String(decoding: (try? JSONSerialization.data(withJSONObject: failure)) ?? Data("{}".utf8), as: UTF8.self))
+                }
+            }
+        case "send":
+            if let relayed = call["message"] as? [String: Any] { ControllerRelay.shared.sendFromPreview(project, relayed) }
+        case "stop":
+            ControllerRelay.shared.disconnectPreview(project)
+        default:
+            break
+        }
+    }
+
+    private func deliverController(_ json: String) {
+        guard Self.open[project.id] === self, (try? JSONSerialization.jsonObject(with: Data(json.utf8))) is [String: Any] else { return }
+        webView.evaluateJavaScript("window.__lampControllers && window.__lampControllers(\(json));", completionHandler: nil)
+    }
+
+    /// Whether a message came from the app's own page, from its staged copy: never a frame inside it or a page it went
+    /// on to, which could be anyone's.
+    private func isOwnPage(_ message: WKScriptMessage) -> Bool {
+        let staged = TVs.stagingFolder(for: project).appendingPathComponent("web").standardizedFileURL.path + "/"
+        guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url, page.isFileURL else { return false }
+        return page.standardizedFileURL.path.hasPrefix(staged)
+    }
 
     /// LampAI in the preview (`DeviceSupport.webJS`): its calls are answered by Lamp in this process, as the app, with
     /// no token for the page to hold and no network between them. Only the AI routes an app uses.
