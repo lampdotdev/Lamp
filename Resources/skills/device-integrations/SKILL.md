@@ -54,7 +54,10 @@ Where each field of the device's record is read from its own answers. `os` is sa
 ```
 
 A read has `json` (a dotted path: `device.modelName`, `items.0.id`) or `xml` (an element, or `parent/child`). Reads are
-GETs.
+GETs. In place of `http`, `"description": true` reads the device's UPnP description wherever its SSDP answer points now
+(with `xml`), for a device whose description moves with its mode, as an Xbox's does. `contains` on a read says what the
+value must hold for the device to be this kind (`"contains": "Xbox"` on the model), when other devices answer the same
+search.
 
 ### Requests
 
@@ -70,6 +73,9 @@ Every request goes to the address the device was found at; you give only the por
 trusts that certificate the first time and holds the device to it after. `method` (GET, POST, PUT, DELETE), `headers`, `body` or `form` (a value `"@{package}"` sends the package file), `auth`
 (`digest` true or false for basic; the password is always one `{field:…}`), and `keep`: `"picture"` in `bridge.look`
 for the answer that is the screen's picture, `"key"` in a step's `run` for an SSH key the device gives this Mac.
+`poll` (seconds) asks again every two seconds while the device answers 204 (still working on an install), and `expect`
+(`json` or `xml`, with `equals` or `contains`) is what the answer must say for the step to count, else it fails with the
+device's words. A form value `"@{certificate}"` sends Lamp's certificate for a wrapped package (below).
 
 ### Values Lamp fills
 
@@ -82,6 +88,10 @@ Write `{name}`; Lamp fills it, checked to a safe alphabet. You never write a val
 - `{field:<key>}` what the person typed in a step's field: only in a sign-in, a form, a header or a body, never in a path
   or command
 - `{read:<step>}` the value a step's check read
+- `{cookie:<name>}` a cookie the device set earlier in the same sequence, only in a header (a CSRF token: a GET first,
+  then `"X-CSRF-Token": "{cookie:CSRF-Token}"` on the POST)
+- `{packageFullName}` and `{appUserModelID}` a wrapped Windows package's names, and `{base64:<one of Lamp's values>}`
+  any of Lamp's values in base64, as some devices take an id in a query
 
 ### steps
 
@@ -182,6 +192,12 @@ never anything to download; `output` is where it leaves it, which `"@{package}"`
 ```
 
 The package step runs in the app's sandbox like every build.
+
+`"wrap": "msix"` is for a device that takes Windows app packages (an Xbox in Developer Mode, through its Device
+Portal): the package step leaves a `.zip` of the app's files, and Lamp makes the package itself, writing its manifest
+(started at `start`, `index.html` unless said), its logos from the app's icon, and its signature with a certificate of
+Lamp's. Install it with the package and `"@{certificate}"` in one form, and launch it by `{base64:appUserModelID}` and
+`{base64:packageFullName}`. Never write a manifest or sign anything in the package step.
 
 ## Checking it before you send
 

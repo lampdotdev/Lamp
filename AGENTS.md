@@ -704,6 +704,21 @@ art, kinds, connectors, `write_wish`), leaving the integration, skills, notes an
 `device_integration` keeps an integration it looks for the device at once, puts each found one's next step in that
 chat, and moves the conversation to the device's new id, so the setup window's Ask About Setup… leads back to it. Each kind of card has its gallery entries ("Device setup").
 
+**Windows packages.** A declared app kind may say `wrap: "msix"`: the package step leaves a zip of the app's files and
+Lamp makes the package itself (`MSIX`, MSIX.swift), with nothing outside Lamp: the zip read as plain files only (no
+link, nothing above its top), a manifest Lamp writes (the identity is Lamp's: `Lamp.<folder>`, publisher `CN=Lamp`, a
+version from the time so each build replaces the last), logos drawn from the app's icon, the block map and content
+types, laid out as Zip64 with every file stored and the signature the one plain deflated record (Windows opens nothing
+else), and an Authenticode signature (the APPX digest blob in an SpcIndirectDataContent) with a key and self-made
+certificate kept in Lamp's folder (`MSIX.Signer`), which the device installs beside the package (`{certificate}`). The
+bridge launches it by its names (`{packageFullName}`, `{appUserModelID}`, and `{base64:…}` of either). For Xbox's Device
+Portal a request also carries cookies the device set earlier in its sequence (`{cookie:CSRF-Token}`), polls an install
+that answers 204 until it's done (`poll`) and fails with the device's words unless the answer says what `expect` asks.
+Lamp ships the Xbox's integration (`Resources/Devices/xbox-one.json`): Developer Mode, Device Portal's password, and a
+controller-driven web app (`navigator.gamepadInputEmulation = "keyboard"`, arrow focus) wrapped as MSIX. Its identity is
+read from wherever the console's SSDP answer points (`Read.description`), since that moves between retail and
+Developer Mode, and `contains: "Xbox"` keeps a Windows PC sharing media out.
+
 ## TV apps
 
 An app can be made for TVs (`Platform.tv`, chosen when a wish names a TV, the Frame or the living room, or by

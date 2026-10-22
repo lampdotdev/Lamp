@@ -57,10 +57,17 @@ struct Integration: Codable, Hashable {
 
     /// A value read from one of the device's answers: a request and a path into it.
     struct Read: Codable, Hashable {
-        var http: Request
+        /// A request to the device; or, with `description`, the description its SSDP answer points at.
+        var http: Request?
+        /// The device's own UPnP description, wherever its SSDP answer says it is now: a description's address can
+        /// change with the device's mode (an Xbox's does), which a fixed path would lose.
+        var description: Bool?
         /// A JSON path ("device.modelName", "items.0.id") or an XML element ("model-name", "device-info/model-name").
         var json: String?
         var xml: String?
+        /// What the value must hold for the device to be this one ("Xbox"): a search answered by other devices too
+        /// (a Windows PC sharing media) doesn't make them this kind.
+        var contains: String?
     }
 
     // MARK: Setting it up
@@ -167,6 +174,12 @@ struct Integration: Codable, Hashable {
             var package: String
             /// Where the package step leaves the package, in the app's folder: what `{package}` names.
             var output: String
+            /// A package Lamp makes of the package step's output: "msix", a Windows app package Lamp writes the manifest
+            /// for and signs itself (`MSIX`), from a zip of the app's files. `{certificate}`, `{packageFullName}` and
+            /// `{appUserModelID}` are then Lamp's values.
+            var wrap: String?
+            /// The file the app starts at, in a wrapped package: "index.html" unless said.
+            var start: String?
         }
     }
 }
@@ -221,7 +234,8 @@ struct Request: Codable, Hashable {
     var path: String
     var headers: [String: String]?
     var body: String?
-    /// A form, sent as multipart; a value "@{package}" is the package's file.
+    /// A form, sent as multipart; a value "@{package}" is the package's file, "@{certificate}" Lamp's certificate for
+    /// a wrapped package.
     var form: [String: String]?
     var auth: Auth?
     /// Over HTTPS, to a device that serves its own certificate (Xbox's Device Portal): Lamp trusts the certificate the
@@ -230,6 +244,18 @@ struct Request: Codable, Hashable {
     /// "picture": the answer is the screen's picture (in a bridge's `look`). "key": the answer is a key the device
     /// gives this Mac to sign in to it over SSH, kept in Lamp's folder (in a setup step's `run`).
     var keep: String?
+    /// Asks again every two seconds, up to this many seconds, while the device answers 204 (still working): for a
+    /// device that takes an install and says later how it went.
+    var poll: Int?
+    /// What the answer must say for the step to count as done; otherwise the step fails with the answer's words.
+    var expect: Expect?
+
+    struct Expect: Codable, Hashable {
+        var json: String?
+        var xml: String?
+        var equals: String?
+        var contains: String?
+    }
 
     struct Auth: Codable, Hashable {
         var digest: Bool?
@@ -246,7 +272,8 @@ struct Request: Codable, Hashable {
 /// request or command does: a sign-in, a form's value, a header, a body.
 enum Placeholders {
     /// Lamp's own names. `field:<key>` and `read:<step>` are the others.
-    static let lamp: Set<String> = ["address", "mac", "package", "appID", "key", "text", "callback", "signIn", "deviceID", "sshKey"]
+    static let lamp: Set<String> = ["address", "mac", "package", "appID", "key", "text", "callback", "signIn", "deviceID", "sshKey",
+                                    "packageFullName", "appUserModelID"]
 
     /// Where a placeholder sits, which decides what may go there and how it's written.
     enum Place { case path, command, header, body, auth, form, shown, argument }
@@ -287,6 +314,15 @@ enum Placeholders {
             }
         }
         if name.hasPrefix("read:") { return nil }
+        // A cookie the device set earlier in the same sequence (a CSRF token), sent back only as a header.
+        if name.hasPrefix("cookie:") {
+            return place == .header ? nil : "{\(name)} goes only in a header: it's a cookie the device set, sent back to it"
+        }
+        // One of Lamp's values in base64, as some devices take an id in a query.
+        if name.hasPrefix("base64:") {
+            let inner = String(name.dropFirst("base64:".count))
+            return lamp.contains(inner) ? nil : "{\(name)} must be base64 of one of Lamp's values, such as {base64:packageFullName}"
+        }
         guard lamp.contains(name) else {
             return "{\(name)} isn't a value Lamp fills (they are \(lamp.sorted().map { "{\($0)}" }.joined(separator: ", ")), {field:<key>} and {read:<step>})"
         }
@@ -307,13 +343,14 @@ enum Placeholders {
         var out = ""
         for piece in pieces(template) {
             guard let name = piece.name else { out += piece.text; continue }
-            guard let value = values[name] else { throw Unsafe(name: name) }
+            let found = name.hasPrefix("base64:") ? values[String(name.dropFirst("base64:".count))].map { Data($0.utf8).base64EncodedString() } : values[name]
+            guard let value = found else { throw Unsafe(name: name) }
             // What the person typed, a sign-in and Lamp's public key (which has spaces) aren't held to the alphabet.
             let secret = name.hasPrefix("field:") || name == "signIn" || name == "sshKey"
             if !secret, value.unicodeScalars.contains(where: { !safe.contains($0) }) || value.count > 512 { throw Unsafe(name: name) }
             switch place {
             case .command: out += "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
-            case .path: out += value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "?#"))) ?? ""
+            case .path: out += value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "?#+&="))) ?? ""
             default: out += value
             }
         }
@@ -368,14 +405,15 @@ enum IntegrationCheck {
     indirect enum Shape {
         case object([String: Shape]), array(Shape), map, leaf
         static let request: Shape = .object(["method": .leaf, "https": .leaf, "port": .leaf, "path": .leaf, "headers": .map, "body": .leaf, "form": .map,
-                                             "auth": .object(["digest": .leaf, "user": .leaf, "password": .leaf]), "keep": .leaf])
+                                             "auth": .object(["digest": .leaf, "user": .leaf, "password": .leaf]), "keep": .leaf,
+                                             "poll": .leaf, "expect": .object(["json": .leaf, "xml": .leaf, "equals": .leaf, "contains": .leaf])])
         static let action: Shape = .object([
             "http": request, "probe": .leaf, "stream": .object(["port": .leaf]),
             "ssh": .object(["port": .leaf, "user": .leaf, "command": .leaf, "explanation": .leaf]),
             "tool": .object(["name": .leaf, "download": .leaf, "sha256": .leaf, "arguments": .array(.leaf), "explanation": .leaf]),
             "vendorSignIn": .object(["page": .leaf]), "wait": .leaf, "bridge": .leaf,
         ])
-        static let read: Shape = .object(["http": request, "json": .leaf, "xml": .leaf])
+        static let read: Shape = .object(["http": request, "description": .leaf, "json": .leaf, "xml": .leaf, "contains": .leaf])
         static let integration: Shape = .object([
             "id": .leaf, "name": .leaf, "maker": .leaf, "kind": .leaf, "sources": .array(.leaf),
             "find": .array(.object(["ssdp": .leaf, "bonjour": .leaf, "contains": .leaf,
@@ -392,7 +430,7 @@ enum IntegrationCheck {
             ])),
             "bridge": .object(["install": .array(action), "launch": .array(action), "look": .array(action),
                                "use": .array(action), "logs": .array(action), "keys": .map]),
-            "app": .object(["lamp": .leaf, "declared": .object(["files": .map, "rules": .leaf, "package": .leaf, "output": .leaf])]),
+            "app": .object(["lamp": .leaf, "declared": .object(["files": .map, "rules": .leaf, "package": .leaf, "output": .leaf, "wrap": .leaf, "start": .leaf])]),
         ])
     }
 
@@ -444,8 +482,15 @@ enum IntegrationCheck {
         for (name, read) in [("id", identity.id), ("model", identity.model)] + [("name", identity.name), ("modelID", identity.modelID), ("osVersion", identity.osVersion)].compactMap({ pair in pair.1.map { (pair.0, $0) } }) {
             let at = "identity.\(name)"
             if (read.json == nil) == (read.xml == nil) { say("\(at) must read the value with exactly one of json or xml.") }
-            problems += requestProblems(read.http, at: "\(at).http", fields: [], steps: [])
-            if read.http.method.map({ $0.uppercased() != "GET" }) ?? false { say("\(at).http must be a GET: reading who a device is changes nothing on it.") }
+            if (read.http == nil) == (read.description != true) { say("\(at) must read from exactly one of http or description.") }
+            if read.description == true, read.xml == nil { say("\(at).description is XML: read it with xml.") }
+            if read.description == true, !integration.find.contains(where: { $0.ssdp != nil }) {
+                say("\(at).description is the one an SSDP answer points at, so find needs an ssdp entry.")
+            }
+            if let http = read.http {
+                problems += requestProblems(http, at: "\(at).http", fields: [], steps: [])
+                if http.method.map({ $0.uppercased() != "GET" }) ?? false { say("\(at).http must be a GET: reading who a device is changes nothing on it.") }
+            }
         }
 
         // Steps
@@ -523,6 +568,11 @@ enum IntegrationCheck {
                 }
                 if declared.package.trimmed.isEmpty { say("app.declared.package is empty: the command that makes the package.") }
                 if declared.rules.trimmed.isEmpty { say("app.declared.rules is empty: what the builder needs to know to write for it.") }
+                if let wrap = declared.wrap {
+                    if wrap != "msix" { say("app.declared.wrap must be one Lamp makes: \"msix\".") }
+                    if !declared.output.lowercased().hasSuffix(".zip") { say("app.declared.output must be a .zip of the app's files when Lamp wraps it.") }
+                }
+                if let start = declared.start, !isAppPath(start) { say("app.declared.start must be a plain path inside the package.") }
             }
             if integration.bridge?.install == nil { say("app is set, so bridge.install must say how it goes on the device.") }
         }
@@ -626,7 +676,9 @@ enum IntegrationCheck {
         }
         if let body = request.body { problems += placeholderProblems(body, at: "\(at).body", place: .body, fields: fields, steps: steps) }
         for (name, value) in request.form ?? [:] {
-            if value.hasPrefix("@"), value != "@{package}" { problems.append("\(at).form.\(name): the only file a form sends is \"@{package}\".") }
+            if value.hasPrefix("@"), value != "@{package}", value != "@{certificate}" {
+                problems.append("\(at).form.\(name): the only files a form sends are \"@{package}\" and, for a wrapped package, \"@{certificate}\".")
+            }
             if !value.hasPrefix("@") { problems += placeholderProblems(value, at: "\(at).form.\(name)", place: .form, fields: fields, steps: steps) }
         }
         if let auth = request.auth {
@@ -639,6 +691,11 @@ enum IntegrationCheck {
             }
         }
         if let keep = request.keep, keep != "picture", keep != "key" { problems.append("\(at).keep can only be \"picture\" or \"key\".") }
+        if let poll = request.poll, !(2...600).contains(poll) { problems.append("\(at).poll is seconds, 2 to 600.") }
+        if let expect = request.expect {
+            if (expect.json == nil) == (expect.xml == nil) { problems.append("\(at).expect reads the answer with exactly one of json or xml.") }
+            if (expect.equals == nil) == (expect.contains == nil) { problems.append("\(at).expect needs exactly one of equals or contains.") }
+        }
         return problems
     }
 

@@ -55,6 +55,8 @@ enum DeviceHTTP {
     struct Answer {
         let status: Int
         let body: Data
+        /// The cookies the device set (a CSRF token), by name, for `{cookie:<name>}` later in the same sequence.
+        var cookies: [String: String] = [:]
         var ok: Bool { (200..<300).contains(status) }
         var text: String { String(decoding: body, as: UTF8.self) }
     }
@@ -91,14 +93,19 @@ enum DeviceHTTP {
             urlRequest.setValue(try Placeholders.fill(value, values, in: .header), forHTTPHeaderField: name)
         }
         if let body = request.body { urlRequest.httpBody = Data(try Placeholders.fill(body, values, in: .body).utf8) }
+        // Some devices refuse a POST that says nothing of its length (Device Portal answers 411), so an empty one says 0.
+        if request.body == nil, request.form == nil, ["POST", "PUT"].contains(urlRequest.httpMethod ?? "") { urlRequest.httpBody = Data() }
         if let form = request.form {
             let boundary = "lamp-" + UUID().uuidString
             var data = Data()
             for (name, value) in form.sorted(by: { $0.key < $1.key }) {
                 data.append(Data("--\(boundary)\r\n".utf8))
-                if value == "@{package}" {
-                    guard let file = files["package"], let contents = try? Data(contentsOf: file) else { throw Failure(message: "There's no package to send yet.") }
-                    data.append(Data("Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(file.lastPathComponent)\"\r\nContent-Type: application/octet-stream\r\n\r\n".utf8))
+                if value == "@{package}" || value == "@{certificate}" {
+                    let key = String(value.dropFirst(2).dropLast())
+                    guard let file = files[key], let contents = try? Data(contentsOf: file) else { throw Failure(message: "There's no \(key) to send yet.") }
+                    // A field named like a file ("app.msix") is sent under that name: some devices go by the file's name.
+                    let filename = name.contains(".") ? name : file.lastPathComponent
+                    data.append(Data("Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(filename)\"\r\nContent-Type: application/octet-stream\r\n\r\n".utf8))
                     data.append(contents)
                 } else {
                     data.append(Data("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".utf8))
@@ -129,7 +136,12 @@ enum DeviceHTTP {
             body.append(byte)
             if body.count > limit { throw Failure(message: "The device's answer was bigger than Lamp takes.") }
         }
-        return Answer(status: (response as? HTTPURLResponse)?.statusCode ?? 0, body: body)
+        var cookies: [String: String] = [:]
+        if let http = response as? HTTPURLResponse, let url = http.url {
+            let fields = http.allHeaderFields.reduce(into: [String: String]()) { if let k = $1.key as? String, let v = $1.value as? String { $0[k] = v } }
+            for cookie in HTTPCookie.cookies(withResponseHeaderFields: fields, for: url) { cookies[cookie.name] = cookie.value }
+        }
+        return Answer(status: (response as? HTTPURLResponse)?.statusCode ?? 0, body: body, cookies: cookies)
     }
 
     /// Whether a request carries what the person typed or a sign-in, which goes only where Lamp knows the device.
