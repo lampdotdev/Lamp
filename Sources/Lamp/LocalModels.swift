@@ -10,6 +10,8 @@ struct LocalModelSpec: Identifiable, Hashable {
     let sizeGB: Double
     let minRAMGB: Int
     let blurb: String
+    /// Tokens the model is given; most get Lamp's usual size, one made for long work more.
+    var contextSize: Int = LocalModels.contextSize
 }
 
 /// A model on disk that Lamp can run.
@@ -71,7 +73,10 @@ final class LocalModels: ObservableObject {
                        blurb: "Best local option. Fast for its size, and can see screenshots."),
         LocalModelSpec(id: "flint", name: "Recursive Flint", repo: "RecursiveSI/flint-int4-gguf",
                        files: ["flint-int4-q4_1.gguf"], sizeGB: 26.0, minRAMGB: 48,
-                       blurb: "Very fast and made for coding, but can't see screenshots."),
+                       blurb: "Very fast and made for coding, but can't see screenshots.",
+                       // Its own card runs it at 262K; at 128K its cache is about 3.4 GB, since all but 13 of its
+                       // layers look back only 513 tokens. Lamp's prompt alone is over 20K, so 32K ran out in a few turns.
+                       contextSize: 131_072),
         LocalModelSpec(id: "qwen3.8-27b", name: "Qwen3.8 27B", repo: "unsloth/Qwen3.8-27B-GGUF",
                        files: ["Qwen3.8-27B-UD-Q4_K_M.gguf", "mmproj-F16.gguf"], sizeGB: 17.4, minRAMGB: 32,
                        blurb: "Strong and careful, but slower. Can see screenshots."),
@@ -202,6 +207,16 @@ final class LocalModels: ObservableObject {
         writePiModels()
     }
 
+    /// The context a model on disk is run with: its catalog entry's, else Lamp's usual size.
+    func contextSize(of model: InstalledModel) -> Int {
+        Self.catalog.first { spec in model.repo == spec.repo && model.files.contains { $0.lastPathComponent == spec.files[0] } }?
+            .contextSize ?? Self.contextSize
+    }
+
+    /// The router's presets: the context for each model. A size given to llama-server itself would win over
+    /// these, so it's only set here.
+    nonisolated static let presetsFile = Edition.supportFolder.appendingPathComponent("models.ini")
+
     /// llama-server's models folder: one subfolder per GGUF model, symlinking the real files.
     private func rebuildRouter() {
         let fm = FileManager.default
@@ -215,6 +230,11 @@ final class LocalModels: ObservableObject {
                                            withDestinationURL: file.resolvingSymlinksInPath())
             }
         }
+        var presets = "version = 1\n\n[*]\nc = \(Self.contextSize)\n"
+        for model in installed where model.format == .gguf && contextSize(of: model) != Self.contextSize {
+            presets += "\n[\(model.id)]\nc = \(contextSize(of: model))\n"
+        }
+        try? presets.write(to: Self.presetsFile, atomically: true, encoding: .utf8)
     }
 
     /// Deletes a GGUF model's files from the Hugging Face cache (blobs only if nothing else uses them).
@@ -414,8 +434,8 @@ final class LocalModels: ObservableObject {
         rebuildRouter()
         let process = Process()
         process.executableURL = binary
-        process.arguments = ["--models-dir", Self.routerDir.path, "--jinja", "--host", "127.0.0.1",
-                             "--port", String(Self.port), "-ngl", "999", "-c", String(Self.contextSize)]
+        process.arguments = ["--models-dir", Self.routerDir.path, "--models-preset", Self.presetsFile.path,
+                             "--jinja", "--host", "127.0.0.1", "--port", String(Self.port), "-ngl", "999"]
         process.standardOutput = logFile("llama-server.log")
         process.standardError = process.standardOutput
         process.standardInput = FileHandle.nullDevice
@@ -491,7 +511,7 @@ final class LocalModels: ObservableObject {
         if !gguf.isEmpty {
             providers[Builder.localProvider] = [
                 "baseUrl": "\(Self.baseURL)/v1", "api": "openai-completions", "apiKey": "local",
-                "models": gguf.map { ["id": $0.id, "contextWindow": Self.contextSize,
+                "models": gguf.map { ["id": $0.id, "contextWindow": contextSize(of: $0),
                                       "input": $0.vision ? ["text", "image"] : ["text"]] as [String: Any] },
             ]
         }
