@@ -183,7 +183,14 @@ struct HUDView: View {
                     .font(.system(size: 54, weight: .black).italic())
                     .foregroundStyle(Color(red: 1, green: 0.8, blue: 0.02))
                 if model.failed {
-                    Text("The map of \(CityConfig.current.name) couldn't be downloaded. Check the internet connection and reopen.").foregroundStyle(.white)
+                    Text(model.noStreets
+                         ? "There are no streets to drive around \(CityConfig.current.name). Pick somewhere else."
+                         : "The map of \(CityConfig.current.name) couldn't be downloaded. Check the internet connection and reopen, or go somewhere else.")
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.center)
+                    Button("Travel Somewhere Else…") { nav.travelOpen = true }
+                        .controlSize(.large)
+                        .padding(.top, 6)
                 } else {
                     ProgressView().controlSize(.large).tint(.white)
                     Text(model.status).foregroundStyle(.white.opacity(0.8))

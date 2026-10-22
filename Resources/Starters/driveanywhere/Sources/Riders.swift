@@ -185,6 +185,7 @@ final class Riders {
     }
 
     private func place(_ i: Int, around p: SIMD2<Float>, from: Float, to: Float) {
+        guard !city.edges.isEmpty else { return }
         for _ in 0..<100 {
             let ei = Int.random(in: 0..<city.edges.count)
             let e = city.edges[ei]

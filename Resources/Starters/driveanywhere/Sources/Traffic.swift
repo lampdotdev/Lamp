@@ -112,6 +112,15 @@ final class Traffic {
     /// Cars waiting at each stop-sign crossing, first come first served, and until when the last one let through
     /// has the crossing to itself.
     private var stopQueue: [Int: [Int]] = [:]
+
+    /// Takes a driver out of traffic (the player took the car). The stop-sign queues hold indices into `drivers`,
+    /// so every later driver waiting at one moves down one place with it.
+    func removeDriver(_ d: Int) {
+        drivers.remove(at: d)
+        for (node, queue) in stopQueue {
+            stopQueue[node] = queue.compactMap { $0 == d ? nil : ($0 > d ? $0 - 1 : $0) }
+        }
+    }
     private var crossingUntil: [Int: Float] = [:]
 
     private func endOf(_ d: Driver) -> Int {
@@ -130,6 +139,7 @@ final class Traffic {
 
     /// Puts a driver somewhere on the streets between two distances from a point, clear of other cars.
     func place(_ d: Int, around p: SIMD2<Float>, from: Float, to: Float) {
+        guard !city.edges.isEmpty else { return }
         for _ in 0..<120 {
             let ei = Int.random(in: 0..<city.edges.count)
             let e = city.edges[ei]

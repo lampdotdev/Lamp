@@ -5,6 +5,8 @@ import RealityKit
 final class HUDModel: ObservableObject {
     @Published var loaded = false
     @Published var failed = false
+    /// The place's map came, but with no streets to drive (open sea, a park's middle): somewhere else is needed.
+    @Published var noStreets = false
     /// What the loading screen says while the city is got ready.
     @Published var status = "Building downtown \(CityConfig.current.name)…"
     /// Bumped on travelling somewhere: the scene is made anew for the new place.
@@ -150,7 +152,7 @@ final class Game {
         Synth.shared.motor = false; Synth.shared.siren = false; Synth.shared.horn = false; Synth.shared.spray = 0
         readyAt = nil
         hud.street = ""; hud.area = ""; hud.speed = 0
-        hud.loaded = false; hud.failed = false; hud.toast = nil; hud.prompt = nil; hud.business = nil
+        hud.loaded = false; hud.failed = false; hud.noStreets = false; hud.toast = nil; hud.prompt = nil; hud.business = nil
         hud.traffic = []; hud.trains = []; hud.rails = []; hud.businesses = []
         nav.mapOpen = false
         nav.travelOpen = false
@@ -175,6 +177,11 @@ final class Game {
         // The city's downtown: from its cache, or made from the map the first time the city is opened.
         let hud = self.hud
         guard let file = await CityLoader.load(CityConfig.current, status: { text in Task { @MainActor in hud.status = text } }) else {
+            hud.failed = true
+            return
+        }
+        guard !file.edges.isEmpty else {
+            hud.noStreets = true
             hud.failed = true
             return
         }
@@ -831,7 +838,7 @@ final class Game {
         guard let physics, let traffic else { return }
         var car = physics.bodies[j]
         if let d = traffic.drivers.firstIndex(where: { $0.body == j }) {
-            traffic.drivers.remove(at: d)
+            traffic.removeDriver(d)
             // The driver gets out on their side and runs off.
             if let parent = physics.bodies[player].entity.parent {
                 crowd?.addDriver(at: car.pos - car.right * (car.halfWidth + 0.7), heading: car.heading, into: parent)

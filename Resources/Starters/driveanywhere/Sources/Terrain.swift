@@ -16,6 +16,8 @@ final class Terrain: @unchecked Sendable {
     private(set) var count = 0
     /// The lowest point, for the lawn under everything.
     private(set) var lowest: Float = 0
+    /// The place the grid was made for (`CityConfig.slug`): Travel somewhere else makes it again.
+    private var place: String?
 
     /// Height above the centre at a point (x east, y north), smoothly between grid points.
     @inline(__always) func height(_ p: SIMD2<Float>) -> Float {
@@ -100,7 +102,11 @@ final class Terrain: @unchecked Sendable {
 
     /// Fetches (or reads from the cache) the elevation tiles round the city and builds the grid.
     func load(_ city: CityConfig, status: @escaping @Sendable (String) -> Void) async {
-        guard count == 0 else { return }
+        guard count == 0 || place != city.slug else { return }
+        // Flat until the new place's land is in, never the last place's hills.
+        count = 0
+        grid = []
+        lowest = 0
         status("Shaping the land round \(city.name)…")
         let n = Double(1 << Self.zoom)
         func tileXY(lat: Double, lon: Double) -> (Double, Double) {
@@ -158,6 +164,7 @@ final class Terrain: @unchecked Sendable {
         out = Self.smoothed(out, cells, radius: Self.smoothing)
         grid = out
         lowest = out.min() ?? 0
+        place = city.slug
         count = cells
     }
 
