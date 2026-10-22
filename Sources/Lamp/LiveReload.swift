@@ -2179,10 +2179,21 @@ enum LiveReload {
             if let early = library { try? FileManager.default.removeItem(at: early) }
             (library, problem) = await compile(project, changed: changed, keep: keep)
         }
+        // Whether a compiler error's quoted source line passes this view this argument (`Row(title: "a", open: true)`):
+        // the plural and no-argument errors name no argument, so the line they quote is what ties one to a view.
+        func passes(_ problem: String, view: String, label: String) -> Bool {
+            let short = String(view.split(separator: ".").last ?? "")
+            return problem.components(separatedBy: "\n").contains { line in
+                line.range(of: #"\b"# + NSRegularExpression.escapedPattern(for: short) + #"\([^)]*\b"# + NSRegularExpression.escapedPattern(for: label) + #"\s*:"#,
+                           options: .regularExpression) != nil
+            }
+        }
         guard let layout = check.layout, library != nil || changed.isEmpty else {
             // A view's state moved into its box is no parameter of the view's initializer any more, and can't be one: a
             // value given that way is lost, since SwiftUI makes the box after the initializer has run. Said plainly.
-            if let plan, let problem, let (given, slot) = plan.slots.flatMap({ type, slots in slots.filter { $0.value.holder == .view && (problem.contains("extra argument '\($0.key)'") || problem.contains("extra arguments") || problem.contains("argument passed to call that takes no arguments")) }.map { ("\(type).\($0.key)", $0.value) } }).sorted(by: { $0.0 < $1.0 }).first {
+            if let plan, let problem, let (given, slot) = plan.slots.flatMap({ type, slots in slots.filter { $0.value.holder == .view && (problem.contains("extra argument '\($0.key)'")
+                || (problem.contains("extra arguments") || problem.contains("argument passed to call that takes no arguments"))
+                    && passes(problem, view: bare(type), label: $0.key)) }.map { ("\(type).\($0.key)", $0.value) } }).sorted(by: { $0.0 < $1.0 }).first {
                 if slot.wrapper == nil {
                     return .reopen(why: "\(given) is given to the view's initializer, and the view is made where the open app keeps it (at launch, or outside a view's body), so a new property of it goes in only as the literal it starts as")
                 }
