@@ -819,8 +819,9 @@ network description; the first scan brings macOS's firewall and local network qu
 
 A TV app may have a page for a phone (a controller, a buzzer, a second screen) in `Phone/` (`TVTemplate.phoneFolder`,
 `Rules.tvPhone`). Lamp serves it, so the agent never starts a server or a login item that would outlive the app: it's
-staged beside `Web/` the same way (links refused) and never packaged, and the gateway answers GET `/phone/<app>/…` with
-its files (`Store.phonePage`, through `Gateway.Page`) only while the app runs, in the preview or set to open on a TV
+staged beside `Web/` the same way (links refused) and never packaged, into a folder nothing serves, and put in place of
+the served one in one swap only once it has passed (`TVs.publishPhone`), so a request never reads a copy being made or
+one that failed. The gateway answers GET `/phone/<app>/…` with its files, reached through no link at any step (`TVs.phoneFile`), (`Store.phonePage`, through `Gateway.Page`) only while the app runs, in the preview or set to open on a TV
 (`Store.servesPhonePage`), from the network by the Mac's name or address and on this Mac by a loopback name, with no
 token, since a phone following a QR code has none. The network listener is on for it while the preview is open
 (`Store.syncLocalNetwork`). The TV page reads the address from `Lamp.phonePage(hash)`, which Lamp writes into the

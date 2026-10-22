@@ -8149,9 +8149,7 @@ final class Store: ObservableObject {
         if names.last == "" { names[names.count - 1] = "index.html" }
         // Only the staged copy's own files: no step up, nothing hidden, no empty name, nothing that isn't a plain file.
         guard names.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") && !$0.contains("/") && !$0.contains("\0") }) else { return missing }
-        let file = names.reduce(TVs.phoneFolder(for: project)) { $0.appendingPathComponent($1) }
-        let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
-        guard values?.isRegularFile == true, values?.isSymbolicLink != true, (values?.fileSize ?? 0) <= 64 << 20,
+        guard let file = TVs.phoneFile(names, in: TVs.phoneFolder(for: project)),
               let data = try? Data(contentsOf: file) else { return missing }
         return Gateway.Page(status: 200, type: Self.pageType(file.pathExtension), body: data)
     }
