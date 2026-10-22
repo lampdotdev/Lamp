@@ -52,8 +52,8 @@ A capability given to one engine must be given to all of them that can take it, 
   line as soon as the agent says something after it (`ChatItem.closing`), as it would be when the turn ends. While the turn goes on the line is open, at
   the bottom under its steps, oldest first, so what's going on now is always last (a command by the name
   the agent gave it, any other tool call in the words the line said while it ran, `LogLine.visible`, never its
-  files); the step still going is the line itself and joins the list when the agent moves on (`ChatItem.live`), and a
-  click folds the list. When the turn ends each stretch of steps folds where it came (`ChatItem.items`): the one just
+  files); the step still going is the line itself and joins the list when the agent moves on (`ChatItem.live`). The line
+  has no chevron and doesn't fold: its steps get one once they fold, when the agent says something after them. When the turn ends each stretch of steps folds where it came (`ChatItem.items`): the one just
   before the turn's last message into "Worked for…", above that message, any other to how many steps it was, or to
   its one step. Each fold is given a line saying what it did, with how long its steps took
   ("Listed the shelf's saved entries · 12 s", `ChatItem.title(of:untitled:)`), by the small model on the route that
