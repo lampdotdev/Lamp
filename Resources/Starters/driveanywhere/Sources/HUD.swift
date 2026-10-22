@@ -15,6 +15,13 @@ struct HUDView: View {
                     Spacer()
                     HStack(alignment: .bottom) {
                         VStack(alignment: .leading, spacing: 6) {
+                            if model.loadingAhead {
+                                Label("Loading the streets ahead…", systemImage: "arrow.down.circle")
+                                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
+                                    .padding(.horizontal, 10).padding(.vertical, 5)
+                                    .background(.black.opacity(0.5), in: Capsule())
+                                    .transition(.opacity)
+                            }
                             Minimap(model: model, nav: nav).frame(width: 230, height: 230)
                             Text("© OpenStreetMap contributors · terrain: Mapzen, USGS")
                                 .font(.system(size: 9)).foregroundStyle(.white.opacity(0.7)).shadow(radius: 2)

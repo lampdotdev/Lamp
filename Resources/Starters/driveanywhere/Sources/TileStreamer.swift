@@ -57,16 +57,38 @@ final class TileStreamer {
         return true
     }
 
-    func update(player p: SIMD2<Float>, time: Float) {
+    func update(player p: SIMD2<Float>, heading v: SIMD2<Float> = .zero, time: Float) {
         guard time - lastCheck > 0.5 else { return }
         lastCheck = time
-        // One tile at a time while driving; a few at once while the big map is looking further afield.
-        let limit = lookArea != nil ? 2 : 1
-        while inFlight.count < limit, let k = next(player: p) { load(k) }
+        // Two at a time: a tile can take half a minute when the map servers are busy, which a car outruns one at a
+        // time. Two is what the main server lets one address run at once.
+        while inFlight.count < 2, let k = next(player: p, heading: v) { load(k) }
+        missingNearby = missing(near: p, within: 350)
     }
 
-    /// The next tile to fetch: nearest the car, then along a trip, then in the area the big map shows.
-    private func next(player p: SIMD2<Float>) -> SIMD2<Int32>? {
+    /// Whether the map round the car isn't all here yet (still coming, or failed and waiting to be tried again):
+    /// the HUD says the streets ahead are loading.
+    private(set) var missingNearby = false
+
+    private func missing(near p: SIMD2<Float>, within r: Float) -> Bool {
+        let here = SIMD2(Int32(floor(p.x / Self.size)), Int32(floor(p.y / Self.size)))
+        for x in Int32(-1)...1 {
+            for y in Int32(-1)...1 {
+                let k = here &+ SIMD2(x, y)
+                if bundled(k) || tiles[k]?.loaded == true { continue }
+                if distance(p, to: k) < r { return true }
+            }
+        }
+        return false
+    }
+
+    /// The next tile to fetch: round the car, those where it's heading first, then along a trip, then in the area
+    /// the big map shows.
+    private func next(player p: SIMD2<Float>, heading v: SIMD2<Float> = .zero) -> SIMD2<Int32>? {
+        // Where the car will be in about fifteen seconds, at most 400 m on: the tile it's in comes first, then
+        // those nearest that point, so the streets ahead arrive before those behind.
+        var ahead = p + v * 15
+        if simd_distance(ahead, p) > 400 { ahead = p + simd_normalize(v) * 400 }
         let here = SIMD2(Int32(floor(p.x / Self.size)), Int32(floor(p.y / Self.size)))
         var best: (SIMD2<Int32>, Float)?
         let reach = Int32(ceil(loadRadius / Self.size)) + 1
@@ -75,7 +97,9 @@ final class TileStreamer {
                 let k = here &+ SIMD2(x, y)
                 guard wanted(k) else { continue }
                 let d = distance(p, to: k)
-                if d < loadRadius && (best == nil || d < best!.1) { best = (k, d) }
+                guard d < loadRadius else { continue }
+                let score = d == 0 ? 0 : distance(ahead, to: k)
+                if best == nil || score < best!.1 { best = (k, score) }
             }
         }
         if best == nil, let trip {
