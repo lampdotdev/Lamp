@@ -37,6 +37,13 @@ final class DeviceSetupModel: ObservableObject {
     private init(device: Device) {
         self.device = device
         passed = Integrations.kept(device.id)?.passed ?? []
+        // A card may show Lamp's public key, which is made the first time it's needed: made now, the card is drawn again.
+        if let runner, runner.needsSSHKey, DeviceSSH.publicKey == nil {
+            Task { [weak self] in
+                await runner.prepare()
+                self?.objectWillChange.send()
+            }
+        }
     }
 
     var integration: Integration? { device.integration.flatMap(Integrations.integration) }

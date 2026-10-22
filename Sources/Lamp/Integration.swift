@@ -30,7 +30,7 @@ struct Integration: Codable, Hashable {
         var ssdp: String?
         /// A Bonjour service type ("_googlecast._tcp").
         var bonjour: String?
-        /// A USB vendor and product id.
+        /// A USB vendor and product id: refused for now, since Lamp has no way to reach such a device yet.
         var usb: USB?
         /// An HTTP probe of an address the network's SSDP answers named: a port, a path and what the answer holds.
         var http: Probe?
@@ -250,16 +250,27 @@ enum Placeholders {
 
     static let safe = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-:/@+=,")
 
-    /// Every `{name}` in a template.
-    static func names(in template: String) -> [String] {
-        var found: [String] = []
-        var rest = template[...]
-        while let open = rest.firstIndex(of: "{"), let close = rest[open...].firstIndex(of: "}") {
-            found.append(String(rest[rest.index(after: open)..<close]))
-            rest = rest[rest.index(after: close)...]
+    /// A placeholder is `{name}`, `{field:<key>}` or `{read:<step>}`: a word in braces, nothing else, so a brace that
+    /// opens JSON (`{"enabled":true}`) is the template's own text, sent as written.
+    private static let pattern = try! NSRegularExpression(pattern: #"\{([A-Za-z][A-Za-z0-9]*(?::[A-Za-z0-9-]+)?)\}"#)
+
+    /// The template in order: its own text, and the placeholders between.
+    static func pieces(_ template: String) -> [(text: String, name: String?)] {
+        let whole = NSRange(template.startIndex..., in: template)
+        var pieces: [(String, String?)] = []
+        var at = template.startIndex
+        for match in pattern.matches(in: template, range: whole) {
+            guard let range = Range(match.range, in: template), let name = Range(match.range(at: 1), in: template) else { continue }
+            if at < range.lowerBound { pieces.append((String(template[at..<range.lowerBound]), nil)) }
+            pieces.append(("", String(template[name])))
+            at = range.upperBound
         }
-        return found
+        if at < template.endIndex { pieces.append((String(template[at...]), nil)) }
+        return pieces
     }
+
+    /// Every placeholder in a template.
+    static func names(in template: String) -> [String] { pieces(template).compactMap(\.name) }
 
     /// Why a placeholder can't sit where it is, or nil.
     static func problem(_ name: String, in place: Place, fields: Set<String>) -> String? {
@@ -291,10 +302,8 @@ enum Placeholders {
     /// a sign-in's, which only reach places that are encoded; in a command each value is quoted for the shell.
     static func fill(_ template: String, _ values: [String: String], in place: Place) throws -> String {
         var out = ""
-        var rest = template[...]
-        while let open = rest.firstIndex(of: "{"), let close = rest[open...].firstIndex(of: "}") {
-            out += rest[..<open]
-            let name = String(rest[rest.index(after: open)..<close])
+        for piece in pieces(template) {
+            guard let name = piece.name else { out += piece.text; continue }
             guard let value = values[name] else { throw Unsafe(name: name) }
             // What the person typed, a sign-in and Lamp's public key (which has spaces) aren't held to the alphabet.
             let secret = name.hasPrefix("field:") || name == "signIn" || name == "sshKey"
@@ -304,9 +313,8 @@ enum Placeholders {
             case .path: out += value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "?#"))) ?? ""
             default: out += value
             }
-            rest = rest[rest.index(after: close)...]
         }
-        return out + rest
+        return out
     }
 }
 
@@ -314,10 +322,11 @@ enum Placeholders {
 
 /// What's wrong with an integration, in plain reasons the model can act on. Empty means Lamp takes it.
 enum IntegrationCheck {
-    static func problems(_ data: Data) -> [String] {
+    /// `submitted`: from the builder, which may only say a step was read. A file Lamp kept is read with its own marks.
+    static func problems(_ data: Data, submitted: Bool = true) -> [String] {
         do {
             let integration = try JSONDecoder().decode(Integration.self, from: data)
-            return problems(integration)
+            return problems(integration, submitted: submitted)
         } catch let DecodingError.keyNotFound(key, context) {
             return ["\(path(context.codingPath + [key])) is missing."]
         } catch let DecodingError.typeMismatch(_, context) {
@@ -396,7 +405,7 @@ enum IntegrationCheck {
     /// The bridges Lamp ships, which an action may name.
     static let bridges: Set<String> = ["devicectl", "adb", "sdb"]
 
-    static func problems(_ integration: Integration) -> [String] {
+    static func problems(_ integration: Integration, submitted: Bool = true) -> [String] {
         var problems: [String] = []
         func say(_ text: String) { problems.append(text) }
 
@@ -407,16 +416,15 @@ enum IntegrationCheck {
         for (index, find) in integration.find.enumerated() {
             let at = "find[\(index)]"
             let set = [find.ssdp != nil, find.bonjour != nil, find.usb != nil, find.http != nil].filter { $0 }.count
-            if set != 1 { say("\(at) must have exactly one of ssdp, bonjour, usb or http.") }
+            if set != 1 { say("\(at) must have exactly one of ssdp, bonjour or http.") }
             if let ssdp = find.ssdp, ssdp.trimmed.isEmpty || ssdp.contains(where: { $0.isNewline }) || ssdp.count > 120 {
                 say("\(at).ssdp must be one search target, such as \"roku:ecp\".")
             }
             if let bonjour = find.bonjour, bonjour.range(of: #"^_[a-z0-9-]{1,40}\._(tcp|udp)$"#, options: .regularExpression) == nil {
                 say("\(at).bonjour must be a service type such as \"_airplay._tcp\".")
             }
-            if let usb = find.usb, !(0...0xFFFF).contains(usb.vendor) || !(0...0xFFFF).contains(usb.product ?? 0) {
-                say("\(at).usb's vendor and product are 16-bit numbers.")
-            }
+            // Lamp can't yet reach a device found over USB (no address for its requests), so it isn't taken until it can.
+            if find.usb != nil { say("\(at).usb: Lamp doesn't find devices over USB yet; find it on the network.") }
             if let probe = find.http {
                 if !isPort(probe.port) { say("\(at).http.port isn't a port.") }
                 if let reason = pathProblem(probe.path) { say("\(at).http.path \(reason).") }
@@ -473,7 +481,7 @@ enum IntegrationCheck {
                 say("\(at) waits for hands on the device, so its check must ask the device, not only a field.")
             }
             if let known = step.known {
-                if known.how != .read { say("\(at).known.how can only be \"read\": Lamp marks a step checked or done once its check passes.") }
+                if submitted, known.how != .read { say("\(at).known.how can only be \"read\": Lamp marks a step checked or done once its check passes.") }
                 if let source = known.source, !isWebPage(source) { say("\(at).known.source must be the https page it was read on.") }
             }
             if (step.accepts ?? []).contains(.commandRuns) == false, step.run?.contains(where: { $0.ssh != nil || ($0.tool != nil && $0.tool?.name == nil) }) == true {
@@ -633,8 +641,6 @@ enum IntegrationCheck {
 
     static func placeholderProblems(_ template: String, at: String, place: Placeholders.Place, fields: Set<String>, steps: Set<String>, needsOne: Bool = false) -> [String] {
         var problems: [String] = []
-        let opens = template.filter { $0 == "{" }.count, closes = template.filter { $0 == "}" }.count
-        if opens != closes { problems.append("\(at) has a { without its } (or the other way round).") }
         let names = Placeholders.names(in: template)
         if needsOne, names.isEmpty { problems.append("\(at) must be a value Lamp fills, such as \"{mac}\": Lamp shows only its own values.") }
         for name in names {

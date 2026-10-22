@@ -34,7 +34,6 @@ How the device announces itself; any one that matches finds it. Each entry has e
 
 - `"ssdp": "<search target>"`, optionally `"contains"` for what the answer's SERVER line holds.
 - `"bonjour": "_service._tcp"`, optionally `"contains"` for the name.
-- `"usb": {"vendor": 1234, "product": 5678}`
 - `"http": {"port": 8060, "path": "/query/device-info", "contains": "<device-info>"}`: asked of every address that
   answered Lamp's own SSDP scan.
 

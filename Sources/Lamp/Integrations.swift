@@ -22,7 +22,7 @@ enum Integrations {
             for file in (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [] where file.pathExtension == "json" {
                 // One written on this Mac is checked again as it's read: the file is in Lamp's folder, but a later Lamp
                 // may hold integrations to more than the one that took it.
-                guard let data = try? Data(contentsOf: file), shipped || IntegrationCheck.problems(data).isEmpty,
+                guard let data = try? Data(contentsOf: file), shipped || IntegrationCheck.problems(data, submitted: false).isEmpty,
                       let integration = try? JSONDecoder().decode(Integration.self, from: data) else { continue }
                 byID[integration.id] = integration
             }
@@ -322,8 +322,21 @@ struct IntegrationRunner {
         return mine.max { shared($0) < shared($1) }
     }
 
+    /// Whether anything in the integration shows or sends Lamp's public key, which is made the first time it's needed.
+    var needsSSHKey: Bool {
+        guard let data = try? JSONEncoder().encode(integration) else { return false }
+        return Placeholders.names(in: String(decoding: data, as: UTF8.self)).contains("sshKey")
+    }
+
+    /// Makes what Lamp's own values need before they're read: its SSH key, which a step may show or send before any
+    /// command has run.
+    func prepare() async {
+        if needsSSHKey, DeviceSSH.publicKey == nil { _ = try? await DeviceSSH.ensureKey() }
+    }
+
     /// Runs a sequence in order, stopping at the first failure.
     func run(_ sequence: [IntegrationAction], extra: [String: String] = [:], files: [String: URL] = [:]) async throws -> Outcome {
+        await prepare()
         var outcome = Outcome()
         for action in sequence {
             let values = values(extra)
@@ -383,6 +396,7 @@ struct IntegrationRunner {
 
     /// Whether a step's check passes now, and if not, the first condition that didn't, in words.
     func check(_ step: Integration.Step) async -> (passed: Bool, why: String?, read: String?) {
+        await prepare()
         let values = values()
         var read: String?
         for condition in step.check {

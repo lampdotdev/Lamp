@@ -2,7 +2,6 @@ import AppKit
 import CoreImage
 import CryptoKit
 import Foundation
-import IOKit
 import Network
 
 /// What an integration acts with, and nothing else. Each primitive is held to what it may reach: a request goes only to
@@ -358,19 +357,6 @@ enum DeviceProbe {
         private var stored: [T] = []
         func set(_ items: [T]) { lock.lock(); stored = items; lock.unlock() }
         var items: [T] { lock.lock(); defer { lock.unlock() }; return stored }
-    }
-
-    /// Whether a USB device with this vendor (and product) id is plugged in.
-    static func usb(vendor: Int, product: Int?) -> Bool {
-        var iterator: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOUSBHostDevice"), &iterator) == KERN_SUCCESS else { return false }
-        defer { IOObjectRelease(iterator) }
-        while case let service = IOIteratorNext(iterator), service != 0 {
-            defer { IOObjectRelease(service) }
-            func number(_ key: String) -> Int? { (IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? NSNumber)?.intValue }
-            if number("idVendor") == vendor, product == nil || number("idProduct") == product { return true }
-        }
-        return false
     }
 }
 

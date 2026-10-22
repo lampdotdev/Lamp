@@ -87,6 +87,26 @@ final class IntegrationTests: XCTestCase {
         }.contains { $0.contains("title must be 1 to 8 words") })
     }
 
+    /// What Lamp writes back after a step passes is read again as it wrote it, though the builder may not write it.
+    func testAStepLampMarkedIsKeptWhenReadBack() {
+        var json = try! JSONSerialization.jsonObject(with: Data(roku.utf8)) as! [String: Any]
+        step(0, &json) { $0["known"] = ["how": "lamp", "model": "4850X", "version": "14.0"] }
+        let data = try! JSONSerialization.data(withJSONObject: json)
+        XCTAssertFalse(IntegrationCheck.problems(data).isEmpty, "the builder can't claim a step was checked")
+        XCTAssertEqual(IntegrationCheck.problems(data, submitted: false), [])
+    }
+
+    /// A device's API often takes JSON: its braces are the template's own text, and only a word in braces is filled.
+    func testJSONBracesAreTextAndOnlyPlaceholdersAreFilled() throws {
+        XCTAssertEqual(problems { json in
+            step(0, &json) { $0["check"] = [["http": ["method": "POST", "port": 3000, "path": "/api", "body": #"{"enabled":true,"id":"{deviceID}"}"#]]] }
+        }, [])
+        XCTAssertEqual(try Placeholders.fill(#"{"id":"{appID}"}"#, ["appID": "dev"], in: .command), #"{"id":"'dev'"}"#)
+        XCTAssertEqual(Placeholders.names(in: #"{"a":{"b":"{field:pin}"}}"#), ["field:pin"])
+        // USB is refused until Lamp can reach a device found that way.
+        XCTAssertTrue(problems { $0["find"] = [["usb": ["vendor": 1234]]] }.contains { $0.contains("USB") })
+    }
+
     func testPlaceholdersAreCheckedAndQuoted() throws {
         XCTAssertEqual(try Placeholders.fill("/launch/{appID}", ["appID": "dev"], in: .path), "/launch/dev")
         XCTAssertThrowsError(try Placeholders.fill("/keypress/{key}", ["key": "Home\r\nX-Evil: 1"], in: .path))

@@ -635,7 +635,7 @@ delete the rest.
 A device Lamp has no kit for is taken on as an **integration** (`Integration`, Integration.swift): JSON the builder
 writes and hands Lamp with `device_integration`, the way an app declares an unlisted service with `LampAPI.own`. Its
 format is the `device-integrations` skill, which `Agent.deviceRules` names in every prompt (it isn't in the skills'
-list). It says how the device is found (`find`: SSDP, Bonjour, USB, or an HTTP probe of what answered Lamp's scan),
+list). It says how the device is found (`find`: SSDP, Bonjour, or an HTTP probe of what answered Lamp's scan; USB is refused until Lamp can reach such a device),
 where each field of its record is read (`identity`: a request and a JSON or XML path; the model says where, Lamp
 reads), its setup `steps`, the `bridge` (install, launch, look, use, logs) and the `app` kind. Nothing in it is code
 Lamp runs: every step and bridge is a list of Lamp's primitives (`IntegrationAction`), and `IntegrationCheck.problems`
@@ -651,7 +651,7 @@ device's model and version, and keeps the mark while the step's text is unchange
 The primitives and their guards (DevicePrimitives.swift, DeviceRemote.swift), which every place goes through:
 `DeviceHTTP` (only the address the device was found at, which must be private or link-local and never loopback, so
 nothing reaches Lamp's gateway; a path that stays a path; no redirect; the answer cut off at `limit`; a password only
-for the device's own challenge, in the scheme declared, once: `Guardian`), `DeviceProbe` (TCP, SSDP, Bonjour, USB;
+for the device's own challenge, in the scheme declared, once: `Guardian`), `DeviceProbe` (TCP, SSDP, Bonjour;
 read only), `DeviceStream` (a TCP log read line by line), `DeviceFields` (what the person typed, kept per device the
 way `AppSecrets` keeps an app's), `DeviceQR`, `VendorSignIn` (the vendor's https page, answered on a loopback listener
 at a port of its own; the card names the page's domain), `DeviceSSH` (the device's address only, its host key pinned
