@@ -43,6 +43,12 @@ A capability given to one engine must be given to all of them that can take it, 
   chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own). What a
   request came to is the agent's last message, in a sentence or two (`Agent.Rules.finish`), under the line that says
   the app is ready or updated; a card for it said no more than that message did and hid what it said beyond it.
+  That message claims only what was observed: every look that saw the app ends with a short note built from what Lamp
+  already knows of it, for every kind of app (`Evidence`, added in `Store.withEvidence`): where it was, whether it was
+  built, how its launch went, how much it logged, how old its picture is, that Lamp ran no tests, how many `use_app`
+  calls the request made, and that the rest is unknown. Nothing is opened or run to make the note; where the app runs
+  beyond the look is the device line's (`DeviceNote`). `Rules.finish` holds the ending to that note and has it name
+  what nobody tried; it never sends the agent to try the app, which stays for when the person asks.
   While longer work goes on, the agent says how it's going with `progress`: a line of 12 words at most, shown at once
   in both chats as a message like any other, which stays one when the turn ends. The chat is one timeline: messages,
   steps and Reload in the order they happened, the newest at the bottom, so steps never collect below what was said

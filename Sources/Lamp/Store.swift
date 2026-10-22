@@ -841,6 +841,10 @@ final class Store: ObservableObject {
         /// The app was built and opened by the last look, and this is how that launch went.
         var installed = false
         var crash: String?
+        /// The last look built the app from changed code, for its evidence note (`Evidence`).
+        var rebuilt = false
+        /// The use_app calls in this turn, for the same note: what the agent may say it tried.
+        var uses = 0
         /// A new app was shown to the person at this turn's first look that opened it: built in passes, it's watched
         /// as it takes shape rather than seen only at the end (`present`).
         var presented = false
@@ -4155,6 +4159,7 @@ final class Store: ObservableObject {
               let json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
             return (400, ["error": "use_app needs a list of actions."])
         }
+        turn.look.uses += 1
         if request["sidebar"] as? Bool == true {
             guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
             // The sidebar is the open copy's too, so it's kept from the agent on the same terms as its windows (below).
@@ -8867,7 +8872,45 @@ final class Store: ObservableObject {
     /// open, code run once at the start), where otherwise a change goes into the open app. The agent ending the
     /// app's process itself skipped that question, and Lamp rightly asked the person about every such command.
     private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false) async -> (Int, [String: Any]) {
-        withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen), of: project)
+        let began = Date()
+        let result = await lookNow(at: project, prop: prop, motion: motion, reopen: reopen)
+        return withLateCrash(await withEvidence(result, of: project, since: began), of: project)
+    }
+
+    /// A look that saw the app (its answer carries pictures, or would with pictures on) ends with what it established
+    /// (`Evidence`). Answers that didn't get that far (a build error, a crash, a change held for Reload) already say so.
+    private func withEvidence(_ result: (Int, [String: Any]), of project: LampProject, since began: Date) async -> (Int, [String: Any]) {
+        guard result.0 == 200, result.1["screenshots"] != nil, let turn = turns[project.id] else { return result }
+        var target = "this Mac"
+        if project.onTV { target = "the TV preview on this Mac" }
+        else if project.onDevice { target = "the " + (DeviceApps.integration(for: project)?.name ?? "device") }
+        else if project.onAndroid { target = project.device == nil ? "the Android emulator" : "the person's Android device" }
+        else if project.onIOS {
+            target = "the simulator"
+            if let udid = simulatorApps[project.id]?.udid, let name = await Simulator.name(of: udid) { target = "the \(name) simulator" }
+        }
+        let launch: Evidence.Launch
+        if let watch = turn.launch, watch.opened >= began {
+            launch = !watch.ended ? .stillStarting : watch.crash == nil ? .stayedOpen : .quit
+        } else if turn.look.installed, project.onTV || project.onDevice {
+            launch = .openedUnwatched
+        } else {
+            launch = .alreadyOpen
+        }
+        var log = Evidence.Log.off
+        if Privacy.sharesLog {
+            let printed = AppFile.read(Runtime.logURL(project), in: project).map { String(decoding: $0, as: UTF8.self).trimmed } ?? ""
+            log = printed.isEmpty ? .empty : .lines(printed.split(separator: "\n").count)
+        }
+        let pictured = ["screenshot.png", "screenshot-2.png", "screenshot-3.png"]
+            .compactMap { try? Runtime.folder(project).appendingPathComponent($0).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
+            .filter { $0 >= began }.max()
+        let facts = Evidence.Facts(target: target, rebuilt: turn.look.rebuilt, launch: launch, log: log,
+                                   pictureAge: pictured.map { Date().timeIntervalSince($0) }, picturesOff: !Privacy.sharesPictures,
+                                   uses: turn.look.uses)
+        var (status, answer) = result
+        answer["text"] = (answer["text"] as? String ?? "") + "\n\n" + Evidence.note(facts)
+        return (status, answer)
     }
 
     private func lookNow(at project: LampProject, prop: String?, motion: Bool, reopen: Bool) async -> (Int, [String: Any]) {
@@ -8904,6 +8947,7 @@ final class Store: ObservableObject {
 
         try? await writeOwnFiles(project, all: false)
         let changed = Runtime.sourcesChanged(project)
+        turn.look.rebuilt = changed
         if changed, let errors = await build(project, inPlace: !reopen) {
             if errors == androidToolsProblem(project) {
                 return (200, ["text": "The app can't be built yet, and Lamp has told the person why: \(errors)\n\nThis isn't a mistake in the code. Finish what was asked without a look, and tell the person in a sentence that you'll build it once the tools are there."])
