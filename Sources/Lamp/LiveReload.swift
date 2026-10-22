@@ -3243,7 +3243,9 @@ enum LiveSlots {
                 let name = String(field[..<colon.lowerBound])
                 if name.hasPrefix("__lamp") { continue }
                 guard !name.hasPrefix("_"), let variable = declarations.variables[type + "\t" + name] else { return nil }
+                // Through a typealias (`typealias Note = String?`) to what it names: an optional is coded only if present.
                 var kind = variable.type
+                for _ in 0..<8 { guard let target = conformed.aliased(kind) else { break }; kind = target }
                 let optional = kind.hasSuffix("?") || kind.hasPrefix("Optional<")
                 if kind.hasSuffix("?") { kind.removeLast() } else if kind.hasPrefix("Optional<"), kind.hasSuffix(">") { kind = String(kind.dropFirst(9).dropLast()) }
                 let fixed = declarations.lets.contains(type + "\t" + name) && initialText(of: variable, in: declarations) != nil
@@ -3278,7 +3280,7 @@ enum LiveSlots {
             if !written.encodes, only != "decode" {
                 body += "    func encode(to encoder: Encoder) throws {\n        var container = encoder.container(keyedBy: \(keyType).self)\n"
                 for field in keyed {
-                    body += "        try container.\(field.optional ? "encodeIfPresent" : "encode")(\(field.name), forKey: \(key(field.name)))\n"
+                    body += "        try container.\(field.optional ? "encodeIfPresent" : "encode")(self.\(field.name), forKey: \(key(field.name)))\n"
                 }
                 body += "    }\n"
             }
