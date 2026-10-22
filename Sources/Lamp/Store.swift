@@ -6548,13 +6548,36 @@ final class Store: ObservableObject {
         }
         let density = androidDensities[project.id]
         let screen = await Adb.screen(on: open.serial, density: density)
-        let report = await Adb.perform(decoded, on: open.serial, density: density, screen: screen) { [weak self] in
-            guard let self, exists(project), turns[project.id] === owner, !owner.stopped else { return false }
+        // On the emulator, in plain sight as on the iPhone's simulator: its window glows, Lamp's fingertip goes to
+        // each spot, and the person's Stop, Esc, or own click in the window ends it. A device of the person's has
+        // nothing of it on the Mac's screen to show.
+        let scale = Adb.scale(density: density)
+        let glass = open.serial == Emulator.serial
+            ? await Adb.displaySize(on: open.serial).flatMap { Emulator.glass(size: CGSize(width: $0.width / scale, height: $0.height / scale)) }
+            : nil
+        let trial = glass.map { Handover(label: "\(Self.lampName) is trying it on Android", finger: true, simulator: $0.pid) }
+        if let glass { trial?.show(window: glass.window) }
+        defer { trial?.end() }
+        let report = await Adb.perform(decoded, on: open.serial, density: density, screen: screen, aim: { point, doing, press in
+            guard let trial, let spot = glass?.point(point) else { return }
+            await trial.aim(at: spot, doing: doing, press: press)
+        }, tookOver: { trial?.tookOver == true }) { [weak self] in
+            guard let self, exists(project), turns[project.id] === owner, !owner.stopped, trial?.tookOver != true else { return false }
             return await isAndroidRunning(project)
+        }
+        // Asked again after the reads below: they take a moment, and Stop may come during them.
+        func tookOver() -> Bool {
+            guard trial?.tookOver == true else { return false }
+            if !owner.tookOver {
+                owner.tookOver = true
+                log(project, .status, Self.stoppedByYou)
+            }
+            return true
         }
         var text = "What happened:\n\(report)"
         guard await isAndroidRunning(project) else {
             text += "\n\nThe app quit or crashed while doing that."
+            if tookOver() { text += "\n\n" + Self.tookOverNote }
             if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nLast lines it logged:\n" + tail }
             return (200, ["text": text])
         }
@@ -6569,6 +6592,7 @@ final class Store: ObservableObject {
                (try? AppFolder.write(data, to: picture, in: project.dir)) != nil { screenshots = [picture] }
             text += "\n\nA picture of the screen follows. Points for the next use_app are pixels in it."
         }
+        if tookOver() { text += "\n\n" + Self.tookOverNote }
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nLast lines it logged:\n" + tail }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
     }
