@@ -874,6 +874,7 @@ struct PhoneSigningSection: View {
 struct DevicesSection: View {
     @EnvironmentObject private var store: Store
     @AppStorage("appleTeam") private var team = ""
+    @State private var adding = false
 
     var body: some View {
         Section("Your Devices") {
@@ -881,14 +882,13 @@ struct DevicesSection: View {
                 row(device)
             }
             HStack {
+                if store.lookingForDevices { LookingForDevices() }
                 Spacer()
-                // Each kind of device has a setup of its own, checked and taken further from its window.
-                Button("iPhone & iPad Setup…") { PhoneSetup.shared.show() }.controlSize(.small)
-                Button("Android Setup…") { AndroidSetup.shared.show() }.controlSize(.small)
-                Button("Look for Devices Again") { store.refreshDevices() }.controlSize(.small)
+                Button("Add a New Device…") { adding = true }.controlSize(.small)
             }
         }
         .onAppear { store.refreshDevices() }
+        .sheet(isPresented: $adding) { AddDeviceSheet() }
     }
 
     private func row(_ device: Device) -> some View {
@@ -906,30 +906,126 @@ struct DevicesSection: View {
             case .needs(let step) where device.kind == .other && device.integration == nil:
                 // Found on the network, with nothing yet that knows it: not a problem, an offer.
                 Text(step).foregroundStyle(.secondary)
-                next(for: device)
+                DeviceNextStep(device: device)
             case .needs(let step):
                 Label(step, systemImage: "exclamationmark.circle.fill").foregroundStyle(.orange).labelStyle(.titleAndIcon)
-                next(for: device)
+                DeviceNextStep(device: device)
             case .talkOnly:
                 Text(setup.words).foregroundStyle(.secondary)
             }
         }
         .accessibilityElement(children: .combine)
     }
+}
 
-    /// The one button that takes the device to its next step, where Lamp can do it from here.
+/// A look for devices going on, said where it was asked for.
+struct LookingForDevices: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.small)
+            Text("Looking for devices…").foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Where a new device starts, from Your Devices: each kind Lamp can set up, the way it's reached, and what's on the
+/// network now that isn't set up yet. Each kind's setup has a window of its own, checked and taken further there,
+/// so choosing one closes this. The network is looked at again as this opens and when asked.
+struct AddDeviceSheet: View {
+    @EnvironmentObject private var store: Store
+    @Environment(\.dismiss) private var dismiss
+
+    /// Found on the network and not set up: the TVs and the devices an integration finds or nothing knows yet.
+    private var waiting: [Device] {
+        store.devices.filter { $0.reach == .network && $0.kind != .watch && $0.setup() != .ready }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Add a New Device").font(.headline)
+            VStack(alignment: .leading, spacing: 12) {
+                kind("iPhone or iPad", symbol: "iphone", how: "Plug it into this Mac and unlock it.") {
+                    PhoneSetup.shared.show()
+                }
+                kind("Android phone or tablet", symbol: "smartphone", how: "Plug it into this Mac.") {
+                    AndroidSetup.shared.show()
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Image(systemName: "tv").foregroundStyle(.secondary).frame(width: 20)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("TV or other device")
+                        Text("Turn it on, on this Mac's network.").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(waiting) { device in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Image(systemName: device.kind.symbol).foregroundStyle(.secondary).frame(width: 20)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(device.name)
+                                Text(device.line).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            DeviceNextStep(device: device, then: { dismiss() })
+                        }
+                    }
+                    HStack {
+                        if store.lookingForDevices {
+                            LookingForDevices()
+                        } else {
+                            Text(waiting.isEmpty ? "Nothing new found." : "").foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Look Again") { store.refreshDevices() }.controlSize(.small).disabled(store.lookingForDevices)
+                    }
+                }
+                .padding(.leading, 30)
+            }
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
+        .onAppear { store.refreshDevices() }
+    }
+
+    private func kind(_ name: String, symbol: String, how: String, setUp: @escaping () -> Void) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: symbol).foregroundStyle(.secondary).frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                Text(how).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Set Up…") { dismiss(); setUp() }.controlSize(.small)
+        }
+    }
+}
+
+/// The one button that takes a device to its next step, where Lamp can do it from here; `then` runs once a window
+/// for it has been asked for.
+struct DeviceNextStep: View {
+    @EnvironmentObject private var store: Store
+    let device: Device
+    var then: () -> Void = {}
+
+    var body: some View { next(for: device) }
+
     @ViewBuilder private func next(for device: Device) -> some View {
         if device.kind.isPhone, !device.paired {
             Button(store.pairing.contains(device.udid) ? "Pairing…" : "Pair…") { store.pairDevice(device, for: nil) }
                 .controlSize(.small).disabled(store.pairing.contains(device.udid))
         } else if device.kind.isPhone, !device.developerMode {
-            Button("How…") { PhoneSetup.shared.show(family: device.family ?? .iphone, phone: device.udid) }.controlSize(.small)
+            Button("How…") { then(); PhoneSetup.shared.show(family: device.family ?? .iphone, phone: device.udid) }.controlSize(.small)
         } else if device.kind.isTV {
-            Button("Set Up…") { TVSetup.shared.show(device.udid) }.controlSize(.small)
+            Button("Set Up…") { then(); TVSetup.shared.show(device.udid) }.controlSize(.small)
         } else if device.kind == .other {
             // One Lamp has an integration for is set up in the window drawn from it; one it doesn't know yet starts
             // the work of writing its integration, in a wish of its own.
             Button("Set Up…") {
+                then()
                 if device.integration != nil { DeviceSetupWindow.show(device) } else { store.setUpDevice(device) }
             }
             .controlSize(.small)
