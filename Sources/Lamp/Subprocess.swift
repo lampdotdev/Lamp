@@ -15,14 +15,17 @@ enum Subprocess {
     /// Runs `tool` and waits for it, off the caller's thread. `started` is handed the process once it runs,
     /// for a caller that may have to stop it early (a sign-in the person cancels).
     /// `input` is written to the tool's standard input and then closed: for what mustn't be in its arguments, which
-    /// any process on the Mac can list.
+    /// any process on the Mac can list. With `keepInputOpenUntil`, the input stays open (after `input`, if any) until
+    /// the output so far satisfies it, or the tool ends: for a tool that gives up as soon as its input closes, as
+    /// webOS's `luna-send-pub` does, before it has answered.
     static func run(_ tool: String, _ arguments: [String] = [], cwd: URL? = nil, env: [String: String]? = nil,
                     mergeErrors: Bool = true, timeout: TimeInterval? = 60, input: Data? = nil,
+                    keepInputOpenUntil done: (@Sendable (String) -> Bool)? = nil,
                     started: (@Sendable (Process) -> Void)? = nil) async -> Result {
         await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
                 continuation.resume(returning: runBlocking(tool, arguments, cwd: cwd, env: env, mergeErrors: mergeErrors,
-                                                           timeout: timeout, input: input, started: started))
+                                                           timeout: timeout, input: input, keepInputOpenUntil: done, started: started))
             }
         }
     }
@@ -31,13 +34,14 @@ enum Subprocess {
     /// lock, a one-time migration). Still read while running and still bounded by the deadline.
     static func runBlocking(_ tool: String, _ arguments: [String] = [], cwd: URL? = nil, env: [String: String]? = nil,
                             mergeErrors: Bool = true, timeout: TimeInterval? = 60, input: Data? = nil,
+                            keepInputOpenUntil done: (@Sendable (String) -> Bool)? = nil,
                             started: (@Sendable (Process) -> Void)? = nil) -> Result {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: tool)
         process.arguments = arguments
         if let cwd { process.currentDirectoryURL = cwd }
         if let env { process.environment = ProcessInfo.processInfo.environment.merging(env) { $1 } }
-        let stdin = input.map { _ in Pipe() }
+        let stdin = input != nil || done != nil ? Pipe() : nil
         process.standardInput = stdin ?? FileHandle.nullDevice
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
@@ -48,16 +52,17 @@ enum Subprocess {
             return Result(status: -1, output: "", errors: "Could not start \(tool): \(error.localizedDescription)", timedOut: false)
         }
         started?(process)
-        if let stdin, let input {
+        let inputEnd = stdin.map { InputEnd($0.fileHandleForWriting) }
+        if let inputEnd {
             // Written off this thread, so a tool that reads slowly can't hold the deadline up.
             DispatchQueue.global().async {
-                try? stdin.fileHandleForWriting.write(contentsOf: input)
-                try? stdin.fileHandleForWriting.close()
+                if let input { inputEnd.write(input) }
+                if done == nil { inputEnd.close() }
             }
         }
         // Drained as it arrives, so neither pipe can fill while the tool runs, and what has arrived is kept
         // even if the pipe never closes (a child the tool left behind can hold it open).
-        let output = Drain(out.fileHandleForReading)
+        let output = Drain(out.fileHandleForReading, heard: done.map { done in { text in if done(text) { inputEnd?.close() } } })
         let errors = mergeErrors ? nil : Drain(err.fileHandleForReading)
         // Polled rather than waitUntilExit(), which off the main thread can wait forever for a process that
         // has already gone.
@@ -68,6 +73,7 @@ enum Subprocess {
             Thread.sleep(forTimeInterval: 0.02)
         }
         while process.isRunning { Thread.sleep(forTimeInterval: 0.02) }
+        inputEnd?.close()
         // The pipes close when the last holder goes: normally the tool itself. A child it left behind could
         // keep them open, so the wait for the rest of the output is bounded, and the readers are stopped
         // before the result is taken.
@@ -77,14 +83,34 @@ enum Subprocess {
         return Result(status: process.terminationStatus, output: output.text, errors: errors?.text ?? "", timedOut: timedOut)
     }
 
+    /// The writing end of a tool's input, closed once whoever gets there first closes it.
+    private final class InputEnd: @unchecked Sendable {
+        private let handle: FileHandle
+        private let lock = NSLock()
+        private var closed = false
+
+        init(_ handle: FileHandle) { self.handle = handle }
+
+        func write(_ data: Data) {
+            guard !lock.withLock({ closed }) else { return }
+            try? handle.write(contentsOf: data)
+        }
+
+        func close() {
+            guard lock.withLock({ let was = closed; closed = true; return !was }) else { return }
+            try? handle.close()
+        }
+    }
+
     /// Reads a pipe as data arrives, on the file handle's own queue, into a buffer the result is taken from.
+    /// `heard` is told the whole output so far each time more arrives.
     private final class Drain: @unchecked Sendable {
         private let handle: FileHandle
         private let lock = NSLock()
         private var data = Data()
         private let closed = DispatchSemaphore(value: 0)
 
-        init(_ handle: FileHandle) {
+        init(_ handle: FileHandle, heard: (@Sendable (String) -> Void)? = nil) {
             self.handle = handle
             handle.readabilityHandler = { [weak self] handle in
                 let chunk = handle.availableData
@@ -94,6 +120,7 @@ enum Subprocess {
                     self.closed.signal()
                 } else {
                     self.lock.withLock { self.data.append(chunk) }
+                    heard?(self.text)
                 }
             }
         }
