@@ -4967,9 +4967,11 @@ final class Store: ObservableObject {
             // its first version when they arrive.
             if setup.hasBuildTools { await saveStartersFirstVersions() }
             // Each once: one that couldn't be made ready without the tools waits for them, not for this loop.
+            // Known by instance, not folder: a starter deleted and added back meanwhile takes the same folder
+            // name, and is a new one to build.
             var tried: Set<String> = []
             while let next = nextStarterToPrepare(excluding: tried) {
-                tried.insert(next.id)
+                tried.insert(next.instance)
                 // Again for each: one put back on the desk meanwhile gets its first version before its build.
                 if setup.hasBuildTools { await saveStartersFirstVersions() }
                 await prepare(next)
@@ -5004,7 +5006,7 @@ final class Store: ObservableObject {
     }
 
     private func nextStarterToPrepare(excluding tried: Set<String> = []) -> LampProject? {
-        let waiting = projects.filter { needsPreparing($0) && canPrepare($0) && !tried.contains($0.id) }
+        let waiting = projects.filter { needsPreparing($0) && canPrepare($0) && !tried.contains($0.instance) }
         return waiting.first { openWhenReady.contains($0.id) } ?? waiting.first
     }
 
