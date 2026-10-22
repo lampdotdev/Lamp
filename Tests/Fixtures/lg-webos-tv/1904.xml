@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0" xmlns:dlna="urn:schemas-dlna-org:device-1-0">
+  <specVersion>
+    <major>1</major>
+    <minor>0</minor>
+  </specVersion>
+  <device>
+    <deviceType>urn:lge:device:tv:1</deviceType>
+    <friendlyName>[LG] webOS TV NANO80ASA</friendlyName>
+    <manufacturer>LG Electronics</manufacturer>
+    <manufacturerURL></manufacturerURL>
+    <modelDescription></modelDescription>
+    <modelName>65NANO80ASA.BWCDLKR</modelName>
+    <modelURL></modelURL>
+    <serialNumber></serialNumber>
+    <UDN>uuid:11111111-2222-4333-8444-000000001904</UDN>
+    <wifiMac>00:00:5E:00:53:00</wifiMac>
+    <wiredMac>00:00:5E:00:53:00</wiredMac>
+    <serviceList>
+      <service>
+        <serviceType>urn:lge:service:virtualSvc:1</serviceType>
+        <serviceId>urn:lge:serviceId:virtualSvc-0000-0001</serviceId>
+        <SCPDURL>/virtualService/11111111-2222-4333-8444-000000001904/scpd.xml</SCPDURL>
+        <controlURL>/virtualService/11111111-2222-4333-8444-000000001904/control.xml</controlURL>
+        <eventSubURL>/virtualService/11111111-2222-4333-8444-000000001904/event.xml</eventSubURL>
+      </service>
+    </serviceList>
+  </device>
+</root>

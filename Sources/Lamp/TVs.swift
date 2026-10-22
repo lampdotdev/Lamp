@@ -29,6 +29,8 @@ enum TVs {
         var duid: String?
         var developerIP: String?
         var developerMode = false
+        /// Every id the TV answered for, one per service (an LG TV has several); a TV kept under any of them is this one.
+        var udns: [String]? = nil
         var isSamsung: Bool { maker == "Samsung" }
     }
 
@@ -63,6 +65,7 @@ enum TVs {
                 keptOne.address = now.address
                 keptOne.developerMode = now.developerMode
                 keptOne.developerIP = now.developerIP
+                if let udns = now.udns { keptOne.udns = Array(Set(keptOne.udns ?? []).union(udns)).sorted() }
                 if keptOne.osVersion.isEmpty { keptOne.osVersion = now.osVersion }
                 keep(keptOne)
                 records.removeAll { $0.id == keptOne.id }
@@ -76,66 +79,24 @@ enum TVs {
             .sorted { $0.name < $1.name }
     }
 
-    /// One SSDP search of the local network (two seconds), then each answer that's a TV asked who it is.
+    /// One SSDP search of the local network (two seconds), then each device that answered as a TV asked who it is.
     static func scan() async -> [Record] {
-        let answers = await Task.detached { ssdp(seconds: 2) }.value
+        var byAddress: [String: [DeviceProbe.SSDPAnswer]] = [:]
+        for answer in await DeviceProbe.ssdp("ssdp:all", seconds: 2) { byAddress[answer.address, default: []].append(answer) }
+        let earlier = kept() + lastFound
         var records: [Record] = []
         await withTaskGroup(of: Record?.self) { group in
-            for (ip, lines) in answers {
-                let server = lines.joined(separator: "\n").lowercased()
-                if server.contains("samsung") {
+            for (ip, answers) in byAddress {
+                let said = answers.map { "\($0.server)\n\($0.location ?? "")\n\($0.searchTarget)" }.joined(separator: "\n").lowercased()
+                if said.contains("samsung") {
                     group.addTask { await samsung(at: ip) }
-                } else if server.contains("webos") || server.contains("lge") {
-                    let location = lines.first { $0.lowercased().hasPrefix("location:") }
-                        .map { String($0.dropFirst("location:".count)).trimmingCharacters(in: .whitespaces) }
-                    group.addTask { await lg(at: ip, description: location) }
+                } else if said.contains("webos") || said.contains("lge") {
+                    group.addTask { await lg(at: ip, answers: answers, earlier: earlier) }
                 }
             }
             for await record in group { if let record, !records.contains(where: { $0.id == record.id }) { records.append(record) } }
         }
         return records
-    }
-
-    /// The UPnP answers on this network, by address: what each said about itself.
-    private static func ssdp(seconds: Int) -> [String: [String]] {
-        let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
-        guard fd >= 0 else { return [:] }
-        defer { close(fd) }
-        var wait = timeval(tv_sec: 0, tv_usec: 300_000)
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
-        var ttl: UInt8 = 2
-        setsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, socklen_t(1))
-        var address = sockaddr_in()
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = UInt16(1900).bigEndian
-        address.sin_addr.s_addr = inet_addr("239.255.255.250")
-        let search = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: ssdp:all\r\n\r\n"
-        for _ in 0..<2 {
-            _ = search.withCString { text in
-                withUnsafePointer(to: &address) {
-                    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { sendto(fd, text, strlen(text), 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
-                }
-            }
-        }
-        var answers: [String: [String]] = [:]
-        let end = Date().addingTimeInterval(TimeInterval(seconds))
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        while Date() < end {
-            var from = sockaddr_in()
-            var length = socklen_t(MemoryLayout<sockaddr_in>.size)
-            let got = withUnsafeMutablePointer(to: &from) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { recvfrom(fd, &buffer, buffer.count, 0, $0, &length) }
-            }
-            guard got > 0 else { continue }
-            let ip = String(cString: inet_ntoa(from.sin_addr))
-            let text = String(decoding: buffer[0..<got], as: UTF8.self)
-            let lines = text.split(separator: "\r\n").map(String.init).filter {
-                let lower = $0.lowercased()
-                return lower.hasPrefix("server:") || lower.hasPrefix("location:") || lower.hasPrefix("st:")
-            }
-            answers[ip, default: []] += lines
-        }
-        return answers
     }
 
     private static func fetch(_ url: URL, timeout: TimeInterval = 3) async -> Data? {
@@ -165,9 +126,44 @@ enum TVs {
                       duid: nil, developerIP: device["developerIP"] as? String, developerMode: (device["developerMode"] as? String) == "1")
     }
 
+    /// The service an LG TV announces for itself; the description it points at is the TV's own.
+    static let lgTV = "urn:lge:device:tv:1"
+
+    /// An LG TV, from the UPnP descriptions its answers point at. It answers for several services, each with a
+    /// description and an id of its own, and the first to answer is often one that says nothing of the TV (Netflix's,
+    /// a few bytes of "status=ok"), so each is tried until one is an LG TV's: the TV's own service first, which gives
+    /// it the same id at every scan. A TV already kept or seen under another of its services' ids (an earlier Lamp
+    /// kept whichever answered first, and the TV's own may miss a scan) keeps that id, so its setup, its key and the
+    /// apps set to open on it still match: it's the same TV when any id it answers for now is one it had then.
+    /// `fetch` is how a description is read; tests answer with recorded ones.
+    static func lg(at ip: String, answers: [DeviceProbe.SSDPAnswer], earlier: [Record] = [],
+                   fetch: (URL) async -> Data? = { await fetch($0) }) async -> Record? {
+        let own = Set(answers.filter { $0.searchTarget.lowercased() == lgTV }.compactMap(\.location))
+        var locations: [String] = []
+        for location in answers.compactMap(\.location).filter(own.contains) + answers.compactMap(\.location)
+            where !locations.contains(location) && URL(string: location)?.host == ip && URL(string: location)?.scheme == "http" {
+            locations.append(location)
+        }
+        // A USN is "uuid:<udn>" or "uuid:<udn>::<type>".
+        let udns = Set(answers.compactMap { answer -> String? in
+            guard answer.usn.lowercased().hasPrefix("uuid:") else { return nil }
+            let udn = answer.usn.dropFirst(5).components(separatedBy: "::")[0]
+            return udn.isEmpty ? nil : udn
+        })
+        for location in locations {
+            guard let url = URL(string: location), let data = await fetch(url), var record = lg(at: ip, description: data) else { continue }
+            record.udns = Array(udns.union([String(record.id.dropFirst("lg:".count))])).sorted()
+            if let seen = earlier.first(where: { tv in
+                !tv.isSamsung && !udns.isDisjoint(with: [String(tv.id.dropFirst("lg:".count))] + (tv.udns ?? []))
+            }) { record.id = seen.id }
+            record.developerMode = FileManager.default.fileExists(atPath: WebOS.keyURL(record.id).path)
+            return record
+        }
+        return nil
+    }
+
     /// An LG TV's UPnP description: its name and model. Its webOS version is read once Lamp can reach it.
-    static func lg(at ip: String, description: String?) async -> Record? {
-        guard let description, let url = URL(string: description), let data = await fetch(url) else { return nil }
+    static func lg(at ip: String, description data: Data) -> Record? {
         let text = String(decoding: data, as: UTF8.self)
         func tag(_ name: String) -> String? {
             guard let open = text.range(of: "<\(name)>"), let close = text.range(of: "</\(name)>", range: open.upperBound..<text.endIndex) else { return nil }
@@ -175,10 +171,8 @@ enum TVs {
         }
         guard (tag("manufacturer") ?? "").uppercased().hasPrefix("LG") else { return nil }
         let udn = (tag("UDN") ?? ip).replacingOccurrences(of: "uuid:", with: "")
-        let id = "lg:\(udn)"
-        return Record(id: id, maker: "LG", name: tag("friendlyName") ?? "LG TV", model: tag("modelName") ?? "webOS TV",
-                      modelID: tag("modelNumber") ?? "", address: ip, os: "webOS", osVersion: "", resolution: "",
-                      developerMode: FileManager.default.fileExists(atPath: WebOS.keyURL(id).path))
+        return Record(id: "lg:\(udn)", maker: "LG", name: tag("friendlyName") ?? "LG TV", model: tag("modelName") ?? "webOS TV",
+                      modelID: tag("modelNumber") ?? "", address: ip, os: "webOS", osVersion: "", resolution: "")
     }
 
     /// This Mac's addresses on the local network, which a Samsung TV in developer mode must name.

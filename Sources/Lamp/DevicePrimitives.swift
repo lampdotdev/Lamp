@@ -353,17 +353,21 @@ enum DeviceProbe {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { recvfrom(fd, &buffer, buffer.count, 0, $0, &length) }
             }
             guard got > 0 else { continue }
-            let ip = String(cString: inet_ntoa(from.sin_addr))
-            var headers: [String: String] = [:]
-            for line in String(decoding: buffer[0..<got], as: UTF8.self).split(separator: "\r\n") {
-                guard let colon = line.firstIndex(of: ":") else { continue }
-                headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-            }
-            let answer = SSDPAnswer(address: ip, server: headers["server"] ?? "", location: headers["location"],
-                                    searchTarget: headers["st"] ?? "", usn: headers["usn"] ?? "")
+            let answer = answer(String(decoding: buffer[0..<got], as: UTF8.self), from: String(cString: inet_ntoa(from.sin_addr)))
             if !answers.contains(answer) { answers.append(answer) }
         }
         return answers
+    }
+
+    /// One SSDP answer's headers, as the device at `address` sent them.
+    static func answer(_ text: String, from address: String) -> SSDPAnswer {
+        var headers: [String: String] = [:]
+        for line in text.split(whereSeparator: \.isNewline) {
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        }
+        return SSDPAnswer(address: address, server: headers["server"] ?? "", location: headers["location"],
+                          searchTarget: headers["st"] ?? "", usn: headers["usn"] ?? "")
     }
 
     /// The devices offering a Bonjour service on the local network, by name and address, browsed for a few seconds.
