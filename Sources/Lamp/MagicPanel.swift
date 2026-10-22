@@ -79,11 +79,12 @@ final class MagicPanel {
 
     /// Whether the copies of the app running now can take Lamp's request for their chat (`openChat`): one built by a
     /// Lamp from before it would only come forward, with the chat nowhere. Read off each running copy's own program,
-    /// which may be older than the one installed since.
+    /// which may be older than the one installed since. The request's name alone, without Lamp's prefix: an app reads
+    /// the prefix from its Info.plist (`LampInstall.note`), so its program holds only the name.
     static func runningCopiesTakeTheChat(_ project: LampProject) -> Bool {
         Store.shared.macCopies(of: project).allSatisfy { app in
             guard let program = app.executableURL, let data = try? Data(contentsOf: program, options: .alwaysMapped) else { return false }
-            return data.range(of: Data((Edition.notificationPrefix + "openSidebar").utf8)) != nil
+            return data.range(of: Data("openSidebar".utf8)) != nil
         }
     }
 
