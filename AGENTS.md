@@ -20,7 +20,7 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools, the notes tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `device_integration`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
@@ -31,7 +31,7 @@ A capability given to one engine must be given to all of them that can take it, 
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `device_integration`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **How the agent talks** (`Talk`, `TalkCards.swift`): in short sentences and in cards, not paragraphs, so building
   feels like a short wizard. A vague wish gets a good first attempt built from sensible guesses, not questions: the
@@ -633,6 +633,59 @@ manifests' `uses-permission` lines (INTERNET is going online, the rest said in p
 files bring in beyond Lamp's catalogue. Converting to or from Android is a rewrite in the other
 language: `convert` puts the new kind's scaffold beside the old code and tells the agent to write the app again and
 delete the rest.
+
+## Devices as data
+
+A device Lamp has no kit for is taken on as an **integration** (`Integration`, Integration.swift): JSON the builder
+writes and hands Lamp with `device_integration`, the way an app declares an unlisted service with `LampAPI.own`. Its
+format is the `device-integrations` skill, which `Agent.deviceRules` names in every prompt (it isn't in the skills'
+list). It says how the device is found (`find`: SSDP, Bonjour, or an HTTP probe of what answered Lamp's scan; USB is refused until Lamp can reach such a device),
+where each field of its record is read (`identity`: a request and a JSON or XML path; the model says where, Lamp
+reads), its setup `steps`, the `bridge` (install, launch, look, use, logs) and the `app` kind. Nothing in it is code
+Lamp runs: every step and bridge is a list of Lamp's primitives (`IntegrationAction`), and `IntegrationCheck.problems`
+(with `unknownKeys`) turns anything else away with plain reasons, which the tool answers as an error for the model to
+fix. Values in a request or command are placeholders Lamp fills (`Placeholders`: `{address}`, `{mac}`, `{package}`,
+`{field:<key>}`…), each checked to a safe alphabet; what the person typed goes only into a sign-in, a form, a header or
+a body, never a path or a command, and a command's values are quoted for the shell. Kept integrations are in Lamp's
+folder (`Integrations.folder`), beside those Lamp ships in `Resources/Devices` (none yet; the kits aren't data yet).
+The model can only say a step was read (`known.how` "read", with its source); Lamp marks it Checked by Lamp or Done
+by people (`Integrations.mark`, by whether it needed hands on the device) once its check passes on a device, with that
+device's model and version, and keeps the mark while the step's text is unchanged.
+
+The primitives and their guards (DevicePrimitives.swift, DeviceRemote.swift), which every place goes through:
+`DeviceHTTP` (only the address the device was found at, which must be private or link-local and never loopback, so
+nothing reaches Lamp's gateway; a path that stays a path; no redirect; the answer cut off at `limit`; a password only
+for the device's own challenge, in the scheme declared, once: `Guardian`), `DeviceProbe` (TCP, SSDP, Bonjour;
+read only), `DeviceStream` (a TCP log read line by line), `DeviceFields` (what the person typed, kept per device the
+way `AppSecrets` keeps an app's), `DeviceQR`, `VendorSignIn` (the vendor's https page, answered on a loopback listener
+at a port of its own; the card names the page's domain), `DeviceSSH` (the device's address only, its host key pinned
+in a file of its own the first time, none of the person's SSH settings, no agent, no forwarding, Lamp's key or one the
+device gave, both in Lamp's folder) and `DeviceTools` (Lamp's list, run as Lamp by full path with its own arguments and
+secrets on standard input; anything else downloaded over https, checked against the integration's SHA-256 and run under
+`sandbox-exec` with a profile of its own: its folder, the system, the network). An SSH command template or a tool runs
+only after the person approves its exact text on that device (`DeviceApprovals`, `DeviceCommandCard`, with the model's
+explanation and Lamp's sentence of what they accept); a changed template asks again.
+
+Setup is one window for every such device (`DeviceSetupWindow`, `DeviceSetupPage`) and one card for a step
+(`DeviceStepCard`, drawn from the step: numbered lines, Lamp's values shown large, a QR code, the field, a link, "What
+you accept" from `Integration.Acceptance` in Lamp's words, `IntegrationWords.accepts`, so no integration can play a
+risk down, the mark, one button and the check's line). A device has one `DeviceSetupModel`, which the window and the
+chat's card (`.deviceStep`, `DeviceStepLine`; in the sidebar a line that opens the window) share. A step that needs
+hands on the device (`wait`) is checked again every few seconds while it's shown. `IntegrationRunner` runs steps and
+sequences and keeps a device (`Integrations.Kept`, in Lamp's folder) only once a step has passed on it: a device found
+is shown for the moment, never kept. The bridges aren't wired to Play, Try On or looks yet; Roku, the first device
+built this way, does that.
+
+Settings → Your Devices lists what integrations find (`Integrations.devices`, after the kits' own) and the devices
+that answered Lamp's SSDP scan that nothing knows, read from their UPnP description (routers left out). Set Up… on one
+Lamp knows opens its window; on one it doesn't, it opens the device's setup conversation (`Store.setUpDevice`), one
+per device, whose first request is `Agent.deviceSetupRequest` (what the device said of itself). That conversation is
+no wish (`LampProject.deviceSetup`, `makesNoApp`): it's never on the desk, never named, scaffolded, built or saved, and
+every request in it carries `Agent.deviceSetupNote` in place of the app's notes, so a follow-up ("it still says
+waiting") stays about the device. Lamp refuses the app tools there (`Store.deviceSetupRefusal`: looks, use, versions,
+art, kinds, connectors, `write_wish`), leaving the integration, skills, notes and the chat's cards. When
+`device_integration` keeps an integration it looks for the device at once, puts each found one's next step in that
+chat, and moves the conversation to the device's new id, so the setup window's Ask About Setup… leads back to it. Each kind of card has its gallery entries ("Device setup").
 
 ## TV apps
 

@@ -114,6 +114,10 @@ struct LampProject: Identifiable, Hashable {
     /// Started with "Help me find one": the agent asks about the person's days and writes a wish into the message
     /// box (`write_wish`). Nothing is named or built until that wish, or one of their own, is sent.
     var finding = false
+    /// A device's setup conversation (`Store.setUpDevice`), by the device's id as it was found: no wish and no app.
+    /// It's never named, scaffolded, built or saved, never on the desk, and the agent in it has only the tools for
+    /// the device's integration.
+    var deviceSetup: String?
     var platform: Platform = .mac
     var family: DeviceFamily = .iphone
     /// The person's own iPhone or iPad that Play puts the app on (Devices), instead of the simulator.
@@ -162,6 +166,9 @@ struct LampProject: Identifiable, Hashable {
     /// theirs from the site or one still to be told. Nothing is an app until Lamp has made something; the
     /// name Lamp or the person gives it takes over everywhere at once.
     var title: String { !untitled ? name : fromWish ? "Your wish" : finding ? "Finding a wish" : "New wish" }
+    var isDeviceSetup: Bool { deviceSetup != nil }
+    /// Nothing here is an app yet, or ever: a wish being found, or a device's setup.
+    var makesNoApp: Bool { finding || isDeviceSetup }
     /// False for a draft (Template.draft): a new app whose scaffold isn't written yet.
     var scaffolded: Bool {
         FileManager.default.fileExists(atPath: dir.appendingPathComponent("Package.swift").path) || Template.isAndroid(dir) || TVTemplate.isTV(dir)
@@ -180,6 +187,7 @@ struct ProjectMeta: Codable {
     var instance: String?      // LampProject.instance
     var wish: Bool?            // LampProject.fromWish
     var finding: Bool?         // LampProject.finding
+    var deviceSetup: String?   // LampProject.deviceSetup
 }
 
 struct AppUsage: Codable {
@@ -203,7 +211,8 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// build one yet, and offers the setup (`IPhoneSetupLine`); its text is the kind that was wanted.
     /// `progress` is the agent's line on how the work is going (`Talk`'s `progress`), folded with the turn's
     /// steps once it ends.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload }
+    /// `deviceStep` is a device's next setup step, drawn from its integration (`DeviceStepLine`); its text is the device's id.
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -972,6 +981,7 @@ final class Store: ObservableObject {
             return LampProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir,
                                 instance: meta.instance ?? dir.lastPathComponent,
                                 untitled: meta.untitled ?? false, fromWish: meta.wish ?? false, finding: meta.finding ?? false,
+                                deviceSetup: meta.deviceSetup,
                                 platform: meta.platform ?? .mac, family: meta.family ?? .iphone,
                                 device: meta.device, chosen: meta.target ?? .mac, simulator: meta.simulator)
         }
@@ -1405,6 +1415,104 @@ final class Store: ObservableObject {
         sendWhenShown = project.id
     }
 
+    /// Set Up… on a device Lamp doesn't know: a new wish whose first request asks the builder to write the device's
+    /// integration (`device_integration`), with what the device said of itself. Like finding a wish, nothing is named,
+    /// scaffolded or built until a wish for the device is sent.
+    func setUpDevice(_ device: Device) {
+        // One conversation per device: Set Up… again goes back to it, where it was left.
+        if let earlier = projects.first(where: { $0.deviceSetup == device.id }) { return showChat(earlier.id) }
+        let project: LampProject
+        do {
+            project = try Template.draft(name: "Set Up \(device.name)", deviceSetup: device.id, in: root)
+        } catch {
+            NSAlert(error: error).runModal()
+            return
+        }
+        reload()
+        showChat(project.id)
+        updateDraft(Draft(text: Agent.deviceSetupRequest(device)), for: project)
+        sendWhenShown = project.id
+    }
+
+    /// A device's setup conversation follows its device from the address it was found at to the id an integration
+    /// gives it, whichever look finds it that way (the integration's own, or any later one), so the setup window's
+    /// Ask About Setup… and Set Up… lead back to it.
+    func linkSetupConversations(to found: [Device]) {
+        var changed = false
+        for project in projects {
+            guard let id = project.deviceSetup, id.hasPrefix("found:"),
+                  let device = found.first(where: { $0.integration != nil && $0.address == String(id.dropFirst("found:".count)) }),
+                  !projects.contains(where: { $0.deviceSetup == device.id }) else { continue }
+            var linked = project
+            linked.deviceSetup = device.id
+            try? Template.saveMeta(linked)
+            changed = true
+        }
+        if changed { reload() }
+    }
+
+    /// What a device's setup conversation may not do: everything that looks at, opens, builds or changes an app,
+    /// since there is none. Only the integration, the skills, the notes and the chat's own cards are left.
+    static func deviceSetupRefusal(route: String, request: Gateway.Request) -> (Int, [String: Any])? {
+        let refusal = (400, ["error": "This conversation sets up a device; no app is made here. Write or fix the device's integration with device_integration, and tell the person to make a wish on Lamp's desk for anything to put on it."] as [String: Any])
+        switch route {
+        case "/agent/look", "/agent/use", "/agent/kind", "/agent/art", "/agent/versions", "/agent/versions/name", "/agent/versions/restore",
+             "/agent/setup", "/agent/connectors":
+            return refusal
+        case "/agent/talk":
+            let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]
+            return body?["tool"] as? String == "write_wish" ? refusal : nil
+        case "/mcp":
+            let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]
+            guard body?["method"] as? String == "tools/call",
+                  let name = (body?["params"] as? [String: Any])?["name"] as? String else { return nil }
+            let allowed: Set<String> = ["device_integration", "read_skill", "ask", "progress", "read_notes", "save_notes"]
+            guard !allowed.contains(name), !FileTools.names.contains(name) else { return nil }
+            return (200, ["jsonrpc": "2.0", "id": body?["id"] ?? NSNull(),
+                          "result": ["content": [["type": "text", "text": refusal.1["error"] as! String]], "isError": true]])
+        default:
+            return nil
+        }
+    }
+
+    /// `device_integration`: the builder hands Lamp an integration. Lamp checks it and answers with what's wrong, or
+    /// keeps it, looks for its devices now, and puts the next step of each one found that isn't set up in the chat.
+    func agentIntegration(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
+        let given = arguments["integration"]
+        let data: Data?
+        if let text = given as? String { data = Data(text.utf8) }
+        else if let object = given, JSONSerialization.isValidJSONObject(object) { data = try? JSONSerialization.data(withJSONObject: object) }
+        else { data = nil }
+        guard let data else { return (400, ["error": "`integration` must be the integration as a JSON object."]) }
+        let (kept, problems) = Integrations.submit(data)
+        guard let integration = kept else {
+            return (400, ["error": "Lamp didn't take the integration. Fix these and call device_integration again:\n" + problems.map { "- " + $0 }.joined(separator: "\n")])
+        }
+        let scan = Integrations.Scan(answers: await DeviceProbe.ssdp("ssdp:all", seconds: 2))
+        var found: [Device] = []
+        for address in await Integrations.addresses(for: integration, scan: scan) {
+            if let device = await Integrations.identify(integration, at: address) { found.append(device) }
+        }
+        linkSetupConversations(to: found)
+        // In the list at once, for the card below; the next look for devices keeps them while they answer.
+        for device in found { devices.removeAll { $0.id == device.id }; devices.append(device) }
+        refreshDevices()
+        var text = "Lamp kept the \(integration.name) integration."
+        if found.isEmpty {
+            text += " No \(integration.name) answered on the network just now, by what find and identity say. If the person's is on, check those against the device's documentation; otherwise it's set up once it's found, from Settings → Building → Your Devices."
+        }
+        for device in found {
+            let shown = (logs[project.id] ?? []).contains { $0.kind == .deviceStep && $0.text == device.id }
+            if let step = Integrations.next(for: device) {
+                if !shown { log(project, .deviceStep, device.id) }
+                text += " Found \(device.name) (\(device.line)); its next step, \"\(step.title)\", is a card in the chat, which the person follows. It isn't set up until they have, so don't say it is, and don't repeat its steps in your words."
+            } else {
+                text += " Found \(device.name) (\(device.line)), already set up."
+            }
+        }
+        return (200, ["text": text])
+    }
+
     /// "Help me find one": a new wish whose first request asks the agent to find it with the person, in the
     /// chat, through its cards (`Agent.findRules`).
     func findWish() {
@@ -1687,8 +1795,11 @@ final class Store: ObservableObject {
             async let apple = Devices.list()
             async let android = Adb.devices()
             async let tvs = TVs.devices()
-            let found = await apple + android + tvs
+            let kits = await apple + android + tvs
+            // What integrations find, and what's on the network that nothing Lamp has knows, after the kits' own.
+            let found = kits + (await Integrations.devices(known: Set(kits.compactMap(\.address))))
             if found != devices { devices = found }
+            linkSetupConversations(to: found)
             let mac = await Device.readThisMac()
             if mac != thisMac { thisMac = mac }
         }
@@ -1719,7 +1830,7 @@ final class Store: ObservableObject {
     func rename(_ project: LampProject, to name: String) async {
         // A wish still being found has no name to give: the wish it becomes names it (`startQueued`), and a
         // rename now would end the finding before the wish is.
-        guard !project.finding, begin(project) != nil else { return }
+        guard !project.makesNoApp, begin(project) != nil else { return }
         finish(await performRename(project, to: name))
     }
 
@@ -2469,13 +2580,14 @@ final class Store: ObservableObject {
         // A wish being found isn't named by its opening request or by answers to the agent's cards: the wish
         // the agent writes into the box (or one of the person's own) names it when it's sent.
         let spoken = (logs[project.id] ?? []).contains { $0.kind == .user }
-        let names = project.finding ? spoken && project.untitled && !messages.contains { $0.card != nil } : !spoken
+        let names = project.isDeviceSetup ? false
+            : project.finding ? spoken && project.untitled && !messages.contains { $0.card != nil } : !spoken
         let first = names
-        let stillFinding = project.finding && !names
+        let stillFinding = project.makesNoApp && !names
         // Still a new app until a request has made its first version: after the agent only asked questions,
         // the answers start the build and get the build card. An imported app has already been built. Not
         // while a wish is being found: there's nothing to build yet.
-        let newApp = Template.isScaffold(project) && !hasVersions(project) && (!project.finding || names)
+        let newApp = Template.isScaffold(project) && !hasVersions(project) && (!project.makesNoApp || names)
         progress[project.id] = TurnProgress(newApp: newApp)
         // Only the first message names the app (bootstrap). A later one, after the agent only asked questions,
         // finds it untitled if that naming failed, and mustn't show a naming that isn't happening.
@@ -2825,8 +2937,8 @@ final class Store: ObservableObject {
         if owner.asked {
             return TurnResult(end: .replied, watched: isWatching(project.id))
         }
-        // Still finding the wish: there's no app yet to build or save, whatever the agent did.
-        if project.finding {
+        // Still finding the wish, or setting up a device: there's no app to build or save, whatever the agent did.
+        if project.makesNoApp {
             return TurnResult(end: .replied, watched: isWatching(project.id))
         }
         // A new app the agent didn't touch: it only replied (say, with questions about a vague request).
@@ -4224,6 +4336,7 @@ final class Store: ObservableObject {
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             case "make_app_for": (status, answer) = await agentKind(arguments, for: project)
             case "connectors": (status, answer) = Connectors.answer(arguments, for: project)
+            case "device_integration": (status, answer) = await agentIntegration(arguments, for: project)
             case "ask", "progress", "write_wish": (status, answer) = talk(name, arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
@@ -5111,6 +5224,8 @@ final class Store: ObservableObject {
     /// (`fileWrites`), so deleting or remaking its folder waits for them (`settleFiles`): one finishing afterwards
     /// would make parts of the folder again.
     private func writeOwnFiles(_ project: LampProject, all: Bool) async throws {
+        // A device's setup conversation has no app for Lamp's files to be part of.
+        if project.isDeviceSetup { return }
         let before = fileWrites[project.id]
         let write = Task.detached(priority: .userInitiated) {
             _ = await before?.result
@@ -7053,6 +7168,7 @@ final class Store: ObservableObject {
         await iconDesigns[project.id]?.value
         var spec = Icons.load(project)
         if spec == nil && project.untitled { return }   // keeps its placeholder until the first message
+        if project.isDeviceSetup { return }   // a device's setup is shown with the device's own symbol, not an app's icon
         if spec == nil {
             log(project, .status, "Designing an icon…")
             spec = await Icons.design(for: project)
@@ -7611,7 +7727,7 @@ final class Store: ObservableObject {
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -7650,6 +7766,7 @@ final class Store: ObservableObject {
             }
             guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
             guard turns[project.id]?.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+            if project.isDeviceSetup, let refusal = Self.deviceSetupRefusal(route: route, request: request) { return refusal }
             return await agentRequest(request, route: route, for: project)
         }
         // The app may have been created since the last reload. A reload rereads every app, so a stale app
@@ -7792,6 +7909,9 @@ final class Store: ObservableObject {
         if route == "/agent/steer" {
             guard turns[project.id]?.steering == .pi else { return (200, [:]) }
             return (200, handOver(project).map { ["message": $0] } ?? [:])
+        }
+        if route == "/agent/integration" {
+            return await agentIntegration((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
         }
         if route == "/agent/connectors" {
             return Connectors.answer((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)

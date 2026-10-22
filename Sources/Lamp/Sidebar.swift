@@ -542,6 +542,14 @@ final class SidebarServer {
                     card.button = "See What's Needed…"
                     card.disabled = IPhoneSetupLine.isOff(for: project)
                     out.append(card)
+                case .deviceStep:
+                    // The step's card has a field and a sign-in, which happen in Lamp's window.
+                    let step = DeviceStepLine.text(line.text)
+                    var card = SidebarLine(id: line.id, kind: .offer, text: step.text, gap: gap)
+                    card.symbol = "dot.radiowaves.left.and.right"
+                    card.done = step.done
+                    card.button = step.done ? nil : "Set Up in Lamp…"
+                    out.append(card)
                 case .noted:
                     guard let receipt = line.noted else { continue }
                     var card = SidebarLine(id: line.id, kind: .note, text: NoteCard.title(receipt, app: project.name), gap: gap)
@@ -782,6 +790,10 @@ final class SidebarServer {
             guard let line = store.logs[project.id]?.first(where: { $0.id == id }) else { return }
             // Reload is done where the person is, beside the app: nothing to show in Lamp's window.
             if line.kind == .reload { return store.reloadWaiting(project.id) }
+            // A device's setup has a window of its own.
+            if line.kind == .deviceStep, let device = store.devices.first(where: { $0.id == line.text && $0.integration != nil }) {
+                return DeviceSetupWindow.show(device)
+            }
             // In Lamp's window: where the card's keys, downloads and sign-ins are, and what Image Playground
             // opens over, which Lamp may have put away for the sidebar.
             NSApp.activate(ignoringOtherApps: true)

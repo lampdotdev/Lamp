@@ -661,6 +661,8 @@ struct LogRow: View, Equatable {
             if let project = Store.shared.projects.first(where: { $0.dir == dir }) {
                 IPhoneSetupLine(project: project, wanted: Platform(rawValue: line.text) ?? .iphone)
             }
+        case .deviceStep:
+            DeviceStepLine(deviceID: line.text)
         case .ask, .result:
             // Drawn by Transcript, which knows whether they're still waiting.
             EmptyView()

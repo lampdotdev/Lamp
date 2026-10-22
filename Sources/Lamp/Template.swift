@@ -14,14 +14,14 @@ enum Template {
     /// change its name and kind for free; its scaffold is written (`fill`) when there's first something to build.
     /// `instance` carries an existing app's identity into its replacement (rescaffolding under a new name);
     /// a new app gets a fresh one.
-    static func draft(name rawName: String, untitled: Bool = false, fromWish: Bool = false, finding: Bool = false, platform: Platform = .mac,
+    static func draft(name rawName: String, untitled: Bool = false, fromWish: Bool = false, finding: Bool = false, deviceSetup: String? = nil, platform: Platform = .mac,
                       family: DeviceFamily = .iphone, instance: String? = nil, in root: URL) throws -> LampProject {
         let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) }
         let exe = identifier(from: name)
         let slug = freeSlug(for: exe, in: root)
         let project = LampProject(id: slug, name: name.isEmpty ? exe : name, exe: exe,
                                    dir: root.appendingPathComponent(slug), instance: instance ?? UUID().uuidString,
-                                   untitled: untitled, fromWish: fromWish, finding: finding, platform: platform, family: family)
+                                   untitled: untitled, fromWish: fromWish, finding: finding, deviceSetup: deviceSetup, platform: platform, family: family)
         try FileManager.default.createDirectory(at: project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
         try saveMeta(project)
         return project
@@ -45,7 +45,8 @@ enum Template {
                                              simulator: project.platform.hasIOS ? project.simulator : nil,
                                              instance: project.instance.isEmpty ? nil : project.instance,
                                              wish: project.untitled && project.fromWish ? true : nil,
-                                             finding: project.untitled && project.finding ? true : nil))
+                                             finding: project.untitled && project.finding ? true : nil,
+                                             deviceSetup: project.deviceSetup))
             .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
     }
 
