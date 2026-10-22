@@ -6549,12 +6549,16 @@ final class Store: ObservableObject {
         let density = androidDensities[project.id]
         let screen = await Adb.screen(on: open.serial, density: density)
         // On the emulator, in plain sight as on the iPhone's simulator: its window glows, Lamp's fingertip goes to
-        // each spot, and the person's Stop, Esc, or own click in the window ends it. A device of the person's has
-        // nothing of it on the Mac's screen to show.
+        // each spot, and the person's Stop, Esc, or own click in the window ends it. A look leaves the emulator hidden
+        // so as not to pull it in front mid-turn, so trying the app brings its window back, without taking the
+        // keyboard. A device of the person's has nothing of it on the Mac's screen to show.
         let scale = Adb.scale(density: density)
-        let glass = open.serial == Emulator.serial
-            ? await Adb.displaySize(on: open.serial).flatMap { Emulator.glass(size: CGSize(width: $0.width / scale, height: $0.height / scale)) }
-            : nil
+        var shown: Emulator.Glass?
+        if open.serial == Emulator.serial, let size = await Adb.displaySize(on: open.serial) {
+            await Emulator.unhide()
+            shown = await Emulator.glass(size: CGSize(width: size.width / scale, height: size.height / scale))
+        }
+        let glass = shown
         let trial = glass.map { Handover(label: "\(Self.lampName) is trying it on Android", finger: true, simulator: $0.pid) }
         if let glass { trial?.show(window: glass.window) }
         defer { trial?.end() }

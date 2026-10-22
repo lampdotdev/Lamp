@@ -859,6 +859,8 @@ enum Emulator {
     }
     static func bringForward() async { app()?.activate() }
     static func putBehind() async { app()?.hide() }
+    /// Its window back on screen where it was, without taking the keyboard from whatever the person is in.
+    static func unhide() async { app()?.unhide() }
     static var isRunning: Bool { !ownProcesses().isEmpty }
 
     /// The window Lamp's emulator draws the device's screen in, for Lamp's fingertip to go where each tap lands. The
@@ -881,8 +883,17 @@ enum Emulator {
         }
     }
 
-    /// Lamp's emulator's screen on the Mac's, or nil when its window isn't on screen (hidden behind Lamp, or minimised).
-    static func glass(size: CGSize) -> Glass? {
+    /// Lamp's emulator's screen on the Mac's, or nil when its window isn't on screen (minimised, or hidden and not
+    /// back within a moment of `unhide`).
+    static func glass(size: CGSize) async -> Glass? {
+        for _ in 0..<10 {
+            if let found = onScreen(size: size) { return found }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return nil
+    }
+
+    private static func onScreen(size: CGSize) -> Glass? {
         let pids = Set(ownProcesses().map(\.pid))
         guard !pids.isEmpty else { return nil }
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
