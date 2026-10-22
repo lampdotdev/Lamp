@@ -187,11 +187,15 @@ enum Scanner {
     private static let allocSizeAttr = attrgroup_t(truncatingIfNeeded: ATTR_FILE_ALLOCSIZE)
 
     /// Lists a folder with readdir and a stat for each entry, for a file system getattrlistbulk doesn't work on.
+    /// False when the folder couldn't be read to its end.
     private static func readSlowly(_ path: String, add: (Bool, Bool, dev_t, Int64, () -> String) -> Void) -> Bool {
         guard let dir = opendir(path) else { return false }
         defer { closedir(dir) }
         let fd = dirfd(dir)
-        while let entry = readdir(dir) {
+        while true {
+            // readdir says nil both at the end and on an error; only errno tells them apart.
+            errno = 0
+            guard let entry = readdir(dir) else { return errno == 0 }
             var st = stat()
             let name: String? = withUnsafePointer(to: &entry.pointee.d_name) { raw in
                 raw.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { cname -> String? in
@@ -204,7 +208,6 @@ enum Scanner {
             let type = st.st_mode & S_IFMT
             add(type == S_IFDIR, type == S_IFREG, st.st_dev, Int64(st.st_blocks) * 512, { name })
         }
-        return true
     }
 
     private static func scanFolder(_ folder: Node, path: String, device: dev_t, depth: Int, skip: Set<String>, progress: ScanProgress) {
