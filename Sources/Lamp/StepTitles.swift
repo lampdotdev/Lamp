@@ -4,10 +4,11 @@ import LampSidebarKit
 /// A line for each fold of a finished turn's steps, saying what it did ("Listed Keychain item names and accounts,
 /// without secrets"), in place of "3 steps" or "Worked for…" (`ChatItem.title(of:untitled:)`).
 ///
-/// Made once the turn is over, in one call for all its folds, and never waited on: the agent has finished, the
-/// chat is already as it will be, and each fold takes its line when the answer comes. While the turn goes on its
-/// steps are open rows anyway, so a line made earlier would show no sooner, and one call per turn costs less than one
-/// per fold. The call goes to the small model on the route that built the turn (`AppAI.fastModel`: Haiku through
+/// A stretch of steps is titled as soon as the agent says something after it (`closed(in:turn:)`), while the turn goes
+/// on, so the folds have their lines when it ends rather than half a minute later; what's left when the turn ends (the
+/// steps after its last message, a fold of one step) is titled then, and never waited on. Each call is one fold's,
+/// so a turn that says something between many stretches makes as many small calls. The call goes to the small model
+/// on the route that built the turn (`AppAI.fastModel`: Haiku through
 /// Claude Code, Luna through Codex; for pi, OpenRouter's default when it builds through OpenRouter, and the model on
 /// this Mac it built with when it builds there, never the cloud). It is told the
 /// person's request and each fold's steps in the words the chat shows, never what a command printed or a file held,
@@ -27,17 +28,54 @@ enum StepTitles {
         let steps: [String]
     }
 
-    /// Titles the folds of the run that just ended, out of the turn's way.
+    /// Folds whose title is being asked for now, so the call at the turn's end doesn't ask for them again.
+    private static var asking: Set<UUID> = []
+
+    /// Titles what's left of the run that just ended, out of the turn's way.
     static func start(for project: LampProject, turn: TurnRoute) {
         Task { @MainActor in
             let lines = LogLine.visible(Store.shared.logs[project.id] ?? [], details: false)
-            let (request, groups, own) = Self.groups(in: lines)
+            let (request, all, own) = Self.groups(in: lines)
+            let groups = all.filter { !asking.contains($0.id) }
             var titles = own
             if !groups.isEmpty, let made = await ask(request: request, groups: groups, turn: turn) {
                 titles.merge(made) { $1 }
             }
             Store.shared.setFoldTitles(titles, in: project)
         }
+    }
+
+    /// Titles the stretches of steps the turn going on has closed by saying something after them, each in a call
+    /// of its own as it closes.
+    static func closed(in project: LampProject, turn: TurnRoute) {
+        let (request, all) = closed(in: LogLine.visible(Store.shared.logs[project.id] ?? [], details: false))
+        for group in all where !asking.contains(group.id) {
+            asking.insert(group.id)
+            Task { @MainActor in
+                let made = await ask(request: request, groups: [group], turn: turn)
+                asking.remove(group.id)
+                if let made { Store.shared.setFoldTitles(made, in: project) }
+            }
+        }
+    }
+
+    /// The run going on's stretches of more than one step that something said came after, untitled: those that will
+    /// fold. A stretch of one step folds only as the answer's, which isn't known until the run ends.
+    nonisolated static func closed(in lines: [LogLine]) -> (request: String?, groups: [Group]) {
+        let start = lines.lastIndex { $0.kind == .summary }.map { $0 + 1 } ?? lines.startIndex
+        let run = lines[start...]
+        let request = run.first { $0.kind == .user }.map { String($0.text.prefix(600)) }
+        var groups: [Group] = []
+        var stretch: [LogLine] = []
+        for line in run {
+            if ChatItem.isStep(line) {
+                stretch.append(line)
+                continue
+            }
+            if stretch.count > 1, stretch[0].foldTitle == nil { groups.append(Group(id: stretch[0].id, steps: stretch.map(words))) }
+            stretch = []
+        }
+        return (request, groups)
     }
 
     /// The last finished run's folds that need a title: those of more than one step, to ask the model about, and

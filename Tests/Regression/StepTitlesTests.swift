@@ -69,6 +69,23 @@ final class StepTitlesTests: XCTestCase {
         XCTAssertTrue(StepTitles.groups(in: LogLine.visible(turn(timed: true, titled: true), details: false)).groups.isEmpty)
     }
 
+    /// While the turn goes on, a stretch of steps is asked about as soon as the agent says something after it, so its
+    /// title is there when the turn ends; the stretch still going isn't, nor one already titled.
+    @MainActor func testAStretchIsTitledOnceSomethingIsSaidAfterIt() {
+        let whole = turn(timed: true, titled: false)
+        // The turn as it stands when "First, the look." starts: the summary and the answer aren't there yet.
+        let live = LogLine.visible(Array(whole[...8]), details: false)
+        let (request, groups) = StepTitles.closed(in: live)
+        XCTAssertEqual(request, "Make it a beer journal")
+        XCTAssertEqual(groups.map(\.steps), [["Looking at the shelf", "Reading the saved entries", "Finding every hot-sauce word"]])
+        XCTAssertEqual(groups.map(\.id), [whole[2].id])
+        // Before anything is said after the steps, nothing is closed.
+        XCTAssertTrue(StepTitles.closed(in: LogLine.visible(Array(whole[...5]), details: false)).groups.isEmpty)
+        var titled = whole
+        titled[2].foldTitle = "Read the shelf"
+        XCTAssertEqual(StepTitles.closed(in: LogLine.visible(Array(titled[...9]), details: false)).groups.map(\.id), [whole[7].id])
+    }
+
     /// A reply that isn't fit to show is no title: the fold keeps its words.
     @MainActor func testOnlyTitlesFitToShowAreKept() {
         let groups = [StepTitles.Group(id: UUID(), steps: ["a", "b"]),

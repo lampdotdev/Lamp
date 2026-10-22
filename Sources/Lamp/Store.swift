@@ -666,6 +666,7 @@ final class Store: ObservableObject {
         var codexCut: String?
         var claudeSession: String?          // Claude Code's conversation, as its own output says (Privacy.isOwnOutput)
         var writing: (line: UUID, unshown: String)?   // the message the agent is writing right now
+        var titleRoute: StepTitles.TurnRoute?          // what builds the run going on, for its steps' titles
         var showingWritten = false
         /// The agent's token for this turn (Store.agentTokens): the only way to its routes.
         let agentToken = UUID().uuidString + UUID().uuidString
@@ -1029,6 +1030,7 @@ final class Store: ObservableObject {
         logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone,
                                                     offer: offer, noted: noted, said: said, at: Date()))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
+        if kind != .detail, kind != .summary, kind != .status, kind != .tool { closeSteps(project) }
         saveChat(project)
     }
 
@@ -1120,6 +1122,7 @@ final class Store: ObservableObject {
             let line = LogLine(kind: .agent, text: String(piece.drop(while: \.isWhitespace)), at: Date())
             logs[project.id, default: []].append(line)
             turn.writing = (line.id, "")
+            closeSteps(project)
             noteAgent("Replying", for: project)
             return
         }
@@ -1131,6 +1134,13 @@ final class Store: ObservableObject {
             turn.showingWritten = false
             showWritten(for: project)
         }
+    }
+
+    /// Something said during a run closes the stretch of steps before it, which is titled now rather than when the
+    /// turn ends (`StepTitles.closed(in:turn:)`).
+    private func closeSteps(_ project: LampProject) {
+        guard let route = turns[project.id]?.titleRoute else { return }
+        StepTitles.closed(in: project, turn: route)
     }
 
     /// Puts what has arrived of the message being written into its chat line.
@@ -3199,6 +3209,7 @@ final class Store: ObservableObject {
         // Whether the agent has answered at all: the request, with any word on the notes in it, got through.
         var answered = false
         guard let turn = turns[project.id] else { return false }   // only inside a turn (startQueued)
+        turn.titleRoute = titleRoute
         // One turn can run the agent several times (fixing build errors, a crash on launch): each run's summary
         // shows only the pictures painted during it.
         let artBefore = turn.artCost
@@ -3415,7 +3426,7 @@ final class Store: ObservableObject {
         turn.writing = nil
         // Pictures are already in the app's building cost (recordArt); the summary shows them with the rest.
         log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost + turn.artCost - artBefore))
-        // Each fold of the turn's steps gets a line saying what it did, made after the turn and never waited on.
+        // The folds the run's messages didn't close get their lines now, never waited on.
         StepTitles.start(for: project, turn: titleRoute)
         recordAgent(project, cost: cost)
         if turn.stopped {
