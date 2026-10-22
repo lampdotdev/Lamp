@@ -673,8 +673,22 @@ risk down, the mark, one button and the check's line). A device has one `DeviceS
 chat's card (`.deviceStep`, `DeviceStepLine`; in the sidebar a line that opens the window) share. A step that needs
 hands on the device (`wait`) is checked again every few seconds while it's shown. `IntegrationRunner` runs steps and
 sequences and keeps a device (`Integrations.Kept`, in Lamp's folder) only once a step has passed on it: a device found
-is shown for the moment, never kept. The bridges aren't wired to Play, Try On or looks yet; Roku, the first device
-built this way, does that.
+is shown for the moment, never kept.
+
+An integration whose `app` is declared makes its device a kind of app (`Platform.device`, with the integration's id in
+`LampProject.integration` and meta.json; DeviceApps.swift), with no Swift of its own for that device: Roku, the first,
+is all data. The naming call is told each such integration as a device a wish may name (`AppName.deviceKinds`), and
+`make_app_for` takes its id alone. The scaffold is the declared `files` (`DeviceApps.fill`, `{{NAME}}` filled, and
+`.lamp/device-app` marking it made), the builder's rules are the declared `rules` inside the usual ones
+(`Agent.devicePrompt`), and the build is the declared `package` command run in the app's sandbox like every build, its
+`output` then copied through `AppFile` into Lamp's own folder (`Device Builds`), which is all that's ever sent. Play,
+Open and every look put it on the device chosen under Try On (`Store.setDeviceAppDevice`, the integration's devices;
+one not set up opens its setup window, and with no choice the only one found is used) with the bridge's `install` and
+`launch` (`Store.installOnDeviceApp`), reading `logs` into the app's log; a device not set up gets its next step in the
+chat instead. `look_at_app` is the bridge's `look` picture with what the device answered the install
+(`IntegrationRunner.Outcome.answers`, as plain text) and the log; `use_app` takes only `key` (Lamp's names in
+`bridge.keys`, each pressed with `use`) and `wait`. Stop presses `home` when there is one. Lamp can't tell whether the
+app is still open on the device, so Play always puts it there again. Such apps aren't shared yet.
 
 Settings → Your Devices lists what integrations find (`Integrations.devices`, after the kits' own) and the devices
 that answered Lamp's SSDP scan that nothing knows, read from their UPnP description (routers left out). Set Up… on one

@@ -296,6 +296,16 @@ struct Device: Identifiable, Hashable {
 enum DeviceNote {
     @MainActor static func line(for project: LampProject, store: Store) -> String {
         let phones = store.devices.filter { $0.kind.isPhone }
+        if project.onDevice {
+            let name = DeviceApps.integration(for: project)?.name ?? "device"
+            let mine = store.devices.filter { $0.integration != nil && $0.integration == project.integration }
+            guard !mine.isEmpty else { return "No \(name) of the person's has been found on the network yet; the app goes on one once it's found and set up." }
+            return mine.map { device in
+                let state = device.setup() == .ready ? "set up for apps" : "not set up yet (next: \(device.setup().words.lowercased()))"
+                let chosen = device.id == project.device || (project.device == nil && mine.count == 1)
+                return "\(chosen ? "The app goes on" : "Also on the network:") the person's \(device.name) (\(device.forAgent)), \(state)."
+            }.joined(separator: " ")
+        }
         if project.onTV {
             let tvs = store.devices.filter { $0.kind.isTV }
             var line = "Your looks are in the TV preview on this Mac, 1920×1080 with a remote's keys."

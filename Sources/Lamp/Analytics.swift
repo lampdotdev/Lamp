@@ -102,6 +102,7 @@ enum Analytics {
         case .universal: "universal"
         case .android: "android"
         case .tv: "tv"
+        case .device: "device"
         }
     }
 

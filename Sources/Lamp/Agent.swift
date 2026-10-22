@@ -361,6 +361,7 @@ enum Agent {
         case .universal: universalPrompt(for: project.family)
         case .android: androidPrompt()
         case .tv: tvPrompt()
+        case .device: devicePrompt(for: project)
         }
     }
 

@@ -246,7 +246,7 @@ struct AppMenu: View {
             .disabled(busy)
         Button("Quit") { Task { await store.quitApp(project) } }
             .disabled(!store.isOpen(project))
-        if project.platform.hasIOS || project.platform == .android || project.platform == .tv {
+        if project.platform.hasIOS || project.platform == .android || project.platform == .tv || project.platform == .device {
             // Which simulator the app opens in (it's built for both), or which of the person's own phones.
             Menu("Try On") { TryOnChoices(project: project) }
                 .disabled(busy)
@@ -853,17 +853,18 @@ struct ProjectView: View {
                 .help(made ? "Use \(project.name) (right-click it on the desk to rebuild)" : "Lamp opens it once it's made")
             }
         }
-        if project.platform.hasIOS || project.platform == .android || project.platform == .tv {
+        if project.platform.hasIOS || project.platform == .android || project.platform == .tv || project.platform == .device {
             ToolbarItem {
                 // Which simulator the app opens in, beside the Play button where Xcode keeps its destination.
                 Menu {
                     TryOnChoices(project: project)
                 } label: {
                     let device = store.devices.first { $0.udid == project.device }
-                    Label(store.tryOnName(project), systemImage: project.onTV ? "tv" : project.onAndroid ? "smartphone" : !project.onIOS ? "laptopcomputer" : (device?.family ?? project.family) == .ipad ? "ipad" : "iphone")
+                    Label(store.tryOnName(project), systemImage: project.onDevice ? Device.Kind.other.symbol : project.onTV ? "tv" : project.onAndroid ? "smartphone" : !project.onIOS ? "laptopcomputer" : (device?.family ?? project.family) == .ipad ? "ipad" : "iphone")
                 }
                 .disabled(busy)
-                .help(project.platform == .tv ? "Where it opens: the TV preview on this Mac, or one of your TVs"
+                .help(project.platform == .device ? "Where it opens: which of your \(DeviceApps.integration(for: project)?.name ?? "devices") it goes on"
+                      : project.platform == .tv ? "Where it opens: the TV preview on this Mac, or one of your TVs"
                       : project.platform == .android ? "Where it opens: the emulator, or your own Android phone or tablet"
                       : project.platform == .universal ? "Where it opens: this Mac, a simulator, or your own iPhone or iPad"
                       : "Where it opens: a simulator, or your own iPhone or iPad")
@@ -1726,7 +1727,9 @@ private struct TryOnChoices: View {
     @State private var olderPhones: [PhoneTools.OlderPhone] = []
 
     var body: some View {
-        if project.platform == .tv {
+        if project.platform == .device {
+            deviceChoices
+        } else if project.platform == .tv {
             tvChoices
         } else if project.platform == .android {
             androidChoices
@@ -1760,6 +1763,34 @@ private struct TryOnChoices: View {
         Divider()
         ForEach(tvs.filter { $0.setup() != .ready }) { tv in
             Button("Set Up \(tv.name)…") { TVSetup.shared.show(tv.udid) }
+        }
+        Button("All Your Devices…") { settingsTab = "building"; openSettings() }
+        Button("Look for Devices Again") { store.refreshDevices() }
+            .onAppear { store.refreshDevices() }
+    }
+
+    /// A device app's places: the person's devices its integration finds, each by its model and what it still needs. One
+    /// not set up is set up when it's chosen, in its setup window.
+    @ViewBuilder private var deviceChoices: some View {
+        let name = DeviceApps.integration(for: project)?.name ?? "device"
+        let mine = store.devices.filter { $0.integration != nil && $0.integration == project.integration }
+        Picker("Your \(name)s", selection: Binding(get: { project.device }, set: { if let id = $0 { store.setDeviceAppDevice(project, id) } })) {
+            ForEach(mine) { device in
+                let step = device.setup() == .ready ? "" : " (\(device.setup().words))"
+                Label((device.name == device.model ? device.name : "\(device.name) · \(device.model)") + step, systemImage: device.kind.symbol)
+                    .tag(Optional(device.id))
+            }
+            if let chosen = project.device, !mine.contains(where: { $0.id == chosen }) {
+                Label("Chosen \(name) (not on the network)", systemImage: Device.Kind.other.symbol).tag(Optional(chosen))
+            }
+        }
+        .pickerStyle(.inline)
+        if mine.isEmpty {
+            Text("No \(name) found on this network. Turn one on, then look again.")
+        }
+        Divider()
+        ForEach(mine.filter { $0.setup() != .ready }) { device in
+            Button("Set Up \(device.name)…") { DeviceSetupWindow.show(device) }
         }
         Button("All Your Devices…") { settingsTab = "building"; openSettings() }
         Button("Look for Devices Again") { store.refreshDevices() }

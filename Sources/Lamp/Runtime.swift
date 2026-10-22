@@ -68,8 +68,13 @@ enum Runtime {
         // An Android app's code is its `app` module, whose `build` folder is what the build makes, not what it's made from.
         let names = project.platform == .android ? [Template.androidAppFolder, "icon.json"]
             : project.platform == .tv ? [TVTemplate.webFolder, "icon.json"]
+            : project.platform == .device ? DeviceApps.sourceRoots(project).map(\.lastPathComponent)
             : ["Sources", Template.widgetFolder, Template.shareFolder, Template.watchFolder, "Package.swift", "icon.json", "capabilities.json"]
         let roots = names.map { project.dir.appendingPathComponent($0) }
+        // A device app's package is made from its integration's declared step, so a new step is a change too.
+        if project.platform == .device, let declared = DeviceApps.integration(for: project)?.app?.declared {
+            hasher.update(data: Data((declared.package + "\n" + declared.output).utf8))
+        }
         for root in roots {
             let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? [])
                 .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
