@@ -2179,21 +2179,30 @@ enum LiveReload {
             if let early = library { try? FileManager.default.removeItem(at: early) }
             (library, problem) = await compile(project, changed: changed, keep: keep)
         }
-        // Whether a compiler error's quoted source line passes this view this argument (`Row(title: "a", open: true)`):
-        // the plural and no-argument errors name no argument, so the line they quote is what ties one to a view.
+        // Whether a compiler error's quoted source line passes this view this argument directly (`Row(title: "a", open:
+        // true)`, never inside another call among its arguments): the plural and no-argument errors name no argument,
+        // and two views may have state of one name, so the line they quote is what ties one to a view.
         func passes(_ problem: String, view: String, label: String) -> Bool {
             let short = String(view.split(separator: ".").last ?? "")
             return problem.components(separatedBy: "\n").contains { line in
-                line.range(of: #"\b"# + NSRegularExpression.escapedPattern(for: short) + #"\([^)]*\b"# + NSRegularExpression.escapedPattern(for: label) + #"\s*:"#,
+                line.range(of: #"\b"# + NSRegularExpression.escapedPattern(for: short) + #"\([^()]*\b"# + NSRegularExpression.escapedPattern(for: label) + #"\s*:"#,
                            options: .regularExpression) != nil
             }
         }
         guard let layout = check.layout, library != nil || changed.isEmpty else {
             // A view's state moved into its box is no parameter of the view's initializer any more, and can't be one: a
             // value given that way is lost, since SwiftUI makes the box after the initializer has run. Said plainly.
-            if let plan, let problem, let (given, slot) = plan.slots.flatMap({ type, slots in slots.filter { $0.value.holder == .view && (problem.contains("extra argument '\($0.key)'")
-                || (problem.contains("extra arguments") || problem.contains("argument passed to call that takes no arguments"))
-                    && passes(problem, view: bare(type), label: $0.key)) }.map { ("\(type).\($0.key)", $0.value) } }).sorted(by: { $0.0 < $1.0 }).first {
+            // Only when the error ties to one property: else the compiler's words stand.
+            let text = problem ?? ""
+            let unnamed = text.contains("extra arguments") || text.contains("argument passed to call that takes no arguments")
+            let named = (plan?.slots ?? [:]).flatMap { type, slots in
+                slots.filter { slot in slot.value.holder == .view && (text.contains("extra argument '\(slot.key)'") || unnamed) }
+                    .map { slot in (type: type, name: slot.key, slot: slot.value) }
+            }
+            let tied = named.count == 1 && !unnamed ? named : named.filter { item in passes(text, view: bare(item.type), label: item.name) }
+            // Several of one view's properties passed together are all given: the first is said.
+            if Set(tied.map(\.type)).count == 1, let (type, name, slot) = tied.sorted(by: { $0.name < $1.name }).first {
+                let given = "\(type).\(name)"
                 if slot.wrapper == nil {
                     return .reopen(why: "\(given) is given to the view's initializer, and the view is made where the open app keeps it (at launch, or outside a view's body), so a new property of it goes in only as the literal it starts as")
                 }
