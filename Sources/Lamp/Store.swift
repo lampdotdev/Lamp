@@ -1123,7 +1123,10 @@ final class Store: ObservableObject {
             logs[project.id, default: []].append(line)
             turn.writing = (line.id, "")
             closeSteps(project)
-            noteAgent("Replying", for: project)
+            // "Replying" only for words the chat shows as they come: after asking, what the agent says on its way out
+            // is hidden (the card is the answer, `LogLine.visible`), so the line says it's working, as it would
+            // with nothing known yet.
+            noteAgent(turn.asked ? Activity.thinking : Self.replying, for: project)
             return
         }
         turn.writing?.unshown += piece
@@ -1142,6 +1145,9 @@ final class Store: ObservableObject {
         guard let route = turns[project.id]?.titleRoute else { return }
         StepTitles.closed(in: project, turn: route)
     }
+
+    /// What the live line says while the agent writes a message the chat shows.
+    private static let replying = "Replying"
 
     /// Puts what has arrived of the message being written into its chat line.
     private func showWritten(for project: LampProject) {
@@ -3279,6 +3285,9 @@ final class Store: ObservableObject {
                     turn.naming = nil
                     let written = turn.writing?.line
                     turn.writing = nil
+                    // The message is written: what comes next isn't known yet, so the line no longer says "Replying"
+                    // while the agent thinks. A step the engine already reported in the same reply keeps its words.
+                    if progress[project.id]?.activity == Self.replying { noteAgent(Activity.thinking, for: project) }
                     if let line = written, let index = logs[project.id]?.lastIndex(where: { $0.id == line }) {
                         logs[project.id]?[index].text = text
                         saveChat(project)
