@@ -1411,6 +1411,23 @@ final class Store: ObservableObject {
         sendWhenShown = project.id
     }
 
+    /// A device's setup conversation follows its device from the address it was found at to the id an integration
+    /// gives it, whichever look finds it that way (the integration's own, or any later one), so the setup window's
+    /// Ask About Setup… and Set Up… lead back to it.
+    func linkSetupConversations(to found: [Device]) {
+        var changed = false
+        for project in projects {
+            guard let id = project.deviceSetup, id.hasPrefix("found:"),
+                  let device = found.first(where: { $0.integration != nil && $0.address == String(id.dropFirst("found:".count)) }),
+                  !projects.contains(where: { $0.deviceSetup == device.id }) else { continue }
+            var linked = project
+            linked.deviceSetup = device.id
+            try? Template.saveMeta(linked)
+            changed = true
+        }
+        if changed { reload() }
+    }
+
     /// What a device's setup conversation may not do: everything that looks at, opens, builds or changes an app,
     /// since there is none. Only the integration, the skills, the notes and the chat's own cards are left.
     static func deviceSetupRefusal(route: String, request: Gateway.Request) -> (Int, [String: Any])? {
@@ -1453,14 +1470,7 @@ final class Store: ObservableObject {
         for address in await Integrations.addresses(for: integration, scan: scan) {
             if let device = await Integrations.identify(integration, at: address) { found.append(device) }
         }
-        // A device's setup conversation follows its device to the id its integration gives it, so the setup window
-        // and Set Up… lead back to it.
-        if project.isDeviceSetup, let address = project.deviceSetup.flatMap({ $0.hasPrefix("found:") ? String($0.dropFirst(6)) : nil }),
-           let device = found.first(where: { $0.address == address }), var linked = current(project) {
-            linked.deviceSetup = device.id
-            try? Template.saveMeta(linked)
-            reload()
-        }
+        linkSetupConversations(to: found)
         // In the list at once, for the card below; the next look for devices keeps them while they answer.
         for device in found { devices.removeAll { $0.id == device.id }; devices.append(device) }
         refreshDevices()
@@ -1766,6 +1776,7 @@ final class Store: ObservableObject {
             // What integrations find, and what's on the network that nothing Lamp has knows, after the kits' own.
             let found = kits + (await Integrations.devices(known: Set(kits.compactMap(\.address))))
             if found != devices { devices = found }
+            linkSetupConversations(to: found)
             let mac = await Device.readThisMac()
             if mac != thisMac { thisMac = mac }
         }
