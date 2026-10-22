@@ -5356,6 +5356,9 @@ final class Store: ObservableObject {
         await owner?.applying?.value
         await owner?.warming?.value
         log(project, .status, "Building…")
+        // A device app whose kind takes the icon gets it in the package Lamp sends, drawn from the icon as it is now:
+        // its install comes after the package is made, so the icon is brought up to date first, not there.
+        if project.platform == .device, !DeviceSupport.icons(for: project).isEmpty { await prepareIcon(project) }
         // Lamp's own files first, and no build without them: the build runs build.sh and Package.swift.
         do {
             try await writeOwnFiles(project, all: true)
