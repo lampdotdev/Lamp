@@ -1830,8 +1830,18 @@ final class Store: ObservableObject {
     /// Phones being paired right now, so the menu doesn't offer it twice.
     @Published var pairing: Set<String> = []
 
+    /// Whether a look for devices is going on, so what asked for it can say so: it takes a few seconds and most often
+    /// finds the same devices, which without a sign looked like nothing happened.
+    @Published private(set) var lookingForDevices = false
+    /// Counts looks, so only the latest one's findings are kept: an earlier one that ends later is out of date.
+    private var deviceLook = 0
+
     func refreshDevices() {
+        deviceLook += 1
+        let look = deviceLook
+        lookingForDevices = true
         Task {
+            defer { if look == deviceLook { lookingForDevices = false } }
             // Apple's devices, Android's when Android's tools are here (adb is one of them), and the TVs on the network.
             async let apple = Devices.list()
             async let android = Adb.devices()
@@ -1839,6 +1849,7 @@ final class Store: ObservableObject {
             let kits = await apple + android + tvs
             // What integrations find, and what's on the network that nothing Lamp has knows, after the kits' own.
             let found = kits + (await Integrations.devices(known: Set(kits.compactMap(\.address))))
+            guard look == deviceLook else { return }
             if found != devices { devices = found }
             linkSetupConversations(to: found)
             let mac = await Device.readThisMac()
