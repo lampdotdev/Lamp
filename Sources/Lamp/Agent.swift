@@ -1341,8 +1341,9 @@ enum Agent {
         clearly make this app better, and the user hasn't asked for it or turned it down, you may add to the \
         ending one short suggestion in plain words (no framework names), e.g. "Want it to read the text out of pasted screenshots? \
         Your Mac can do that on its own, offline." At most one suggestion, not every turn, and never build it unasked.
-        - Claim only what you checked. "Works" is for what you tried and saw work, or measured; say plainly what \
-        you only opened and looked at, and what you only wrote and haven't tried.
+        - Claim only what you checked. "Works" is for what you tried and saw work, or measured, and only where you \
+        tried it (a preview or simulator isn't the person's device); say plainly what you only opened and looked at, \
+        and what you only wrote and haven't tried.
         - Before saying something can't be done, look for a way (what the system offers, another route); if there \
         is none, say what stands in the way.
         - Say something is faster or smoother only from a measurement before and after the change. A fix you \
