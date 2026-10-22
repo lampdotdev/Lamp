@@ -646,6 +646,8 @@ final class Store: ObservableObject {
         /// The chat lines of the requests the agent took while it worked (`handOver`), which go with the turn's
         /// own to the version it makes.
         var midTurn: [UUID] = []
+        /// The chat lines of the requests the turn began with, which go to the engine as its request (`CatchUp`).
+        var requests: [UUID] = []
         /// Requests handed to the engine that its output hasn't yet shown reaching the model (`received`).
         var handed: [UUID] = []
         /// The engine running now, which takes messages while it works; nil between runs.
@@ -2972,6 +2974,7 @@ final class Store: ObservableObject {
         let carried = setAsideChanges[project.id].flatMap { $0.told ? nil : $0.crash }
         let crashAside = carried.map { "\n\nNote from Lamp: a change saved earlier crashed the open app. \($0)\nFix the cause as part of this request." } ?? ""
         turns[project.id]?.request = prompt
+        turns[project.id]?.requests = asked
         turns[project.id]?.carriedSetAside = carried
         let ran = await runAgent(prompt + notes + crashAside, files: files, on: project)
         project = current(project) ?? project
@@ -3224,7 +3227,11 @@ final class Store: ObservableObject {
             try? FileManager.default.removeItem(at: sessionFile)
             session = nil
         }
-        var run = Agent.run(prompt: prompt, files: files, project: project, offered: offers(in: project),
+        // What was said in the chat since this engine's conversation last ran (with another engine, or in one
+        // that was ended) goes with the request, so switching engines doesn't lose the conversation.
+        let missed = CatchUp.note(for: project, engine: engine, session: session, chat: logs[project.id] ?? [],
+                                  before: turn.requests.first)
+        var run = Agent.run(prompt: prompt + missed, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
         turn.saysCommands = run.saysCommands
         // Held strongly: it lives only while the engine runs. (A weak capture here, in a closure kept in a
