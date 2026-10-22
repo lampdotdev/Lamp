@@ -789,9 +789,12 @@ direction, OK clicking, Back with `Lamp.onBack` and leaving the app when nothing
 `LampStore` under the name it had first). The rules are `Agent.tvPrompt` (`Rules.tv…`: a
 1920×1080 page that never scrolls whole, design for the sofa, no syntax newer than 2019). The agent tries the app in
 the TV preview (`TVPreview`): a window showing it at the TV's size, half scale, from the staged copy, where
+the page is opened at an address of its own (`lamp-tv://app/`, `StagedFiles`) rather than as a file, so it reads its own
+files with fetch and XMLHttpRequest, as text or bytes, as it does on a TV (WebKit refuses both to a file's page), and
 `look_at_app` pictures it and reads it as text (focusable things and text, with which has focus) and `use_app` presses
 remote keys (synthetic key events with TV key codes), clicks and types; the page's console goes to the app's log;
-each app keeps its own saved data there between openings, as a TV does. The preview runs in the Mac's browser, far
+each app keeps its own saved data there between openings, as a TV does (what it saved when earlier Lamps opened it as a
+file is handed to its new address once, `savedFromFileAddress`). The preview runs in the Mac's browser, far
 faster than a TV's, so everything the agent is told of it (`Agent.tvPrompt`, each look and use with `Store.notTheTV`,
 the screen as text, the device line, the note on its picture) says it is the TV preview on this Mac and not the
 person's TV, and the agent never tells the person how the app runs on a TV it hasn't seen. Closing the window, by the person or by

@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 import WebKit
 
 /// The TV on this Mac's screen: a TV app opened at the TVs' own size (1920×1080, shown at half that), from the copy of
@@ -9,9 +10,16 @@ import WebKit
 final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerWithReply, WKNavigationDelegate, NSWindowDelegate {
     private static var open: [String: TVPreview] = [:]
 
+    /// Where the app's page is opened. A TV opens an app's files straight from its package, and the page reads its own
+    /// files (a game's data, a program in WebAssembly) with fetch and XMLHttpRequest, as text or as bytes. WebKit
+    /// refuses both to a page opened from a file, so the preview serves the staged copy at an address of its own.
+    private static let scheme = "lamp-tv"
+    private static let home = URL(string: "\(scheme)://app/index.html")!
+
     private let project: LampProject
     private let window: NSWindow
     private let webView: WKWebView
+    private let files = StagedFiles()
     private var loaded: CheckedContinuation<Void, Never>?
     private var log: FileHandle?
 
@@ -47,6 +55,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         // What the page prints, and what it throws, reach the log.
         controller.addUserScript(WKUserScript(source: Self.consoleScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         configuration.userContentController = controller
+        configuration.setURLSchemeHandler(files, forURLScheme: Self.scheme)
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 960, height: 540), configuration: configuration)
         webView.pageZoom = 0.5
         webView.autoresizingMask = [.width, .height]
@@ -88,20 +97,25 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         Runtime.startLog(project)
         try? log?.close()
         log = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)
-        let index = staged.appendingPathComponent("index.html")
-        // WebKit keeps the scripts and styles a page loaded and serves them again for the same file's address, so an
+        files.folder = staged
+        // WebKit keeps the scripts and styles a page loaded and serves them again for the same address, so an
         // opening after a change would run the app's code as it first was. Its saved data stays: only the caches go.
         await webView.configuration.websiteDataStore.removeData(ofTypes: [WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeDiskCache],
                                                                 modifiedSince: .distantPast)
         // Closed while the caches went: loading now would start the app again in a preview nobody can see or close.
         guard Self.open[project.id] === self else { return "The TV preview was closed before the app opened." }
-        await withCheckedContinuation { continuation in
-            loaded = continuation
-            webView.loadFileURL(index, allowingReadAccessTo: staged)
-            Task {
-                try? await Task.sleep(for: .seconds(10))
-                self.finishLoading()
+        let carried = await savedFromFileAddress(staged)
+        guard Self.open[project.id] === self else { return "The TV preview was closed before the app opened." }
+        if let carried { webView.configuration.userContentController.addUserScript(Self.restoreScript(carried)) }
+        await navigate { $0.load(URLRequest(url: Self.home)) }
+        if carried != nil {
+            // Marked done only once the app's page says it has the saves: a load that failed, timed out or was closed
+            // ran no script, and the next opening tries again.
+            if Self.open[project.id] === self, (try? await webView.evaluateJavaScript("window.lampRestored === true", in: nil, contentWorld: Self.restoreWorld)) as? Bool == true {
+                UserDefaults.standard.set(true, forKey: Self.carriedKey(project))
             }
+            webView.configuration.userContentController.removeAllUserScripts()
+            webView.configuration.userContentController.addUserScript(WKUserScript(source: Self.consoleScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         }
         // Closed while it loaded: showing the window again would bring back a preview with no page in it.
         guard Self.open[project.id] === self else { return "The TV preview was closed before the app opened." }
@@ -110,6 +124,46 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         // Its scripts start on load; a moment more lets a first screen draw and take focus.
         try? await Task.sleep(for: .milliseconds(600))
         return nil
+    }
+
+    /// Starts a navigation and waits for it to finish, fail, or ten seconds to pass.
+    private func navigate(_ start: (WKWebView) -> Void) async {
+        await withCheckedContinuation { continuation in
+            loaded = continuation
+            start(webView)
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                self.finishLoading()
+            }
+        }
+    }
+
+    /// WebKit keeps what a page saves by the page's address, and an earlier Lamp opened the app from its file, so what
+    /// the app saved then is read from that address once and handed to the app's first page at its own. Nil when
+    /// there's nothing to hand over.
+    private func savedFromFileAddress(_ staged: URL) async -> String? {
+        guard webView.configuration.websiteDataStore.isPersistent, !UserDefaults.standard.bool(forKey: Self.carriedKey(project)) else { return nil }
+        await navigate { $0.loadHTMLString("", baseURL: staged.appendingPathComponent("index.html")) }
+        let read = "(function () { var o = {}; for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); o[k] = localStorage.getItem(k); } return JSON.stringify(o); })()"
+        guard let saved = try? await webView.evaluateJavaScript(read) as? String else { return nil }
+        if saved == "{}" { UserDefaults.standard.set(true, forKey: Self.carriedKey(project)) }
+        return saved == "{}" ? nil : saved
+    }
+
+    private static func carriedKey(_ project: LampProject) -> String { "tvPreviewCarriedSaves." + project.id }
+
+    /// Puts back what was handed over, before the app's own scripts run, leaving alone anything already saved here, and
+    /// says it did in a world of its own, which the app's scripts can't see or set.
+    private static let restoreWorld = WKContentWorld.world(name: "lampRestore")
+    private static func restoreScript(_ saved: String) -> WKUserScript {
+        WKUserScript(source: """
+            (function () {
+              if (location.protocol !== '\(scheme):') return;
+              var s = \(saved);
+              for (var k in s) if (localStorage.getItem(k) === null) localStorage.setItem(k, s[k]);
+              window.lampRestored = true;
+            })();
+            """, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: restoreWorld)
     }
 
     private func finishLoading() {
@@ -139,9 +193,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
                                replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
         // Only the app's own page, from its staged copy: never a frame inside it or a page it went on to, which could be
         // anyone's and would use AI as the app.
-        let staged = TVs.stagingFolder(for: project).appendingPathComponent("web").standardizedFileURL.path + "/"
-        guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url, page.isFileURL,
-              page.standardizedFileURL.path.hasPrefix(staged),
+        guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url, page.scheme == Self.scheme, page.host == Self.home.host,
               let call = message.body as? [String: Any], let path = call["path"] as? String,
               ["/ai", "/ai/status", "/ai/image", "/ai/decide"].contains(path),
               let current = Store.shared.projects.first(where: { $0.id == project.id }) else {
@@ -365,5 +417,65 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
             if let focused = screen.first(where: \.focused) { report[report.count - 1] += " Focus is on \(focused.kind) \"\(focused.name)\"." }
         }
         return report.joined(separator: "\n")
+    }
+}
+
+/// The staged copy of a TV app, served to its preview: only plain files inside the copy, each with its type (WebAssembly
+/// is compiled as it arrives only when it says it's WebAssembly) and a part of one when asked (sound and video ask for
+/// theirs in parts). Not kept in WebKit's cache, so an opening after a change has the files as they are now.
+@MainActor
+final class StagedFiles: NSObject, WKURLSchemeHandler {
+    var folder: URL?
+
+    private static let types = ["html": "text/html", "htm": "text/html", "js": "text/javascript", "mjs": "text/javascript",
+                                "css": "text/css", "json": "application/json", "wasm": "application/wasm", "svg": "image/svg+xml"]
+
+    func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
+        guard let url = task.request.url else { return task.didFailWithError(URLError(.badURL)) }
+        guard let data = file(at: url) else {
+            task.didReceive(HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: ["Cache-Control": "no-store"])!)
+            task.didFinish()
+            return
+        }
+        let ext = url.pathExtension.lowercased()
+        var headers = ["Content-Type": Self.types[ext] ?? UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream",
+                       "Accept-Ranges": "bytes", "Cache-Control": "no-store"]
+        var status = 200, body = data
+        if let range = task.request.value(forHTTPHeaderField: "Range"), let part = Self.part(range, of: data.count) {
+            status = 206
+            body = data.subdata(in: part)
+            headers["Content-Range"] = "bytes \(part.lowerBound)-\(part.upperBound - 1)/\(data.count)"
+        }
+        headers["Content-Length"] = String(body.count)
+        task.didReceive(HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!)
+        task.didReceive(body)
+        task.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
+
+    /// The file a page address names, when it's a plain file inside the staged copy (which never holds links).
+    private func file(at url: URL) -> Data? {
+        guard let folder, url.host == "app" else { return nil }
+        let root = folder.standardizedFileURL.path + "/"
+        let path = url.path.isEmpty || url.path.hasSuffix("/") ? url.path + "index.html" : url.path
+        let file = folder.appendingPathComponent(path).standardizedFileURL
+        guard file.path.hasPrefix(root),
+              let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+              values.isRegularFile == true, values.isSymbolicLink != true else { return nil }
+        return try? Data(contentsOf: file, options: .alwaysMapped)
+    }
+
+    /// The bytes one `Range: bytes=…` asks for (a start and an end, a start alone, or the last n), within the file.
+    static func part(_ header: String, of size: Int) -> Range<Int>? {
+        guard header.hasPrefix("bytes="), !header.contains(","), size > 0 else { return nil }
+        let bounds = header.dropFirst(6).split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).map { Int($0.trimmingCharacters(in: .whitespaces)) }
+        guard bounds.count == 2 else { return nil }
+        switch (bounds[0], bounds[1]) {
+        case let (start?, end?) where start <= end && start < size: return start..<(min(end, size - 1) + 1)
+        case let (start?, nil) where start < size: return start..<size
+        case let (nil, last?) where last > 0: return max(0, size - last)..<size
+        default: return nil
+        }
     }
 }
