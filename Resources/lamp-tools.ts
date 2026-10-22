@@ -35,7 +35,8 @@
  * - Shell commands (pi's `bash` tool) need the user's approval: before each one runs, this asks Lamp, which
  *   shows the command in the app's chat with Allow / Allow All This Turn / Deny, and blocks it if denied.
  *   pi's bash is given a description of what the command does, in the model's own words, which Lamp shows
- *   in place of the command (as Claude Code's own Bash has).
+ *   in place of the command (as Claude Code's own Bash has); its edit and write are given a `doing`, which Lamp
+ *   shows the same way.
  * - `plan`: the agent's checklist of what it's building, with the files behind each part. Lamp reads the
  *   list from pi's event stream, shows it on the build card, and ticks parts as their files are written,
  *   so the tool itself has nothing to do. * - Messages the person sends while the agent works reach it in the same turn: after each of pi's turns (a
@@ -48,7 +49,7 @@ import { lstat, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "@earendil-works/pi-ai";
-import { createBashTool, defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createBashTool, createEditTool, createWriteTool, defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /**
  * The tools' names, descriptions and schemas come from lamp-tools.json, next to this file in Lamp's bundle
@@ -272,29 +273,32 @@ const webFetch = defineTool({
 });
 
 /**
- * pi's own bash, with one more field: what the command does, in a few words of the model's own, which Lamp shows
- * as the step's name and the turn's activity, as it does Claude Code's description of its commands. pi's bash
- * takes only the command, so nothing else says it in words a person can follow, and the command's text is never
- * read for it. An extension may register a tool under a built-in's name to replace it (pi's extension docs); the
- * rest is pi's bash as it is, which runs the command once the description is set aside. It's required: left
- * optional, Sonnet through pi left it off every command, where Opus filled it in.
+ * One of pi's own tools with one more field: what the step is for, in a few words of the model's own, which Lamp
+ * shows as the step's name and the turn's activity, as it does Claude Code's description of its commands. pi's
+ * tools take only what they act on, so nothing else says it in words a person can follow, and a command's text or a
+ * file's name is never read for it. An extension may register a tool under a built-in's name to replace it (pi's
+ * extension docs); the rest is pi's tool as it is, which runs once the words are set aside. The field is required:
+ * left optional, Sonnet through pi left it off every command, where Opus filled it in.
  */
-function bashWithDescription() {
-	const bash = createBashTool(process.cwd());
+function withWords<T extends { parameters: { properties: Record<string, unknown> }; execute: unknown }>(tool: T, field: string, words: string): T {
 	return {
-		...bash,
-		parameters: Type.Object({
-			...bash.parameters.properties,
-			description: Type.String({
-				description: "What this command does, in 5-10 plain words a non-programmer would follow, e.g. \"Building the app\" or \"Checking which files changed\"",
-			}),
-		}),
-		async execute(id: string, params: { command: string; timeout?: number; description?: string }, ...rest: unknown[]) {
-			const { description: _said, ...run } = params;
-			return (bash.execute as (...args: unknown[]) => ReturnType<typeof bash.execute>)(id, run, ...rest);
+		...tool,
+		parameters: Type.Object({ ...tool.parameters.properties, [field]: Type.String({ description: words }) }),
+		async execute(id: string, params: Record<string, unknown>, ...rest: unknown[]) {
+			const { [field]: _said, ...run } = params;
+			return (tool.execute as (...args: unknown[]) => unknown)(id, run, ...rest);
 		},
 	};
 }
+
+/** pi's bash, with a `description` as Claude Code's Bash has, which the approval carries too. */
+const bashWithDescription = () => withWords(createBashTool(process.cwd()), "description",
+	"What this command does, in 5-10 plain words a non-programmer would follow, e.g. \"Building the app\" or \"Checking which files changed\"");
+
+/** pi's edit and write, with the `doing` Lamp's other tools have. */
+const doing = "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Adding the shelf's new layout\", \"Saving what you like about the look\".";
+const editWithDoing = () => withWords(createEditTool(process.cwd()), "doing", doing);
+const writeWithDoing = () => withWords(createWriteTool(process.cwd()), "doing", doing);
 
 /** Asks Lamp to approve a shell command: a reason when it isn't approved, else the command to run (Lamp hands
  * it back confined to the app's folder, see Sandbox). */
@@ -643,6 +647,8 @@ export default function (pi: ExtensionAPI) {
 		return undefined;
 	});
 	pi.registerTool(bashWithDescription());
+	pi.registerTool(editWithDoing());
+	pi.registerTool(writeWithDoing());
 	keepsPicturesFew(pi);
 	takesMessagesMidTurn(pi);
 	pi.registerTool(webFetch);

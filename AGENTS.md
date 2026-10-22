@@ -275,7 +275,8 @@ A capability given to one engine must be given to all of them that can take it, 
   one allowed on Lamp's card is a row like one that needed no card (`Store.approveCommand`); one the person declines leaves none. pi's bash takes only the
   command, so Lamp's extension replaces it, as pi's extension docs allow, with pi's own bash and a `description`
   (`bashWithDescription` in `lamp-tools.ts`), sent with the approval and read by pi's parser. It's required: left
-  optional, some models (Sonnet) never fill it in. While Lamp itself works in a turn (a look's build, putting a change
+  optional, some models (Sonnet) never fill it in. pi's edit and write are replaced the same way (`withWords`), with the
+  `doing` Lamp's own tools have, so a file change is a step in the agent's words too. While Lamp itself works in a turn (a look's build, putting a change
   into the open app, reopening it) the activity says what Lamp is doing at each stage, so nothing it said earlier
   stays: the whole build that follows a change put into the open app is "Building…" (`Store.awaitLiveBuild`), and a
   look that reopens the app builds it whole without putting the change in first. While a look runs, what the
