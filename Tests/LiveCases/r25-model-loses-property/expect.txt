@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: items=1 count=3, items=1 count=4
+RELOAD 1 (whole): ok
+after1 (want it in, items=1 count=4: an @Observable model loses a property, the rest keeping their values): items=1 count=4

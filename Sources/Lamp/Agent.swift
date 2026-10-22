@@ -255,7 +255,8 @@ enum Agent {
     New stored properties go in too, in a class, a struct or a view (as @State, @AppStorage or a parameter its parent \
     passes), when each has a starting value (or is an optional, or a view's parameter) and no didSet or willSet, and the \
     type isn't a Codable class (a view's new @Environment(\\.key) and @Binding go in, an @Environment(Type.self) needs a reopen); so do new cases at the end of an enum whose cases carry nothing, \
-    and new values for constants that hold no object. Changing or removing a stored property, a case anywhere \
+    and new values for constants that hold no object, and a stored property removed or renamed, except in a type \
+    that is Equatable, Hashable or Codable. Changing a stored property's type, a case anywhere \
     else, or what's read only at launch (the App, its scenes and menu commands) needs it reopened, which waits \
     for the person to press Reload. \
     Code already running keeps the version it started with: a closure given to a Timer, a Task or an observer, a \
