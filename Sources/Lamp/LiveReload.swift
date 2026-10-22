@@ -2870,6 +2870,15 @@ enum LiveSlots {
                    SwiftSource.Text(path: variable.position.file).flatMap({ storageKey(of: variable, in: $0) }) == nil {
                     return .refused("\(type).\(name) is @AppStorage with a store of its own, and a view's spare keeps only the standard defaults")
                 }
+                if holder == .view, variable.attributes.contains(where: { $0.name == "AppStorage" }), declarations.choosesDefaultStore {
+                    return .refused("\(type).\(name) is @AppStorage, and the app gives views a defaults store of its own (defaultAppStorage), which a view's spare can't tell it reads from")
+                }
+                // A parameter a call leaves out reads its starting value each time, never set: so only one that comes
+                // out the same every time, as a struct's property kept in its spare.
+                if holder == .parameter, initialText(of: variable, in: declarations) != nil,
+                   !isSteady(initial, type: kind, cases: cases, literal: isLiteral(variable, in: declarations), own: declarations.ownTypeNames) {
+                    return .refused("\(type).\(name) starts as \(initial), which may differ from one read to the next where a call leaves it out; a view's new parameter starts from a literal, an empty collection or one of the app's enum's cases, or has no starting value")
+                }
                 if holder == .value, !isSteady(initial, type: kind, cases: cases, literal: isLiteral(variable, in: declarations), own: declarations.ownTypeNames) {
                     return .refused("\(type).\(name) starts as \(initial), which may differ from one value to the next; a struct's property kept in a spare starts from a literal, an empty collection or one of the app's enum's cases")
                 }

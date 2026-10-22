@@ -1158,7 +1158,8 @@ each type of the app's spare room the open app's values already have: every clas
 plain in an `ObservableObject` too, so only a moved `@Published` property announces its changes, its setter calling
 `LampSpare.announce`), every view one `@State` box (`__lampState_<View>`, a
 `LampStateBox`, which keeps new `@State`, and new `@AppStorage` in the standard defaults under its own key, drawing the
-views that read it again when the defaults change, from anywhere) and one private spare for new parameters
+views that read it again when the defaults change, from anywhere; not in an app that gives views a store of its own,
+`defaultAppStorage`, which Lamp can't tell a view reads from) and one private spare for new parameters
 (`__lampSpare_<View>`, private so the initializer Swift makes for the view stays the same), and every other struct one place holding any number of properties by name (`__lampSpare_<Struct>`, not optional,
 so its own `==` and hash run: they take a property never set as its starting value; saved data leaves it out
 through two overloads of the keyed coding containers, which the compiler's Codable code takes over the general ones). A struct's moved properties drop out of the initializer Swift makes for it, which the new code may call with them,
@@ -1172,7 +1173,8 @@ view's new plain property (a `let` with no starting value, or any `var`) is a pa
 and set by its memberwise initializer made again as a struct's is, only where every value of the view is made by a
 body or code only bodies call (`LiveReload.madeOutsideBodies`): each is then made again by the new code before it
 draws, so one with no starting value reads, until then, as its type's empty value (`LiveSlots.emptyValue`: nil, false,
-0, "", an empty collection, an action that does nothing), which nothing sees; a type with none reopens the app. A view
+0, "", an empty collection, an action that does nothing), which nothing sees; a type with none reopens the app, and so does a starting value that may differ from one read to
+the next (`UUID()`), since a call that leaves the parameter out never sets it. A view
 made elsewhere (the window's root, a hosting view's) keeps what the open app made, so a new property of it goes in only
 as a literal, which it then always is, and one its maker passes reopens the app. Another wrapper (`@Environment`,
 `@Binding`) reopens it too: SwiftUI fills a wrapper in only where the view stored it when the app opened. A struct or view declared inside a function can't be extended, so a
