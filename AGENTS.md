@@ -783,7 +783,8 @@ LG: Developer Mode from LG's store with its Key Server on, the passphrase it sho
 key fetched from the TV (port 9991) and unlocked with `ssh-keygen`, then `TVPackage.ipk` (an ar archive Lamp writes,
 with tarred control and data), copied over SFTP as LG's ares-install does (`WebOS.put`: the developer shell has no `scp`, and a
 TV whose SSH server offers no SFTP gets the file streamed into `cat`), then `luna-send-pub` over SSH as `prisoner` on port 9922 with its
-input held open until the TV's answer, since it gives up when its input closes (`WebOS.luna`), and the
+input kept open until the TV's answer, since it gives up when its input closes (`WebOS.luna`, through
+`Subprocess.run`'s `keepInputOpenUntil`), and the
 developer-mode session renewed with LG at every install. Play with a TV chosen under Try On (`Store.setTVDevice`, which
 runs that TV's setup first) packages and installs; the preview needs nothing set up. Lamp's Info.plist carries a local
 network description; the first scan brings macOS's firewall and local network questions. TV apps aren't shared yet.

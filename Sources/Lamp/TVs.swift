@@ -481,8 +481,12 @@ enum WebOS {
     @discardableResult
     static func ssh(_ record: TVs.Record, _ command: String, key: URL? = nil, timeout: TimeInterval = 60) async throws -> String {
         let result = await Subprocess.run("/usr/bin/ssh", sshOptions(record, key: key) + ["prisoner@\(record.address)", command], mergeErrors: false, timeout: timeout)
-        guard result.ok else { throw TVs.Failure(message: "\(record.name) didn't answer: \(result.errors.trimmed.isEmpty ? "it may have left developer mode" : result.errors.trimmed)") }
+        guard result.ok else { throw unanswered(record, result) }
         return result.output
+    }
+
+    private static func unanswered(_ record: TVs.Record, _ result: Subprocess.Result) -> TVs.Failure {
+        TVs.Failure(message: "\(record.name) didn't answer: \(result.errors.trimmed.isEmpty ? "it may have left developer mode" : result.errors.trimmed)")
     }
 
     static func install(_ package: URL, appID: String, on record: TVs.Record) async throws {
@@ -503,15 +507,19 @@ enum WebOS {
         }
     }
 
-    /// Calls a service on the TV and gives back its replies up to the first `until` matches. `luna-send-pub` gives up
-    /// as soon as its input closes, before any reply, and an SSH command's input is closed here, so a `sleep` on the TV
-    /// holds it open until that reply comes (LG's own tools hold it open from their end), and `-w` ends a call nothing
-    /// answers. The service, payload and pattern are Lamp's own, with no single quotes in them.
+    /// Calls a service on the TV and gives back its replies up to the first that `until` (a pattern) matches.
+    /// `luna-send-pub` gives up as soon as its input closes, before any reply, so its input is kept open until that
+    /// reply comes, as LG's own tools keep it, and `-w` ends a call nothing answers. The service and payload are
+    /// Lamp's own, with no single quotes in them.
     static func luna(_ record: TVs.Record, _ uri: String, _ payload: String, until: String, seconds: Int = 120) async throws -> String {
-        let held = "/media/developer/temp/.lamp-luna-$$"
-        let command = "{ sleep \(seconds + 15) & echo $! > \(held); wait; } | luna-send-pub -w \(seconds * 1000) -i \(uri) '\(payload)'"
-            + " | { grep -m 1 -iE '\(until)'; kill $(cat \(held)) 2>/dev/null; rm -f \(held); }"
-        return try await ssh(record, command, timeout: TimeInterval(seconds + 30))
+        func answered(_ line: Substring) -> Bool { line.range(of: until, options: [.regularExpression, .caseInsensitive]) != nil }
+        let result = await Subprocess.run("/usr/bin/ssh", sshOptions(record) + ["prisoner@\(record.address)",
+                                          "luna-send-pub -w \(seconds * 1000) -i \(uri) '\(payload)'"],
+                                          mergeErrors: false, timeout: TimeInterval(seconds + 30),
+                                          keepInputOpenUntil: { $0.split(separator: "\n").contains(where: answered) })
+        guard result.ok else { throw unanswered(record, result) }
+        let lines = result.output.split(separator: "\n")
+        return (lines.firstIndex(where: answered).map { lines[...$0] } ?? lines[...]).joined(separator: "\n")
     }
 
     /// The TV's reason in a reply, for the person: what it says went wrong, else nothing.
