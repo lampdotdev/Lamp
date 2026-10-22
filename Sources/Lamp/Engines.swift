@@ -623,7 +623,8 @@ extension Agent {
             if content.contains(where: { $0["type"] as? String == "tool_result" }) { return [.step("")] }
         case "result":
             var events: [AgentEvent] = []
-            if let cost = obj["total_cost_usd"] as? Double, cost > 0 { events.append(.cost(cost)) }
+            // No cost from Claude Code: Lamp runs it with the person's Claude sign-in, so its `total_cost_usd` is what the
+            // run would have cost at API prices, not money spent. What Lamp shows as spent is what was: OpenRouter's.
             if obj["is_error"] as? Bool == true { events.append(.failed(obj["result"] as? String ?? "Claude failed.")) }
             return events + [.finished]
         default: break
