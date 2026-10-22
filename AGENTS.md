@@ -791,7 +791,10 @@ direction, OK clicking, Back with `Lamp.onBack` and leaving the app when nothing
 the TV preview (`TVPreview`): a window showing it at the TV's size, half scale, from the staged copy, where
 `look_at_app` pictures it and reads it as text (focusable things and text, with which has focus) and `use_app` presses
 remote keys (synthetic key events with TV key codes), clicks and types; the page's console goes to the app's log;
-each app keeps its own saved data there between openings, as a TV does. Closing the window, by the person or by
+each app keeps its own saved data there between openings, as a TV does. The preview runs in the Mac's browser, far
+faster than a TV's, so everything the agent is told of it (`Agent.tvPrompt`, each look and use with `Store.notTheTV`,
+the screen as text, the device line, the note on its picture) says it is the TV preview on this Mac and not the
+person's TV, and the agent never tells the person how the app runs on a TV it hasn't seen. Closing the window, by the person or by
 Lamp, ends the page (its sound and timers): WebKit runs a page as long as its web view lives, so the preview lets go of
 its script handlers and web view when its window closes. TVs are found on the network (`TVs.scan`:
 SSDP, then a Samsung TV's own API at port 8001, an LG TV's UPnP description) and listed with the other devices; a
