@@ -183,6 +183,10 @@ struct Integration: Codable, Hashable {
             /// Lamp's building blocks the app takes, by library ("web", "brightscript") to where they go in its folder:
             /// Lamp's own files there, written afresh before every turn and build (`DeviceSupport`).
             var support: [String: String]?
+            /// The app's icon on the device, by path in the app's folder to its size in pixels ("images/icon_hd.png":
+            /// "336x210"): Lamp draws the icon it made for the app at each, before every turn and build (`DeviceSupport`),
+            /// for the files the device's manifest names. The agent never draws one.
+            var icons: [String: String]?
         }
     }
 }
@@ -434,7 +438,7 @@ enum IntegrationCheck {
             ])),
             "bridge": .object(["install": .array(action), "launch": .array(action), "look": .array(action),
                                "use": .array(action), "logs": .array(action), "keys": .map]),
-            "app": .object(["lamp": .leaf, "declared": .object(["files": .map, "rules": .leaf, "package": .leaf, "output": .leaf, "wrap": .leaf, "start": .leaf, "support": .map])]),
+            "app": .object(["lamp": .leaf, "declared": .object(["files": .map, "rules": .leaf, "package": .leaf, "output": .leaf, "wrap": .leaf, "start": .leaf, "support": .map, "icons": .map])]),
         ])
     }
 
@@ -584,6 +588,16 @@ enum IntegrationCheck {
                         say("app.declared.support: \"\(path)\" must be a plain path inside the app's folder, not in .lamp.")
                     } else if declared.files.keys.contains(where: { $0 == path || $0.hasPrefix(path + "/") }) {
                         say("app.declared.support: \"\(path)\" is Lamp's, so the scaffold's files can't be there.")
+                    }
+                }
+                for (path, size) in declared.icons ?? [:] {
+                    if !isAppPath(path) || !path.lowercased().hasSuffix(".png") {
+                        say("app.declared.icons: \"\(path)\" must be a plain path to a .png inside the app's folder, not in .lamp.")
+                    } else if declared.files.keys.contains(path) {
+                        say("app.declared.icons: \"\(path)\" is Lamp's, so the scaffold's files can't be there.")
+                    }
+                    if DeviceSupport.iconSize(size) == nil {
+                        say("app.declared.icons: \"\(size)\" must be a size in pixels, \"WIDTHxHEIGHT\", each 16 to 4096.")
                     }
                 }
             }

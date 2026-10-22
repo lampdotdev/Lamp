@@ -709,7 +709,12 @@ is all data. The naming call is told each such integration as a device a wish ma
 `make_app_for` takes its id alone. The scaffold is the declared `files` (`DeviceApps.fill`, `{{NAME}}` filled, and
 `.lamp/device-app` marking it made), the builder's rules are the declared `rules` inside the usual ones
 (`Agent.devicePrompt`), and the build is the declared `package` command run in the app's sandbox like every build, its
-`output` then copied through `AppFile` into Lamp's own folder (`Device Builds`), which is all that's ever sent. Play,
+`output` then copied through `AppFile` into Lamp's own folder (`Device Builds`), which is all that's ever sent. Its icon
+is the one Lamp draws for every app: the kind names where the device's manifest looks for it and at what size
+(`app.declared.icons`, `"images/icon_focus_hd.png": "336x210"`), and Lamp draws it there before every turn and build
+(`DeviceSupport.write`, the icon on a dark tile, as the Xbox's logos are), Lamp's own like the building blocks; the agent
+never draws one. Every other kind already carries it: the Mac's and iPhone's, a watch app's catalog, Android's launcher
+icon, a Samsung TV's `icon.png`, an LG TV's two, and the Xbox's logos. Play,
 Open and every look put it on the device chosen under Try On (`Store.setDeviceAppDevice`, the integration's devices;
 one not set up opens its setup window, and with no choice the only one found is used) with the bridge's `install` and
 `launch` (`Store.installOnDeviceApp`), reading `logs` into the app's log; a device not set up gets its next step in the

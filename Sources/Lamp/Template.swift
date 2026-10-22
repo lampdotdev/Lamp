@@ -113,6 +113,11 @@ enum Template {
     /// Writes one of Lamp's own files into the app's folder when it isn't already what it should be (so its date
     /// moves only when the app needs a rebuild), without following a link on the way (`AppFolder`), and
     /// executable when asked.
+    /// Lamp's own picture in an app's folder, written only when it differs, as text is.
+    static func put(_ data: Data, at url: URL, for project: LampProject) throws {
+        if AppFile.read(url, in: project) != data { try AppFolder.write(data, to: url, in: project.dir) }
+    }
+
     static func put(_ contents: String, at url: URL, for project: LampProject, executable: Bool = false) throws {
         if AppFile.read(url, in: project) != Data(contents.utf8) {
             try AppFolder.write(contents, to: url, in: project.dir, mode: executable ? 0o755 : 0o644)

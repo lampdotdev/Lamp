@@ -184,10 +184,11 @@ never anything to download; `output` is where it leaves it, which `"@{package}"`
 
 ```json
 "app": { "declared": {
-  "files": { "manifest": "title={{NAME}}\nmajor_version=1\n…", "source/main.brs": "sub Main()\n…\nend sub\n" },
+  "files": { "manifest": "title={{NAME}}\nmajor_version=1\nmm_icon_focus_hd=pkg:/images/icon_focus_hd.png\n…", "source/main.brs": "sub Main()\n…\nend sub\n" },
   "rules": "What a builder needs to know to write apps for it, in a few sentences.",
   "package": "rm -f build/app.zip && mkdir -p build && zip -r build/app.zip manifest source components images",
-  "output": "build/app.zip"
+  "output": "build/app.zip",
+  "icons": { "images/icon_focus_hd.png": "336x210" }
 } }
 ```
 
@@ -198,6 +199,13 @@ by library to where they go in the app's folder: `"web": "Web/lamp.js"` for an a
 `index.html` loads before the app's own), `"brightscript": "components/Lamp"` for a Roku channel (a folder its
 components include). Lamp writes them before every build, so keep them out of `files`, and make sure the package step
 takes them into the package. Lamp tells the app where it is and gives it its token on the device itself.
+
+`"icons"` gives the app its icon on the device, wherever the device shows one (a channel's poster on a Roku's home
+screen, a tile, a launcher): by path in the app's folder to its size in pixels, `"images/icon_focus_hd.png": "336x210"`,
+one for each picture the device's manifest names, at the sizes its maker documents. Lamp draws the icon it made for the
+app at each path before every build, so name those paths in the scaffold's manifest, keep them out of `files`, and make
+sure the package step takes them in. Never draw an icon in the scaffold or the package step. A device that shows no icon
+for an app needs none.
 
 `"wrap": "msix"` is for a device that takes Windows app packages (an Xbox in Developer Mode, through its Device
 Portal): the package step leaves a `.zip` of the app's files, and Lamp makes the package itself, writing its manifest
