@@ -550,11 +550,12 @@ extension Agent {
         return String(decoding: (try? JSONSerialization.data(withJSONObject: message)) ?? Data(), as: UTF8.self)
     }
 
-    /// The request Lamp sends when the person has pressed Reload after a change paused the agent (`Store.pause`): the
-    /// next request of the same conversation, on every engine, so the agent carries on where it stopped.
+    /// The request Lamp sends once the change a turn left waiting for Reload is in: after a pause (`Store.pause`), or
+    /// after Lamp reloaded the app while the person was away (`Store.reloadIfAway`). The next request of the same
+    /// conversation, on every engine, so the agent carries on where it stopped.
     static let afterReload = """
-        Your change is in: the person pressed Reload and the app reopened with it, or they closed the app and the new \
-        version went in. Look at it now, then carry on with the request from where you stopped, unless a message \
+        Your change is in: the app was reloaded with it (by the person, or by Lamp while they were away), or the person \
+        closed the app and the new version went in. Look at it now, then carry on with the request from where you stopped, unless a message \
         below says otherwise. If nothing was left to do, say so in a sentence.
         """
 
