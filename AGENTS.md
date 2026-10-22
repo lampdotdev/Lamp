@@ -550,8 +550,8 @@ at most, `Store.devicesForWish`), and the naming call is told each device found 
 answer for it (`AppName.seen`: a TV, an Android device, an integration's device, so "my TV" is the TV the person has).
 Apple's phones, iPads and watches are left off it, since the rules name them already and listing them drew wishes that
 named no device to the iPhone. A wish to run something on a device Lamp can't put apps on yet is "other": it stays a
-draft with nothing scaffolded (`Store.waitsForDevice`) while the agent sets the device up and gives it its kind with
-`make_app_for`. The exact device a request is for goes to the agent at the end of the request (`DeviceNote`,
+draft with nothing scaffolded (`Store.waitsForDevice`, by its instance, which a rename keeps) while the agent sets the
+device up and gives it its kind with `make_app_for`, which then makes it, scaffold and first version (`convert`). The exact device a request is for goes to the agent at the end of the request (`DeviceNote`,
 sent like `AIStatus.brief`: once per conversation and again when it changes) in the shape "iPhone 16 Pro Max, iOS
 27, Dynamic Island" (`Device.forAgent`). A new kind of device is a `Device.Kind`, a reader that fills the record,
 and its own setup steps; the lists and the note read nothing else. Xcode 27 keeps simctl and devicectl in the

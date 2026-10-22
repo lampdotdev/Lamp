@@ -1838,15 +1838,14 @@ final class Store: ObservableObject {
     @Published private(set) var lookingForDevices = false
     /// Counts looks, so only the latest one's findings are kept: an earlier one that ends later is out of date.
     private var deviceLook = 0
-    /// The look going on, for a new wish to wait for (`devicesForWish`), and when the last one ended.
-    private var deviceLookTask: Task<Void, Never>?
+    /// When the last look ended, so a new wish doesn't look again within a moment of one (`lookForDevicesForWish`).
     private var devicesLookedAt: Date?
 
     func refreshDevices() {
         deviceLook += 1
         let look = deviceLook
         lookingForDevices = true
-        deviceLookTask = Task {
+        Task {
             defer {
                 if look == deviceLook {
                     lookingForDevices = false
@@ -1881,14 +1880,10 @@ final class Store: ObservableObject {
     /// seconds at most, since the wish waits on it; one that takes longer leaves what the last look found.
     func devicesForWish() async -> [Device] {
         lookForDevicesForWish()
-        if lookingForDevices, let task = deviceLookTask {
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask { await task.value }
-                group.addTask { try? await Task.sleep(for: .seconds(5)) }
-                await group.next()
-                group.cancelAll()
-            }
-        }
+        // Checked every fifth of a second rather than awaited: the look's own task can't be cut short, and waiting on
+        // it in a group would wait for it to end, however long that took.
+        let until = Date().addingTimeInterval(5)
+        while lookingForDevices, Date() < until { try? await Task.sleep(for: .milliseconds(200)) }
         return devices
     }
 
@@ -2584,7 +2579,8 @@ final class Store: ObservableObject {
 
     /// Wishes for a device Lamp can't make apps for yet (`AppName.Suggestion.forOtherDevice`): no scaffold is written
     /// for them, since one of any kind Lamp has would be the wrong one, while the agent sets the device up and gives
-    /// the wish its kind with `make_app_for` (`convert`), after which it's made as any wish is.
+    /// the wish its kind with `make_app_for` (`convert`), after which it's made as any wish is. Kept by the wish's
+    /// instance, which a rename doesn't change, as its folder and id do.
     private var waitsForDevice: Set<String> = []
 
     /// The first message bootstraps the app: it names an untitled app, then designs the icon
@@ -2600,8 +2596,7 @@ final class Store: ObservableObject {
                 project = await chooseKind(project, kind, said: suggestion.kindSaid, watch: suggestion.watch, integration: suggestion.integration)
             }
             if project.untitled, let name = suggestion?.name { project = await performRename(project, to: name) }
-            // By the id it has once named: a rename moves it to a folder, and an id, of its new name.
-            if suggestion?.forOtherDevice == true { waitsForDevice.insert(project.id) }
+            if suggestion?.forOtherDevice == true { waitsForDevice.insert(project.instance) }
             if let color = suggestion?.color, Icons.load(project) == nil { iconColors[project.id] = color }
         }
         if Icons.load(project) == nil {
@@ -2747,7 +2742,7 @@ final class Store: ObservableObject {
             // Named now, so the scaffold is written under its name. If it can't be, the turn ends here, failed.
             // Not while a wish is still being found: the agent only asks, and the wish it finds may be for the
             // iPhone, which a scaffold already written as a Mac app would rule out.
-            if !stillFinding, !waitsForDevice.contains(project.id) {
+            if !stillFinding, !waitsForDevice.contains(project.instance) {
                 guard let ready = await materialize(project) else { return }
                 project = ready
                 if newApp { showEarly(project, in: owner) }
@@ -4667,12 +4662,20 @@ final class Store: ObservableObject {
         var changed = current
         changed.platform = kind
         changed.integration = kind == .device ? integration : nil
-        waitsForDevice.remove(project.id)
+        // A wish held for its device has nothing written yet: given its kind, it's made now, scaffold and first version,
+        // so the agent builds on it in this request as it would on any new wish.
+        let fresh = waitsForDevice.remove(current.instance) != nil && !current.scaffolded
         // Where it opens next: where it's newly made for, so the person sees the change.
         changed.chosen = current.platform == .mac ? .ios : .mac
         if !kind.hasIOS { changed.device = nil }
         do { try Template.saveMeta(changed) } catch { return (500, ["error": "Lamp couldn't save the change: \(error.localizedDescription)"]) }
         projects[index] = changed
+        if fresh {
+            guard let made = await materialize(changed) else {
+                return (500, ["error": "Lamp couldn't set up the app for \(words). Tell the person in a sentence; it says why in the chat."])
+            }
+            changed = made
+        }
         if changed.scaffolded {
             do { try Template.writeOwnedFiles(for: changed) } catch {
                 return (500, ["error": "Lamp couldn't write the build files for it: \(error.localizedDescription)"])
@@ -4717,7 +4720,7 @@ final class Store: ObservableObject {
             : current.platform == .device ? "the code that was for the device" : "the Swift in Sources/"
         let leftover = current.platform == .android ? "app/ and the Gradle files" : current.platform == .tv ? "the rest of Web/"
             : current.platform == .device ? "the files that were for the device" : "Sources/, Package.swift and the other Swift-only files"
-        let rewrite = ownLanguage(kind) == ownLanguage(current.platform) ? ""
+        let rewrite = fresh || ownLanguage(kind) == ownLanguage(current.platform) ? ""
             : kind == .android ? "Write the app again in Kotlin and Jetpack Compose under app/ (the scaffold is there), reading \(from) for what it does, then delete \(leftover) with delete_file. "
             : kind == .tv ? "Write the app again as a TV app in Web/ (the scaffold is there), reading \(from) for what it does, then delete \(leftover) with delete_file. "
             : kind == .device ? "Write the app again for the device, in the scaffold its integration gave (it's there now), reading \(from) for what it does, then delete \(leftover) with delete_file. "
