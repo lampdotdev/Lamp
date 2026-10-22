@@ -252,8 +252,9 @@ enum Agent {
     @StateObject of the views inside it start over, so keep what must survive in a model those views read. \
     A change to a Shape's path, or to an NSViewRepresentable's or UIViewRepresentable's make or update, shows only \
     when SwiftUI next draws that shape or updates that view; if the person must see it now, look with reopen. \
-    New stored properties go in too, in a class, a struct or (as @State) a view, when each has a starting value \
-    (or is an optional) and no didSet or willSet, and the type isn't Codable; so do new cases at the end of an enum whose cases carry nothing, \
+    New stored properties go in too, in a class, a struct or a view (as @State, @AppStorage or a parameter its parent \
+    passes), when each has a starting value (or is an optional, or a view's parameter) and no didSet or willSet, and the \
+    type isn't Codable (a view's new @Environment or @Binding needs a reopen); so do new cases at the end of an enum whose cases carry nothing, \
     and new values for constants that hold no object. Changing or removing a stored property, a case anywhere \
     else, or what's read only at launch (the App, its scenes and menu commands) needs it reopened, which waits \
     for the person to press Reload. \

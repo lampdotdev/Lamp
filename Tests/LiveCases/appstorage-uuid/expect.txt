@@ -1,11 +1,8 @@
-VERDICT 1: REOPEN (Settings changed what it holds (Settings._size: AppStorage<Int>); Settings.size is @AppStorage, and a view's spare keeps only @State)
+VERDICT 1: RELOAD (Added Settings.size)
 VERDICT 2: REOPEN (Item changed what it holds (Item.id: UUID); Item is Codable and gained id, which has to be stored to be encoded and decoded)
 == run
 before: Settings a
-RELOAD 1: REOPEN Settings changed what it holds (Settings._size: AppStorage<Int>); Settings.size is @AppStorage, and a view's spare keeps only @State
-after1: a
-before: Settings a
-RELOAD 1: in the restart
+RELOAD 1 (whole): ok
 after1: a
 RELOAD 2: REOPEN Item changed what it holds (Item.id: UUID); Item is Codable and gained id, which has to be stored to be encoded and decoded
 after2: a

@@ -3,7 +3,7 @@ import SwiftUI
 import AppKit
 @main struct Main { static func main() { MainActor.assumeIsolated {
     setvbuf(stdout, nil, _IONBF, 0)
-    UserDefaults.standard.removeObject(forKey: "r19-hide-done")
+    UserDefaults.standard.removeObject(forKey: "r19-view-gains-appstorage-hide")
     NSApplication.shared.setActivationPolicy(.prohibited)
     let host = NSHostingView(rootView: ContentView())
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [.borderless], backing: .buffered, defer: false)
@@ -14,5 +14,8 @@ import AppKit
     reload(1)
     settle()
     print("after1 (want it in: a setting added to an existing view with @AppStorage, as agents add settings):", Log.take())
+    UserDefaults.standard.set(true, forKey: "r19-view-gains-appstorage-hide")
+    settle()
+    print("after1, set elsewhere (want hideDone=true: the view hears the defaults change):", Log.take())
     _ = window
 }}}

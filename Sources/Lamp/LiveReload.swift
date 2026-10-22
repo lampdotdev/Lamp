@@ -370,7 +370,7 @@ enum LiveReload {
     }
 
     /// `freeOpaque` names the `some View` members whose type may change: only a view's bodies use them (`freeOpaque(…)`).
-    static func layoutProblem(before: [String]?, after: [String]?, freeOpaque: Set<String> = []) -> (problem: String?, layout: [String]?) {
+    static func layoutProblem(before: [String]?, after: [String]?, freeOpaque: Set<String> = [], spared: Set<String> = []) -> (problem: String?, layout: [String]?) {
         guard let now = after else { return ("the new code doesn't type-check as a whole", nil) }
         guard let before else { return ("the compiler couldn't say what the open app's types hold", nil) }
         // A typealias is printed as itself wherever it's used, so a type keeping `var amount: Money` reads the same
@@ -608,7 +608,15 @@ enum LiveReload {
                     let raw = { (entry: String) in entry.components(separatedBy: " = ").dropFirst().joined(separator: " = ") }
                     return ("the raw value of \(type).\(name) changed (\(raw(changed.0).isEmpty ? "none" : raw(changed.0)) to \(raw(changed.1).isEmpty ? "none" : raw(changed.1))), which the open app's values are kept, compared and hashed by", nil)
                 }
-                let what = (current.first { !members.contains($0) } ?? members.first { !current.contains($0) }.map { "no longer " + $0 } ?? "the order of its fields")
+                // A field kept in a spare since the app opened is in the new code's layout and not the open app's: the
+                // one named is a field that isn't, when there is one.
+                func isSpared(_ entry: String) -> Bool {
+                    let parts = entry.split(separator: "\t", maxSplits: 1)
+                    guard parts.count == 2 else { return false }
+                    return spared.contains(String(parts[0]) + "\t" + String(parts[1].prefix { $0 != ":" }.drop { $0 == "_" }))
+                }
+                let added = current.filter { !members.contains($0) }
+                let what = ((added.first { !isSpared($0) } ?? added.first) ?? members.first { !current.contains($0) }.map { "no longer " + $0 } ?? "the order of its fields")
                     .replacingOccurrences(of: "\t", with: ".")
                 return ("\(type) changed what it holds (\(what))", nil)
             }
@@ -1981,7 +1989,8 @@ enum LiveReload {
         // View members whose type changed but which only views' bodies use: in place, with every file compiled.
         let opaqueMoved = before.flatMap { before in after.map { opaqueChanged(before: before, after: $0) } } ?? []
         let free = opaqueMoved.isEmpty || after == nil ? [] : freeOpaque(opaqueMoved, declarations: declarations, layout: after ?? [])
-        var check = layoutProblem(before: before, after: after, freeOpaque: free)
+        let spares = Set(LiveSlots.mapping(project).flatMap { type, slots in slots.filter { $0.value.retired != true }.keys.map { type + "\t" + $0 } })
+        var check = layoutProblem(before: before, after: after, freeOpaque: free, spared: spares)
         // A constant made from an enum that grew (`Mood.allCases`) keeps the value the open app made: remade too.
         let grownEarly = before.flatMap { before in after.map { grownEnums(before: before, after: $0) } } ?? []
         // The system types Lamp can't judge from the code that the constants a change remakes are made of, and which
@@ -2050,7 +2059,7 @@ enum LiveReload {
             // A constant newly read through its new code is read so everywhere: the open app's own reads go to storage
             // that keeps the first value. Afterwards every caller reads through it, so later changes need no more.
             if !fitted.constants.isEmpty { changed = appFiles(project) }
-            check = layoutProblem(before: before, after: fitted.layout, freeOpaque: free)
+            check = layoutProblem(before: before, after: fitted.layout, freeOpaque: free, spared: spares)
             if check.problem == nil, !fitted.added.isEmpty { said.append("Added \(fitted.added.joined(separator: ", "))") }
             if check.problem == nil, !fitted.constants.isEmpty {
                 said.append("Gave \(fitted.constants.joined(separator: ", ")) \(fitted.constants.count == 1 ? "its" : "their") new value")
@@ -2176,8 +2185,11 @@ enum LiveReload {
         guard let layout = check.layout, library != nil || changed.isEmpty else {
             // A view's state moved into its box is no parameter of the view's initializer any more, and can't be one: a
             // value given that way is lost, since SwiftUI makes the box after the initializer has run. Said plainly.
-            if let plan, let problem, let given = plan.slots.flatMap({ type, slots in slots.filter { $0.value.holder == .view && problem.contains("extra argument '\($0.key)'") }.map { "\(type).\($0.key)" } }).sorted().first {
-                return .reopen(why: "\(given) is @State the view's initializer is given, and a property kept in a spare can't take a value that way")
+            if let plan, let problem, let (given, slot) = plan.slots.flatMap({ type, slots in slots.filter { $0.value.holder == .view && problem.contains("extra argument '\($0.key)'") }.map { ("\(type).\($0.key)", $0.value) } }).sorted(by: { $0.0 < $1.0 }).first {
+                if slot.wrapper == nil {
+                    return .reopen(why: "\(given) is given to the view's initializer, and the view is made where the open app keeps it (at launch, or outside a view's body), so a new property of it goes in only as the literal it starts as")
+                }
+                return .reopen(why: "\(given) is @\(slot.wrapper ?? "State") the view's initializer is given, and a property kept in a spare can't take a value that way")
             }
             // A compiler error is the compiler's words; anything else (the change's types couldn't be made the app's)
             // is a reason already.
@@ -2387,7 +2399,8 @@ enum LiveSlots {
     static let count = 4
 
     /// What keeps a property: a class's own place, a struct's shared one, or a view's state box.
-    enum Holder: String, Codable { case object, value, view }
+    /// A view's parameter is kept in its own spare, as a struct's property is, beside its state box.
+    enum Holder: String, Codable { case object, value, view, parameter }
 
     struct Slot: Codable, Equatable {
         var index: Int
@@ -2407,6 +2420,9 @@ enum LiveSlots {
         /// Which time round this name has a place: a struct's or view's keeps its values by name, so a name brought
         /// back is kept under the name with this number, apart from what the old one left.
         var generation: Int?
+        /// A view's property in its box: the wrapper it was written with (`State`, `AppStorage`); nil for one that's
+        /// always the literal it starts as.
+        var wrapper: String?
     }
     /// A class's place that was retired, kept under this prefix with the property's name so its index stays taken.
     private static let retiredKey = "\u{1}retired "
@@ -2741,6 +2757,8 @@ enum LiveSlots {
         }
         var planned: [(type: String, name: String, slot: Slot, published: Bool, isNew: Bool)] = []
         var moved = Set<String>()
+        // Where views are made again at every draw, found once and only when a view gains a parameter.
+        var made: [(start: SwiftSource.Position, last: SwiftSource.Position)]?
         for (type, members) in old.sorted(by: { $0.key < $1.key }) where !LiveReload.isGroup(type) {
             guard let current = new[type] else { continue }
             guard current != members, !casesAdded(type, members, current) else { continue }
@@ -2753,13 +2771,14 @@ enum LiveSlots {
             let observed = members.contains(type + "\t_\(first): LampSpare?")
             let published = members.contains(type + "\t_\(first): Published<LampSpare?>")
             let holder: Holder
+            // A view has a spare too (since views were given one for their parameters), so its box is looked for first.
             if observed || published || members.contains(type + "\t\(first): LampSpare?") {
                 holder = .object
-            } else if members.contains(type + "\t\(place(in: type, holder: .value)): LampSpare") {
-                holder = .value
             } else if members.contains(type + "\t_\(place(in: type, holder: .view)): State<LampStateBox>")
                         || members.contains(type + "\t__\(place(in: type, holder: .view)): LazyState<LampStateBox>") {
                 holder = .view
+            } else if members.contains(type + "\t\(place(in: type, holder: .value)): LampSpare") {
+                holder = .value
             } else if extras.contains(where: { $0.dropFirst(type.count + 1).hasPrefix("case ") }) {
                 // An enum keeps no spare: a case added anywhere but at the end, or one that carries values, lays its values out anew.
                 return .refused("\(type) gained a case that carries values or isn't at the end, which lays out its values anew")
@@ -2769,9 +2788,12 @@ enum LiveSlots {
             // Every index in use, the retired ones' included: their values are still in them.
             var taken = Set((map[type] ?? [:]).values.map(\.index))
             for extra in extras {
+                var holder = holder
                 let field = extra.dropFirst(type.count + 1)
                 guard !field.hasPrefix("case "), let colon = field.range(of: ": ") else { return .refused(nil) }
                 var name = String(field[..<colon.lowerBound]), kind = String(field[colon.upperBound...])
+                // The wrapper a view's property in its box was written with.
+                let wrapper = field.hasPrefix("_") ? String(kind.prefix { $0 != "<" }).replacingOccurrences(of: "LazyState", with: "State") : nil
                 // A lazy property's storage (`$__lazy_storage_$_name`): what a spare can't keep, said as such.
                 if name.hasPrefix("$__lazy_storage_$_") { return .refused("\(type).\(name.dropFirst(18)) is lazy, which a property kept in a spare can't be") }
                 // A wrapper's storage: `_name: Wrapper<T>`, or `__name: LazyState<T>` where @State is a macro.
@@ -2789,14 +2811,27 @@ enum LiveSlots {
                     // A wrapper's storage (`_name`) isn't a plain property.
                     guard !name.hasPrefix("_") else { return .refused("\(type).\(name.dropFirst()) is kept by a property wrapper, which needs storage of its own") }
                 case .view:
-                    // Or a `let` with a literal (below), which never changes and is no parameter of the initializer.
-                    guard unwrap("State") || unwrap("LazyState", underscores: 2) || declarations.lets.contains(type + "\t" + name) else {
-                        // A wrapper's storage (`_size: AppStorage<Int>`) is said by its wrapper.
-                        if name.hasPrefix("_"), let open = kind.firstIndex(of: "<") {
-                            return .refused("\(type).\(name.dropFirst()) is @\(kind[..<open]), and a view's spare keeps only @State")
+                    // @State and @AppStorage are kept in the box; a plain property as a parameter or a constant (below).
+                    guard unwrap("State") || unwrap("LazyState", underscores: 2) || unwrap("AppStorage") || !name.hasPrefix("_") else {
+                        // Any other wrapper's storage (`_openURL: Environment<OpenURLAction>`) is said by its wrapper:
+                        // SwiftUI fills a wrapper in only where the view stored it when the app opened.
+                        if let open = kind.firstIndex(of: "<") {
+                            return .refused("\(type).\(name.dropFirst()) is @\(kind[..<open]), which SwiftUI fills in only for what \(type) stored when the app opened (a view's spare takes @State, @AppStorage and plain properties)")
                         }
-                        return .refused("\(type).\(name) isn't @State, and a view's spare keeps only @State")
+                        return .refused(nil)
                     }
+                    if !field.hasPrefix("_") {
+                        // A plain property: a parameter, kept in the view's own spare, where every value of the view is made
+                        // again at the next draw (in a body, by the new code); else only one that's always the literal it
+                        // starts as, a `let`, or a `var` nobody gives (one given doesn't compile, said as such).
+                        let parameter = members.contains(type + "\t\(place(in: type, holder: .value)): LampSpare")
+                        if parameter, !declarations.lets.contains(type + "\t" + name) || declarations.variables[type + "\t" + name].map({ initialText(of: $0, in: declarations) == nil }) == true {
+                            if made == nil { made = LiveReload.madeInBodies(declarations: declarations, layout: after) }
+                            if !LiveReload.madeOutsideBodies(type, declarations: declarations, made: made ?? []) { holder = .parameter }
+                        }
+                    }
+                case .parameter:
+                    break
                 }
                 // A property in a Codable type's CodingKeys, written or made by the compiler, stays a field: moved into a
                 // spare, it would drop out of what's encoded and decoded.
@@ -2820,10 +2855,29 @@ enum LiveSlots {
                     return .refused("\(type).\(name)'s publisher ($\(name)) is used, and a property kept in a spare has none")
                 }
                 let optional = kind.hasSuffix("?") || kind.hasPrefix("Optional<")
-                let initial = initialText(of: variable, in: declarations) ?? (optional ? "nil" : nil)
-                guard let initial else { return .refused("\(type).\(name) has no starting value, which a property kept in a spare needs") }
-                if holder == .view, declarations.lets.contains(type + "\t" + name), !(isLiteral(initial) || isLiteral(variable, in: declarations)) {
-                    return .refused("\(type).\(name) is a let that starts as \(initial), and a view's let goes in only with a literal, which it returns")
+                // A view's parameter is given by every value the new code makes, so one with no starting value reads,
+                // until then, as its type's empty value: never seen, since each value is made again before it draws.
+                let initial = initialText(of: variable, in: declarations) ?? (optional ? "nil" : holder == .parameter ? emptyValue(kind) : nil)
+                guard let initial else {
+                    if holder == .parameter { return .refused("\(type).\(name) has no starting value, and a view's new parameter needs one unless it's an optional, a number, text, a collection or an action") }
+                    if holder == .view, !field.hasPrefix("_") { return .refused("\(type).\(name) has no starting value, and \(type) is made where the open app keeps it (at launch, or outside a view's body), which a new parameter of it can't reach") }
+                    return .refused("\(type).\(name) has no starting value, which a property kept in a spare needs")
+                }
+                if holder == .view, !field.hasPrefix("_"), !(isLiteral(initial) || isLiteral(variable, in: declarations)) {
+                    return .refused("\(type).\(name) starts as \(initial), and \(type) is made where the open app keeps it (at launch, or outside a view's body), so a new property of it goes in only as a literal, which it then always is")
+                }
+                if holder == .view, field.hasPrefix("_"), variable.attributes.contains(where: { $0.name == "AppStorage" }),
+                   SwiftSource.Text(path: variable.position.file).flatMap({ storageKey(of: variable, in: $0) }) == nil {
+                    return .refused("\(type).\(name) is @AppStorage with a store of its own, and a view's spare keeps only the standard defaults")
+                }
+                if holder == .view, variable.attributes.contains(where: { $0.name == "AppStorage" }), declarations.choosesDefaultStore {
+                    return .refused("\(type).\(name) is @AppStorage, and the app gives views a defaults store of its own (defaultAppStorage), which a view's spare can't tell it reads from")
+                }
+                // A parameter a call leaves out reads its starting value each time, never set: so only one that comes
+                // out the same every time, as a struct's property kept in its spare.
+                if holder == .parameter, initialText(of: variable, in: declarations) != nil,
+                   !isSteady(initial, type: kind, cases: cases, literal: isLiteral(variable, in: declarations), own: declarations.ownTypeNames) {
+                    return .refused("\(type).\(name) starts as \(initial), which may differ from one read to the next where a call leaves it out; a view's new parameter starts from a literal, an empty collection or one of the app's enum's cases, or has no starting value")
                 }
                 if holder == .value, !isSteady(initial, type: kind, cases: cases, literal: isLiteral(variable, in: declarations), own: declarations.ownTypeNames) {
                     return .refused("\(type).\(name) starts as \(initial), which may differ from one value to the next; a struct's property kept in a spare starts from a literal, an empty collection or one of the app's enum's cases")
@@ -2854,7 +2908,7 @@ enum LiveSlots {
                     index = free
                 }
                 let known = holder == .value ? cases[enumName(kind)].map { $0.sorted() } : nil
-                planned.append((type, name, Slot(index: index, type: kind, holder: holder, cases: known, generation: generation), published, true))
+                planned.append((type, name, Slot(index: index, type: kind, holder: holder, cases: known, generation: generation, wrapper: holder == .view ? wrapper : nil), published, true))
             }
         }
         // Every type the open app doesn't have is the library's to lay out; one it has that changed must be fitted.
@@ -2880,8 +2934,8 @@ enum LiveSlots {
             }
             byFile[variable.position.file, default: []].append((variable.binding, [], key))
         }
-        let initializers = memberwiseInitializers(for: planned.filter { $0.slot.holder == .value }.map { ($0.type, $0.name) },
-                                                  declarations: declarations)
+        let initializers = memberwiseInitializers(for: planned.filter { $0.slot.holder == .value || $0.slot.holder == .parameter }.map { ($0.type, $0.name) },
+                                                  views: Set(planned.filter { $0.slot.holder == .parameter }.map(\.type)), declarations: declarations)
         // Where each view's moved state's `$name` is its own, by file: the view's declaration and its extensions (a
         // private view's only in its file), since another view may have state of the same name. There the state's
         // binding becomes its box's.
@@ -2991,7 +3045,7 @@ enum LiveSlots {
     /// values). A call is then matched by the first moved property it passes and by nothing else, and one that passes
     /// none only by Swift's own. The call inside passes the spare's argument, which only Swift's takes; without a spare
     /// there's nothing to tell them apart by, and none is added. By file, the text to add to its end.
-    static func memberwiseInitializers(for moved: [(type: String, name: String)],
+    static func memberwiseInitializers(for moved: [(type: String, name: String)], views: Set<String> = [],
                                        declarations: SwiftSource.Declarations) -> [String: String] {
         var out: [String: String] = [:]
         for (type, items) in Dictionary(grouping: moved, by: \.type).sorted(by: { $0.key < $1.key }) {
@@ -3007,7 +3061,9 @@ enum LiveSlots {
                     guard label.hasPrefix("__lamp") else { return "\(label): \(label)" }
                     return initial(label).map { "\(label): \($0)" }
                 }
-                guard kept.contains(where: { $0.hasPrefix("__lamp") }) else { continue }
+                // A view's spare is private, so no initializer Swift makes takes it; the first of these takes a moved
+                // parameter with no default, which a call to Swift's own never passes, so the two are told apart anyway.
+                guard kept.contains(where: { $0.hasPrefix("__lamp") }) || views.contains(type) else { continue }
                 let order = made.labels.filter(names.contains)
                 // One the app declares itself with the same labels and types is the app's: a second would be a
                 // redeclaration. One with other types is another overload, and this one is still needed beside it.
@@ -3216,6 +3272,80 @@ enum LiveSlots {
         })
     }
 
+    /// What a view's new parameter with no starting value reads as before a value of the view gives it: its type's
+    /// empty value, or nil for a type that has none Lamp can write.
+    static func emptyValue(_ kind: String) -> String? {
+        if kind.hasSuffix("?") || kind.hasPrefix("Optional<") { return "nil" }
+        if kind == "Bool" { return "false" }
+        if ["Int", "Int8", "Int16", "Int32", "Int64", "UInt", "UInt8", "UInt16", "UInt32", "UInt64", "Double", "Float", "CGFloat", "TimeInterval"].contains(kind) { return "0" }
+        if kind == "String" { return "\"\"" }
+        if kind.hasPrefix("Set<") { return "[]" }
+        // An array or a dictionary, told apart by a colon outside any brackets inside it.
+        if kind.hasPrefix("["), kind.hasSuffix("]") {
+            var depth = 0
+            for character in kind.dropFirst().dropLast() {
+                if "[(<".contains(character) { depth += 1 } else if "])>".contains(character) { depth -= 1 } else if character == ":", depth == 0 { return "[:]" }
+            }
+            return "[]"
+        }
+        // An action: a function returning nothing, which does nothing, taking as many arguments as it's given.
+        var rest = Substring(kind)
+        while rest.hasPrefix("@") { rest = rest.drop { $0 != " " }.drop { $0 == " " } }
+        guard rest.hasPrefix("(") else { return nil }
+        var depth = 0, commas = 0, close: Substring.Index?
+        for index in rest.indices {
+            let character = rest[index]
+            if "[(<".contains(character) { depth += 1 } else if "])>".contains(character) {
+                depth -= 1
+                if depth == 0 { close = index; break }
+            } else if character == ",", depth == 1 { commas += 1 }
+        }
+        guard let close else { return nil }
+        let returns = rest[rest.index(after: close)...].replacingOccurrences(of: "async", with: "").replacingOccurrences(of: "throws", with: "")
+            .trimmingCharacters(in: .whitespaces)
+        guard returns == "-> ()" || returns == "-> Void" else { return nil }
+        let empty = rest[rest.index(after: rest.startIndex)..<close].trimmingCharacters(in: .whitespaces).isEmpty
+        return empty ? "{}" : "{ " + Array(repeating: "_", count: commas + 1).joined(separator: ", ") + " in }"
+    }
+
+    /// The key an `@AppStorage` property is kept under, as written (`"hideDone"`, `Keys.hide`): its attribute's first
+    /// argument. Nil when it names a store of its own, which the view's box doesn't read.
+    static func storageKey(of variable: SwiftSource.Variable, in text: SwiftSource.Text) -> String? {
+        // The attribute's range takes in its arguments: they follow its name, past the `@`.
+        guard let attribute = variable.attributes.first(where: { $0.name == "AppStorage" }), let start = text.offset(attribute.start),
+              let range = text.slice(start, min(text.bytes.count, start + 64)).range(of: "AppStorage"),
+              let (arguments, _) = arguments(at: start + text.slice(start, min(text.bytes.count, start + 64))[..<range.upperBound].utf8.count, in: text),
+              arguments.count == 1,
+              let key = arguments.first?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty else { return nil }
+        return key
+    }
+
+    /// An attribute's arguments in parentheses from this offset (after spaces), each as written, and where they end.
+    private static func arguments(at offset: Int, in text: SwiftSource.Text) -> (arguments: [String], end: Int)? {
+        var index = offset
+        while index < text.bytes.count, text.bytes[index] == UInt8(ascii: " ") { index += 1 }
+        guard index < text.bytes.count, text.bytes[index] == UInt8(ascii: "(") else { return nil }
+        var depth = 0, from = index + 1, arguments: [String] = []
+        while index < text.bytes.count {
+            let byte = text.bytes[index]
+            // A string's text is no argument's end: skipped to its closing quote.
+            if byte == UInt8(ascii: "\"") {
+                index += 1
+                while index < text.bytes.count, text.bytes[index] != UInt8(ascii: "\"") { index += text.bytes[index] == UInt8(ascii: "\\") ? 2 : 1 }
+                index += 1
+                continue
+            }
+            if [UInt8(ascii: "("), UInt8(ascii: "["), UInt8(ascii: "{")].contains(byte) { depth += 1 }
+            if [UInt8(ascii: ")"), UInt8(ascii: "]"), UInt8(ascii: "}")].contains(byte) {
+                depth -= 1
+                if depth == 0 { arguments.append(text.slice(from, index)); return (arguments, index + 1) }
+            }
+            if byte == UInt8(ascii: ","), depth == 1 { arguments.append(text.slice(from, index)); from = index + 1 }
+            index += 1
+        }
+        return nil
+    }
+
     /// Where its starting value is written.
     private static func initialRange(of variable: SwiftSource.Variable, in declarations: SwiftSource.Declarations) -> (start: SwiftSource.Position, last: SwiftSource.Position)? {
         declarations.bindings[variable.binding].entries.first(where: { $0.name == variable.name })?.initial
@@ -3247,7 +3377,7 @@ enum LiveSlots {
         // The same with a wrapper's attribute taken out, for a computed property, which can't carry one.
         var plain = Array(text.bytes[first..<start])
         for attribute in attributes.sorted(by: { ($0.start.line, $0.start.column) > ($1.start.line, $1.start.column) })
-        where ["Published", "State", "ObservationIgnored"].contains(attribute.name) {
+        where ["Published", "State", "ObservationIgnored", "AppStorage"].contains(attribute.name) {
             guard let from = text.offset(attribute.start), let to = text.tokenEnd(attribute.last), from >= first, to <= start else { return nil }
             plain.removeSubrange((from - first)..<(to - first))
         }
@@ -3280,8 +3410,10 @@ enum LiveSlots {
             // A class's places are plain, so a @Published property announces its changes itself (an app built
             // when the places were @Published already announces them through the place).
             let announces = !item.published && attributes.contains(where: { $0.name == "Published" })
+            let storage = variable.attributes.contains(where: { $0.name == "AppStorage" }) ? storageKey(of: variable, in: text) : nil
+            if variable.attributes.contains(where: { $0.name == "AppStorage" }), storage == nil { return nil }
             guard !variable.special, let made = computed(variable, item: item, keyword: keyword, declarations: declarations, cases: cases,
-                                                         announces: announces) else { return nil }
+                                                         announces: announces, storage: storage) else { return nil }
             // A class's spare places take the class's actor, which a property written `nonisolated` (a modifier the
             // compiler leaves before the declaration's start) can't read.
             if item.slot.holder ?? .object == .object, isNonisolated(before: first, in: text) { return nil }
@@ -3305,12 +3437,12 @@ enum LiveSlots {
     /// binding its `$name` becomes).
     private static func computed(_ variable: SwiftSource.Variable, item: (type: String, name: String, slot: Slot, published: Bool, isNew: Bool),
                                  keyword: String, declarations: SwiftSource.Declarations, cases: [String: Set<String>],
-                                 announces: Bool = false) -> [String]? {
+                                 announces: Bool = false, storage: String? = nil) -> [String]? {
         let name = variable.name, declared = variable.type, type = item.type
         let key = spareKey(type: type, name: name, generation: item.slot.generation)
         let isLet = keyword == "let"
         let optional = declared.hasSuffix("?") || declared.hasPrefix("Optional<")
-        guard let initial = initialText(of: variable, in: declarations) ?? (optional ? "nil" : nil) else { return nil }
+        guard let initial = initialText(of: variable, in: declarations) ?? (optional ? "nil" : item.slot.holder == .parameter ? emptyValue(declared) : nil) else { return nil }
         // A value set is read back as set, nil included: an optional's nil is told from "never set" by the place
         // holding a value at all, and read as `nil` when its box doesn't cast (a nil boxed as Any doesn't).
         let read: (String) -> String = { value in optional ? "return (\(value) as? \(declared)) ?? nil" : "if let v = \(value) as? \(declared) { return v }" }
@@ -3333,12 +3465,25 @@ enum LiveSlots {
             let setter = isLet ? "" : " set { \(place) = LampSpare.setting(\"\(key)\", to: newValue, initial: { () -> \(declared) in \(initial) }(), in: \(place)) }"
             return ["var \(name): \(declared) { \(getter)\(setter) }"]
         case .view:
-            // A view's `let` with a literal: the literal, every time, as the stored one would always have held.
-            if isLet { return ["var \(name): \(declared) { \(initial) }"] }
+            // A view's plain property here is a literal, every time, as the stored one would always have held.
+            guard variable.attributes.contains(where: { $0.name == "State" || $0.name == "AppStorage" }) else { return ["var \(name): \(declared) { \(initial) }"] }
             let box = place(in: type, holder: .view)
+            // An @AppStorage property is kept in the defaults, under its own key, as AppStorage keeps it.
+            if let storage {
+                let read = "\(box).defaults(\(storage), (\(initial)) as \(declared))"
+                return ["var \(name): \(declared) { get { \(read) } nonmutating set { \(box).setDefaults(\(storage), newValue) } }",
+                        "var __lampBinding_\(name): Binding<\(declared)> { Binding(get: { \(read) }, set: { \(box).setDefaults(\(storage), $0) }) }"]
+            }
             let read = "\(box).get(\"\(key)\") { () -> \(declared) in \(initial) }"
             return ["var \(name): \(declared) { get { \(read) } nonmutating set { \(box).set(\"\(key)\", newValue) } }",
                     "var __lampBinding_\(name): Binding<\(declared)> { Binding(get: { \(read) }, set: { \(box).set(\"\(key)\", $0) }) }"]
+        case .parameter:
+            // A view's parameter, kept in its own spare and set by the initializer made again for it; settable, so
+            // that initializer can, whether it was a `let` or a `var`.
+            let place = place(in: type, holder: .value)
+            let getter = "get { if \(place).has(\"\(key)\") { \(read("\(place).field(\"\(key)\")")) }; return \(initial) }"
+            let setter = " set { \(place) = LampSpare.setting(\"\(key)\", to: newValue, initial: { () -> \(declared) in \(initial) }(), in: \(place)) }"
+            return ["var \(name): \(declared) { \(getter)\(setter) }"]
         }
     }
 

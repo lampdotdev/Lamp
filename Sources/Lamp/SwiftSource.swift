@@ -103,6 +103,9 @@ enum SwiftSource {
         /// shared code, a private type in another file), is in `ownResolved` instead.
         var systemResolved: [String: String] = [:]
         var ownResolved: Set<String> = []
+        /// Whether the app's code gives views a defaults store of its own (`.defaultAppStorage(…)`), which an
+        /// `@AppStorage` without one reads from: where that is, Lamp can't say.
+        var choosesDefaultStore = false
 
         /// Whether code in `ranges` names the type (its qualified name, as `bare` gives it): uses it as a type, or
         /// uses one of its members. One of the `cases` alone (`.a`) is no use of the type as a whole: what's made
@@ -261,6 +264,7 @@ enum SwiftSource {
             if let open = preview, indent > open { return }
             // And the type such a macro writes for it, named by its mangled name (`$s…PreviewRegistryfMu_`).
             preview = opens("macro_expansion_decl") || opens("struct_decl") && line.has(" \"$s") ? indent : nil
+            if line.has("extension.defaultAppStorage") { out.choosesDefaultStore = true }
             if opens("typealias"), let m = aliasName.firstMatch(in: line.text, range: line.range) {
                 out.aliases.insert(String(line.text[Range(m.range(at: 1), in: line.text)!]))
             }

@@ -10,7 +10,7 @@ struct ContentView: View {
     }
 }
 struct ListView: View {
-    @AppStorage("r19-hide-done") private var hideDone = false
+    @AppStorage("r19-view-gains-appstorage-hide") private var hideDone = false
     var body: some View {
         let _ = Log.add("list hideDone=\(hideDone)")
         VStack {

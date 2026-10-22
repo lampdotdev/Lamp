@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Row changed what it holds (Row.token: String); Row.token starts as UUID().uuidString, which may differ from one read to the next where a call leaves it out; a view's new parameter starts from a literal, an empty collection or one of the app's enum's cases, or has no starting value)
+== run
+before: list hideDone=false help, row Milk
+RELOAD 1: REOPEN Row changed what it holds (Row.token: String); Row.token starts as UUID().uuidString, which may differ from one read to the next where a call leaves it out; a view's new parameter starts from a literal, an empty collection or one of the app's enum's cases, or has no starting value
+after1 (want a plain reason: a row gains a var made new at each read, which its parent leaves out): 
+before: list hideDone=false help, row Milk token=36
+RELOAD 1: in the restart
+after1 (want a plain reason: a row gains a var made new at each read, which its parent leaves out): 
