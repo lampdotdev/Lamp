@@ -3255,14 +3255,23 @@ enum LiveSlots {
         func isWord(_ b: UInt8) -> Bool { b == UInt8(ascii: "_") || (b >= 48 && b <= 57) || (b | 0x20 >= 97 && b | 0x20 <= 122) }
         func isSpace(_ b: UInt8) -> Bool { b == UInt8(ascii: " ") || b == UInt8(ascii: "\t") }
         var start = offset
-        // The modifier words just before it on its line.
+        // The modifier words just before it on its line, over block comments between them (`private /* … */ var`).
+        var scan = start
         while true {
-            var end = start
+            var end = scan
             while end > 0, isSpace(bytes[end - 1]) { end -= 1 }
+            if end >= 2, bytes[end - 1] == UInt8(ascii: "/"), bytes[end - 2] == UInt8(ascii: "*") {
+                var open = end - 2
+                while open >= 2, !(bytes[open - 2] == UInt8(ascii: "/") && bytes[open - 1] == UInt8(ascii: "*")), bytes[open - 1] != UInt8(ascii: "\n") { open -= 1 }
+                guard open >= 2, bytes[open - 2] == UInt8(ascii: "/") else { break }
+                scan = open - 2
+                continue
+            }
             var from = end
             while from > 0, isWord(bytes[from - 1]) { from -= 1 }
             guard from < end, modifierWords.contains(text.slice(from, end)) else { break }
             start = from
+            scan = from
         }
         // Lines above of modifiers alone, while nothing but space comes before the declaration on its line.
         while true {
@@ -3271,7 +3280,11 @@ enum LiveSlots {
             guard lineStart > 0, text.slice(lineStart, start).allSatisfy({ $0 == " " || $0 == "\t" }) else { break }
             var previous = lineStart - 1
             while previous > 0, bytes[previous - 1] != UInt8(ascii: "\n") { previous -= 1 }
-            let words = text.slice(previous, lineStart - 1).split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+            // Its code: before a `//` comment, without `/* … */` ones.
+            var code = text.slice(previous, lineStart - 1)
+            if let comment = code.range(of: "//") { code = String(code[..<comment.lowerBound]) }
+            code = code.replacingOccurrences(of: #"/\*.*?\*/"#, with: " ", options: .regularExpression)
+            let words = code.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
             guard !words.isEmpty, words.allSatisfy(modifierWords.contains) else { break }
             start = previous
             while start < lineStart - 1, isSpace(bytes[start]) { start += 1 }

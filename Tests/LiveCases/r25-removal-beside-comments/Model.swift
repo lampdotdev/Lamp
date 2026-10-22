@@ -10,6 +10,17 @@ struct ContentView: View {
     var body: some View {
         let _ = Log.add("count=\(count) gone=\(gone)")
         Panel()
+        Shelf()
+    }
+}
+struct Shelf: View {
+    @State private var spare = 2
+    private /* keep private */ var depth = 4
+    private // stays private
+    var width = 9
+    var body: some View {
+        let _ = Log.add("depth=\(depth) width=\(width)")
+        Text("Shelf")
     }
 }
 struct Panel: View {

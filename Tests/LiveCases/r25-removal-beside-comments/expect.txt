@@ -1,5 +1,5 @@
 VERDICT 1: RELOAD
 == run
-before: count=7 gone=x, total=3 dropped=1.5
+before: count=7 gone=x, depth=4 width=9, total=3 dropped=1.5
 RELOAD 1 (whole): ok
-after1 (want it in, count=7 total=3: fields go before one with a comment on its line, and one whose private is on a line above): count=7, total=3
+after1 (want it in, count=7 total=3 depth=4 width=9: fields go before one with a comment on its line, one whose private is on a line above, and ones with comments between a modifier and its keyword): count=7, depth=4 width=9, total=3

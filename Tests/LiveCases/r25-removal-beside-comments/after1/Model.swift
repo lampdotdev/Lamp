@@ -9,6 +9,16 @@ struct ContentView: View {
     var body: some View {
         let _ = Log.add("count=\(count)")
         Panel()
+        Shelf()
+    }
+}
+struct Shelf: View {
+    private /* keep private */ var depth = 4
+    private // stays private
+    var width = 9
+    var body: some View {
+        let _ = Log.add("depth=\(depth) width=\(width)")
+        Text("Shelf")
     }
 }
 struct Panel: View {

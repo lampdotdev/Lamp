@@ -12,6 +12,6 @@ import AppKit
     print("before:", Log.take())
     reload(1)
     settle()
-    print("after1 (want it in, count=7 total=3: fields go before one with a comment on its line, and one whose private is on a line above):", Log.take())
+    print("after1 (want it in, count=7 total=3 depth=4 width=9: fields go before one with a comment on its line, one whose private is on a line above, and ones with comments between a modifier and its keyword):", Log.take())
     _ = window
 }}}
