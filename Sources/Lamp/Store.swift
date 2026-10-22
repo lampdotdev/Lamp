@@ -250,6 +250,12 @@ struct LogLine: Identifiable, Codable, Equatable {
     var said: String? = nil           // for a command Lamp let run ("Ran: …"): what the agent said it was for (`AgentEvent.naming`)
     var at: Date? = nil               // when Lamp logged it, for how long a fold of steps took (`ChatItem.folds`); none in older chats
     var foldTitle: String? = nil      // for the first step of a fold: what the fold did, in a line (`StepTitles`)
+    var failed: Bool? = nil           // for a step: it was tried and didn't work (`AgentEvent.ended`)
+    var call: String? = nil           // for a command's row: the engine's id for its call, which its outcome comes back by
+    var notRun: Bool? = nil           // for commands of one name gathered as one row (`ChatItem.items`): none of them ran
+
+    /// A command's row stopped before it ran: by its own words, or, for commands gathered as one row, every one of them.
+    var wasNotRun: Bool { notRun ?? text.hasPrefix(ChatLook.notRun) }
 
     /// The offer a setup card is about, for this line and for the older key card.
     var setupOffer: SetupOffer? {
@@ -626,6 +632,9 @@ final class Store: ObservableObject {
         /// What the agent last said it's doing, in its own words (`AgentEvent.naming`): the name of the commands
         /// that follow, until it says something else.
         var naming: String?
+        /// This turn's tool calls by the engine's id for them: the step each was logged as, and a command's text, so
+        /// the step can say it failed once the call's outcome comes back (`AgentEvent.ended`).
+        var calls: [String: (line: UUID, command: String?)] = [:]
         /// Whether the chat says each command from the engine's own output (`AgentRun.saysCommands`), for the run going now.
         var saysCommands = false
         /// The agent put its questions to the person this turn: the turn is over, whatever the agent does next.
@@ -1031,12 +1040,49 @@ final class Store: ObservableObject {
     }
 
     func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil, retryPhone: String? = nil,
-             offer: SetupOffer? = nil, noted: NoteReceipt? = nil, said: String? = nil) {
+             offer: SetupOffer? = nil, noted: NoteReceipt? = nil, said: String? = nil, failed: Bool = false, call: String? = nil) {
         logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone,
-                                                    offer: offer, noted: noted, said: said, at: Date()))
+                                                    offer: offer, noted: noted, said: said, at: Date(), failed: failed ? true : nil,
+                                                    call: call))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
         if kind != .detail, kind != .summary, kind != .status, kind != .tool { closeSteps(project) }
         saveChat(project)
+    }
+
+    /// A tool call's step in the agent's own words: what it gave this call, else, for Codex, the heading of its
+    /// reasoning before it, which says what the work after it is for. A command's description (Claude Code's, pi's)
+    /// names that command only: the file work after it is a step of its own, or a read would carry "Share the page"
+    /// after the command that was to share it had failed.
+    nonisolated static func stepName(of call: ToolCall, said: String?, naming: String?, engine: Engine) -> String? {
+        let fileWork = [.read, .write, .edit, .search, .list, .delete].contains(call.action)
+        return said ?? (engine == .codex && (call.action == .run || fileWork) ? naming : nil)
+    }
+
+    /// Marks a step that was tried and didn't work, so it says so in the chat and in its fold's line.
+    func markFailed(_ line: UUID?, id: String?, command: String?, in project: LampProject) {
+        guard var lines = logs[project.id] else { return }
+        let failed = Self.failedRows(in: lines, line: line, id: id, command: command)
+        guard !failed.isEmpty else { return }
+        for index in failed { lines[index].failed = true }
+        logs[project.id] = lines
+        saveChat(project)
+    }
+
+    /// The lines a failed call marks: the call's own step, and a command's row ("Ran: …"), which Lamp logs apart from
+    /// the call, when the command is let run or has run. The row is found by the engine's id for the call, which it
+    /// carries when the approval or the engine's output said it: two calls of the same command in one message may each
+    /// have a row, and only the call's own is its. A row that carries no id (an engine that didn't say it) is found by
+    /// its command, the latest since the call, or since the request when the call isn't known, never one tied to another
+    /// call. A command declined on the card has no row, and an older run of the same command keeps its own.
+    nonisolated static func failedRows(in lines: [LogLine], line: UUID?, id: String?, command: String?) -> [Int] {
+        let own = line.flatMap { line in lines.lastIndex { $0.id == line } }
+        var rows = own.map { [$0] } ?? []
+        if let id, let row = lines.lastIndex(where: { $0.kind == .status && $0.call == id }) { return rows + [row] }
+        let since = own ?? lines.lastIndex { $0.kind == .user } ?? lines.startIndex
+        if let command, let row = lines[since...].lastIndex(where: { $0.kind == .status && $0.call == nil && $0.text == "Ran: \(command)" }) {
+            rows.append(row)
+        }
+        return rows
     }
 
     /// What each fold of a finished turn's steps did (`StepTitles`), put on the fold's first step. A line gone since
@@ -3398,13 +3444,11 @@ final class Store: ObservableObject {
                 case .naming(let words):
                     turn.naming = words.nilIfEmpty
                     if let words = turn.naming { noteAgent(words, for: project) }
-                case .tool(let text, let fullCall, let said):
+                case .tool(let text, let fullCall, let said, let id, let command):
                     let call = ToolCall(text)
-                    // The step in the agent's own words: what it gave this call, else what it last said it's doing (a
-                    // command's name, a heading), which names the file work that follows until it says something else.
-                    let fileWork = [.read, .write, .edit, .search, .list, .delete].contains(call.action)
-                    let named = said ?? (call.action == .run || fileWork ? turn.naming : nil)
+                    let named = Self.stepName(of: call, said: said, naming: turn.naming, engine: engine)
                     log(project, .tool, text, said: named)
+                    if let id, let line = logs[project.id]?.last?.id { turn.calls[id] = (line, command) }
                     endIfOver(turn, before: call.name)
                     noteAgent(named ?? TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
                     if let file = TurnProgress.file(changedBy: call) { progress[project.id]?.wrote(file) }
@@ -3432,12 +3476,18 @@ final class Store: ObservableObject {
                     received(project)
                 case .acting(let id, let started):
                     if started { turn.codexActing.insert(id) } else { turn.codexActing.remove(id); steer(project) }
-                case .ran(let command, let refused):
+                case .ended(let id, let failed):
+                    if failed, let call = turn.calls[id] { markFailed(call.line, id: id, command: call.command, in: project) }
+                case .ran(let command, let refused, let failed, let id):
                     // A command Codex ran is said in the chat as a command Lamp let run is, by the name the agent gave
                     // it; one its reviewer refused is the same step, marked only when it's opened (`ChatLook.ranCommand`).
-                    // A run whose commands each come to Lamp's card says nothing here: the others' don't either.
-                    guard turn.saysCommands else { break }
-                    log(project, .status, (refused ? ChatLook.notRun : "Ran: ") + command, said: turn.naming)
+                    // A run whose commands each come to Lamp's card says nothing here: the others' don't either. Its
+                    // row was logged as the card let it run, and says so if it failed.
+                    guard turn.saysCommands else {
+                        if failed { markFailed(nil, id: id, command: command, in: project) }
+                        break
+                    }
+                    log(project, .status, (refused ? ChatLook.notRun : "Ran: ") + command, said: turn.naming, failed: failed, call: id)
                 case .finished:
                     // Claude Code has answered. A message sent from now on is the next request.
                     turn.input?.close()
@@ -3839,7 +3889,7 @@ final class Store: ObservableObject {
 
     /// Commands confined for Claude Code's classifier to judge (`format=claude-confine`), by what they became, with
     /// what the agent wrote and said they were for, so its card and the chat show the agent's words.
-    private var confinedCommands: [String: (original: String, said: String?)] = [:]
+    private var confinedCommands: [String: (original: String, said: String?, call: String?)] = [:]
 
     /// The latest request per app, so the decision model can judge commands against what the user asked for.
 
@@ -3847,10 +3897,10 @@ final class Store: ObservableObject {
     /// `sandboxed`: the command will run confined to the app (Sandbox), so where it looks isn't in question.
     /// `said` is what the agent said the command is for, which names it in the chat (`LogLine.said`).
     private func approveCommand(_ command: String, for project: LampProject, escalated: Bool, shell: Bool = true, sandboxed: Bool,
-                                said: String? = nil) async -> Bool {
+                                said: String? = nil, call: String? = nil) async -> Bool {
         switch CommandApproval.current {
         case .never:
-            log(project, .status, "Ran: \(command)", said: said)
+            log(project, .status, "Ran: \(command)", said: said, call: call)
             return true
         case .risky where !escalated:
             let judgment = await commandJudgment(command, for: project, aboutRequest: !sandboxed)
@@ -3860,14 +3910,14 @@ final class Store: ObservableObject {
             // nearly all of them allowed. A check that couldn't be made at all goes to the in-app model's rating:
             // the sandbox leaves the network open, so it isn't the only guard, but a "low" there runs it.
             if judgment.verdict == .run || (sandboxed && judgment.verdict == .unsure && judgment.judged) {
-                log(project, .status, "Ran: \(command)", said: said)
+                log(project, .status, "Ran: \(command)", said: said, call: call)
                 return true
             }
             // A risky verdict always has its reason; if one were ever missing, the card still comes up as flagged.
             let flagged = judgment.verdict == .risky ? judgment.reason ?? .reachesBeyond : nil
             let allowed = await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged,
                                                 said: said)
-            if allowed, shell { log(project, .status, "Ran: \(command)", said: said) }
+            if allowed, shell { log(project, .status, "Ran: \(command)", said: said, call: call) }
             return allowed
         case .risky where shell:
             // Claude Code's own classifier judged it and asked: the person decides, with no second check of
@@ -3878,7 +3928,7 @@ final class Store: ObservableObject {
             // A command allowed on the card is a step like any other, by the name the agent gave it, whichever engine
             // asked, as one that needed no card is.
             let allowed = await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, said: said)
-            if allowed, shell { log(project, .status, "Ran: \(command)", said: said) }
+            if allowed, shell { log(project, .status, "Ran: \(command)", said: said, call: call) }
             return allowed
         }
     }
@@ -8401,8 +8451,10 @@ final class Store: ObservableObject {
                 let (allowed, reason) = await fileAccess(tool: tool, path: path, for: project)
                 return (200, reason.map { ["allow": allowed, "reason": $0] } ?? ["allow": allowed])
             }
-            // pi's extension sends {"command", "description"}; Claude Code's hook sends {"tool_input": {"command", "description"}}.
+            // pi's extension sends {"command", "description", "call"}; Claude Code's hook sends {"tool_input": {"command",
+            // "description"}, "tool_use_id"}. The call's id ties the command's row to the call its outcome comes back by.
             let input = body["tool_input"] as? [String: Any] ?? [:]
+            let call = (body["call"] as? String ?? body["tool_use_id"] as? String)?.nilIfEmpty
             let tool = body["tool_name"] as? String ?? "Bash"
             if request.path.contains("format=claude-file") {
                 // One of Claude Code's file tools, before it runs: the same check pi's and Codex's get.
@@ -8442,14 +8494,15 @@ final class Store: ObservableObject {
             if request.path.contains("format=claude-refused") {
                 if let known { confinedCommands[wrapped] = nil }
                 let why = (body["reason"] as? String ?? body["message"] as? String)?.trimmed.nilIfEmpty
-                log(project, .status, ChatLook.notRun + command, said: known?.said)
+                log(project, .status, ChatLook.notRun + command, said: known?.said, call: known?.call ?? call)
                 if let why { log(project, .detail, "Claude's check stopped it: \(why)") }
                 return (200, [:])
             }
             if request.path.contains("format=claude-ran") {
                 if let known {
                     confinedCommands[wrapped] = nil
-                    log(project, .status, "Ran: \(command)", said: known.said)
+                    log(project, .status, "Ran: \(command)", said: known.said,
+                        failed: body["hook_event_name"] as? String == "PostToolUseFailure", call: known.call ?? call)
                 }
                 return (200, [:])
             }
@@ -8473,7 +8526,7 @@ final class Store: ObservableObject {
                 if known == nil {
                     let said = (input["description"] as? String ?? body["description"] as? String)?.trimmed.nilIfEmpty
                     if confinedCommands.count > 500 { confinedCommands.removeAll() }   // ones refused never come back
-                    confinedCommands[confined] = (command, said)
+                    confinedCommands[confined] = (command, said, call)
                 }
                 return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "updatedInput": ["command": confined]]])
             }
@@ -8481,7 +8534,7 @@ final class Store: ObservableObject {
                 // Codex's PreToolUse hook can only block: an empty answer lets the command run.
                 // Codex says what its commands are for in its reasoning, which comes before them (`AgentEvent.naming`).
                 let allowed = await approveCommand(command, for: project, escalated: false, sandboxed: sandboxed,
-                                                   said: turns[project.id]?.naming)
+                                                   said: turns[project.id]?.naming, call: call)
                 return (200, allowed ? [:] : ["hookSpecificOutput": ["hookEventName": "PreToolUse",
                                                                      "permissionDecision": "deny",
                                                                      "permissionDecisionReason": "The user denied this command in Lamp."]])
@@ -8489,7 +8542,8 @@ final class Store: ObservableObject {
             // Claude Code's hook and pi's extension carry the command's own description, so each command keeps its
             // own words whichever of the approval and the engine's output reaches Lamp first.
             let said = (input["description"] as? String ?? body["description"] as? String)?.trimmed.nilIfEmpty
-            let allowed = await approveCommand(command, for: project, escalated: escalated, shell: shell, sandboxed: sandboxed, said: said)
+            let allowed = await approveCommand(command, for: project, escalated: escalated, shell: shell, sandboxed: sandboxed, said: said,
+                                               call: call)
             let reason = allowed ? "Approved in Lamp." : "The user denied this command in Lamp."
             // An allowed command goes back confined: the hooks run what Lamp hands them.
             if escalated {

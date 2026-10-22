@@ -62,7 +62,9 @@ A capability given to one engine must be given to all of them that can take it, 
   the agent says something after it (a message, a progress line, a question card: `StepTitles.closed(in:turn:)`), so the
   lines are there when the turn ends, and what's left (the steps after the last message, and a stretch whose early call
   failed) in one call after the turn's summary, never waited on. The model is
-  told only the request and the steps' words, never a command or what it printed. A fold keeps its
+  told only the request and the steps' words, never a command or what it printed, with which steps failed or never ran
+  (`StepTitles.words`); a step's words are what the agent set out to do, so the prompt has it say what was done, not
+  that its aim was reached, and say when it failed. A fold keeps its
   words until the line comes, and for good when it doesn't. How long a fold took comes from when Lamp logged its
   lines (`LogLine.at`), so a chat from before that shows no time; "Worked for…" stays the whole run's time, shown
   until its fold is titled. Whatever the agent writes as messages on the way is
@@ -285,7 +287,14 @@ A capability given to one engine must be given to all of them that can take it, 
   call (its parser, and its approval hook, which carries the same input; `Agent.claudeNote` asks for plain words),
   and for Codex the heading of the reasoning summary before it (`model_reasoning_summary`). The name is the activity
   while the command runs and the step's row in the chat (`LogLine.said`, `ChatLook.RanCommand`; consecutive commands
-  under one name are one row, `ChatItem.items`); a command with no name stays "Did a bit of housekeeping". A
+  under one name are one row, `ChatItem.items`); a command with no name stays "Did a bit of housekeeping". The name
+  is that command's only: Claude Code's and pi's file work after it is a step of its own, and only a Codex heading,
+  which says what the work after it is for, names that work too (`Store.stepName`). A step that was tried and didn't
+  work says so after its words, "(failed)" (`LogLine.failed`, `LogLine.withOutcome`): each engine reports how a call
+  ended by its id (`AgentEvent.ended`: pi's `tool_execution_end`, Claude Code's `tool_result`, Codex's `mcp_tool_call`
+  and `file_change`, and its commands' status in `AgentEvent.ran`), and a command's row is the one marked, found by
+  that id, which the approval carries (pi's extension sends it, Claude Code's hooks give `tool_use_id`; `LogLine.call`,
+  `Store.failedRows`). A
   command a reviewer or classifier stopped is the same row, with "(not run)" beside it only once the row is opened, and
   one allowed on Lamp's card is a row like one that needed no card (`Store.approveCommand`); one the person declines leaves none. pi's bash takes only the
   command, so Lamp's extension replaces it, as pi's extension docs allow, with pi's own bash and a `description`

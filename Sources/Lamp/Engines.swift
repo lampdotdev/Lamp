@@ -593,7 +593,8 @@ extension Agent {
                 case "tool_use":
                     let name = block["name"] as? String ?? "Tool", input = block["input"] as? [String: Any] ?? [:]
                     let said = ((input["doing"] as? String) ?? (name == "Bash" ? input["description"] as? String : nil))?.trimmed.nilIfEmpty
-                    let call = AgentEvent.tool(tool(name, input), call: callKey(plainName(name), input), said: said)
+                    let call = AgentEvent.tool(tool(name, input), call: callKey(plainName(name), input), said: said, id: block["id"] as? String,
+                                               command: name == "Bash" ? input["command"] as? String : nil)
                     // Claude Code has the model say what each command is for, in a few words of its own.
                     guard name == "Bash" else { return [call] }
                     return [.naming((input["description"] as? String)?.trimmed ?? ""), call]
@@ -624,7 +625,12 @@ extension Agent {
             if obj["isReplay"] as? Bool == true { return [.received] }
             // A tool result: the tool has finished and the model is thinking about what's next.
             let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
-            if content.contains(where: { $0["type"] as? String == "tool_result" }) { return [.step("")] }
+            let results = content.filter { $0["type"] as? String == "tool_result" }
+            if !results.isEmpty {
+                return [.step("")] + results.compactMap { result in
+                    (result["tool_use_id"] as? String).map { AgentEvent.ended($0, failed: result["is_error"] as? Bool == true) }
+                }
+            }
         case "result":
             var events: [AgentEvent] = []
             // No cost from Claude Code: Lamp runs it with the person's Claude sign-in, so its `total_cost_usd` is what the
@@ -695,15 +701,18 @@ extension Agent {
             guard let message = item["message"] as? String, !message.contains("--dangerously-bypass-hook-trust") else { return [] }
             return [.raw(message)]
         case ("item.completed", "command_execution"):
-            // "declined": Codex's reviewer refused it, and it never ran.
+            // "declined": Codex's reviewer refused it, and it never ran. "failed": it ran and exited with an error.
             let command = item["command"] as? String ?? ""
-            return [.step("")] + (command.isEmpty ? [] : [.ran(Self.unwrapped(command), refused: item["status"] as? String == "declined")])
+            let failed = item["status"] as? String == "failed" || (item["exit_code"] as? Int).map { $0 != 0 } == true
+            return [.step("")] + (command.isEmpty ? [] : [.ran(Self.unwrapped(command), refused: item["status"] as? String == "declined",
+                                                               failed: failed, id: item["id"] as? String)])
         case ("item.completed", "mcp_tool_call"):
-            return [.step("")]
+            return [.step("")] + ((item["id"] as? String).map { [.ended($0, failed: item["status"] as? String == "failed")] } ?? [])
         case ("item.started", "mcp_tool_call"):
             let name = item["tool"] as? String ?? "tool"
             let arguments = item["arguments"] as? [String: Any] ?? [:]
-            return [.tool(tool(name, arguments), call: callKey(name, arguments), said: (arguments["doing"] as? String)?.trimmed.nilIfEmpty)]
+            return [.tool(tool(name, arguments), call: callKey(name, arguments), said: (arguments["doing"] as? String)?.trimmed.nilIfEmpty,
+                          id: item["id"] as? String)]
         case ("item.started", "command_execution"):
             let command = "Run: \(item["command"] as? String ?? "")"
             return [.tool(command, call: command)]
@@ -711,8 +720,9 @@ extension Agent {
             let paths = (item["changes"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String }
             // Codex doesn't say what an edit changed, so two edits to one file can't be told apart:
             // each counts as its own step.
-            return [.tool("Edit \(paths.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))",
-                          call: item["id"] as? String ?? UUID().uuidString)]
+            let id = item["id"] as? String ?? UUID().uuidString
+            return [.tool("Edit \(paths.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))", call: id, id: id),
+                    .ended(id, failed: item["status"] as? String == "failed")]
         case ("error", _), ("turn.failed", _):
             let raw = obj["message"] as? String ?? ((obj["error"] as? [String: Any])?["message"] as? String) ?? "ChatGPT failed."
             // Codex nests the API error as JSON text; surface its message.

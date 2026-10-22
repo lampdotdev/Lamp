@@ -282,7 +282,7 @@ public enum ChatLook {
         public var body: some View {
             HStack(spacing: 6) {
                 Group {
-                    if running { ProgressView().controlSize(.mini) } else { Image(systemName: "checkmark.circle") }
+                    if running { ProgressView().controlSize(.mini) } else { Image(systemName: ChatLook.stepSymbol(text)) }
                 }
                 .frame(width: 16)
                 Text(text)
@@ -384,7 +384,7 @@ public enum ChatLook {
                     withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
                 } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: "checkmark.circle").frame(width: 16)
+                        Image(systemName: ChatLook.stepSymbol(said ?? "")).frame(width: 16)
                         Text(said ?? ChatLook.unnamedStep)
                         Image(systemName: "chevron.right")
                             .font(.caption2.weight(.semibold))
@@ -413,17 +413,28 @@ public enum ChatLook {
     /// A step the agent gave no words of its own.
     public static let unnamedStep = "Did a bit of housekeeping"
 
+    /// What a step that was tried and didn't work says after its words.
+    public static let failedMark = " (failed)"
+
+    /// A done step's tick, or a cross for one that says it failed, so its row never reads as done.
+    public static func stepSymbol(_ words: String) -> String {
+        words.hasSuffix(failedMark) ? "xmark.circle" : "checkmark.circle"
+    }
+
     /// The command in a status line that says one was run, or that one was stopped before it ran ("Not run: …", by
     /// a reviewer or a classifier). A stopped command is the same step, by the name the agent gave it, whatever the
     /// engine: its line was already showing while it was judged, and only opening the step says it didn't run.
     public static func ranCommand(in status: String) -> String? {
         if status.hasPrefix("Ran: ") { return String(status.dropFirst(5)) }
-        if status.hasPrefix(notRun) { return String(status.dropFirst(notRun.count)) + "  (not run)" }
+        if status.hasPrefix(notRun) { return String(status.dropFirst(notRun.count)) + notRunMark }
         return nil
     }
 
     /// How a status line says a command was stopped before it ran.
     public static let notRun = "Not run: "
+
+    /// What a stopped command says after it once its step is opened, and keeps when commands of one name are one row.
+    public static let notRunMark = "  (not run)"
 
     /// A turn's progress: one line saying what the agent is doing, with no clock beside it, which changes in place
     /// as it moves from one thing to the next. `since` is when the activity began, which a long think or build is

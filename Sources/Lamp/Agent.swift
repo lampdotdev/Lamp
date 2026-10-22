@@ -23,7 +23,12 @@ enum AgentEvent {
     /// A tool call as shown in the chat ("grep cache.json"), and the whole call with its arguments,
     /// which is what tells a repeated call from a similar one.
     /// `said`: what the agent said the step is for, in its own words (a command's description, a tool's `doing`).
-    case tool(String, call: String, said: String? = nil)
+    /// `id`: the engine's id for the call, which its outcome comes back with (`ended`); `command`: a shell command's
+    /// text, as its row in the chat has it ("Ran: …").
+    case tool(String, call: String, said: String? = nil, id: String? = nil, command: String? = nil)
+    /// A tool call has finished, by the engine's id for it, and whether it failed (a command that exited with an
+    /// error, a tool that answered with one).
+    case ended(String, failed: Bool)
     case cost(Double)
     case failed(String)
     case raw(String)
@@ -40,9 +45,10 @@ enum AgentEvent {
     /// What the agent says it's doing, in its own words: Claude Code's or pi's description of a command, a Codex
     /// reasoning summary's heading. Empty for a command that came without one, which leaves it unnamed.
     case naming(String)
-    /// A shell command Codex finished, or that was refused before it ran (`refused`), as the agent wrote it. The step
-    /// the person reads is named by `naming`; the command is shown only when the step is opened.
-    case ran(String, refused: Bool)
+    /// A shell command Codex finished, or that was refused before it ran (`refused`), as the agent wrote it, and
+    /// whether it failed. The step the person reads is named by `naming`; the command is shown only when the step is
+    /// opened.
+    case ran(String, refused: Bool, failed: Bool = false, id: String? = nil)
 }
 
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.
@@ -1492,11 +1498,14 @@ enum Agent {
             let name = obj["toolName"] as? String ?? "tool"
             let args = obj["args"] as? [String: Any] ?? [:]
             let said = ((args["doing"] as? String) ?? (name == "bash" ? args["description"] as? String : nil))?.trimmed.nilIfEmpty
-            var events: [AgentEvent] = [.tool(describe(name, args), call: callKey(name, args), said: said)]
+            var events: [AgentEvent] = [.tool(describe(name, args), call: callKey(name, args), said: said, id: obj["toolCallId"] as? String,
+                                              command: name == "bash" ? args["command"] as? String : nil)]
             // Lamp's extension gives pi's bash a description, which the model fills in as Claude Code's does.
             if name == "bash" { events.insert(.naming((args["description"] as? String)?.trimmed ?? ""), at: 0) }
             if name == "plan", args["parts"] != nil { events.append(.plan(PlanPart.parts(from: args))) }
             return events
+        case "tool_execution_end":
+            return (obj["toolCallId"] as? String).map { [.ended($0, failed: obj["isError"] as? Bool == true)] } ?? []
         case "message_end":
             guard let message = obj["message"] as? [String: Any] else { return [] }
             if message["role"] as? String == "user" { return [.received] }
