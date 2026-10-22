@@ -997,7 +997,9 @@ not the app's. A shape is compared only where both
 layouts have one, so a layout an earlier Lamp kept says nothing of it. After a build, `Store.install` tries
 `reloadInPlace` first, which decides the app is open and built live, takes the verdict and hands the changed files to
 `LiveReload.put`, the one pipeline from the layout check to the record of what the app now runs, acting on its
-`Outcome` (it went in, with what was done beyond the code; or why the app has to reopen): the change goes in when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.LaunchReader`, held to what the open app had as part of the layout, with the code they call, as far down as that goes but not their actions', `LiveReload.launchCalls`, since it ran once too; a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again, and one the change didn't touch is left out of a compile of every file when it names nothing newly declared, `LiveReload.addedNames`; a conformance, subscript or operator, which code reaches without naming it, or a declaration taken away keeps it in) or Lamp's own files, and leaves every type
+`Outcome` (it went in, with what was done beyond the code; or why the app has to reopen): the change goes in when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.LaunchReader`, held to what the open app had as part of the layout, with the code they call, as far down as that goes but not their actions', `LiveReload.launchCalls`, since it ran once too
+(into an initializer's type only by what its stored properties' starting values call: a view's `body` runs at each draw,
+and the values themselves are state like any object's, so the window's view and the model the App holds change live); a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again, and one the change didn't touch is left out of a compile of every file when it names nothing newly declared, `LiveReload.addedNames`; a conformance, subscript or operator, which code reaches without naming it, or a declaration taken away keeps it in) or Lamp's own files, and leaves every type
 holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties (their types in Swift's short
 spellings, so `Array<String>` is `[String]`, only where the name is Swift's and no type of the app's) and cases (with their raw values, which an `@objc` enum's values are and
 a raw-value enum hashes by; a raw type given to an existing enum or taken from it reopens the app too),
@@ -1175,9 +1177,10 @@ of them is matched by the first it passes and one passing none only by Swift's o
 initializer is private, since these extensions go in the type's own file. A view's moved `@State` is no parameter of
 the view's initializer any more, and can't be made one (SwiftUI makes the state box lazily, after the initializer
 has run, so a value given that way would be lost): a change whose code passes it there reopens the app, saying so. A
-view's new plain property (a `let` with no starting value, or any `var`) is a parameter, kept in the view's own spare
-and set by its memberwise initializer made again as a struct's is, only where every value of the view is made by a
-body or code only bodies call (`LiveReload.madeOutsideBodies`): each is then made again by the new code before it
+view's new plain property (any but a `let` with a literal, which stays that literal) is a parameter, kept in the view's
+own spare and set by its memberwise initializer made again as a struct's is (state already in the box left out of it),
+only where every value of the view is made by a body, code only bodies call, or an old-style preview
+(`LiveReload.madeOutsideBodies`): each is then made again by the new code before it
 draws, so one with no starting value reads, until then, as its type's empty value (`LiveSlots.emptyValue`: nil, false,
 0, "", an empty collection, an action that does nothing), which nothing sees; a type with none reopens the app, and so does a starting value that may differ from one read to
 the next (`UUID()`), since a call that leaves the parameter out never sets it. A view

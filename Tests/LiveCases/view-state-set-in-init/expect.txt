@@ -1,7 +1,7 @@
-VERDICT 1: REOPEN (Row changed what it holds (Row._open: State<Bool>); Row.open has no starting value, which a property kept in a spare needs)
+VERDICT 1: REOPEN (Row changed what it holds (Row._open: State<Bool>); Row.open is set in Row's own initializer, where a property kept in a spare can't be set)
 == run
 before: 2
-RELOAD 1: REOPEN Row changed what it holds (Row._open: State<Bool>); Row.open has no starting value, which a property kept in a spare needs
+RELOAD 1: REOPEN Row changed what it holds (Row._open: State<Bool>); Row.open is set in Row's own initializer, where a property kept in a spare can't be set
 after1 (reopen expected, with a reason naming the initializer): 2
 before: 2 true
 RELOAD 1: in the restart

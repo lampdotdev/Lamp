@@ -3969,10 +3969,15 @@ enum Template {
             watch(key)
             return (UserDefaults.standard.object(forKey: key) as? T.RawValue).flatMap(T.init(rawValue:)) ?? initial
         }
+        func defaults<T: RawRepresentable>(_ key: String, _ initial: T?) -> T? {
+            watch(key)
+            return (UserDefaults.standard.object(forKey: key) as? T.RawValue).flatMap(T.init(rawValue:)) ?? initial
+        }
         func defaults(_ key: String, _ initial: URL) -> URL { watch(key); return UserDefaults.standard.url(forKey: key) ?? initial }
         func defaults(_ key: String, _ initial: URL?) -> URL? { watch(key); return UserDefaults.standard.url(forKey: key) ?? initial }
         func setDefaults<T>(_ key: String, _ value: T) { UserDefaults.standard.set(Self.unwrapped(value), forKey: key); defaultsSet(key) }
         func setDefaults<T: RawRepresentable>(_ key: String, _ value: T) { UserDefaults.standard.set(value.rawValue, forKey: key); defaultsSet(key) }
+        func setDefaults<T: RawRepresentable>(_ key: String, _ value: T?) { UserDefaults.standard.set(value?.rawValue, forKey: key); defaultsSet(key) }
         func setDefaults(_ key: String, _ value: URL?) { UserDefaults.standard.set(value, forKey: key); defaultsSet(key) }
         private func defaultsSet(_ key: String) {
             seen[key] = UserDefaults.standard.object(forKey: key) as? NSObject ?? NSNull()

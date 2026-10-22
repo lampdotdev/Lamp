@@ -5674,7 +5674,8 @@ final class Store: ObservableObject {
             away.dropped(project.id)
         }
         setAsideChanges[project.id] = SetAside(fingerprint: fingerprint, crash: "It crashed as the change went into the open app, "
-            + "so Lamp set the change aside and opened the version before it again.\n\n" + crash,
+            + "so Lamp set the change aside and opened the app as it was last installed, which doesn't have the changes "
+            + "that went into it live since then: they're still in the code and go in again with the next change.\n\n" + crash,
             // After Stop, nothing more is done for the request, a fix included: the person says what's next.
             afterStop: afterStop || turns[project.id]?.wasStopped == true)
         log(project, .error, ErrorMessages.setAside(project.name))
