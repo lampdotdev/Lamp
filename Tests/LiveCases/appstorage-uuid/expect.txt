@@ -1,10 +1,10 @@
 VERDICT 1: RELOAD (Added Settings.size)
-VERDICT 2: REOPEN (Item changed what it holds (Item.id: UUID); Item is Codable and gained id, which has to be stored to be encoded and decoded)
+VERDICT 2: REOPEN (Item changed what it holds (Item.id: UUID); Item.id starts as UUID(), which may differ from one value to the next; a struct's property kept in a spare starts from a literal, an empty collection or one of the app's enum's cases)
 == run
 before: Settings a
 RELOAD 1 (whole): ok
 after1: a
-RELOAD 2: REOPEN Item changed what it holds (Item.id: UUID); Item is Codable and gained id, which has to be stored to be encoded and decoded
+RELOAD 2: REOPEN Item changed what it holds (Item.id: UUID); Item.id starts as UUID(), which may differ from one value to the next; a struct's property kept in a spare starts from a literal, an empty collection or one of the app's enum's cases
 after2: a
 before: Settings a
 RELOAD 1: in the restart

@@ -1989,7 +1989,10 @@ enum LiveReload {
         let spares = Set(LiveSlots.mapping(project).flatMap { type, slots in slots.filter { $0.value.retired != true }.keys.map { type + "\t" + $0 } })
         var check = layoutProblem(before: before, after: after, freeOpaque: free, spared: spares)
         // A constant made from an enum that grew (`Mood.allCases`) keeps the value the open app made: remade too.
-        let grownEarly = before.flatMap { before in after.map { grownEnums(before: before, after: $0) } } ?? []
+        // Not the CodingKeys the compiler makes for a Codable struct: only its own coding uses them, and a struct that
+        // gained a property has that coding written out (`LiveSlots.codingExtensions`), so the change has none.
+        func grownOwn(_ grown: [String]) -> [String] { grown.filter { !($0.hasSuffix(".CodingKeys") && declarations.types[$0] == nil) } }
+        let grownEarly = grownOwn(before.flatMap { before in after.map { grownEnums(before: before, after: $0) } } ?? [])
         // The system types Lamp can't judge from the code that the constants a change remakes are made of, and which
         // of them hold no object at all.
         var plain = Set<String>()
@@ -2097,7 +2100,7 @@ enum LiveReload {
         // An enum that only gained cases goes in when nothing holds it where a new case would change what's there.
         // Then every file of the app's is compiled again, so no code of the open app's meets a case it never knew
         // (a switch, or printing it), and the enum's own metadata is the change's, which knows the new cases.
-        if let before, let layout = check.layout, case let grown = grownEnums(before: before, after: layout), !grown.isEmpty {
+        if let before, let layout = check.layout, case let grown = grownOwn(grownEnums(before: before, after: layout)), !grown.isEmpty {
             // A generic enum's values are laid out by the runtime for each type it's used at, from the cases it had
             // when the open app first asked: there's no one metadata to point at the change's.
             if let generic = grown.first(where: { name in Group.shape.parts(in: layout).contains { $0.first == name && $0.last?.contains(" generic") == true } }) {
@@ -2828,6 +2831,8 @@ enum LiveSlots {
         var moved = Set<String>()
         // Where views are made again at every draw, found once and only when a view gains a parameter.
         var made: [(start: SwiftSource.Position, last: SwiftSource.Position)]?
+        // The Codable structs whose coding is written out, with the properties they gained.
+        var coded = Set<String>()
         for (type, members) in old.sorted(by: { $0.key < $1.key }) where !LiveReload.isGroup(type) {
             guard let current = new[type] else { continue }
             guard current != members, !casesAdded(type, members, current) else { continue }
@@ -2850,6 +2855,10 @@ enum LiveSlots {
                 holder = .value
             } else if extras.contains(where: { $0.dropFirst(type.count + 1).hasPrefix("case ") }) {
                 // An enum keeps no spare: a case added anywhere but at the end, or one that carries values, lays its values out anew.
+                // So does a second case added to one with one, which takes no room at all.
+                if members.filter({ $0.contains("\tcase ") }).count == 1 {
+                    return .refused("\(type) had one case, which takes no room, and with another its values take room the open app's don't")
+                }
                 return .refused("\(type) gained a case that carries values or isn't at the end, which lays out its values anew")
             } else {
                 return .refused("\(type) has no spare place of Lamp's (a model, a Sendable class, an Equatable view, a wrapper or a struct in a file that lays memory out by hand gets none)")
@@ -2921,10 +2930,18 @@ enum LiveSlots {
                 case .parameter:
                     break
                 }
-                // A property in a Codable type's CodingKeys, written or made by the compiler, stays a field: moved into a
-                // spare, it would drop out of what's encoded and decoded.
+                // A property in a Codable type's CodingKeys, written or made by the compiler, would drop out of what's
+                // encoded and decoded once moved into a spare: a struct's coding is written out beside it instead
+                // (`codingExtensions`), as the compiler would have made it, with the property in it. Coding the type's own
+                // code writes needs nothing; a class's decoding initializer can only be written in the class itself.
                 if cases[type + ".CodingKeys"]?.contains(name) == true {
-                    return .refused("\(LiveReload.spoken(type)) is Codable and gained \(name), which has to be stored to be encoded and decoded")
+                    let written = handWrittenCoding(type, in: after)
+                    if !(written.decodes && written.encodes) {
+                        guard holder == .value, declarations.types[type] != nil else {
+                            return .refused("\(LiveReload.spoken(type)) is Codable and gained \(name), which has to be stored to be encoded and decoded (a struct's coding is written out for it; a class's can't be)")
+                        }
+                        coded.insert(type)
+                    }
                 }
                 // What a computed property kept in a spare can't do: observers, `lazy`, a weak or unowned reference,
                 // or being set in an initializer the type writes, before the stored properties are all set.
@@ -2932,7 +2949,7 @@ enum LiveSlots {
                 if kind.contains("some ") { return .refused("\(type).\(name)'s type is opaque (\(kind)), which a property kept in a spare can't have") }
                 // A struct or view declared inside a function can't be extended, and a property moved out of one takes its
                 // initializer's argument with it, which only an extension could give back.
-                if holder != .object, type.contains("().") { return .refused("\(LiveReload.bare(type)) is declared inside a function, where Lamp can't give it back the initializer a property kept in a spare leaves") }
+                if holder != .object, type.contains("().") { return .refused("\(LiveReload.spoken(type)) is declared inside a function, where Lamp can't give it back the initializer (or the coding) a property kept in a spare leaves") }
                 if variable.special { return .refused("\(type).\(name) has observers, is lazy, or is a weak or unowned reference, which a property kept in a spare can't be") }
                 if declarations.assigned.contains(type + "\t" + name) || declarations.assigned.contains(type + "\t_" + name) { return .refused("\(type).\(name) is set in \(type)'s own initializer, where a property kept in a spare can't be set") }
                 // A spare is observed: a property marked ignored changes while views draw, and observed would redraw them again.
@@ -3054,6 +3071,10 @@ enum LiveSlots {
             }
         }
         for file in stateRanges.keys where byFile[file] == nil { byFile[file] = [] }
+        guard let codings = codingExtensions(for: coded, moved: Set(planned.map { $0.type + "\t" + $0.name }), layout: new, after: after, cases: cases, declarations: declarations) else {
+            return .refused("\(coded.sorted().map(LiveReload.spoken).joined(separator: ", ")) is Codable, and Lamp can't write its coding out (a generic type, or a property kept by a wrapper)")
+        }
+        for file in codings.keys where byFile[file] == nil { byFile[file] = [] }
         var written: [(path: String, text: String)] = []
         for (file, edits) in byFile {
             guard let original = SwiftSource.Text(path: file) else { return .refused(nil) }
@@ -3114,6 +3135,7 @@ enum LiveSlots {
             }
             var text = String(decoding: bytes, as: UTF8.self)
             text += initializers[file] ?? ""
+            text += codings[file] ?? ""
             written.append((file, text))
         }
         for item in planned {
@@ -3190,6 +3212,79 @@ enum LiveSlots {
                         + "        self.init(\(kept.joined(separator: ", ")))\n" + set + "    }\n}\n"
                 }
             }
+        }
+        return out
+    }
+
+    /// Which halves of its coding a type's own code writes (`init(from:)`, `encode(to:)`), by the declarations the
+    /// layout lists: the compiler's own aren't listed.
+    static func handWrittenCoding(_ type: String, in layout: [String]) -> (decodes: Bool, encodes: Bool) {
+        let declared = LiveReload.Group.declared.parts(in: layout).compactMap(\.first)
+        return (declared.contains { $0.hasPrefix(type + ".init(from:)") }, declared.contains { $0.hasPrefix(type + ".encode(to:)") })
+    }
+
+    /// A Codable struct's coding written out beside it, in an extension in its file, as the compiler makes it: every
+    /// stored property of the new code's (those moved into the spare included, set after the rest), under its
+    /// CodingKeys when the code writes them and by its own name otherwise; an optional decoded if present and encoded
+    /// if not nil, a `let` with a starting value encoded and never decoded. Only the halves the type's code doesn't
+    /// write, and only those its conformance asks for. By file; nil when one can't be written (a wrapped property).
+    static func codingExtensions(for types: Set<String>, moved: Set<String>, layout new: [String: [String]], after: [String], cases: [String: Set<String>],
+                                 declarations: SwiftSource.Declarations) -> [String: String]? {
+        var out: [String: String] = [:]
+        let conformed = LiveReload.conformances(inLayout: after)
+        let generic = Set(LiveReload.Group.shape.parts(in: after).filter { $0.count == 2 && $0[1].contains("generic") }.map { $0[0] })
+        for type in types.sorted() {
+            // A generic one may be Codable only where its parameters are, which an extension would have to repeat.
+            guard let declaredAt = declarations.types[type], let entries = new[type], !generic.contains(type) else { return nil }
+            var fields: [(name: String, type: String, optional: Bool, fixed: Bool)] = []
+            for entry in entries {
+                let field = entry.dropFirst(type.count + 1)
+                guard !field.hasPrefix("case "), let colon = field.range(of: ": ") else { continue }
+                let name = String(field[..<colon.lowerBound])
+                if name.hasPrefix("__lamp") { continue }
+                guard !name.hasPrefix("_"), let variable = declarations.variables[type + "\t" + name] else { return nil }
+                // Through a typealias (`typealias Note = String?`) to what it names: an optional is coded only if present.
+                var kind = variable.type
+                for _ in 0..<8 { guard let target = conformed.aliased(kind) else { break }; kind = target }
+                let optional = kind.hasSuffix("?") || kind.hasPrefix("Optional<")
+                if kind.hasSuffix("?") { kind.removeLast() } else if kind.hasPrefix("Optional<"), kind.hasSuffix(">") { kind = String(kind.dropFirst(9).dropLast()) }
+                let fixed = declarations.lets.contains(type + "\t" + name) && initialText(of: variable, in: declarations) != nil
+                fields.append((name, kind, optional, fixed))
+            }
+            // Its keys: the CodingKeys its code writes, which may leave a property out or name it otherwise; else each
+            // property's own name.
+            let ownKeys = declarations.types[type + ".CodingKeys"] != nil
+            let keyed = ownKeys ? fields.filter { cases[type + ".CodingKeys"]?.contains($0.name) == true } : fields
+            func key(_ name: String) -> String { ownKeys ? "CodingKeys.\(name)" : "__LampCodingKey(\"\(name)\")" }
+            let keyType = ownKeys ? "CodingKeys" : "__LampCodingKey"
+            let protocols = (conformed.of[type] ?? []).union(conformed.of[LiveReload.bare(type)] ?? [])
+            let only = protocols.contains("Codable") ? nil : protocols.contains("Encodable") && !protocols.contains("Decodable") ? "encode"
+                : protocols.contains("Decodable") && !protocols.contains("Encodable") ? "decode" : nil
+            let written = handWrittenCoding(type, in: after)
+            var body = ""
+            if !ownKeys {
+                body += "    private struct __LampCodingKey: CodingKey {\n        var stringValue: String\n        var intValue: Int? { nil }\n"
+                    + "        init(_ name: String) { stringValue = name }\n        init?(stringValue: String) { self.stringValue = stringValue }\n"
+                    + "        init?(intValue: Int) { nil }\n    }\n"
+            }
+            if !written.decodes, only != "encode" {
+                // The stored properties first, then those in the spare, which can only be set once the rest are.
+                let stored = keyed.filter { !$0.fixed && !moved.contains(type + "\t" + $0.name) }
+                let spared = keyed.filter { field in !field.fixed && moved.contains(type + "\t" + field.name) }
+                body += "    init(from decoder: Decoder) throws {\n        let container = try decoder.container(keyedBy: \(keyType).self)\n"
+                for field in stored + spared {
+                    body += "        self.\(field.name) = try container.\(field.optional ? "decodeIfPresent" : "decode")(\(field.type).self, forKey: \(key(field.name)))\n"
+                }
+                body += "    }\n"
+            }
+            if !written.encodes, only != "decode" {
+                body += "    func encode(to encoder: Encoder) throws {\n        var container = encoder.container(keyedBy: \(keyType).self)\n"
+                for field in keyed {
+                    body += "        try container.\(field.optional ? "encodeIfPresent" : "encode")(self.\(field.name), forKey: \(key(field.name)))\n"
+                }
+                body += "    }\n"
+            }
+            out[declaredAt.start.file, default: ""] += "\n\nextension \(LiveReload.bare(type)) {\n" + body + "}\n"
         }
         return out
     }

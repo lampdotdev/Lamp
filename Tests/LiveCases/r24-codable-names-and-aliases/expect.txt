@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Item.starred)
+== run
+before: read bag, saved {"container":"box"}
+RELOAD 1 (whole): ok
+after1 (want it in, saved box and starred with no note, read bag starred=true: a property named container and an optional through a typealias): read bag starred=true, saved {"container":"box","starred":false}

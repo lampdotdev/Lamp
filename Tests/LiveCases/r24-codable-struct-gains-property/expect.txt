@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD (Added Item.starred, Item.note)
+VERDICT 2: RELOAD (Added Item.version)
+== run
+before: read Eggs, saved {"name":"Milk"}
+RELOAD 1 (whole): ok
+after1 (want it in, saved with starred and no note, read starred=true note=big: a Codable struct gains a property and an optional): read Eggs starred=true note=big, saved {"name":"Milk","starred":false}
+RELOAD 2 (whole): ok
+after2 (want it in, saved with version 2: then a let with a starting value, encoded and never decoded): read Eggs starred=true note=big, saved {"name":"Milk","starred":false,"version":2}

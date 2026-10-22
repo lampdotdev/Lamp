@@ -1359,14 +1359,19 @@ metadata to point at the change's; a private enum's symbols carry the compiler's
 compiler writes a word of the name by its place (`Pet` and `PetMood` are `3Pet0A4MoodO`) the enum's own descriptor
 gives its spelling, found by demangling (`LiveObject.demangledType`). What a grown enum is checked against (the layout with statics and globals, `held`)
 and what old code does come from the analyses already made (`Analyses.Entry`), not a further run of the compiler.
-A property in a type's `CodingKeys`, written or made by the compiler for a Codable type, stays a field (moved into
-a spare, it would drop out of what's encoded and decoded),
-so it reopens the app, as does one set in an initializer the type writes itself (`SwiftSource.Declarations.assigned`:
+A property in a Codable struct's `CodingKeys`, written or made by the compiler, would drop out of what's encoded and
+decoded once moved into a spare, so the struct's coding is written out beside it in the live copy, as the compiler makes
+it (`LiveSlots.codingExtensions`: every stored property of the new code's, the moved ones set after the rest, under the
+CodingKeys the code writes or by name, an optional decoded if present, a `let` with a starting value encoded and never
+decoded), only the halves the type's own code doesn't write; the CodingKeys the compiler made, which only that coding used,
+are no enum that grew. A class's (its decoding initializer can only be written in the class itself) or a generic
+struct's (Codable only where its parameters are) reopens the app, and so does a written CodingKeys of one case gaining a
+second, since a one-case enum takes no room. One the type codes itself and leaves out goes in as any property. One set in an initializer the type writes itself (`SwiftSource.Declarations.assigned`:
 a computed property can't be set before the stored ones are; a convenience initializer sets them after `self.init`
 and doesn't count), one with observers, `lazy`, or held weakly or
 unowned, or `@ObservationIgnored` (a spare is observed), or a `@Published` one whose `$name` publisher is used
 anywhere in the app, or
-one with no starting value, or a struct's whose starting value isn't the same every time; `LiveSlots.fitting` says
+one with no starting value, or a struct's whose starting value isn't the same every time, reopens the app; `LiveSlots.fitting` says
 which, and the chat's detail carries that reason beside the layout's, with the
 copy step's own names said as what they are (`LiveReload.readable`). A view's `$name`, its state's binding, becomes
 its box's only within that view's own declaration (`SwiftSource.Declarations.types`), since another view in the

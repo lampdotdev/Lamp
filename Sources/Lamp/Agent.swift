@@ -245,7 +245,7 @@ enum Agent {
     request ends with one Reload at most. Before the first change that needs a reopen, look, and start those \
     changes only once the look says what you saved before them is in the open app. These need it reopened: the app's icon (icon.json), capabilities.json, a \
     widget or Share item, what's read only at launch (the App, its scenes, window titles and menu commands), new \
-    stored properties in a Codable type, and the other changes below that say so. The icon matters least: save \
+    stored properties in a Codable class, and the other changes below that say so. The icon matters least: save \
     icon.json in that last group, then paint any new pictures, which take its colors. \
     This app is updated in place while it's open, keeping what's on screen, when a change only edits or adds code. \
     A body whose structure changes (a modifier or a view added around others) is built again, and the @State and \
@@ -254,7 +254,7 @@ enum Agent {
     when SwiftUI next draws that shape or updates that view; if the person must see it now, look with reopen. \
     New stored properties go in too, in a class, a struct or a view (as @State, @AppStorage or a parameter its parent \
     passes), when each has a starting value (or is an optional, or a view's parameter) and no didSet or willSet, and the \
-    type isn't Codable (a view's new @Environment(\\.key) and @Binding go in, an @Environment(Type.self) needs a reopen); so do new cases at the end of an enum whose cases carry nothing, \
+    type isn't a Codable class (a view's new @Environment(\\.key) and @Binding go in, an @Environment(Type.self) needs a reopen); so do new cases at the end of an enum whose cases carry nothing, \
     and new values for constants that hold no object. Changing or removing a stored property, a case anywhere \
     else, or what's read only at launch (the App, its scenes and menu commands) needs it reopened, which waits \
     for the person to press Reload. \

@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Basket changed what it holds (Basket.count: Int); Basket is Codable and gained count, which has to be stored to be encoded and decoded (a struct's coding is written out for it; a class's can't be))
+== run
+before: saved {"name":"Weekly"}
+RELOAD 1: REOPEN Basket changed what it holds (Basket.count: Int); Basket is Codable and gained count, which has to be stored to be encoded and decoded (a struct's coding is written out for it; a class's can't be)
+after1 (want a plain reason: a Codable class gains a property, whose decoding initializer can only be written in the class): 
+before: saved {"count":0,"name":"Weekly"}
+RELOAD 1: in the restart
+after1 (want a plain reason: a Codable class gains a property, whose decoding initializer can only be written in the class): 
