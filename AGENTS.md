@@ -146,7 +146,7 @@ A capability given to one engine must be given to all of them that can take it, 
   Lamp's hook only hands each one back confined, with no decision (`format=claude-confine`), what the classifier asks
   about comes to Lamp's card through `PermissionRequest` with no check or rating of Lamp's, and a command that ran is
   said in the chat from `PostToolUse` and `PostToolUseFailure` (`format=claude-ran`). What the classifier refuses stays
-  refused (the agent is told why, `PermissionDenied`, `format=claude-refused`, and the command's step stays as below). Codex's
+  refused (the agent is told why, `PermissionDenied`, `format=claude-refused`, and the command's step stays as below; no card comes, so `Agent.claudeNote` tells the agent never to say one will). Codex's
   own reviewer (Auto-review: `approval_policy="on-request"`, `approvals_reviewer="auto_review"`) decides its commands the
   same way, with no hook of Lamp's: only a command that needs more than Codex's sandbox gives (below) reaches it, and
   what it refuses stays refused, with nothing coming to Lamp's card. Its policy (`CodexReview`, as `auto_review.policy`)
@@ -816,6 +816,16 @@ input kept open until the TV's answer, since it gives up when its input closes (
 developer-mode session renewed with LG at every install. Play with a TV chosen under Try On (`Store.setTVDevice`, which
 runs that TV's setup first) packages and installs; the preview needs nothing set up. Lamp's Info.plist carries a local
 network description; the first scan brings macOS's firewall and local network questions. TV apps aren't shared yet.
+
+A TV app may have a page for a phone (a controller, a buzzer, a second screen) in `Phone/` (`TVTemplate.phoneFolder`,
+`Rules.tvPhone`). Lamp serves it, so the agent never starts a server or a login item that would outlive the app: it's
+staged beside `Web/` the same way (links refused) and never packaged, and the gateway answers GET `/phone/<app>/…` with
+its files (`Store.phonePage`, through `Gateway.Page`) only while the app runs, in the preview or set to open on a TV
+(`Store.servesPhonePage`), from the network by the Mac's name or address and on this Mac by a loopback name, with no
+token, since a phone following a QR code has none. The network listener is on for it while the preview is open
+(`Store.syncLocalNetwork`). The TV page reads the address from `Lamp.phonePage(hash)`, which Lamp writes into the
+staged lamp.js (`TVTemplate.phoneMarker`): plain http at the Mac's local address, so a phone's browser won't give the
+page motion sensors or the camera, which need https.
 
 ## Apps for both the Mac and the iPhone
 
