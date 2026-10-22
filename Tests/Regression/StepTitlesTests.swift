@@ -108,6 +108,42 @@ final class StepTitlesTests: XCTestCase {
         }, ["Make it a beer journal", "I'll look first.", "First, the look.", "Ran: sed", "Ran: swift build"])
     }
 
+    /// A stretch asked about while the turn went on is asked about once: one whose title failed, or was turned away,
+    /// isn't asked again, and paid for again, at every later message. The call at the turn's end is its one more try.
+    @MainActor func testAFailedEarlyTitleIsNotAskedAgainAtTheNextMessage() async {
+        final class Calls { var groups: [[String]] = [] }
+        let calls = Calls()
+        let saved = StepTitles.asker
+        defer { StepTitles.asker = saved }
+        StepTitles.asker = { _, groups, _ in
+            await MainActor.run { calls.groups += groups.map(\.steps) }
+            return nil
+        }
+        let whole = turn(timed: true, titled: false)
+        // "First, the look." closes the first stretch; "It's a beer journal now." closes the second.
+        for lines in [Array(whole[...8]), Array(whole[...9])] {
+            for task in StepTitles.askEarly(LogLine.visible(lines, details: false), turn: .openRouter, apply: { _ in }) { await task.value }
+        }
+        XCTAssertEqual(calls.groups, [["Looking at the shelf", "Reading the saved entries", "Finding every hot-sauce word"],
+                                      ["Painting the shelves oak", "Checking it builds"]])
+    }
+
+    /// Whatever the turn says, it closes the steps before it, so each closed stretch is titled as it closes: the
+    /// lines Lamp puts in the chat itself for a tool (a progress line, a question card) as much as a message or what
+    /// `log` adds. The lines are added in the gateway's handler, which runs with Lamp itself, so the check reads it.
+    func testEveryLineSaidInATurnClosesTheStepsBeforeIt() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/Lamp/Store.swift"), encoding: .utf8)
+            .components(separatedBy: "\n")
+        let appends = store.indices.filter { store[$0].contains("logs[project.id, default: []].append(LogLine(kind: .") }
+        XCTAssertFalse(appends.isEmpty)
+        for index in appends {
+            let kind = store[index].firstMatch(of: #/kind: \.(\w+)/#).map { String($0.1) } ?? "?"
+            XCTAssertTrue(store[index...min(index + 3, store.count - 1)].contains { $0.contains("closeSteps(project)") },
+                          "the \(kind) line added at Store.swift:\(index + 1) doesn't close the steps before it")
+        }
+    }
+
     /// A reply that isn't fit to show is no title: the fold keeps its words.
     @MainActor func testOnlyTitlesFitToShowAreKept() {
         let groups = [StepTitles.Group(id: UUID(), steps: ["a", "b"]),

@@ -58,9 +58,10 @@ A capability given to one engine must be given to all of them that can take it, 
   its one step. Each fold is given a line saying what it did, with how long its steps took
   ("Listed the shelf's saved entries · 12 s", `ChatItem.title(of:untitled:)`), by the small model on the route that
   built the turn (`StepTitles`, `AppAI.fastModel`; a turn built on this Mac is titled by the model on this Mac that
-  built it, or not at all, whatever key is saved): a stretch of steps is asked about in a call of its own as soon as
-  the agent says something after it (`StepTitles.closed(in:turn:)`), so the lines are there when the turn ends, and
-  what's left (the steps after the last message) in one call after the turn's summary, never waited on. The model is
+  built it, or not at all, whatever key is saved): a stretch of steps is asked about once, in a call of its own, as soon as
+  the agent says something after it (a message, a progress line, a question card: `StepTitles.closed(in:turn:)`), so the
+  lines are there when the turn ends, and what's left (the steps after the last message, and a stretch whose early call
+  failed) in one call after the turn's summary, never waited on. The model is
   told only the request and the steps' words, never a command or what it printed. A fold keeps its
   words until the line comes, and for good when it doesn't. How long a fold took comes from when Lamp logged its
   lines (`LogLine.at`), so a chat from before that shows no time; "Worked for…" stays the whole run's time, shown

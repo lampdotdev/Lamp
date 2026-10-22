@@ -30,6 +30,14 @@ enum StepTitles {
 
     /// Folds whose title is being asked for now, so the call at the turn's end doesn't ask for them again.
     private static var asking: Set<UUID> = []
+    /// Folds already asked about while their turn went on, whatever came of it: one whose title failed, or was
+    /// turned away, isn't asked again at every later message, each a call paid for. The call at the turn's end is
+    /// its one more try.
+    private static var attempted: Set<UUID> = []
+    /// How a title is asked for: the model, or what a test puts in its place.
+    static var asker: (_ request: String?, _ groups: [Group], _ turn: TurnRoute) async -> [UUID: String]? = { request, groups, turn in
+        await ask(request: request, groups: groups, turn: turn)
+    }
 
     /// Titles what's left of the run that just ended, out of the turn's way.
     static func start(for project: LampProject, turn: TurnRoute) {
@@ -37,8 +45,9 @@ enum StepTitles {
             let lines = LogLine.visible(Store.shared.logs[project.id] ?? [], details: false)
             let (request, all, own) = Self.groups(in: lines)
             let groups = all.filter { !asking.contains($0.id) }
+            attempted.subtract(groups.map(\.id))
             var titles = own
-            if !groups.isEmpty, let made = await ask(request: request, groups: groups, turn: turn) {
+            if !groups.isEmpty, let made = await asker(request, groups, turn) {
                 titles.merge(made) { $1 }
             }
             Store.shared.setFoldTitles(titles, in: project)
@@ -48,13 +57,23 @@ enum StepTitles {
     /// Titles the stretches of steps the turn going on has closed by saying something after them, each in a call
     /// of its own as it closes.
     static func closed(in project: LampProject, turn: TurnRoute) {
-        let (request, all) = closed(in: LogLine.visible(Store.shared.logs[project.id] ?? [], details: false))
-        for group in all where !asking.contains(group.id) {
+        askEarly(LogLine.visible(Store.shared.logs[project.id] ?? [], details: false), turn: turn) { titles in
+            Store.shared.setFoldTitles(titles, in: project)
+        }
+    }
+
+    /// Asks once for each closed stretch not asked about yet, handing what comes back to `apply`. The calls it
+    /// started, for whoever needs to wait for them.
+    @discardableResult
+    static func askEarly(_ lines: [LogLine], turn: TurnRoute, apply: @escaping ([UUID: String]) -> Void) -> [Task<Void, Never>] {
+        let (request, all) = closed(in: lines)
+        return all.filter { !asking.contains($0.id) && !attempted.contains($0.id) }.map { group in
             asking.insert(group.id)
-            Task { @MainActor in
-                let made = await ask(request: request, groups: [group], turn: turn)
+            attempted.insert(group.id)
+            return Task { @MainActor in
+                let made = await asker(request, [group], turn)
                 asking.remove(group.id)
-                if let made { Store.shared.setFoldTitles(made, in: project) }
+                if let made, !made.isEmpty { apply(made) }
             }
         }
     }

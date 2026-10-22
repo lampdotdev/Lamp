@@ -4545,6 +4545,7 @@ final class Store: ObservableObject {
                 // agent hasn't had that answer yet, and a new card would be asking over it.
                 if turn.asked || Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
                 logs[project.id, default: []].append(LogLine(kind: .ask, text: ask.text, ask: ask, at: Date()))
+                closeSteps(project)
                 // A new app's card gives up its checklist in the same moment the questions arrive, not when
                 // the turn ends a little later: once there's something to click, nothing above it moves.
                 if progress[project.id]?.newApp == true { progress[project.id]?.asking = true }
@@ -4559,6 +4560,7 @@ final class Store: ObservableObject {
             case .success(nil): return (200, ["text": Talk.saidAlready])
             case .success(let text?):
                 logs[project.id, default: []].append(LogLine(kind: .progress, text: text, at: Date()))
+                closeSteps(project)
                 // A new phase: the file work after it isn't what the last command or heading was for.
                 turns[project.id]?.naming = nil
                 saveChat(project)
