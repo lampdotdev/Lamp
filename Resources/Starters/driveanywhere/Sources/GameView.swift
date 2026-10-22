@@ -4,6 +4,8 @@ import RealityKit
 /// What the HUD shows, updated a few times a second.
 final class HUDModel: ObservableObject {
     @Published var loaded = false
+    /// The map just round the car is still coming from the map servers.
+    @Published var loadingAhead = false
     @Published var failed = false
     /// The place's map came, but with no streets to drive (open sea, a park's middle): somewhere else is needed.
     @Published var noStreets = false
@@ -387,7 +389,9 @@ final class Game {
         }
         railway?.update(dt, traffic: traffic)
         Perf.shared.lap("railway")
-        streamer?.update(player: physics.bodies[player].pos, time: scene.time)
+        streamer?.update(player: physics.bodies[player].pos, heading: physics.bodies[player].vel, time: scene.time)
+        let loadingAhead = streamer?.missingNearby ?? false
+        if hud.loadingAhead != loadingAhead { hud.loadingAhead = loadingAhead }
         Perf.shared.lap("streamer")
         traffic.update(dt, time: scene.time, player: physics.bodies[player].pos)
         Perf.shared.lap("traffic")

@@ -54,7 +54,8 @@ hills from open elevation tiles. It opens on downtown San Francisco, and Travel 
 ## Data
 
 Nothing about a place ships with the game. Map data comes from the Overpass API (three public servers tried in turn,
-one or two requests at a time, each answer kept), elevation from the open Terrain Tiles on AWS, and Travel's search
+one that just failed passed over for two minutes, two requests at a time, the tiles where the car is heading first,
+each answer kept), elevation from the open Terrain Tiles on AWS, and Travel's search
 from Apple Maps; none needs a key. Everything fetched is kept per place in `~/Library/Caches/DriveAnywhere/<place>/`
 (`CityConfig.cacheFolder`), so a place is downloaded once; bump `CityLoader.version` when the rules that read the map
 change. The credit "© OpenStreetMap contributors" stays on screen (the HUD and the big map): the map's licence asks

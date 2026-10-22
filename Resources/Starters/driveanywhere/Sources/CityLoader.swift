@@ -9,6 +9,27 @@ enum Overpass {
                           "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
                           "https://overpass.kumi.systems/api/interpreter"]
 
+    /// When each server last failed (busy, timed out, refused): it's passed over for `restFor` seconds, so a
+    /// mirror that's down doesn't hold up every request (one took 80 s to answer that it couldn't), and a busy
+    /// server isn't asked again at once, as its usage policy asks.
+    nonisolated(unsafe) private static var failedAt: [String: Date] = [:]
+    private static let lock = NSLock()
+    private static let restFor: TimeInterval = 120
+
+    /// The servers to try, those that haven't failed lately first.
+    private static var ordered: [String] {
+        lock.lock(); defer { lock.unlock() }
+        let now = Date()
+        let resting = { (s: String) in failedAt[s].map { now.timeIntervalSince($0) < restFor } ?? false }
+        let ready = servers.filter { !resting($0) }
+        // All resting: try the main one again rather than give up.
+        return ready.isEmpty ? [servers[0]] : ready
+    }
+
+    private static func noteFailed(_ server: String) {
+        lock.lock(); failedAt[server] = Date(); lock.unlock()
+    }
+
     static func query(lo: SIMD2<Float>, hi: SIMD2<Float>, timeout: Int = 90) -> String {
         let a = MapGeo.latLon(lo), b = MapGeo.latLon(hi)
         let bbox = String(format: "%.6f,%.6f,%.6f,%.6f", a.lat, a.lon, b.lat, b.lon)
@@ -22,7 +43,7 @@ enum Overpass {
     static func fetch(lo: SIMD2<Float>, hi: SIMD2<Float>, cache: URL, timeout: Int = 90) async -> Data? {
         if let data = try? Data(contentsOf: cache), data.count > 200 { return data }
         let body = "data=" + (query(lo: lo, hi: hi, timeout: timeout).addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "")
-        for server in servers {
+        for server in ordered {
             guard let url = URL(string: server) else { continue }
             var request = URLRequest(url: url, timeoutInterval: TimeInterval(timeout + 30))
             request.httpMethod = "POST"
@@ -31,7 +52,7 @@ enum Overpass {
             request.setValue("DriveAnywhere/1.0 (a driving game for macOS made with Lamp)", forHTTPHeaderField: "User-Agent")
             guard let (data, response) = try? await URLSession.shared.data(for: request),
                   (response as? HTTPURLResponse)?.statusCode == 200, data.count > 200,
-                  String(decoding: data.suffix(64), as: UTF8.self).contains("</osm>") else { continue }
+                  String(decoding: data.suffix(64), as: UTF8.self).contains("</osm>") else { noteFailed(server); continue }
             try? FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: cache)
             return data
