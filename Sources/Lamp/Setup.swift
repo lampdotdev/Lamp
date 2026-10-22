@@ -367,10 +367,19 @@ extension View {
 
 private struct SettingsPane: ViewModifier {
     @State private var height: CGFloat = 0
+    @State private var window: NSWindow?
+    /// Goes up when the window moves to another screen, which has room of its own.
+    @State private var screenChanges = 0
 
-    /// Room left on screen once the window's title bar and toolbar are accounted for.
+    /// Room left on the window's own screen once its title bar and toolbar are taken off, as they are, with a little
+    /// to spare. A pane any taller makes a window macOS won't put on screen: it's shrunk to fit, the pane asks for its
+    /// height again, and the two go on until AppKit gives up and Lamp crashes. The screen is the window's (the main
+    /// one can be another size), and the chrome is measured, since a toolbar's height isn't the same everywhere.
     private var maxHeight: CGFloat {
-        ((NSScreen.main?.visibleFrame.height ?? 800) - 100).rounded()
+        _ = screenChanges
+        let screen = window?.screen ?? NSScreen.main
+        let chrome = window.map { $0.frame.height - $0.contentLayoutRect.height } ?? 120
+        return max(200, ((screen?.visibleFrame.height ?? 800) - chrome - 20).rounded(.down))
     }
 
     func body(content: Content) -> some View {
@@ -383,7 +392,38 @@ private struct SettingsPane: ViewModifier {
         }
         .scrollDisabled(height <= maxHeight)
         .frame(height: height == 0 ? nil : min(height, maxHeight))
+        .background(SettingsWindowReader { window = $0; keepOnScreen() })
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeScreenNotification)) { note in
+            if (note.object as? NSWindow) === window { screenChanges += 1 }
+        }
+        .onChange(of: height) { keepOnScreen() }
     }
+
+    /// The window keeps its top where it is as the pane grows, as Settings windows do, so one opened low on the
+    /// screen grows past its bottom; macOS then fits it back while the pane is still asking for the height, which is
+    /// the loop above. Once the window has taken its new height, it's moved up just enough to be on screen whole.
+    private func keepOnScreen() {
+        DispatchQueue.main.async {
+            guard let window, let visible = (window.screen ?? NSScreen.main)?.visibleFrame else { return }
+            var frame = window.frame
+            guard frame.minY < visible.minY else { return }
+            frame.origin.y = min(visible.minY, visible.maxY - frame.height)
+            window.setFrameOrigin(frame.origin)
+        }
+    }
+}
+
+/// Hands back the window a Settings pane is in, once it's in one.
+private struct SettingsWindowReader: NSViewRepresentable {
+    let found: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { if let window = view.window { found(window) } }
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {}
 }
 
 /// A section's on/off options, as checkboxes with the box first, as Finder's settings have them: in a stack,
