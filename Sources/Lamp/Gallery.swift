@@ -283,8 +283,8 @@ enum Gallery {
         step("Typing a password", rokuPassword),
         step("This Mac's address and a code", frameAddress),
         step("A sign-in with the maker, checked by Lamp", frameSignIn, known: .init(how: .lamp, model: "QN50LS03B", version: "6.5")),
-        step("Done by people, and failed", rokuPassword, known: .init(how: .people, model: "4850X", version: "14.0"),
-             state: .failed("Living Room Roku said the password was wrong. Type it again.")),
+        step("Done by people, and the sign-in rejected", rokuPassword, known: .init(how: .people, model: "4850X", version: "14.0"),
+             state: .failed("The device rejected the sign-in. Check the user name and password, then try again.")),
         Entry(group: "Device setup", name: "Approving a command on the device") {
             AnyView(DeviceCommandCard(approval: DeviceCommandApproval(action: IntegrationAction(ssh: .init(port: 9922, user: "prisoner",
                 command: "luna-send-pub -n 1 luna://com.webos.appInstallService/dev/install '{\"id\":\"{appID}\"}'",

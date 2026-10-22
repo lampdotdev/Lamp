@@ -210,4 +210,28 @@ final class IntegrationTests: XCTestCase {
         changed.ssh?.command += " ; reboot"
         XCTAssertFalse(DeviceApprovals.isApproved(DeviceApprovals.subject(of: changed)!, on: device))
     }
+    /// A device that turns the password away has said so: the step fails with words to fix it instead of waiting on
+    /// the device for ever, and the same step still passes once the device lets Lamp in.
+    func testARejectedSignInFailsTheStepAndAnAcceptedOnePassesIt() async throws {
+        let roku = try JSONDecoder().decode(Integration.self, from: Data(roku.utf8))
+        let step = roku.steps[1]
+        var device = Device(id: "roku:TEST", kind: .other, maker: "Roku", model: "Roku Ultra", modelID: "4800X",
+                            name: "Test Roku", os: "Roku OS", osVersion: "14.0", reach: .network)
+        device.address = "192.168.1.20"
+        func runner(answering status: Int) -> IntegrationRunner {
+            var runner = IntegrationRunner(integration: roku, device: device)
+            runner.send = { _, _, _, _ in DeviceHTTP.Answer(status: status, body: Data()) }
+            return runner
+        }
+
+        let rejected = await runner(answering: 401).check(step)
+        XCTAssertFalse(rejected.passed)
+        XCTAssertTrue(rejected.failed, "a rejected sign-in is shown as a failure, not as waiting with a spinner")
+        XCTAssertEqual(rejected.why, "The device rejected the sign-in. Check the user name and password, then try again.")
+
+        let accepted = await runner(answering: 200).check(step)
+        XCTAssertTrue(accepted.passed)
+        XCTAssertFalse(accepted.failed)
+    }
 }
+
