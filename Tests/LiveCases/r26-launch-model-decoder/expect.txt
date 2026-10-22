@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Stats.streak)
+== run
+before: wins=2 word=ROBOT lives=6
+RELOAD 1 (whole): ok
+after1 (want it in, wins=2 streak=0 and saved with losses, streak and wins: the model the window view holds gains a streak its decoder reads, and the game maker changes): saved {"losses":1,"streak":0,"wins":2}, wins=2 streak=0 word=ROBOT lives=6

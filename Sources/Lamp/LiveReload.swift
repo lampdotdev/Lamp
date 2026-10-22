@@ -320,16 +320,27 @@ enum LiveReload {
     /// What the code read only at launch calls (`buildMenu()` from an app delegate, a model's initializer from the
     /// App), as far down as that goes, as one launch entry: it ran once, so a change to it shows only when the app
     /// opens again. Not what its actions call (a menu command's button), which runs each time it's chosen.
-    static func launchCalls(_ launch: [String], _ declarations: SwiftSource.Declarations) -> [String] {
+    static func launchCalls(_ launch: [String], _ declarations: SwiftSource.Declarations, layout: [String] = []) -> [String] {
         let names = Group.launchNames(in: launch)
         let ranges = declarations.types.filter { names.contains(bare($0.key)) }.map(\.value) + names.flatMap { declarations.extensions[$0] ?? [] }
         guard !ranges.isEmpty else { return [] }
         var files: [String: SwiftSource.Text] = [:]
+        // Not into a SwiftUI view or an observable model: what their initializers and starting values make is the state
+        // SwiftUI draws from, kept by a live change like every view's and model's, and drawn again with the new code
+        // (the window's view and the model the App holds load and change live). A controller's (an `NSMenu` built once)
+        // is followed: what it made is AppKit's, which the new code doesn't build again.
+        let conformed = conformances(inLayout: layout)
+        let observed = Set(byType(layout).filter { $0.value.contains { $0.contains("\t_$observationRegistrar") } }.map(\.key))
+        let stateTypes = conformed.of.filter { !$0.value.isDisjoint(with: ["View", "ObservableObject"]) }.map(\.key) + observed
+        let stateRanges = stateTypes.filter { !names.contains(bare($0)) }.flatMap { type in
+            (declarations.types[type].map { [$0] } ?? []) + (declarations.extensions[bare(type)] ?? [])
+        }
         // Into what an initializer makes as it starts (`let menu = makeMenu()`), the one the compiler wrote included:
         // the code those starting values call, not the values themselves, which are state like any object's (a model
         // the App holds may gain a property as any other).
-        let called = SwiftSource.called(fromAll: ranges, in: declarations, files: &files, members: true, listingMembers: false, skipping: declarations.actions)
-            .filter { range in !ranges.contains { SwiftSource.within(range.start, $0) } }
+        let called = SwiftSource.called(fromAll: ranges, in: declarations, files: &files, members: true, listingMembers: false,
+                                        skipping: declarations.actions + stateRanges)
+            .filter { range in !ranges.contains { SwiftSource.within(range.start, $0) } && !stateRanges.contains { SwiftSource.within(range.start, $0) } }
             .compactMap { SwiftSource.text(of: $0, files: &files) }
         guard !called.isEmpty else { return [] }
         return [Group.launch.entry("the code it calls: " + SwiftSource.digest(Set(called).sorted().joined(separator: "\n")))]
@@ -1460,7 +1471,7 @@ enum LiveReload {
         SwiftSource.walk(dump) { line in plain.take(line); held.take(line); declared.take(line); launch.take(line); old.take(line) }
         let declarations = declared.finish()
         let launched = launch.finish(folder: folder)
-        let made = (layout: plain.finish() + launched + launchCalls(launched, declarations) + SwiftSource.constantEntries(declarations),
+        let made = (layout: plain.finish() + launched + launchCalls(launched, declarations, layout: plain.finish()) + SwiftSource.constantEntries(declarations),
                     held: held.finish(), declarations: declarations, oldCode: old.finish())
         // Kept only when the code didn't change while it was read.
         if Analyses.digest(of: folder, module: module, macOS: macOS) == digest {
@@ -2265,6 +2276,12 @@ enum LiveReload {
             // A compiler error is the compiler's words; anything else (the change's types couldn't be made the app's)
             // is a reason already.
             guard let problem, problem.contains("error:") else { return .reopen(why: problem ?? "the change didn't compile on its own") }
+            // A property kept in a spare set in its type's own initializer before the stored ones all are: Lamp's
+            // rewrite, said as such.
+            if let plan, ["used before all stored properties are initialized", "before 'super.init' call", "used before being initialized"].contains(where: problem.contains),
+               let moved = plan.slots.flatMap({ type, slots in slots.keys.map { (type, $0) } }).first(where: { declarations.assigned.contains($0.0 + "\t" + $0.1) }) {
+                return .reopen(why: "\(spoken(moved.0)).\(moved.1) is set in its own initializer before the stored properties are all set, where a property kept in a spare can't be set yet")
+            }
             // An error in a constant Lamp rewrote to take its new value (one made by the type's main-actor code, say)
             // is Lamp's, said as such rather than in the compiler's words about code the agent never wrote.
             if let match = problem.range(of: ##"error:[^\n]*\n(?:[^\n]*\n){0,8}?[^\n]*LampConstants\.value\("[^"#]+#"##, options: .regularExpression),
@@ -2840,7 +2857,22 @@ enum LiveSlots {
         var made: [(start: SwiftSource.Position, last: SwiftSource.Position)]?
         // The Codable structs whose coding is written out, with the properties they gained.
         var coded = Set<String>()
-        for (type, members) in old.sorted(by: { $0.key < $1.key }) where !LiveReload.isGroup(type) {
+        // The CodingKeys the compiler makes for a Codable type (none written in its code): only coding uses them. A
+        // struct that gains a property has its coding written out with keys of Lamp's, so they're used by no code, or
+        // only by a half the type writes itself (its own decoder), which still reads them: then only while their number
+        // of cases holds, which is the room their values take and what the open app's generic coding lays out by.
+        var compilerKeys = Set<String>()
+        for (type, members) in old where type.hasSuffix(".CodingKeys") && declarations.types[type] == nil {
+            guard let current = new[type], current != members, !casesAdded(type, members, current) else { continue }
+            let owner = String(type.dropLast(".CodingKeys".count))
+            let written = handWrittenCoding(owner, in: after)
+            func caseCount(_ entries: [String]) -> Int { entries.filter { $0.contains("\tcase ") }.count }
+            if written.decodes || written.encodes, caseCount(members) != caseCount(current) {
+                return .refused("\(LiveReload.spoken(owner))'s own coding reads the keys Swift makes for it, which would number other than the open app's")
+            }
+            compilerKeys.insert(type)
+        }
+        for (type, members) in old.sorted(by: { $0.key < $1.key }) where !LiveReload.isGroup(type) && !compilerKeys.contains(type) {
             guard let current = new[type] else { continue }
             guard current != members, !casesAdded(type, members, current) else { continue }
             // Only additions, with what was there still there, in order.
@@ -2958,7 +2990,15 @@ enum LiveSlots {
                 // initializer's argument with it, which only an extension could give back.
                 if holder != .object, type.contains("().") { return .refused("\(LiveReload.spoken(type)) is declared inside a function, where Lamp can't give it back the initializer (or the coding) a property kept in a spare leaves") }
                 if variable.special { return .refused("\(type).\(name) has observers, is lazy, or is a weak or unowned reference, which a property kept in a spare can't be") }
-                if declarations.assigned.contains(type + "\t" + name) || declarations.assigned.contains(type + "\t_" + name) { return .refused("\(type).\(name) is set in \(type)'s own initializer, where a property kept in a spare can't be set") }
+                // Set in an initializer the type writes: the open app's values were made by the old one and would read the
+                // property's starting value where a fresh launch's had what the new one sets. Except in a decoder
+                // (`init(from:)`) whose value for a missing key is that starting value (`decodeIfPresent(…) ?? 0` for
+                // `= 0`): the open app's values were decoded from data saved before the property existed (below). A
+                // view's state seeded there (`_draft = State(…)`) never can be, its box being made after the initializer.
+                let setInInit = declarations.assigned.contains(type + "\t" + name)
+                if declarations.assigned.contains(type + "\t_" + name) || setInInit && (holder == .view || holder == .parameter) {
+                    return .refused("\(type).\(name) is set in \(type)'s own initializer, where a property kept in a spare can't be set")
+                }
                 // A spare is observed: a property marked ignored changes while views draw, and observed would redraw them again.
                 if variable.attributes.contains(where: { $0.name == "ObservationIgnored" }) { return .refused("\(type).\(name) is @ObservationIgnored, and a property kept in a spare is observed") }
                 // A @Published property's `$name` publisher has no spare to come from.
@@ -2983,6 +3023,9 @@ enum LiveSlots {
                     if holder == .parameter { return .refused("\(type).\(name) has no starting value, and a view's new parameter needs one unless it's an optional, a number, text, a collection or an action") }
                     if holder == .view, !field.hasPrefix("_") { return .refused("\(type).\(name) has no starting value, and \(unplaced), which a new parameter of it can't reach") }
                     return .refused("\(type).\(name) has no starting value, which a property kept in a spare needs")
+                }
+                if setInInit, !decodesToStart(type + "\t" + name, initial: initial, declarations: declarations) {
+                    return .refused("\(type).\(name) is set in \(type)'s own initializer, which the open app's \(LiveReload.spoken(type)) values were made without, so they'd read \(initial) where a fresh launch gives what it sets")
                 }
                 if holder == .view, !field.hasPrefix("_"), !(isLiteral(initial) || isLiteral(variable, in: declarations)) {
                     return .refused("\(type).\(name) starts as \(initial), and \(unplaced), so a new property of it goes in only as a literal, which it then always is")
@@ -3187,7 +3230,8 @@ enum LiveSlots {
         for file in written { try? file.text.write(toFile: file.path, atomically: true, encoding: .utf8) }
         let earlier = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: constantsURL(project)))) ?? []
         return .plan(Plan(added: planned.filter(\.isNew).map { $0.type + "." + $0.name },
-                          layout: after.filter { !moved.contains($0) },
+                          layout: after.filter { entry in !moved.contains(entry) && !compilerKeys.contains { entry.hasPrefix($0 + "\t") } }
+                            + compilerKeys.sorted().flatMap { old[$0] ?? [] },
                           files: written.map { URL(fileURLWithPath: $0.path).standardizedFileURL.path }.map { $0.hasPrefix(base) ? String($0.dropFirst(base.count)) : $0 },
                           constants: constants.filter { !earlier.contains($0) }.map(displayName), slots: map, allConstants: constants))
     }
@@ -3426,6 +3470,23 @@ enum LiveSlots {
         return .kept(kept, layout: layout)
     }
 
+    /// Whether every place a type's own initializers set this property is a decoder giving it its starting value for a
+    /// missing key: `decodeIfPresent(…)` alone for a starting value of nil, or `decodeIfPresent(…) ?? <starting value>`.
+    static func decodesToStart(_ key: String, initial: String, declarations: SwiftSource.Declarations) -> Bool {
+        guard let places = declarations.assignments[key], !places.isEmpty else { return false }
+        var files: [String: SwiftSource.Text] = [:]
+        return places.allSatisfy { place in
+            guard place.decoder, let text = SwiftSource.text(of: (place.start, place.last), files: &files),
+                  let equals = text.firstIndex(of: "=") else { return false }
+            let value = text[text.index(after: equals)...].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard value.contains(".decodeIfPresent(") else { return false }
+            if let fallback = value.range(of: "??", options: .backwards) {
+                return value[fallback.upperBound...].trimmingCharacters(in: .whitespaces) == initial
+            }
+            return initial == "nil"
+        }
+    }
+
     /// Which halves of its coding a type's own code writes (`init(from:)`, `encode(to:)`), by the declarations the
     /// layout lists: the compiler's own aren't listed.
     static func handWrittenCoding(_ type: String, in layout: [String]) -> (decodes: Bool, encodes: Bool) {
@@ -3462,16 +3523,25 @@ enum LiveSlots {
                 fields.append((name, kind, optional, fixed))
             }
             // Its keys: the CodingKeys its code writes, which may leave a property out or name it otherwise; else each
-            // property's own name.
-            let ownKeys = declarations.types[type + ".CodingKeys"] != nil
-            let keyed = ownKeys ? fields.filter { cases[type + ".CodingKeys"]?.contains($0.name) == true } : fields
+            // property's own name. Where the type writes one half itself with the keys Swift makes (its own decoder),
+            // Swift makes none once the other half is written here, so they're written too, with the cases the compiler
+            // would have given them, in its order, and both halves use them.
+            let written = handWrittenCoding(type, in: after)
+            let madeKeys = declarations.types[type + ".CodingKeys"] == nil && (written.decodes || written.encodes)
+                ? new[type + ".CodingKeys"].map { $0.compactMap { entry in entry.components(separatedBy: "\tcase ").dropFirst().first.map { String($0.prefix { $0 != ":" && $0 != " " }) } } }
+                : nil
+            let ownKeys = declarations.types[type + ".CodingKeys"] != nil || madeKeys != nil
+            let keyed = madeKeys.map { names in fields.filter { names.contains($0.name) } }
+                ?? (ownKeys ? fields.filter { cases[type + ".CodingKeys"]?.contains($0.name) == true } : fields)
             func key(_ name: String) -> String { ownKeys ? "CodingKeys.\(name)" : "__LampCodingKey(\"\(name)\")" }
             let keyType = ownKeys ? "CodingKeys" : "__LampCodingKey"
             let protocols = (conformed.of[type] ?? []).union(conformed.of[LiveReload.bare(type)] ?? [])
             let only = protocols.contains("Codable") ? nil : protocols.contains("Encodable") && !protocols.contains("Decodable") ? "encode"
                 : protocols.contains("Decodable") && !protocols.contains("Encodable") ? "decode" : nil
-            let written = handWrittenCoding(type, in: after)
             var body = ""
+            if let madeKeys {
+                body += "    private enum CodingKeys: CodingKey { case \(madeKeys.joined(separator: ", ")) }\n"
+            }
             if !ownKeys {
                 body += "    private struct __LampCodingKey: CodingKey {\n        var stringValue: String\n        var intValue: Int? { nil }\n"
                     + "        init(_ name: String) { stringValue = name }\n        init?(stringValue: String) { self.stringValue = stringValue }\n"
@@ -3875,6 +3945,8 @@ enum LiveSlots {
             let literal = isLiteral(initial) || isLiteral(variable, in: declarations)
             let first = !literal ? "let v: \(declared) = \(initial); \(place) = LampSpare(v); return v" : "return \(initial)"
             let getter = "get { if let p = \(place) { \(read("p.value")) }; \(first) }"
+            // A `let` its own initializer sets has a setter for that.
+            let isLet = isLet && !declarations.assigned.contains(type + "\t" + name)
             let setter = isLet ? "" : " set { \(announces ? "LampSpare.announce(self); " : "")\(place) = LampSpare(newValue) }"
             // Final, so it's in no method table: a class something subclasses keeps the table the open app laid out.
             return ["final var \(name): \(declared) { \(getter)\(setter) }"]
@@ -3885,6 +3957,7 @@ enum LiveSlots {
             let place = place(in: type, holder: .value)
             let getter = "get { if \(place).has(\"\(key)\") { \(read("\(place).field(\"\(key)\")")) }; return \(initial) }"
             // Set back to its starting value, it's as if never set, so two values alike compare alike.
+            let isLet = isLet && !declarations.assigned.contains(type + "\t" + name)
             let setter = isLet ? "" : " set { \(place) = LampSpare.setting(\"\(key)\", to: newValue, initial: { () -> \(declared) in \(initial) }(), in: \(place)) }"
             return ["var \(name): \(declared) { \(getter)\(setter) }"]
         case .view:

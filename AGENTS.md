@@ -1120,7 +1120,10 @@ layouts have one, so a layout an earlier Lamp kept says nothing of it. After a b
 `LiveReload.put`, the one pipeline from the layout check to the record of what the app now runs, acting on its
 `Outcome` (it went in, with what was done beyond the code; or why the app has to reopen): the change goes in when the app is open, was built live, and the change didn't touch what's read only at launch (the App, its scenes, its menu commands, an application delegate and their extensions, wherever they're written: `SwiftSource.LaunchReader`, held to what the open app had as part of the layout, with the code they call, as far down as that goes but not their actions', `LiveReload.launchCalls`, since it ran once too
 (into an initializer's type only by what its stored properties' starting values call: a view's `body` runs at each draw,
-and the values themselves are state like any object's, so the window's view and the model the App holds change live); a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again, and one the change didn't touch is left out of a compile of every file when it names nothing newly declared, `LiveReload.addedNames`; a conformance, subscript or operator, which code reaches without naming it, or a declaration taken away keeps it in) or Lamp's own files, and leaves every type
+and the values themselves are state like any object's, so the window's view and the model the App holds change live; and
+never into a SwiftUI view or an observable model, whose initializers and starting values build the state SwiftUI draws
+from, kept by a live change like every view's and model's, while a controller's, an `NSMenu` it builds once, is AppKit's
+and still counts); a view or helper beside them goes in like any code; the file of a SwiftData `@Model` class is held whole, since its accessors find its data by key paths a recompiled file makes over again, and one the change didn't touch is left out of a compile of every file when it names nothing newly declared, `LiveReload.addedNames`; a conformance, subscript or operator, which code reaches without naming it, or a declaration taken away keeps it in) or Lamp's own files, and leaves every type
 holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties (their types in Swift's short
 spellings, so `Array<String>` is `[String]`, only where the name is Swift's and no type of the app's) and cases (with their raw values, which an `@objc` enum's values are and
 a raw-value enum hashes by; a raw type given to an existing enum or taken from it reopens the app too),
@@ -1394,9 +1397,13 @@ CodingKeys the code writes or by name, an optional decoded if present, a `let` w
 decoded), only the halves the type's own code doesn't write; the CodingKeys the compiler made, which only that coding used,
 are no enum that grew. A class's (its decoding initializer can only be written in the class itself) or a generic
 struct's (Codable only where its parameters are) reopens the app, and so does a written CodingKeys of one case gaining a
-second, since a one-case enum takes no room. One the type codes itself and leaves out goes in as any property. One set in an initializer the type writes itself (`SwiftSource.Declarations.assigned`:
-a computed property can't be set before the stored ones are; a convenience initializer sets them after `self.init`
-and doesn't count), one with observers, `lazy`, or held weakly or
+second, since a one-case enum takes no room. One the type codes itself and leaves out goes in as any property; where its own decoder reads the keys Swift makes,
+which Swift stops making once the other half is written here, they're written too with the cases the compiler would
+have given them, and only while their number holds (the room their values take). One set in an initializer the type
+writes itself (`SwiftSource.Declarations.assigned`) reopens the app: the open app's values were made by the old one and
+would read the property's starting value where a fresh launch's have what the new one sets. Except in a decoder whose
+value for a missing key is that starting value (`decodeIfPresent(…) ?? 0` for `= 0`, `LiveSlots.decodesToStart`): the open
+app's values were decoded from data saved before the property existed. One with observers, `lazy`, or held weakly or
 unowned, or `@ObservationIgnored` (a spare is observed), or a `@Published` one whose `$name` publisher is used
 anywhere in the app, or
 one with no starting value, or a struct's whose starting value isn't the same every time, reopens the app; `LiveSlots.fitting` says
