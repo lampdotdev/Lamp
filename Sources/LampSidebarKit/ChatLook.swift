@@ -322,6 +322,8 @@ public enum ChatLook {
     public static let stepFont = Font.subheadline
     /// Steps line up with the words in the agent's bubbles.
     public static let stepIndent: CGFloat = tailRoom + 4
+    /// A step's symbol column and the space after it, where its words begin.
+    public static let stepSymbolRoom: CGFloat = 16 + 6
 
     /// A finished turn's steps under one line, "Worked for 2 min 3 s", opened with a click to show each of them.
     /// The steps draw themselves, set in as the agent's steps are.

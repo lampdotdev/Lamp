@@ -645,6 +645,9 @@ struct LogRow: View, Equatable {
                         .font(.caption)
                 }
             }
+            // Set in with the steps' words, past their symbols, as what the step above it said.
+            .padding(.leading, ChatLook.stepIndent + ChatLook.stepSymbolRoom)
+            .padding(.trailing, 32)
         case .needsKey, .offer:
             if let offer = line.setupOffer { SetupCard(offer: offer, reason: line.text, dir: dir) }
         case .noted:

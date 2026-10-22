@@ -1404,6 +1404,7 @@ final class Store: ObservableObject {
     /// A Mac app until the intro says otherwise (`setKind`).
     func create(fromWelcome: Bool = false, fromSite: Bool = false, from desk: DeskStart? = nil) {
         // A draft: its scaffold waits for the first build (`materialize`), so the intro can still change its kind.
+        lookForDevicesForWish()
         let project: LampProject
         do {
             project = try Template.draft(name: uniqueName("Untitled"), untitled: true, fromWish: fromSite,
@@ -1546,7 +1547,9 @@ final class Store: ObservableObject {
     }
 
     /// What's typed in the desk's wish bar and not sent: kept here, so going to a wish's chat and back keeps it.
-    @Published var deskDraft = ""
+    @Published var deskDraft = "" {
+        didSet { if oldValue.isEmpty, !deskDraft.isEmpty { lookForDevicesForWish() } }
+    }
 
     /// Goes up to put the cursor in the desk's wish bar (New Wish).
     @Published var deskFocusRequest = 0
@@ -1835,13 +1838,21 @@ final class Store: ObservableObject {
     @Published private(set) var lookingForDevices = false
     /// Counts looks, so only the latest one's findings are kept: an earlier one that ends later is out of date.
     private var deviceLook = 0
+    /// The look going on, for a new wish to wait for (`devicesForWish`), and when the last one ended.
+    private var deviceLookTask: Task<Void, Never>?
+    private var devicesLookedAt: Date?
 
     func refreshDevices() {
         deviceLook += 1
         let look = deviceLook
         lookingForDevices = true
-        Task {
-            defer { if look == deviceLook { lookingForDevices = false } }
+        deviceLookTask = Task {
+            defer {
+                if look == deviceLook {
+                    lookingForDevices = false
+                    devicesLookedAt = Date()
+                }
+            }
             // Apple's devices, Android's when Android's tools are here (adb is one of them), and the TVs on the network.
             async let apple = Devices.list()
             async let android = Adb.devices()
@@ -1855,6 +1866,30 @@ final class Store: ObservableObject {
             let mac = await Device.readThisMac()
             if mac != thisMac { thisMac = mac }
         }
+    }
+
+    /// A new wish may be for one of the person's devices ("tetris on my TV", "something for my Roku"), so one is
+    /// looked for as a wish begins: when something is typed in the desk's bar, when a new wish is made, and as its
+    /// first request is named. A look from the last two minutes does.
+    func lookForDevicesForWish() {
+        guard !lookingForDevices else { return }
+        if let at = devicesLookedAt, Date().timeIntervalSince(at) < 120 { return }
+        refreshDevices()
+    }
+
+    /// The devices a new wish's naming call is told of (`AppName.suggest`): the look going on is waited for, a few
+    /// seconds at most, since the wish waits on it; one that takes longer leaves what the last look found.
+    func devicesForWish() async -> [Device] {
+        lookForDevicesForWish()
+        if lookingForDevices, let task = deviceLookTask {
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { await task.value }
+                group.addTask { try? await Task.sleep(for: .seconds(5)) }
+                await group.next()
+                group.cancelAll()
+            }
+        }
+        return devices
     }
 
     /// An untitled app you left without ever using is deleted, so trying New leaves nothing behind.
@@ -2547,19 +2582,26 @@ final class Store: ObservableObject {
         line.text.isEmpty ? label(attachments: line.attachments ?? []) : line.text
     }
 
+    /// Wishes for a device Lamp can't make apps for yet (`AppName.Suggestion.forOtherDevice`): no scaffold is written
+    /// for them, since one of any kind Lamp has would be the wrong one, while the agent sets the device up and gives
+    /// the wish its kind with `make_app_for` (`convert`), after which it's made as any wish is.
+    private var waitsForDevice: Set<String> = []
+
     /// The first message bootstraps the app: it names an untitled app, then designs the icon
     /// while the agent builds the first version. Returns the app as it is now.
     private func bootstrap(_ project: LampProject, brief: String) async -> LampProject {
         var project = project
         // A draft named before its first request (in its intro) is still asked about, for what it runs on.
         if project.untitled || !project.scaffolded {
-            let suggestion = await AppName.suggest(for: brief)
+            let suggestion = await AppName.suggest(for: brief, devices: await devicesForWish())
             progress[project.id]?.sketch = suggestion?.sketch ?? []
             progress[project.id]?.naming = false
             if let suggestion, let kind = suggestion.kind {
                 project = await chooseKind(project, kind, said: suggestion.kindSaid, watch: suggestion.watch, integration: suggestion.integration)
             }
             if project.untitled, let name = suggestion?.name { project = await performRename(project, to: name) }
+            // By the id it has once named: a rename moves it to a folder, and an id, of its new name.
+            if suggestion?.forOtherDevice == true { waitsForDevice.insert(project.id) }
             if let color = suggestion?.color, Icons.load(project) == nil { iconColors[project.id] = color }
         }
         if Icons.load(project) == nil {
@@ -2705,7 +2747,7 @@ final class Store: ObservableObject {
             // Named now, so the scaffold is written under its name. If it can't be, the turn ends here, failed.
             // Not while a wish is still being found: the agent only asks, and the wish it finds may be for the
             // iPhone, which a scaffold already written as a Mac app would rule out.
-            if !stillFinding {
+            if !stillFinding, !waitsForDevice.contains(project.id) {
                 guard let ready = await materialize(project) else { return }
                 project = ready
                 if newApp { showEarly(project, in: owner) }
@@ -4625,6 +4667,7 @@ final class Store: ObservableObject {
         var changed = current
         changed.platform = kind
         changed.integration = kind == .device ? integration : nil
+        waitsForDevice.remove(project.id)
         // Where it opens next: where it's newly made for, so the person sees the change.
         changed.chosen = current.platform == .mac ? .ios : .mac
         if !kind.hasIOS { changed.device = nil }
