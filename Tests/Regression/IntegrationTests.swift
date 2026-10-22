@@ -133,6 +133,33 @@ final class IntegrationTests: XCTestCase {
         }
     }
 
+    /// A device with its own certificate is held to the one it showed first, and nothing secret goes to one whose
+    /// certificate Lamp doesn't keep.
+    func testHTTPSKeepsTheFirstCertificateAndSendsNoSecretWithoutIt() async {
+        XCTAssertEqual(try DeviceHTTP.url(address: "10.0.0.138", port: 11443, path: "/api/os/info", https: true).absoluteString,
+                       "https://10.0.0.138:11443/api/os/info")
+        XCTAssertEqual(DeviceTLS.judge("aa", kept: nil, keeping: true), .keep)
+        XCTAssertEqual(DeviceTLS.judge("aa", kept: "aa", keeping: true), .trust)
+        XCTAssertEqual(DeviceTLS.judge("bb", kept: "aa", keeping: true), .refuse)
+        XCTAssertEqual(DeviceTLS.judge("bb", kept: nil, keeping: false), .trust, "a read while finding keeps nothing")
+        // Kept and compared in one step, and closed when the store can't be trusted.
+        let device = "test:tls-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(at: DeviceFolder.of(device)) }
+        let pins = DeviceTLS.Pins(deviceID: device)
+        XCTAssertNil(pins.admit("aa", port: 11443))
+        XCTAssertNil(pins.admit("aa", port: 11443))
+        XCTAssertEqual(pins.admit("bb", port: 11443), .changed)
+        try? Data("not json".utf8).write(to: DeviceFolder.of(device).appendingPathComponent("certificates.json"))
+        XCTAssertEqual(pins.admit("aa", port: 11443), .unsaved)
+        let signIn = Request(port: 11443, path: "/api/os/info", auth: .init(digest: false, user: "lamp", password: "{field:password}"), https: true)
+        do {
+            _ = try await DeviceHTTP.send(signIn, to: "10.0.0.138", values: ["field:password": "secret"])
+            XCTFail("a password went to a device whose certificate isn't kept")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("certificate"), error.localizedDescription)
+        }
+    }
+
     func testNoRedirectAndThePasswordOnlyForTheDevicesOwnChallenge() {
         let guardian = DeviceHTTP.Guardian(address: "192.168.1.20", credential: ("rokudev", "secret", true))
         let followed = expectation(description: "redirect answered")

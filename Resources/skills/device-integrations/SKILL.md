@@ -66,7 +66,8 @@ Every request goes to the address the device was found at; you give only the por
   "form": { "mysubmit": "Install", "archive": "@{package}" } }
 ```
 
-`method` (GET, POST, PUT, DELETE), `headers`, `body` or `form` (a value `"@{package}"` sends the package file), `auth`
+`https: true` for a device that only speaks HTTPS with a certificate of its own (Xbox's Device Portal): Lamp
+trusts that certificate the first time and holds the device to it after. `method` (GET, POST, PUT, DELETE), `headers`, `body` or `form` (a value `"@{package}"` sends the package file), `auth`
 (`digest` true or false for basic; the password is always one `{field:…}`), and `keep`: `"picture"` in `bridge.look`
 for the answer that is the screen's picture, `"key"` in a step's `run` for an SSH key the device gives this Mac.
 

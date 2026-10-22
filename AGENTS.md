@@ -656,7 +656,9 @@ device's model and version, and keeps the mark while the step's text is unchange
 The primitives and their guards (DevicePrimitives.swift, DeviceRemote.swift), which every place goes through:
 `DeviceHTTP` (only the address the device was found at, which must be private or link-local and never loopback, so
 nothing reaches Lamp's gateway; a path that stays a path; no redirect; the answer cut off at `limit`; a password only
-for the device's own challenge, in the scheme declared, once: `Guardian`), `DeviceProbe` (TCP, SSDP, Bonjour;
+for the device's own challenge, in the scheme declared, once: `Guardian`; over HTTPS, with `https: true`, the device's
+own certificate is kept the first time per port and a different one refused, as SSH host keys are, `DeviceTLS`, and
+nothing secret goes to a device whose certificate isn't kept, so a read while finding it sends no password), `DeviceProbe` (TCP, SSDP, Bonjour;
 read only), `DeviceStream` (a TCP log read line by line), `DeviceFields` (what the person typed, kept per device the
 way `AppSecrets` keeps an app's), `DeviceQR`, `VendorSignIn` (the vendor's https page, answered on a loopback listener
 at a port of its own; the card names the page's domain), `DeviceSSH` (the device's address only, its host key pinned

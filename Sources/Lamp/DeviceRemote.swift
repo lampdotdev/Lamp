@@ -22,6 +22,74 @@ enum DeviceFolder {
     static func deviceKey(_ deviceID: String) -> URL { of(deviceID).appendingPathComponent("device.key") }
 }
 
+// MARK: - HTTPS
+
+/// A device that speaks HTTPS with a certificate of its own (Xbox's Device Portal) can't be checked against any
+/// authority, so Lamp does what SSH does: it keeps the certificate's fingerprint the first time it reaches the device,
+/// per port, in the device's folder, and from then on refuses one that differs. While a device is only being found and
+/// read, nothing is kept and nothing secret is sent (`DeviceHTTP.send`).
+enum DeviceTLS {
+    enum Judgement: Equatable { case trust, keep, refuse }
+
+    static func fingerprint(_ certificate: Data) -> String {
+        SHA256.hash(data: certificate).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// What to do with a certificate: trust it (it's the one kept, or nothing is being kept), keep it (the first for
+    /// this device), or refuse it (another than the one kept).
+    static func judge(_ fingerprint: String, kept: String?, keeping: Bool) -> Judgement {
+        guard keeping else { return .trust }
+        guard let kept else { return .keep }
+        return kept == fingerprint ? .trust : .refuse
+    }
+
+    /// Why a certificate wasn't taken, in words for the setup card.
+    enum Refusal: LocalizedError, Equatable {
+        case changed, unsaved
+        var errorDescription: String? {
+            switch self {
+            case .changed: return "This device isn't the one Lamp set up at that address: its certificate has changed. If you reset it, set it up again."
+            case .unsaved: return "Lamp couldn't keep this device's certificate on this Mac, so it sent nothing to it."
+            }
+        }
+    }
+
+    /// One device's kept certificates.
+    struct Pins: Sendable {
+        let deviceID: String
+        private static let lock = NSLock()
+        private var file: URL { DeviceFolder.of(deviceID).appendingPathComponent("certificates.json") }
+
+        /// Whether a certificate is taken, decided and kept under one lock, so two first requests at once can't each
+        /// keep their own: the second is judged against what the first kept. It fails closed: a store that's there
+        /// but can't be read, or a first certificate that can't be saved, takes nothing.
+        func admit(_ fingerprint: String, port: Int) -> Refusal? {
+            Self.lock.lock(); defer { Self.lock.unlock() }
+            var pins: [String: String] = [:]
+            if FileManager.default.fileExists(atPath: file.path) {
+                guard let data = try? Data(contentsOf: file), let read = try? JSONDecoder().decode([String: String].self, from: data) else {
+                    return .unsaved
+                }
+                pins = read
+            }
+            switch judge(fingerprint, kept: pins[String(port)], keeping: true) {
+            case .trust: return nil
+            case .refuse: return .changed
+            case .keep:
+                pins[String(port)] = fingerprint
+                do { try JSONEncoder().encode(pins).write(to: file, options: .atomic) } catch { return .unsaved }
+                return nil
+            }
+        }
+
+        /// The certificate kept for a port, for tests and the record.
+        func kept(port: Int) -> String? {
+            Self.lock.lock(); defer { Self.lock.unlock() }
+            return (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) }?[String(port)]
+        }
+    }
+}
+
 // MARK: - Approvals
 
 /// What the person approved on each device: the exact text of a command template or a tool, so Play doesn't ask each
