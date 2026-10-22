@@ -5,6 +5,18 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.18.2
+
+- Switching between Claude, ChatGPT and OpenRouter keeps the conversation: the one you switch to knows what was said
+  before.
+- A new wish knows which devices you have: "make tetris on my TV" is made for the TV that's actually on your network,
+  and apps for devices like a Roku get Lamp's icon on the device.
+- An Android app opens where you were after a change, instead of on its first screen.
+- Drive Anywhere loads the streets ahead of the car, two pieces at a time, and says when the map is still coming.
+- LG TVs take apps more reliably, and closing the TV preview stops the app in it.
+- On macOS 27, Lamp's clicks when it tries your app land again.
+- More changes go into an open app without restarting it, including ones to how an app loads what it saved.
+
 ## 0.18.1
 
 - A new starter, Drive Anywhere: a driving game on real streets anywhere in the world, built from the map as you drive.
