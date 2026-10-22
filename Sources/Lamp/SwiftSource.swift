@@ -73,6 +73,9 @@ enum SwiftSource {
         /// The properties set in an initializer the type writes itself ("Type<tab>name"): a computed property kept
         /// in a spare can't be set before the stored ones are, so such a property stays stored.
         var assigned: Set<String> = []
+        /// Where each of those is set ("Type<tab>name"): the assignment's range, and whether it's in a decoder
+        /// (`init(from:)`), whose value for data saved before the property existed is its default for a missing key.
+        var assignments: [String: [(start: Position, last: Position, decoder: Bool)]] = [:]
         /// Where each declaration a call can name runs (a function, an initializer, a subscript, a property with what
         /// makes it), and every call to one of the app's, from where it's made to where what it names is declared:
         /// a constant's value is made by what it calls, as far down as that goes (`constantEntries`).
@@ -238,7 +241,7 @@ enum SwiftSource {
         private var observed = Set<String>()
         private var out = Declarations()
         // The initializer being read, and an assignment in it whose target is the next node.
-        private var initializer: (indent: Int, owner: String)?, assignment: Int?
+        private var initializer: (indent: Int, owner: String, decoder: Bool)?, assignment: (indent: Int, range: (start: Position, last: Position)?)?
         // The binding being read, at its indent, and what's inside it.
         private var binding: (indent: Int, index: Int)?
         private var entryOpen = false
@@ -308,10 +311,14 @@ enum SwiftSource {
             if let open = initializer, indent <= open.indent { initializer = nil; assignment = nil }
             if let open = initializer {
                 if let at = assignment {
-                    if indent == at + 2, opens("member_ref_expr"), let m = assigned.firstMatch(in: line.text, range: line.range) { out.assigned.insert(open.owner + "\t" + String(line.text[Range(m.range(at: 2), in: line.text)!])) }
+                    if indent == at.indent + 2, opens("member_ref_expr"), let m = assigned.firstMatch(in: line.text, range: line.range) {
+                        let key = open.owner + "\t" + String(line.text[Range(m.range(at: 2), in: line.text)!])
+                        out.assigned.insert(key)
+                        if let range = at.range { out.assignments[key, default: []].append((range.start, range.last, open.decoder)) }
+                    }
                     assignment = nil
                 }
-                if opens("assign_expr") { assignment = indent }
+                if opens("assign_expr") { assignment = (indent, SwiftSource.range(in: line.text)) }
                 return
             }
             // A protocol's requirements aren't declarations with storage.
@@ -335,7 +342,7 @@ enum SwiftSource {
             if line.function != nil {
                 // A convenience initializer sets properties only after `self.init`, when a computed one can be set.
                 if let owner, opens("constructor_decl"), !line.has(" implicit ") {
-                    if !line.has(" convenience") { initializer = (indent, owner) }
+                    if !line.has(" convenience") { initializer = (indent, owner, line.has("\"init(from:)\"")) }
                     if let made = SwiftSource.memberwise(in: line.text) { out.initializers[owner, default: []].append(made) }
                 }
                 if let owner, opens("constructor_decl"), line.has(" implicit "),
