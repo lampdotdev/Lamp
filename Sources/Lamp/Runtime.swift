@@ -52,6 +52,22 @@ enum Runtime {
 
     static func holdsBuild(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: heldURL(project).path) }
 
+    /// When Play last put a TV app on each of the person's TVs and opened it there, and from which sources: the agent
+    /// is told it (`DeviceNote`), since nothing else Lamp knows says what the TV has.
+    struct OnTV: Codable {
+        var at: Date
+        var fingerprint: String
+    }
+    private static func onTVURL(_ project: LampProject) -> URL { macFolder(project).appendingPathComponent("on-tv.json") }
+    static func putOnTV(_ project: LampProject, tv: String) {
+        var all = onTV(project)
+        all[tv] = OnTV(at: Date(), fingerprint: fingerprint(project))
+        if let data = try? JSONEncoder().encode(all) { try? AppFolder.write(data, to: onTVURL(project), in: project.dir) }
+    }
+    static func onTV(_ project: LampProject) -> [String: OnTV] {
+        (try? Data(contentsOf: onTVURL(project))).flatMap { try? JSONDecoder().decode([String: OnTV].self, from: $0) } ?? [:]
+    }
+
     /// What the app is built from, as one hash: the contents of Sources, its widget's folder, Package.swift and the icon design,
     /// and the attached files the app itself uses (they're copied into the bundle, so a new picture for the
     /// app needs a build; a screenshot attached for the agent to look at doesn't). Not file dates, which move

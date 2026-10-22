@@ -6208,6 +6208,7 @@ final class Store: ObservableObject {
             do {
                 if record.isSamsung { try await TVs.installSamsung(project, staged: staged, on: record, say: say) }
                 else { try await TVs.installLG(project, staged: staged, on: record, say: say) }
+                Runtime.putOnTV(project, tv: record.id)
                 log(project, .status, "\(project.name) is open on \(record.name).")
                 return nil
             } catch {
@@ -6249,8 +6250,8 @@ final class Store: ObservableObject {
     }
 
     /// Said with every look at a TV app: a preview at the TV's size reads like the TV itself, and the agent would tell
-    /// the person how the app runs on a TV it has never seen, which is far slower than the Mac the preview runs on.
-    static let notTheTV = "This is the TV preview, a window on this Mac, not the person's TV: it runs in the Mac's browser, many times faster than a TV, so it says nothing about how the app runs on the TV."
+    /// the person how the app runs on a TV it has never seen.
+    static let notTheTV = "This is the TV preview, a window on this Mac, not one of the person's TVs: it runs in this Mac's browser, so what it shows, its speed included, is the preview's."
 
     /// `use_app` for a TV app: the remote's keys and clicks on the preview, the screen read between them.
     private func useOnTV(_ project: LampProject, actions: [[String: Any]], json: String) async -> (Int, [String: Any]) {

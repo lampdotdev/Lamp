@@ -52,4 +52,24 @@ final class LGDiscoveryTests: XCTestCase {
         XCTAssertEqual(device?.name, "[LG] webOS TV NANO80ASA")
         XCTAssertEqual(device?.id, "found:192.168.1.20")
     }
+
+    /// The agent's line for a TV app is what Lamp has seen of this TV, and what it hasn't seen (its screen, whether
+    /// the app runs there now) is said to be unknown.
+    func testTheAgentIsToldWhatLampKnowsOfTheTVAndNoMore() async throws {
+        let found = await TVs.lg(at: address, answers: try answers()) { self.description(port: $0.port) }
+        let record = try XCTUnwrap(found)
+        let tv = Device.from(tv: record, onNetwork: true, kept: false)
+        let put = Date(timeIntervalSince1970: 1_800_000_000)
+        let line = DeviceNote.tv(previewOpen: true, chosen: tv.udid, tvs: [tv],
+                                 onTV: [tv.udid: Runtime.OnTV(at: put, fingerprint: "old")], current: "new")
+        XCTAssertTrue(line.contains("The TV preview, a window on this Mac with a remote's keys, is open now"))
+        XCTAssertTrue(line.contains("screen size unknown"))
+        XCTAssertTrue(line.contains("is chosen under Try On"))
+        XCTAssertTrue(line.contains("Lamp finds it on the network now"))
+        XCTAssertTrue(line.contains("at \(put.formatted(date: .abbreviated, time: .shortened)), and the code has changed since"))
+        XCTAssertTrue(line.contains("Whether the app is running on a TV now, and how it looks or runs there, Lamp doesn't know."))
+        // Only the preview, with no TV chosen or found, has nothing to say of a TV.
+        let alone = DeviceNote.tv(previewOpen: false, chosen: nil, tvs: [], onTV: [:], current: "")
+        XCTAssertEqual(alone, "The TV preview, a window on this Mac with a remote's keys, is closed now; look_at_app and use_app reach only the preview. Try On points at the preview, so Play opens the app there. No TV of the person's has been found on the network.")
+    }
 }

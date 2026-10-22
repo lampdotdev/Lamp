@@ -794,10 +794,14 @@ files with fetch and XMLHttpRequest, as text or bytes, as it does on a TV (WebKi
 `look_at_app` pictures it and reads it as text (focusable things and text, with which has focus) and `use_app` presses
 remote keys (synthetic key events with TV key codes), clicks and types; the page's console goes to the app's log;
 each app keeps its own saved data there between openings, as a TV does (what it saved when earlier Lamps opened it as a
-file is handed to its new address once, `savedFromFileAddress`). The preview runs in the Mac's browser, far
-faster than a TV's, so everything the agent is told of it (`Agent.tvPrompt`, each look and use with `Store.notTheTV`,
-the screen as text, the device line, the note on its picture) says it is the TV preview on this Mac and not the
-person's TV, and the agent never tells the person how the app runs on a TV it hasn't seen. Closing the window, by the person or by
+file is handed to its new address once, `savedFromFileAddress`). The preview runs in the Mac's browser, so everything
+the agent is told of it (each look and use with `Store.notTheTV`, the screen as text, the note on its picture) says it is
+the TV preview on this Mac and not the person's TV. Where the app is otherwise comes with the request, as the device line
+(`DeviceNote.tv`), from Lamp's own state and never a fixed description: whether the preview is open, each of the person's
+TVs with what's known of it (chosen under Try On, found on the network, set up, when Play last put this app on it and
+whether the code has changed since, `Runtime.putOnTV`), and "unknown" for the rest, the TV's screen size and whether the
+app runs there now among them. Lamp's tools don't reach a TV, but the agent is told it may find another way to see one,
+not that it can't. Closing the window, by the person or by
 Lamp, ends the page (its sound and timers): WebKit runs a page as long as its web view lives, so the preview lets go of
 its script handlers and web view when its window closes. TVs are found on the network (`TVs.scan`:
 SSDP, then a Samsung TV's own API at port 8001, an LG TV's UPnP description) and listed with the other devices; a
