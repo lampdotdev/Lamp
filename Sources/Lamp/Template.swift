@@ -9058,14 +9058,22 @@ enum Template {
                                        pressure: type == .leftMouseDown ? 1 : 0)
                 }
                 guard let down = event(.leftMouseDown), let up = event(.leftMouseUp) else { return "couldn't click" }
-                // Straight to the view: through the window, a click on an inactive window would only activate it.
                 // AppKit controls (buttons, fields, column headers) track the mouse and take the mouse-up from the
-                // event queue. SwiftUI's own views (plain buttons, toggles, tap gestures) leave it there and want
-                // it handed to them.
+                // event queue. SwiftUI's own views (plain buttons, toggles) leave it there and want it handed to them.
+                // From macOS 27 SwiftUI presses nothing for a click handed straight to its view, only for one the
+                // window dispatches, which reaches it whether or not the window is key; before, through the window a
+                // click on an inactive window would only activate it, so it went straight to the view.
                 NSApp.postEvent(up, atStart: true)
-                view.mouseDown(with: down)
-                if let unused = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
-                    view.mouseUp(with: unused)
+                if #available(macOS 27, *) {
+                    window.sendEvent(down)
+                    if let unused = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
+                        window.sendEvent(unused)
+                    }
+                } else {
+                    view.mouseDown(with: down)
+                    if let unused = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
+                        view.mouseUp(with: unused)
+                    }
                 }
             }
             // A row of a list, table or sidebar: AppKit only selects rows while the real mouse is held down, so
