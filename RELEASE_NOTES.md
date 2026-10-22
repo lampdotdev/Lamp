@@ -5,6 +5,28 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.18.0
+
+- Lamp makes apps for more than the Mac and the iPhone. Wish for an Android app and it's written in Kotlin, built,
+  and opened in the Android emulator or on your own phone or tablet, with Lamp's building blocks for AI, saving and
+  pictures; Android wishes can be shared as files too. Wish for a TV app and Lamp finds your Samsung or LG TV on the
+  network, walks you through setting it up, tries the app in a preview on your Mac, and puts it on the TV itself. A
+  Roku, or an Xbox in Developer Mode, gets its app the same way.
+- Settings → Building lists every device Lamp knows, by its exact model and whether it's ready, with the one next
+  step for each; Try On lists the same phones. The agent is told which device a wish is for, so it builds for the
+  screen and features that device has. A device Lamp has no kit for can be described to it and set up in one window.
+- When a change needs a Reload and you've stepped away from your Mac, Lamp presses it for you and the agent goes on;
+  while you're there, Reload stays yours.
+- The agent now shows a new look in the open app while it's still working, and keeps the changes that need a Reload
+  for last, so there's one Reload at the end instead of several.
+- Each fold of a finished turn says what it did and how long it took. A new app's build card opens to the steps so
+  far, and the chat shows messages, steps and Reload in the order they happened.
+- A starter added back opens as soon as it's ready, even while the others are still being prepared.
+- Lamp finds Codex where the ChatGPT app now keeps it, and apps' quick decisions go to the newest small models.
+- Far more changes go into an open app without restarting it: new settings, bindings and environment values in a
+  view, new properties in a saved struct, parameters a parent passes, and generic calls; a crash in a live change is
+  caught and said in a sentence.
+
 ## 0.17.0
 
 - Each change the agent makes goes into the open app as soon as it's saved, so you watch the app change while it
