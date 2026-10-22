@@ -2231,7 +2231,9 @@ enum LiveReload {
                     if line[at] == UInt8(ascii: ")") { depth += 1 } else if line[at] == UInt8(ascii: "(") { if depth == 0 { break }; depth -= 1 }
                     at -= 1
                 }
-                guard at > 0 else { continue }
+                // A string or comment on the way could hold a parenthesis that isn't code: no call is told from such a
+                // line, and the compiler's words stand.
+                guard at > 0, !line[at..<labelStart].contains(where: { $0 == UInt8(ascii: "\"") || $0 == UInt8(ascii: "/") || $0 == UInt8(ascii: "#") }) else { continue }
                 let callee = word(endingBefore: at).0
                 if !callee.isEmpty { found.insert(callee + "\t" + label) }
             }
