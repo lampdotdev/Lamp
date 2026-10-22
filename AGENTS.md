@@ -42,7 +42,11 @@ A capability given to one engine must be given to all of them that can take it, 
   pieces are tools: `ask` puts questions in the chat as a card answered by clicking, laid out as the agent
   chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own). What a
   request came to is the agent's last message, in a sentence or two (`Agent.Rules.finish`), under the line that says
-  the app is ready or updated; a card for it said no more than that message did and hid what it said beyond it.
+  the app is ready or updated. It claims only what it checked: before saying a change works it tries it once with
+  `use_app`, reversibly, and never on what the person keeps in an app they already use unless asked (`lookRules`),
+  and it says plainly what it only wrote or only looked at; "can't" comes after looking for a way, and "faster" after a
+  measurement before and after, an unmeasured fix being an experiment. These hold for every kind of app, so no
+  platform's rules repeat or contradict them. A card for that message said no more than that message did and hid what it said beyond it.
   While longer work goes on, the agent says how it's going with `progress`: a line of 12 words at most, shown at once
   in both chats as a message like any other, which stays one when the turn ends. The chat is one timeline: messages,
   steps and Reload in the order they happened, the newest at the bottom, so steps never collect below what was said
