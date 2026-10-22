@@ -93,6 +93,8 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         // opening after a change would run the app's code as it first was. Its saved data stays: only the caches go.
         await webView.configuration.websiteDataStore.removeData(ofTypes: [WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeDiskCache],
                                                                 modifiedSince: .distantPast)
+        // Closed while the caches went: loading now would start the app again in a preview nobody can see or close.
+        guard Self.open[project.id] === self else { return "The TV preview was closed before the app opened." }
         await withCheckedContinuation { continuation in
             loaded = continuation
             webView.loadFileURL(index, allowingReadAccessTo: staged)
