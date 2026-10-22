@@ -38,7 +38,8 @@ struct WishDesk: View {
 
     /// A wish not yet told is thrown away as the desk comes back (`discardIfUnused`): the rest are on the desk.
     /// They're in the order the person dragged them into (`DeskArrangement`).
-    private var wishes: [LampProject] { arrangement.arranged(store.projects) }
+    /// A device's setup conversation isn't a wish: it's reached from the device, in Settings → Your Devices.
+    private var wishes: [LampProject] { arrangement.arranged(store.projects.filter { !$0.isDeviceSetup }) }
 
     var body: some View {
         ZStack {

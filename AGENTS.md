@@ -674,10 +674,14 @@ built this way, does that.
 
 Settings → Your Devices lists what integrations find (`Integrations.devices`, after the kits' own) and the devices
 that answered Lamp's SSDP scan that nothing knows, read from their UPnP description (routers left out). Set Up… on one
-Lamp knows opens its window; on one it doesn't, it starts a wish marked `finding` whose first request is
-`Agent.deviceSetupRequest` (what the device said of itself), so the builder writes its integration before anything is
-named or built. When `device_integration` keeps an integration it looks for the device at once and puts each found
-one's next step in that chat. Each kind of card has its gallery entries ("Device setup").
+Lamp knows opens its window; on one it doesn't, it opens the device's setup conversation (`Store.setUpDevice`), one
+per device, whose first request is `Agent.deviceSetupRequest` (what the device said of itself). That conversation is
+no wish (`LampProject.deviceSetup`, `makesNoApp`): it's never on the desk, never named, scaffolded, built or saved, and
+every request in it carries `Agent.deviceSetupNote` in place of the app's notes, so a follow-up ("it still says
+waiting") stays about the device. Lamp refuses the app tools there (`Store.deviceSetupRefusal`: looks, use, versions,
+art, kinds, connectors, `write_wish`), leaving the integration, skills, notes and the chat's cards. When
+`device_integration` keeps an integration it looks for the device at once, puts each found one's next step in that
+chat, and moves the conversation to the device's new id, so the setup window's Ask About Setup… leads back to it. Each kind of card has its gallery entries ("Device setup").
 
 ## TV apps
 

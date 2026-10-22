@@ -258,7 +258,7 @@ extension Agent {
     /// app, and left to tell one from the placeholder code on its own, not every model does: some build the whole
     /// app with no checklist at all.
     static func newApp(_ project: LampProject) -> String {
-        guard !project.finding, Template.isScaffold(project) else { return "" }
+        guard !project.makesNoApp, Template.isScaffold(project) else { return "" }
         return "\n\n---\nThis is a new app (from Lamp, not part of the request above): its code is still Lamp's placeholder. Unless you ask first, call `plan` before writing any code."
     }
 
@@ -269,7 +269,8 @@ extension Agent {
                                session: String?, token: String) -> AgentRun {
         // A line on what Lamp remembers, one on what AI the app has, one on the skills that apply to it and one
         // on the device it's for go with the request when the conversation needs telling, the same for each engine.
-        let prompt = prompt + Memory.brief(for: project, engine: Builder.engine, session: session)
+        // A device's setup has no app for any of those to be about: it's told what the conversation is, every time.
+        let prompt = project.isDeviceSetup ? prompt + Agent.deviceSetupNote(project) : prompt + Memory.brief(for: project, engine: Builder.engine, session: session)
             + AIStatus.brief(for: project, engine: Builder.engine, session: session, offered: offered)
             + Skills.brief(for: project, engine: Builder.engine, session: session)
             + DeviceNote.brief(for: project, engine: Builder.engine, session: session)

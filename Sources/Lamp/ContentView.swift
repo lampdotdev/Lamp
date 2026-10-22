@@ -253,8 +253,8 @@ struct AppMenu: View {
         }
         Divider()
         Button("Rename…") { store.renaming = project }
-            // Still being found: the wish it becomes names it.
-            .disabled(busy || project.finding)
+            // Still being found: the wish it becomes names it. A device's setup is never named.
+            .disabled(busy || project.makesNoApp)
         Button("Duplicate") { Task { await store.duplicate(project) } }
             .disabled(busy || !project.scaffolded || project.untitled)
         Button("New Icon") { Task { await store.newIcon(project) } }
@@ -688,7 +688,7 @@ struct ProjectView: View {
         .navigationSubtitle(usageSummary)
         .toolbarTitleMenu {
             Button("Rename…") { store.renaming = project }
-                .disabled(busy || project.finding)
+                .disabled(busy || project.makesNoApp)
         }
         .toolbar { toolbar }
     }
@@ -829,7 +829,7 @@ struct ProjectView: View {
         }
         // A wish not yet told, or still being found, has nothing to open, undo, share or look into: only its
         // icon, until it does.
-        if !untold && !project.finding { appTools }
+        if !untold && !project.makesNoApp { appTools }
     }
 
     /// Nothing asked yet: a new wish, with no app behind it.

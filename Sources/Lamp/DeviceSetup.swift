@@ -189,8 +189,10 @@ struct DeviceSetupView: View {
     @ObservedObject var model: DeviceSetupModel
 
     var body: some View {
+        let conversation = Store.shared.projects.first { $0.deviceSetup == model.device.id }
         DeviceSetupPage(device: model.device, steps: model.steps, passed: model.passed, content: model.content, typed: $model.typed,
-                        approval: model.approval, act: model.act, decide: model.decide)
+                        approval: model.approval, act: model.act, decide: model.decide,
+                        ask: conversation.map { project in { Store.shared.showChat(project.id) } })
     }
 }
 
@@ -205,6 +207,8 @@ struct DeviceSetupPage: View {
     let approval: DeviceCommandApproval?
     let act: () -> Void
     let decide: (Bool) -> Void
+    /// Back to the device's setup conversation, where a step that doesn't work is talked through.
+    var ask: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -214,6 +218,8 @@ struct DeviceSetupPage: View {
                     Text("Set up \(device.name)").font(.title2.weight(.semibold))
                     Text(device.line).foregroundStyle(.secondary)
                 }
+                Spacer(minLength: 8)
+                if let ask { Button("Ask About Setup…", action: ask) }
             }
             .padding(.bottom, 16)
             VStack(alignment: .leading, spacing: 0) {
