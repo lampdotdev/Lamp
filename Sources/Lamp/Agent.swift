@@ -308,18 +308,22 @@ enum Agent {
 
     /// With every request in a device's setup conversation: the conversation outlives what it began with, and a
     /// follow-up ("it still says waiting") is about the device, never a wish.
-    static func deviceSetupNote(_ project: LampProject) -> String {
-        "\n\n---\nThis conversation is the setup of a device of the person's (from Lamp, not part of the request above): no app is made here. Write no files and open nothing; write or fix the device's integration with `device_integration` (the `device-integrations` skill), and answer about the device in a sentence or two. Lamp shows its setup steps as cards. When the person wants something on the device, tell them to make a wish for it on Lamp's desk."
+    @MainActor static func deviceSetupNote(_ project: LampProject) -> String {
+        var note = "\n\n---\nThis conversation is the setup of a device of the person's (from Lamp, not part of the request above): no app is made here. Write no files and open nothing; write or fix the device's integration with `device_integration` (the `device-integrations` skill), and answer about the device in a sentence or two. Lamp shows its setup steps as cards. When the person wants something on the device, tell them to make a wish for it on Lamp's desk."
+        // What the device said of itself when it was found, for writing its integration: the agent's to read, not the
+        // person's, so it isn't in the request they see.
+        if let device = Store.shared.devices.first(where: { $0.id == project.deviceSetup }) {
+            var said = [device.maker, device.model].filter { !$0.isEmpty }.joined(separator: " ")
+            if !device.modelID.isEmpty { said += " (model number \(device.modelID))" }
+            note += " Lamp found it on the network as \(said)" + (device.discovery.map { "; it answered Lamp's SSDP scan as \($0)" } ?? "") + "."
+        }
+        return note
     }
 
     /// The first request of a device's setup conversation, from Set Up… on a device Lamp doesn't know
-    /// (`Store.setUpDevice`): what the device said of itself when it was found, for the builder to write its
-    /// integration from.
+    /// (`Store.setUpDevice`), in the person's words: what Lamp found of it goes to the agent in `deviceSetupNote`.
     static func deviceSetupRequest(_ device: Device) -> String {
-        var said = [device.maker, device.model].filter { !$0.isEmpty }.joined(separator: " ")
-        if !device.modelID.isEmpty { said += " (model number \(device.modelID))" }
-        return "Set up my \(device.name). Lamp found it on my network: \(said)."
-            + (device.discovery.map { " It answered Lamp's scan as \($0)." } ?? "")
+        "Set up my \(device.name)."
     }
 
     /// Kept short, like the tools' descriptions: every word here is sent with every call to the model. What the
