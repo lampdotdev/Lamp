@@ -3473,17 +3473,20 @@ enum LiveSlots {
     /// Whether every place a type's own initializers set this property is a decoder giving it its starting value for a
     /// missing key: `decodeIfPresent(…)` alone for a starting value of nil, or `decodeIfPresent(…) ?? <starting value>`.
     static func decodesToStart(_ key: String, initial: String, declarations: SwiftSource.Declarations) -> Bool {
-        guard let places = declarations.assignments[key], !places.isEmpty else { return false }
+        guard let places = declarations.assignments[key], !places.isEmpty, let name = key.split(separator: "\t").last else { return false }
+        // One shape only, its own key and nothing else: `try c.decodeIfPresent(T.self, forKey: .name)`, then `?? <starting
+        // value>` or (for a starting value of nil) nothing. A chain or another key could read something else when it's missing.
+        let pattern = #"^try\s+\w+\.decodeIfPresent\(\s*[\w.<>\[\]: ?]+\.self\s*,\s*forKey:\s*(?:CodingKeys)?\.\#(NSRegularExpression.escapedPattern(for: String(name)))\s*\)\s*(?:\?\?\s*(.+))?$"#
+        guard let shape = try? NSRegularExpression(pattern: pattern) else { return false }
         var files: [String: SwiftSource.Text] = [:]
         return places.allSatisfy { place in
             guard place.decoder, let text = SwiftSource.text(of: (place.start, place.last), files: &files),
                   let equals = text.firstIndex(of: "=") else { return false }
             let value = text[text.index(after: equals)...].trimmingCharacters(in: .whitespacesAndNewlines)
-            guard value.contains(".decodeIfPresent(") else { return false }
-            if let fallback = value.range(of: "??", options: .backwards) {
-                return value[fallback.upperBound...].trimmingCharacters(in: .whitespaces) == initial
-            }
-            return initial == "nil"
+            guard let match = shape.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)) else { return false }
+            guard let fallback = Range(match.range(at: 1), in: value) else { return initial == "nil" }
+            let rest = value[fallback].trimmingCharacters(in: .whitespaces)
+            return rest == initial && !rest.contains("??") && !rest.contains("decode")
         }
     }
 

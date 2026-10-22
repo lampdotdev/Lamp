@@ -1,5 +1,13 @@
 VERDICT 1: RELOAD (Added Stats.streak)
+VERDICT 2: REOPEN (Stats changed what it holds (Stats.streak: Int); Stats.streak is set in Stats's own initializer, which the open app's Stats values were made without, so they'd read 0 where a fresh launch gives what it sets)
 == run
 before: wins=2 word=ROBOT lives=6
 RELOAD 1 (whole): ok
 after1 (want it in, wins=2 streak=0 and saved with losses, streak and wins: the model the window view holds gains a streak its decoder reads, and the game maker changes): saved {"losses":1,"streak":0,"wins":2}, wins=2 streak=0 word=ROBOT lives=6
+RELOAD 2: REOPEN Stats changed what it holds (Stats.streak: Int); Stats.streak is set in Stats's own initializer, which the open app's Stats values were made without, so they'd read 0 where a fresh launch gives what it sets
+after2 (want a plain reason: the streak decoder now falls back to wins, which the open values would read as 0 where a fresh launch reads 2): 
+before: saved {"losses":1,"streak":2,"wins":2}, wins=2 streak=2 word=ROBOT lives=6
+RELOAD 1: in the restart
+after1 (want it in, wins=2 streak=0 and saved with losses, streak and wins: the model the window view holds gains a streak its decoder reads, and the game maker changes): 
+RELOAD 2: in the restart
+after2 (want a plain reason: the streak decoder now falls back to wins, which the open values would read as 0 where a fresh launch reads 2): 

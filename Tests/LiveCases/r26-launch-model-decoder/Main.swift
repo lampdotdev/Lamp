@@ -13,5 +13,8 @@ import AppKit
     reload(1)
     settle()
     print("after1 (want it in, wins=2 streak=0 and saved with losses, streak and wins: the model the window view holds gains a streak its decoder reads, and the game maker changes):", Log.take())
+    reload(2)
+    settle()
+    print("after2 (want a plain reason: the streak decoder now falls back to wins, which the open values would read as 0 where a fresh launch reads 2):", Log.take())
     _ = window
 }}}
