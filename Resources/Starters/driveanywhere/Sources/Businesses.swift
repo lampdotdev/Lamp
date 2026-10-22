@@ -341,7 +341,8 @@ enum ShopPieces {
         var kits: [String: MeshKit] = [:]
         let n = SIMD2<Float>(0, 1), t = SIMD2<Float>(1, 0), o = SIMD2<Float>(0, 0)
         let key = style.symbol
-        let width = min(Float(data.n.count) * 0.21 + 0.6, 6.6) + 0.6
+        let letters: Float = Float(data.n.count) * 0.21
+        let width: Float = min(letters + 0.6, 6.6) + 0.6
         let base = Heights.sidewalk
 
         // The shopfront itself, built for the kind of place it is.
