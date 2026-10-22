@@ -2207,6 +2207,7 @@ enum Template {
     static func platform(fromPackageIn dir: URL) -> Platform? {
         if isAndroid(dir) { return .android }
         if TVTemplate.isTV(dir) { return .tv }
+        if DeviceApps.isScaffolded(dir) { return .device }
         guard let text = try? String(contentsOf: dir.appendingPathComponent("Package.swift"), encoding: .utf8) else { return nil }
         let mac = text.contains(".macOS("), ios = text.contains(".iOS(")
         return mac && ios ? .universal : ios ? .iphone : mac ? .mac : nil

@@ -5919,7 +5919,7 @@ final class Store: ObservableObject {
         if project.onDevice {
             await prepareIcon(project)
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
-            return await installOnDeviceApp(project, inFront: inFront)
+            return await installOnDeviceApp(project, inFront: inFront, owner: owner)
         }
         if project.onTV {
             await prepareIcon(project)
@@ -6191,6 +6191,8 @@ final class Store: ObservableObject {
 
     /// Device apps put on a device since Lamp opened, by app: the device, and the log read from it.
     private var deviceRuns: [String: DeviceApps.Run] = [:]
+    /// Devices an app is being put on now, by id.
+    private var installingOn: Set<String> = []
 
     /// The device a device app goes on now: the one chosen, or the only one its integration finds, looked for again
     /// when the list hasn't got it yet.
@@ -6208,7 +6210,7 @@ final class Store: ObservableObject {
 
     /// Puts a device app on the person's device and opens it there, through its integration's bridge. A device not set
     /// up yet gets its next step in the chat instead. Nil when it's open; else what went wrong.
-    private func installOnDeviceApp(_ project: LampProject, inFront: Bool) async -> String? {
+    private func installOnDeviceApp(_ project: LampProject, inFront: Bool, owner: Turn) async -> String? {
         let name = DeviceApps.integration(for: project)?.name ?? "device"
         guard let device = await deviceForApp(project) else {
             let problem = project.device == nil
@@ -6233,13 +6235,26 @@ final class Store: ObservableObject {
             }
             return "\(device.name) isn't set up for apps yet. Its next step, \"\(step.title)\", is a card in the chat for the person to follow."
         }
+        // One app at a time goes on a device: a second waits for the first, then takes the device from it.
+        while installingOn.contains(device.id) { try? await Task.sleep(for: .milliseconds(300)) }
+        installingOn.insert(device.id)
+        defer { installingOn.remove(device.id) }
+        let stillWanted: @MainActor () -> Bool = { [weak self] in self?.turns[project.id] === owner && !owner.stopped }
+        guard stillWanted() else { return "Stopped." }
         deviceRuns.removeValue(forKey: project.id)?.end()
         note("Putting \(project.name) on \(device.name)…", for: project)
         try? AppFolder.write(Data(), to: Runtime.logURL(project), in: project.dir)
         let file = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)
         do {
-            let run = try await DeviceApps.install(project, on: device, log: file)
+            let run = try await DeviceApps.install(project, on: device, log: file, stillWanted: stillWanted)
+            guard stillWanted() else { run.end(); return "Stopped." }
+            // The device shows this app now: another wish's run on it is over, so its looks and keys don't reach this one.
+            for (id, other) in deviceRuns where id != project.id && other.device.id == device.id {
+                other.end()
+                deviceRuns[id] = nil
+            }
             deviceRuns[project.id] = run
+            refreshOpenApps()
             if inFront { log(project, .status, "\(project.name) is open on \(device.name).") }
             return nil
         } catch {
@@ -7829,7 +7844,8 @@ final class Store: ObservableObject {
         // A TV app is open while its preview is, unless a TV is chosen: then Play is for putting it on the TV, which
         // Lamp can't watch, so it always offers Play.
         let previews = TVPreview.openIDs.filter { id in projects.first { $0.id == id }?.device == nil }
-        let onIOS = Array(simulatorApps.keys) + Array(deviceApps.keys) + Array(androidApps.keys) + previews
+        // A device app is open while it's the one Lamp last put on its device, so Stop can take the device back.
+        let onIOS = Array(simulatorApps.keys) + Array(deviceApps.keys) + Array(androidApps.keys) + previews + Array(deviceRuns.keys)
         // A build or icon held for a Mac copy goes in when that copy closes, even with its iPhone copy still open.
         let closedOnMac = openOnMac.subtracting(onMac)
         if Set(onMac) != openOnMac { openOnMac = Set(onMac) }

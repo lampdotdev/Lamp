@@ -7,8 +7,15 @@ import Foundation
 /// integration's bridge, run by `IntegrationRunner` with each primitive held to its guard. Nothing here knows any one
 /// device: what's for a Roku is in the Roku's integration.
 enum DeviceApps {
-    /// Written with the scaffold: what tells a device app's folder from a draft's.
-    static let marker = ".lamp/device-app"
+    /// Written with the scaffold, holding the integration's id: what tells a device app's folder from a draft's. It's
+    /// kept with the code (not in .lamp/), so a version restored from before the app changed kind brings the kind
+    /// and its device back with it (`Template.platform(fromPackageIn:)`).
+    static let marker = ".lamp-device"
+
+    /// The integration a folder's code was written for, read off its marker.
+    static func integrationID(in dir: URL) -> String? {
+        (try? String(contentsOf: dir.appendingPathComponent(marker), encoding: .utf8))?.trimmed.nilIfEmpty
+    }
 
     struct Failure: LocalizedError {
         let message: String
@@ -122,7 +129,9 @@ enum DeviceApps {
 
     /// Puts the package on the device and opens it: the bridge's install, then its launch, with its log read into the
     /// app's from the moment before the install, so what the device says of the package is in it.
-    static func install(_ project: LampProject, on device: Device, log: FileHandle?) async throws -> Run {
+    /// `stillWanted` is asked before each thing that changes the device, so a Stop meanwhile leaves it as it was.
+    static func install(_ project: LampProject, on device: Device, log: FileHandle?,
+                        stillWanted: @escaping @MainActor () -> Bool = { true }) async throws -> Run {
         guard let integration = integration(for: project), let bridge = integration.bridge, let install = bridge.install else {
             throw Failure(message: "\(device.name)'s integration doesn't say how an app goes on it.")
         }
@@ -139,8 +148,10 @@ enum DeviceApps {
         var tries = 0
         while true {
             do {
+                guard await stillWanted() else { throw Failure(message: "Stopped.") }
                 let outcome = try await runner.run(install, extra: values(project), files: ["package": packageURL(for: project)])
                 run.installAnswer = outcome.answers.last.map(plain)
+                guard await stillWanted() else { throw Failure(message: "Stopped.") }
                 if let launch = bridge.launch, !launch.isEmpty { _ = try await runner.run(launch, extra: values(project)) }
                 break
             } catch let error as URLError where error.code == .networkConnectionLost && tries < 2 {
