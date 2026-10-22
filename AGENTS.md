@@ -701,6 +701,27 @@ chat instead. `look_at_app` is the bridge's `look` picture with what the device 
 `bridge.keys`, each pressed with `use`) and `wait`. Stop presses `home` when there is one. Lamp can't tell whether the
 app is still open on the device, so Play always puts it there again. Such apps aren't shared yet.
 
+**Lamp's building blocks on devices** (`DeviceSupport`, DeviceSupport.swift): TVs and declared app kinds get `LampAI`,
+`LampStore` and `LampAssets` as Mac, iPhone and Android apps do, under the same names and with the same advice in their
+comments, so a change to one of those is made to all of them. A declared kind asks for them by library in
+`app.declared.support` (`"web": "Web/lamp.js"`, `"brightscript": "components/Lamp"`); the TV kit always has the web one
+in its `Web/lamp.js`, the Xbox's integration asks for it too. The web library is plain ES5 with Promises
+(`DeviceSupport.webJS`, LampStore on localStorage); the BrightScript one runs each LampAI call in a Task node
+(`LampAITask`), since a Roku refuses network calls on its render thread, and keeps LampStore in the registry. Lamp writes
+them before every turn and build (`DeviceSupport.write`, from `Template.writeOwnedFiles` and `writeSupport`), the agent
+can't delete them, and versions leave them out of their names and diffs. How an app reaches the gateway comes in two
+halves, since none of these devices can be written to after an install the way `Adb.tellApp` writes an Android app's
+storage. Where Lamp is (`DeviceSupport.installValues`: this Mac's Bonjour name, then its addresses, and the port) isn't
+secret and goes into Lamp's own file in the package as it's made (`DeviceSupport.fill`: the TV's staged copy as it's
+packaged, the Xbox's MSIX payload, a Roku's zip made again), never into the app's folder. The token is never in the
+package: Lamp opens a claim for the app just before it puts it on a device (`DeviceSupport.Claims`, from that device's
+address, for five minutes), and the app, finding no token kept, asks `/app/claim` for it and keeps it on the device. The
+TV preview needs neither: LampAI's calls reach Lamp through the web view (`TVPreview`'s `lampGateway` handler), as the
+app. The gateway listens on the network while a TV app is set to open on a TV or a device app takes the building blocks
+(`Store.syncLocalNetwork`); from the network it answers a browser's preflight and lets the device's page read the answer
+(only there: nothing on this Mac is answered across origins), and admits this Mac's own addresses as Host beside its
+name (`Store.isMacHost`), since a web page can't choose its Host and these devices don't resolve `.local` names.
+
 Settings → Your Devices lists what integrations find (`Integrations.devices`, after the kits' own) and the devices
 that answered Lamp's SSDP scan that nothing knows, read from their UPnP description (routers left out). Set Up… on one
 Lamp knows opens its window; on one it doesn't, it opens the device's setup conversation (`Store.setUpDevice`), one
@@ -733,9 +754,10 @@ An app can be made for TVs (`Platform.tv`, chosen when a wish names a TV, the Fr
 `make_app_for` with "tv" alone). It is a web app, HTML, CSS and JavaScript in `Web/`, the same files for Samsung
 (Tizen) and LG (webOS) TVs, with no build step: "building" copies `Web/` into Lamp's own folder (`TVs.stage`, a copy
 made under the app's sandbox, links refused), which is all the preview and the packages ever read. Lamp owns
-`Web/lamp.js` (`TVTemplate.lampJS`, plain ES5 for the TVs' Chrome-79-era browsers): the remote's keys by name, focus
-moved with the arrows to the nearest thing in that direction, OK clicking, Back with `Lamp.onBack` and leaving the
-app when nothing handles it, and `Lamp.store` on localStorage. The rules are `Agent.tvPrompt` (`Rules.tv…`: a
+`Web/lamp.js` (`TVTemplate.lampJS`, plain ES5 for the TVs' Chrome-79-era browsers): Lamp's building blocks for the web
+(`DeviceSupport.webJS`, below), then the remote's keys by name, focus moved with the arrows to the nearest thing in that
+direction, OK clicking, Back with `Lamp.onBack` and leaving the app when nothing handles it (`Lamp.store` is
+`LampStore` under the name it had first). The rules are `Agent.tvPrompt` (`Rules.tv…`: a
 1920×1080 page that never scrolls whole, design for the sofa, no syntax newer than 2019). The agent tries the app in
 the TV preview (`TVPreview`): a window showing it at the TV's size, half scale, from the staged copy, where
 `look_at_app` pictures it and reads it as text (focusable things and text, with which has focus) and `use_app` presses

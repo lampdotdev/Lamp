@@ -1710,6 +1710,7 @@ final class Store: ObservableObject {
             log(changed, .status, name.map { "\(changed.name) will go on \($0) when you press Play." } ?? "\(changed.name) will open in the TV preview from now on.")
             finish(changed)
             refreshOpenApps()
+            syncLocalNetwork()   // the TV reaches Lamp's gateway over the Wi‑Fi
         }
         if let id { TVSetup.shared.perform(id, then: choose) } else { choose() }
     }
@@ -4455,7 +4456,9 @@ final class Store: ObservableObject {
         let lowered = relative.lowercased()
         if protected.contains(where: { lowered == $0.lowercased() || lowered.hasPrefix($0.lowercased() + "/") }) 
             // An Android app's building blocks are Lamp's while it is one; made into a Swift app, the agent clears app/ away.
-            || (project.platform == .android && Template.isAndroidSupport(relative)) {
+            || (project.platform == .android && Template.isAndroidSupport(relative))
+            // A TV's or a device app's building blocks are Lamp's too (`DeviceSupport`).
+            || DeviceSupport.isSupport(relative, in: project) {
             return (400, ["error": "\(relative) belongs to Lamp and can't be deleted."])
         }
         let fm = FileManager.default
@@ -6115,6 +6118,8 @@ final class Store: ObservableObject {
                 return problem
             }
             let say: @Sendable (String) -> Void = { [weak self] text in Task { @MainActor in self?.note(text, for: project) } }
+            // The app opened by this install asks for its token, which isn't in its package.
+            DeviceSupport.Claims.shared.open(project.id, from: record.address)
             do {
                 if record.isSamsung { try await TVs.installSamsung(project, staged: staged, on: record, say: say) }
                 else { try await TVs.installLG(project, staged: staged, on: record, say: say) }
@@ -8016,9 +8021,12 @@ final class Store: ObservableObject {
     }
 
     /// The gateway answers on the local network only while an app is set to open on the person's own phone or
-    /// tablet, Apple's or Android's: kept in step with the list of apps (Try On, deletion, rename, reload).
+    /// tablet, Apple's or Android's, or on a TV, or is an app for a device (which always opens on one) that takes Lamp's
+    /// building blocks: kept in step with the list of apps (Try On, deletion, rename, reload).
     func syncLocalNetwork() {
-        gateway?.setLocalNetwork(projects.contains { ($0.platform.hasIOS || $0.platform.hasAndroid) && $0.device != nil })
+        gateway?.setLocalNetwork(projects.contains {
+            (($0.platform.hasIOS || $0.platform.hasAndroid || $0.platform == .tv) && $0.device != nil) || ($0.platform == .device && !DeviceSupport.libraries(for: $0).isEmpty)
+        })
     }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
@@ -8027,7 +8035,7 @@ final class Store: ObservableObject {
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -8046,6 +8054,16 @@ final class Store: ObservableObject {
             }
         } else {
             guard Self.isLocalHost(request.headers["host"]) else { return (403, ["error": "Not for this host."]) }
+        }
+        // An app Lamp has just put on a TV or another device asking for its token, which is never in its package: answered
+        // only from the address of the device it was put on, for a few minutes after (`DeviceSupport.Claims`).
+        if route == "/app/claim" {
+            let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+            guard request.fromNetwork, let id = body["app"] as? String, DeviceSupport.Claims.shared.take(id, from: request.peerAddress),
+                  let project = projects.first(where: { $0.id == id }) else {
+                return (403, ["error": "Lamp didn't just put this app here."])
+            }
+            return (200, ["token": Template.token(for: project), "routes": DeviceSupport.installValues(for: project)["routes"] ?? []])
         }
         // pi collecting its provider's key (Agent.keyCommand). The ticket is the whole credential, and it's
         // good once.
@@ -8136,13 +8154,15 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Whether a Host header is this Mac's name on the local network (what apps on phones are given), with
-    /// an optional numeric port.
+    /// Whether a Host header is this Mac's name on the local network (what apps on phones are given), or one of its
+    /// own addresses there, with an optional numeric port. A web app on a TV or a console can't choose its Host, and
+    /// those devices don't resolve the Mac's name, so they reach it by an address; an address can't be rebound to
+    /// another site the way a name can, so it's no way round the check.
     static func isMacHost(_ header: String?) -> Bool {
         guard let host = header?.trimmed.lowercased(), !host.isEmpty else { return false }
         let name = host.split(separator: ":", maxSplits: 1).first.map(String.init) ?? host
         guard host.count == name.count || host.dropFirst(name.count + 1).allSatisfy(\.isNumber) else { return false }
-        return name == Devices.macHost.lowercased()
+        return name == Devices.macHost.lowercased() || Devices.localAddresses.contains(name)
     }
 
     /// Whether a Host header names this Mac and nothing else: exactly a loopback name or address, with an

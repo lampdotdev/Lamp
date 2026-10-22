@@ -131,8 +131,9 @@ enum Template {
         if project.platform == .android { try writeAndroidOwnedFiles(for: project); return }
         // A TV app's own files are its web code; Lamp's is its building blocks there.
         if project.platform == .tv { try TVTemplate.writeOwnedFiles(for: project); return }
-        // A device app's build is the integration's package step, which Lamp holds, not a file in the folder.
-        if project.platform == .device { return }
+        // A device app's build is the integration's package step, which Lamp holds, not a file in the folder; its own
+        // files are the building blocks its integration asks for.
+        if project.platform == .device { try DeviceSupport.write(for: project); return }
         // Where an earlier Lamp kept the phone's secret, readable by the agent's commands; a new one is made in
         // Lamp's own folder (`phoneSecret(in:)`).
         AppFolder.remove(project.dir.appendingPathComponent(".lamp/phone-secret"), in: project.dir)
@@ -257,8 +258,9 @@ enum Template {
     static func writeSupport(for project: LampProject) throws {
         // An Android app's building blocks are Kotlin (`writeAndroidSupport`).
         if project.platform == .android { try writeAndroidSupport(for: project); return }
-        // A TV app has no Swift: its building blocks are its own script (`TVTemplate.writeOwnedFiles`).
-        guard project.platform != .tv, project.platform != .device else { return }
+        // A TV app has no Swift: its building blocks are its own script, and a device app's what its integration asks for.
+        if project.platform == .tv { try TVTemplate.writeOwnedFiles(for: project); return }
+        if project.platform == .device { try DeviceSupport.write(for: project); return }
         let contents = lampSupportSwift
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
         try put(contents, at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)

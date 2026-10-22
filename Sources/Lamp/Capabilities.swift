@@ -331,9 +331,10 @@ struct SetupOffer: Codable, Equatable, Hashable {
 /// per conversation and again only when it changes, so most requests carry nothing.
 enum AIStatus {
     @MainActor static func line(for project: LampProject, offered: Set<SetupOffer>) -> String {
-        // A TV app has none of Lamp's AI building blocks, so none of this applies to it.
-        if project.platform == .tv { return "- None: a TV app has no AI building blocks from Lamp." }
-        if project.platform == .device { return "- None: an app for a device Lamp reaches through its integration has no AI building blocks from Lamp." }
+        // A device app whose integration takes none of Lamp's building blocks has no AI of Lamp's.
+        if project.platform == .device, DeviceSupport.libraries(for: project).isEmpty {
+            return "- None: this device's integration takes none of Lamp's building blocks, so the app has no AI from Lamp."
+        }
         var lines = Capability.allCases.filter { $0 != .browser || (BrowserBridge.enabled && project.platform.hasMac) }.map { capability in
             let resolution = AppAI.resolve(capability, for: project)
             var line = "- \(capability.title): \(AppAI.summary(resolution))"
@@ -347,6 +348,11 @@ enum AIStatus {
         if project.platform == .android {
             // An Android device reaches AI only through this Mac, in the emulator or over the same Wi‑Fi.
             lines.append("- On the person's Android device: the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, no AI")
+        }
+        if project.platform == .tv || project.platform == .device {
+            // A TV or another device reaches AI only through this Mac, over the same Wi‑Fi; the TV preview is on the Mac.
+            let device = project.platform == .tv ? "TV" : DeviceApps.integration(for: project)?.name ?? "device"
+            lines.append("- On the person's \(device): the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, or with Lamp closed, no AI")
         }
         return lines.joined(separator: "\n")
     }

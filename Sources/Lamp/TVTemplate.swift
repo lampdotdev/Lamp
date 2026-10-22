@@ -138,14 +138,18 @@ enum TVTemplate {
         - `Web/index.html`: the page, which loads `lamp.js` and then `app.js`.
         - `Web/style.css`: the look, laid out for a 1920×1080 screen.
         - `Web/app.js`: the app's code.
-        - `Web/lamp.js`: Lamp's building blocks (the remote's keys, focus, Back, saved data). Written by Lamp; don't edit.
+        - `Web/lamp.js`: Lamp's building blocks (AI, saved data, the app's files, the remote's keys, focus, Back). Written by Lamp; don't edit.
 
         """
 
-    /// Lamp's building blocks in every TV app, written before every build. It runs on Samsung's and LG's TVs and in
-    /// the preview, whose browsers are about Chrome 79's age, so it's plain ES5.
-    static let lampJS = """
-        /* Lamp's building blocks for a TV app. Written by Lamp before every build; don't edit.
+    /// Lamp's building blocks in every TV app, written before every build: LampAI, LampStore and LampAssets
+    /// (`DeviceSupport.webJS`, shared with the web apps integrations declare), then the remote. It runs on Samsung's and
+    /// LG's TVs and in the preview, whose browsers are about Chrome 79's age, so it's plain ES5.
+    static var lampJS: String { DeviceSupport.webJS + remoteJS }
+
+    static let remoteJS = """
+        /* The remote, for a TV app. Written by Lamp before every build; don't edit. LampAI, LampStore and LampAssets
+         * are above.
          *
          * Lamp.onKey(function (name, event) { ... return true if handled })   every remote key, by name:
          *   up down left right enter back, play pause playpause stop fastforward rewind,
@@ -154,7 +158,7 @@ enum TVTemplate {
          * Lamp.focus(elementOrSelector), Lamp.focusFirst()          give the remote's focus to something
          * Lamp.scope = element or null                              keep the arrows inside a dialog while it's open
          * Lamp.navigation = false                                   turn off moving focus with the arrows (a game)
-         * Lamp.store.get(key, fallback), .set(key, value), .remove(key)   saved on the TV, JSON values
+         * Lamp.store   LampStore, under the name it had first
          * Lamp.platform   "tizen", "webos" or "browser" (the preview on the Mac)
          *
          * The arrows move focus between what can take it (buttons, links, fields, and anything with data-focus),
@@ -222,15 +226,7 @@ enum TVTemplate {
               else if (platform === 'webos') { if (window.webOS && webOS.platformBack) webOS.platformBack(); else window.close(); }
             } catch (e) {}
           }
-          var prefix = 'lamp:';
-          var store = {
-            get: function (key, fallback) {
-              try { var v = window.localStorage.getItem(prefix + key); return v === null ? fallback : JSON.parse(v); }
-              catch (e) { return fallback; }
-            },
-            set: function (key, value) { try { window.localStorage.setItem(prefix + key, JSON.stringify(value)); } catch (e) {} },
-            remove: function (key) { try { window.localStorage.removeItem(prefix + key); } catch (e) {} }
-          };
+          var store = window.LampStore;
 
           document.addEventListener('keydown', function (event) {
             var name = names[event.keyCode];
@@ -289,7 +285,7 @@ enum TVTemplate {
 extension Agent {
     /// The rules for a TV app, in the same shape as the others' and said for the web on a TV.
     static func tvPrompt() -> String {
-        let rules = [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData,
+        let rules = [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.webAI,
                      Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
         return (Rules.tvHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "TV")
@@ -317,8 +313,7 @@ extension Agent.Rules {
     - Write code that runs first time on the TVs' browsers, which are about as old as Chrome 79: plain JavaScript and \
     CSS, no optional chaining (?.) or ?? or other syntax newer than 2019, no modules or top-level await, no build step, \
     no npm and no frameworks loaded from the internet. CSS grid and flexbox, CSS variables and transitions are fine. \
-    The app stands alone on the TV: it can fetch from https APIs that allow it (no key you don't have), and it has \
-    no AI of Lamp's and no connection to the Mac.
+    The app can fetch from https APIs that allow it (no key you don't have); its AI comes from Lamp (below).
     """
 
     static let tvDesign = """
@@ -339,9 +334,22 @@ extension Agent.Rules {
     """
 
     static let tvData = """
-    - Keep what the app saves with `Lamp.store.get(key, fallback)` and `Lamp.store.set(key, value)`, JSON values kept \
-    on the TV. People rely on their data through every change you make, so once something is saved, only ever add to \
-    it: a new field gets a default where it's read, and never rename or retype a saved one.
+    - Keep what the app saves with `LampStore` from lamp.js: `LampStore.load(key, fallback)` and \
+    `LampStore.save(value, key)` for a value saved whole, `LampStore.collection(name)` for items saved one at a time \
+    (put, get, all, delete), JSON kept on the TV. People rely on their data through every change you make, so once \
+    something is saved, only ever add to it: a new field gets a default where it's read, and never rename or retype a \
+    saved one. The app's own files (pictures, data) come in its package: `LampAssets.url(name)`, `.json(name)`.
+    """
+
+    /// Lamp's AI in a web app on a device (`DeviceSupport.webJS`): the TV kit's and a declared web kind's.
+    static let webAI = """
+    - For AI (text, pictures, decisions), use `LampAI` from lamp.js: Lamp on the person's Mac answers, with the AI \
+    they set up, in the preview and on their own device while it's on the Mac's Wi‑Fi with Lamp open. Every call \
+    gives back a Promise: `LampAI.ask(prompt, {data, json, images})`, `LampAI.makeImage(description)` (a data: URL), \
+    `LampAI.isTrue`, `choose`, `rate`, `decide` and `decideEach` for quick judgments code acts on. Text from outside \
+    the app goes in `data`, never into the prompt. Show progress while a call runs and `error.message` when it fails; \
+    where a feature depends on AI, check `LampAI.isAvailable('text')` and show a short note when it can't answer. \
+    Read LampAI's comment in lamp.js before using it; never call an AI service yourself.
     """
 
     static let tvAttachments = """

@@ -356,7 +356,7 @@ enum TVPackage {
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-wgt-\(UUID().uuidString)")
         let tree = work.appendingPathComponent("package")
         try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true)
-        var files = try self.files(in: staged).filter { $0.path != "config.xml" && !$0.path.hasSuffix("signature.xml") && $0.path != "signature1.xml" }
+        var files = try DeviceSupport.fill(self.files(in: staged), for: project).filter { $0.path != "config.xml" && !$0.path.hasSuffix("signature.xml") && $0.path != "signature1.xml" }
         files.append(("config.xml", Data(TVTemplate.tizenConfig(for: project).utf8)))
         if let icon = await icon(for: project, size: 512, in: work) { files.removeAll { $0.path == "icon.png" }; files.append(("icon.png", icon)) }
         files.sort { $0.path < $1.path }
@@ -384,7 +384,7 @@ enum TVPackage {
         try fm.createDirectory(at: info, withIntermediateDirectories: true)
         try fm.createDirectory(at: work.appendingPathComponent("control"), withIntermediateDirectories: true)
         var size = 0
-        for (path, data) in try files(in: staged) where path != "appinfo.json" {
+        for (path, data) in DeviceSupport.fill(try files(in: staged), for: project) where path != "appinfo.json" {
             let url = app.appendingPathComponent(path)
             try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url)
