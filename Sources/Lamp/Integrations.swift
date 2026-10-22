@@ -295,6 +295,10 @@ struct IntegrationRunner {
     var approve: (DeviceCommandApproval) async -> Bool = { _ in false }
     /// A line for the app's log, from a stream.
     var onLog: (@Sendable (String) -> Void)?
+    /// How a step's check reaches the device; tests answer for a made-up one.
+    var send: (Request, String, [String: String], DeviceTLS.Pins?) async throws -> DeviceHTTP.Answer = {
+        try await DeviceHTTP.send($0, to: $1, values: $2, pins: $3)
+    }
 
     struct Failure: LocalizedError {
         let message: String
@@ -441,7 +445,8 @@ struct IntegrationRunner {
     }
 
     /// Whether a step's check passes now, and if not, the first condition that didn't, in words. `failed` is a reason
-    /// waiting won't mend (the device's certificate changed), which the card shows as a failure rather than waiting.
+    /// waiting won't mend (the device's certificate changed, or it rejected the sign-in), which the card shows as a
+    /// failure rather than waiting.
     func check(_ step: Integration.Step) async -> (passed: Bool, why: String?, read: String?, failed: Bool) {
         await prepare()
         let values = values()
@@ -456,11 +461,16 @@ struct IntegrationRunner {
             } else if let request = condition.http {
                 let answer: DeviceHTTP.Answer?
                 do {
-                    answer = try await DeviceHTTP.send(request, to: try address, values: values, pins: DeviceTLS.Pins(deviceID: device.id))
+                    answer = try await send(request, try address, values, DeviceTLS.Pins(deviceID: device.id))
                 } catch let refusal as DeviceTLS.Refusal {
                     return (false, refusal.localizedDescription, nil, true)
                 } catch {
                     answer = nil
+                }
+                // A device that turns the password away keeps doing so however long Lamp waits: the person has to
+                // type it again, so the card says so and stops checking.
+                if request.auth != nil, answer?.status == 401 {
+                    return (false, "The device rejected the sign-in. Check the user name and password, then try again.", nil, true)
                 }
                 guard let answer, answer.ok else { return (false, "Waiting for \(device.name)…", nil, false) }
                 if condition.json != nil || condition.xml != nil {
