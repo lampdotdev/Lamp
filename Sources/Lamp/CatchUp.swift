@@ -11,10 +11,19 @@ enum CatchUp {
     static let budget = 12_000
     static let messageLimit = 2_000
 
-    /// The note for the engine's conversation, given the chat and the turn's first request (`before`), which goes as
-    /// the request itself.
-    static func note(for project: LampProject, engine: Engine, session: String?, chat: [LogLine], before request: UUID?) -> String {
-        note(missed(in: chat, since: lastRun(of: engine, session: session, in: project), before: request))
+    /// The note for the engine's conversation, given the chat and the turn's requests (`turn`).
+    static func note(for project: LampProject, engine: Engine, session: String?, chat: [LogLine], turn requests: [UUID],
+                     sendsRequest: Bool) -> String {
+        note(missed(in: chat, since: lastRun(of: engine, session: session, in: project),
+                    before: cutoff(turn: requests, sendsRequest: sendsRequest)))
+    }
+
+    /// Where the missed messages stop: at the turn's request when the run sends it, which then goes as itself. A
+    /// repair Lamp asks for later in the turn (a build's errors, a crash) sends only its own words, so an engine
+    /// switched to before it is told the whole turn so far, the request and what was said since included; left out
+    /// then, they would be behind its conversation's last run by the next turn, and never told.
+    static func cutoff(turn requests: [UUID], sendsRequest: Bool) -> UUID? {
+        sendsRequest ? requests.first : nil
     }
 
     /// When the engine's conversation last ran for this app, or nil for one that is only now beginning, which has

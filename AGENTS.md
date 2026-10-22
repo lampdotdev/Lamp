@@ -118,8 +118,9 @@ A capability given to one engine must be given to all of them that can take it, 
   another's, so the one the person switches to would resume its own older conversation, or start a new one, knowing
   nothing of what was said with the other. What it missed goes at the end of the request, in `Store.runAgent`: the
   chat's messages (the person's, the agent's and its questions; never steps, commands or tool output) from the first
-  request sent after that engine's conversation last ran up to this turn's own, the newest kept when there are more
-  than fit. When it last ran is read from what each engine already leaves (Claude Code's and Codex's conversation
+  request sent after that engine's conversation last ran up to this turn's own (and through the turn so far for a
+  repair Lamp asks for later in it, a build's errors or a crash, which sends no request), the newest kept when there
+  are more than fit. When it last ran is read from what each engine already leaves (Claude Code's and Codex's conversation
   file, rewritten as each run starts; pi's session file), so no new record is kept; a conversation that is only now
   beginning, an ended one included (`Store.forgetConversation`), is given the chat from its start.
 - **Skills** (`Skills`, `Resources/skills`): guidance only some requests need lives in a skill, not in the system

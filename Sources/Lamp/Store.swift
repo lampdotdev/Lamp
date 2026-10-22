@@ -2976,7 +2976,7 @@ final class Store: ObservableObject {
         turns[project.id]?.request = prompt
         turns[project.id]?.requests = asked
         turns[project.id]?.carriedSetAside = carried
-        let ran = await runAgent(prompt + notes + crashAside, files: files, on: project)
+        let ran = await runAgent(prompt + notes + crashAside, files: files, sendsRequest: true, on: project)
         project = current(project) ?? project
         if let carried, let last = asked.last, Self.reachedAgent(last, in: logs[project.id] ?? []),
            setAsideChanges[project.id]?.crash == carried {
@@ -3167,7 +3167,9 @@ final class Store: ObservableObject {
     }
 
     /// Returns false when the agent couldn't run at all (bad key, no credit, …), after telling the user why.
-    private func runAgent(_ prompt: String, files: [String] = [], on project: LampProject) async -> Bool {
+    /// `sendsRequest`: this run carries the turn's own request, not a repair Lamp asks for after it (a build's
+    /// errors, a crash), which an engine switched to meanwhile needs the turn's messages for (`CatchUp`).
+    private func runAgent(_ prompt: String, files: [String] = [], sendsRequest: Bool = false, on project: LampProject) async -> Bool {
         // A turn started at launch (one waiting from before) may come before the look for the person's own
         // Claude Code or Codex has finished: it waits for it rather than finding no copy.
         if Builder.engine != .pi, EngineInstall.path(for: Builder.engine) == nil, !EngineInstall.hasLooked {
@@ -3230,7 +3232,7 @@ final class Store: ObservableObject {
         // What was said in the chat since this engine's conversation last ran (with another engine, or in one
         // that was ended) goes with the request, so switching engines doesn't lose the conversation.
         let missed = CatchUp.note(for: project, engine: engine, session: session, chat: logs[project.id] ?? [],
-                                  before: turn.requests.first)
+                                  turn: turn.requests, sendsRequest: sendsRequest)
         var run = Agent.run(prompt: prompt + missed, files: files, project: project, offered: offers(in: project),
                             session: session, token: turn.agentToken)
         turn.saysCommands = run.saysCommands
@@ -3446,7 +3448,7 @@ final class Store: ObservableObject {
            lower.contains("auto"), lower.contains("mode") || lower.contains("permission") {
             CommandApproval.claudeAutoUnavailable = true
             log(project, .status, "Claude's auto mode isn't available, so Lamp will ask before every command.")
-            return await runAgent(prompt, files: files, on: project)
+            return await runAgent(prompt, files: files, sendsRequest: sendsRequest, on: project)
         }
         // A request too big to send, which the engine couldn't shrink (Claude Code and Codex don't in Lamp's
         // non-interactive runs; pi's extension drops pictures and tries once more before this is reached):

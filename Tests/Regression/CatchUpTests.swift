@@ -39,6 +39,20 @@ final class CatchUpTests: XCTestCase {
         XCTAssertTrue(CatchUp.missed(in: chat, since: t0.addingTimeInterval(60), before: chat[3].id).isEmpty)
     }
 
+    /// Switched to Claude while ChatGPT's run of the turn was going on, so the build's errors are Claude's to fix: the
+    /// repair sends only the errors, so Claude is told the turn's request and what was said in it too.
+    func testARepairAfterASwitchIsToldTheTurnSoFar() {
+        let chat = [line(.user, "Make a recipe box", at: 0), line(.agent, "Ready.", at: 2),       // Claude, run at 1
+                    line(.user, "Add a dark theme", at: 10), line(.agent, "Dark theme added.", at: 12),  // ChatGPT
+                    line(.status, "The build failed", at: 13)]
+        let lastRun = t0.addingTimeInterval(60)
+        let repair = CatchUp.missed(in: chat, since: lastRun, before: CatchUp.cutoff(turn: [chat[2].id], sendsRequest: false))
+        XCTAssertEqual(repair.map(\.text), ["Add a dark theme", "Dark theme added."])
+        // The run that sends the request leaves it out of the note: it goes as itself.
+        let request = CatchUp.missed(in: chat, since: lastRun, before: CatchUp.cutoff(turn: [chat[2].id], sendsRequest: true))
+        XCTAssertTrue(request.isEmpty)
+    }
+
     func testALongChatKeepsItsNewestMessages() {
         let chat = (0..<40).map { line(.user, String(repeating: "\($0 % 10)", count: 1_000), at: Double($0)) }
         let note = CatchUp.note(chat)
