@@ -1,0 +1,32 @@
+VERDICT 1: RELOAD
+VERDICT 2: RELOAD
+VERDICT 3: RELOAD (Added ContentView.showDone)
+VERDICT 4: RELOAD (Added ItemRow.isFirst)
+VERDICT 5: RELOAD (Added Store.listName)
+VERDICT 6: RELOAD
+VERDICT 7: RELOAD (Gave Theme.spacing its new value)
+VERDICT 8: RELOAD
+VERDICT 9: RELOAD
+VERDICT 10: RELOAD (Added ContentView.compact)
+== run
+before: header=Groceries, row Milk, row Soap
+RELOAD 1: ok
+after1 (want it in, header=Shopping: a heading changes its words): header=Shopping, row Milk, row Soap
+RELOAD 2 (whole): ok
+after2 (want it in, summary 2 items: a new view is added under the heading): header=Shopping, row Milk, row Soap, summary 2 items
+RELOAD 3 (whole): ok
+after3 (want it in, showDone=false: the window view gains @State): header=Shopping showDone=false, row Milk, row Soap, summary 2 items
+RELOAD 4 (whole): ok
+after4 (want it in, Milk first=true: a row gains a parameter its parent passes): header=Shopping showDone=false, row Milk first=true, row Soap first=false, summary 2 items
+RELOAD 5 (whole): ok
+after5 (want it in, list=Weekly: the model the App holds gains a property): header=Shopping showDone=false list=Weekly, row Milk first=true, row Soap first=false, summary 2 items
+RELOAD 6 (whole): ok
+after6 (want it in, 3 kinds: an enum gains a case at its end): header=Shopping showDone=false list=Weekly, row Milk first=true, row Soap first=false, summary 2 items in 3 kinds
+RELOAD 7 (whole): ok
+after7 (want it in, spacing=12.0: a theme constant changes): header=Shopping showDone=false list=Weekly spacing=12.0, row Milk first=true, row Soap first=false, summary 2 items in 3 kinds
+RELOAD 8 (whole): ok
+after8 (want it in, food=1: the model gains a helper a view calls): food=1, header=Shopping showDone=false list=Weekly spacing=12.0, row Milk first=true, row Soap first=false, summary 2 items in 3 kinds
+RELOAD 9 (whole): ok
+after9 (want it in, footer: a new file with a new view): food=1, footer, header=Shopping showDone=false list=Weekly spacing=12.0, row Milk first=true, row Soap first=false, summary 2 items in 3 kinds
+RELOAD 10 (whole): ok
+after10 (want it in, compact=false: a setting is added with @AppStorage): food=1, footer, header=Shopping showDone=false list=Weekly spacing=12.0 compact=false, row Milk first=true, row Soap first=false, summary 2 items in 3 kinds

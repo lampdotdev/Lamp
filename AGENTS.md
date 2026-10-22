@@ -1429,7 +1429,9 @@ asked (`LAMP_LIVE_CASES=1 swift test --filter LiveCasesTests`, a few minutes wit
 `LAMP_LIVE_CASES_RECORD=1` writes the expectations instead of checking them: after a change to anything above,
 run them all, read every difference as a change of behaviour (the first line of each print says what's wanted),
 and record only what's meant. A new kind of change gets a case: its sources, its edits, and a print of what the
-app should see, with what's wanted in the print's words.
+app should see, with what's wanted in the print's words. One case, `r23-real-app`, is shaped like Lamp's own scaffold (an App that makes the
+window's view and holds the model, child views, a model, a theme) and runs the ten edits agents make most, one after
+another, each wanted in live: a change that sends any of them to Reload is a regression however narrow its own case.
 
 Code already running keeps the version it started with (a closure given to a Timer, a loop in a Task, an observer):
 calls go to new code, but a closure already handed out is the old one. `Agent.liveNote` asks for loops and timers

@@ -1,0 +1,45 @@
+import Foundation
+import SwiftUI
+import AppKit
+@main struct Main { static func main() { MainActor.assumeIsolated {
+    setvbuf(stdout, nil, _IONBF, 0)
+    UserDefaults.standard.removeObject(forKey: "r23-real-app-compact")
+    NSApplication.shared.setActivationPolicy(.prohibited)
+    let host = NSHostingView(rootView: ContentView().environment(Store()))
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 300), styleMask: [.borderless], backing: .buffered, defer: false)
+    window.contentView = host
+    func settle() { for _ in 0..<6 { host.layoutSubtreeIfNeeded(); RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05)) } }
+    settle()
+    print("before:", Log.take())
+    reload(1)
+    settle()
+    print("after1 (want it in, header=Shopping: a heading changes its words):", Log.take())
+    reload(2)
+    settle()
+    print("after2 (want it in, summary 2 items: a new view is added under the heading):", Log.take())
+    reload(3)
+    settle()
+    print("after3 (want it in, showDone=false: the window view gains @State):", Log.take())
+    reload(4)
+    settle()
+    print("after4 (want it in, Milk first=true: a row gains a parameter its parent passes):", Log.take())
+    reload(5)
+    settle()
+    print("after5 (want it in, list=Weekly: the model the App holds gains a property):", Log.take())
+    reload(6)
+    settle()
+    print("after6 (want it in, 3 kinds: an enum gains a case at its end):", Log.take())
+    reload(7)
+    settle()
+    print("after7 (want it in, spacing=12.0: a theme constant changes):", Log.take())
+    reload(8)
+    settle()
+    print("after8 (want it in, food=1: the model gains a helper a view calls):", Log.take())
+    reload(9)
+    settle()
+    print("after9 (want it in, footer: a new file with a new view):", Log.take())
+    reload(10)
+    settle()
+    print("after10 (want it in, compact=false: a setting is added with @AppStorage):", Log.take())
+    _ = window
+}}}
