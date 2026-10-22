@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (what the app reads only at launch changed (the code it calls))
+== run
+before: Open, Quit
+RELOAD 1: REOPEN what the app reads only at launch changed (the code it calls)
+after1 (want Open, Pause, Quit, or a reopen: an observable model's method the app delegate calls builds the menu once, and the change is in that method): Open, Quit
+before: Open, Pause, Quit
+RELOAD 1: in the restart
+after1 (want Open, Pause, Quit, or a reopen: an observable model's method the app delegate calls builds the menu once, and the change is in that method): Open, Pause, Quit

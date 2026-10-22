@@ -332,9 +332,19 @@ enum LiveReload {
         let conformed = conformances(inLayout: layout)
         let observed = Set(byType(layout).filter { $0.value.contains { $0.contains("\t_$observationRegistrar") } }.map(\.key))
         let stateTypes = conformed.of.filter { !$0.value.isDisjoint(with: ["View", "ObservableObject"]) }.map(\.key) + observed
-        let stateRanges = stateTypes.filter { !names.contains(bare($0)) }.flatMap { type in
+        // Only what makes their state, their initializers and stored properties' starting values: a method of theirs
+        // that launch code calls (a delegate's `model.installMenu()`) runs once like any other.
+        let scopes = stateTypes.filter { !names.contains(bare($0)) }.flatMap { type in
             (declarations.types[type].map { [$0] } ?? []) + (declarations.extensions[bare(type)] ?? [])
         }
+        let initializer = try! NSRegularExpression(pattern: #"^\s*(?:@\w+\s+|\w+\s+)*init\b"#)
+        let initializers = declarations.bodies.filter { body in
+            scopes.contains { SwiftSource.within(body.start, $0) }
+                && SwiftSource.text(of: body, files: &files).map { initializer.firstMatch(in: $0, range: NSRange($0.startIndex..., in: $0)) != nil } == true
+        }
+        let startingValues = declarations.bindings.filter { binding in scopes.contains { SwiftSource.within(binding.start, $0) } }
+            .flatMap { $0.entries.compactMap(\.initial) }
+        let stateRanges = initializers + startingValues
         // Into what an initializer makes as it starts (`let menu = makeMenu()`), the one the compiler wrote included:
         // the code those starting values call, not the values themselves, which are state like any object's (a model
         // the App holds may gain a property as any other).
@@ -2863,10 +2873,12 @@ enum LiveSlots {
         // of cases holds, which is the room their values take and what the open app's generic coding lays out by.
         var compilerKeys = Set<String>()
         for (type, members) in old where type.hasSuffix(".CodingKeys") && declarations.types[type] == nil {
-            guard let current = new[type], current != members, !casesAdded(type, members, current) else { continue }
+            guard let current = new[type], current != members else { continue }
             let owner = String(type.dropLast(".CodingKeys".count))
             let written = handWrittenCoding(owner, in: after)
             func caseCount(_ entries: [String]) -> Int { entries.filter { $0.contains("\tcase ") }.count }
+            // Cases added at the end too: no grown enum's metadata is brought up to date for these keys, so a type's own
+            // coding would meet the open app's count (its optional's nil among them).
             if written.decodes || written.encodes, caseCount(members) != caseCount(current) {
                 return .refused("\(LiveReload.spoken(owner))'s own coding reads the keys Swift makes for it, which would number other than the open app's")
             }
