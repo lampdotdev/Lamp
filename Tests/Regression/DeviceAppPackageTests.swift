@@ -21,6 +21,11 @@ final class DeviceAppPackageTests: XCTestCase {
         let identity = MSIX.Identity(name: "Lamp.demo", publisher: "CN=LampTest", version: "1.0.0.0")
         XCTAssertEqual(identity.fullName, "Lamp.demo_1.0.0.0_neutral__t1a59ncyrzgcm")
         XCTAssertEqual(identity.appUserModelID, "Lamp.demo_t1a59ncyrzgcm!App")
+        // Two builds in one minute still get a newer version each, which Windows needs to replace the package.
+        let now = Date()
+        let first = MSIX.version(at: now), second = MSIX.version(at: now, after: first)
+        XCTAssertNotEqual(first, second)
+        XCTAssertTrue(first.split(separator: ".").map { Int($0)! }.lexicographicallyPrecedes(second.split(separator: ".").map { Int($0)! }))
     }
 
     /// The package step's zip is read as plain files only: nothing above its top, no links.
@@ -43,6 +48,13 @@ final class DeviceAppPackageTests: XCTestCase {
         XCTAssertEqual(try MSIX.files(inZip: try zip(["index.html"])).map(\.path), ["index.html"])
         XCTAssertThrowsError(try MSIX.files(inZip: try zip(["-y", "secret"])), "a link isn't packaged")
         XCTAssertThrowsError(try MSIX.files(inZip: try zip(["../Web/index.html"])), "nothing above the zip's top")
+        // A zip cut short is refused, never read past its end.
+        let whole = try zip(["index.html"])
+        for cut in [whole.count - 30, whole.count / 2, 40] {
+            var broken = whole.prefix(cut) + whole.suffix(22)
+            broken.replaceSubrange(broken.count - 6 ..< broken.count - 2, with: Data([0, 0, 0, 0]))
+            XCTAssertThrowsError(try MSIX.files(inZip: Data(broken)))
+        }
     }
 
     /// A cookie the device set goes back only as a header, and base64 is only of Lamp's own values.
@@ -51,6 +63,7 @@ final class DeviceAppPackageTests: XCTestCase {
         XCTAssertNotNil(Placeholders.problem("cookie:CSRF-Token", in: .path, fields: []))
         XCTAssertNil(Placeholders.problem("base64:packageFullName", in: .path, fields: []))
         XCTAssertNotNil(Placeholders.problem("base64:field:password", in: .path, fields: ["password"]))
+        XCTAssertNotNil(Placeholders.problem("base64:signIn", in: .path, fields: []), "a sign-in isn't carried into a path by encoding it")
         let filled = try Placeholders.fill("/api/app?package={base64:packageFullName}", ["packageFullName": "Lamp.a_1.0.0.0_neutral__x"], in: .path)
         // The value's own "+", "/" and "=" can't change the query they're put in.
         XCTAssertEqual(filled, "/api/app?package=TGFtcC5hXzEuMC4wLjBfbmV1dHJhbF9feA%3D%3D")

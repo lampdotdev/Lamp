@@ -112,10 +112,11 @@ enum DeviceApps {
     /// Lamp's signature, beside the certificate the device installs with it and the identity the bridge launches by.
     private static func wrapMSIX(_ zip: Data, for project: LampProject, start: String) throws {
         let files = try MSIX.files(inZip: zip)
-        let identity = MSIX.Identity(name: MSIX.identityName(for: project.id), publisher: MSIX.publisher, version: MSIX.version())
+        let folder = buildFolder(for: project)
+        let previous = (try? Data(contentsOf: folder.appendingPathComponent("identity.json"))).flatMap { try? JSONDecoder().decode(MSIX.Identity.self, from: $0) }
+        let identity = MSIX.Identity(name: MSIX.identityName(for: project.id), publisher: MSIX.publisher, version: MSIX.version(after: previous?.version))
         let icon = AppFile.read(Icons.squareURL(project), in: project).flatMap(NSImage.init(data:))
         let package = try MSIX.package(payload: files, displayName: project.name, identity: identity, start: start, icon: icon)
-        let folder = buildFolder(for: project)
         try package.write(to: packageURL(for: project), options: .atomic)
         try MSIX.certificate().write(to: folder.appendingPathComponent("certificate.cer"), options: .atomic)
         try JSONEncoder().encode(identity).write(to: folder.appendingPathComponent("identity.json"), options: .atomic)

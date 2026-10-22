@@ -48,10 +48,19 @@ enum MSIX {
         return "Lamp." + String((plain.isEmpty ? "app" : plain).prefix(40))
     }
 
-    /// A version that only goes up, so each build replaces the last: minutes since 2026, in two of the four parts.
-    static func version(at date: Date = Date()) -> String {
+    /// A version newer than `previous`, so each build replaces the last (Windows refuses a changed package under a
+    /// version it has): minutes since 2026 in two of the four parts, or the previous one's next revision when two builds
+    /// fall in the same minute.
+    static func version(at date: Date = Date(), after previous: String? = nil) -> String {
         let minutes = max(0, Int(date.timeIntervalSince1970 - 1_767_225_600) / 60)
-        return "1.\(minutes >> 16).\(minutes & 0xFFFF).0"
+        let byTime = [1, minutes >> 16, minutes & 0xFFFF, 0]
+        var next = previous?.split(separator: ".").compactMap { Int($0) } ?? []
+        guard next.count == 4, !next.lexicographicallyPrecedes(byTime) else { return byTime.map(String.init).joined(separator: ".") }
+        for index in stride(from: 3, through: 0, by: -1) {
+            if next[index] < 0xFFFF { next[index] += 1; break }
+            next[index] = 0
+        }
+        return next.map(String.init).joined(separator: ".")
     }
 
     // MARK: Making a package
@@ -239,7 +248,8 @@ enum MSIX {
     /// zip's top, no folder entries), and a total Lamp is willing to hold.
     static func files(inZip zip: Data) throws -> [(path: String, data: Data)] {
         let bytes = [UInt8](zip)
-        func u16(_ at: Int) -> Int { at + 1 < bytes.count ? Int(bytes[at]) | Int(bytes[at + 1]) << 8 : 0 }
+        func u16(_ at: Int) -> Int { at >= 0 && at + 1 < bytes.count ? Int(bytes[at]) | Int(bytes[at + 1]) << 8 : 0 }
+        let unreadable = Failure(message: "The package step's zip can't be read.")
         func u32(_ at: Int) -> Int { u16(at) | u16(at + 2) << 16 }
         guard bytes.count >= 22, let end = stride(from: bytes.count - 22, through: max(0, bytes.count - 22 - 65535), by: -1)
             .first(where: { u32($0) == 0x06054b50 }) else { throw Failure(message: "The package step's output isn't a zip.") }
@@ -247,10 +257,12 @@ enum MSIX {
         var files: [(String, Data)] = []
         var total = 0
         for _ in 0..<u16(end + 10) {
-            guard u32(at) == 0x02014b50 else { throw Failure(message: "The package step's zip can't be read.") }
+            // The fixed header and each part after it must be inside the zip before anything is read from them.
+            guard at >= 0, at + 46 <= bytes.count, u32(at) == 0x02014b50 else { throw unreadable }
             let method = u16(at + 10), compressed = u32(at + 20), size = u32(at + 24)
             let nameLength = u16(at + 28), extraLength = u16(at + 30), commentLength = u16(at + 32)
             let attributes = u32(at + 38), offset = u32(at + 42)
+            guard at + 46 + nameLength + extraLength + commentLength <= bytes.count else { throw unreadable }
             let name = String(decoding: bytes[(at + 46)..<(at + 46 + nameLength)], as: UTF8.self)
             at += 46 + nameLength + extraLength + commentLength
             if name.hasSuffix("/") { continue }
@@ -260,9 +272,9 @@ enum MSIX {
             guard !name.hasPrefix("/"), !name.contains("\\"), !parts.contains(".."), !parts.isEmpty else {
                 throw Failure(message: "The package step's zip holds \(name), which isn't a plain path.")
             }
-            guard u32(offset) == 0x04034b50 else { throw Failure(message: "The package step's zip can't be read.") }
+            guard offset + 30 <= bytes.count, u32(offset) == 0x04034b50 else { throw unreadable }
             let dataStart = offset + 30 + u16(offset + 26) + u16(offset + 28)
-            guard dataStart + compressed <= bytes.count else { throw Failure(message: "The package step's zip is cut short.") }
+            guard dataStart <= bytes.count, compressed <= bytes.count - dataStart else { throw Failure(message: "The package step's zip is cut short.") }
             total += size
             guard total <= DeviceHTTP.limit else { throw Failure(message: "The app is bigger than Lamp sends to a device.") }
             let raw = Data(bytes[dataStart..<(dataStart + compressed)])

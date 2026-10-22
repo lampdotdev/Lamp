@@ -374,6 +374,8 @@ struct IntegrationRunner {
                         try await Task.sleep(for: .seconds(2))
                         answer = try await DeviceHTTP.send(request, to: try address, values: values, files: files, pins: DeviceTLS.Pins(deviceID: device.id))
                     }
+                    // Still working when the time is up is no answer: the step didn't finish.
+                    if answer.status == 204 { throw Failure(message: "\(device.name) was still working on \(request.path) after \(poll) seconds.") }
                 }
                 cookies.merge(answer.cookies) { $1 }
                 guard answer.ok else {

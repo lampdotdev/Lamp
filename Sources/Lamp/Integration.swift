@@ -321,7 +321,8 @@ enum Placeholders {
         // One of Lamp's values in base64, as some devices take an id in a query.
         if name.hasPrefix("base64:") {
             let inner = String(name.dropFirst("base64:".count))
-            return lamp.contains(inner) ? nil : "{\(name)} must be base64 of one of Lamp's values, such as {base64:packageFullName}"
+            // Only of a value that's not secret: encoding one mustn't carry it past where it may go.
+            return lamp.subtracting(["signIn"]).contains(inner) ? nil : "{\(name)} must be base64 of one of Lamp's values that isn't secret, such as {base64:packageFullName}"
         }
         guard lamp.contains(name) else {
             return "{\(name)} isn't a value Lamp fills (they are \(lamp.sorted().map { "{\($0)}" }.joined(separator: ", ")), {field:<key>} and {read:<step>})"
