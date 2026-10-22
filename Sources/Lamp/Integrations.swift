@@ -193,15 +193,36 @@ enum Integrations {
         return recent.values.map(\.device)
     }
 
+    /// Where the device at an address says its UPnP description is now, from its answer to the integration's own SSDP
+    /// search: only a description on the device itself, over plain HTTP.
+    static func describedAt(_ address: String, by integration: Integration) async -> Request? {
+        for target in integration.find.compactMap(\.ssdp) {
+            for answer in await DeviceProbe.ssdp(target) where answer.address == address {
+                guard let location = answer.location, let url = URL(string: location), url.scheme == "http", url.host == address else { continue }
+                return Request(port: url.port ?? 80, path: (url.path.isEmpty ? "/" : url.path) + (url.query.map { "?" + $0 } ?? ""))
+            }
+        }
+        return nil
+    }
+
     /// The device at an address, read from its own answers as the integration says. Nil when it doesn't answer as one.
     static func identify(_ integration: Integration, at address: String) async -> Device? {
         var answers: [Request: DeviceHTTP.Answer] = [:]
+        var description: Request??
         func read(_ read: Integration.Read?) async -> String? {
             guard let read else { return nil }
-            if answers[read.http] == nil, let answer = try? await DeviceHTTP.send(read.http, to: address, values: [:]), answer.ok {
-                answers[read.http] = answer
+            var request = read.http
+            if read.description == true {
+                if description == nil { description = await describedAt(address, by: integration) }
+                request = description ?? nil
             }
-            return answers[read.http].flatMap { DeviceHTTP.value(json: read.json, xml: read.xml, in: $0) }?.trimmed.nilIfEmpty
+            guard let request else { return nil }
+            if answers[request] == nil, let answer = try? await DeviceHTTP.send(request, to: address, values: [:]), answer.ok {
+                answers[request] = answer
+            }
+            let value = answers[request].flatMap { DeviceHTTP.value(json: read.json, xml: read.xml, in: $0) }?.trimmed.nilIfEmpty
+            if let needed = read.contains, !(value ?? "").localizedCaseInsensitiveContains(needed) { return nil }
+            return value
         }
         let identity = integration.identity
         guard let serial = await read(identity.id), let model = await read(identity.model) else { return nil }
@@ -340,11 +361,34 @@ struct IntegrationRunner {
     func run(_ sequence: [IntegrationAction], extra: [String: String] = [:], files: [String: URL] = [:]) async throws -> Outcome {
         await prepare()
         var outcome = Outcome()
+        // Cookies the device set earlier in this sequence, sent back as `{cookie:<name>}` (a CSRF token).
+        var cookies: [String: String] = [:]
         for action in sequence {
-            let values = values(extra)
+            let values = values(extra).merging(cookies.reduce(into: [:]) { $0["cookie:" + $1.key] = $1.value }) { $1 }
             if let request = action.http {
-                let answer = try await DeviceHTTP.send(request, to: try address, values: values, files: files, pins: DeviceTLS.Pins(deviceID: device.id))
-                guard answer.ok else { throw Failure(message: "\(device.name) answered \(answer.status) to \(request.path).") }
+                var answer = try await DeviceHTTP.send(request, to: try address, values: values, files: files, pins: DeviceTLS.Pins(deviceID: device.id))
+                // A device still working on what it was sent says so with 204 until it's done.
+                if let poll = request.poll {
+                    let until = Date().addingTimeInterval(TimeInterval(min(max(poll, 2), 600)))
+                    while answer.status == 204, Date() < until {
+                        try await Task.sleep(for: .seconds(2))
+                        answer = try await DeviceHTTP.send(request, to: try address, values: values, files: files, pins: DeviceTLS.Pins(deviceID: device.id))
+                    }
+                    // Still working when the time is up is no answer: the step didn't finish.
+                    if answer.status == 204 { throw Failure(message: "\(device.name) was still working on \(request.path) after \(poll) seconds.") }
+                }
+                cookies.merge(answer.cookies) { $1 }
+                guard answer.ok else {
+                    let said = DeviceApps.plain(answer.text)
+                    throw Failure(message: "\(device.name) answered \(answer.status) to \(request.path)" + (said.isEmpty ? "." : ": " + said))
+                }
+                if let expect = request.expect {
+                    let value = DeviceHTTP.value(json: expect.json, xml: expect.xml, in: answer) ?? ""
+                    let met = expect.equals.map { value.caseInsensitiveCompare($0) == .orderedSame } ?? expect.contains.map { value.localizedCaseInsensitiveContains($0) } ?? true
+                    guard met else {
+                        throw Failure(message: "\(device.name) said: " + DeviceApps.plain(answer.text))
+                    }
+                }
                 switch request.keep {
                 case "picture": outcome.picture = answer.body
                 case "key":

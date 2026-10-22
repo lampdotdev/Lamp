@@ -77,6 +77,7 @@ enum DeviceApps {
     }
 
     static func packageURL(for project: LampProject) -> URL {
+        if integration(for: project)?.app?.declared?.wrap == "msix" { return buildFolder(for: project).appendingPathComponent("package.msix") }
         let output = integration(for: project)?.app?.declared?.output ?? "package"
         let suffix = URL(fileURLWithPath: output).pathExtension
         return buildFolder(for: project).appendingPathComponent(suffix.isEmpty ? "package" : "package." + suffix)
@@ -100,7 +101,33 @@ enum DeviceApps {
         }
         guard data.count <= DeviceHTTP.limit else { throw Failure(message: "The package is bigger than Lamp sends to a device.") }
         try FileManager.default.createDirectory(at: buildFolder(for: project), withIntermediateDirectories: true)
-        try data.write(to: packageURL(for: project), options: .atomic)
+        if declared.wrap == "msix" {
+            try wrapMSIX(data, for: project, start: declared.start ?? "index.html")
+        } else {
+            try data.write(to: packageURL(for: project), options: .atomic)
+        }
+    }
+
+    /// The Windows package Lamp makes of the package step's zip: its own manifest, the app's icon as its logos, and
+    /// Lamp's signature, beside the certificate the device installs with it and the identity the bridge launches by.
+    private static func wrapMSIX(_ zip: Data, for project: LampProject, start: String) throws {
+        let files = try MSIX.files(inZip: zip)
+        let folder = buildFolder(for: project)
+        let previous = (try? Data(contentsOf: folder.appendingPathComponent("identity.json"))).flatMap { try? JSONDecoder().decode(MSIX.Identity.self, from: $0) }
+        let identity = MSIX.Identity(name: MSIX.identityName(for: project.id), publisher: MSIX.publisher, version: MSIX.version(after: previous?.version))
+        let icon = AppFile.read(Icons.squareURL(project), in: project).flatMap(NSImage.init(data:))
+        let package = try MSIX.package(payload: files, displayName: project.name, identity: identity, start: start, icon: icon)
+        try package.write(to: packageURL(for: project), options: .atomic)
+        try MSIX.certificate().write(to: folder.appendingPathComponent("certificate.cer"), options: .atomic)
+        try JSONEncoder().encode(identity).write(to: folder.appendingPathComponent("identity.json"), options: .atomic)
+    }
+
+    /// The files a bridge's form may send: the package, and for a wrapped one Lamp's certificate.
+    static func files(for project: LampProject) -> [String: URL] {
+        var files = ["package": packageURL(for: project)]
+        let certificate = buildFolder(for: project).appendingPathComponent("certificate.cer")
+        if FileManager.default.fileExists(atPath: certificate.path) { files["certificate"] = certificate }
+        return files
     }
 
     // MARK: On the device
@@ -149,7 +176,7 @@ enum DeviceApps {
         while true {
             do {
                 guard await stillWanted() else { throw Failure(message: "Stopped.") }
-                let outcome = try await runner.run(install, extra: values(project), files: ["package": packageURL(for: project)])
+                let outcome = try await runner.run(install, extra: values(project), files: files(for: project))
                 run.installAnswer = outcome.answers.last.map(plain)
                 guard await stillWanted() else { throw Failure(message: "Stopped.") }
                 if let launch = bridge.launch, !launch.isEmpty { _ = try await runner.run(launch, extra: values(project)) }
@@ -183,7 +210,16 @@ enum DeviceApps {
         _ = try await IntegrationRunner(integration: integration, device: device).run(use, extra: values(project).merging(["key": name]) { $1 })
     }
 
-    private static func values(_ project: LampProject) -> [String: String] { ["appID": project.id] }
+    /// Lamp's values for the bridge: the app's id, and for a wrapped package the names Windows gives it.
+    private static func values(_ project: LampProject) -> [String: String] {
+        var values = ["appID": project.id]
+        if let data = try? Data(contentsOf: buildFolder(for: project).appendingPathComponent("identity.json")),
+           let identity = try? JSONDecoder().decode(MSIX.Identity.self, from: data) {
+            values["packageFullName"] = identity.fullName
+            values["appUserModelID"] = identity.appUserModelID
+        }
+        return values
+    }
 
     /// A device's answer as plain words: an HTML page's text without its tags and scripts, cut to a few lines.
     static func plain(_ answer: String) -> String {
