@@ -186,6 +186,27 @@ enum Scanner {
     private static let errorAttr = attrgroup_t(truncatingIfNeeded: ATTR_CMN_ERROR)
     private static let allocSizeAttr = attrgroup_t(truncatingIfNeeded: ATTR_FILE_ALLOCSIZE)
 
+    /// Lists a folder with readdir and a stat for each entry, for a file system getattrlistbulk doesn't work on.
+    private static func readSlowly(_ path: String, add: (Bool, Bool, dev_t, Int64, () -> String) -> Void) -> Bool {
+        guard let dir = opendir(path) else { return false }
+        defer { closedir(dir) }
+        let fd = dirfd(dir)
+        while let entry = readdir(dir) {
+            var st = stat()
+            let name: String? = withUnsafePointer(to: &entry.pointee.d_name) { raw in
+                raw.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { cname -> String? in
+                    if cname[0] == 46 && (cname[1] == 0 || (cname[1] == 46 && cname[2] == 0)) { return nil } // . and ..
+                    guard fstatat(fd, cname, &st, AT_SYMLINK_NOFOLLOW) == 0 else { return nil }
+                    return String(cString: cname)
+                }
+            }
+            guard let name else { continue }
+            let type = st.st_mode & S_IFMT
+            add(type == S_IFDIR, type == S_IFREG, st.st_dev, Int64(st.st_blocks) * 512, { name })
+        }
+        return true
+    }
+
     private static func scanFolder(_ folder: Node, path: String, device: dev_t, depth: Int, skip: Set<String>, progress: ScanProgress) {
         defer { folder.markComplete() }
         guard !progress.cancelled else { return }
@@ -211,6 +232,28 @@ enum Scanner {
         var fileCount = 0
         let prefix = path.hasSuffix("/") ? path : path + "/"
 
+        // One entry of the folder, however it was read. The name is made only where it's shown.
+        func add(isFolder: Bool, isFile: Bool, device entryDevice: dev_t, size: Int64, name: () -> String) {
+            if isFolder {
+                if entryDevice != device { return } // another volume
+                let entryName = name()
+                let sub = Node(name: entryName, kind: .folder)
+                subfolders.append((prefix + entryName, sub))
+                children.append(sub)
+            } else if isFile {
+                fileBytes += size
+                fileCount += 1
+                if size >= smallFileLimit {
+                    children.append(Node(name: name(), kind: .file, size: size, fileCount: 1))
+                } else {
+                    smallSize += size
+                    smallCount += 1
+                    // Only a folder's one small file is shown by name; the rest are counted.
+                    if smallCount == 1 { lastSmall = (name(), size) }
+                }
+            }
+        }
+
         // getattrlistbulk hands back the name, type, device and allocated size of many entries in one call, where
         // readdir and a stat for each entry take one call per file. Each entry in the buffer is its length, the
         // attributes it holds, then those attributes in a fixed order, each a multiple of 4 bytes.
@@ -222,9 +265,14 @@ enum Scanner {
         let buffer = UnsafeMutableRawPointer.allocate(byteCount: bufferSize, alignment: 8)
         defer { buffer.deallocate() }
 
+        var failed = false
+        var failure: Int32 = 0
+        var read = 0
         while true {
             let count = getattrlistbulk(fd, &request, buffer, bufferSize, 0)
-            if count <= 0 { break }
+            if count < 0 { failed = true; failure = errno; break }
+            if count == 0 { break }
+            read += Int(count)
             var entry = buffer
             for _ in 0..<count {
                 let length = Int(entry.loadUnaligned(as: UInt32.self))
@@ -233,9 +281,9 @@ enum Scanner {
                 let returned = field.loadUnaligned(as: attribute_set_t.self)
                 field += MemoryLayout<attribute_set_t>.size
                 if returned.commonattr & errorAttr != 0 {
-                    let failed = field.loadUnaligned(as: UInt32.self)
+                    let entryError = field.loadUnaligned(as: UInt32.self)
                     field += 4
-                    if failed != 0 { continue }
+                    if entryError != 0 { continue }
                 }
                 guard returned.commonattr & nameAttr != 0 else { continue }
                 let nameField = field
@@ -247,26 +295,15 @@ enum Scanner {
                 field += 4
                 let name = { String(cString: (nameField + nameOffset).assumingMemoryBound(to: CChar.self)) }
 
-                if type == VDIR.rawValue {
-                    if entryDevice != device { continue } // another volume
-                    let entryName = name()
-                    let sub = Node(name: entryName, kind: .folder)
-                    subfolders.append((prefix + entryName, sub))
-                    children.append(sub)
-                } else if type == VREG.rawValue {
-                    let size = returned.fileattr & allocSizeAttr != 0 ? field.loadUnaligned(as: off_t.self) : 0
-                    fileBytes += size
-                    fileCount += 1
-                    if size >= smallFileLimit {
-                        children.append(Node(name: name(), kind: .file, size: size, fileCount: 1))
-                    } else {
-                        smallSize += size
-                        smallCount += 1
-                        // Only a folder's one small file is shown by name; the rest are counted.
-                        if smallCount == 1 { lastSmall = (name(), size) }
-                    }
-                }
+                let size = type == VREG.rawValue && returned.fileattr & allocSizeAttr != 0 ? field.loadUnaligned(as: off_t.self) : 0
+                add(isFolder: type == VDIR.rawValue, isFile: type == VREG.rawValue, device: entryDevice, size: size, name: name)
             }
+        }
+        // A file system that can't list this way (some network and third-party ones) is read the slow way; anything
+        // else that went wrong leaves the folder counted as unreadable, with what was read so far.
+        if failed, !((failure == ENOTSUP || failure == EINVAL) && read == 0 && readSlowly(path, add: add)) {
+            folder.unreadable = true
+            progress.addUnreadable()
         }
         close(fd)
 

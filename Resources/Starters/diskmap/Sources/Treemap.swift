@@ -72,6 +72,10 @@ struct TreemapContent {
     /// Space set aside for what hasn't been measured yet.
     var gap: CGRect?
     var gapSize: Int64 = 0
+    /// Space for the items beyond the map's limit, drawn as one tile so every item keeps its share of the map.
+    var more: CGRect?
+    var moreCount = 0
+    var moreSize: Int64 = 0
 }
 
 enum TileColors {
@@ -88,14 +92,25 @@ enum TileColors {
 }
 
 func buildTiles(for folder: Node, pending: Int64, in rect: CGRect) -> TreemapContent {
-    let items = Array(folder.sortedChildren.map { ($0, $0.size) }.filter { $0.1 > 0 }.prefix(400))
+    // At most 400 tiles at the top and 150 inside each; what's left over keeps its area, so the map's shares match
+    // the table's.
+    let all = folder.sortedChildren.map { ($0, $0.size) }.filter { $0.1 > 0 }
+    let items = Array(all.prefix(400))
+    let rest = all.dropFirst(400)
+    let restSize = rest.reduce(Int64(0)) { $0 + $1.1 }
     var values = items.map { Double($0.1) }
+    if restSize > 0 { values.append(Double(restSize)) }
     if pending > 0 { values.append(Double(pending)) }
     var rects = TreemapLayout.layout(values, in: rect)
     var content = TreemapContent()
     if pending > 0 {
         let gap = rects.removeLast()
         if gap.width > 1, gap.height > 1 { content.gap = gap; content.gapSize = pending }
+    }
+    if restSize > 0 {
+        content.more = rects.removeLast()
+        content.moreCount = rest.count
+        content.moreSize = restSize
     }
     var folderIndex = 0
     content.tiles = zip(items, rects).map { item, r in
@@ -105,11 +120,16 @@ func buildTiles(for folder: Node, pending: Int64, in rect: CGRect) -> TreemapCon
         var inner: [(Node, CGRect)] = []
         var header: CGFloat = 0
         if node.kind == .folder, r.width > 50, r.height > 44 {
-            let kids = Array(node.sortedChildren.map { ($0, $0.size) }.filter { $0.1 > 0 }.prefix(150))
+            let allKids = node.sortedChildren.map { ($0, $0.size) }.filter { $0.1 > 0 }
+            let kids = Array(allKids.prefix(150))
             if !kids.isEmpty {
                 header = 18
                 let area = CGRect(x: r.minX + 2, y: r.minY + header, width: r.width - 4, height: r.height - header - 2)
-                let kidRects = TreemapLayout.layout(kids.map { Double($0.1) }, in: area)
+                // The rest of the folder's items keep their area, left in the tile's own colour.
+                let unplaced = max(0, size - kids.reduce(Int64(0)) { $0 + $1.1 })
+                var kidValues = kids.map { Double($0.1) }
+                if unplaced > 0 { kidValues.append(Double(unplaced)) }
+                let kidRects = TreemapLayout.layout(kidValues, in: area)
                 inner = Array(zip(kids.map(\.0), kidRects))
             }
         }
@@ -133,6 +153,7 @@ struct TreemapView: View {
             let tiles = content.tiles
             Canvas { context, _ in
                 draw(tiles, in: &context)
+                if let more = content.more { drawMore(more, count: content.moreCount, size: content.moreSize, in: &context) }
                 if let gap = content.gap { drawGap(gap, size: content.gapSize, in: &context) }
             }
             .onContinuousHover { phase in
@@ -172,6 +193,16 @@ struct TreemapView: View {
         let text = Text("Not measured yet").font(.caption.weight(.semibold)).foregroundColor(.secondary)
             + Text("\nabout " + formatBytes(size)).font(.caption2).foregroundColor(.secondary.opacity(0.8))
         c.draw(c.resolve(text), at: CGPoint(x: r.midX, y: r.midY), anchor: .center)
+    }
+
+    private func drawMore(_ rect: CGRect, count: Int, size: Int64, in context: inout GraphicsContext) {
+        let r = rect.insetBy(dx: 0.5, dy: 0.5)
+        guard r.width > 0, r.height > 0 else { return }
+        context.fill(Path(roundedRect: r, cornerRadius: min(4, r.width / 4, r.height / 4)),
+                     with: .color(Color(nsColor: .systemGray).opacity(0.45)))
+        if r.width > 44, r.height > 16 {
+            label("\(count.formatted()) more items", size: r.height > 32 ? size : nil, in: r, context: &context, font: .caption.weight(.semibold))
+        }
     }
 
     private func hit(_ p: CGPoint, _ tiles: [Tile]) -> (outer: Node, inner: Node?)? {

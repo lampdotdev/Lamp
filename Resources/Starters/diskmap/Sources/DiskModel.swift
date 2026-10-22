@@ -317,6 +317,7 @@ final class DiskModel: ObservableObject {
         for node in nodes where node.canTrash {
             do {
                 try FileManager.default.trashItem(at: node.url, resultingItemURL: nil)
+                forgetOverlapping(node.path)
                 if let current, node.contains(current) { self.current = node.parent }
                 selection.remove(node.id)
                 node.detach()
@@ -327,6 +328,24 @@ final class DiskModel: ObservableObject {
         revision += 1
         refreshUsage()
         if !failed.isEmpty { errorMessage = failed.joined(separator: "\n") }
+    }
+
+    /// Forgets the other locations' scans that hold `path` or lie inside it (Home holds an added folder, the disk
+    /// holds Home), since only the tree on screen knows the item went; they're measured again when chosen.
+    private func forgetOverlapping(_ path: String) {
+        // A scan of the disk reaches the home folder through the data volume's path.
+        func plain(_ p: String) -> String {
+            let data = "/System/Volumes/Data"
+            return p.hasPrefix(data + "/") ? String(p.dropFirst(data.count)) : p == data ? "/" : p
+        }
+        func within(_ inner: String, _ outer: String) -> Bool {
+            outer == "/" || inner == outer || inner.hasPrefix(outer.hasSuffix("/") ? outer : outer + "/")
+        }
+        let moved = plain(path)
+        for key in results.keys where key != location?.id {
+            let root = plain(key)
+            if within(moved, root) || within(root, moved) { results[key] = nil }
+        }
     }
 
     func openFullDiskAccessSettings() {

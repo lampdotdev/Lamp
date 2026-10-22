@@ -70,8 +70,8 @@ the gap) and "measuresAsking". Nothing else is kept.
 
 - Colours of the tiles: `TileColors.palette` and `TileColors.color(for:index:)`.
 - How the map is drawn (corners, labels, the gap's look): `TreemapView.draw`, `label`, `drawGap`.
-- How deep the map goes and how many tiles: `buildTiles` (400 at the top, 150 inside each, inner level only for
-  tiles bigger than 50×44).
+- How deep the map goes and how many tiles: `buildTiles` (400 at the top, the rest one "N more items" tile; 150
+  inside each, the rest left in the tile's colour; inner level only for tiles bigger than 50×44).
 - What counts as a small file: `Scanner.smallFileLimit`. What the scanner records per file (dates, kinds): more
   attributes asked of `getattrlistbulk` in `Scanner.scanFolder` (read back in the order of their bits, ATTR_CMN_ERROR first), kept on
   `Node`.
