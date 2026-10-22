@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: Weekly: ["Milk"], row Milk 2 litres
+RELOAD 1 (whole): ok
+after1 (want it in, [Milk] + [Eggs]: a plain struct the model keeps in an array loses a field): Weekly: ["Milk"] + ["Eggs"], row Milk 2 litres

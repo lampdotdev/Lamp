@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Item changed what it holds (no longer Item.note: String); Item lost note, and it's Hashable, whose own code reads every field it holds, a field kept in its place included)
+== run
+before: items=1
+RELOAD 1: REOPEN Item changed what it holds (no longer Item.note: String); Item lost note, and it's Hashable, whose own code reads every field it holds, a field kept in its place included
+after1 (want a plain reason: a Hashable struct loses a field, which its values compare and hash by): 
+before: items=1
+RELOAD 1: in the restart
+after1 (want a plain reason: a Hashable struct loses a field, which its values compare and hash by): 

@@ -1475,6 +1475,16 @@ carries its file's) is laid out by the library itself, which does it as the app 
 until the library's references to its own types are bound (`rebind`), since its accessor reads the class's description
 through them, and comes before the app's calls are pointed at the new code.
 
+A stored property taken out of a type the open app has (a view's `@State`, a parameter, a model's property, the old
+half of a rename) is kept in the live copy as a private field nothing reads, at its place (`LiveSlots.keptFields`):
+the type then holds what the open app's values hold, so their other fields keep their values, and the new code goes
+on without it. It's given its type's empty value (or an enum of the app's first case), never read, and being private
+with a value it's no argument of the initializer Swift makes; a wrapper's storage is kept with its wrapper (`@State`,
+`@Published`, an `@Observable` class's tracked property). It's put back at each change until the app reopens. Not in
+an Equatable, Hashable, Comparable or Codable type, whose own code reads every field, the kept one included; nor where
+the new code uses the name for something else, a field held `unowned`, another wrapper's, or a type with no value Lamp
+can write: those reopen the app, saying which.
+
 A file taken away doesn't reopen the app: its code stays in the open app, which the new code no longer calls, and a
 type it declared that something still holds shows as that holder changing. A type taken away is therefore no
 reason to reopen by itself (`layoutProblem`), but its layout is kept with the open app's until it reopens, so a type

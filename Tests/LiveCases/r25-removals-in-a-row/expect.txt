@@ -1,0 +1,13 @@
+VERDICT 1: RELOAD
+VERDICT 2: REOPEN (ContentView changed what it holds (no longer ContentView.__name: LazyState<String>); Panel lost b beside fields declared in one list, where Lamp can't put it back in its place)
+== run
+before: count=7 name=Eggs, count=7 name=Milk
+RELOAD 1 (whole): ok
+after1 (want it in, count=7: two @State of different types go before a private field): count=7
+RELOAD 2: REOPEN ContentView changed what it holds (no longer ContentView.__name: LazyState<String>); Panel lost b beside fields declared in one list, where Lamp can't put it back in its place
+after2 (want a plain reason: a field goes from a list declared together (var a, b, c)): 
+before: count=7
+RELOAD 1: in the restart
+after1 (want it in, count=7: two @State of different types go before a private field): 
+RELOAD 2: in the restart
+after2 (want a plain reason: a field goes from a list declared together (var a, b, c)): 
