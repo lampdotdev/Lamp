@@ -765,7 +765,9 @@ direction, OK clicking, Back with `Lamp.onBack` and leaving the app when nothing
 the TV preview (`TVPreview`): a window showing it at the TV's size, half scale, from the staged copy, where
 `look_at_app` pictures it and reads it as text (focusable things and text, with which has focus) and `use_app` presses
 remote keys (synthetic key events with TV key codes), clicks and types; the page's console goes to the app's log;
-each app keeps its own saved data there between openings, as a TV does. TVs are found on the network (`TVs.scan`:
+each app keeps its own saved data there between openings, as a TV does. Closing the window, by the person or by
+Lamp, ends the page (its sound and timers): WebKit runs a page as long as its web view lives, so the preview lets go of
+its script handlers and web view when its window closes. TVs are found on the network (`TVs.scan`:
 SSDP, then a Samsung TV's own API at port 8001, an LG TV's UPnP description) and listed with the other devices; a
 found TV is kept (`TVs.keep`, Lamp's TV folder) only once a setup step has worked, since a scan sees neighbours'
 TVs too. Setup is a window of its own per TV (`TVSetup`), each step checked by Lamp. Samsung: developer mode on with
