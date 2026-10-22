@@ -291,11 +291,12 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// Hidden unless Agent Details is on.
     var isDetail: Bool { kind == .detail || kind == .tool || kind == .summary }
 
-    /// "Worked for 4m 21s · $0.48"
+    /// "Worked for 4m 21s · $0.48", and "Worked for 4m 21s" when nothing was spent: a turn on a Claude or ChatGPT
+    /// sign-in, or on this Mac's own model. Only OpenRouter's calls (pi's, and the pictures painted) cost money.
     static func workSummary(seconds: Double, cost: Double) -> String {
         let total = Int(seconds.rounded())
         let time = total < 60 ? "\(total)s" : "\(total / 60)m \(total % 60)s"
-        return String(format: "Worked for %@ · $%.2f", time, cost)
+        return cost < 0.005 ? "Worked for \(time)" : String(format: "Worked for %@ · $%.2f", time, cost)
     }
 
     /// Older chats logged tool calls and run summaries as plain details, and named the engine in summaries.
