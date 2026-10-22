@@ -134,20 +134,22 @@ enum DeviceApps {
             // A device with nothing listening on its log's port still takes the app.
             run.streams = (try? await runner.run(logs).streams) ?? []
         }
-        do {
-            let outcome: IntegrationRunner.Outcome
+        // A device busy closing the app it's replacing can drop a connection, the upload's or the launch's just after
+        // it; a little later it's ready, so the pair is tried again a couple of times before Lamp gives up.
+        var tries = 0
+        while true {
             do {
-                outcome = try await runner.run(install, extra: values(project), files: ["package": packageURL(for: project)])
-            } catch let error as URLError where error.code == .networkConnectionLost {
-                // A device busy closing the app it's replacing can drop the upload once; the second try finds it ready.
-                try await Task.sleep(for: .seconds(2))
-                outcome = try await runner.run(install, extra: values(project), files: ["package": packageURL(for: project)])
+                let outcome = try await runner.run(install, extra: values(project), files: ["package": packageURL(for: project)])
+                run.installAnswer = outcome.answers.last.map(plain)
+                if let launch = bridge.launch, !launch.isEmpty { _ = try await runner.run(launch, extra: values(project)) }
+                break
+            } catch let error as URLError where error.code == .networkConnectionLost && tries < 2 {
+                tries += 1
+                try? await Task.sleep(for: .seconds(3))
+            } catch {
+                run.end()
+                throw error
             }
-            run.installAnswer = outcome.answers.last.map(plain)
-            if let launch = bridge.launch, !launch.isEmpty { _ = try await runner.run(launch, extra: values(project)) }
-        } catch {
-            run.end()
-            throw error
         }
         return run
     }
