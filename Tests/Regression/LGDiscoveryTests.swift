@@ -37,6 +37,14 @@ final class LGDiscoveryTests: XCTestCase {
         XCTAssertEqual(again?.id, first.id)
     }
 
+    func testATVKeptUnderAnotherServicesIDKeepsThatID() async throws {
+        // An earlier Lamp kept whichever description answered first: here the media renderer's.
+        let kept = TVs.Record(id: "lg:11111111-2222-4333-8444-000000001601", maker: "LG", name: "[LG] webOS TV NANO80ASA",
+                              model: "LG TV", modelID: "1.0", address: address, os: "webOS", osVersion: "", resolution: "")
+        let record = await TVs.lg(at: address, answers: try answers(), earlier: [kept]) { self.description(port: $0.port) }
+        XCTAssertEqual(record?.id, kept.id)
+    }
+
     func testAnUnknownDeviceIsReadFromTheDescriptionThatNamesIt() async throws {
         let device = await Integrations.described(address, answers: try answers()) { request, _ in
             self.description(port: request.port).map { DeviceHTTP.Answer(status: 200, body: $0) }

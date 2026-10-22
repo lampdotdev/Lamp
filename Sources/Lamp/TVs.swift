@@ -29,6 +29,8 @@ enum TVs {
         var duid: String?
         var developerIP: String?
         var developerMode = false
+        /// Every id the TV answered for, one per service (an LG TV has several); a TV kept under any of them is this one.
+        var udns: [String]? = nil
         var isSamsung: Bool { maker == "Samsung" }
     }
 
@@ -63,6 +65,7 @@ enum TVs {
                 keptOne.address = now.address
                 keptOne.developerMode = now.developerMode
                 keptOne.developerIP = now.developerIP
+                if let udns = now.udns { keptOne.udns = Array(Set(keptOne.udns ?? []).union(udns)).sorted() }
                 if keptOne.osVersion.isEmpty { keptOne.osVersion = now.osVersion }
                 keep(keptOne)
                 records.removeAll { $0.id == keptOne.id }
@@ -80,7 +83,7 @@ enum TVs {
     static func scan() async -> [Record] {
         var byAddress: [String: [DeviceProbe.SSDPAnswer]] = [:]
         for answer in await DeviceProbe.ssdp("ssdp:all", seconds: 2) { byAddress[answer.address, default: []].append(answer) }
-        let earlier = lastFound + kept()
+        let earlier = kept() + lastFound
         var records: [Record] = []
         await withTaskGroup(of: Record?.self) { group in
             for (ip, answers) in byAddress {
@@ -129,9 +132,10 @@ enum TVs {
     /// An LG TV, from the UPnP descriptions its answers point at. It answers for several services, each with a
     /// description and an id of its own, and the first to answer is often one that says nothing of the TV (Netflix's,
     /// a few bytes of "status=ok"), so each is tried until one is an LG TV's: the TV's own service first, which gives
-    /// it the same id at every scan. When that one didn't answer this time, a TV already seen at this address keeps
-    /// the id it had, so its setup and a kept TV still match it. `fetch` is how a description is read; tests answer
-    /// with recorded ones.
+    /// it the same id at every scan. A TV already kept or seen under another of its services' ids (an earlier Lamp
+    /// kept whichever answered first, and the TV's own may miss a scan) keeps that id, so its setup, its key and the
+    /// apps set to open on it still match: it's the same TV when any id it answers for now is one it had then.
+    /// `fetch` is how a description is read; tests answer with recorded ones.
     static func lg(at ip: String, answers: [DeviceProbe.SSDPAnswer], earlier: [Record] = [],
                    fetch: (URL) async -> Data? = { await fetch($0) }) async -> Record? {
         let own = Set(answers.filter { $0.searchTarget.lowercased() == lgTV }.compactMap(\.location))
@@ -140,9 +144,18 @@ enum TVs {
             where !locations.contains(location) && URL(string: location)?.host == ip && URL(string: location)?.scheme == "http" {
             locations.append(location)
         }
+        // A USN is "uuid:<udn>" or "uuid:<udn>::<type>".
+        let udns = Set(answers.compactMap { answer -> String? in
+            guard answer.usn.lowercased().hasPrefix("uuid:") else { return nil }
+            let udn = answer.usn.dropFirst(5).components(separatedBy: "::")[0]
+            return udn.isEmpty ? nil : udn
+        })
         for location in locations {
             guard let url = URL(string: location), let data = await fetch(url), var record = lg(at: ip, description: data) else { continue }
-            if !own.contains(location), let seen = earlier.first(where: { !$0.isSamsung && $0.address == ip }) { record.id = seen.id }
+            record.udns = Array(udns.union([String(record.id.dropFirst("lg:".count))])).sorted()
+            if let seen = earlier.first(where: { tv in
+                !tv.isSamsung && !udns.isDisjoint(with: [String(tv.id.dropFirst("lg:".count))] + (tv.udns ?? []))
+            }) { record.id = seen.id }
             record.developerMode = FileManager.default.fileExists(atPath: WebOS.keyURL(record.id).path)
             return record
         }
