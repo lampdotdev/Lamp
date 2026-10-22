@@ -1260,8 +1260,8 @@ plain in an `ObservableObject` too, so only a moved `@Published` property announ
 `LampSpare.announce`), every view one `@State` box (`__lampState_<View>`, a
 `LampStateBox`, which keeps new `@State`, and new `@AppStorage` in the standard defaults under its own key, drawing the
 views that read it again when the defaults change, from anywhere; not in an app that gives views a store of its own,
-`defaultAppStorage`, which Lamp can't tell a view reads from), one private spare for new parameters
-(`__lampSpare_<View>`, private so the initializer Swift makes for the view stays the same), and its environment
+`defaultAppStorage`, which Lamp can't tell a view reads from), one spare for new parameters
+(`__lampSpare_<View>`, one more argument with a default of the initializer Swift makes for the view, as a struct's is), and its environment
 (`@Environment(\.self) private var __lampEnv_<View>`), from which a new `@Environment(\.key)` is read as a computed
 property: SwiftUI hands the whole environment to the view at each draw, and draws a view that keeps it again only when
 something in it changes, which costs little. One read by its type (`@Environment(Store.self)`) reopens the app, since
