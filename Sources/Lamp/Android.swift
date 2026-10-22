@@ -432,17 +432,49 @@ enum Adb {
         return try? Data(contentsOf: file)
     }
 
+    /// The screen's size in pixels as the system draws it now: a size set with `wm size` over the panel's own.
+    static func displaySize(on serial: String) async -> CGSize? {
+        let lines = (await run(["shell", "wm", "size"], on: serial, timeout: 20)).output.split(separator: "\n")
+        let sizes = lines.compactMap { line -> (Bool, CGSize)? in
+            let parts = line.split(separator: ":")
+            guard parts.count == 2 else { return nil }
+            let numbers = parts[1].trimmingCharacters(in: .whitespaces).split(separator: "x").compactMap { Double($0) }
+            guard numbers.count == 2 else { return nil }
+            return (parts[0].hasPrefix("Override"), CGSize(width: numbers[0], height: numbers[1]))
+        }
+        return (sizes.first { $0.0 } ?? sizes.first)?.1
+    }
+
     /// Android's own scale: 160 dpi is one pixel a point.
     static func scale(density: Int?) -> Double { density.map { max(1, Double($0) / 160) } ?? 1 }
 
     /// The screen as text (`Screen.text`), from the system's own view of what's on it.
-    static func screen(on serial: String, density: Int?) async -> Screen? {
-        var result = await run(["exec-out", "uiautomator", "dump", "/dev/tty"], on: serial, timeout: 60)
+    /// `mayWake` is asked before the key that wakes a screen asleep: false once the person has taken the app back.
+    static func screen(on serial: String, density: Int?, mayWake: @escaping @MainActor () -> Bool = { true }) async -> Screen? {
+        await screen(density: density, adb: { await run($0, on: serial, timeout: $1) }, input: { arguments, timeout in
+            guard await mayWake() else { return false }
+            _ = await run(arguments, on: serial, timeout: timeout)
+            return true
+        })
+    }
+
+    /// Commands for one device: adb's arguments after the serial, and how long to give them.
+    typealias Commands = ([String], TimeInterval) async -> Subprocess.Result
+
+    /// `input` sends the key that wakes the screen, which is input like any tap: while Lamp tries the app it's the one
+    /// way input goes (`perform`'s `send`), and false means the app isn't Lamp's to touch any more.
+    static func screen(density: Int?, adb: Commands, input: (([String], TimeInterval) async -> Bool)? = nil) async -> Screen? {
+        var result = await adb(["exec-out", "uiautomator", "dump", "/dev/tty"], 60)
         // A screen asleep, or one the system is still laying out, answers nothing: woken and asked once more.
         if !result.output.contains("</hierarchy>") {
-            _ = await run(["shell", "input", "keyevent", "KEYCODE_WAKEUP"], on: serial, timeout: 20)
+            let wake = ["shell", "input", "keyevent", "KEYCODE_WAKEUP"]
+            if let input {
+                guard await input(wake, 20) else { return nil }
+            } else {
+                _ = await adb(wake, 20)
+            }
             try? await Task.sleep(for: .seconds(1))
-            result = await run(["exec-out", "uiautomator", "dump", "/dev/tty"], on: serial, timeout: 60)
+            result = await adb(["exec-out", "uiautomator", "dump", "/dev/tty"], 60)
         }
         guard let start = result.output.range(of: "<?xml"), let end = result.output.range(of: "</hierarchy>") else { return nil }
         let xml = String(result.output[start.lowerBound..<end.upperBound])
@@ -543,56 +575,99 @@ enum Adb {
 
     /// Carries out `use_app`'s actions on the device, one after another, with the screen read again after each so
     /// the next can name what the last one showed. The report says what each landed on. `stillMine` is asked before
-    /// each action: false ends the batch (the app closed, the turn was stopped).
+    /// each action: false ends the batch (the app closed, the turn was stopped, or the person took the app back,
+    /// `tookOver`, which the report then says). `aim` shows where each action is about to happen, a point on the
+    /// device, with what it's doing and whether it presses there (`Handover`), and returns once Lamp's fingertip is there.
     static func perform(_ actions: [Simulator.Driver.Action], on serial: String, density: Int?, screen first: Screen?,
+                        aim: @escaping @MainActor (CGPoint, String?, Bool) async -> Void = { _, _, _ in },
+                        tookOver: @escaping @MainActor () -> Bool = { false },
+                        adb commands: Commands? = nil,
                         stillMine: @escaping @MainActor () async -> Bool) async -> String {
+        let adb: Commands = commands ?? { await run($0, on: serial, timeout: $1) }
         var screen = first
         var report: [String] = []
         let scale = scale(density: density)
-        func point(_ action: Simulator.Driver.Action) -> (CGPoint, String)? {
+        let middle = CGPoint(x: 540 / scale, y: 1200 / scale)
+        func point(_ action: Simulator.Driver.Action, on screen: Screen?) -> (CGPoint, String, Screen.Item?)? {
             if let target = action.target {
                 guard let item = screen?.find(target) else { return nil }
-                return (CGPoint(x: item.frame.midX, y: item.frame.midY), "\(item.kind) \"\(item.name)\"")
+                return (CGPoint(x: item.frame.midX, y: item.frame.midY), "\(item.kind) \"\(item.name)\"", item)
             }
             guard let x = action.x, let y = action.y else { return nil }
-            return (CGPoint(x: x, y: y), "the point \(Int(x)),\(Int(y))")
+            return (CGPoint(x: x, y: y), "the point \(Int(x)),\(Int(y))", nil)
         }
         func pixels(_ point: CGPoint) -> (Int, Int) { (Int((point.x * scale).rounded()), Int((point.y * scale).rounded())) }
-        for (index, action) in actions.enumerated() {
-            guard await stillMine() else { report.append("Stopped before action \(index + 1)."); break }
+        /// Where an action happens on the device, what the fingertip's caption says, and whether it presses there.
+        /// Nil for what happens nowhere in particular (a key, a wait) or isn't on the screen read.
+        func spot(of action: Simulator.Driver.Action, on screen: Screen?) -> (point: CGPoint, doing: String?, press: Bool)? {
             switch action.action {
             case "click", "tap", "left_click", "double_click", "right_click", "long_press":
-                guard let (at, what) = point(action) else { report.append("\(index + 1). Nothing on screen matches \"\(action.target ?? "")\"."); continue }
+                guard let (at, _, item) = point(action, on: screen) else { return nil }
+                return (at, item.map { tapping($0, as: action.action) } ?? tapping(nil, as: action.action), true)
+            case "type":
+                if let (at, _, item) = point(action, on: screen) { return (at, item.map { "typing into " + shortName($0) } ?? "typing", true) }
+                guard let field = screen?.items.first(where: { $0.kind == "field" && $0.focused }) else { return nil }
+                return (CGPoint(x: field.frame.midX, y: field.frame.midY), "typing into " + shortName(field), false)
+            case "scroll", "swipe":
+                return (point(action, on: screen)?.0 ?? middle, action.action == "scroll" ? "scrolling" : "swiping", false)
+            default:
+                return nil
+            }
+        }
+        // Every input goes through here. The person may take the app back at any moment, the fingertip's glide, a
+        // pause and a screen read included, and nothing more of Lamp's reaches the device once they have.
+        var stopped: Int?
+        var current = 0
+        var begun = false   // some of the current action's input went out, so it was cut short rather than not done
+        func send(_ arguments: [String], _ timeout: TimeInterval) async -> Bool {
+            // Asked again once the check is back: it waits on the device (whether the app still runs), and the
+            // person may take the app back meanwhile.
+            guard stopped == nil, await stillMine(), await !tookOver() else {
+                stopped = stopped ?? current
+                return false
+            }
+            _ = await adb(arguments, timeout)
+            begun = true
+            return true
+        }
+        actions: for (index, action) in actions.enumerated() {
+            current = index
+            begun = false
+            guard await stillMine() else { stopped = index; break }
+            if let spot = spot(of: action, on: screen) { await aim(spot.point, spot.doing, spot.press) }
+            switch action.action {
+            case "click", "tap", "left_click", "double_click", "right_click", "long_press":
+                guard let (at, what, _) = point(action, on: screen) else { report.append("\(index + 1). Nothing on screen matches \"\(action.target ?? "")\"."); continue }
                 let (x, y) = pixels(at)
                 if action.action == "right_click" || action.action == "long_press" {
-                    _ = await run(["shell", "input", "swipe", "\(x)", "\(y)", "\(x)", "\(y)", "800"], on: serial, timeout: 30)
+                    guard await send(["shell", "input", "swipe", "\(x)", "\(y)", "\(x)", "\(y)", "800"], 30) else { break actions }
                     report.append("\(index + 1). Long-pressed \(what).")
                 } else {
-                    _ = await run(["shell", "input", "tap", "\(x)", "\(y)"], on: serial, timeout: 30)
-                    if action.action == "double_click" { _ = await run(["shell", "input", "tap", "\(x)", "\(y)"], on: serial, timeout: 30) }
+                    guard await send(["shell", "input", "tap", "\(x)", "\(y)"], 30) else { break actions }
+                    if action.action == "double_click" { guard await send(["shell", "input", "tap", "\(x)", "\(y)"], 30) else { break actions } }
                     report.append("\(index + 1). Tapped \(what).")
                 }
             case "type":
                 guard let text = action.text else { report.append("\(index + 1). type needs text."); continue }
-                if let (at, _) = point(action) {
+                if let (at, _, _) = point(action, on: screen) {
                     let (x, y) = pixels(at)
-                    _ = await run(["shell", "input", "tap", "\(x)", "\(y)"], on: serial, timeout: 30)
+                    guard await send(["shell", "input", "tap", "\(x)", "\(y)"], 30) else { break actions }
                     try? await Task.sleep(for: .milliseconds(300))
                 }
                 // The field typed into, read once the tap has landed: the one with the keyboard now, else the target.
-                let before = await Self.screen(on: serial, density: density)
+                let before = await Self.screen(density: density, adb: adb, input: send)
                 let field = before?.items.first { $0.kind == "field" && $0.focused } ?? action.target.flatMap { before?.find($0) }
                 // In place of what the field held, as on the other devices: everything selected and deleted where the
                 // device takes a key combination (Android 11 and later); on an older one, to the end and back over
                 // every character the field was seen to hold, in calls of a hundred keys.
-                _ = await run(["shell", "input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_A"], on: serial, timeout: 30)
-                _ = await run(["shell", "input", "keyevent", "KEYCODE_DEL"], on: serial, timeout: 30)
+                guard await send(["shell", "input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_A"], 30) else { break actions }
+                guard await send(["shell", "input", "keyevent", "KEYCODE_DEL"], 30) else { break actions }
                 var remaining = (field?.value.count ?? 0) + 2
-                if let field, (await Self.screen(on: serial, density: density))?.find(field.id)?.value.isEmpty == false, remaining > 0 {
-                    _ = await run(["shell", "input", "keyevent", "KEYCODE_MOVE_END"], on: serial, timeout: 30)
+                if let field, (await Self.screen(density: density, adb: adb, input: send))?.find(field.id)?.value.isEmpty == false, remaining > 0 {
+                    guard await send(["shell", "input", "keyevent", "KEYCODE_MOVE_END"], 30) else { break actions }
                     while remaining > 0 {
                         let batch = min(remaining, 100)
-                        _ = await run(["shell", "input", "keyevent"] + Array(repeating: "KEYCODE_DEL", count: batch), on: serial, timeout: 60)
+                        guard await send(["shell", "input", "keyevent"] + Array(repeating: "KEYCODE_DEL", count: batch), 60) else { break actions }
                         remaining -= batch
                     }
                 }
@@ -605,7 +680,7 @@ enum Adb {
                     default: return String(character)
                     }
                 }.joined()
-                _ = await run(["shell", "input", "text", escaped], on: serial, timeout: 60)
+                guard await send(["shell", "input", "text", escaped], 60) else { break actions }
                 report.append("\(index + 1). Typed \"\(text)\".")
             case "key":
                 let keys = ["return": "KEYCODE_ENTER", "enter": "KEYCODE_ENTER", "escape": "KEYCODE_BACK", "back": "KEYCODE_BACK",
@@ -615,10 +690,10 @@ enum Adb {
                     report.append("\(index + 1). Unknown key \"\(action.key ?? "")\"; the keys are \(keys.keys.sorted().joined(separator: ", ")).")
                     continue
                 }
-                _ = await run(["shell", "input", "keyevent", code], on: serial, timeout: 30)
+                guard await send(["shell", "input", "keyevent", code], 30) else { break actions }
                 report.append("\(index + 1). Pressed \(key).")
             case "scroll", "swipe":
-                let (from, what) = point(action) ?? (CGPoint(x: 540 / scale, y: 1200 / scale), "the middle of the screen")
+                let (from, what) = point(action, on: screen).map { ($0.0, $0.1) } ?? (middle, "the middle of the screen")
                 let distance = action.amount ?? (action.action == "scroll" ? 400 : 300)
                 var to = from
                 // A scroll's direction is where the content goes; a swipe's is where the finger goes.
@@ -630,14 +705,20 @@ enum Adb {
                 default: break
                 }
                 let (x1, y1) = pixels(from), (x2, y2) = pixels(to)
-                _ = await run(["shell", "input", "swipe", "\(x1)", "\(y1)", "\(x2)", "\(y2)", "300"], on: serial, timeout: 30)
+                // The fingertip follows the finger, from where it went down to where it lifts.
+                let lifted = to
+                async let followed: Void = aim(lifted, nil, false)
+                guard await send(["shell", "input", "swipe", "\(x1)", "\(y1)", "\(x2)", "\(y2)", "300"], 30) else { break actions }
+                await followed
                 report.append("\(index + 1). \(action.action == "scroll" ? "Scrolled" : "Swiped") \(action.direction ?? "down") at \(what).")
                 if action.action == "swipe", let item = action.item {
                     try? await Task.sleep(for: .milliseconds(500))
-                    screen = await Self.screen(on: serial, density: density)
+                    screen = await Self.screen(density: density, adb: adb, input: send)
                     if let found = screen?.find(item) {
-                        let (x, y) = pixels(CGPoint(x: found.frame.midX, y: found.frame.midY))
-                        _ = await run(["shell", "input", "tap", "\(x)", "\(y)"], on: serial, timeout: 30)
+                        let spot = CGPoint(x: found.frame.midX, y: found.frame.midY)
+                        await aim(spot, tapping(found, as: "tap"), true)
+                        let (x, y) = pixels(spot)
+                        guard await send(["shell", "input", "tap", "\(x)", "\(y)"], 30) else { break actions }
                         report.append("\(index + 1). Then tapped \"\(found.name)\".")
                     } else {
                         report.append("\(index + 1). The swipe uncovered nothing named \"\(item)\".")
@@ -650,10 +731,36 @@ enum Adb {
                 report.append("\(index + 1). Unknown action \"\(action.action)\".")
                 continue
             }
+            // The pause for the app to take the action up, and the screen read again. Lamp's fingertip goes on to
+            // where the next action looks to be meanwhile, so that action needn't wait for it: only to show the way,
+            // since the action finds its target afresh on the screen read now, and the press shows then.
+            let next = index + 1 < actions.count ? spot(of: actions[index + 1], on: screen) : nil
+            async let ahead: Void = { if let next { await aim(next.point, next.doing, false) } }()
             try? await Task.sleep(for: .milliseconds(600))
-            screen = await Self.screen(on: serial, density: density)
+            screen = await Self.screen(density: density, adb: adb, input: send)
+            await ahead
+        }
+        if let stopped {
+            let place = begun ? "partway through action \(stopped + 1) of \(actions.count)"
+                : "after \(stopped) of \(actions.count) action\(actions.count == 1 ? "" : "s")"
+            report.append(await tookOver()
+                ? "Stopped \(place): the person took the app over. Nothing after that was done."
+                : "Stopped \(place).")
         }
         return report.joined(separator: "\n")
+    }
+
+    /// What the fingertip says beside a tap: "tapping Add", "double-tapping", "pressing Delete".
+    private static func tapping(_ item: Screen.Item?, as action: String) -> String {
+        let verb = action == "right_click" || action == "long_press" ? "pressing" : action == "double_click" ? "double-tapping" : "tapping"
+        return item.map { verb + " " + shortName($0) } ?? verb
+    }
+
+    /// What a thing is called, short enough to ride beside the fingertip.
+    private static func shortName(_ item: Screen.Item) -> String {
+        let name = item.name.replacingOccurrences(of: "\n", with: " ").trimmed
+        guard !name.isEmpty else { return item.kind }
+        return name.count > 30 ? String(name.prefix(29)) + "…" : name
     }
 }
 
@@ -793,5 +900,51 @@ enum Emulator {
     }
     static func bringForward() async { app()?.activate() }
     static func putBehind() async { app()?.hide() }
+    /// Its window back on screen where it was, without taking the keyboard from whatever the person is in.
+    static func unhide() async { app()?.unhide() }
     static var isRunning: Bool { !ownProcesses().isEmpty }
+
+    /// The window Lamp's emulator draws the device's screen in, for Lamp's fingertip to go where each tap lands. The
+    /// emulator keeps its buttons in a window of their own beside it, so the screen is its largest window on screen.
+    struct Glass {
+        let window: CGWindowID
+        let pid: pid_t
+        /// The device's screen in points (adb's pixels over its density), as the actions' points are.
+        let size: CGSize
+
+        /// Where a point on the device is on the Mac's display, in the drivers' space, as the window is now: the
+        /// person may move or resize it between actions. The window holds the screen whole, at its own scale.
+        func point(_ point: CGPoint) -> CGPoint? {
+            guard let frame = ComputerOverlay.frame(of: window), size.width > 0, size.height > 0 else { return nil }
+            // Turned on its side, the window is wider than tall while adb still gives the upright size.
+            let shown = (frame.width > frame.height) == (size.width > size.height) ? size : CGSize(width: size.height, height: size.width)
+            let zoom = min(frame.width / shown.width, frame.height / shown.height)
+            let origin = CGPoint(x: frame.midX - shown.width * zoom / 2, y: frame.midY - shown.height * zoom / 2)
+            return CGPoint(x: origin.x + point.x * zoom, y: origin.y + point.y * zoom)
+        }
+    }
+
+    /// Lamp's emulator's screen on the Mac's, or nil when its window isn't on screen (minimised, or hidden and not
+    /// back within a moment of `unhide`).
+    static func glass(size: CGSize) async -> Glass? {
+        for _ in 0..<10 {
+            if let found = onScreen(size: size) { return found }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return nil
+    }
+
+    private static func onScreen(size: CGSize) -> Glass? {
+        let pids = Set(ownProcesses().map(\.pid))
+        guard !pids.isEmpty else { return nil }
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        let largest = windows.compactMap { info -> (CGWindowID, pid_t, Double)? in
+            guard let pid = info[kCGWindowOwnerPID as String] as? pid_t, pids.contains(pid), (info[kCGWindowLayer as String] as? Int) == 0,
+                  let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary),
+                  let id = info[kCGWindowNumber as String] as? CGWindowID else { return nil }
+            return (id, pid, rect.width * rect.height)
+        }.max { $0.2 < $1.2 }
+        return largest.map { Glass(window: $0.0, pid: $0.1, size: size) }
+    }
 }

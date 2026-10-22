@@ -18,6 +18,8 @@ final class Handover {
     private var ended = false
     private let label: String
     private let finger: Bool
+    /// Whether the pill offers Esc: only where Lamp hears it (`escape` in `init`).
+    private let escape: Bool
     /// The Simulator's process, whose window the person's own clicks and keys are watched in. Nil for a Mac app.
     private let simulator: pid_t?
     /// A window of Lamp's own the app is shown in (the TV preview): every click and key in it is the person's, since
@@ -32,9 +34,14 @@ final class Handover {
 
     /// From now on the person's Esc, or their own press in the simulator, takes the app back: even before any
     /// window is known (a batch that waits before opening a menu bar icon's panel), so that Esc isn't ignored.
-    init(label: String, finger: Bool = false, simulator: pid_t? = nil, lampWindow: NSWindow? = nil, halt: @escaping () -> Void = {}) {
+    /// `escape` is false where Lamp can't hear Esc in the window in use: macOS passes another app's keys on only to an
+    /// app allowed to control the computer, so without that Esc is heard only while Lamp is in front, and the pill
+    /// offers Stop alone rather than a key that seems to do nothing.
+    init(label: String, finger: Bool = false, simulator: pid_t? = nil, lampWindow: NSWindow? = nil, escape: Bool = true,
+         halt: @escaping () -> Void = {}) {
         self.label = label
         self.finger = finger
+        self.escape = escape
         self.simulator = simulator
         self.lampWindow = lampWindow
         self.halt = halt
@@ -45,7 +52,7 @@ final class Handover {
     func show(window id: CGWindowID) {
         guard !tookOver, !ended, id != window else { return }
         window = id
-        overlay.focus(window: id, label: label, owner: owner, escape: true) { [weak self] in self?.take() }
+        overlay.focus(window: id, label: label, owner: owner, escape: escape) { [weak self] in self?.take() }
     }
 
     /// Lamp's cursor goes to where the next action happens, and presses there when it's a click or a tap. `due`

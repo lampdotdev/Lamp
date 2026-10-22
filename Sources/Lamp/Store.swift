@@ -6548,13 +6548,45 @@ final class Store: ObservableObject {
         }
         let density = androidDensities[project.id]
         let screen = await Adb.screen(on: open.serial, density: density)
-        let report = await Adb.perform(decoded, on: open.serial, density: density, screen: screen) { [weak self] in
-            guard let self, exists(project), turns[project.id] === owner, !owner.stopped else { return false }
-            return await isAndroidRunning(project)
+        // On the emulator, in plain sight as on the iPhone's simulator: its window glows, Lamp's fingertip goes to
+        // each spot, and the person's Stop, Esc, or own click in the window ends it. A look leaves the emulator hidden
+        // so as not to pull it in front mid-turn, so trying the app brings its window back, without taking the
+        // keyboard. A device of the person's has nothing of it on the Mac's screen to show.
+        let scale = Adb.scale(density: density)
+        var shown: Emulator.Glass?
+        if open.serial == Emulator.serial, let size = await Adb.displaySize(on: open.serial) {
+            await Emulator.unhide()
+            shown = await Emulator.glass(size: CGSize(width: size.width / scale, height: size.height / scale))
+        }
+        let glass = shown
+        // Driving the emulator needs no permission, so none is asked for just to hear Esc: without it the pill offers
+        // Stop, and the person's own click in the emulator still takes it back.
+        let trial = glass.map { Handover(label: "\(Self.lampName) is trying it on Android", finger: true, simulator: $0.pid,
+                                         escape: Simulator.Driver.isAllowed) }
+        if let glass { trial?.show(window: glass.window) }
+        defer { trial?.end() }
+        let report = await Adb.perform(decoded, on: open.serial, density: density, screen: screen, aim: { point, doing, press in
+            guard let trial, let spot = glass?.point(point) else { return }
+            await trial.aim(at: spot, doing: doing, press: press)
+        }, tookOver: { trial?.tookOver == true }) { [weak self] in
+            guard let self, exists(project), turns[project.id] === owner, !owner.stopped, trial?.tookOver != true else { return false }
+            // Whether the app still runs is asked of the device, and Stop or the person's click may come meanwhile.
+            guard await isAndroidRunning(project) else { return false }
+            return turns[project.id] === owner && !owner.stopped && trial?.tookOver != true
+        }
+        // Asked again after the reads below: they take a moment, and Stop may come during them.
+        func tookOver() -> Bool {
+            guard trial?.tookOver == true else { return false }
+            if !owner.tookOver {
+                owner.tookOver = true
+                log(project, .status, Self.stoppedByYou)
+            }
+            return true
         }
         var text = "What happened:\n\(report)"
         guard await isAndroidRunning(project) else {
             text += "\n\nThe app quit or crashed while doing that."
+            if tookOver() { text += "\n\n" + Self.tookOverNote }
             if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nLast lines it logged:\n" + tail }
             return (200, ["text": text])
         }
@@ -6564,11 +6596,12 @@ final class Store: ObservableObject {
         var screenshots: [URL] = []
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         if Privacy.sharesPictures {
-            if let after = await Adb.screen(on: open.serial, density: density) { text += "\n\n" + after.text }
+            if let after = await Adb.screen(on: open.serial, density: density, mayWake: { trial?.tookOver != true }) { text += "\n\n" + after.text }
             if let data = await Adb.screenshot(on: open.serial, density: density),
                (try? AppFolder.write(data, to: picture, in: project.dir)) != nil { screenshots = [picture] }
             text += "\n\nA picture of the screen follows. Points for the next use_app are pixels in it."
         }
+        if tookOver() { text += "\n\n" + Self.tookOverNote }
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nLast lines it logged:\n" + tail }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
     }
