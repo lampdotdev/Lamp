@@ -4222,6 +4222,14 @@ final class Store: ObservableObject {
         if NSApp.isActive, !app.isActive, actions.contains(where: { ["click", "double_click", "drag"].contains($0["action"] as? String ?? "") }) {
             app.activate()
             try? await Task.sleep(for: .milliseconds(300))
+            // Stop pressed meanwhile reached an app that had no batch yet to stop, so the batch isn't sent at all.
+            if trial.tookOver {
+                if !turn.tookOver {
+                    turn.tookOver = true
+                    log(project, .status, Self.stoppedByYou)
+                }
+                return (200, ["text": "Stopped: the person took the app over before anything was done.\n\n" + Self.tookOverNote])
+            }
         }
         // Signed with the app's token rather than carrying it: distributed notifications reach every process.
         Self.signal(project, "useApp", ["actions": json, "id": id], signedAs: "lampUseAppSignature", over: "\(id)\n\(json)")
