@@ -8889,18 +8889,17 @@ final class Store: ObservableObject {
             target = "the simulator"
             if let udid = simulatorApps[project.id]?.udid, let name = await Simulator.name(of: udid) { target = "the \(name) simulator" }
         }
-        let launch: Evidence.Launch
-        if let watch = turn.launch, watch.opened >= began {
-            launch = !watch.ended ? .stillStarting : watch.crash == nil ? .stayedOpen : .quit
-        } else if turn.look.installed, project.onTV || project.onDevice {
-            launch = .openedUnwatched
-        } else {
-            launch = .alreadyOpen
-        }
+        let watch = turn.launch.flatMap { $0.opened >= began ? (ended: $0.ended, crashed: $0.crash != nil) : nil }
+        // Where Lamp opens an app with no watch on it; elsewhere a look that opened it made a watch, and `installed`
+        // alone may only mean it pictured the copy that was open.
+        let unwatched = project.onTV || project.onDevice || (project.platform == .mac && Template.isWidgetOnly(project))
+        // The other targets' looks check their copy is running before they picture it; a Mac app's is asked now.
+        let launch = Evidence.launch(watch: watch, opened: turn.look.installed && unwatched, wentInLive: turn.updatedInPlace,
+                                     running: project.onIOS || project.onAndroid || project.onTV || project.onDevice || isRunning(project))
         var log = Evidence.Log.off
         if Privacy.sharesLog {
-            let printed = AppFile.read(Runtime.logURL(project), in: project).map { String(decoding: $0, as: UTF8.self).trimmed } ?? ""
-            log = printed.isEmpty ? .empty : .lines(printed.split(separator: "\n").count)
+            let url = Runtime.logURL(project)
+            log = Evidence.log(size: Runtime.logSize(project)) { AppFile.read(url, in: project, last: $0) }
         }
         let pictured = ["screenshot.png", "screenshot-2.png", "screenshot-3.png"]
             .compactMap { try? Runtime.folder(project).appendingPathComponent($0).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }

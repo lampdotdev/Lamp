@@ -17,12 +17,16 @@ enum Evidence {
         case openedUnwatched
         /// It was open already and wasn't opened again.
         case alreadyOpen
+        /// Lamp didn't open it in this look and sees no copy of it open now.
+        case notOpen
     }
 
     enum Log: Equatable {
         case off
         case empty
         case lines(Int)
+        /// Too long to count: only its end was read.
+        case large(bytes: Int)
     }
 
     struct Facts {
@@ -38,6 +42,27 @@ enum Evidence {
         var uses: Int
     }
 
+    /// How the look's launch went. `watch` is the watch on a launch made during this look, if any. A look that opened
+    /// the app with nothing watching (the TV preview, a device, a widget-only app's helper) can't say it stayed open,
+    /// and "already open" needs a copy Lamp sees running now, not just the absence of a launch.
+    static func launch(watch: (ended: Bool, crashed: Bool)?, opened: Bool, wentInLive: Bool, running: Bool) -> Launch {
+        if let watch { return !watch.ended ? .stillStarting : watch.crashed ? .quit : .stayedOpen }
+        if opened, !wentInLive { return .openedUnwatched }
+        return running ? .alreadyOpen : .notOpen
+    }
+
+    /// The most of a log a look reads to describe it. An emulator's log has no limit, and the look runs on the main
+    /// actor, so a longer one is told by its size rather than read whole.
+    static let logReadLimit = 64 * 1024
+
+    /// How much the app has logged since it last opened. `readTail` reads the log's last bytes, at most the given count.
+    static func log(size: Int, readTail: (Int?) -> Data?) -> Log {
+        guard size > 0 else { return .empty }
+        guard size <= logReadLimit else { return .large(bytes: size) }
+        let printed = readTail(logReadLimit).map { String(decoding: $0, as: UTF8.self).trimmed } ?? ""
+        return printed.isEmpty ? .empty : .lines(printed.split(separator: "\n").count)
+    }
+
     static func note(_ facts: Facts) -> String {
         let seconds = Int(Runtime.launchWindow.components.seconds)
         var lines = ["What Lamp observed in this look, which is all your ending may claim:"]
@@ -50,6 +75,7 @@ enum Evidence {
             case .quit: "Lamp opened it and it quit in its first \(seconds) seconds."
             case .openedUnwatched: "Lamp opened it; nothing there tells Lamp whether it stays open."
             case .alreadyOpen: "it was already open and wasn't opened again."
+            case .notOpen: "Lamp didn't open it in this look and sees no copy of it open now."
             }
         }())
         lines.append("- Log: " + {
@@ -57,6 +83,7 @@ enum Evidence {
             case .off: "not shared with you (the person's privacy setting)."
             case .empty: "nothing printed since it was last opened."
             case .lines(let count): "\(count) \(count == 1 ? "line" : "lines") since it was last opened; the end of it is above."
+            case .large(let bytes): "\(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)) since it was last opened; only the end of it is above."
             }
         }())
         lines.append("- Picture: " + (facts.picturesOff ? "not shared with you (the person's privacy setting)."
