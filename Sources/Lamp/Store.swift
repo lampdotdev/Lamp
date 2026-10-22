@@ -6202,13 +6202,15 @@ final class Store: ObservableObject {
                 log(project, .error, problem)
                 return problem
             }
+            // What the staged copy was made from, taken before the upload: an edit meanwhile isn't on the TV.
+            let stagedFrom = Runtime.builtFingerprint(project)
             let say: @Sendable (String) -> Void = { [weak self] text in Task { @MainActor in self?.note(text, for: project) } }
             // The app opened by this install asks for its token, which isn't in its package.
             DeviceSupport.Claims.shared.open(project.id, from: record.address)
             do {
                 if record.isSamsung { try await TVs.installSamsung(project, staged: staged, on: record, say: say) }
                 else { try await TVs.installLG(project, staged: staged, on: record, say: say) }
-                Runtime.putOnTV(project, tv: record.id)
+                Runtime.putOnTV(project, tv: record.id, staged: stagedFrom)
                 log(project, .status, "\(project.name) is open on \(record.name).")
                 return nil
             } catch {

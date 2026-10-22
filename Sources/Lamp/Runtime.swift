@@ -59,13 +59,21 @@ enum Runtime {
         var fingerprint: String
     }
     private static func onTVURL(_ project: LampProject) -> URL { macFolder(project).appendingPathComponent("on-tv.json") }
-    static func putOnTV(_ project: LampProject, tv: String) {
+    /// `staged` is what the copy that went to the TV was made from, read before it was sent: the sources may have
+    /// changed since (an edit during a slow upload), and the TV doesn't have that. Without it, the last build's.
+    static func putOnTV(_ project: LampProject, tv: String, staged: String? = nil) {
+        guard let made = staged ?? builtFingerprint(project) else { return }
         var all = onTV(project)
-        all[tv] = OnTV(at: Date(), fingerprint: fingerprint(project))
+        all[tv] = OnTV(at: Date(), fingerprint: made)
         if let data = try? JSONEncoder().encode(all) { try? AppFolder.write(data, to: onTVURL(project), in: project.dir) }
     }
+    /// Read as everything Lamp reads in the app's folder is: the agent may leave a link or a pipe in its place.
     static func onTV(_ project: LampProject) -> [String: OnTV] {
-        (try? Data(contentsOf: onTVURL(project))).flatMap { try? JSONDecoder().decode([String: OnTV].self, from: $0) } ?? [:]
+        AppFile.read(onTVURL(project), in: project).flatMap { try? JSONDecoder().decode([String: OnTV].self, from: $0) } ?? [:]
+    }
+    /// What the last build was made from (`markBuilt`), the fingerprint taken before its copy was staged.
+    static func builtFingerprint(_ project: LampProject) -> String? {
+        AppFile.text(builtURL(project), in: project).flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// What the app is built from, as one hash: the contents of Sources, its widget's folder, Package.swift and the icon design,

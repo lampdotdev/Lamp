@@ -799,7 +799,7 @@ the agent is told of it (each look and use with `Store.notTheTV`, the screen as 
 the TV preview on this Mac and not the person's TV. Where the app is otherwise comes with the request, as the device line
 (`DeviceNote.tv`), from Lamp's own state and never a fixed description: whether the preview is open, each of the person's
 TVs with what's known of it (chosen under Try On, found on the network, set up, when Play last put this app on it and
-whether the code has changed since, `Runtime.putOnTV`), and "unknown" for the rest, the TV's screen size and whether the
+whether the code has changed since, `Runtime.putOnTV`, which records what the staged copy was made from, read before the upload, and is read back through `AppFile`), and "unknown" for the rest, the TV's screen size and whether the
 app runs there now among them. Lamp's tools don't reach a TV, but the agent is told it may find another way to see one,
 not that it can't. Closing the window, by the person or by
 Lamp, ends the page (its sound and timers): WebKit runs a page as long as its web view lives, so the preview lets go of
