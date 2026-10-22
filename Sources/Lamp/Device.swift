@@ -178,8 +178,10 @@ struct Device: Identifiable, Hashable {
 
     /// The device as the agent is told it: "iPhone 16 Pro Max, iOS 27, Dynamic Island".
     var forAgent: String {
-        // A TV's software version is told whole (Tizen 6.5): its apps differ by the point release.
-        var parts = ["\(kind.isTV ? maker + " " + model : model), \(os) \(kind.isTV ? osVersion : osMajor)"]
+        // A TV's software version is told whole (Tizen 6.5): its apps differ by the point release. An LG TV's is read
+        // only once Lamp can reach it, so until then it's said to be unknown rather than left out.
+        let version = kind.isTV ? (osVersion.isEmpty ? "version unknown" : osVersion) : osMajor
+        var parts = ["\(kind.isTV ? maker + " " + model : model), \(os) \(version)"]
         parts += features
         for screen in screens { parts.append("screen \(screen.words)") }
         return parts.joined(separator: ", ")
@@ -307,18 +309,9 @@ enum DeviceNote {
             }.joined(separator: " ")
         }
         if project.onTV {
-            let tvs = store.devices.filter { $0.kind.isTV }
-            var line = "Your looks are in the TV preview, a window on this Mac at a TV's 1920×1080 with a remote's keys: it is not one of the person's TVs, and much faster than one."
-            if let id = project.device {
-                line += tvs.first(where: { $0.udid == id }).map { " Play puts the app on the person's \($0.name): \($0.forAgent)." }
-                    ?? " Try On points at one of the person's TVs, which isn't on the network now."
-            }
-            for tv in tvs where tv.udid != project.device {
-                let state = tv.setup() == .ready ? "set up for the app to go on it" : "not set up yet (next: \(tv.setup().words.lowercased()))"
-                line += " The person's \(tv.name) (\(tv.forAgent)) is \(state)."
-            }
-            if tvs.isEmpty { line += " No TV of the person's has been found on the network yet." }
-            return line
+            let onTV = Runtime.onTV(project)
+            return tv(previewOpen: TVPreview.isOpen(project), chosen: project.device, tvs: store.devices.filter { $0.kind.isTV },
+                      onTV: onTV, current: onTV.isEmpty ? "" : Runtime.fingerprint(project))
         }
         if project.onAndroid {
             let androids = store.devices.filter { $0.kind == .android }
@@ -359,6 +352,38 @@ enum DeviceNote {
         }
         let mac = store.thisMac ?? Device.thisMac()
         return "It opens on this Mac: \(mac.forAgent)."
+    }
+
+    /// Where a TV app is, from what Lamp has seen: the preview, which the agent's tools reach, and each of the person's
+    /// TVs, which they don't. A TV found on the network is only that: Lamp hasn't asked it what it's running, so that
+    /// stays unknown, and the agent is left to find out what else it can learn of it rather than being told it can't.
+    static func tv(previewOpen: Bool, chosen: String?, tvs: [Device], onTV: [String: Runtime.OnTV], current: String) -> String {
+        var line = "The TV preview, a window on this Mac with a remote's keys, is \(previewOpen ? "open" : "closed") now; "
+            + "look_at_app and use_app reach only the preview."
+        if chosen == nil { line += " Try On points at the preview, so Play opens the app there." }
+        if let chosen, !tvs.contains(where: { $0.udid == chosen }) {
+            line += " Try On points at one of the person's TVs, which Lamp doesn't find on the network now."
+        }
+        for tv in tvs.sorted(by: { ($0.udid == chosen ? 0 : 1, $0.name) < ($1.udid == chosen ? 0 : 1, $1.name) }) {
+            var facts = [tv.forAgent]
+            if tv.screens.isEmpty { facts.append("screen size unknown") }
+            line += " The person's \(tv.name) (\(facts.joined(separator: ", ")))"
+            line += tv.udid == chosen ? " is chosen under Try On, so Play puts the app on it." : " isn't chosen under Try On."
+            line += tv.connected ? " Lamp finds it on the network now." : " Lamp doesn't find it on the network now."
+            if tv.setup() != .ready { line += " It isn't set up for apps yet (next: \(tv.setup().words.lowercased()))." }
+            if let put = onTV[tv.udid] {
+                line += " Lamp last put this app on it and opened it at \(put.at.formatted(date: .abbreviated, time: .shortened)), "
+                    + (put.fingerprint == current ? "with the code as it is now." : "and the code has changed since.")
+            } else {
+                line += " Lamp has no record of putting this app on it."
+            }
+        }
+        if tvs.isEmpty, chosen == nil { line += " No TV of the person's has been found on the network." }
+        if chosen != nil || !tvs.isEmpty {
+            line += " Whether the app is running on a TV now, and how it looks or runs there, Lamp doesn't know. "
+                + "You might be able to get a screenshot or other state from the TV another way: take a look if it matters."
+        }
+        return line
     }
 
     @MainActor static func brief(for project: LampProject, engine: Engine, session: String?) -> String {

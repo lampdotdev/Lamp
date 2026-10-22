@@ -6247,12 +6247,15 @@ final class Store: ObservableObject {
                 log(project, .error, problem)
                 return problem
             }
+            // What the staged copy was made from, taken before the upload: an edit meanwhile isn't on the TV.
+            let stagedFrom = Runtime.builtFingerprint(project)
             let say: @Sendable (String) -> Void = { [weak self] text in Task { @MainActor in self?.note(text, for: project) } }
             // The app opened by this install asks for its token, which isn't in its package.
             DeviceSupport.Claims.shared.open(project.id, from: record.address)
             do {
                 if record.isSamsung { try await TVs.installSamsung(project, staged: staged, on: record, say: say) }
                 else { try await TVs.installLG(project, staged: staged, on: record, say: say) }
+                Runtime.putOnTV(project, tv: record.id, staged: stagedFrom)
                 log(project, .status, "\(project.name) is open on \(record.name).")
                 return nil
             } catch {
@@ -6294,8 +6297,8 @@ final class Store: ObservableObject {
     }
 
     /// Said with every look at a TV app: a preview at the TV's size reads like the TV itself, and the agent would tell
-    /// the person how the app runs on a TV it has never seen, which is far slower than the Mac the preview runs on.
-    static let notTheTV = "This is the TV preview, a window on this Mac, not the person's TV: it runs in the Mac's browser, many times faster than a TV, so it says nothing about how the app runs on the TV."
+    /// the person how the app runs on a TV it has never seen.
+    static let notTheTV = "This is the TV preview, a window on this Mac, not one of the person's TVs: it runs in this Mac's browser, so what it shows, its speed included, is the preview's."
 
     /// `use_app` for a TV app: the remote's keys and clicks on the preview, the screen read between them.
     private func useOnTV(_ project: LampProject, actions: [[String: Any]], json: String) async -> (Int, [String: Any]) {
