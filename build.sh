@@ -33,10 +33,10 @@ esac
 PI_TARBALL="vendor/pi-$PI_VERSION-darwin-$PI_ARCH.tar.gz"
 
 # llama.cpp's server runs downloaded models on this Mac (MIT, github.com/ggml-org/llama.cpp).
-LLAMA_BUILD="b11346"
+LLAMA_BUILD="b11814"
 case "$(uname -m)" in
-  arm64)  LLAMA_ARCH="arm64"; LLAMA_SHA256="25cefd22cf708a14eacea623327a2320fa07493a29b4c37bf3376623de581553" ;;
-  x86_64) LLAMA_ARCH="x64";   LLAMA_SHA256="1f91f85611d1573c53409c99d96d43451cd89e928ce1882b6739fd1cf7befaf2" ;;
+  arm64)  LLAMA_ARCH="arm64"; LLAMA_SHA256="698d16c10104ad5212fdd9cb084e7076b3ab4255c68433ee8ed70f3d041432cb" ;;
+  x86_64) LLAMA_ARCH="x64";   LLAMA_SHA256="cb38196573bcf57c441523f15da3129ef162f202fdacf7c14d7b41c2156cc858" ;;
 esac
 LLAMA_TARBALL="vendor/llama-$LLAMA_BUILD-bin-macos-$LLAMA_ARCH.tar.gz"
 if [ ! -f "$LLAMA_TARBALL" ] || ! echo "$LLAMA_SHA256  $LLAMA_TARBALL" | shasum -a 256 -c - >/dev/null 2>&1; then
