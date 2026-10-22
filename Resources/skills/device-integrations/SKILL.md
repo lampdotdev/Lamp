@@ -109,6 +109,10 @@ The setup, in order. Each step is done when its `check` passes, never because an
 - `check`: every condition must hold. Each is one of `http` (answers 2xx; with `json` or `xml`, the value `equals` or
   `contains` something), `tcp` (a port that accepts a connection), `field` (the person typed it), `signedIn` (a
   `vendorSignIn` came back).
+- Every setting of the device's that the bridge needs is a step of its own, checked on the device, so it's found in
+  setup rather than when a builder first uses it: a Roku answers key presses only with Settings → System → Advanced
+  system settings → Control by mobile apps set to Enabled, which its device-info says
+  (`{"http": {"port": 8060, "path": "/query/device-info"}, "xml": "ecp-setting-mode", "equals": "enabled"}`).
 - `accepts`: what doing it may cost, from Lamp's list; Lamp writes the sentences. `account` (an account with the
   maker), `softwareRisk` (it may stop working until reset), `warranty`, `dataWiped`, `updatesStop`, `protectionsOff`,
   `commandRuns` (required by any step that runs `ssh` or a downloaded `tool`).

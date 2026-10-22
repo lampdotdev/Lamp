@@ -6218,7 +6218,19 @@ final class Store: ObservableObject {
             return problem
         }
         if let step = Integrations.next(for: device) {
-            if !(logs[project.id] ?? []).contains(where: { $0.kind == .deviceStep && $0.text == device.id }) { log(project, .deviceStep, device.id) }
+            // The card goes under the latest request, where the person is reading: one left further up, from setting the
+            // device up before, would be out of sight, and two would show the same step twice.
+            let lines = logs[project.id] ?? []
+            let lastRequest = lines.lastIndex { $0.kind == .user } ?? -1
+            if !lines.indices.contains(where: { $0 > lastRequest && lines[$0].kind == .deviceStep && lines[$0].text == device.id }) {
+                logs[project.id]?.removeAll { $0.kind == .deviceStep && $0.text == device.id }
+                log(project, .deviceStep, device.id)
+            }
+            // Nothing runs while the card waits for the person; once its last step passes, the app goes on the device.
+            DeviceSetupModel.for(device).then = { [weak self] in
+                guard let self, let now = current(project) else { return }
+                Task { await self.run(now) }
+            }
             return "\(device.name) isn't set up for apps yet. Its next step, \"\(step.title)\", is a card in the chat for the person to follow."
         }
         deviceRuns.removeValue(forKey: project.id)?.end()

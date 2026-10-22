@@ -92,7 +92,7 @@ final class DeviceSetupModel: ObservableObject {
         watching = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self, self.next == step else { break }
-                await self.checkOnce(step, runner: runner, keepWatching: false)
+                await self.checkOnce(step, runner: runner, keepWatching: false, quietly: true)
                 if self.passed.contains(step.id) { break }
                 try? await Task.sleep(for: .seconds(3))
             }
@@ -107,8 +107,10 @@ final class DeviceSetupModel: ObservableObject {
         watching = nil
     }
 
-    private func checkOnce(_ step: Integration.Step, runner: IntegrationRunner, keepWatching: Bool) async {
-        if !state.isBusy || state == .checking { state = .checking }
+    private func checkOnce(_ step: Integration.Step, runner: IntegrationRunner, keepWatching: Bool, quietly: Bool = false) async {
+        // The watch's look every few seconds leaves the card as it is: only a check the person asked for shows as
+        // checking, so nothing on the card blinks while they're at the device.
+        if !quietly, !state.isBusy || state == .checking { state = .checking }
         let (ok, why, read) = await runner.check(step)
         guard next == step else { return }
         if ok {
@@ -449,7 +451,9 @@ private struct DeviceStepChat: View {
             } else if let content = model.content {
                 DeviceStepCard(content: content, typed: $model.typed, act: model.act)
             } else {
-                Label("\(model.device.name) is set up.", systemImage: "checkmark.circle.fill").foregroundStyle(.secondary)
+                // Folded, it's one of the chat's status lines, drawn and indented as they are.
+                ChatLook.StatusLine("\(model.device.name) is set up.", running: false)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .onAppear { model.watch() }

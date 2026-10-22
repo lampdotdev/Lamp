@@ -135,7 +135,14 @@ enum DeviceApps {
             run.streams = (try? await runner.run(logs).streams) ?? []
         }
         do {
-            let outcome = try await runner.run(install, extra: values(project), files: ["package": packageURL(for: project)])
+            let outcome: IntegrationRunner.Outcome
+            do {
+                outcome = try await runner.run(install, extra: values(project), files: ["package": packageURL(for: project)])
+            } catch let error as URLError where error.code == .networkConnectionLost {
+                // A device busy closing the app it's replacing can drop the upload once; the second try finds it ready.
+                try await Task.sleep(for: .seconds(2))
+                outcome = try await runner.run(install, extra: values(project), files: ["package": packageURL(for: project)])
+            }
             run.installAnswer = outcome.answers.last.map(plain)
             if let launch = bridge.launch, !launch.isEmpty { _ = try await runner.run(launch, extra: values(project)) }
         } catch {
