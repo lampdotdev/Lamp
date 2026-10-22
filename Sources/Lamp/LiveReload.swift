@@ -2179,15 +2179,63 @@ enum LiveReload {
             if let early = library { try? FileManager.default.removeItem(at: early) }
             (library, problem) = await compile(project, changed: changed, keep: keep)
         }
-        // Whether a compiler error's quoted source line passes this view this argument directly (`Row(title: "a", open:
-        // true)`, never inside another call among its arguments): the plural and no-argument errors name no argument,
-        // and two views may have state of one name, so the line they quote is what ties one to a view.
-        func passes(_ problem: String, view: String, label: String) -> Bool {
-            let short = String(view.split(separator: ".").last ?? "")
-            return problem.components(separatedBy: "\n").contains { line in
-                line.range(of: #"\b"# + NSRegularExpression.escapedPattern(for: short) + #"\([^()]*\b"# + NSRegularExpression.escapedPattern(for: label) + #"\s*:"#,
-                           options: .regularExpression) != nil
+        // The view and argument each initializer error is about, read at the place the compiler gives (`File.swift:4:30:
+        // error: extra argument…`): the argument's label there, and the call around it, the innermost `(` it's in on
+        // that line. Nothing for an error whose place can't be read so.
+        func givenArguments(in problem: String) -> Set<String> {
+            let place = try! NSRegularExpression(pattern: #"^(.+\.swift):(\d+):(\d+): error: (?:extra argument|argument passed to call that takes no arguments)"#, options: .anchorsMatchLines)
+            var found = Set<String>()
+            for m in place.matches(in: problem, range: NSRange(problem.startIndex..., in: problem)) {
+                guard let path = Range(m.range(at: 1), in: problem).map({ String(problem[$0]) }),
+                      let row = Range(m.range(at: 2), in: problem).flatMap({ Int(problem[$0]) }),
+                      let column = Range(m.range(at: 3), in: problem).flatMap({ Int(problem[$0]) }),
+                      // Named as the live copy's sources name it, from their folder.
+                      case let url = path.hasPrefix("/") ? URL(fileURLWithPath: path) : sources(project).appendingPathComponent(path),
+                      let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+                let lines = text.components(separatedBy: "\n")
+                guard row >= 1, row <= lines.count else { continue }
+                let line = Array(lines[row - 1].utf8)
+                guard column >= 1, column <= line.count else { continue }
+                func isWord(_ b: UInt8) -> Bool { b == UInt8(ascii: "_") || (b >= 48 && b <= 57) || (b | 0x20 >= 97 && b | 0x20 <= 122) }
+                // The label, wherever the place is: the argument's label itself, its value (after `label:`), or the call's
+                // `(` (the first argument's label after it).
+                func word(endingBefore index: Int) -> (String, Int) {
+                    var from = index
+                    while from > 0, isWord(line[from - 1]) { from -= 1 }
+                    return (String(decoding: line[from..<index], as: UTF8.self), from)
+                }
+                func skipSpaces(_ index: Int, by step: Int) -> Int {
+                    var at = index
+                    while at >= 0, at < line.count, line[at] == UInt8(ascii: " ") { at += step }
+                    return at
+                }
+                var labelStart = column - 1, label = ""
+                if line[column - 1] == UInt8(ascii: "(") {
+                    labelStart = skipSpaces(column, by: 1)
+                    var end = labelStart
+                    while end < line.count, isWord(line[end]) { end += 1 }
+                    label = String(decoding: line[labelStart..<end], as: UTF8.self)
+                } else {
+                    var end = column - 1
+                    while end < line.count, isWord(line[end]) { end += 1 }
+                    if case let colon = skipSpaces(end, by: 1), colon < line.count, line[colon] == UInt8(ascii: ":") {
+                        label = String(decoding: line[(column - 1)..<end], as: UTF8.self)
+                    } else if case let colon = skipSpaces(column - 2, by: -1), colon > 0, line[colon] == UInt8(ascii: ":") {
+                        (label, labelStart) = word(endingBefore: skipSpaces(colon - 1, by: -1) + 1)
+                    }
+                }
+                guard !label.isEmpty else { continue }
+                // The call: back to the `(` that opens the argument list it's in, and the name before it.
+                var at = labelStart - 1, depth = 0
+                while at >= 0 {
+                    if line[at] == UInt8(ascii: ")") { depth += 1 } else if line[at] == UInt8(ascii: "(") { if depth == 0 { break }; depth -= 1 }
+                    at -= 1
+                }
+                guard at > 0 else { continue }
+                let callee = word(endingBefore: at).0
+                if !callee.isEmpty { found.insert(callee + "\t" + label) }
             }
+            return found
         }
         guard let layout = check.layout, library != nil || changed.isEmpty else {
             // A view's state moved into its box is no parameter of the view's initializer any more, and can't be one: a
@@ -2199,14 +2247,15 @@ enum LiveReload {
                 slots.filter { slot in slot.value.holder == .view && (text.contains("extra argument '\(slot.key)'") || unnamed) }
                     .map { slot in (type: type, name: slot.key, slot: slot.value) }
             }
-            let tied = named.count == 1 && !unnamed ? named : named.filter { item in passes(text, view: bare(item.type), label: item.name) }
+            let given = givenArguments(in: text)
+            let tied = named.filter { item in given.contains(String(bare(item.type).split(separator: ".").last ?? "") + "\t" + item.name) }
             // Several of one view's properties passed together are all given: the first is said.
             if Set(tied.map(\.type)).count == 1, let (type, name, slot) = tied.sorted(by: { $0.name < $1.name }).first {
-                let given = "\(type).\(name)"
+                let said = "\(type).\(name)"
                 if slot.wrapper == nil {
-                    return .reopen(why: "\(given) is given to the view's initializer, and the view is made where the open app keeps it (at launch, or outside a view's body), so a new property of it goes in only as the literal it starts as")
+                    return .reopen(why: "\(said) is given to the view's initializer, and the view is made where the open app keeps it (at launch, or outside a view's body), so a new property of it goes in only as the literal it starts as")
                 }
-                return .reopen(why: "\(given) is @\(slot.wrapper ?? "State") the view's initializer is given, and a property kept in a spare can't take a value that way")
+                return .reopen(why: "\(said) is @\(slot.wrapper ?? "State") the view's initializer is given, and a property kept in a spare can't take a value that way")
             }
             // A compiler error is the compiler's words; anything else (the change's types couldn't be made the app's)
             // is a reason already.
