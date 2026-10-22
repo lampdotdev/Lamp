@@ -9080,10 +9080,15 @@ enum Template {
                 // click on an inactive window would only activate it, so it went straight to the view.
                 NSApp.postEvent(up, atStart: true)
                 if #available(macOS 27, *) {
+                    // A tap gesture takes a click only in the key window, as a real click makes it. A panel that had
+                    // the keyboard (the chat beside the window) gets it back, so what the person types there stays there.
+                    let keyBefore = NSApp.keyWindow
+                    if NSApp.isActive, !window.isKeyWindow, window.canBecomeKey { window.makeKey() }
                     window.sendEvent(down)
                     if let unused = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
                         window.sendEvent(unused)
                     }
+                    if let keyBefore, keyBefore !== window, keyBefore is NSPanel, keyBefore.isVisible { keyBefore.makeKey() }
                 } else {
                     view.mouseDown(with: down)
                     if let unused = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
@@ -9105,6 +9110,9 @@ enum Template {
                 guard count == 2 else { return "row \(row + 1) of a list, now selected" }
                 send("\r", code: 36, flags: [], to: window)
                 return "row \(row + 1) of a list, selected and opened"
+            }
+            if #available(macOS 27, *), !NSApp.isActive {
+                return describe(view) + " (the app isn't in front, so something that only answers taps won't have taken the click)"
             }
             return describe(view)
         }

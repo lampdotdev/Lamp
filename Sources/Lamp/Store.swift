@@ -4216,6 +4216,13 @@ final class Store: ObservableObject {
             DistributedNotificationCenter.default().removeObserver(steps)
             trial.end()
         }
+        // SwiftUI takes a click for a tap gesture only in the active app's key window (macOS 27), so a batch that
+        // clicks brings the app in front, as a real click would. Only over Lamp, whose chat the person is watching:
+        // never over another app they're using, where their typing would land in this one.
+        if NSApp.isActive, !app.isActive, actions.contains(where: { ["click", "double_click", "drag"].contains($0["action"] as? String ?? "") }) {
+            app.activate()
+            try? await Task.sleep(for: .milliseconds(300))
+        }
         // Signed with the app's token rather than carrying it: distributed notifications reach every process.
         Self.signal(project, "useApp", ["actions": json, "id": id], signedAs: "lampUseAppSignature", over: "\(id)\n\(json)")
         // Waits, and keys held down (a Mac app's `key` with `amount`), each up to 10 seconds, as the app takes them;
