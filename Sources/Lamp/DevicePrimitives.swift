@@ -61,12 +61,12 @@ enum DeviceHTTP {
 
     /// The URL for a path on the device. Only the device's own address, which must be private; the path is the
     /// integration's with Lamp's values filled in, and must stay a path.
-    static func url(address: String, port: Int, path: String) throws -> URL {
+    static func url(address: String, port: Int, path: String, https: Bool = false) throws -> URL {
         guard DeviceAddress.isPrivate(address) else { throw DeviceAddress.NotOnNetwork(address: address) }
         guard IntegrationCheck.isPort(port) else { throw Failure(message: "\(port) isn't a port.") }
         if let reason = IntegrationCheck.pathProblem(path.components(separatedBy: "?").first ?? path) { throw Failure(message: "The path \(reason).") }
         let host = address.contains(":") ? "[\(address)]" : address
-        guard let url = URL(string: "http://\(host):\(port)\(path)"), url.host(percentEncoded: false)?.trimmingCharacters(in: CharacterSet(charactersIn: "[]")) == address,
+        guard let url = URL(string: "\(https ? "https" : "http")://\(host):\(port)\(path)"), url.host(percentEncoded: false)?.trimmingCharacters(in: CharacterSet(charactersIn: "[]")) == address,
               url.port == port, url.user == nil else {
             throw Failure(message: "That path doesn't stay on the device.")
         }
@@ -74,10 +74,16 @@ enum DeviceHTTP {
     }
 
     /// Makes the request with Lamp's values filled in. No redirect is followed, a sign-in goes only to the device's own
-    /// challenge, and the answer is cut off at `limit`.
-    static func send(_ request: Request, to address: String, values: [String: String], files: [String: URL] = [:]) async throws -> Answer {
+    /// challenge, and the answer is cut off at `limit`. Over HTTPS, `pins` holds the device to the certificate it showed
+    /// the first time; without them (while a device is only being found and read) nothing secret is sent.
+    static func send(_ request: Request, to address: String, values: [String: String], files: [String: URL] = [:],
+                     pins: DeviceTLS.Pins? = nil) async throws -> Answer {
+        let https = request.https == true
+        if https, pins == nil, carriesSecret(request) {
+            throw Failure(message: "Lamp sends a password over HTTPS only to a device whose certificate it keeps.")
+        }
         let path = try Placeholders.fill(request.path, values, in: .path)
-        var urlRequest = URLRequest(url: try url(address: address, port: request.port, path: path), timeoutInterval: 30)
+        var urlRequest = URLRequest(url: try url(address: address, port: request.port, path: path, https: https), timeoutInterval: 30)
         urlRequest.httpMethod = (request.method ?? "GET").uppercased()
         urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
         urlRequest.httpShouldHandleCookies = false
@@ -108,10 +114,18 @@ enum DeviceHTTP {
         if let auth = request.auth {
             credential = (auth.user, try Placeholders.fill(auth.password, values, in: .auth), auth.digest ?? false)
         }
-        let guardian = Guardian(address: address, credential: credential)
+        let guardian = Guardian(address: address, credential: credential, https: https, port: request.port, pins: pins)
         let session = URLSession(configuration: .ephemeral, delegate: guardian, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
-        let (bytes, response) = try await session.bytes(for: urlRequest)
+        let bytes: URLSession.AsyncBytes, response: URLResponse
+        do {
+            (bytes, response) = try await session.bytes(for: urlRequest)
+        } catch {
+            if guardian.changedCertificate {
+                throw Failure(message: "This device isn't the one Lamp set up at that address: its certificate has changed. If you reset it, set it up again.")
+            }
+            throw error
+        }
         var body = Data()
         for try await byte in bytes {
             body.append(byte)
@@ -120,15 +134,30 @@ enum DeviceHTTP {
         return Answer(status: (response as? HTTPURLResponse)?.statusCode ?? 0, body: body)
     }
 
+    /// Whether a request carries what the person typed or a sign-in, which goes only where Lamp knows the device.
+    static func carriesSecret(_ request: Request) -> Bool {
+        if request.auth != nil { return true }
+        let texts = [request.path, request.body ?? ""] + Array((request.headers ?? [:]).values) + Array((request.form ?? [:]).values)
+        return texts.flatMap(Placeholders.names(in:)).contains { $0.hasPrefix("field:") || $0 == "signIn" }
+    }
+
     /// Follows no redirect, and answers a sign-in challenge only from the device's own address, once, with the
-    /// scheme the integration declared.
+    /// scheme the integration declared. Over HTTPS it judges the device's certificate (`DeviceTLS`).
     final class Guardian: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
         let address: String
         let credential: (user: String, password: String, digest: Bool)?
+        let https: Bool
+        let port: Int
+        let pins: DeviceTLS.Pins?
         private var tried = false
-        init(address: String, credential: (user: String, password: String, digest: Bool)?) {
+        private(set) var changedCertificate = false
+        init(address: String, credential: (user: String, password: String, digest: Bool)?, https: Bool = false, port: Int = 0,
+             pins: DeviceTLS.Pins? = nil) {
             self.address = address
             self.credential = credential
+            self.https = https
+            self.port = port
+            self.pins = pins
         }
 
         func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
@@ -139,6 +168,25 @@ enum DeviceHTTP {
         func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
                         completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
             let space = challenge.protectionSpace
+            if space.authenticationMethod == NSURLAuthenticationMethodServerTrust {
+                // Only for a request the integration made over HTTPS, and only from the device's own address.
+                guard https, space.host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")) == address, let trust = space.serverTrust,
+                      let leaf = (SecTrustCopyCertificateChain(trust) as? [SecCertificate])?.first else {
+                    completionHandler(.cancelAuthenticationChallenge, nil)
+                    return
+                }
+                let fingerprint = DeviceTLS.fingerprint(SecCertificateCopyData(leaf) as Data)
+                switch DeviceTLS.judge(fingerprint, kept: pins?.kept(port: port), keeping: pins != nil) {
+                case .trust: break
+                case .keep: pins?.keep(fingerprint, port: port)
+                case .refuse:
+                    changedCertificate = true
+                    completionHandler(.cancelAuthenticationChallenge, nil)
+                    return
+                }
+                completionHandler(.useCredential, URLCredential(trust: trust))
+                return
+            }
             guard Guardian.answers(space: (host: space.host, method: space.authenticationMethod), address: address,
                                    digest: credential?.digest, tried: tried), let credential else {
                 completionHandler(.performDefaultHandling, nil)

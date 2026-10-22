@@ -224,6 +224,9 @@ struct Request: Codable, Hashable {
     /// A form, sent as multipart; a value "@{package}" is the package's file.
     var form: [String: String]?
     var auth: Auth?
+    /// Over HTTPS, to a device that serves its own certificate (Xbox's Device Portal): Lamp trusts the certificate the
+    /// first time and holds the device to it after (`DeviceTLS`).
+    var https: Bool?
     /// "picture": the answer is the screen's picture (in a bridge's `look`). "key": the answer is a key the device
     /// gives this Mac to sign in to it over SSH, kept in Lamp's folder (in a setup step's `run`).
     var keep: String?
@@ -364,7 +367,7 @@ enum IntegrationCheck {
 
     indirect enum Shape {
         case object([String: Shape]), array(Shape), map, leaf
-        static let request: Shape = .object(["method": .leaf, "port": .leaf, "path": .leaf, "headers": .map, "body": .leaf, "form": .map,
+        static let request: Shape = .object(["method": .leaf, "https": .leaf, "port": .leaf, "path": .leaf, "headers": .map, "body": .leaf, "form": .map,
                                              "auth": .object(["digest": .leaf, "user": .leaf, "password": .leaf]), "keep": .leaf])
         static let action: Shape = .object([
             "http": request, "probe": .leaf, "stream": .object(["port": .leaf]),

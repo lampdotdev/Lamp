@@ -343,7 +343,7 @@ struct IntegrationRunner {
         for action in sequence {
             let values = values(extra)
             if let request = action.http {
-                let answer = try await DeviceHTTP.send(request, to: try address, values: values, files: files)
+                let answer = try await DeviceHTTP.send(request, to: try address, values: values, files: files, pins: DeviceTLS.Pins(deviceID: device.id))
                 guard answer.ok else { throw Failure(message: "\(device.name) answered \(answer.status) to \(request.path).") }
                 switch request.keep {
                 case "picture": outcome.picture = answer.body
@@ -409,7 +409,7 @@ struct IntegrationRunner {
             } else if let port = condition.tcp {
                 guard let address = try? address, await DeviceProbe.tcp(address, port: port) else { return (false, "Waiting for \(device.name)…", nil) }
             } else if let request = condition.http {
-                guard let address = try? address, let answer = try? await DeviceHTTP.send(request, to: address, values: values), answer.ok else {
+                guard let address = try? address, let answer = try? await DeviceHTTP.send(request, to: address, values: values, pins: DeviceTLS.Pins(deviceID: device.id)), answer.ok else {
                     return (false, "Waiting for \(device.name)…", nil)
                 }
                 if condition.json != nil || condition.xml != nil {

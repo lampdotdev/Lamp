@@ -22,6 +22,52 @@ enum DeviceFolder {
     static func deviceKey(_ deviceID: String) -> URL { of(deviceID).appendingPathComponent("device.key") }
 }
 
+// MARK: - HTTPS
+
+/// A device that speaks HTTPS with a certificate of its own (Xbox's Device Portal) can't be checked against any
+/// authority, so Lamp does what SSH does: it keeps the certificate's fingerprint the first time it reaches the device,
+/// per port, in the device's folder, and from then on refuses one that differs. While a device is only being found and
+/// read, nothing is kept and nothing secret is sent (`DeviceHTTP.send`).
+enum DeviceTLS {
+    enum Judgement: Equatable { case trust, keep, refuse }
+
+    static func fingerprint(_ certificate: Data) -> String {
+        SHA256.hash(data: certificate).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// What to do with a certificate: trust it (it's the one kept, or nothing is being kept), keep it (the first for
+    /// this device), or refuse it (another than the one kept).
+    static func judge(_ fingerprint: String, kept: String?, keeping: Bool) -> Judgement {
+        guard keeping else { return .trust }
+        guard let kept else { return .keep }
+        return kept == fingerprint ? .trust : .refuse
+    }
+
+    /// One device's kept certificates.
+    struct Pins: Sendable {
+        let deviceID: String
+        private static let lock = NSLock()
+        private var file: URL { DeviceFolder.of(deviceID).appendingPathComponent("certificates.json") }
+
+        private func all() -> [String: String] {
+            (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+        }
+
+        func kept(port: Int) -> String? {
+            Self.lock.lock(); defer { Self.lock.unlock() }
+            return all()[String(port)]
+        }
+
+        func keep(_ fingerprint: String, port: Int) {
+            Self.lock.lock(); defer { Self.lock.unlock() }
+            var pins = all()
+            guard pins[String(port)] == nil else { return }
+            pins[String(port)] = fingerprint
+            try? JSONEncoder().encode(pins).write(to: file, options: .atomic)
+        }
+    }
+}
+
 // MARK: - Approvals
 
 /// What the person approved on each device: the exact text of a command template or a tool, so Play doesn't ask each
