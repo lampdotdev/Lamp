@@ -362,7 +362,7 @@ extension Store {
         switch project.platform {
         case .mac: isOpen(project)
         case .universal: openOnMac.contains(project.id)
-        case .iphone, .android, .tv: false
+        case .iphone, .android, .tv, .device: false
         }
     }
 }

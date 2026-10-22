@@ -46,7 +46,8 @@ enum Template {
                                              instance: project.instance.isEmpty ? nil : project.instance,
                                              wish: project.untitled && project.fromWish ? true : nil,
                                              finding: project.untitled && project.finding ? true : nil,
-                                             deviceSetup: project.deviceSetup))
+                                             deviceSetup: project.deviceSetup,
+                                             integration: project.platform == .device ? project.integration : nil))
             .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
     }
 
@@ -59,6 +60,7 @@ enum Template {
         case .universal: (app, view, md) = (universalAppSwift, universalContentViewSwift, universalAppMd)
         case .android: try fillAndroid(project); return
         case .tv: try TVTemplate.fill(project); return
+        case .device: try DeviceApps.fill(project); return
         }
         try write(app, to: "Sources/App.swift", for: project)
         try write(view, to: "Sources/ContentView.swift", for: project)
@@ -129,6 +131,8 @@ enum Template {
         if project.platform == .android { try writeAndroidOwnedFiles(for: project); return }
         // A TV app's own files are its web code; Lamp's is its building blocks there.
         if project.platform == .tv { try TVTemplate.writeOwnedFiles(for: project); return }
+        // A device app's build is the integration's package step, which Lamp holds, not a file in the folder.
+        if project.platform == .device { return }
         // Where an earlier Lamp kept the phone's secret, readable by the agent's commands; a new one is made in
         // Lamp's own folder (`phoneSecret(in:)`).
         AppFolder.remove(project.dir.appendingPathComponent(".lamp/phone-secret"), in: project.dir)
@@ -171,7 +175,7 @@ enum Template {
             try write(withWatch(universalBuildSh(widget: widget, share: share), for: project), to: "build.sh", for: project, executable: true)
             try write(withWatch(universalPackageSwift(widget: widget, share: share), for: project), to: "Package.swift", for: project)
             try writeDeviceProject(for: project, team: Devices.team)
-        case .android, .tv:
+        case .android, .tv, .device:
             break   // above
         }
     }
@@ -254,7 +258,7 @@ enum Template {
         // An Android app's building blocks are Kotlin (`writeAndroidSupport`).
         if project.platform == .android { try writeAndroidSupport(for: project); return }
         // A TV app has no Swift: its building blocks are its own script (`TVTemplate.writeOwnedFiles`).
-        guard project.platform != .tv else { return }
+        guard project.platform != .tv, project.platform != .device else { return }
         let contents = lampSupportSwift
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
         try put(contents, at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
@@ -2203,6 +2207,7 @@ enum Template {
     static func platform(fromPackageIn dir: URL) -> Platform? {
         if isAndroid(dir) { return .android }
         if TVTemplate.isTV(dir) { return .tv }
+        if DeviceApps.isScaffolded(dir) { return .device }
         guard let text = try? String(contentsOf: dir.appendingPathComponent("Package.swift"), encoding: .utf8) else { return nil }
         let mac = text.contains(".macOS("), ios = text.contains(".iOS(")
         return mac && ios ? .universal : ios ? .iphone : mac ? .mac : nil

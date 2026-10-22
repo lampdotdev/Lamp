@@ -285,6 +285,8 @@ struct IntegrationRunner {
         var picture: Data?
         var streams: [DeviceStream] = []
         var printed: [String] = []
+        /// What each request that kept nothing was answered, as text: where a device says what it made of a package.
+        var answers: [String] = []
     }
 
     var address: String {
@@ -349,7 +351,7 @@ struct IntegrationRunner {
                     let file = DeviceFolder.deviceKey(device.id)
                     try answer.body.write(to: file, options: .atomic)
                     try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-                default: break
+                default: outcome.answers.append(String(answer.text.prefix(64 << 10)))
                 }
             } else if let probe = action.probe {
                 guard try await probed(probe) else { throw Failure(message: "\(device.name) didn't answer (\(probe)).") }

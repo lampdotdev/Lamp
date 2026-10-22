@@ -23,8 +23,8 @@ steps in the chat: the steps are cards Lamp draws from what you write here.
   "find": [{ "ssdp": "roku:ecp" }],
   "identity": { ... },
   "steps": [ ... ],
-  "bridge": { ... },                   // optional until apps can go on it
-  "app": { ... }                       // optional, needs bridge.install
+  "bridge": { ... },                   // how an app goes on it, opens, is seen and is used
+  "app": { ... }                       // what's built for it; needs bridge.install
 }
 ```
 
@@ -109,6 +109,10 @@ The setup, in order. Each step is done when its `check` passes, never because an
 - `check`: every condition must hold. Each is one of `http` (answers 2xx; with `json` or `xml`, the value `equals` or
   `contains` something), `tcp` (a port that accepts a connection), `field` (the person typed it), `signedIn` (a
   `vendorSignIn` came back).
+- Every setting of the device's that the bridge needs is a step of its own, checked on the device, so it's found in
+  setup rather than when a builder first uses it: a Roku answers key presses only with Settings → System → Advanced
+  system settings → Control by mobile apps set to Enabled, which its device-info says
+  (`{"http": {"port": 8060, "path": "/query/device-info"}, "xml": "ecp-setting-mode", "equals": "enabled"}`).
 - `accepts`: what doing it may cost, from Lamp's list; Lamp writes the sentences. `account` (an account with the
   maker), `softwareRisk` (it may stop working until reset), `warranty`, `dataWiped`, `updatesStop`, `protectionsOff`,
   `commandRuns` (required by any step that runs `ssh` or a downloaded `tool`).
@@ -134,14 +138,19 @@ A step's `run` and each bridge sequence are lists of these, one key each:
 
 ### bridge
 
-How software goes on the device once it's set up. Each is a sequence of primitives.
+How software goes on the device once it's set up. Each is a sequence of primitives. With `app`, this is all Lamp has
+to make apps for the device with, and the builder of each app gets it as Lamp's own: `install` then `launch` when
+the person presses Play and at every look, `look` for the picture the builder sees, `use` once for each of the
+remote's keys the builder presses (`{key}` is the device's name for it, from `keys`), `logs` read into the app's log
+while it's open. What the device answers to `install` is shown to the builder, so a device that says there what it
+made of the package (a compile error) needs nothing more. Lamp presses `home` when the app is stopped.
 
 ```json
 "bridge": {
   "install": [{ "http": { "method": "POST", "port": 80, "path": "/plugin_install",
                           "auth": { "digest": true, "user": "rokudev", "password": "{field:password}" },
                           "form": { "mysubmit": "Install", "archive": "@{package}" } } }],
-  "launch":  [{ "http": { "method": "POST", "port": 8060, "path": "/launch/dev" } }],
+  "launch":  [{ "http": { "method": "POST", "port": 8060, "path": "/launch/dev" } }, { "wait": 3 }],
   "look":    [{ "http": { "method": "POST", "port": 80, "path": "/plugin_inspect",
                           "auth": { "digest": true, "user": "rokudev", "password": "{field:password}" },
                           "form": { "mysubmit": "Screenshot" } } },
@@ -155,11 +164,16 @@ How software goes on the device once it's set up. Each is a sequence of primitiv
 
 ### app
 
-What's built for it: `{"lamp": "tv-web"}` for Lamp's own TV web app, or a kind you declare:
+What's built for it: `{"lamp": "tv-web"}` for Lamp's own TV web app, or a kind you declare. A declared kind becomes
+a kind of app people can wish for ("a Roku app that…"): `files` is each new app's scaffold, where `{{NAME}}` is the
+app's name; `rules` is what its builder is told about writing for the device (the language, the layout, the screen,
+how input arrives, where its output is printed), as the only guide they get; `package` is the shell command that
+makes the package from the app's folder, run there in the app's sandbox with the system's own tools (`zip`, `tar`),
+never anything to download; `output` is where it leaves it, which `"@{package}"` sends.
 
 ```json
 "app": { "declared": {
-  "files": { "manifest": "title=…\nmajor_version=1\n…", "source/main.brs": "sub Main()\n…\nend sub\n" },
+  "files": { "manifest": "title={{NAME}}\nmajor_version=1\n…", "source/main.brs": "sub Main()\n…\nend sub\n" },
   "rules": "What a builder needs to know to write apps for it, in a few sentences.",
   "package": "rm -f build/app.zip && mkdir -p build && zip -r build/app.zip manifest source components images",
   "output": "build/app.zip"

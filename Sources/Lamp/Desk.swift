@@ -1351,7 +1351,7 @@ struct WishDrag: NSViewRepresentable {
 /// Where a wish lives once it's made, read from its files: for its caption on the desk, and for what the desk
 /// says when it's used and nothing comes to the front to say so itself.
 enum WishPlace: Equatable {
-    case window, menuBar, widget, background, iPhone, iPhoneAndWatch, everywhere, android, tv
+    case window, menuBar, widget, background, iPhone, iPhoneAndWatch, everywhere, android, tv, device
 
     /// Reads the app's files: not on the main thread.
     static func of(_ project: LampProject) -> WishPlace {
@@ -1360,6 +1360,7 @@ enum WishPlace: Equatable {
         case .universal: return .everywhere
         case .android: return .android
         case .tv: return .tv
+        case .device: return .device
         case .mac: break
         }
         if Template.isWidgetOnly(project) { return .widget }
@@ -1393,6 +1394,7 @@ enum WishPlace: Equatable {
         case .everywhere: "Mac and iPhone"
         case .android: "Android"
         case .tv: "TV"
+        case .device: "Device"
         }
     }
 
@@ -1407,6 +1409,7 @@ enum WishPlace: Equatable {
         case .everywhere: "laptopcomputer.and.iphone"
         case .android: "smartphone"
         case .tv: "tv"
+        case .device: "shippingbox"
         }
     }
 }
@@ -1624,6 +1627,9 @@ extension Store {
                 WishHUD.show(icon: icon, symbol: place.symbol, title: "\(project.name) is in your menu bar.")
             case .background:
                 WishHUD.show(icon: icon, symbol: place.symbol, title: "\(project.name) is running in the background.")
+            case .device:
+                let device = DeviceApps.integration(for: project)?.name ?? "device"
+                WishHUD.show(icon: icon, symbol: place.symbol, title: "\(project.name) is opening on your \(device).")
             case .iPhone, .iPhoneAndWatch, .everywhere, .android, .tv:
                 if project.onIOS, project.device != nil {
                     WishHUD.show(icon: icon, symbol: "iphone", title: "\(project.name) is opening on your iPhone.")

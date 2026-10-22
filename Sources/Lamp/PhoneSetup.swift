@@ -91,6 +91,12 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
             TVSetup.shared.perform(id) { if let now = store.current(project) { then(now) } else { cancelled() } }
             return
         }
+        // A device app needs its device set up before Open puts it there; a request goes to the agent either way.
+        if current.platform == .device {
+            guard building, let device = DeviceApps.device(for: current, among: store.devices), device.setup() != .ready else { then(current); return }
+            DeviceSetupWindow.show(device) { if let now = store.current(project) { then(now) } else { cancelled() } }
+            return
+        }
         // An Android app's checks are Android's: the tools, the emulator, and the person's device when one is chosen.
         if current.platform == .android {
             AndroidSetup.shared.perform(device: current.device, cancelled: cancelled) {

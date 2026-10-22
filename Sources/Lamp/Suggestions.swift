@@ -141,6 +141,8 @@ enum AppName {
         /// What it runs on, from the request (`Store.chooseKind`), and whether the person said so.
         var kind: Platform?
         var kindSaid = false
+        /// For a device app (`Platform.device`), the integration it's for.
+        var integration: String?
         /// The person wants an Apple Watch app too (the agent writes it; `chooseKind` says so in the chat).
         var watch = false
         /// The icon's background (`Icons.backgrounds`), chosen here so the blueprint shows it from the start and the
@@ -149,7 +151,7 @@ enum AppName {
     }
 
     static func suggest(for brief: String) async -> Suggestion? {
-        let request = "\(prompt)\n\nThe user asked for:\n\(brief.prefix(4000))"
+        let request = "\(prompt)\(deviceKinds())\n\nThe user asked for:\n\(brief.prefix(4000))"
         guard let (text, _) = try? await AppAI.complete(prompt: request, images: [], system: "", json: true,
                                                          model: await AppAI.helperModel()),
               let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
@@ -159,8 +161,17 @@ enum AppName {
         let devices = Set(object["devices"] as? [String] ?? [])
         return Suggestion(name: name(object, asked: brief), sketch: sketch.count >= 2 ? Array(sketch) : [],
                           kind: Platform(devices: devices), kindSaid: object["devices_by_user"] as? Bool ?? false,
+                          integration: Platform(devices: devices) == .device ? devices.first : nil,
                           watch: devices.contains("watch"),
                           color: (object["color"] as? String).flatMap { name in Icons.backgrounds.first { $0.name == name.trimmed.lowercased() }?.name })
+    }
+
+    /// The devices whose integrations declare their apps, as more names the devices may be: each stands alone.
+    static func deviceKinds() -> String {
+        let kinds = DeviceApps.kinds()
+        guard !kinds.isEmpty else { return "" }
+        return "\n\nThese devices of the person's take apps too; each stands alone, for a request that names it or its maker: "
+            + kinds.map { "[\"\($0.id)\"] for their \($0.name) (\($0.kind ?? "device") by \($0.maker))" }.joined(separator: ", ") + "."
     }
 
     static func name(_ object: [String: Any], asked brief: String) -> String? {
