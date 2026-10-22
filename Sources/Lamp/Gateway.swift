@@ -16,6 +16,8 @@ final class Gateway: @unchecked Sendable {
         var fromNetwork = false
         /// The port the request came from (host order), which tells Lamp which program on this Mac sent it.
         var peerPort: UInt16?
+        /// The address it came from: for a request from the network, the device that sent it.
+        var peerAddress: String?
     }
 
     private var listener: NWListener?
@@ -71,10 +73,23 @@ final class Gateway: @unchecked Sendable {
             if var request = Self.parse(buffer) {
                 if request.method == "BAD" { self.respond(connection, status: 400, json: ["error": "Bad request"]); return }
                 request.fromNetwork = fromNetwork
-                if case .hostPort(_, let port) = connection.endpoint { request.peerPort = port.rawValue }
+                if case .hostPort(let host, let port) = connection.endpoint {
+                    request.peerPort = port.rawValue
+                    switch host {
+                    case .ipv4(let address): request.peerAddress = "\(address)"
+                    case .ipv6(let address): request.peerAddress = address.asIPv4.map { "\($0)" } ?? "\(address)"
+                    default: break
+                    }
+                }
+                // A web app on a TV or a console asks before it sends a request with a token, as browsers do across
+                // origins. Only over the network: nothing on this Mac is answered across origins.
+                if fromNetwork, request.method == "OPTIONS" {
+                    self.respond(connection, status: 204, json: [:], crossOrigin: true)
+                    return
+                }
                 Task {
                     let (status, json) = await self.handler(request)
-                    self.respond(connection, status: status, json: json)
+                    self.respond(connection, status: status, json: json, crossOrigin: fromNetwork)
                 }
             } else if done || error != nil || buffer.count > 40_000_000 {
                 connection.cancel()
@@ -84,11 +99,14 @@ final class Gateway: @unchecked Sendable {
         }
     }
 
-    private func respond(_ connection: NWConnection, status: Int, json: [String: Any]) {
-        // 202 is how the MCP endpoint acknowledges a notification: no body.
-        let body = status == 202 ? Data() : (try? JSONSerialization.data(withJSONObject: json)) ?? Data("{}".utf8)
+    /// `crossOrigin` lets a web app on a device read the answer: the app's token is what's checked, never where its page
+    /// came from, which is the device's own package.
+    private func respond(_ connection: NWConnection, status: Int, json: [String: Any], crossOrigin: Bool = false) {
+        // 202 is how the MCP endpoint acknowledges a notification, and 204 a preflight: no body.
+        let body = status == 202 || status == 204 ? Data() : (try? JSONSerialization.data(withJSONObject: json)) ?? Data("{}".utf8)
         let reason = HTTPURLResponse.localizedString(forStatusCode: status).capitalized
-        var response = Data("HTTP/1.1 \(status) \(reason)\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+        let cors = crossOrigin ? "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST\r\nAccess-Control-Allow-Headers: Authorization, Content-Type\r\nAccess-Control-Max-Age: 600\r\n" : ""
+        var response = Data("HTTP/1.1 \(status) \(reason)\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\n\(cors)Connection: close\r\n\r\n".utf8)
         response.append(body)
         connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
     }
