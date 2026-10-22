@@ -56,9 +56,15 @@ enum DeviceTLS {
 
     /// One device's kept certificates.
     struct Pins: Sendable {
-        let deviceID: String
         private static let lock = NSLock()
-        private var file: URL { DeviceFolder.of(deviceID).appendingPathComponent("certificates.json") }
+        private let file: URL
+
+        init(deviceID: String) {
+            self.init(file: DeviceFolder.of(deviceID).appendingPathComponent("certificates.json"))
+        }
+
+        /// A store of its own lets tests exercise failures without touching Lamp's kept devices.
+        init(file: URL) { self.file = file }
 
         /// Whether a certificate is taken, decided and kept under one lock, so two first requests at once can't each
         /// keep their own: the second is judged against what the first kept. It fails closed: a store that's there
