@@ -60,10 +60,12 @@ enum StepTitles {
     }
 
     /// The run going on's stretches of more than one step that something said came after, untitled: those that will
-    /// fold. A stretch of one step folds only as the answer's, which isn't known until the run ends.
+    /// fold. A stretch of one step folds only as the answer's, which isn't known until the run ends. The run starts
+    /// at its request, as `ChatItem.live` takes it: the statuses left after the last summary are that turn's end,
+    /// titled with the rest of what the run leaves (`start`).
     nonisolated static func closed(in lines: [LogLine]) -> (request: String?, groups: [Group]) {
-        let start = lines.lastIndex { $0.kind == .summary }.map { $0 + 1 } ?? lines.startIndex
-        let run = lines[start...]
+        let end = lines.lastIndex { $0.kind == .summary }.map { $0 + 1 } ?? lines.startIndex
+        let run = lines[(lines[end...].firstIndex { $0.kind == .user } ?? end)...]
         let request = run.first { $0.kind == .user }.map { String($0.text.prefix(600)) }
         var groups: [Group] = []
         var stretch: [LogLine] = []

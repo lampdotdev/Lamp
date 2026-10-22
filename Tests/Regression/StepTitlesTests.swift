@@ -84,6 +84,12 @@ final class StepTitlesTests: XCTestCase {
         var titled = whole
         titled[2].foldTitle = "Read the shelf"
         XCTAssertEqual(StepTitles.closed(in: LogLine.visible(Array(titled[...9]), details: false)).groups.map(\.id), [whole[7].id])
+        // The next turn's first message closes nothing of this one: what came after its summary is its own end.
+        let next = whole + [LogLine(kind: .status, text: "Building…", at: at(92)), LogLine(kind: .status, text: "Hot Shelf is updated", at: at(93)),
+                            LogLine(kind: .user, text: "Now a dark mode", at: at(100)), LogLine(kind: .agent, text: "On it.", at: at(102))]
+        let (nextRequest, nextGroups) = StepTitles.closed(in: LogLine.visible(next, details: false))
+        XCTAssertEqual(nextRequest, "Now a dark mode")
+        XCTAssertTrue(nextGroups.isEmpty)
     }
 
     /// A reply that isn't fit to show is no title: the fold keeps its words.
