@@ -98,7 +98,8 @@ final class TileStreamer {
                 guard wanted(k) else { continue }
                 let d = distance(p, to: k)
                 guard d < loadRadius else { continue }
-                let score = d == 0 ? 0 : distance(ahead, to: k)
+                // The car's own tile below every other, even one holding the point ahead (which scores 0 too).
+                let score = d == 0 ? -1 : distance(ahead, to: k)
                 if best == nil || score < best!.1 { best = (k, score) }
             }
         }
