@@ -21,10 +21,13 @@ final class DeviceTLSPinsTests: XCTestCase {
     }
 
     func testNewRequestsKeepEachPortsCertificateAndRefuseChanges() throws {
-        try Data(#"{"443":"first","11443":"other"}"#.utf8).write(to: file)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
         let pins = DeviceTLS.Pins(file: file)
-        XCTAssertEqual(pins.kept(port: 443), "first")
-        XCTAssertEqual(pins.kept(port: 11443), "other")
+        XCTAssertNil(pins.admit("first", port: 443))
+        XCTAssertEqual(DeviceTLS.Pins(file: file).kept(port: 443), "first")
+        XCTAssertNil(DeviceTLS.Pins(file: file).admit("other", port: 11443))
+        XCTAssertEqual(DeviceTLS.Pins(file: file).kept(port: 443), "first", "saving another port must keep the first")
+        XCTAssertEqual(DeviceTLS.Pins(file: file).kept(port: 11443), "other")
         XCTAssertNil(DeviceTLS.Pins(file: file).admit("first", port: 443))
         XCTAssertNil(DeviceTLS.Pins(file: file).admit("other", port: 11443))
         let saved = try Data(contentsOf: file)
