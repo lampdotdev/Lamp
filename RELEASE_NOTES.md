@@ -5,6 +5,14 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.18.4
+
+- A new starter, Disk Map: see where your disk space goes as a map that fills in while it measures, and clear out
+  what you don't need. It doesn't ask for your private folders until you choose to measure them.
+- On macOS 27, Lamp's taps and drags when it tries your app reach every button and gesture again.
+- TV apps can load their own files in the preview, pictures and sounds included, and the agent knows the preview is
+  on your Mac, not your TV.
+
 ## 0.18.3
 
 - A turn built with your Claude subscription no longer shows a dollar amount: that was what it would have cost at API
