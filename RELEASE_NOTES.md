@@ -5,6 +5,15 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.18.1
+
+- A new starter, Drive Anywhere: a driving game on real streets anywhere in the world, built from the map as you drive.
+  It opens in San Francisco, and Travel takes you anywhere you can search for, with the traffic, people, shops, trains
+  and hills that are really there. It needs macOS 15, so it's offered once your Mac has it.
+- Settings → Building → Your Devices ends in one Add a New Device… button, which shows how to connect an iPhone or
+  iPad, an Android phone or tablet, or a TV, and lists the devices Lamp finds on your network while it looks.
+- LG TVs are found reliably, whichever of their services answers Lamp first.
+
 ## 0.18.0
 
 - Lamp makes apps for more than the Mac and the iPhone. Wish for an Android app and it's written in Kotlin, built,
