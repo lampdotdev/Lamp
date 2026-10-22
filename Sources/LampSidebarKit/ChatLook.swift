@@ -427,17 +427,17 @@ public enum ChatLook {
 
     /// A turn's progress: one line saying what the agent is doing, with no clock beside it, which changes in place
     /// as it moves from one thing to the next. `since` is when the activity began, which a long think or build is
-    /// counted from (the turn's start when it isn't known). It starts open, with the steps done since the agent last
-    /// said something above it, oldest first, and itself at the bottom saying what's going on now; a click folds them.
-    /// Steps before that stay where they came, between what was said. The whole turn's time is its "Worked for…": when
-    /// the turn ends, the steps before its answer fold into it (`Worked`), above the answer.
+    /// counted from (the turn's start when it isn't known). The steps done since the agent last said something are
+    /// above it, oldest first, and itself at the bottom saying what's going on now. It doesn't fold: what's going on
+    /// is what's worth seeing, and its steps fold to one line once the agent says something after them
+    /// (`ChatItem.closing`), with the chevron every finished fold has. The whole turn's time is its "Worked for…":
+    /// when the turn ends, the steps before its answer fold into it (`Worked`), above the answer.
     public struct ActivityLine<Steps: View>: View {
         let activity: String
         let started: Date
         let since: Date
         let hasSteps: Bool
         let steps: Steps
-        @State private var expanded = true
         @State private var dim = false
 
         public init(_ activity: String, started: Date, since: Date? = nil, hasSteps: Bool,
@@ -453,37 +453,20 @@ public enum ChatLook {
             VStack(alignment: .leading, spacing: 4) {
                 // What's done reads down in the order it happened, and the line saying what's going on now stays at the
                 // bottom, under all of it: a step that finishes joins the list above the line.
-                if expanded && hasSteps {
+                if hasSteps {
                     VStack(alignment: .leading, spacing: 4) { steps }
                         .transition(.opacity)
                 }
-                Button {
-                    guard hasSteps else { return }
-                    withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
-                } label: {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.mini).frame(width: 16)
-                        // It breathes while the agent works, so the line reads as live rather than stuck.
-                        ActivityText(activity, since: since)
-                            .opacity(dim ? 0.5 : 1)
-                            .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: dim)
-                        if hasSteps {
-                            Image(systemName: "chevron.right")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                                // Right when folded and down when open, as every other fold in the chat turns
-                                // (the steps, "Worked for…"), so the line reads as one of them.
-                                .rotationEffect(.degrees(expanded ? 90 : 0))
-                        }
-                    }
-                    .contentShape(Rectangle())
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini).frame(width: 16)
+                    // It breathes while the agent works, so the line reads as live rather than stuck.
+                    ActivityText(activity, since: since)
+                        .opacity(dim ? 0.5 : 1)
+                        .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: dim)
                 }
-                .buttonStyle(.plain)
-                .pointingHand()
                 .font(ChatLook.stepFont)
                 .foregroundStyle(.secondary)
                 .padding(.leading, ChatLook.stepIndent)
-                .help(hasSteps ? (expanded ? "Hide the steps" : "Show the steps") : "")
                 .onAppear { dim = true }
             }
         }

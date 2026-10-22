@@ -69,6 +69,81 @@ final class StepTitlesTests: XCTestCase {
         XCTAssertTrue(StepTitles.groups(in: LogLine.visible(turn(timed: true, titled: true), details: false)).groups.isEmpty)
     }
 
+    /// While the turn goes on, a stretch of steps is asked about as soon as the agent says something after it, so its
+    /// title is there when the turn ends; the stretch still going isn't, nor one already titled.
+    @MainActor func testAStretchIsTitledOnceSomethingIsSaidAfterIt() {
+        let whole = turn(timed: true, titled: false)
+        // The turn as it stands when "First, the look." starts: the summary and the answer aren't there yet.
+        let live = LogLine.visible(Array(whole[...8]), details: false)
+        let (request, groups) = StepTitles.closed(in: live)
+        XCTAssertEqual(request, "Make it a beer journal")
+        XCTAssertEqual(groups.map(\.steps), [["Looking at the shelf", "Reading the saved entries", "Finding every hot-sauce word"]])
+        XCTAssertEqual(groups.map(\.id), [whole[2].id])
+        // Before anything is said after the steps, nothing is closed.
+        XCTAssertTrue(StepTitles.closed(in: LogLine.visible(Array(whole[...5]), details: false)).groups.isEmpty)
+        var titled = whole
+        titled[2].foldTitle = "Read the shelf"
+        XCTAssertEqual(StepTitles.closed(in: LogLine.visible(Array(titled[...9]), details: false)).groups.map(\.id), [whole[7].id])
+        // The next turn's first message closes nothing of this one: what came after its summary is its own end.
+        let next = whole + [LogLine(kind: .status, text: "Building…", at: at(92)), LogLine(kind: .status, text: "Hot Shelf is updated", at: at(93)),
+                            LogLine(kind: .user, text: "Now a dark mode", at: at(100)), LogLine(kind: .agent, text: "On it.", at: at(102))]
+        let (nextRequest, nextGroups) = StepTitles.closed(in: LogLine.visible(next, details: false))
+        XCTAssertEqual(nextRequest, "Now a dark mode")
+        XCTAssertTrue(nextGroups.isEmpty)
+    }
+
+    /// While the turn goes on, a stretch the agent has said something after folds to its one line, its title once it
+    /// has one; the stretch still going stays open, its steps rows.
+    func testAClosedStretchFoldsWhileTheTurnGoesOn() {
+        let live = Array(turn(timed: true, titled: false)[...8])
+        XCTAssertEqual(titles(live), ["3 steps"])
+        XCTAssertEqual(titles(Array(turn(timed: true, titled: true)[...8])), ["Read the shelf and found its hot-sauce words · 42 s"])
+        let items = ChatItem.items(LogLine.visible(live, details: false), gather: true)
+        XCTAssertEqual(items.filter { if case .work = $0 { return false }; return true }.flatMap { item -> [String] in
+            switch item {
+            case .line(let line): [line.text]
+            case .statuses(let lines), .tools(let lines): lines.map(\.text)
+            case .work: []
+            }
+        }, ["Make it a beer journal", "I'll look first.", "First, the look.", "Ran: sed", "Ran: swift build"])
+    }
+
+    /// A stretch asked about while the turn went on is asked about once: one whose title failed, or was turned away,
+    /// isn't asked again, and paid for again, at every later message. The call at the turn's end is its one more try.
+    @MainActor func testAFailedEarlyTitleIsNotAskedAgainAtTheNextMessage() async {
+        final class Calls { var groups: [[String]] = [] }
+        let calls = Calls()
+        let saved = StepTitles.asker
+        defer { StepTitles.asker = saved }
+        StepTitles.asker = { _, groups, _ in
+            await MainActor.run { calls.groups += groups.map(\.steps) }
+            return nil
+        }
+        let whole = turn(timed: true, titled: false)
+        // "First, the look." closes the first stretch; "It's a beer journal now." closes the second.
+        for lines in [Array(whole[...8]), Array(whole[...9])] {
+            for task in StepTitles.askEarly(LogLine.visible(lines, details: false), turn: .openRouter, apply: { _ in }) { await task.value }
+        }
+        XCTAssertEqual(calls.groups, [["Looking at the shelf", "Reading the saved entries", "Finding every hot-sauce word"],
+                                      ["Painting the shelves oak", "Checking it builds"]])
+    }
+
+    /// Whatever the turn says, it closes the steps before it, so each closed stretch is titled as it closes: the
+    /// lines Lamp puts in the chat itself for a tool (a progress line, a question card) as much as a message or what
+    /// `log` adds. The lines are added in the gateway's handler, which runs with Lamp itself, so the check reads it.
+    func testEveryLineSaidInATurnClosesTheStepsBeforeIt() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/Lamp/Store.swift"), encoding: .utf8)
+            .components(separatedBy: "\n")
+        let appends = store.indices.filter { store[$0].contains("logs[project.id, default: []].append(LogLine(kind: .") }
+        XCTAssertFalse(appends.isEmpty)
+        for index in appends {
+            let kind = store[index].firstMatch(of: #/kind: \.(\w+)/#).map { String($0.1) } ?? "?"
+            XCTAssertTrue(store[index...min(index + 3, store.count - 1)].contains { $0.contains("closeSteps(project)") },
+                          "the \(kind) line added at Store.swift:\(index + 1) doesn't close the steps before it")
+        }
+    }
+
     /// A reply that isn't fit to show is no title: the fold keeps its words.
     @MainActor func testOnlyTitlesFitToShowAreKept() {
         let groups = [StepTitles.Group(id: UUID(), steps: ["a", "b"]),

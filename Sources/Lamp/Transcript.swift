@@ -265,7 +265,32 @@ enum ChatItem: Identifiable {
             result += run.contains { $0.id == waiting } ? items(run) : folded(run, summary: line)
             run = []
         }
-        return result + items(run)
+        return result + (run.contains { $0.id == waiting } ? items(run) : closing(run))
+    }
+
+    /// The run going on: each stretch of more than one step that something said came after folds to its one line,
+    /// as it will when the turn ends, so the chat keeps only what's going on now open. The line reads how many steps
+    /// it was until its title comes, which is asked for as the stretch closes (`StepTitles.closed(in:turn:)`). The
+    /// stretch still going, and a step on its own, stay rows.
+    private static func closing(_ run: [LogLine]) -> [ChatItem] {
+        var result: [ChatItem] = []
+        var stretch: [LogLine] = []
+        for line in run {
+            if isStep(line) {
+                stretch.append(line)
+                continue
+            }
+            if stretch.count > 1 {
+                let seconds = stretch[0].at.flatMap { start in line.at.map { max(0, $0.timeIntervalSince(start)) } }
+                let fold = Fold(steps: stretch, first: stretch[0], isAnswers: false, seconds: seconds)
+                result.append(.work(id: stretch[0].id, title: title(of: fold, untitled: "\(stretch.count) steps"), steps: stretch))
+            } else {
+                result += items(stretch)
+            }
+            result += items([line])
+            stretch = []
+        }
+        return result + items(stretch)
     }
 
     /// What a turn did, as against what it said: the lines that go into its one line ("Worked for…", and while it
@@ -276,8 +301,8 @@ enum ChatItem: Identifiable {
 
     /// While a turn goes on, the steps since the last thing it said aren't rows of their own: they're inside the one
     /// line at the bottom that says what it's doing (`ActivityRow`, the sidebar's `workingSteps`), which opens to show
-    /// them. Steps that came before something it said (a message, a progress line, Reload) stay rows where they came,
-    /// so the chat reads in the order things happened, newest at the bottom. `shown` is the chat without the live
+    /// them. Steps that came before something it said (a message, a progress line, Reload) stay where they came, folded
+    /// when there's more than one (`closing`), so the chat reads in the order things happened, newest at the bottom. `shown` is the chat without the live
     /// line's steps, `steps` what that line opens to. The turn still going is what comes after the last summary, from
     /// its request on: a status left after the summary before it ("Hot Shelf is ready") belongs to that turn's end.
     /// `doing` is what the line says the turn is doing now (`TurnProgress.activity`), and `looking` whether Lamp is

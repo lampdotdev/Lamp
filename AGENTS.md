@@ -48,17 +48,21 @@ A capability given to one engine must be given to all of them that can take it, 
   steps and Reload in the order they happened, the newest at the bottom, so steps never collect below what was said
   after them. A turn's steps since it last said something belong to its one live line (`ChatLook.ActivityLine`,
   `ChatItem.live`, the sidebar's `SidebarState.workingSteps`), which says what it's doing now and changes in place;
-  the steps before that stay rows where they came, between the messages. While the turn goes on the line is open, at
+  the steps before that stay where they came, between the messages, each stretch of more than one folded to its one
+  line as soon as the agent says something after it (`ChatItem.closing`), as it would be when the turn ends. While the turn goes on the line is open, at
   the bottom under its steps, oldest first, so what's going on now is always last (a command by the name
   the agent gave it, any other tool call in the words the line said while it ran, `LogLine.visible`, never its
-  files); the step still going is the line itself and joins the list when the agent moves on (`ChatItem.live`), and a
-  click folds the list. When the turn ends each stretch of steps folds where it came (`ChatItem.items`): the one just
+  files); the step still going is the line itself and joins the list when the agent moves on (`ChatItem.live`). The line
+  has no chevron and doesn't fold: its steps get one once they fold, when the agent says something after them. When the turn ends each stretch of steps folds where it came (`ChatItem.items`): the one just
   before the turn's last message into "Worked for…", above that message, any other to how many steps it was, or to
-  its one step. Once the turn is over each fold is given a line saying what it did, with how long its steps took
-  ("Listed the shelf's saved entries · 12 s", `ChatItem.title(of:untitled:)`): one call for the whole turn to the small
-  model on the route that built it (`StepTitles`, `AppAI.fastModel`; a turn built on this Mac is titled by the model
-  on this Mac that built it, or not at all, whatever key is saved), made after the turn's summary and never waited on,
-  told only the steps' words and what was said around them, never a command or what it printed. A fold keeps its
+  its one step. Each fold is given a line saying what it did, with how long its steps took
+  ("Listed the shelf's saved entries · 12 s", `ChatItem.title(of:untitled:)`), by the small model on the route that
+  built the turn (`StepTitles`, `AppAI.fastModel`; a turn built on this Mac is titled by the model on this Mac that
+  built it, or not at all, whatever key is saved): a stretch of steps is asked about once, in a call of its own, as soon as
+  the agent says something after it (a message, a progress line, a question card: `StepTitles.closed(in:turn:)`), so the
+  lines are there when the turn ends, and what's left (the steps after the last message, and a stretch whose early call
+  failed) in one call after the turn's summary, never waited on. The model is
+  told only the request and the steps' words, never a command or what it printed. A fold keeps its
   words until the line comes, and for good when it doesn't. How long a fold took comes from when Lamp logged its
   lines (`LogLine.at`), so a chat from before that shows no time; "Worked for…" stays the whole run's time, shown
   until its fold is titled. Whatever the agent writes as messages on the way is
@@ -250,7 +254,9 @@ A capability given to one engine must be given to all of them that can take it, 
   is running and before its next request (`Store.handOver`). pi's extension asks `/agent/steer` after each of pi's turns and hands such messages to pi's own
   steering (`sendUserMessage` with `deliverAs: "steer"`); Claude Code reads its request on its input
   (`--input-format stream-json`, `Store.steer`), which Lamp writes to while a tool runs and closes once Claude Code
-  has answered. A message goes into the chat as it's handed over and is a request of the turn (its version,
+  has answered. Claude Code runs with background commands off (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`), as pi has
+  none: after answering it waits for one it started (a server) and takes another turn when that ends, so the turn never
+  ended; one still there ten seconds after its answer is ended as Stop would end it (`Store.endAfterAnswer`). A message goes into the chat as it's handed over and is a request of the turn (its version,
   `LogLine.midTurn`) once the engine's output shows the model has it (pi's user `message_end`, Claude Code's
   `--replay-user-messages` echo); nothing more is handed over until then, and one the run ends without goes back to
   the front of the line. Send Now isn't offered while the group holds an answer to a card or a request sent again, while a

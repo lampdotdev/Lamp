@@ -551,6 +551,8 @@ final class Store: ObservableObject {
 
     @MainActor final class Turn {
         var agent: Process?                 // the engine, while it runs
+        /// Lamp ended the engine itself after it had answered (`endAfterAnswer`): its exit is no failure.
+        var endedAfterAnswer = false
         var build: Process?                 // the app's build.sh, while it runs
         var stopped = false                 // the user pressed Stop (or deleted the app, or quit Lamp)
         /// Stop was pressed at some point in this turn. `stopped` is cleared once the agent has stopped, so the
@@ -669,6 +671,7 @@ final class Store: ObservableObject {
         var codexCut: String?
         var claudeSession: String?          // Claude Code's conversation, as its own output says (Privacy.isOwnOutput)
         var writing: (line: UUID, unshown: String)?   // the message the agent is writing right now
+        var titleRoute: StepTitles.TurnRoute?          // what builds the run going on, for its steps' titles
         var showingWritten = false
         /// The agent's token for this turn (Store.agentTokens): the only way to its routes.
         let agentToken = UUID().uuidString + UUID().uuidString
@@ -1032,6 +1035,7 @@ final class Store: ObservableObject {
         logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone,
                                                     offer: offer, noted: noted, said: said, at: Date()))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
+        if kind != .detail, kind != .summary, kind != .status, kind != .tool { closeSteps(project) }
         saveChat(project)
     }
 
@@ -1123,7 +1127,11 @@ final class Store: ObservableObject {
             let line = LogLine(kind: .agent, text: String(piece.drop(while: \.isWhitespace)), at: Date())
             logs[project.id, default: []].append(line)
             turn.writing = (line.id, "")
-            noteAgent("Replying", for: project)
+            closeSteps(project)
+            // "Replying" only for words the chat shows as they come: after asking, what the agent says on its way out
+            // is hidden (the card is the answer, `LogLine.visible`), so the line says it's working, as it would
+            // with nothing known yet.
+            noteAgent(turn.asked ? Activity.thinking : Self.replying, for: project)
             return
         }
         turn.writing?.unshown += piece
@@ -1135,6 +1143,34 @@ final class Store: ObservableObject {
             showWritten(for: project)
         }
     }
+
+    /// Something said during a run closes the stretch of steps before it, which is titled now rather than when the
+    /// turn ends (`StepTitles.closed(in:turn:)`).
+    private func closeSteps(_ project: LampProject) {
+        guard let route = turns[project.id]?.titleRoute else { return }
+        StepTitles.closed(in: project, turn: route)
+    }
+
+    /// Ends Claude Code when it's still there a while after it answered, so the turn ends with its answer. With its
+    /// input closed it exits at once, unless something it started in the background holds it open: Claude Code then
+    /// waits for that and takes one more turn with what it found, which for a server never comes. Lamp turns
+    /// background commands off (`Agent.run`), so this is for whatever else might; SIGTERM is how Claude Code's own
+    /// documentation ends a run, and what the run still had going (its commands, what they started) ends with it, as
+    /// with Stop.
+    private func endAfterAnswer(_ process: Process, in turn: Turn) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Self.answeredGrace))
+            guard turn.agent === process, process.isRunning, !turn.stopped else { return }
+            turn.endedAfterAnswer = true
+            Subprocess.terminateTree(process)
+        }
+    }
+
+    /// How long Claude Code has to exit after it answered: it takes a moment to write its output and end.
+    private static let answeredGrace: TimeInterval = 10
+
+    /// What the live line says while the agent writes a message the chat shows.
+    private static let replying = "Replying"
 
     /// Puts what has arrived of the message being written into its chat line.
     private func showWritten(for project: LampProject) {
@@ -3242,6 +3278,7 @@ final class Store: ObservableObject {
         // Whether the agent has answered at all: the request, with any word on the notes in it, got through.
         var answered = false
         guard let turn = turns[project.id] else { return false }   // only inside a turn (startQueued)
+        turn.titleRoute = titleRoute
         // One turn can run the agent several times (fixing build errors, a crash on launch): each run's summary
         // shows only the pictures painted during it.
         let artBefore = turn.artCost
@@ -3315,6 +3352,9 @@ final class Store: ObservableObject {
                     turn.naming = nil
                     let written = turn.writing?.line
                     turn.writing = nil
+                    // The message is written: what comes next isn't known yet, so the line no longer says "Replying"
+                    // while the agent thinks. A step the engine already reported in the same reply keeps its words.
+                    if progress[project.id]?.activity == Self.replying { noteAgent(Activity.thinking, for: project) }
                     if let line = written, let index = logs[project.id]?.lastIndex(where: { $0.id == line }) {
                         logs[project.id]?[index].text = text
                         saveChat(project)
@@ -3402,6 +3442,7 @@ final class Store: ObservableObject {
                     // Claude Code has answered. A message sent from now on is the next request.
                     turn.input?.close()
                     turn.input = nil
+                    if let process = turn.agent { endAfterAnswer(process, in: turn) }
                 case .session(let id):
                     if engine == .claude { turn.claudeSession = id }
                     if engine != .pi {
@@ -3426,8 +3467,10 @@ final class Store: ObservableObject {
             turn.autoApply?.cancel()
             if turn.warming == nil, let current = current(project), isRunning(current) { turn.warming = warmLive(current) }
             turn.autoApply = autoApply(project, in: turn)
+            turn.endedAfterAnswer = false
             status = await Shell.run(run.command, cwd: project.dir, env: run.env, input: input,
                                      started: { turn.agent = $0 }, onLine: onLine)
+            if turn.endedAfterAnswer { status = 0 }
             turn.autoApply?.cancel()
             turn.autoApply = nil
             await turn.applying?.value
@@ -3462,7 +3505,7 @@ final class Store: ObservableObject {
         turn.writing = nil
         // Pictures are already in the app's building cost (recordArt); the summary shows them with the rest.
         log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost + turn.artCost - artBefore))
-        // Each fold of the turn's steps gets a line saying what it did, made after the turn and never waited on.
+        // The folds the run's messages didn't close get their lines now, never waited on.
         StepTitles.start(for: project, turn: titleRoute)
         recordAgent(project, cost: cost)
         if turn.stopped {
@@ -4564,6 +4607,7 @@ final class Store: ObservableObject {
                 // agent hasn't had that answer yet, and a new card would be asking over it.
                 if turn.asked || Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
                 logs[project.id, default: []].append(LogLine(kind: .ask, text: ask.text, ask: ask, at: Date()))
+                closeSteps(project)
                 // A new app's card gives up its checklist in the same moment the questions arrive, not when
                 // the turn ends a little later: once there's something to click, nothing above it moves.
                 if progress[project.id]?.newApp == true { progress[project.id]?.asking = true }
@@ -4578,6 +4622,7 @@ final class Store: ObservableObject {
             case .success(nil): return (200, ["text": Talk.saidAlready])
             case .success(let text?):
                 logs[project.id, default: []].append(LogLine(kind: .progress, text: text, at: Date()))
+                closeSteps(project)
                 // A new phase: the file work after it isn't what the last command or heading was for.
                 turns[project.id]?.naming = nil
                 saveChat(project)

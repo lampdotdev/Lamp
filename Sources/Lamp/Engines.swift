@@ -313,6 +313,10 @@ extension Agent {
             // replies in Claude Code's hook format. If Lamp can't be reached the hook fails and the command is denied.
             env["LAMP_TOKEN"] = token
             env["LAMP_SYSTEM"] = systemPrompt(for: project) + tryRules + Self.claudeNote + sandboxNote
+            // No background commands, as pi has none: after answering, Claude Code waits for one it started (a
+            // server the agent ran to try something) and takes another turn once it ends, so a server kept the turn
+            // going with nobody to answer to. A command that runs long stops at its time limit instead.
+            env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
             // How commands are approved (Settings → Building):
             // - auto: Claude Code's own classifier (--permission-mode auto) runs routine commands; when it would
             //   ask, its PermissionRequest hook sends the request to Lamp's approval card.
