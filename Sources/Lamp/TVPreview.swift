@@ -68,6 +68,16 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     func windowDidResize(_ notification: Notification) { webView.pageZoom = webView.bounds.width / 1920 }
 
     func windowWillClose(_ notification: Notification) {
+        // Closing the window doesn't end the page: WebKit runs it, its sound and timers included, for as long as the web
+        // view lives, and the web view's script handlers hold on to this preview, which holds the web view. So the app's
+        // page is swapped for an empty one and the handlers let go, and the web view goes with the window.
+        webView.stopLoading()
+        webView.navigationDelegate = nil
+        webView.configuration.userContentController.removeAllScriptMessageHandlers()
+        webView.configuration.userContentController.removeAllUserScripts()
+        webView.loadHTMLString("", baseURL: nil)
+        window.contentView = nil
+        finishLoading()
         try? log?.close()
         log = nil
         Self.open[project.id] = nil
@@ -83,6 +93,8 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         // opening after a change would run the app's code as it first was. Its saved data stays: only the caches go.
         await webView.configuration.websiteDataStore.removeData(ofTypes: [WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeDiskCache],
                                                                 modifiedSince: .distantPast)
+        // Closed while the caches went: loading now would start the app again in a preview nobody can see or close.
+        guard Self.open[project.id] === self else { return "The TV preview was closed before the app opened." }
         await withCheckedContinuation { continuation in
             loaded = continuation
             webView.loadFileURL(index, allowingReadAccessTo: staged)
@@ -91,6 +103,8 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
                 self.finishLoading()
             }
         }
+        // Closed while it loaded: showing the window again would bring back a preview with no page in it.
+        guard Self.open[project.id] === self else { return "The TV preview was closed before the app opened." }
         if inFront { window.makeKeyAndOrderFront(nil); NSApp.activate() } else { window.orderFront(nil) }
         webView.pageZoom = webView.bounds.width / 1920
         // Its scripts start on load; a moment more lets a first screen draw and take focus.
