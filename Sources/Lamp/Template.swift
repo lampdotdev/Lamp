@@ -8635,7 +8635,11 @@ enum Template {
                 }
                 guard let view = frame.hitTest(point) else { return "drag: nothing there" }
                 drag(view, from: point, to: end, in: window)
-                return "dragged from \(Int(x)), \(Int(y)) to \(Int(toX)), \(Int(toY))" + (what.map { ", starting on \($0)" } ?? "")
+                let dragged = "dragged from \(Int(x)), \(Int(y)) to \(Int(toX)), \(Int(toY))" + (what.map { ", starting on \($0)" } ?? "")
+                if #available(macOS 27, *), !NSApp.isActive {
+                    return dragged + " (the app isn't in front, so something that only answers drags won't have taken it)"
+                }
+                return dragged
             case "wait":
                 return "waited \(action.amount ?? 1) s"
             default:
@@ -9058,11 +9062,32 @@ enum Template {
                 }
             }
             if let up = event(.leftMouseUp, end, steps + 1) { NSApp.postEvent(up, atStart: false) }
+            // From macOS 27 SwiftUI's gestures take the pointer only as the window dispatches it, and only in the key
+            // window, as with a click.
+            if #available(macOS 27, *) {
+                asKey(window) {
+                    window.sendEvent(down)
+                    while let next = NSApp.nextEvent(matching: [.leftMouseDragged, .leftMouseUp], until: .distantPast, inMode: .default, dequeue: true) {
+                        window.sendEvent(next)
+                        if next.type == .leftMouseUp { break }
+                    }
+                }
+                return
+            }
             view.mouseDown(with: down)
             while let next = NSApp.nextEvent(matching: [.leftMouseDragged, .leftMouseUp], until: .distantPast, inMode: .default, dequeue: true) {
                 if next.type == .leftMouseUp { view.mouseUp(with: next); break }
                 view.mouseDragged(with: next)
             }
+        }
+
+        /// A tap or drag gesture takes the pointer only in the key window, as a real press makes it. A panel that had
+        /// the keyboard (the chat beside the window) gets it back, so what the person types there stays there.
+        private static func asKey(_ window: NSWindow, _ body: () -> Void) {
+            let keyBefore = NSApp.keyWindow
+            if NSApp.isActive, !window.isKeyWindow, window.canBecomeKey { window.makeKey() }
+            body()
+            if let keyBefore, keyBefore !== window, keyBefore is NSPanel, keyBefore.isVisible { keyBefore.makeKey() }
         }
 
         private static func click(_ view: NSView, at point: NSPoint, in window: NSWindow, count: Int) -> String {
@@ -9080,15 +9105,12 @@ enum Template {
                 // click on an inactive window would only activate it, so it went straight to the view.
                 NSApp.postEvent(up, atStart: true)
                 if #available(macOS 27, *) {
-                    // A tap gesture takes a click only in the key window, as a real click makes it. A panel that had
-                    // the keyboard (the chat beside the window) gets it back, so what the person types there stays there.
-                    let keyBefore = NSApp.keyWindow
-                    if NSApp.isActive, !window.isKeyWindow, window.canBecomeKey { window.makeKey() }
-                    window.sendEvent(down)
-                    if let unused = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
-                        window.sendEvent(unused)
+                    asKey(window) {
+                        window.sendEvent(down)
+                        if let unused = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
+                            window.sendEvent(unused)
+                        }
                     }
-                    if let keyBefore, keyBefore !== window, keyBefore is NSPanel, keyBefore.isVisible { keyBefore.makeKey() }
                 } else {
                     view.mouseDown(with: down)
                     if let unused = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
