@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Row.isDone)
+== run
+before: list, row Milk
+RELOAD 1 (whole): ok
+after1 (want it in, done=false then done=true: a row gains a @Binding its parent passes, and sets it): list, row Milk done=false, row Milk done=true

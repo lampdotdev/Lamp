@@ -1,8 +1,5 @@
-VERDICT 1: REOPEN (ListView changed what it holds (ListView._openURL: Environment<OpenURLAction>); ListView.openURL is @Environment, which SwiftUI fills in only for what ListView stored when the app opened (a view's spare takes @State, @AppStorage and plain properties))
+VERDICT 1: RELOAD (Added ListView.openURL)
 == run
 before: list hideDone=false, row Milk
-RELOAD 1: REOPEN ListView changed what it holds (ListView._openURL: Environment<OpenURLAction>); ListView.openURL is @Environment, which SwiftUI fills in only for what ListView stored when the app opened (a view's spare takes @State, @AppStorage and plain properties)
-after1 (want a plain reason: @Environment(\.openURL) added to an existing view, which SwiftUI fills in only where the view stored it at launch): 
-before: list hideDone=false help, row Milk
-RELOAD 1: in the restart
-after1 (want a plain reason: @Environment(\.openURL) added to an existing view, which SwiftUI fills in only where the view stored it at launch): 
+RELOAD 1 (whole): ok
+after1 (want it in, help: @Environment(\.openURL) added to an existing view for a new button): list hideDone=false help, row Milk
