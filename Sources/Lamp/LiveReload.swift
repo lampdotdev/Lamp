@@ -3220,8 +3220,9 @@ enum LiveSlots {
                     guard label.hasPrefix("__lamp") else { return "\(label): \(label)" }
                     return initial(label).map { "\(label): \($0)" }
                 }
-                // A view's spare is private, so no initializer Swift makes takes it; the first of these takes a moved
-                // parameter with no default, which a call to Swift's own never passes, so the two are told apart anyway.
+                // A view's spare is an argument of Swift's own too, as a struct's is; and the first of these takes a
+                // moved parameter with no default, which a call to Swift's own never passes, so the two are told apart
+                // either way.
                 guard kept.contains(where: { $0.hasPrefix("__lamp") }) || views.contains(type) else { continue }
                 let order = made.labels.filter(names.contains)
                 // One the app declares itself with the same labels and types is the app's: a second would be a
