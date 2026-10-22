@@ -4537,9 +4537,14 @@ final class Store: ObservableObject {
     @discardableResult
     private func followRestoredKind(_ project: LampProject) -> LampProject {
         guard let index = projects.firstIndex(where: { $0.id == project.id }) else { return project }
-        if let kind = Template.platform(fromPackageIn: project.dir), projects[index].platform != kind {
+        let kind = Template.platform(fromPackageIn: project.dir)
+        // A device app's code also says which device it's for: restoring between two such kinds changes that too.
+        let integration = kind == .device ? DeviceApps.integrationID(in: project.dir) : nil
+        if let kind, projects[index].platform != kind || projects[index].integration != integration {
             projects[index].platform = kind
+            projects[index].integration = integration
             if !kind.hasIOS { projects[index].device = nil }
+            try? Template.saveMeta(projects[index])
             refreshOpenApps()
         }
         return projects[index]
@@ -6241,18 +6246,19 @@ final class Store: ObservableObject {
         defer { installingOn.remove(device.id) }
         let stillWanted: @MainActor () -> Bool = { [weak self] in self?.turns[project.id] === owner && !owner.stopped }
         guard stillWanted() else { return "Stopped." }
-        deviceRuns.removeValue(forKey: project.id)?.end()
+        // The device is this app's from the upload on: every run there (another wish's, or this one's last) is over,
+        // so a look or a key in flight for it stops rather than reaching what replaces it.
+        for (id, other) in deviceRuns where id == project.id || other.device.id == device.id {
+            other.end()
+            deviceRuns[id] = nil
+        }
+        refreshOpenApps()
         note("Putting \(project.name) on \(device.name)…", for: project)
         try? AppFolder.write(Data(), to: Runtime.logURL(project), in: project.dir)
         let file = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)
         do {
             let run = try await DeviceApps.install(project, on: device, log: file, stillWanted: stillWanted)
             guard stillWanted() else { run.end(); return "Stopped." }
-            // The device shows this app now: another wish's run on it is over, so its looks and keys don't reach this one.
-            for (id, other) in deviceRuns where id != project.id && other.device.id == device.id {
-                other.end()
-                deviceRuns[id] = nil
-            }
             deviceRuns[project.id] = run
             refreshOpenApps()
             if inFront { log(project, .status, "\(project.name) is open on \(device.name).") }
@@ -6318,6 +6324,7 @@ final class Store: ObservableObject {
         var report: [String] = []
         for action in actions {
             guard turns[project.id] === owner, !owner.stopped else { report.append("Stopped."); break }
+            guard deviceRuns[project.id] === run else { report.append("Another app was put on the \(name) meanwhile, so nothing more was pressed."); break }
             let kind = action["action"] as? String ?? ""
             if kind == "wait" {
                 let seconds = min(max(action["amount"] as? Double ?? 1, 0.2), 10)
@@ -6343,6 +6350,7 @@ final class Store: ObservableObject {
         if Runtime.sourcesChanged(project) {
             text += "\n\nThis is the app as last put on the \(name): it doesn't have the changes you've made to the code since. Call look_at_app to put them there."
         }
+        guard deviceRuns[project.id] === run else { return (200, ["text": text + "\n\nThe \(name) shows another app now. Call look_at_app to put this one back."]) }
         text += "\n\n" + (await deviceAppPicture(project, on: run.device))
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n" + tail }
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
