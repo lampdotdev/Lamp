@@ -449,18 +449,30 @@ enum Adb {
     static func scale(density: Int?) -> Double { density.map { max(1, Double($0) / 160) } ?? 1 }
 
     /// The screen as text (`Screen.text`), from the system's own view of what's on it.
-    static func screen(on serial: String, density: Int?) async -> Screen? {
-        await screen(density: density) { await run($0, on: serial, timeout: $1) }
+    /// `mayWake` is asked before the key that wakes a screen asleep: false once the person has taken the app back.
+    static func screen(on serial: String, density: Int?, mayWake: @escaping @MainActor () -> Bool = { true }) async -> Screen? {
+        await screen(density: density, adb: { await run($0, on: serial, timeout: $1) }, input: { arguments, timeout in
+            guard await mayWake() else { return false }
+            _ = await run(arguments, on: serial, timeout: timeout)
+            return true
+        })
     }
 
     /// Commands for one device: adb's arguments after the serial, and how long to give them.
     typealias Commands = ([String], TimeInterval) async -> Subprocess.Result
 
-    static func screen(density: Int?, adb: Commands) async -> Screen? {
+    /// `input` sends the key that wakes the screen, which is input like any tap: while Lamp tries the app it's the one
+    /// way input goes (`perform`'s `send`), and false means the app isn't Lamp's to touch any more.
+    static func screen(density: Int?, adb: Commands, input: (([String], TimeInterval) async -> Bool)? = nil) async -> Screen? {
         var result = await adb(["exec-out", "uiautomator", "dump", "/dev/tty"], 60)
         // A screen asleep, or one the system is still laying out, answers nothing: woken and asked once more.
         if !result.output.contains("</hierarchy>") {
-            _ = await adb(["shell", "input", "keyevent", "KEYCODE_WAKEUP"], 20)
+            let wake = ["shell", "input", "keyevent", "KEYCODE_WAKEUP"]
+            if let input {
+                guard await input(wake, 20) else { return nil }
+            } else {
+                _ = await adb(wake, 20)
+            }
             try? await Task.sleep(for: .seconds(1))
             result = await adb(["exec-out", "uiautomator", "dump", "/dev/tty"], 60)
         }
@@ -568,7 +580,7 @@ enum Adb {
     /// device, with what it's doing and whether it presses there (`Handover`), and returns once Lamp's fingertip is there.
     static func perform(_ actions: [Simulator.Driver.Action], on serial: String, density: Int?, screen first: Screen?,
                         aim: @escaping @MainActor (CGPoint, String?, Bool) async -> Void = { _, _, _ in },
-                        tookOver: @MainActor () -> Bool = { false },
+                        tookOver: @escaping @MainActor () -> Bool = { false },
                         adb commands: Commands? = nil,
                         stillMine: @escaping @MainActor () async -> Bool) async -> String {
         let adb: Commands = commands ?? { await run($0, on: serial, timeout: $1) }
@@ -608,7 +620,9 @@ enum Adb {
         var current = 0
         var begun = false   // some of the current action's input went out, so it was cut short rather than not done
         func send(_ arguments: [String], _ timeout: TimeInterval) async -> Bool {
-            guard stopped == nil, await stillMine() else {
+            // Asked again once the check is back: it waits on the device (whether the app still runs), and the
+            // person may take the app back meanwhile.
+            guard stopped == nil, await stillMine(), await !tookOver() else {
                 stopped = stopped ?? current
                 return false
             }
@@ -641,7 +655,7 @@ enum Adb {
                     try? await Task.sleep(for: .milliseconds(300))
                 }
                 // The field typed into, read once the tap has landed: the one with the keyboard now, else the target.
-                let before = await Self.screen(density: density, adb: adb)
+                let before = await Self.screen(density: density, adb: adb, input: send)
                 let field = before?.items.first { $0.kind == "field" && $0.focused } ?? action.target.flatMap { before?.find($0) }
                 // In place of what the field held, as on the other devices: everything selected and deleted where the
                 // device takes a key combination (Android 11 and later); on an older one, to the end and back over
@@ -649,7 +663,7 @@ enum Adb {
                 guard await send(["shell", "input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_A"], 30) else { break actions }
                 guard await send(["shell", "input", "keyevent", "KEYCODE_DEL"], 30) else { break actions }
                 var remaining = (field?.value.count ?? 0) + 2
-                if let field, (await Self.screen(density: density, adb: adb))?.find(field.id)?.value.isEmpty == false, remaining > 0 {
+                if let field, (await Self.screen(density: density, adb: adb, input: send))?.find(field.id)?.value.isEmpty == false, remaining > 0 {
                     guard await send(["shell", "input", "keyevent", "KEYCODE_MOVE_END"], 30) else { break actions }
                     while remaining > 0 {
                         let batch = min(remaining, 100)
@@ -699,7 +713,7 @@ enum Adb {
                 report.append("\(index + 1). \(action.action == "scroll" ? "Scrolled" : "Swiped") \(action.direction ?? "down") at \(what).")
                 if action.action == "swipe", let item = action.item {
                     try? await Task.sleep(for: .milliseconds(500))
-                    screen = await Self.screen(density: density, adb: adb)
+                    screen = await Self.screen(density: density, adb: adb, input: send)
                     if let found = screen?.find(item) {
                         let spot = CGPoint(x: found.frame.midX, y: found.frame.midY)
                         await aim(spot, tapping(found, as: "tap"), true)
@@ -723,7 +737,7 @@ enum Adb {
             let next = index + 1 < actions.count ? spot(of: actions[index + 1], on: screen) : nil
             async let ahead: Void = { if let next { await aim(next.point, next.doing, false) } }()
             try? await Task.sleep(for: .milliseconds(600))
-            screen = await Self.screen(density: density, adb: adb)
+            screen = await Self.screen(density: density, adb: adb, input: send)
             await ahead
         }
         if let stopped {

@@ -6570,7 +6570,9 @@ final class Store: ObservableObject {
             await trial.aim(at: spot, doing: doing, press: press)
         }, tookOver: { trial?.tookOver == true }) { [weak self] in
             guard let self, exists(project), turns[project.id] === owner, !owner.stopped, trial?.tookOver != true else { return false }
-            return await isAndroidRunning(project)
+            // Whether the app still runs is asked of the device, and Stop or the person's click may come meanwhile.
+            guard await isAndroidRunning(project) else { return false }
+            return turns[project.id] === owner && !owner.stopped && trial?.tookOver != true
         }
         // Asked again after the reads below: they take a moment, and Stop may come during them.
         func tookOver() -> Bool {
@@ -6594,7 +6596,7 @@ final class Store: ObservableObject {
         var screenshots: [URL] = []
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         if Privacy.sharesPictures {
-            if let after = await Adb.screen(on: open.serial, density: density) { text += "\n\n" + after.text }
+            if let after = await Adb.screen(on: open.serial, density: density, mayWake: { trial?.tookOver != true }) { text += "\n\n" + after.text }
             if let data = await Adb.screenshot(on: open.serial, density: density),
                (try? AppFolder.write(data, to: picture, in: project.dir)) != nil { screenshots = [picture] }
             text += "\n\nA picture of the screen follows. Points for the next use_app are pixels in it."
