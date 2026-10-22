@@ -6478,11 +6478,19 @@ final class Store: ObservableObject {
             await Adb.tellApp(Template.androidInstallValues(for: project, onDevice: project.device != nil), package: package, on: serial)
             guard stillOwns() else { return "The app was deleted or stopped before it opened." }
             Runtime.startLog(project)
-            var pid = try await Adb.launch(package, on: serial)
-            // State the new code can't take may end it at once; the app has used it up by then, so it opens fresh.
-            if kept, await Adb.quitSoon(pid, package: package, on: serial) {
-                log(project, .detail, "The app couldn't open where it was after the change, so it was opened fresh.")
-                Runtime.startLog(project)
+            // State the new code can't take may end it at once, before or after it's seen running; the app has used
+            // the state up by then, so it opens fresh.
+            var pid: Int32
+            if kept {
+                let restored = try? await Adb.launch(package, on: serial)
+                if let restored, !(await Adb.quitSoon(restored, package: package, on: serial)) {
+                    pid = restored
+                } else {
+                    log(project, .detail, "The app couldn't open where it was after the change, so it was opened fresh.")
+                    Runtime.startLog(project)
+                    pid = try await Adb.launch(package, on: serial)
+                }
+            } else {
                 pid = try await Adb.launch(package, on: serial)
             }
             let logcat = (try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)).flatMap { try? Adb.logcat(pid: pid, on: serial, log: $0) }

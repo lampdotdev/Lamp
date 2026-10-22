@@ -173,6 +173,11 @@ extension Template {
         override fun onCreate(savedInstanceState: Bundle?) {
             super.onCreate(savedInstanceState ?: LampState.take(this))
         }
+
+        override fun onSaveInstanceState(outState: Bundle) {
+            super.onSaveInstanceState(outState)
+            LampState.saved(this, outState)
+        }
     }
 
     /**
@@ -188,13 +193,16 @@ extension Template {
         /** The last state Android had the app save, for when Lamp asks while it's in the background. */
         private var lastSaved: Pair<String, Bundle>? = null
 
+        /** Kept once AndroidX has added its own (what `rememberSaveable` and the back stack keep), which it does after the framework's callbacks. */
+        fun saved(activity: LampActivity, outState: Bundle) {
+            lastSaved = activity.javaClass.name to Bundle(outState)
+        }
+
         fun start(app: Application) {
             app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
                 override fun onActivityResumed(activity: Activity) { resumed = WeakReference(activity) }
                 override fun onActivityPaused(activity: Activity) { if (resumed?.get() === activity) resumed = null }
-                override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {
-                    if (activity is LampActivity) lastSaved = activity.javaClass.name to Bundle(outState)
-                }
+                override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
                 override fun onActivityDestroyed(activity: Activity) {
                     if (activity.isFinishing && lastSaved?.first == activity.javaClass.name) lastSaved = null
                 }
