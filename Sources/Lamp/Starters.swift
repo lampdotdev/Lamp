@@ -33,7 +33,14 @@ enum Starters {
     static var bundled: [Starter] {
         guard let folder else { return [] }
         let folders = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
-        return folders.sorted { $0.lastPathComponent < $1.lastPathComponent }.compactMap(read)
+        return folders.sorted { $0.lastPathComponent < $1.lastPathComponent }.filter(runsHere).compactMap(read)
+    }
+
+    /// Whether a starter runs on this Mac. One with a 3D scene needs macOS 15 (RealityView begins there), so on an
+    /// older Mac it isn't put on the desk or offered, rather than greeting someone with a game that won't open; it's
+    /// offered once the Mac is updated (`missing`).
+    static func runsHere(_ folder: URL) -> Bool {
+        Agent.Rules.scenes || !Template.importsRealityKit(folder.appendingPathComponent("Sources"))
     }
 
     /// The starters this Lamp ships that aren't on the desk: never added, or deleted since. The desk offers them

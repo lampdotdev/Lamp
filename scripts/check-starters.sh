@@ -10,6 +10,7 @@
 set -euo pipefail
 here="${0:A:h}/.."
 template="$here/Sources/Lamp/Template.swift"
+scene_template="$here/Sources/Lamp/TemplateScene.swift"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
@@ -28,17 +29,21 @@ extract() {
   awk -v start="static let $1 = #\"\"\"" '
     index($0, start) { on = 1; next }
     on && /^ *"""#( \+ [A-Za-z]+)?$/ { exit }
-    on { print }' "$template" |
+    on { print }' "${2:-$template}" |
     perl -pe 's/^ *\/\/ \{\{SIGN_IN_SERVICES\}\}\n/$ENV{SIGN_IN}\n/; s/^ *\/\/ \{\{TOKEN_SERVICES\}\}\n/$ENV{TOKEN}\n/' |
     sed -E 's/\{\{[A-Z_]*(PORT|TRIES)\}\}/7777/g; s/\{\{[A-Z_]+\}\}/stand-in/g'
 }
 # Lamp's flame, which both files end with (`lampGlyphSwift`, macOS only in LampSupport).
 { extract lampSupportTemplate; print "#if os(macOS)"; extract lampGlyphSwift; print "#endif" } > "$work/LampSupport.swift"
 { extract lampWidgetSupportSwift; extract lampGlyphSwift } > "$work/LampWidgetSupport.swift"
+# LampScene.swift, which Lamp writes beside LampSupport.swift into an app whose code imports RealityKit
+# (`Template.usesScene`); such an app is built for macOS 15, where RealityView begins (`Template.withScene`).
+extract lampSceneSwift "$scene_template" > "$work/LampScene.swift"
 
 sdk="${SDKROOT:-$(xcrun --sdk macosx --show-sdk-path)}"
 check() {
-  xcrun swiftc -typecheck -parse-as-library -swift-version 5 -target arm64-apple-macos14.0 -sdk "$sdk" "$@"
+  local macos=$1; shift
+  xcrun swiftc -typecheck -parse-as-library -swift-version 5 -target arm64-apple-macos$macos -sdk "$sdk" "$@"
 }
 
 starters=("$here"/Resources/Starters/*(/))
@@ -46,13 +51,17 @@ starters=("$here"/Resources/Starters/*(/))
 failed=0
 for starter in $starters; do
   name="${starter:t}"
-  if check "$work/LampSupport.swift" "$starter"/Sources/**/*.swift(N) 2>"$work/$name.log"; then
+  library=("$work/LampSupport.swift") macos=14.0
+  if grep -qE '^[[:space:]]*(@[A-Za-z_]+[[:space:]]+)?import[[:space:]]+RealityKit\b' "$starter"/Sources/**/*.swift(N); then
+    library+=("$work/LampScene.swift") macos=15.0
+  fi
+  if check $macos $library "$starter"/Sources/**/*.swift(N) 2>"$work/$name.log"; then
     print "✓ $name"
   else
     print "✗ $name"; cat "$work/$name.log"; failed=1
   fi
   if [ -d "$starter/Widget" ]; then
-    if check -D LAMP_WIDGET "$work/LampWidgetSupport.swift" "$starter"/Widget/**/*.swift(N) 2>"$work/$name-widget.log"; then
+    if check 14.0 -D LAMP_WIDGET "$work/LampWidgetSupport.swift" "$starter"/Widget/**/*.swift(N) 2>"$work/$name-widget.log"; then
       print "✓ $name widget"
     else
       print "✗ $name widget"; cat "$work/$name-widget.log"; failed=1
