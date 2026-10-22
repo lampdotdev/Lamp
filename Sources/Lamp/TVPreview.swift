@@ -79,6 +79,10 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         try? log?.close()
         log = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)
         let index = staged.appendingPathComponent("index.html")
+        // WebKit keeps the scripts and styles a page loaded and serves them again for the same file's address, so an
+        // opening after a change would run the app's code as it first was. Its saved data stays: only the caches go.
+        await webView.configuration.websiteDataStore.removeData(ofTypes: [WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeDiskCache],
+                                                                modifiedSince: .distantPast)
         await withCheckedContinuation { continuation in
             loaded = continuation
             webView.loadFileURL(index, allowingReadAccessTo: staged)
