@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD (Added Row.expanded)
+VERDICT 2: RELOAD (Added Row.isDone)
+== run
+before: row Milk
+RELOAD 1 (whole): ok
+after1 (want it in, expanded=false: a row gains @State that is not private): row Milk expanded=false
+RELOAD 2 (whole): ok
+after2 (want it in, done=true: then a parameter its parent passes): row Milk expanded=false done=true

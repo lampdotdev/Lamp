@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (ContentView.compact is given to the view's initializer, and the view is made where the open app keeps it (at launch, or outside a view's body), so a new property of it goes in only as the literal it starts as)
+== run
+before: root
+RELOAD 1: REOPEN ContentView.compact is given to the view's initializer, and the view is made where the open app keeps it (at launch, or outside a view's body), so a new property of it goes in only as the literal it starts as
+after1 (want a plain reason: the root view gains two vars its maker passes, which the view the open app made never gets): 
+before: root compact=true spacing=4
+RELOAD 1: in the restart
+after1 (want a plain reason: the root view gains two vars its maker passes, which the view the open app made never gets): 

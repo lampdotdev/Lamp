@@ -354,7 +354,10 @@ enum SwiftSource {
                     if entry.name.isEmpty, line.has("(pattern_named"), let m = named.firstMatch(in: line.text, range: line.range) {
                         entry.name = String(line.text[Range(m.range(at: 1), in: line.text)!])
                     } else if entry.initial == nil, line.has("(original_init=") || line.has("(processed_init="),
-                              let r = SwiftSource.range(in: line.text) {
+                              let r = SwiftSource.range(in: line.text),
+                              // Not a property wrapper's own construction (`@AppStorage("key") var note: String?`, with no
+                              // value of its own), which the compiler writes at the attribute, before the declaration.
+                              line.has("(original_init=") || !before(r.start, out.bindings[open.index].start) || r.start == out.bindings[open.index].start {
                         // As written, or (when that's unresolved and has no place) as the compiler settled it.
                         entry.initial = r
                         let kind = line.node.name.split(separator: "=").last ?? ""
@@ -531,8 +534,9 @@ enum SwiftSource {
     /// The app's code that code in `from` calls, as far down as that goes: each declaration's body, `from` itself
     /// included, so what's made there can be read off its uses (`Declarations.names`).
     static func reached(from: [(start: Position, last: Position)], in declarations: Declarations) -> [(start: Position, last: Position)] {
+        // Not what their actions call (a menu command's button), which runs each time it's chosen.
         var files: [String: Text] = [:]
-        return from + called(fromAll: from, in: declarations, files: &files)
+        return from + called(fromAll: from, in: declarations, files: &files, skipping: declarations.actions)
     }
 
     /// A type as Swift's short spellings write it (`Array<String>` is `[String]`, `Optional<Int>` is `Int?`,
@@ -614,17 +618,20 @@ enum SwiftSource {
 
     /// The same from several stretches at once (every view's body), each declaration once however many reach it.
     static func called(fromAll starts: [(start: Position, last: Position)], in declarations: Declarations, files: inout [String: Text],
-                       members followMembers: Bool = false,
+                       members followMembers: Bool = false, listingMembers: Bool = true,
                        skipping: [(start: Position, last: Position)] = []) -> [(start: Position, last: Position)] {
         var seen: Set<Int> = [], pending = starts, parts: [(start: Position, last: Position)] = [], typesSeen = Set<String>()
         // A type's own stored properties' starting values and its cases with their raw values: what an initializer
         // the compiler wrote, one that leaves them as they start, and a case (or its `rawValue`) are made of.
         // Its own: not a local in one of its functions (the bodies are a binding's too, which a member is in).
         let bindingStarts = Set(declarations.bindings.map { "\($0.start.file):\($0.start.line):\($0.start.column)" })
+        // Only a stored property's starting value, never a computed property's code (a view's `body`): that runs when
+        // it's read, not as the type is made.
         func members(of type: (start: Position, last: Position)) -> [(start: Position, last: Position)] {
             let inside = declarations.bodies.filter { within($0.start, type) && !bindingStarts.contains("\($0.start.file):\($0.start.line):\($0.start.column)") }
-            return (declarations.bindings.map { ($0.start, $0.last) } + declarations.cases)
-                .filter { member in within(member.start, type) && !inside.contains { within(member.start, $0) } }
+            let values = declarations.bindings.filter { binding in within(binding.start, type) && !inside.contains { within(binding.start, $0) } }
+                .flatMap { $0.entries.compactMap(\.initial) }
+            return values + declarations.cases.filter { member in within(member.start, type) && !inside.contains { within(member.start, $0) } }
         }
         // Looked up once each: the calls by the file they're made in, and the innermost declaration holding each place
         // a call names.
@@ -648,7 +655,7 @@ enum SwiftSource {
                    typesSeen.insert(type.key).inserted {
                     // And what each member's starting value calls, as far down as that goes (`var audio = Audio()`).
                     for member in members(of: type.value) {
-                        parts.append(member)
+                        if listingMembers { parts.append(member) }
                         pending.append(member)
                     }
                 }

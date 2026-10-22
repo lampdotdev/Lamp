@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added ListView.note)
+== run
+before: list
+RELOAD 1 (whole): ok
+after1 (want it in, note=a then note=b: an optional @AppStorage, read and then set): list note=a, list note=b

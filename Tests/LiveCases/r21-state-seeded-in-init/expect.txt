@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Row changed what it holds (Row._draft: State<String>); Row.draft is set in Row's own initializer, where a property kept in a spare can't be set)
+== run
+before: row Milk
+RELOAD 1: REOPEN Row changed what it holds (Row._draft: State<String>); Row.draft is set in Row's own initializer, where a property kept in a spare can't be set
+after1 (want a plain reason: a row gains @State its own initializer seeds): 
+before: row Milk draft=Milk
+RELOAD 1: in the restart
+after1 (want a plain reason: a row gains @State its own initializer seeds): 
