@@ -244,7 +244,9 @@ A capability given to one engine must be given to all of them that can take it, 
   is running and before its next request (`Store.handOver`). pi's extension asks `/agent/steer` after each of pi's turns and hands such messages to pi's own
   steering (`sendUserMessage` with `deliverAs: "steer"`); Claude Code reads its request on its input
   (`--input-format stream-json`, `Store.steer`), which Lamp writes to while a tool runs and closes once Claude Code
-  has answered. A message goes into the chat as it's handed over and is a request of the turn (its version,
+  has answered. Claude Code runs with background commands off (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`), as pi has
+  none: after answering it waits for one it started (a server) and takes another turn when that ends, so the turn never
+  ended; one still there ten seconds after its answer is ended as Stop would end it (`Store.endAfterAnswer`). A message goes into the chat as it's handed over and is a request of the turn (its version,
   `LogLine.midTurn`) once the engine's output shows the model has it (pi's user `message_end`, Claude Code's
   `--replay-user-messages` echo); nothing more is handed over until then, and one the run ends without goes back to
   the front of the line. Send Now isn't offered while the group holds an answer to a card or a request sent again, while a

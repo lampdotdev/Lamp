@@ -550,6 +550,8 @@ final class Store: ObservableObject {
 
     @MainActor final class Turn {
         var agent: Process?                 // the engine, while it runs
+        /// Lamp ended the engine itself after it had answered (`endAfterAnswer`): its exit is no failure.
+        var endedAfterAnswer = false
         var build: Process?                 // the app's build.sh, while it runs
         var stopped = false                 // the user pressed Stop (or deleted the app, or quit Lamp)
         /// Stop was pressed at some point in this turn. `stopped` is cleared once the agent has stopped, so the
@@ -1145,6 +1147,24 @@ final class Store: ObservableObject {
         guard let route = turns[project.id]?.titleRoute else { return }
         StepTitles.closed(in: project, turn: route)
     }
+
+    /// Ends Claude Code when it's still there a while after it answered, so the turn ends with its answer. With its
+    /// input closed it exits at once, unless something it started in the background holds it open: Claude Code then
+    /// waits for that and takes one more turn with what it found, which for a server never comes. Lamp turns
+    /// background commands off (`Agent.run`), so this is for whatever else might; SIGTERM is how Claude Code's own
+    /// documentation ends a run, and what the run still had going (its commands, what they started) ends with it, as
+    /// with Stop.
+    private func endAfterAnswer(_ process: Process, in turn: Turn) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Self.answeredGrace))
+            guard turn.agent === process, process.isRunning, !turn.stopped else { return }
+            turn.endedAfterAnswer = true
+            Subprocess.terminateTree(process)
+        }
+    }
+
+    /// How long Claude Code has to exit after it answered: it takes a moment to write its output and end.
+    private static let answeredGrace: TimeInterval = 10
 
     /// What the live line says while the agent writes a message the chat shows.
     private static let replying = "Replying"
@@ -3375,6 +3395,7 @@ final class Store: ObservableObject {
                     // Claude Code has answered. A message sent from now on is the next request.
                     turn.input?.close()
                     turn.input = nil
+                    if let process = turn.agent { endAfterAnswer(process, in: turn) }
                 case .session(let id):
                     if engine == .claude { turn.claudeSession = id }
                     if engine != .pi {
@@ -3399,8 +3420,10 @@ final class Store: ObservableObject {
             turn.autoApply?.cancel()
             if turn.warming == nil, let current = current(project), isRunning(current) { turn.warming = warmLive(current) }
             turn.autoApply = autoApply(project, in: turn)
+            turn.endedAfterAnswer = false
             status = await Shell.run(run.command, cwd: project.dir, env: run.env, input: input,
                                      started: { turn.agent = $0 }, onLine: onLine)
+            if turn.endedAfterAnswer { status = 0 }
             turn.autoApply?.cancel()
             turn.autoApply = nil
             await turn.applying?.value
