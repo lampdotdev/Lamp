@@ -3149,6 +3149,11 @@ enum LiveSlots {
                 guard var offset = field.after ? original.tokenEnd(field.at) : original.offset(field.at) else { return .refused(nil) }
                 // Before the whole declaration, its modifiers (`private`, `static`) included.
                 if !field.after { offset = declarationStart(offset, in: original) }
+                // Never inside a comment or a string, read as the compiler reads them (nested comments, raw strings): a
+                // field put there wouldn't be one, while the layout judged would say it is.
+                if insideTrivia(offset, in: original) {
+                    return .refused("\(LiveReload.spoken(field.type)) lost a field beside a comment Lamp can't read its way around, so it can't put it back in its place")
+                }
                 let at = shifted(offset) + places.keys.filter { $0 < offset }.count * grew
                 var insert: String
                 if field.after {
@@ -3290,6 +3295,24 @@ enum LiveSlots {
             while start < lineStart - 1, isSpace(bytes[start]) { start += 1 }
         }
         return start
+    }
+
+    /// Whether a place falls inside a comment or a string literal (its start is outside), read as `SwiftText.skip` reads them.
+    static func insideTrivia(_ offset: Int, in text: SwiftSource.Text) -> Bool {
+        let chars = Array(text.string)
+        var index = 0, byte = 0
+        while index < chars.count, byte < offset {
+            if let end = SwiftText.skip(chars, at: index), end > index {
+                let after = byte + chars[index..<end].reduce(0) { $0 + String($1).utf8.count }
+                if offset > byte, offset < after { return true }
+                byte = after
+                index = end
+                continue
+            }
+            byte += String(chars[index]).utf8.count
+            index += 1
+        }
+        return false
     }
 
     /// A stored property taken out of the code, kept in the live copy: its declaration, and where it goes (before the
