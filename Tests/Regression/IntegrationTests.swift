@@ -142,6 +142,15 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(DeviceTLS.judge("aa", kept: "aa", keeping: true), .trust)
         XCTAssertEqual(DeviceTLS.judge("bb", kept: "aa", keeping: true), .refuse)
         XCTAssertEqual(DeviceTLS.judge("bb", kept: nil, keeping: false), .trust, "a read while finding keeps nothing")
+        // Kept and compared in one step, and closed when the store can't be trusted.
+        let device = "test:tls-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(at: DeviceFolder.of(device)) }
+        let pins = DeviceTLS.Pins(deviceID: device)
+        XCTAssertNil(pins.admit("aa", port: 11443))
+        XCTAssertNil(pins.admit("aa", port: 11443))
+        XCTAssertEqual(pins.admit("bb", port: 11443), .changed)
+        try? Data("not json".utf8).write(to: DeviceFolder.of(device).appendingPathComponent("certificates.json"))
+        XCTAssertEqual(pins.admit("aa", port: 11443), .unsaved)
         let signIn = Request(port: 11443, path: "/api/os/info", auth: .init(digest: false, user: "lamp", password: "{field:password}"), https: true)
         do {
             _ = try await DeviceHTTP.send(signIn, to: "10.0.0.138", values: ["field:password": "secret"])

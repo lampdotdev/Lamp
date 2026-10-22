@@ -396,32 +396,39 @@ struct IntegrationRunner {
         }
     }
 
-    /// Whether a step's check passes now, and if not, the first condition that didn't, in words.
-    func check(_ step: Integration.Step) async -> (passed: Bool, why: String?, read: String?) {
+    /// Whether a step's check passes now, and if not, the first condition that didn't, in words. `failed` is a reason
+    /// waiting won't mend (the device's certificate changed), which the card shows as a failure rather than waiting.
+    func check(_ step: Integration.Step) async -> (passed: Bool, why: String?, read: String?, failed: Bool) {
         await prepare()
         let values = values()
         var read: String?
         for condition in step.check {
             if let key = condition.field {
-                guard values["field:" + key]?.isEmpty == false else { return (false, "Waiting for what you type.", nil) }
+                guard values["field:" + key]?.isEmpty == false else { return (false, "Waiting for what you type.", nil, false) }
             } else if condition.signedIn == true {
-                guard values["signIn"] != nil else { return (false, "Waiting for you to sign in.", nil) }
+                guard values["signIn"] != nil else { return (false, "Waiting for you to sign in.", nil, false) }
             } else if let port = condition.tcp {
-                guard let address = try? address, await DeviceProbe.tcp(address, port: port) else { return (false, "Waiting for \(device.name)…", nil) }
+                guard let address = try? address, await DeviceProbe.tcp(address, port: port) else { return (false, "Waiting for \(device.name)…", nil, false) }
             } else if let request = condition.http {
-                guard let address = try? address, let answer = try? await DeviceHTTP.send(request, to: address, values: values, pins: DeviceTLS.Pins(deviceID: device.id)), answer.ok else {
-                    return (false, "Waiting for \(device.name)…", nil)
+                let answer: DeviceHTTP.Answer?
+                do {
+                    answer = try await DeviceHTTP.send(request, to: try address, values: values, pins: DeviceTLS.Pins(deviceID: device.id))
+                } catch let refusal as DeviceTLS.Refusal {
+                    return (false, refusal.localizedDescription, nil, true)
+                } catch {
+                    answer = nil
                 }
+                guard let answer, answer.ok else { return (false, "Waiting for \(device.name)…", nil, false) }
                 if condition.json != nil || condition.xml != nil {
                     let value = DeviceHTTP.value(json: condition.json, xml: condition.xml, in: answer)
-                    guard let value else { return (false, "\(device.name) doesn't say yet.", nil) }
-                    if let equals = condition.equals, value.caseInsensitiveCompare(equals) != .orderedSame { return (false, "Waiting for \(device.name)…", nil) }
-                    if let contains = condition.contains, !value.localizedCaseInsensitiveContains(contains) { return (false, "Waiting for \(device.name)…", nil) }
+                    guard let value else { return (false, "\(device.name) doesn't say yet.", nil, false) }
+                    if let equals = condition.equals, value.caseInsensitiveCompare(equals) != .orderedSame { return (false, "Waiting for \(device.name)…", nil, false) }
+                    if let contains = condition.contains, !value.localizedCaseInsensitiveContains(contains) { return (false, "Waiting for \(device.name)…", nil, false) }
                     read = read ?? value
                 }
             }
         }
-        return (true, nil, read)
+        return (true, nil, read, false)
     }
 
     /// A step passed on this device: it's kept, with the step and what the step read.

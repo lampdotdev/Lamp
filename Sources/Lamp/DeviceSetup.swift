@@ -94,6 +94,7 @@ final class DeviceSetupModel: ObservableObject {
                 guard let self, self.next == step else { break }
                 await self.checkOnce(step, runner: runner, keepWatching: false, quietly: true)
                 if self.passed.contains(step.id) { break }
+                if case .failed = self.state { return }
                 try? await Task.sleep(for: .seconds(3))
             }
             guard !Task.isCancelled else { return }
@@ -111,7 +112,7 @@ final class DeviceSetupModel: ObservableObject {
         // The watch's look every few seconds leaves the card as it is: only a check the person asked for shows as
         // checking, so nothing on the card blinks while they're at the device.
         if !quietly, !state.isBusy || state == .checking { state = .checking }
-        let (ok, why, read) = await runner.check(step)
+        let (ok, why, read, failed) = await runner.check(step)
         guard next == step else { return }
         if ok {
             runner.passed(step, read: read)
@@ -119,6 +120,10 @@ final class DeviceSetupModel: ObservableObject {
             state = .idle
             Store.shared.refreshDevices()
             if ready { then?(); then = nil } else { watch() }
+        } else if failed {
+            // Waiting won't mend it: the card says why, and nothing goes on checking.
+            state = .failed(why ?? "\(device.name) can't be checked.")
+            stopWatching()
         } else {
             state = .waiting(why ?? "Waiting for \(device.name)…")
             if keepWatching { watch() }

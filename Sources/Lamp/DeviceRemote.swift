@@ -43,27 +43,49 @@ enum DeviceTLS {
         return kept == fingerprint ? .trust : .refuse
     }
 
+    /// Why a certificate wasn't taken, in words for the setup card.
+    enum Refusal: LocalizedError, Equatable {
+        case changed, unsaved
+        var errorDescription: String? {
+            switch self {
+            case .changed: return "This device isn't the one Lamp set up at that address: its certificate has changed. If you reset it, set it up again."
+            case .unsaved: return "Lamp couldn't keep this device's certificate on this Mac, so it sent nothing to it."
+            }
+        }
+    }
+
     /// One device's kept certificates.
     struct Pins: Sendable {
         let deviceID: String
         private static let lock = NSLock()
         private var file: URL { DeviceFolder.of(deviceID).appendingPathComponent("certificates.json") }
 
-        private func all() -> [String: String] {
-            (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+        /// Whether a certificate is taken, decided and kept under one lock, so two first requests at once can't each
+        /// keep their own: the second is judged against what the first kept. It fails closed: a store that's there
+        /// but can't be read, or a first certificate that can't be saved, takes nothing.
+        func admit(_ fingerprint: String, port: Int) -> Refusal? {
+            Self.lock.lock(); defer { Self.lock.unlock() }
+            var pins: [String: String] = [:]
+            if FileManager.default.fileExists(atPath: file.path) {
+                guard let data = try? Data(contentsOf: file), let read = try? JSONDecoder().decode([String: String].self, from: data) else {
+                    return .unsaved
+                }
+                pins = read
+            }
+            switch judge(fingerprint, kept: pins[String(port)], keeping: true) {
+            case .trust: return nil
+            case .refuse: return .changed
+            case .keep:
+                pins[String(port)] = fingerprint
+                do { try JSONEncoder().encode(pins).write(to: file, options: .atomic) } catch { return .unsaved }
+                return nil
+            }
         }
 
+        /// The certificate kept for a port, for tests and the record.
         func kept(port: Int) -> String? {
             Self.lock.lock(); defer { Self.lock.unlock() }
-            return all()[String(port)]
-        }
-
-        func keep(_ fingerprint: String, port: Int) {
-            Self.lock.lock(); defer { Self.lock.unlock() }
-            var pins = all()
-            guard pins[String(port)] == nil else { return }
-            pins[String(port)] = fingerprint
-            try? JSONEncoder().encode(pins).write(to: file, options: .atomic)
+            return (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) }?[String(port)]
         }
     }
 }

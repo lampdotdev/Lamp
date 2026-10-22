@@ -121,9 +121,7 @@ enum DeviceHTTP {
         do {
             (bytes, response) = try await session.bytes(for: urlRequest)
         } catch {
-            if guardian.changedCertificate {
-                throw Failure(message: "This device isn't the one Lamp set up at that address: its certificate has changed. If you reset it, set it up again.")
-            }
+            if let refusal = guardian.refusal { throw refusal }
             throw error
         }
         var body = Data()
@@ -150,7 +148,8 @@ enum DeviceHTTP {
         let port: Int
         let pins: DeviceTLS.Pins?
         private var tried = false
-        private(set) var changedCertificate = false
+        /// Why the device's certificate wasn't taken, when it wasn't.
+        private(set) var refusal: DeviceTLS.Refusal?
         init(address: String, credential: (user: String, password: String, digest: Bool)?, https: Bool = false, port: Int = 0,
              pins: DeviceTLS.Pins? = nil) {
             self.address = address
@@ -176,11 +175,9 @@ enum DeviceHTTP {
                     return
                 }
                 let fingerprint = DeviceTLS.fingerprint(SecCertificateCopyData(leaf) as Data)
-                switch DeviceTLS.judge(fingerprint, kept: pins?.kept(port: port), keeping: pins != nil) {
-                case .trust: break
-                case .keep: pins?.keep(fingerprint, port: port)
-                case .refuse:
-                    changedCertificate = true
+                // Kept and compared in one step; without pins (a read while finding) nothing secret is in the request.
+                if let refused = pins?.admit(fingerprint, port: port) {
+                    refusal = refused
                     completionHandler(.cancelAuthenticationChallenge, nil)
                     return
                 }
