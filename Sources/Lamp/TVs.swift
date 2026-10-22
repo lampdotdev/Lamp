@@ -487,15 +487,65 @@ enum WebOS {
 
     static func install(_ package: URL, appID: String, on record: TVs.Record) async throws {
         let remote = "/media/developer/temp/\(package.lastPathComponent)"
-        let copy = await Subprocess.run("/usr/bin/scp", ["-O"] + sshOptions(record).map { $0 == "-p" ? "-P" : $0 } + [package.path, "prisoner@\(record.address):\(remote)"], timeout: 300)
-        guard copy.ok else { throw TVs.Failure(message: "Lamp couldn't copy the app to \(record.name): \(copy.output.trimmed)") }
+        try await put(package, to: remote, on: record)
         let payload = "{\"id\":\"\(appID)\",\"ipkUrl\":\"\(remote)\",\"subscribe\":true}"
-        let output = try await ssh(record, "luna-send-pub -w 120000 -i luna://com.webos.appInstallService/dev/install '\(payload)' | grep -m 1 -E 'installed|fail|error'; rm -f \(remote)", timeout: 150)
-        guard output.contains("installed") else { throw TVs.Failure(message: "\(record.name) didn't install the app: \(output.trimmed)") }
+        let reply: String
+        do {
+            reply = try await luna(record, "luna://com.webos.appInstallService/dev/install", payload,
+                                   until: #""state":"installed"|failed|"returnValue":false"#)
+        } catch {
+            try? await ssh(record, "/bin/rm -f '\(remote)'")
+            throw error
+        }
+        try? await ssh(record, "/bin/rm -f '\(remote)'")
+        guard reply.contains(#""state":"installed""#) else {
+            throw TVs.Failure(message: "\(record.name) didn't install the app\(said(reply))")
+        }
+    }
+
+    /// Calls a service on the TV and gives back its replies up to the first `until` matches. `luna-send-pub` gives up
+    /// as soon as its input closes, before any reply, and an SSH command's input is closed here, so a `sleep` on the TV
+    /// holds it open until that reply comes (LG's own tools hold it open from their end), and `-w` ends a call nothing
+    /// answers. The service, payload and pattern are Lamp's own, with no single quotes in them.
+    static func luna(_ record: TVs.Record, _ uri: String, _ payload: String, until: String, seconds: Int = 120) async throws -> String {
+        let held = "/media/developer/temp/.lamp-luna-$$"
+        let command = "{ sleep \(seconds + 15) & echo $! > \(held); wait; } | luna-send-pub -w \(seconds * 1000) -i \(uri) '\(payload)'"
+            + " | { grep -m 1 -iE '\(until)'; kill $(cat \(held)) 2>/dev/null; rm -f \(held); }"
+        return try await ssh(record, command, timeout: TimeInterval(seconds + 30))
+    }
+
+    /// The TV's reason in a reply, for the person: what it says went wrong, else nothing.
+    private static func said(_ reply: String) -> String {
+        guard let line = reply.split(separator: "\n").last,
+              let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { return "." }
+        let details = json["details"] as? [String: Any]
+        let reason = (details?["reason"] as? String) ?? (json["errorText"] as? String) ?? (details?["state"] as? String) ?? ""
+        return reason.isEmpty ? "." : ": \(reason)"
+    }
+
+    /// Copies a file to the TV the way LG's own installer (ares-install) does: into the developer folder over SFTP, which
+    /// the TV's SSH server has built in, and on a TV whose server offers none, streamed into `cat` over SSH. The
+    /// developer-mode shell has no `scp` program, so scp's old protocol (`-O`), which runs one on the TV, can't work.
+    /// The name is the package's own (letters, digits, dots, dashes and underscores), so it needs no quoting beyond this.
+    static func put(_ file: URL, to remote: String, on record: TVs.Record) async throws {
+        try await ssh(record, "/bin/mkdir -p '\((remote as NSString).deletingLastPathComponent)'")
+        let host = "prisoner@\(record.address)"
+        let batch = "put \"\(file.path)\" \"\(remote)\"\n"
+        let sftp = await Subprocess.run("/usr/bin/sftp", ["-b", "-"] + sshOptions(record).map { $0 == "-p" ? "-P" : $0 } + [host],
+                                        timeout: 300, input: Data(batch.utf8))
+        if sftp.ok { return }
+        let stream = await Subprocess.run("/usr/bin/ssh", sshOptions(record) + [host, "/bin/cat > '\(remote)'"], mergeErrors: false,
+                                          timeout: 300, input: try Data(contentsOf: file))
+        guard stream.ok else {
+            throw TVs.Failure(message: "Lamp couldn't copy the app to \(record.name): \((stream.errors.trimmed.isEmpty ? sftp.output : stream.errors).trimmed)")
+        }
     }
 
     static func launch(_ appID: String, on record: TVs.Record) async throws {
-        try await ssh(record, "luna-send-pub -n 1 luna://com.webos.applicationManager/launch '{\"id\":\"\(appID)\"}'")
+        let reply = try await luna(record, "luna://com.webos.applicationManager/launch", "{\"id\":\"\(appID)\"}", until: "returnValue", seconds: 30)
+        guard reply.contains(#""returnValue":true"#) else {
+            throw TVs.Failure(message: "\(record.name) installed the app but didn't open it\(said(reply))")
+        }
     }
 
     /// Developer mode lapses after about 50 hours; asking LG to reset its clock with the TV's own session token keeps it.
