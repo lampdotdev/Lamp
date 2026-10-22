@@ -48,7 +48,8 @@ A capability given to one engine must be given to all of them that can take it, 
   steps and Reload in the order they happened, the newest at the bottom, so steps never collect below what was said
   after them. A turn's steps since it last said something belong to its one live line (`ChatLook.ActivityLine`,
   `ChatItem.live`, the sidebar's `SidebarState.workingSteps`), which says what it's doing now and changes in place;
-  the steps before that stay rows where they came, between the messages. While the turn goes on the line is open, at
+  the steps before that stay where they came, between the messages, each stretch of more than one folded to its one
+  line as soon as the agent says something after it (`ChatItem.closing`), as it would be when the turn ends. While the turn goes on the line is open, at
   the bottom under its steps, oldest first, so what's going on now is always last (a command by the name
   the agent gave it, any other tool call in the words the line said while it ran, `LogLine.visible`, never its
   files); the step still going is the line itself and joins the list when the agent moves on (`ChatItem.live`), and a

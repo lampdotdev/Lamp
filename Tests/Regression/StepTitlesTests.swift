@@ -92,6 +92,22 @@ final class StepTitlesTests: XCTestCase {
         XCTAssertTrue(nextGroups.isEmpty)
     }
 
+    /// While the turn goes on, a stretch the agent has said something after folds to its one line, its title once it
+    /// has one; the stretch still going stays open, its steps rows.
+    func testAClosedStretchFoldsWhileTheTurnGoesOn() {
+        let live = Array(turn(timed: true, titled: false)[...8])
+        XCTAssertEqual(titles(live), ["3 steps"])
+        XCTAssertEqual(titles(Array(turn(timed: true, titled: true)[...8])), ["Read the shelf and found its hot-sauce words · 42 s"])
+        let items = ChatItem.items(LogLine.visible(live, details: false), gather: true)
+        XCTAssertEqual(items.filter { if case .work = $0 { return false }; return true }.flatMap { item -> [String] in
+            switch item {
+            case .line(let line): [line.text]
+            case .statuses(let lines), .tools(let lines): lines.map(\.text)
+            case .work: []
+            }
+        }, ["Make it a beer journal", "I'll look first.", "First, the look.", "Ran: sed", "Ran: swift build"])
+    }
+
     /// A reply that isn't fit to show is no title: the fold keeps its words.
     @MainActor func testOnlyTitlesFitToShowAreKept() {
         let groups = [StepTitles.Group(id: UUID(), steps: ["a", "b"]),
