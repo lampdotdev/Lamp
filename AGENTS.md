@@ -600,7 +600,8 @@ the decisions and their `each` forms), `LampStore` (values and collections as JS
 the names and with the doc comments the Swift ones have, so a change to one of those is made to both. A Lamp-owned
 debug manifest beside it (`app/src/debug/AndroidManifest.xml`, merged into every build Lamp makes) adds the network
 and `LampInit`, a provider that hands the blocks the app's context before any of its code runs. There are no
-connectors yet, and the rules say so (`Agent.androidPrompt`, `Rules.androidAI`). The app's token is never built in:
+connectors yet, and the rules say so (`Agent.androidPrompt`, `Rules.androidAI`). How an Android app should look and behave (theme, every
+screen size, navigation, components, states) is the `android-design` skill, which only its prompt offers. The app's token is never built in:
 after each install Lamp writes what the app is told (`Template.androidInstallValues`: its token and the ways to the
 gateway) into the app's own storage on the device, on adb's input through `run-as` (`Adb.tellApp`), so the APK in the
 app's folder holds no secret. The emulator reaches the gateway at 10.0.2.2, naming this Mac as 127.0.0.1; a device
@@ -622,7 +623,11 @@ app opens is Try On's choice (`TryOnChoices.androidChoices`): the emulator Lamp 
 devices, which adb lists (`Adb.devices`, each a `Device` with its state: debugging allowed, or the next step) and which
 `LampProject.device` keeps by serial (`Store.setAndroidDevice`). Play and a look install the APK with adb and start
 the main activity (`Store.installOnAndroid`), with its log read into the app's log by `adb logcat` for the app's
-process; a look pictures the screen with `screencap`, scaled by the device's density so a pixel is a point, and reads
+process. A change opens where the person was: before an install replaces a running copy, Lamp has it save
+its state (`Adb.saveState`, a broadcast only adb's shell may send, holding DUMP), and the new copy's activity, a
+`LampActivity`, starts from it (`LampState` in LampSupport.kt), as after Android closed it in the background. The state
+is used once, only across that install and into the same activity; a launch it ends at once is opened again fresh, and
+a look with `reopen` always starts fresh. A look pictures the screen with `screencap`, scaled by the device's density so a pixel is a point, and reads
 it as text from `uiautomator dump` (`Adb.Screen`, the same line shape as the Mac's and the iPhone's);
 `use_app` taps, types, swipes and presses keys through `adb shell input` (`Adb.perform`), reading the screen again
 between actions. On the emulator it happens in plain sight as on the simulator (`Handover`): its window glows, Lamp's
