@@ -553,7 +553,14 @@ fills it from its own hardware and displays (`Device.thisMac`), iPhones, iPads a
 list (`Devices.list`, `Device.from(devicectl:)`; watches are kept, since their app goes with an iPhone's, and ready
 once an iPhone is). The one list is Settings → Building's Your Devices (`DevicesSection`), each with its model and
 state and the button for its next step; Try On lists the same phones, by model and state, and links there. Nothing
-is set up in advance. The exact device a request is for goes to the agent at the end of the request (`DeviceNote`,
+is set up in advance, but a wish is named knowing what's here: Lamp looks for devices as one begins (something typed in
+the desk's bar, a new wish, its first request; a look from the last two minutes does, and the naming waits five seconds
+at most, `Store.devicesForWish`), and the naming call is told each device found that changes the answer, with what to
+answer for it (`AppName.seen`: a TV, an Android device, an integration's device, so "my TV" is the TV the person has).
+Apple's phones, iPads and watches are left off it, since the rules name them already and listing them drew wishes that
+named no device to the iPhone. A wish to run something on a device Lamp can't put apps on yet is "other": it stays a
+draft with nothing scaffolded (`Store.waitsForDevice`, by its instance, which a rename keeps) while the agent sets the
+device up and gives it its kind with `make_app_for`, which then makes it, scaffold and first version (`convert`). The exact device a request is for goes to the agent at the end of the request (`DeviceNote`,
 sent like `AIStatus.brief`: once per conversation and again when it changes) in the shape "iPhone 16 Pro Max, iOS
 27, Dynamic Island" (`Device.forAgent`). A new kind of device is a `Device.Kind`, a reader that fills the record,
 and its own setup steps; the lists and the note read nothing else. Xcode 27 keeps simctl and devicectl in the
