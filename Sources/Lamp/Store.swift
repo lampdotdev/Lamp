@@ -250,6 +250,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     var said: String? = nil           // for a command Lamp let run ("Ran: …"): what the agent said it was for (`AgentEvent.naming`)
     var at: Date? = nil               // when Lamp logged it, for how long a fold of steps took (`ChatItem.folds`); none in older chats
     var foldTitle: String? = nil      // for the first step of a fold: what the fold did, in a line (`StepTitles`)
+    var failed: Bool? = nil           // for a step: it was tried and didn't work (`AgentEvent.ended`)
 
     /// The offer a setup card is about, for this line and for the older key card.
     var setupOffer: SetupOffer? {
@@ -626,6 +627,9 @@ final class Store: ObservableObject {
         /// What the agent last said it's doing, in its own words (`AgentEvent.naming`): the name of the commands
         /// that follow, until it says something else.
         var naming: String?
+        /// This turn's tool calls by the engine's id for them: the step each was logged as, and a command's text, so
+        /// the step can say it failed once the call's outcome comes back (`AgentEvent.ended`).
+        var calls: [String: (line: UUID, command: String?)] = [:]
         /// Whether the chat says each command from the engine's own output (`AgentRun.saysCommands`), for the run going now.
         var saysCommands = false
         /// The agent put its questions to the person this turn: the turn is over, whatever the agent does next.
@@ -1031,11 +1035,36 @@ final class Store: ObservableObject {
     }
 
     func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil, retryPhone: String? = nil,
-             offer: SetupOffer? = nil, noted: NoteReceipt? = nil, said: String? = nil) {
+             offer: SetupOffer? = nil, noted: NoteReceipt? = nil, said: String? = nil, failed: Bool = false) {
         logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone,
-                                                    offer: offer, noted: noted, said: said, at: Date()))
+                                                    offer: offer, noted: noted, said: said, at: Date(), failed: failed ? true : nil))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
         if kind != .detail, kind != .summary, kind != .status, kind != .tool { closeSteps(project) }
+        saveChat(project)
+    }
+
+    /// A tool call's step in the agent's own words: what it gave this call, else, for Codex, the heading of its
+    /// reasoning before it, which says what the work after it is for. A command's description (Claude Code's, pi's)
+    /// names that command only: the file work after it is a step of its own, or a read would carry "Share the page"
+    /// after the command that was to share it had failed.
+    nonisolated static func stepName(of call: ToolCall, said: String?, naming: String?, engine: Engine) -> String? {
+        let fileWork = [.read, .write, .edit, .search, .list, .delete].contains(call.action)
+        return said ?? (engine == .codex && (call.action == .run || fileWork) ? naming : nil)
+    }
+
+    /// Marks a step that was tried and didn't work, so it says so in the chat and in its fold's line. A command's step is
+    /// its row ("Ran: …"), which Lamp logs when the command is let run or has run, after the call itself: the latest row
+    /// for that command since the call, or since the request when the call isn't known, is the one. A command declined
+    /// on the card has no row, and an older run of the same command keeps its own.
+    func markFailed(_ line: UUID?, command: String?, in project: LampProject) {
+        guard var lines = logs[project.id] else { return }
+        let call = line.flatMap { line in lines.lastIndex { $0.id == line } }
+        if let call { lines[call].failed = true }
+        let since = call ?? lines.lastIndex { $0.kind == .user } ?? lines.startIndex
+        if let command, let index = lines[since...].lastIndex(where: { $0.kind == .status && $0.text == "Ran: \(command)" }) {
+            lines[index].failed = true
+        }
+        logs[project.id] = lines
         saveChat(project)
     }
 
@@ -3398,13 +3427,11 @@ final class Store: ObservableObject {
                 case .naming(let words):
                     turn.naming = words.nilIfEmpty
                     if let words = turn.naming { noteAgent(words, for: project) }
-                case .tool(let text, let fullCall, let said):
+                case .tool(let text, let fullCall, let said, let id, let command):
                     let call = ToolCall(text)
-                    // The step in the agent's own words: what it gave this call, else what it last said it's doing (a
-                    // command's name, a heading), which names the file work that follows until it says something else.
-                    let fileWork = [.read, .write, .edit, .search, .list, .delete].contains(call.action)
-                    let named = said ?? (call.action == .run || fileWork ? turn.naming : nil)
+                    let named = Self.stepName(of: call, said: said, naming: turn.naming, engine: engine)
                     log(project, .tool, text, said: named)
+                    if let id, let line = logs[project.id]?.last?.id { turn.calls[id] = (line, command) }
                     endIfOver(turn, before: call.name)
                     noteAgent(named ?? TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
                     if let file = TurnProgress.file(changedBy: call) { progress[project.id]?.wrote(file) }
@@ -3432,12 +3459,18 @@ final class Store: ObservableObject {
                     received(project)
                 case .acting(let id, let started):
                     if started { turn.codexActing.insert(id) } else { turn.codexActing.remove(id); steer(project) }
-                case .ran(let command, let refused):
+                case .ended(let id, let failed):
+                    if failed, let call = turn.calls[id] { markFailed(call.line, command: call.command, in: project) }
+                case .ran(let command, let refused, let failed):
                     // A command Codex ran is said in the chat as a command Lamp let run is, by the name the agent gave
                     // it; one its reviewer refused is the same step, marked only when it's opened (`ChatLook.ranCommand`).
-                    // A run whose commands each come to Lamp's card says nothing here: the others' don't either.
-                    guard turn.saysCommands else { break }
-                    log(project, .status, (refused ? ChatLook.notRun : "Ran: ") + command, said: turn.naming)
+                    // A run whose commands each come to Lamp's card says nothing here: the others' don't either. Its
+                    // row was logged as the card let it run, and says so if it failed.
+                    guard turn.saysCommands else {
+                        if failed { markFailed(nil, command: command, in: project) }
+                        break
+                    }
+                    log(project, .status, (refused ? ChatLook.notRun : "Ran: ") + command, said: turn.naming, failed: failed)
                 case .finished:
                     // Claude Code has answered. A message sent from now on is the next request.
                     turn.input?.close()
@@ -8449,7 +8482,8 @@ final class Store: ObservableObject {
             if request.path.contains("format=claude-ran") {
                 if let known {
                     confinedCommands[wrapped] = nil
-                    log(project, .status, "Ran: \(command)", said: known.said)
+                    log(project, .status, "Ran: \(command)", said: known.said,
+                        failed: body["hook_event_name"] as? String == "PostToolUseFailure")
                 }
                 return (200, [:])
             }

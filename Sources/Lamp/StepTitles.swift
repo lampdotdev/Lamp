@@ -13,8 +13,10 @@ import LampSidebarKit
 /// this Mac it built with when it builds there, never the cloud). It is told the
 /// person's request and each fold's steps in the words the chat shows, never what a command printed or a file held,
 /// and not what the agent said around a fold, which a model given it turns into claims the steps don't show (a plan
-/// it announced becomes something the fold did). When there's no such route, the call fails or its answer isn't fit
-/// to show, the fold keeps the words it had.
+/// it announced becomes something the fold did). A step's words are what the agent set out to do, so the model is told
+/// which steps failed or never ran, and that a step's words aren't its result: a fold whose command to share a page
+/// failed is not "Shared the page". When there's no such route, the call fails or its answer isn't fit to show, the
+/// fold keeps the words it had.
 @MainActor
 enum StepTitles {
     nonisolated static let maxWords = 12
@@ -119,15 +121,23 @@ enum StepTitles {
         return (request, groups, own)
     }
 
-    /// A step as the chat names it: the agent's words for a command, never the command itself.
+    /// A step as the chat names it: the agent's words for a command, never the command itself, with whether it failed
+    /// (`LogLine.withOutcome`) or was stopped before it ran, which the chat says only once the step is opened.
     nonisolated static func words(_ step: LogLine) -> String {
-        if let said = step.said { return said }
-        return ChatLook.ranCommand(in: step.text) == nil ? step.text : ChatLook.unnamedStep
+        guard ChatLook.ranCommand(in: step.text) != nil else { return step.said ?? step.text }
+        let said = step.said ?? ChatLook.unnamedStep
+        return step.text.hasPrefix(ChatLook.notRun) ? said + " (not run)" : said
     }
 
     nonisolated static let system = """
     You write the one-line titles of folded groups of steps in a chat, where an assistant changes an app for \
     someone. A title sums up one group's steps, in the past tense, in at most 8 plain words, like "\(examples[0])".
+
+    Each step is what the assistant set out to do, in its words, not what came of it. A step marked (failed) was \
+    tried and didn't work; one marked (not run) was stopped before it ran. Say what was done, never that its aim \
+    was reached: from "Share the page over the network" write "Ran the page's network share", not "Shared the \
+    page". When a group's main steps failed or didn't run, the title says so ("Tried to start the server, but it \
+    failed"), unless a later step did the same thing without failing.
 
     Make the title from the steps alone. Add no result, reason or success the steps don't state. No file, type or \
     framework names, no quotes, no emoji.

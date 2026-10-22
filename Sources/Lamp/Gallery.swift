@@ -420,8 +420,9 @@ enum Gallery {
                 ChatLook.RanCommand("ls Assets")
             })
         },
-        // The steps as the chat gathers them from what was logged: file work Lamp named after a command, logged before
-        // that command's own row (calls made together, the command still running), is one step with it.
+        // The steps as the chat gathers them from what was logged: file work Lamp named after a command (Codex's, by the
+        // heading of its reasoning), logged before that command's own row (calls made together, the command still
+        // running), is one step with it.
         Entry(group: "Activity", name: "File work before its command") {
             let logged = [LogLine(kind: .user, text: "Turn this into a beer tracker"),
                           LogLine(kind: .tool, text: "bash cat Sources/App.swift", said: "Reading how the shelf works"),
@@ -434,6 +435,20 @@ enum Gallery {
             let steps = ChatItem.live(LogLine.visible(logged, details: false), doing: Activity.thinking).steps
             return AnyView(ChatLook.ActivityLine("Mulling it over", started: Date().addingTimeInterval(-40),
                                                  hasSteps: true) { StepList(steps: steps) })
+        },
+        // Steps that were tried and didn't work, as a fold opens to them: a command that failed, the file
+        // work after it in words of its own, and a change that failed.
+        Entry(group: "Activity", name: "Steps that failed") {
+            var shared = LogLine(kind: .status, text: "Ran: tailscale serve --bg 8080", said: "Share the page over the network")
+            shared.failed = true
+            var edit = LogLine(kind: .tool, text: "edit Sources/ShelfView.swift", said: "Adding the sort button")
+            edit.failed = true
+            let logged = [LogLine(kind: .user, text: "Let me open the shelf on my phone"),
+                          LogLine(kind: .status, text: "Ran: python3 -m http.server 8080", said: "Start the page server"),
+                          shared, LogLine(kind: .tool, text: "read Sources/App.swift"), edit,
+                          LogLine(kind: .agent, text: "The page server is running, but sharing it didn't work.")]
+            let steps = LogLine.visible(logged, details: false).filter(ChatItem.isStep)
+            return AnyView(VStack(alignment: .leading, spacing: 4) { StepList(steps: steps) })
         },
         // A change waiting for Reload, under the answer that says so: the action line's symbol and words in the steps'
         // column, with "Worked for…" above and Undo Last Change below.
