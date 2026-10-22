@@ -8056,7 +8056,7 @@ final class Store: ObservableObject {
             guard Self.isLocalHost(request.headers["host"]) else { return (403, ["error": "Not for this host."]) }
         }
         // An app Lamp has just put on a TV or another device asking for its token, which is never in its package: answered
-        // only from the address of the device it was put on, for a few minutes after (`DeviceSupport.Claims`).
+        // only from the address of the device it was put on, for half an hour after (`DeviceSupport.Claims`).
         if route == "/app/claim" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             guard request.fromNetwork, let id = body["app"] as? String, DeviceSupport.Claims.shared.take(id, from: request.peerAddress),

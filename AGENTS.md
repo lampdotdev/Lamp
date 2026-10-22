@@ -715,7 +715,7 @@ storage. Where Lamp is (`DeviceSupport.installValues`: this Mac's Bonjour name, 
 secret and goes into Lamp's own file in the package as it's made (`DeviceSupport.fill`: the TV's staged copy as it's
 packaged, the Xbox's MSIX payload, a Roku's zip made again), never into the app's folder. The token is never in the
 package: Lamp opens a claim for the app just before it puts it on a device (`DeviceSupport.Claims`, from that device's
-address, for five minutes), and the app, finding no token kept, asks `/app/claim` for it and keeps it on the device. The
+address, for half an hour), and the app, finding no token kept, asks `/app/claim` for it and keeps it on the device. The
 TV preview needs neither: LampAI's calls reach Lamp through the web view (`TVPreview`'s `lampGateway` handler), as the
 app. The gateway listens on the network while a TV app is set to open on a TV or a device app takes the building blocks
 (`Store.syncLocalNetwork`); from the network it answers a browser's preflight and lets the device's page read the answer

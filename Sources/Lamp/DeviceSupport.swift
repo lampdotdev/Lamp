@@ -14,7 +14,7 @@ import Foundation
 /// writes it into its own file in the package it sends (`fill`), never into the app's folder, where it would date. The
 /// app's token is: it's never in the package. Just before Lamp puts the app on a device it opens a claim for it
 /// (`Claims`), and the app, opened by that install and finding no token kept, asks the gateway for it once, from that
-/// device's address, within a few minutes. It keeps it in its own storage on the device from then on.
+/// device's address, within half an hour. It keeps it in its own storage on the device from then on.
 enum DeviceSupport {
     /// The libraries a declared app kind may ask for, and what each one is put in: a file, or a folder of files.
     enum Library: String, CaseIterable {
@@ -96,12 +96,12 @@ enum DeviceSupport {
 
     // MARK: Claims
 
-    /// The token claims Lamp opens as it puts an app on a device: one per app, from that device's address, for a few
-    /// minutes. The app opened by the install asks for its token at once (a Roku app's calls each ask, from threads of
-    /// their own, so more than once); one opened later finds it kept.
+    /// The token claims Lamp opens as it puts an app on a device: one per app, from that device's address, for half an
+    /// hour. A web app asks for its token as it opens; a Roku app at its first call to LampAI, which may be a while after
+    /// (each of its calls asks, from threads of their own, so more than once). One opened later finds it kept.
     final class Claims: @unchecked Sendable {
         static let shared = Claims()
-        static let window: TimeInterval = 5 * 60
+        static let window: TimeInterval = 30 * 60
         private let lock = NSLock()
         private var open: [String: (address: String, until: Date)] = [:]
 
@@ -705,6 +705,9 @@ enum DeviceSupport {
         }
       };
 
+      // Opened by Lamp's install, the app asks for its token now, while Lamp is waiting for it, not at its first call.
+      if (installed && !bridge) token().then(null, function () {});
+
       window.LampAI = LampAI;
       window.LampQuestion = LampQuestion;
       window.LampStore = LampStore;
@@ -1116,7 +1119,8 @@ enum DeviceSupport {
 
     function lampToken(installed as Object, routes as Object) as Object
         section = CreateObject("roRegistrySection", "lamp-install")
-        kept = ParseJson(section.Read("token"))
+        kept = invalid
+        if section.Exists("token") then kept = ParseJson(section.Read("token"))
         if kept <> invalid and kept.app = installed.app then return { token: kept.token }
         answer = lampSend(routes, "/app/claim", { app: installed.app }, "", 10000)
         if answer.status <> 200 or answer.reply.token = invalid then
