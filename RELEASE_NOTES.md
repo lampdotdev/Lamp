@@ -5,6 +5,12 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.18.3
+
+- A turn built with your Claude subscription no longer shows a dollar amount: that was what it would have cost at API
+  prices, not money spent. Costs show only for what you pay for through OpenRouter.
+- When the agent tries your app while a change is going in, it reads what's on screen again instead of finding nothing.
+
 ## 0.18.2
 
 - Switching between Claude, ChatGPT and OpenRouter keeps the conversation: the one you switch to knows what was said
