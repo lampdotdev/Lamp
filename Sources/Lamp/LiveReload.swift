@@ -281,6 +281,12 @@ enum LiveReload {
         }
         /// The entries of this group, each as its parts.
         func parts(in entries: [String]) -> [[String]] { entries.compactMap(parts(of:)) }
+        /// The group an entry is of, nil for a type's own entry.
+        static func of(_ entry: String) -> Group? { Group(rawValue: String(entry.prefix { $0 != "\t" })) }
+        /// The names of what's read only at launch (the App, its scenes, its commands, the types they extend).
+        static func launchNames(in entries: [String]) -> Set<String> {
+            Set(launch.parts(in: entries).compactMap { $0.first.map { String($0.prefix { $0 != ":" }).replacingOccurrences(of: "extension ", with: "") } })
+        }
         /// What an entry of this group is about, by which one kept from the open app's layout is told to be gone from
         /// the new one: an alias's name, a constant's, an opaque member's, a private type's with its file, a class's
         /// for its initializers, a type's for its shape. Nil for what's read at launch and what's declared, which
@@ -315,18 +321,14 @@ enum LiveReload {
     /// App), as far down as that goes, as one launch entry: it ran once, so a change to it shows only when the app
     /// opens again. Not what its actions call (a menu command's button), which runs each time it's chosen.
     static func launchCalls(_ launch: [String], _ declarations: SwiftSource.Declarations) -> [String] {
-        let names = Set(Group.launch.parts(in: launch).compactMap { $0.first.map { String($0.prefix { $0 != ":" }).replacingOccurrences(of: "extension ", with: "") } })
+        let names = Group.launchNames(in: launch)
         let ranges = declarations.types.filter { names.contains(bare($0.key)) }.map(\.value) + names.flatMap { declarations.extensions[$0] ?? [] }
         guard !ranges.isEmpty else { return [] }
         var files: [String: SwiftSource.Text] = [:]
         // Into what an initializer makes as it starts (`let menu = makeMenu()`), the one the compiler wrote included.
         let called = SwiftSource.called(fromAll: ranges, in: declarations, files: &files, members: true, skipping: declarations.actions)
             .filter { range in !ranges.contains { SwiftSource.within(range.start, $0) } }
-            .compactMap { range -> String? in
-                guard let text = files[range.start.file] ?? SwiftSource.Text(path: range.start.file),
-                      let from = text.offset(range.start), let end = text.tokenEnd(range.last), from < end else { return nil }
-                return text.slice(from, end)
-            }
+            .compactMap { SwiftSource.text(of: $0, files: &files) }
         guard !called.isEmpty else { return [] }
         return [Group.launch.entry("the code it calls: " + SwiftSource.digest(Set(called).sorted().joined(separator: "\n")))]
     }
@@ -346,7 +348,7 @@ enum LiveReload {
     /// A typealias added, taken away or changed counts too: a name an unchanged file uses may now mean it, as an
     /// alias inside a type stands before a type of the same name outside it.
     static func declarationsChanged(before: [String], after: [String]) -> Bool {
-        func declared(_ entries: [String]) -> Set<String> { Set(entries.filter { $0.hasPrefix(declarationGroup + "\t") || $0.hasPrefix(aliasGroup + "\t") }) }
+        func declared(_ entries: [String]) -> Set<String> { Set(entries.filter { [.declared, .alias].contains(Group.of($0)) }) }
         return declared(before) != declared(after)
     }
 
@@ -628,7 +630,7 @@ enum LiveReload {
         // that group about that subject (a group of its own: an alias named Mood says nothing of the shape Mood had);
         // what's read at launch and what's declared are the new code's whole.
         func keyed(_ entry: String) -> String? {
-            Group(rawValue: String(entry.prefix { $0 != "\t" })).flatMap { group in group.subject(of: entry).map { group.rawValue + "\t" + $0 } }
+            Group.of(entry).flatMap { group in group.subject(of: entry).map { group.rawValue + "\t" + $0 } }
         }
         let subjects = Set(now.compactMap(keyed))
         let kept = now + before.filter { entry in
@@ -676,16 +678,9 @@ enum LiveReload {
         guard conformed.of[type]?.contains("View") == true, conformed.kinds[type].map({ $0 == ["struct"] }) ?? true else { return false }
         // Held by value elsewhere (a struct keeping a view, an array of them, a class's field), it's laid out in what
         // holds it, which the open app keeps. A field's type may name it through a typealias: followed to what it names.
-        let short = bare(type), word = LiveReload.identifierWords
-        func names(_ kind: String, _ depth: Int = 0) -> [String] {
-            word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).flatMap { m -> [String] in
-                let name = String(kind[Range(m.range, in: kind)!])
-                guard depth < 8, !conformed.types.contains(name), let target = conformed.aliases[name], target != name else { return [name] }
-                return [name] + names(target, depth + 1)
-            }
-        }
+        let short = bare(type)
         return !conformed.fields.contains { owner, kinds in
-            owner != type && bare(owner) != short && kinds.contains { names($0).contains { $0 == short || $0.split(separator: ".").last.map(String.init) == short } }
+            owner != type && bare(owner) != short && kinds.contains { conformed.names(in: $0).contains { $0 == short || $0.split(separator: ".").last.map(String.init) == short } }
         }
     }
 
@@ -899,7 +894,7 @@ enum LiveReload {
                 var changed = false
                 for m in word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).reversed() {
                     let range = Range(m.range, in: kind)!, name = String(kind[range])
-                    guard !own.contains(name), !conformed.types.contains(name), let target = conformed.aliases[name], target != name else { continue }
+                    guard !own.contains(name), let target = conformed.aliased(name) else { continue }
                     kind.replaceSubrange(range, with: target)
                     changed = true
                 }
@@ -1009,8 +1004,6 @@ enum LiveReload {
         return nil
     }
 
-    static func oldCode(meeting enums: [String], inDump dump: String) -> String? { oldCode(meeting: enums, uses: oldCodeUses(inDump: dump)) }
-
     /// Every `switch` over an enum, and every interpolation of one, in code that may go on running after a change
     /// (an escaping closure made outside a view's body, an async closure, an async function), as
     /// "Type<tab>where<tab>switches over" or "…<tab>prints", for every enum: which ones will grow isn't known yet.
@@ -1023,7 +1016,7 @@ enum LiveReload {
     /// Reads what code may go on running after a change, line by line as `SwiftSource.walk` gives them. It keeps a
     /// scope stack of its own, since what matters here is how a scope outlives a draw, not what it declares.
     final class OldCode {
-        private var preview: Int?
+        private var macroMade: Int?
         private enum Kind { case body, escaping, async, function(String?, async: Bool), named(String), other }
         // A view's body, or the live copy's name for it (`Template.liveCopySteps` moves the body into `__lampBody`).
         private let bodyDecl = try! NSRegularExpression(pattern: #"^(\s*)\(var_decl\b[^"]*"(?:body|__lampBody)" "#)
@@ -1074,13 +1067,10 @@ enum LiveReload {
 
         func take(_ line: SwiftSource.Walk.Line) {
             let indent = line.indent, opens = line.opens
-            // A preview's code (`#Preview { … }`) never runs in the app.
-            if let open = preview, indent > open { return }
-            // And the type such a macro writes for it, named by its mangled name (`$s…PreviewRegistryfMu_`).
-            preview = opens("macro_expansion_decl") || opens("struct_decl") && line.has(" \"$s") ? indent : nil
             // What the `@State` macro writes for a property (`StatefMp_`): its starting value handed to `State` as a
             // closure, which SwiftUI calls only to make a new view's first value, never code kept running.
-            if preview == nil, line.has("range=[@__swiftmacro_"), line.has("StatefMp_") { preview = indent }
+            if let open = macroMade, indent > open { return }
+            macroMade = line.has("range=[@__swiftmacro_") && line.has("StatefMp_") ? indent : nil
             while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
             while let last = callees.last, last.indent >= indent { callees.removeLast() }
             while let last = calls.last, last >= indent { calls.removeLast() }
@@ -1178,24 +1168,15 @@ enum LiveReload {
             guard !isGroup(entry), let tab = entry.firstIndex(of: "\t") else { return nil }
             return String(entry[..<tab])
         })
-        let word = LiveReload.identifierWords
         func last(_ name: String) -> String { String(name.split(separator: ".").last ?? "") }
-        // A field's type may be a typealias of one: followed to what it names.
-        func resolved(_ name: String) -> String {
-            var name = name, steps = 0
-            while !conformed.types.contains(name), let target = conformed.aliases[name], target != name, steps < 8 { name = target; steps += 1 }
-            return name
-        }
         var found = Set(types), grew = true
         while grew {
             grew = false
             // What's found is named bare, as a field's type names it.
             for (owner, kinds) in conformed.fields where own.contains(owner) && !found.contains(bare(owner)) && carrier(owner) {
                 for kind in kinds {
-                    let names = word.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).flatMap { m -> [String] in
-                        let name = String(kind[Range(m.range, in: kind)!]), target = resolved(name)
-                        return [name] + word.matches(in: target, range: NSRange(target.startIndex..., in: target)).map { String(target[Range($0.range, in: target)!]) }
-                    }
+                    // A field's type may be a typealias of one: followed to what it names.
+                    let names = conformed.names(in: kind)
                     if names.contains(where: { found.contains($0) || found.contains(last($0)) }) { found.insert(bare(owner)); grew = true; break }
                 }
             }
@@ -1214,6 +1195,20 @@ enum LiveReload {
         var fields: [String: [String]] = [:]
         /// Each typealias and what it names, by its name and its qualified name.
         var aliases: [String: String] = [:]
+        /// What a name names one step on, when it's a typealias of the app's and not a type of the app's of that name.
+        func aliased(_ name: String) -> String? {
+            guard !types.contains(name), let target = aliases[name], target != name else { return nil }
+            return target
+        }
+        /// Every name a type as written names, each followed through typealiases as far as they go (up to 8 steps),
+        /// with every name met on the way: `Choice` for `Picky?` is `Choice`, `Picky`, `Optional`… whatever it names.
+        func names(in kind: String, depth: Int = 0) -> [String] {
+            LiveReload.identifierWords.matches(in: kind, range: NSRange(kind.startIndex..., in: kind)).flatMap { m -> [String] in
+                let name = String(kind[Range(m.range, in: kind)!])
+                guard depth < 8, let target = aliased(name) else { return [name] }
+                return [name] + names(in: target, depth: depth + 1)
+            }
+        }
         /// What each type is (struct, class, enum, actor), from the layout's shapes; unknown in one an earlier Lamp
         /// kept, and more than one under a bare name two files' private types share.
         var kinds: [String: Set<String>] = [:]
@@ -1748,7 +1743,7 @@ enum LiveReload {
                 // With its access when it's private to its file: made visible, it can stand where another of its name
                 // did for code elsewhere.
                 let access = !what.contains(" inherits ") && (line.has("access=private") || line.has("access=fileprivate")) ? " private" : ""
-                let entry = declarationGroup + "\t" + place + what + access
+                let entry = Group.declared.entry(place + what + access)
                 if listed { add(entry) }
                 objcPending = (indent, entry)
             }
@@ -1762,7 +1757,7 @@ enum LiveReload {
                 // With `@objc`: such a protocol's values are one word, where a Swift protocol's take two, so every stored
                 // `any P` changes size while every type is printed the same.
                 if let m = signature.firstMatch(in: line.text, range: line.range) {
-                    add(shapeGroup + "\t" + type + "\t" + String(line.text[Range(m.range(at: 1), in: line.text)!]) + (line.has(" @objc ") ? " @objc" : ""))
+                    add(Group.shape.entry(type, String(line.text[Range(m.range(at: 1), in: line.text)!]) + (line.has(" @objc ") ? " @objc" : "")))
                 }
             } else if let owner, owner.hasPrefix("protocol "), opens("func_decl", "var_decl", "subscript_decl", "constructor_decl", "associated_type_decl"),
                       let m = requirement.firstMatch(in: line.text, range: line.range) {
@@ -1779,7 +1774,7 @@ enum LiveReload {
                     classTypes.insert(type.key)
                     // Whether it's final: a final class keeps no method table, so one that stops being final (a
                     // subclass added) or starts needs the app reopened, with its initializers.
-                    if line.text.range(of: #" final\b"#, options: .regularExpression) != nil { add(initsGroup + "\t" + type.key + ".final") }
+                    if line.text.range(of: #" final\b"#, options: .regularExpression) != nil { add(Group.inits.entry(type.key + ".final")) }
                 }
                 // Every type is listed, members or not: an empty one the open app has is still its, and a first
                 // field added to it changes what it holds.
@@ -1795,19 +1790,19 @@ enum LiveReload {
                     let simple = String(first.prefix { $0 != "<" }.split(separator: ".").last ?? "")
                     if names.classes.contains(simple) { shape += " : " + first } else if !names.protocols.contains(simple) { undecided = first }
                 }
-                let entry = shapeGroup + "\t" + type.key + "\t" + shape
+                let entry = Group.shape.entry(type.key, shape)
                 if seen.insert(entry).inserted {
                     out.append(entry)
                     if type.kind == "enum" { shapePending = (indent, out.count - 1) }
                     if let undecided { superPending.append((indent, type.key, out.count - 1, undecided)) }
                 }
                 // A private type is known by its file too (`placeGroup`, by its bare name): moved, it's another type.
-                if type.isPrivate, let file = type.file { add(placeGroup + "\t" + bare(type.key) + "\t" + file) }
+                if type.isPrivate, let file = type.file { add(Group.place.entry(bare(type.key), file)) }
             } else if let name = line.extensionOf {
                 conformances(name)
             } else if opens("typealias"), let m = inferredAlias.firstMatch(in: line.text, range: line.range), let owner {
                 let name = String(line.text[Range(m.range(at: 2), in: line.text)!]), type = String(line.text[Range(m.range(at: 3), in: line.text)!])
-                if !type.contains("some ") { add(aliasGroup + "\t" + owner + "." + name + " = " + type) }
+                if !type.contains("some ") { add(Group.alias.entry(owner + "." + name + " = " + type)) }
             } else if opaque == nil || line.has("readImpl=stored"), opens("func_decl", "var_decl"), let m = opaqueMember.firstMatch(in: line.text, range: line.range),
                       case let name = String(line.text[Range(m.range(at: 3), in: line.text)!]), name != "__lampBody", !name.hasPrefix("$") {
                 // A stored one inside a member being read (a field of a type declared in a `some` helper) is listed
@@ -1837,8 +1832,8 @@ enum LiveReload {
                 if ["private", "fileprivate"].contains(access) {
                     name = ((String(line.text[Range(m.range(at: 2), in: line.text)!]) as NSString).lastPathComponent) + ":" + name
                 }
-                if let owner { add(aliasGroup + "\t" + owner + "." + name + " = " + type) }
-                else if line.isTopLevel { add(aliasGroup + "\t" + name + " = " + type) }
+                if let owner { add(Group.alias.entry(owner + "." + name + " = " + type)) }
+                else if line.isTopLevel { add(Group.alias.entry(name + " = " + type)) }
             } else if opens("var_decl"), let m = varDecl.firstMatch(in: line.text, range: line.range) {
                 let rest = String(line.text[Range(m.range(at: 4), in: line.text)!])
                 let global = held && line.isTopLevel
@@ -1865,7 +1860,7 @@ enum LiveReload {
                 if case .extensionOf = line.scopes.last?.scope { inExtension = true }
                 let convenience = line.has(" convenience") && !line.has(" required")
                 if line.text[Range(m.range(at: 2), in: line.text)!] == "constructor_decl", let owner, classTypes.contains(owner), !inExtension, !convenience {
-                    add(initsGroup + "\t" + owner + "." + signature)
+                    add(Group.inits.entry(owner + "." + signature))
                 }
             } else if opens("enum_element_decl"), let m = caseDecl.firstMatch(in: line.text, range: line.range), let owner {
                 let entry = owner + "\tcase " + String(line.text[Range(m.range(at: 2), in: line.text)!]) + ": " + String(line.text[Range(m.range(at: 3), in: line.text)!])
@@ -1880,11 +1875,9 @@ enum LiveReload {
 
         func finish() -> [String] {
             closeOpaque()
-            for entry in pendingOpaque { add(opaqueGroup + "\t" + entry.key + "\t" + opaqueValue(builds: entry.builds, names: entry.names)) }
+            for entry in pendingOpaque { add(Group.opaque.entry(entry.key, opaqueValue(builds: entry.builds, names: entry.names))) }
             pendingOpaque = []
-            // Not a type a freestanding macro wrote (`#Preview`'s): it's named by its mangled name, which carries the
-            // line it's on, so moving the preview would read as declarations changing. Nothing in the app uses it.
-            return out.filter { entry in !entry.split(separator: "\t").contains { $0.hasPrefix("$s") && $0.contains("fMf_") } }
+            return out
         }
     }
 
@@ -2017,7 +2010,7 @@ enum LiveReload {
         // A constant read by what runs only at launch (the App, its scenes, its menu commands), there or through the
         // code they call: the new value would show only once the app opens again.
         if !constants.isEmpty, let after {
-            let launchNames = Set(Group.launch.parts(in: after).compactMap { $0.first.map { String($0.prefix { $0 != ":" }).replacingOccurrences(of: "extension ", with: "") } })
+            let launchNames = Group.launchNames(in: after)
             // The launch types and their extensions, where an App's body is often written.
             let launch = declarations.types.filter { launchNames.contains(bare($0.key)) }.map(\.value)
                 + launchNames.flatMap { declarations.extensions[$0] ?? [] }
@@ -2127,7 +2120,7 @@ enum LiveReload {
         // again), nor one that code still running has in hand (a timer's closure, a task), which would hand it to the
         // new code as the old code laid it out. Every file is compiled again, so every caller makes it the new way.
         if let before, let layout = check.layout, case let views = retypedViews(before: before, after: layout), !views.isEmpty {
-            let launchNames = Set(Group.launch.parts(in: layout).compactMap { $0.first.map { String($0.prefix { $0 != ":" }).replacingOccurrences(of: "extension ", with: "") } })
+            let launchNames = Group.launchNames(in: layout)
             let launch = declarations.types.filter { launchNames.contains(bare($0.key)) }.map(\.value) + launchNames.flatMap { declarations.extensions[$0] ?? [] }
             // Made there, or by the app's code what runs at launch calls (`WindowGroup { makeRoot() }`).
             let reached = SwiftSource.reached(from: launch, in: declarations)
