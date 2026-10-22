@@ -114,6 +114,15 @@ A capability given to one engine must be given to all of them that can take it, 
   What is worth saving is said in `save_notes`'s description: every word there is paid for on every call.
   When to think of saving is said in the rule (`Agent.memoryRules`): at the end of each request, without waiting to be told to remember, and nothing when nothing lasting came up; an instruction for the one request (“don't test it”) is not a preference and isn't noted. No second call to a model decides it.
   A save that changes what the notes say leaves a receipt in the chat (`NoteReceipt`, a `.noted` line, logged in `Store.notes` for every engine): one line that opens to the lines added and removed, and Undo (`Store.undoNote`), which takes that save back out even when the notes have changed since. What was taken back is told to the agent with its next request (`Memory.tookBack`, beside the summaries), so the conversation that learned it doesn't note it again: each engine keeps its own conversation about an app, so each one is told (`Memory.Undone`). Undoing a later save never brings back a line taken back on an earlier receipt. An Undo that leaves notes neither as they were before the save nor as they are now gives them a summary made from their own lines (`NoteReceipt.summary(of:)`): the summary is all the agent is told, so it must be true of what is left.
+- **Switching engines** (`CatchUp`): each engine keeps its own conversation for an app, and none can take
+  another's, so the one the person switches to would resume its own older conversation, or start a new one, knowing
+  nothing of what was said with the other. What it missed goes at the end of the request, in `Store.runAgent`: the
+  chat's messages (the person's, the agent's and its questions; never steps, commands or tool output) from the first
+  request sent after that engine's conversation last ran up to this turn's own (and through the turn so far for a
+  repair Lamp asks for later in it, a build's errors or a crash, which sends no request), the newest kept when there
+  are more than fit. When it last ran is read from what each engine already leaves (Claude Code's and Codex's conversation
+  file, rewritten as each run starts; pi's session file), so no new record is kept; a conversation that is only now
+  beginning, an ended one included (`Store.forgetConversation`), is given the chat from its start.
 - **Skills** (`Skills`, `Resources/skills`): guidance only some requests need lives in a skill, not in the system
   prompt, so the prompt keeps what nearly every request uses. A skill is a folder with a `SKILL.md` in the Agent
   Skills format (a one-line `name` and `description` between `---` lines, then the instructions), copied into
