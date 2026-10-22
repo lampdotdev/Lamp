@@ -34,12 +34,57 @@ final class Gateway: @unchecked Sendable {
     private let handler: @Sendable (Request) async -> (Int, [String: Any])
     private let pages: @Sendable (Request) async -> Page
     private let sockets: @Sendable (Request, NWConnection, Data) -> Void
+    /// The port it answers on: Lamp's gateway's, or one app's phone page's (`PhoneSites`).
+    let port: UInt16
+    /// A site answers only pages and sockets, on every interface, each request marked by where it came from.
+    private let isSite: Bool
+
+    /// One app's phone page on a port of its own (`PhoneSites`): every request is a page or a socket, whatever its path.
+    init(site port: UInt16, pages: @escaping @Sendable (Request) async -> Page, sockets: @escaping @Sendable (Request, NWConnection, Data) -> Void) {
+        self.port = port
+        self.isSite = true
+        self.handler = { _ in (404, ["error": "Not found"]) }
+        self.pages = pages
+        self.sockets = sockets
+    }
 
     init(handler: @escaping @Sendable (Request) async -> (Int, [String: Any]), pages: @escaping @Sendable (Request) async -> Page,
          sockets: @escaping @Sendable (Request, NWConnection, Data) -> Void) {
+        self.port = Self.port
+        self.isSite = false
         self.handler = handler
         self.pages = pages
         self.sockets = sockets
+    }
+
+    /// A site's one listener, on every interface: a request from this Mac's own loopback is told from one from the network.
+    func startSite() throws {
+        let params = NWParameters.tcp
+        params.allowLocalEndpointReuse = true
+        let listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
+        listener.newConnectionHandler = { [weak self] connection in
+            connection.start(queue: self?.queue ?? .main)
+            var loopback = false
+            if case .hostPort(let host, _) = connection.endpoint {
+                switch host {
+                case .ipv4(let address): loopback = address.isLoopback
+                case .ipv6(let address): loopback = address.isLoopback || address.asIPv4?.isLoopback == true
+                default: break
+                }
+            }
+            self?.receive(connection, buffer: Data(), fromNetwork: !loopback)
+        }
+        listener.start(queue: queue)
+        self.listener = listener
+    }
+
+    func stop() {
+        queue.async { [self] in
+            listener?.cancel()
+            networkListener?.cancel()
+            listener = nil
+            networkListener = nil
+        }
     }
 
     func start() throws {
@@ -101,13 +146,13 @@ final class Gateway: @unchecked Sendable {
                     return
                 }
                 // A phone, or a TV app, opening its socket for phone controllers: the connection is the socket's from here.
-                if request.method == "GET", request.headers["upgrade"]?.lowercased() == "websocket", request.path.hasPrefix("/phone/") {
+                if request.method == "GET", request.headers["upgrade"]?.lowercased() == "websocket", self.isSite {
                     let leftover = buffer.range(of: Data("\r\n\r\n".utf8)).map { Data(buffer[$0.upperBound...]) } ?? Data()
                     self.sockets(request, connection, leftover)
                     return
                 }
                 // A phone opening a TV app's page: plain files, read by a browser that came by following a link.
-                if request.method == "GET" || request.method == "HEAD", request.path == "/phone" || request.path.hasPrefix("/phone/") {
+                if request.method == "GET" || request.method == "HEAD", self.isSite {
                     Task {
                         let page = await self.pages(request)
                         self.respond(connection, page: page, head: request.method == "HEAD")

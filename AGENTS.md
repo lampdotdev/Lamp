@@ -821,21 +821,25 @@ A TV app may have a page for a phone (a controller, a buzzer, a second screen) i
 `Rules.tvPhone`). Lamp serves it, so the agent never starts a server or a login item that would outlive the app: it's
 staged beside `Web/` the same way (links refused) and never packaged, into a folder nothing serves, and put in place of
 the served one in one swap only once it has passed (`TVs.publishPhone`), so a request never reads a copy being made or
-one that failed. The gateway answers GET `/phone/<app>/…` with its files, reached through no link at any step (`TVs.phoneFile`), (`Store.phonePage`, through `Gateway.Page`) only while the app runs, in the preview or set to open on a TV
-(`Store.servesPhonePage`), from the network by the Mac's name or address and on this Mac by a loopback name, with no
-token, since a phone following a QR code has none. The network listener is on for it while the preview is open
-(`Store.syncLocalNetwork`). The TV page reads the address from `Lamp.phonePage(hash)`, which Lamp writes into the
-staged lamp.js (`TVTemplate.phoneMarker`): plain http at the Mac's local address, so a phone's browser won't give the
-page motion sensors or the camera, which need https.
+one that failed. It's served by Lamp at a port of the app's own (`PhoneSites`, from `Edition.phonePagePorts`, sixteen
+for each Lamp), so each app's page is an origin of its own in the phone's browser and what one app's page keeps is out
+of another's reach. The site answers with the app's files (`Store.phonePage`), reached through no link at any step
+(`TVs.phoneFile`), only while the app runs, in the preview or set to open on a TV (`Store.servesPhonePage`), from the
+network by the Mac's name or address and on this Mac by a loopback name, with no token, since a phone following a QR
+code has none; it's opened and closed with the rest of the network listening (`Store.syncLocalNetwork`). The TV page
+reads the address from `Lamp.phonePage(hash)`, which Lamp writes into the staged lamp.js (`TVTemplate.phoneMarker`):
+plain http at the Mac's local address, so a phone's browser won't give the page motion sensors or the camera, which
+need https.
 
 Phones as controllers go through Lamp itself (`PhoneControllers`), over the home network the phone page is already
 served on, so nothing is hosted and nothing leaves the home. The phone page loads `lamp-controller.js`, which Lamp
 serves beside the app's files (`TVTemplate.phoneControllerJS`: `LampController`'s buttons, sticks and messages, and
-tilt asked for from a tap), and opens a WebSocket at `/phone/<app>/socket` on the same gateway (`Gateway` hands an
-upgrade there to `Store.phoneSocket`, held to the page's own Host rules; `WebSocketPeer` speaks it). The TV page has
+tilt asked for from a tap), and opens a WebSocket at `/socket` on the app's own site (`Gateway` hands an upgrade there
+to `Store.phoneSocket`, held to the page's own Host rules; `WebSocketPeer` speaks it). A link just opened always wins
+over a credential the page kept from before. The TV page has
 `Lamp.controllers` in lamp.js (`TVTemplate.controllersJS`): in the preview it is the app's host in Lamp itself, through
-the `lampController` bridge (`TVPreview`); on a TV it asks Lamp for a host credential (`/app/controller`) and opens
-the same socket over the Wi‑Fi. The credentials are the controllers' own (`ControllerCredential`, signed with a key kept
+the `lampController` bridge (`TVPreview`); on a TV it asks Lamp's gateway for a host credential (`/app/controller`) and
+opens the same socket, at the app's port, over the Wi‑Fi. The credentials are the controllers' own (`ControllerCredential`, signed with a key kept
 only in Lamp's memory: a host's for the session, a join link's for fifteen minutes, a phone's for two, renewed over its
 socket), never the app's token for its AI, and ending a session (the preview closed with no TV chosen) makes all of
 them worthless. A phone is let in only from the page's own origin; a dropped phone keeps its number while its

@@ -8118,13 +8118,13 @@ final class Store: ObservableObject {
 
     /// The gateway answers on the local network only while an app is set to open on the person's own phone or
     /// tablet, Apple's or Android's, or on a TV, or is an app for a device (which always opens on one) that takes Lamp's
-    /// building blocks, or is a TV app open in the preview with a page for a phone: kept in step with the list of apps
-    /// (Try On, deletion, rename, reload) and with the TV preview.
+    /// building blocks: kept in step with the list of apps (Try On, deletion, rename, reload). A TV app's phone page has a
+    /// port of its own (`PhoneSites`), opened and closed here too, with the TV preview.
     func syncLocalNetwork() {
         gateway?.setLocalNetwork(projects.contains {
             (($0.platform.hasIOS || $0.platform.hasAndroid || $0.platform == .tv) && $0.device != nil) || ($0.platform == .device && !DeviceSupport.libraries(for: $0).isEmpty)
-                || Self.servesPhonePage($0)
         })
+        PhoneSites.sync(projects)
     }
 
     /// Whether a TV app's phone page is handed out now: while the app runs, in the preview, or on a TV, which Lamp
@@ -8268,8 +8268,11 @@ final class Store: ObservableObject {
     private func controllerSession(_ request: Gateway.Request, for project: LampProject) -> (Int, [String: Any]) {
         guard project.platform == .tv else { return (403, ["error": "Only TV apps take phone controllers."]) }
         guard TVs.hasPhonePage(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
-        let host = request.headers["host"] ?? "127.0.0.1:\(Gateway.port)"
-        return (200, ["socket": "ws://\(host)/phone/\(project.id)/socket", "host": PhoneControllers.shared.hostCredential(for: project)])
+        syncLocalNetwork()
+        guard let port = PhoneSites.port(for: project.id) else { return (503, ["error": "Lamp has no free port for the phone page."]) }
+        // By the name or address the TV reached Lamp at, at the app's own port.
+        let host = (request.headers["host"] ?? "127.0.0.1").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
+        return (200, ["socket": "ws://\(host):\(port)/socket", "host": PhoneControllers.shared.hostCredential(for: project)])
     }
 
     /// A socket at `/phone/<app>/socket`, from a phone's page or a TV app: addressed to this Mac like the page itself.

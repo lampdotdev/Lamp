@@ -501,8 +501,10 @@ extension TVTemplate {
             if (join) history.replaceState(null, '', location.pathname + location.search);
             function state(s) { if (handlers.onState) handlers.onState(s); }
 
+            // A link just opened always wins over a credential kept from before: that one may be for a game that has
+            // ended, or have run out while the page was away, and the link is what the person just chose.
             function open() {
-              var credential = sessionStorage.getItem(keyName) || join;
+              var credential = join || sessionStorage.getItem(keyName);
               if (!credential) { state('ended'); return; }
               state('connecting');
               socket = new WebSocket(socketURL);
@@ -531,7 +533,10 @@ extension TVTemplate {
               };
               socket.onclose = function (event) {
                 socket = null;
-                if (event.code === 4003 || event.code === 4005) { sessionStorage.removeItem(keyName); closedForGood = true; state('ended'); }
+                if (event.code === 4003 || event.code === 4005) {
+                  sessionStorage.removeItem(keyName);
+                  closedForGood = true; state('ended');
+                }
                 if (closedForGood) return;
                 state('connecting');
                 retry = Math.min(retry + 1, 5);

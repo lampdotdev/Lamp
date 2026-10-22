@@ -493,3 +493,82 @@ final class WebSocketPeer {
         return (fin, opcode, Data(payload), offset + 4 + length)
     }
 }
+
+/// Each TV app's phone page on a port of its own (`Edition.phonePagePorts`), so each app's page is an origin of its own
+/// in the phone's browser: what one app's page keeps (a player's credential) is out of reach of another app's page in
+/// the same tab, which a path of one shared address couldn't give. A site is open only while the app's page is served
+/// (`Store.servesPhonePage`); its port is kept for the app while Lamp runs, so the address an app was given stays its.
+@MainActor
+enum PhoneSites {
+    private static var ports: [String: UInt16] = [:]
+    private static var sites: [String: Gateway] = [:]
+
+    /// The app's port: the one it has, else the first free one in Lamp's range, starting from a place worked out from
+    /// its id so an app tends to keep the same one from run to run.
+    static func port(for app: String) -> UInt16? {
+        if let port = ports[app] { return port }
+        let range = Edition.phonePagePorts
+        let count = Int(range.count)
+        let start = Int(app.utf8.reduce(UInt32(2166136261)) { ($0 ^ UInt32($1)) &* 16777619 } % UInt32(count))
+        let taken = Set(ports.values)
+        for step in 0..<count {
+            let port = range.lowerBound + UInt16((start + step) % count)
+            if !taken.contains(port), isFree(port) {
+                ports[app] = port
+                return port
+            }
+        }
+        return nil
+    }
+
+    /// Opens the sites of the apps whose phone pages are served and closes the rest.
+    static func sync(_ projects: [LampProject]) {
+        let serving = Set(projects.filter(Store.servesPhonePage).map(\.id))
+        for (app, site) in sites where !serving.contains(app) {
+            site.stop()
+            sites[app] = nil
+        }
+        for app in serving where sites[app] == nil {
+            for _ in 0..<2 {
+                guard let port = port(for: app) else { break }
+                let site = Gateway(site: port, pages: { request in
+                    await Store.shared.phonePage(request.within(app))
+                }, sockets: { request, connection, leftover in
+                    Task { @MainActor in Store.shared.phoneSocket(request.within(app), connection: connection, leftover: leftover) }
+                })
+                if (try? site.startSite()) != nil {
+                    sites[app] = site
+                    break
+                }
+                ports[app] = nil   // taken since it was chosen: the next free one
+            }
+        }
+    }
+
+    private static func isFree(_ port: UInt16) -> Bool {
+        let fd = socket(AF_INET6, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        var no: Int32 = 0
+        setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &no, socklen_t(MemoryLayout<Int32>.size))
+        var address = sockaddr_in6()
+        address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        address.sin6_family = sa_family_t(AF_INET6)
+        address.sin6_port = port.bigEndian
+        address.sin6_addr = in6addr_any
+        return withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in6>.size)) == 0 }
+        }
+    }
+}
+
+extension Gateway.Request {
+    /// A request to an app's own site, as the path under `/phone/<app>` the page's code has always read it at.
+    func within(_ app: String) -> Gateway.Request {
+        var request = Gateway.Request(method: method, path: "/phone/\(app)" + path, headers: headers, body: body)
+        request.fromNetwork = fromNetwork
+        request.peerPort = peerPort
+        request.peerAddress = peerAddress
+        return request
+    }
+}
