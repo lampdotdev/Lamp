@@ -3144,8 +3144,15 @@ enum LiveSlots {
             // The fields kept in their places, from the last: each place in the original, moved by what the rewrites and
             // the `$name`s before it changed.
             let grew = "__lampBinding_".utf8.count - 1
-            for field in kept.filter({ $0.at.file == file }).sorted(by: { ($0.at.line, $0.at.column) > ($1.at.line, $1.at.column) }) {
-                guard let offset = field.after ? original.tokenEnd(field.at) : original.offset(field.at) else { return .refused(nil) }
+            // Several at one place go in last first, so they end up in the open app's order.
+            for field in kept.filter({ $0.at.file == file }).sorted(by: { ($0.at.line, $0.at.column, $0.order) > ($1.at.line, $1.at.column, $1.order) }) {
+                guard var offset = field.after ? original.tokenEnd(field.at) : original.offset(field.at) else { return .refused(nil) }
+                // Before the whole declaration, its modifiers (`private`, `static`) included: back to where the line, or
+                // the member before it, ends.
+                if !field.after {
+                    while offset > 0, ![UInt8(ascii: "\n"), UInt8(ascii: ";"), UInt8(ascii: "{"), UInt8(ascii: "}")].contains(original.bytes[offset - 1]) { offset -= 1 }
+                    while offset < original.bytes.count, [UInt8(ascii: " "), UInt8(ascii: "\t")].contains(original.bytes[offset]) { offset += 1 }
+                }
                 let at = shifted(offset) + places.keys.filter { $0 < offset }.count * grew
                 var insert: String
                 if field.after {
@@ -3249,6 +3256,8 @@ enum LiveSlots {
         var text: String
         var at: SwiftSource.Position
         var after: Bool
+        /// Its place among the type's fields in the open app: kept fields at one place go in in this order.
+        var order: Int
     }
     enum KeptFields {
         case kept([Kept], layout: [String])
@@ -3322,12 +3331,16 @@ enum LiveSlots {
                 guard let index = members.firstIndex(of: entry) else { return .refused(nil) }
                 let following = members[(index + 1)...].compactMap { $0 == entry ? nil : current.contains($0) ? fieldName($0).flatMap { variable(type, $0) } : nil }.first
                 let preceding = members[..<index].reversed().compactMap { current.contains($0) ? fieldName($0).flatMap { variable(type, $0) } : nil }.first
+                // A field declared in one list with others (`var a = 1, b = 2`) gives no place between them.
+                if let anchor = following ?? preceding, declarations.bindings[anchor.binding].entries.count > 1 {
+                    return .refused("\(spoken) lost \(base) beside fields declared in one list, where Lamp can't put it back in its place")
+                }
                 if let next = following {
                     let binding = declarations.bindings[next.binding]
                     let start = ([binding.start] + next.attributes.map(\.start)).min { ($0.line, $0.column) < ($1.line, $1.column) }!
-                    kept.append(Kept(type: type, text: text, at: start, after: false))
+                    kept.append(Kept(type: type, text: text, at: start, after: false, order: index))
                 } else if let last = preceding {
-                    kept.append(Kept(type: type, text: text, at: declarations.bindings[last.binding].last, after: true))
+                    kept.append(Kept(type: type, text: text, at: declarations.bindings[last.binding].last, after: true, order: index))
                 } else {
                     return .refused(nil)
                 }
