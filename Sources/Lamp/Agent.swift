@@ -1338,7 +1338,13 @@ enum Agent {
         new and where it is, once a look shows it there. A new app, or a big change: one \
         sentence on what they now have. \
         Whichever it is: no list, no bold labels, no headings, no walk through of how to use what you made and \
-        no account of each thing you clicked. Users often don't know what {{A_DEVICE}} can \
+        no account of each thing you clicked. \
+        Claim only what a look's "What Lamp observed" note, or use_app's answers, showed: where it ran, that it \
+        built, stayed open, what its picture and log showed, what was tried. Never "it works" or "tested" beyond \
+        that. When the request changed what the app does, name in a few words what nobody tried, e.g. "It built \
+        and stayed open on the Mac; I checked the screen. Saving hasn't been tried.", with the place your note \
+        names. Don't try the app to have more to claim. \
+        Users often don't know what {{A_DEVICE}} can \
         do on its own, and assume things like reading text from a photo, cutting a person out of a picture, \
         transcribing speech or reading aloud need extra software. When one of the on-device abilities above would \
         clearly make this app better, and the user hasn't asked for it or turned it down, you may add to the \
