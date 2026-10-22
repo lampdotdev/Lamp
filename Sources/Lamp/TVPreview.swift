@@ -69,7 +69,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     func windowDidResize(_ notification: Notification) { webView.pageZoom = webView.bounds.width / 1920 }
 
     func windowWillClose(_ notification: Notification) {
-        ControllerRelay.shared.disconnectPreview(project)
+        PhoneControllers.shared.detachPreview(project)
         // Closing the window doesn't end the page: WebKit runs it, its sound and timers included, for as long as the web
         // view lives, and the web view's script handlers hold on to this preview, which holds the web view. So the app's
         // page is swapped for an empty one and the handlers let go, and the web view goes with the window.
@@ -137,24 +137,17 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
 
     private func write(_ line: String) { log?.write(Data((line + "\n").utf8)) }
 
-    /// Phones as controllers in the preview (`Lamp.controllers` in lamp.js): Lamp joins the relay for the page and
-    /// passes what comes to it, since the page is a file on this Mac. Only the app's own page, as for its AI.
+    /// Phones as controllers in the preview (`Lamp.controllers` in lamp.js): the page is the app's host in Lamp itself
+    /// (`PhoneControllers`), which passes it what the phones send. Only the app's own page, as for its AI.
     private func controller(_ message: WKScriptMessage) {
         guard isOwnPage(message), let call = message.body as? [String: Any], let op = call["op"] as? String else { return }
         switch op {
         case "start":
-            Task { @MainActor in
-                do {
-                    try await ControllerRelay.shared.connectPreview(project) { [weak self] text in self?.deliverController(text) }
-                } catch {
-                    let failure = ["t": "error", "message": error.localizedDescription]
-                    deliverController(String(decoding: (try? JSONSerialization.data(withJSONObject: failure)) ?? Data("{}".utf8), as: UTF8.self))
-                }
-            }
+            PhoneControllers.shared.attachPreview(project) { [weak self] text in self?.deliverController(text) }
         case "send":
-            if let relayed = call["message"] as? [String: Any] { ControllerRelay.shared.sendFromPreview(project, relayed) }
+            if let message = call["message"] as? [String: Any] { PhoneControllers.shared.fromPreview(project, message) }
         case "stop":
-            ControllerRelay.shared.disconnectPreview(project)
+            PhoneControllers.shared.detachPreview(project)
         default:
             break
         }

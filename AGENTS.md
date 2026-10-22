@@ -828,20 +828,21 @@ token, since a phone following a QR code has none. The network listener is on fo
 staged lamp.js (`TVTemplate.phoneMarker`): plain http at the Mac's local address, so a phone's browser won't give the
 page motion sensors or the camera, which need https.
 
-Phones as controllers go through Lamp's controller relay (`relay/`, a Node process with no dependencies and no storage,
-run locally with `node relay/server.js`; none is hosted yet, so Lamp finds it through the `controllerRelay` setting or
-`LAMP_CONTROLLER_RELAY`, `ControllerRelay.base`). Lamp opens a session there for the app and puts the staged phone page
-in it (`ControllerRelay.open`), which the relay hands out over https at an address of the session's own, so phones'
-browsers give the page their motion sensors and no two apps' pages share an origin. The page loads the relay's
-`/lamp-controller.js` (`LampController`: buttons, sticks, messages, and tilt asked for from a tap); the TV page has
-`Lamp.controllers` in lamp.js (`TVTemplate.controllersJS`). On a TV the page asks Lamp for a session
-(`/app/controller`) and joins the relay as its host itself; in the preview Lamp joins for it and passes messages through
-the `lampController` bridge (`TVPreview`, `ControllerRelay.connectPreview`), dropped when the window closes. The relay's
-credentials are its own (`relay/credentials.js`: a host's for the session, a join link's for fifteen minutes, a
-phone's for two, renewed over its socket), never Lamp's token for the app's AI; it keeps no message, beats every five
-seconds, drops a phone's stick or tilt while the host is behind, and tells the host when a phone leaves, when
-lamp.js lets go of what it held; lamp.js drops movement older than 300 ms. Controller traffic leaves the home, and the
-app's chat says so the first time (`ControllerRelay.tellOnce`), as the agent is told to.
+Phones as controllers go through Lamp itself (`PhoneControllers`), over the home network the phone page is already
+served on, so nothing is hosted and nothing leaves the home. The phone page loads `lamp-controller.js`, which Lamp
+serves beside the app's files (`TVTemplate.phoneControllerJS`: `LampController`'s buttons, sticks and messages, and
+tilt asked for from a tap), and opens a WebSocket at `/phone/<app>/socket` on the same gateway (`Gateway` hands an
+upgrade there to `Store.phoneSocket`, held to the page's own Host rules; `WebSocketPeer` speaks it). The TV page has
+`Lamp.controllers` in lamp.js (`TVTemplate.controllersJS`): in the preview it is the app's host in Lamp itself, through
+the `lampController` bridge (`TVPreview`); on a TV it asks Lamp for a host credential (`/app/controller`) and opens
+the same socket over the Wi‑Fi. The credentials are the controllers' own (`ControllerCredential`, signed with a key kept
+only in Lamp's memory: a host's for the session, a join link's for fifteen minutes, a phone's for two, renewed over its
+socket), never the app's token for its AI, and ending a session (the preview closed with no TV chosen) makes all of
+them worthless. A phone is let in only from the page's own origin; a dropped phone keeps its number while its
+credential lasts. Lamp keeps no message, beats every five seconds, drops a phone's stick or tilt while the TV is behind,
+and tells the host when a phone leaves, when lamp.js lets go of what it held; lamp.js drops movement older than 300 ms.
+The page is plain http, so phones keep their motion sensors from it: buttons and sticks work, and tilt only where the
+person has put https in front of the page themselves (`LampController.canTilt`); Lamp builds nothing for that.
 
 ## Apps for both the Mac and the iPhone
 

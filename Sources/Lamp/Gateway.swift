@@ -33,10 +33,13 @@ final class Gateway: @unchecked Sendable {
     private let queue = DispatchQueue(label: "dev.lamp.gateway")
     private let handler: @Sendable (Request) async -> (Int, [String: Any])
     private let pages: @Sendable (Request) async -> Page
+    private let sockets: @Sendable (Request, NWConnection, Data) -> Void
 
-    init(handler: @escaping @Sendable (Request) async -> (Int, [String: Any]), pages: @escaping @Sendable (Request) async -> Page) {
+    init(handler: @escaping @Sendable (Request) async -> (Int, [String: Any]), pages: @escaping @Sendable (Request) async -> Page,
+         sockets: @escaping @Sendable (Request, NWConnection, Data) -> Void) {
         self.handler = handler
         self.pages = pages
+        self.sockets = sockets
     }
 
     func start() throws {
@@ -95,6 +98,12 @@ final class Gateway: @unchecked Sendable {
                 // origins. Only over the network: nothing on this Mac is answered across origins.
                 if fromNetwork, request.method == "OPTIONS" {
                     self.respond(connection, status: 204, json: [:], crossOrigin: true)
+                    return
+                }
+                // A phone, or a TV app, opening its socket for phone controllers: the connection is the socket's from here.
+                if request.method == "GET", request.headers["upgrade"]?.lowercased() == "websocket", request.path.hasPrefix("/phone/") {
+                    let leftover = buffer.range(of: Data("\r\n\r\n".utf8)).map { Data(buffer[$0.upperBound...]) } ?? Data()
+                    self.sockets(request, connection, leftover)
                     return
                 }
                 // A phone opening a TV app's page: plain files, read by a browser that came by following a link.
