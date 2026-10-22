@@ -1593,7 +1593,7 @@ builder decides from the wish (`Agent.Rules.browserCompanion`) and tries the sid
 (`PagePreview`), shows it light, dark and at 200% zoom with the app's window beside it, says what it measured there
 (contrast, the system font, small words, pictures and symbols that didn't load, sideways scrolling, words cut off,
 parts out of line),
-and hands it the page beside it, so every engine tries it the same way; it's the one thing the builder uses in a new app, since it isn't the person's Chrome.
+and hands it the page beside it, so every engine tries it the same way; it isn't the person's Chrome, so it's tried like the app's window before the builder says it works.
 Each Chrome tab has its own sidebar and the app keeps what one tab prepared by its tab (`call.tab`), so what one
 page prepared never shows on another; keep that when changing either side. The builder may also give an app a
 right-click item (`menu` in browser.json) for what its sidebar does with a page, whatever that is (save it, explain,

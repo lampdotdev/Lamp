@@ -601,8 +601,8 @@ enum Agent {
             everything in it and leave empty what the page doesn't say. A quote or figure kept as the page's must pass \
             `page.contains(quote)` (decode it as `LampBrowser.Page`). Say so when `truncated` cut the page short. Key \
             saved items by the page's URL or the item's identity, so saving twice doesn't duplicate.
-            - Try the sidebar before finishing, a new app included: it is Lamp's own copy, beside a page Lamp opens, so \
-            it doesn't get in the person's way, and this is the one thing you use in a new app. `look_at_app` with \
+            - Try the sidebar before finishing, as well as the window: it is Lamp's own copy, beside a page Lamp opens, \
+            so it doesn't get in the person's way. `look_at_app` with \
             `sidebar: true` and `page` (the https address of a real page it's for) shows it as Chrome would, light, dark \
             and at large text, with the app's window beside it, says what it measured, and whether the page fits \
             browser.json; `use_app` with `sidebar: true` and `page` clicks and types in it by target. Go through the \
