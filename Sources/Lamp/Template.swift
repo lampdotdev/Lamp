@@ -38,8 +38,9 @@ enum Template {
         return slug
     }
 
+    /// Written without following a link on the way (`AppFolder`): `.lamp` is in the app's folder, which the agent writes.
     static func saveMeta(_ project: LampProject) throws {
-        try JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
+        try AppFolder.write(JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
                                              platform: project.platform, family: project.platform.hasIOS ? project.family : nil,
                                              device: project.device, target: project.platform == .universal ? project.chosen : nil,
                                              simulator: project.platform.hasIOS ? project.simulator : nil,
@@ -47,8 +48,9 @@ enum Template {
                                              wish: project.untitled && project.fromWish ? true : nil,
                                              finding: project.untitled && project.finding ? true : nil,
                                              deviceSetup: project.deviceSetup,
-                                             integration: project.platform == .device ? project.integration : nil))
-            .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
+                                             integration: project.platform == .device ? project.integration : nil,
+                                             undecided: project.undecided)),
+                            to: project.dir.appendingPathComponent(".lamp/meta.json"), in: project.dir)
     }
 
     /// Writes the scaffold into a draft's folder, as the kind of app it is now.
@@ -225,6 +227,8 @@ enum Template {
     static func installValues(for project: LampProject) -> [String: String] {
         [
             "slug": project.id,
+            // Where its folder is under Lamp's apps: its id, or for a wish's other part its wish's folder and its own.
+            "folder": project.isPart ? project.dir.deletingLastPathComponent().lastPathComponent + "/" + project.dir.lastPathComponent : project.id,
             "dataID": Edition.appBundlePrefix + project.id,
             "token": token(for: project),
             "port": String(Gateway.port),
@@ -3623,7 +3627,9 @@ enum Template {
         static var host: String { value("host") }
         /// The folder of Lamp's apps, and this app's in it.
         static var apps: String { value("apps") }
-        static var app: String { apps + "/" + slug }
+        /// Its folder: under its own name, or for a part of a wish (an app beside a TV app) inside its wish's. An app
+        /// installed by a Lamp from before says only its name.
+        static var app: String { apps + "/" + (value("folder").isEmpty ? slug : value("folder")) }
         static var macHost: String { value("macHost") }
         /// A link that asks Lamp to do something for this app.
         static func link(_ action: String) -> URL {
@@ -13586,6 +13592,220 @@ enum Template {
             score = json["score"] as? Double
             probabilities = json["probabilities"] as? [String: Double] ?? [:]
             confidence = json["confidence"] as? Double
+        }
+    }
+
+    // MARK: - The wish's TV app
+
+    /// Joins the TV app of this app's wish as a player of its `Lamp.controllers`, the way a phone's page does: through
+    /// Lamp on the person's Mac and the home Wi‑Fi, with nothing to pair or set up. Keep it while it's used (a
+    /// @StateObject, or a model's property); it lets go when released.
+    ///
+    ///     @StateObject private var pad = LampController.connect()
+    ///     Button("Next") { pad.press("next") }                  // a tap: held, then let go
+    ///     pad.button("fire", down: true); pad.button("fire", down: false)
+    ///     pad.axis("stick", x: 0.4, y: -1)                      // each from -1 to 1
+    ///     pad.send(["volume": 4])                               // anything small, as JSON; false when it wasn't sent
+    ///     pad.onMessage { data in … }                           // what the TV app sent with Lamp.controllers.send
+    ///     pad.state                                             // .connecting, .connected, .waiting (the TV app isn't open), .ended
+    ///
+    /// Each message, as the JSON that goes out, is at most `messageLimit` (1,024) bytes, the most Lamp passes between
+    /// devices. A bigger one isn't sent: `send` returns false and says why in the app's log, and the TV app's log says
+    /// so too. Send something big (a file, a picture) in pieces of at most 700 characters of base64, each with its
+    /// number, and the next only once the TV app has answered the last; the phone-controllers skill shows how.
+    @MainActor final class LampController: ObservableObject {
+        enum State: String { case connecting, connected, waiting, ended, full }
+        /// The most bytes one message may take as JSON, Lamp's own wrapping included (`PhoneControllers.Limits.message`).
+        static let messageLimit = 1024
+        @Published private(set) var state: State = .connecting { didSet { if state == .connected { saidAway = false } } }
+        /// The player number the TV app knows this one by (1, 2, …), once it has joined.
+        @Published private(set) var player: Int?
+
+        private final class Link: @unchecked Sendable { var task: URLSessionWebSocketTask? }
+        private let link = Link()
+        private var credential: String?
+        private var address: URL?
+        private var seq = 0
+        private var listeners: [(Any) -> Void] = []
+        private var closed = false
+        private var retry = 0
+        private var heard = Date()
+        private var beat: Timer?
+        private var saidAway = false
+
+        static func connect() -> LampController {
+            let pad = LampController()
+            pad.open()
+            pad.beat = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak pad] _ in
+                MainActor.assumeIsolated { pad?.tick() }
+            }
+            return pad
+        }
+
+        deinit {
+            link.task?.cancel(with: .goingAway, reason: nil)
+        }
+
+        func press(_ name: String) {
+            button(name, down: true)
+            button(name, down: false)
+        }
+        @discardableResult func button(_ name: String, down: Bool) -> Bool { post(["t": "button", "name": name, "down": down]) }
+        @discardableResult func axis(_ name: String, x: Double, y: Double) -> Bool {
+            post(["t": "axis", "name": name, "x": max(-1, min(1, x)), "y": max(-1, min(1, y))])
+        }
+        /// Sends `data` (anything JSON can hold) to the TV app; false, with the reason in the app's log, when it wasn't.
+        @discardableResult func send(_ data: Any) -> Bool { post(["t": "message", "data": data]) }
+        func onMessage(_ handler: @escaping (Any) -> Void) { listeners.append(handler) }
+
+        func close() {
+            closed = true
+            beat?.invalidate()
+            link.task?.cancel(with: .goingAway, reason: nil)
+            link.task = nil
+            state = .ended
+        }
+
+        // Nothing is dropped without a word in the app's log: the code that sent it can't tell otherwise why the TV app
+        // never heard it. Being away from the TV app is said once until it's back, not for every message meanwhile.
+        private func post(_ message: [String: Any]) -> Bool {
+            let what = message["t"] as? String == "message" ? "A message" : "'\(message["name"] as? String ?? "")'"
+            // While the TV app isn't open (.waiting) Lamp has no one to give it to.
+            guard let task = link.task, state == .connected else {
+                if !saidAway { saidAway = true; fputs("LampController: \(what) wasn't sent: not connected to the TV app (\(state.rawValue)). Check pad.state before sending.\n", stderr) }
+                return false
+            }
+            var message = message
+            message["seq"] = seq + 1
+            guard JSONSerialization.isValidJSONObject(message), let data = try? JSONSerialization.data(withJSONObject: message) else {
+                fputs("LampController: \(what) wasn't sent: it holds something JSON can't (only text, numbers, true/false, arrays and dictionaries).\n", stderr)
+                return false
+            }
+            guard data.count <= Self.messageLimit else {
+                fputs("LampController: \(what) of \(data.count) bytes wasn't sent: a message between devices is at most \(Self.messageLimit) bytes as JSON. Send something big in numbered pieces of at most 700 characters, each after the TV app has answered the last.\n", stderr)
+                tell(task, "{\"t\":\"too-big\",\"bytes\":\(data.count)}")
+                return false
+            }
+            seq += 1
+            tell(task, String(decoding: data, as: UTF8.self))
+            return true
+        }
+
+        private func tell(_ task: URLSessionWebSocketTask, _ text: String) {
+            task.send(.string(text)) { error in
+                if let error { fputs("LampController: a message didn't reach Lamp: \(error.localizedDescription)\n", stderr) }
+            }
+        }
+
+        // Where to join, from Lamp: the TV app's socket and a link's credential, asked again whenever the one held
+        // has run out (Lamp gives a joined player one of its own, renewed while it stays).
+        private func open() {
+            guard !closed else { return }
+            state = .connecting
+            Task { @MainActor in
+                do {
+                    if credential == nil || address == nil {
+                        let answer: [String: Any]
+                        do {
+                            answer = try await LampAI.post("/app/controller", ["as": "player"], timeout: 20)
+                        } catch {
+                            // Lamp answers but the TV app isn't open: that's waiting, not a fault.
+                            if (error as? LampAI.Failure)?.message.contains("isn't open") == true { state = .waiting; return again(waiting: true) }
+                            throw error
+                        }
+                        guard let socket = (answer["socket"] as? String).flatMap(URL.init(string:)), let join = answer["join"] as? String else {
+                            throw LampAI.Failure(message: answer["error"] as? String ?? "Lamp didn't say where the TV app is.")
+                        }
+                        address = socket
+                        credential = join
+                    }
+                    guard let address, let credential, !closed else { return }
+                    let task = URLSession.shared.webSocketTask(with: address)
+                    link.task = task
+                    task.resume()
+                    heard = Date()
+                    let hello = try JSONSerialization.data(withJSONObject: ["t": "hello", "credential": credential])
+                    try await task.send(.string(String(decoding: hello, as: UTF8.self)))
+                    receive(on: task)
+                } catch {
+                    fputs("LampController: \(error.localizedDescription)\n", stderr)
+                    again()
+                }
+            }
+        }
+
+        private func receive(on task: URLSessionWebSocketTask) {
+            task.receive { [weak self] result in
+                Task { @MainActor in
+                    guard let self, self.link.task === task else { return }
+                    switch result {
+                    case .success(.string(let text)):
+                        self.heard = Date()
+                        self.hear(text)
+                        self.receive(on: task)
+                    case .success:
+                        self.receive(on: task)
+                    case .failure:
+                        self.dropped(task)
+                    }
+                }
+            }
+        }
+
+        private func hear(_ text: String) {
+            guard let m = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] else { return }
+            switch m["t"] as? String {
+            case "welcome":
+                retry = 0
+                seq = 0
+                // The state first, so code that sends as soon as it sees its player number is heard.
+                state = m["host"] as? Bool == true ? .connected : .waiting
+                if let kept = m["credential"] as? String { credential = kept }
+                player = m["player"] as? Int
+            case "credential":
+                if let kept = m["credential"] as? String { credential = kept }
+            case "state":
+                state = m["host"] as? Bool == true ? .connected : .waiting
+            case "message":
+                if let data = m["data"] { for listener in listeners { listener(data) } }
+            case "full":
+                closed = true
+                state = .full
+            default:
+                break
+            }
+        }
+
+        private func dropped(_ task: URLSessionWebSocketTask) {
+            guard link.task === task else { return }
+            let code = task.closeCode.rawValue
+            link.task = nil
+            // Refused, or the game ended: the credential is no use, so a fresh one is asked for. Dropped before it was let
+            // in, the TV app's site may have moved: where it is is asked for again too.
+            if code == 4003 || code == 4005 || player == nil || retry >= 3 { credential = nil; address = nil }
+            again()
+        }
+
+        private func again(waiting: Bool = false) {
+            guard !closed else { return }
+            if !waiting { state = .connecting }
+            retry = min(retry + 1, 6)
+            let wait = Double(retry) * 0.75
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(wait))
+                self?.open()
+            }
+        }
+
+        // A beat both ways: Lamp lets a quiet player go, and one that hears nothing joins again.
+        private func tick() {
+            guard let task = link.task else { return }
+            if Date().timeIntervalSince(heard) > 12 {
+                task.cancel(with: .goingAway, reason: nil)
+                dropped(task)
+                return
+            }
+            task.send(.string(#"{"t":"beat"}"#)) { _ in }
         }
     }
 

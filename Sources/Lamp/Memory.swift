@@ -524,7 +524,7 @@ struct MemorySettings: View {
                 }
             }
             // The notes depend on the checkbox: off, nothing reads them, so they aren't read or listed.
-            if let listing = Self.listing(on: memory, apps: store.projects, read: notes) {
+            if let listing = Self.listing(on: memory, apps: store.wishes, read: notes) {
                 Section {
                     if listing.saved.isEmpty {
                         VStack(alignment: .leading, spacing: 2) {

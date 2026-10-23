@@ -569,7 +569,9 @@ struct Transcript: View {
             // The offer to set up iPhone apps, while the app is still only a Mac app.
             case .iphoneSetup: project?.platform == .mac
             // Reload, while the change it's for still waits: the last such line only, under the latest change.
-            case .reload: project.map(Runtime.waitsForReload) ?? false && line.id == lines.last(where: { $0.kind == .reload })?.id
+            // A wish's line is for its other parts' changes too.
+            case .reload: project.map { Runtime.waitsForReload($0) || Store.shared.parts(of: $0).contains(where: Runtime.waitsForReload) } ?? false
+                && line.id == lines.last(where: { $0.kind == .reload })?.id
             default: true
             }
         }

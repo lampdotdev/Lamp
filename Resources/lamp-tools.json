@@ -26,6 +26,10 @@
           "type": "string",
           "description": "The name of a prop in the LampSceneView's props, to see it on its own from four sides."
         },
+        "part": {
+          "type": "string",
+          "description": "For a wish of more than one app: which one, by its device (\"iphone\", \"tv\", \"mac\"). Left out, the app at the wish's root."
+        },
         "doing": {
           "type": "string",
           "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
@@ -134,6 +138,10 @@
         "selection": {
           "description": "With sidebar: the passage selected on that page, for a button that reads a selection",
           "type": "string"
+        },
+        "part": {
+          "type": "string",
+          "description": "For a wish of more than one app: which one, by its device (\"iphone\", \"tv\", \"mac\"). Left out, the app at the wish's root."
         },
         "doing": {
           "type": "string",
@@ -414,7 +422,7 @@
   {
     "name": "make_app_for",
     "label": "Change devices",
-    "description": "Changes which devices this app is made for, when the person asks for it somewhere it isn't (\"make it work on my iPhone too\"). List every device it should run on from now on: \"mac\" for this Mac, \"iphone\" for iPhone and iPad, \"watch\" for an Apple Watch app, which comes with the iPhone app. \"android\", alone, for an Android phone or tablet, or \"tv\", alone, for Samsung and LG TVs, or, alone, the id of a device integration that declares its apps (\"roku\", once Lamp has one): each stands by itself, never one code with Apple's devices. Lamp checks this Mac can build it, rewrites the build files and keeps the app's data; the reply says how to adapt the code, which you then do in the same request. Not for a change the person didn't ask for.",
+    "description": "Changes which devices this wish is made for, when the person asks for it somewhere it isn't (\"make it work on my iPhone too\"), or answers which devices a new wish is for. List every device it should run on from now on: \"mac\" for this Mac, \"iphone\" for iPhone and iPad, \"watch\" for an Apple Watch app, which comes with the iPhone app, \"tv\" for Samsung and LG TVs; \"android\", alone, for an Android phone or tablet, or, alone, the id of a device integration that declares its apps (\"roku\", once Lamp has one). Apple's devices share one code; a TV app is an app of its own, so \"tv\" with Apple's devices makes the wish two apps made to work together (\"tv\" and \"iphone\": a TV app with an iPhone app that controls it), each in its own folder. Lamp checks this Mac can build each, writes their build files and keeps the data; the reply says how to adapt the code and gives each new app's rules, which you then follow in the same request. Not for a change the person didn't ask for.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
