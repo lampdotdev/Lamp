@@ -3838,6 +3838,10 @@ final class Store: ObservableObject {
         await WidgetProcess.end(for: project)
         // A device app is taken off the devices Lamp put it on, and Lamp's packages of it go.
         if project.platform == .device {
+            // An install already under way runs to its end (Stop ends no request mid-upload), so it's let finish, two
+            // minutes at most, before its package is taken off again.
+            let until = Date().addingTimeInterval(120)
+            while installingApps.contains(project.id), Date() < until { try? await Task.sleep(for: .milliseconds(300)) }
             await DeviceApps.removeEverywhere(project, among: devices)
             try? FileManager.default.removeItem(at: DeviceApps.buildFolder(for: project))
         }
@@ -6441,6 +6445,8 @@ final class Store: ObservableObject {
     private var deviceRuns: [String: DeviceApps.Run] = [:]
     /// Devices an app is being put on now, by id.
     private var installingOn: Set<String> = []
+    /// Apps being put on a device now, by id: deleting one waits for that to settle before taking it off again.
+    private var installingApps: Set<String> = []
     /// What each device app's run on its device was built from, so a look that went to the preview on this Mac isn't
     /// taken for the device having the change.
     private var deviceRunBuilt: [String: String] = [:]
@@ -6510,7 +6516,8 @@ final class Store: ObservableObject {
         // One app at a time goes on a device: a second waits for the first, then takes the device from it.
         while installingOn.contains(device.id) { try? await Task.sleep(for: .milliseconds(300)) }
         installingOn.insert(device.id)
-        defer { installingOn.remove(device.id) }
+        installingApps.insert(project.id)
+        defer { installingOn.remove(device.id); installingApps.remove(project.id) }
         let stillWanted: @MainActor () -> Bool = { [weak self] in self?.turns[project.id] === owner && !owner.stopped }
         guard stillWanted() else { return "Stopped." }
         // The device is this app's from the upload on: every run there (another wish's, or this one's last) is over,

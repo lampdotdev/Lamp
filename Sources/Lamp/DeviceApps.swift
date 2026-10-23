@@ -254,8 +254,10 @@ enum DeviceApps {
         while true {
             do {
                 guard await stillWanted() else { throw Failure(message: "Stopped.") }
-                let outcome = try await runner.run(install, extra: values(project), files: files(for: project))
+                // Noted before the upload, not after: an install cut short or deleted midway may still land on the
+                // device, and a removal then has the package to name.
                 remember(project, on: device)
+                let outcome = try await runner.run(install, extra: values(project), files: files(for: project))
                 run.installAnswer = outcome.answers.last.map(plain)
                 guard await stillWanted() else { throw Failure(message: "Stopped.") }
                 if let launch = bridge.launch, !launch.isEmpty {
