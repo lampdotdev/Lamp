@@ -68,11 +68,18 @@ enum MSIX {
 
     // MARK: Making a package
 
-    /// What a package's app starts: a web app's page, or a native program.
+    /// What a package's app starts: a web app's page in the system's EdgeHTML host, a native program, or Lamp's own
+    /// WebView2 host (`WebHost`), which shows the app's pages from its Web folder.
     enum Start: Equatable {
         case page(String)
         case program(String)
-        var path: String { switch self { case .page(let path), .program(let path): path } }
+        case webHost
+        var path: String {
+            switch self {
+            case .page(let path), .program(let path): path
+            case .webHost: WebHost.program
+            }
+        }
     }
 
     /// A signed package of the app's files (`payload`, read from the package step's zip), started at `entry`.
@@ -115,6 +122,14 @@ enum MSIX {
             application = "Executable=\"\(escaped(program.replacingOccurrences(of: "/", with: "\\")))\" EntryPoint=\"App.App\""
             minimum = "10.0.17763.0"
             capabilities = ""
+        case .webHost:
+            // WebView2's WinRT classes come from the copy of its core library in the package, which Windows finds
+            // only by these registrations; the browser itself is the console's.
+            application = "Executable=\"\(WebHost.program)\" EntryPoint=\"App.App\""
+            minimum = "10.0.19041.0"
+            let classes = WebHost.activatableClasses.map { "<ActivatableClass ActivatableClassId=\"\($0)\" ThreadingModel=\"both\"/>" }.joined()
+            capabilities = "<Capabilities><Capability Name=\"internetClient\"/><Capability Name=\"privateNetworkClientServer\"/></Capabilities>"
+                + "<Extensions><Extension Category=\"windows.activatableClass.inProcessServer\"><InProcessServer><Path>\(WebHost.library)</Path>\(classes)</InProcessServer></Extension></Extensions>"
         }
         return """
         <?xml version="1.0" encoding="utf-8"?>

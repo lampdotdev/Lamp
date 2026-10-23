@@ -803,7 +803,7 @@ bridge launches it by its names (`{packageFullName}`, `{appUserModelID}`, and `{
 Portal a request also carries cookies the device set earlier in its sequence (`{cookie:CSRF-Token}`), polls an install
 that answers 204 until it's done (`poll`) and fails with the device's words unless the answer says what `expect` asks.
 Lamp ships the Xbox's integration (`Resources/Devices/xbox-one.json`): Developer Mode, Device Portal's password, and a
-controller-driven web app (`navigator.gamepadInputEmulation = "keyboard"`, arrow focus) wrapped as MSIX. Its identity is
+controller-driven web app (arrow focus) wrapped as MSIX and shown in Lamp's own WebView2 host (`"host": "webview2"`, below). Its identity is
 read from wherever the console's SSDP answer points (`Read.description`), since that moves between retail and
 Developer Mode, and `contains: "Xbox"` keeps a Windows PC sharing media out. Its apps may be 3D games: Babylon.js ships
 with Lamp (`Resources/WebLibraries/babylon`, Apache-2.0 with its notice) as a library a kind asks for like the building
@@ -813,6 +813,28 @@ played, the keyboard too. A kind that declares `preview` (a web app's folder) is
 Mac, the TV preview's window under the device's name (`Store.openDevicePreview`, `TVPreview.show(device:)`, where Back
 is Escape, letters reach the page and a key can be held), since a device's screen can only be pictured; Play still puts
 it on the device.
+
+**The Xbox's web host** (`WebHost`, `Resources/WebHost`): an Xbox web app runs in Chromium, the console's WebView2,
+not in the EdgeHTML that Windows gives a package naming a start page (WebGL 1, Edge 18's JavaScript, about a third of
+the frame rate). The host is one small C++ program (`lamp_web_host.cpp`) that never changes between apps, so Lamp
+ships it built (`App.exe`, made by `scripts/build-web-host.sh` with the game tools, its downloads checked) with
+Microsoft's redistributable `Microsoft.Web.WebView2.Core.dll` beside it, and `DeviceApps` puts the app's files under
+`Web/` in an x64 package whose manifest registers that library's classes (`MSIX.Start.webHost`): nothing is built on
+the person's Mac, and the browser is the console's own. It hosts WebView2 through composition on its CoreWindow,
+as WinUI's control does (a controller given the CoreWindow itself ends the app on the Xbox), and keeps the
+`CoreWebView2` and its DevTools receivers for the app's life (WebView2 drops the handlers of objects let go). The
+console's web view lays a page out at 1280x720 and scales it up, so the host zooms it to 1920x1080 CSS pixels before the
+app's page opens (`fit_page`), as the preview and the rules have it. Only the app's own page may use the host: a link
+to another site opens in the console's browser, and an answer goes only to the page that asked. The page
+is https at `https://lamp.example/`, so lamp.js reaches Lamp's plain-http gateway through the host (`http` web
+messages, only to Lamp's own paths), and a claim tries the Mac's IPv4 addresses first: the console reaches the
+`.local` name over IPv6, which the claim, opened for the device's IPv4 address, refuses. The page's console, uncaught
+errors and the host's own lines go to `LocalState\log.txt`, which the bridge's `log` reads, so `look_at_app` with
+`on_device` (which a web kind with a preview now honours) shows how the app really runs. A controller in WebView2
+sends its buttons as key presses named "Unidentified" with Edge's old key codes; lamp.js renames them before the page
+hears them (`padKeys`: the d-pad and left stick are the arrows, A is Enter and presses what has focus, B is Escape,
+the rest Edge's `Gamepad…` names), and `navigator.getGamepads()` gives the standard mapping. A package Lamp put on a
+console before installs over the earlier EdgeHTML one (same family, newer version), so nothing moves an app across.
 
 ## Xbox games
 

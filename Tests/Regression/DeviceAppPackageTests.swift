@@ -28,6 +28,17 @@ final class DeviceAppPackageTests: XCTestCase {
         XCTAssertTrue(first.split(separator: ".").map { Int($0)! }.lexicographicallyPrecedes(second.split(separator: ".").map { Int($0)! }))
     }
 
+    /// A web app in Lamp's WebView2 host starts the host, and registers WebView2's classes from the library beside it:
+    /// without them the host can't make a web view, and the console shows nothing.
+    func testTheWebHostsPackageRegistersWebView2() {
+        let identity = MSIX.Identity(name: "Lamp.demo", publisher: MSIX.publisher, version: "1.0.0.0", architecture: "x64")
+        let manifest = MSIX.manifest(identity: identity, displayName: "Demo", entry: .webHost)
+        XCTAssertTrue(manifest.contains("Executable=\"App.exe\""))
+        XCTAssertFalse(manifest.contains("StartPage="))
+        XCTAssertTrue(manifest.contains("<Path>Microsoft.Web.WebView2.Core.dll</Path>"))
+        for name in WebHost.activatableClasses { XCTAssertTrue(manifest.contains("ActivatableClassId=\"\(name)\""), name) }
+    }
+
     /// The package step's zip is read as plain files only: nothing above its top, no links.
     func testThePackageStepsZipIsReadAsPlainFilesOnly() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-zip-\(UUID().uuidString)")

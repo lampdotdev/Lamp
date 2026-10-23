@@ -224,7 +224,9 @@ app must also work with the keyboard (arrows, Enter, Escape for the device's Bac
 Portal): the package step leaves a `.zip` of the app's files, and Lamp makes the package itself, writing its manifest
 (started at `start`, `index.html` unless said), its logos from the app's icon, and its signature with a certificate of
 Lamp's. Install it with the package and `"@{certificate}"` in one form, and launch it by `{base64:appUserModelID}` and
-`{base64:packageFullName}`. Never write a manifest or sign anything in the package step.
+`{base64:packageFullName}`. Never write a manifest or sign anything in the package step. With `"host": "webview2"` beside it, the
+pages are shown in Lamp's own host for Chromium's WebView2 rather than the system's older EdgeHTML: much faster, WebGL 2
+and current JavaScript, with the app's console in its log. Use it for a web app on an Xbox; `start` is then `index.html`.
 
 `"purpose"` says in a few words what the kind is for ("an app with menus and pages"), for a device that takes more than
 one kind. The integrations Lamp ships may offer more kinds beside `app` in `kinds` (the Xbox's native 3D games,

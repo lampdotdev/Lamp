@@ -147,7 +147,7 @@ enum DeviceApps {
         guard data.count <= DeviceHTTP.limit else { throw Failure(message: "The package is bigger than Lamp sends to a device.") }
         try FileManager.default.createDirectory(at: buildFolder(for: project), withIntermediateDirectories: true)
         if declared.wrap == "msix" {
-            try wrapMSIX(data, for: project, entry: .page(declared.start ?? "index.html"))
+            try wrapMSIX(data, for: project, entry: WebHost.isUsed(by: declared) ? .webHost : .page(declared.start ?? "index.html"))
         } else if !DeviceSupport.libraries(for: project).isEmpty, declared.output.lowercased().hasSuffix(".zip") {
             try await withFilledSupport(data, for: project).write(to: packageURL(for: project), options: .atomic)
         } else {
@@ -180,11 +180,12 @@ enum DeviceApps {
     /// The Windows package Lamp makes of the package step's zip: its own manifest, the app's icon as its logos, and
     /// Lamp's signature, beside the certificate the device installs with it and the identity the bridge launches by.
     private static func wrapMSIX(_ zip: Data, for project: LampProject, entry: MSIX.Start) throws {
-        let files = DeviceSupport.fill(try MSIX.files(inZip: zip), for: project)
+        var files = DeviceSupport.fill(try MSIX.files(inZip: zip), for: project)
+        if entry == .webHost { files = try WebHost.payload(files) }
         let folder = buildFolder(for: project)
         let previous = (try? Data(contentsOf: folder.appendingPathComponent("identity.json"))).flatMap { try? JSONDecoder().decode(MSIX.Identity.self, from: $0) }
         var identity = MSIX.Identity(name: MSIX.identityName(for: project.id), publisher: MSIX.publisher, version: MSIX.version(after: previous?.version))
-        if case .program = entry { identity.architecture = "x64" }
+        if case .page = entry {} else { identity.architecture = "x64" }
         let icon = AppFile.read(Icons.squareURL(project), in: project).flatMap(NSImage.init(data:))
         let package = try MSIX.package(payload: files, displayName: project.name, identity: identity, entry: entry, icon: icon)
         try package.write(to: packageURL(for: project), options: .atomic)
@@ -262,14 +263,15 @@ enum DeviceApps {
                 run.installAnswer = outcome.answers.last.map(plain)
                 guard await stillWanted() else { throw Failure(message: "Stopped.") }
                 if let launch = bridge.launch, !launch.isEmpty {
-                    // A device that has only just taken an update can refuse to open it for a moment (an Xbox answers
-                    // 0x80073D00 to a launch right after an install over a copy it ended): asked again a little later.
+                    // A device that has only just taken an update can refuse to open it for a while (an Xbox answers
+                    // 0x80073D00, 0x8D160120 or 0x80070002 to a launch right after an install over a copy it ended, for up
+                    // to ten seconds or so while that copy's web view lets go): asked again a little later, a few times.
                     var refused = 0
                     while true {
                         do { _ = try await runner.run(launch, extra: values(project)); break }
-                        catch let failure as IntegrationRunner.Failure where refused < 2 {
+                        catch let failure as IntegrationRunner.Failure where refused < 4 {
                             refused += 1
-                            try? await Task.sleep(for: .seconds(3))
+                            try? await Task.sleep(for: .seconds(4))
                             guard await stillWanted() else { throw failure }
                         }
                     }

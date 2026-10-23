@@ -6127,16 +6127,17 @@ final class Store: ObservableObject {
     /// which tells of a death after that with its next answer (`lateCrash`).
     /// `saysReady` false keeps "… is ready" out of the chat, for a reopen in the middle of a request (`reloadInTurn`),
     /// whose end says what the request came to.
+    /// `onDevice`: a look the agent asked to see on the device itself, which a kind with a preview otherwise opens there.
     private func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false, reload: Bool = false,
-                         early: Bool = false, saysReady: Bool = true) async -> String? {
-        let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early, saysReady: saysReady)
+                         early: Bool = false, saysReady: Bool = true, onDevice: Bool = false) async -> String? {
+        let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early, saysReady: saysReady, onDevice: onDevice)
         // Whatever didn't put the change into the open app (it waits for Reload, was kept open, reopened, failed)
         // lets the glow go; a reopened copy gets the light once its window is up (`AppTransition.landWhenShown`).
         AppTransition.end(project)
         return crash
     }
 
-    private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool, early: Bool, saysReady: Bool) async -> String? {
+    private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool, early: Bool, saysReady: Bool, onDevice: Bool) async -> String? {
         guard exists(project) else { return nil }
         // The turn this install belongs to, taken before the icon wait: a Stop during it can end the turn
         // and start the next one's, which must not inherit this launch.
@@ -6145,7 +6146,7 @@ final class Store: ObservableObject {
             await prepareIcon(project)
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
             // The agent's looks go to the preview on this Mac when the device's kind has one; Play puts it on the device.
-            if !inFront, let folder = DeviceApps.previewFolder(for: project) { return await openDevicePreview(project, folder: folder) }
+            if !inFront, !onDevice, let folder = DeviceApps.previewFolder(for: project) { return await openDevicePreview(project, folder: folder) }
             return await installOnDeviceApp(project, inFront: inFront, owner: owner)
         }
         if project.onTV {
@@ -6360,7 +6361,9 @@ final class Store: ObservableObject {
     private func lookOnTV(_ project: LampProject, turn: Turn, changed: Bool, reopen: Bool) async -> (Int, [String: Any]) {
         let device = previewDevice(project)
         var summary = "The app is open in the \(device) preview on this Mac."
-        if changed || !TVPreview.isOpen(project) || reopen {
+        // A device app's preview may show an older build than the last one: a look on the device builds without opening it here.
+        let stale = project.platform == .device && previewBuilt[project.id] != Runtime.builtFingerprint(project)
+        if changed || stale || !TVPreview.isOpen(project) || reopen {
             let problem = await install(project, inFront: false, early: true)
             turn.look.installed = true
             if let problem { return (200, ["text": "The app didn't open in the \(device) preview on this Mac.\n\n\(problem)"]) }
@@ -6472,7 +6475,9 @@ final class Store: ObservableObject {
     private func openDevicePreview(_ project: LampProject, folder: String) async -> String? {
         let device = previewDevice(project)
         do {
+            let built = Runtime.builtFingerprint(project)
             let staged = try await TVs.stage(project, folder: folder)
+            previewBuilt[project.id] = built
             note("Opening \(project.name) in the \(device) preview…", for: project)
             let problem = await TVPreview.show(project, staged: staged, inFront: false, device: device)
             refreshOpenApps()
@@ -6482,6 +6487,9 @@ final class Store: ObservableObject {
             return error.localizedDescription
         }
     }
+
+    /// Which build each device app's preview on this Mac was opened from, as `deviceRunBuilt` is for the device.
+    private var previewBuilt: [String: String] = [:]
 
     /// What a preview on this Mac stands in for, as the person calls it: a TV, or a device app's device ("Xbox").
     private func previewDevice(_ project: LampProject) -> String {
@@ -6560,12 +6568,16 @@ final class Store: ObservableObject {
 
     /// `look_at_app` for a device app: put on the device when it changed, then the device's own picture of its screen,
     /// what it answered to the install and what the app printed.
-    private func lookOnDeviceApp(_ project: LampProject, turn: Turn, changed: Bool, reopen: Bool) async -> (Int, [String: Any]) {
-        if DeviceApps.previewFolder(for: project) != nil { return await lookOnTV(project, turn: turn, changed: changed, reopen: reopen) }
+    /// A kind with a preview is looked at there unless the look asks for the device itself (`on_device`), which is how its
+    /// real speed and log are seen.
+    private func lookOnDeviceApp(_ project: LampProject, turn: Turn, changed: Bool, reopen: Bool, onDevice: Bool = false) async -> (Int, [String: Any]) {
+        if DeviceApps.previewFolder(for: project) != nil, !onDevice { return await lookOnTV(project, turn: turn, changed: changed, reopen: reopen) }
         let name = DeviceApps.integration(for: project)?.name ?? "device"
         var summary: String
-        if changed || deviceRuns[project.id] == nil || reopen {
-            let problem = await install(project, inFront: false, early: true)
+        // What the device runs may be older than what was built since: a look in the preview builds without putting it there.
+        let stale = deviceRunBuilt[project.id] != Runtime.builtFingerprint(project)
+        if changed || stale || deviceRuns[project.id] == nil || reopen {
+            let problem = await install(project, inFront: false, early: true, onDevice: true)
             turn.look.installed = true
             if let problem {
                 return (200, ["text": "The app isn't on the \(name).\n\n\(problem)\n\nWhen it's a step for the person, say in a sentence that "
@@ -7383,8 +7395,9 @@ final class Store: ObservableObject {
         guard let crash = await install(project), owner?.stopped != true else { return }
         // Only an app that opened and died is worth a fix; one that never opened says why in the chat already.
         if owner?.diedOnLaunch == true { crashesAfterRelease[project.id] = crash }
-        // A TV or an Android device that didn't take the app has said why already: it never opened, so it didn't crash.
-        else if project.platform == .tv || project.platform == .android { return }
+        // A TV, an Android device or another device that didn't take the app has said why already: it never opened, so
+        // it didn't crash.
+        else if project.platform == .tv || project.platform == .android || project.platform == .device { return }
         else { log(project, .error, ErrorMessages.crashAfterLaunch(project.name)) }
     }
 
@@ -9316,7 +9329,7 @@ final class Store: ObservableObject {
         turn.autoApplied = 0
         if project.onAndroid { return await lookOnAndroid(project, turn: turn, changed: changed, reopen: reopen) }
         if project.onTV { return await lookOnTV(project, turn: turn, changed: changed, reopen: reopen) }
-        if project.onDevice { return await lookOnDeviceApp(project, turn: turn, changed: changed, reopen: reopen) }
+        if project.onDevice { return await lookOnDeviceApp(project, turn: turn, changed: changed, reopen: reopen, onDevice: onDevice) }
         if project.onIOS {
             // The simulator photographs the screen; nothing in the app has to cooperate.
             // Open, and the device still this app's: otherwise it's opened again (which takes the device back).
