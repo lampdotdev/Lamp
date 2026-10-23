@@ -628,11 +628,17 @@ extension TVTemplate {
 
 extension Agent {
     /// The rules for a TV app, in the same shape as the others' and said for the web on a TV, offering `skills`.
-    static func tvPrompt(skills: [String: Skills.Skill] = Skills.all) -> String {
-        let rules = [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI,
-                     Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience,
-                     Skills.index(Skills.offered(.tv), from: skills), Rules.begin, Rules.finish]
-        return (Rules.tvHeader + "\n\nRules:\n" + rules.joined())
+    /// `part`: the folder of a wish's other part this is for (`Parts.pack`), as `prompt(platform:…)` takes it.
+    static func tvPrompt(skills: [String: Skills.Skill] = Skills.all, part: String? = nil) -> String {
+        let rules = part == nil
+            ? [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI,
+               Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience,
+               Skills.index(Skills.offered(.tv), from: skills), Rules.begin, Rules.finish]
+            : [Rules.tvEdit, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI, Rules.tvLogs, Rules.tvTry,
+               Rules.tvParts, Skills.index(Skills.offered(.tv), from: skills)]
+        let header = part.map { Rules.partHeader("a TV app (HTML, CSS and JavaScript in Web/, the same files for Samsung and LG TVs, with no build step)", folder: $0) }
+            ?? Rules.tvHeader
+        return (header + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "TV")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a TV")
             .replacingOccurrences(of: "{{RELAUNCH}}", with: "opens it in the TV preview")
@@ -690,6 +696,14 @@ extension Agent.Rules {
     static let tvPhone = """
     - A page for phones (controllers, a buzzer, a second screen) goes in Phone/, which Lamp serves while the app \
     runs: never start a server or anything that keeps running for it. Open the phone-controllers skill first.
+    """
+
+    /// For a TV app with an iPhone or Mac app beside it in the same wish (`Parts`): how the two talk.
+    static let tvParts = """
+    - When the wish has an iPhone or Mac app beside the TV app, that app joins the TV app the way a phone's page \
+    does, as a player of `Lamp.controllers`: its buttons, sticks and messages arrive in onButton, onAxis and \
+    onMessage, and `Lamp.controllers.send` reaches it. Call `Lamp.controllers.start()` as the TV app opens; it \
+    needs no page in Phone/ for that.
     """
 
     /// Lamp's AI in a web app on a device (`DeviceSupport.webJS`): the TV kit's and a declared web kind's.

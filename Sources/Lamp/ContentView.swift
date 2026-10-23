@@ -870,6 +870,26 @@ struct ProjectView: View {
                       : "Where it opens: a simulator, or your own iPhone or iPad")
             }
         }
+        if let part = store.parts(of: project).first {
+            ToolbarItem {
+                // The wish's other app (an iPhone app beside its TV app): used, quit and given a place here, as the
+                // wish's own app is beside it.
+                let name = part.platform == .mac ? "Mac App" : "iPhone App"
+                Menu {
+                    if store.isOpen(part) {
+                        Button("Quit the \(name)") { Task { await store.quitApp(part) } }
+                    } else {
+                        Button("Use the \(name)") { store.openPrepared(part) }
+                    }
+                    Divider()
+                    TryOnChoices(project: part)
+                } label: {
+                    Label(name, systemImage: part.platform == .mac ? "laptopcomputer" : "iphone")
+                }
+                .disabled(busy)
+                .help("The \(name.lowercased()) that goes with \(project.name): use it, and choose where it opens")
+            }
+        }
         gap
         ToolbarItemGroup {
             Button { Task { await store.undo(project) } } label: {
@@ -1313,7 +1333,7 @@ struct NewAppIntro: View {
     }
 
     private func drawIdeas() {
-        let others = store.projects.filter { $0.id != project.id && !$0.untitled }
+        let others = store.wishes.filter { $0.id != project.id && !$0.untitled }
         ideas = Ideas.starters(made: others.map(\.name))
     }
 

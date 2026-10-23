@@ -18,6 +18,10 @@ enum Skills {
     /// Lamp's own skills, from its bundle.
     static let all: [String: Skill] = Bundle.main.resourceURL.map { load(from: $0.appendingPathComponent("skills")) } ?? [:]
 
+    /// The skills `read_skill` answers: Lamp's own, and the rules of each kind of app a wish's other part can be
+    /// (`Parts.packs`), which are made from the prompts' own rules rather than kept as files.
+    static var readable: [String: Skill] { all.merging(Parts.packs) { own, _ in own } }
+
     /// Every skill in a folder of skill folders, by name. A folder whose SKILL.md can't be read is left out.
     static func load(from folder: URL) -> [String: Skill] {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
@@ -73,7 +77,7 @@ enum Skills {
     }
 
     /// `read_skill`, for every engine.
-    static func read(_ arguments: [String: Any], from skills: [String: Skill] = all) -> (Int, [String: Any]) {
+    static func read(_ arguments: [String: Any], from skills: [String: Skill] = readable) -> (Int, [String: Any]) {
         let name = (arguments["name"] as? String ?? "").trimmingCharacters(in: .whitespaces)
         guard let skill = skills[name] else {
             return (400, ["error": "There's no skill called \"\(name)\". The skills are: \(skills.keys.sorted().joined(separator: ", "))."])
@@ -85,9 +89,12 @@ enum Skills {
 
     /// The skills an app's own code shows it uses, each with what showed it, among those its prompt offers. A new
     /// app (still Lamp's placeholder) is about to be given its kind, so it's told how the kinds look.
-    static func applying(to project: LampProject) -> [(name: String, because: String)] {
+    /// A wish's other parts (`parts`) each bring their kind's rules, which apply as long as the wish has the part.
+    static func applying(to project: LampProject, parts: [LampProject] = []) -> [(name: String, because: String)] {
         let offered = offered(project.platform, sidebar: BrowserBridge.enabled && project.platform.hasMac)
-        var found: [(name: String, because: String)] = []
+        var found: [(name: String, because: String)] = parts.map { part in
+            (Parts.skill(for: part.platform), "this wish has \(Parts.name(of: part.platform)) in \(part.dir.lastPathComponent)/: its rules, for the files there (part \"\(Parts.word(for: part.platform))\" in look_at_app and use_app)")
+        }
         if offered.contains("app-kinds"), !project.makesNoApp, Template.isScaffold(project) { found.append(("app-kinds", "it's a new app, still to be given its kind")) }
         if offered.contains("chrome-sidebar"), Template.hasSidebarPage(project) { found.append(("chrome-sidebar", "it has a sidebar page in Chrome")) }
         if offered.contains("menu-bar"), appSwift(of: project, matches: #"\bLampMenuBar\b"#) { found.append(("menu-bar", "its code uses LampMenuBar")) }
@@ -137,7 +144,7 @@ enum Skills {
     }
 
     /// Which version of a skill this is: a change to its instructions in a Lamp update changes it.
-    static func revision(of name: String, in skills: [String: Skill] = all) -> String {
+    static func revision(of name: String, in skills: [String: Skill] = readable) -> String {
         SHA256.hash(data: Data((skills[name]?.body ?? "").utf8)).prefix(6).map { String(format: "%02x", $0) }.joined()
     }
 
@@ -145,8 +152,8 @@ enum Skills {
     /// once per conversation and when it changes. Nothing when none apply. What's remembered as told includes
     /// each skill's revision, so a conversation that opened a skill before a Lamp update changed it is told to
     /// open it again rather than go on with the copy it has.
-    @MainActor static func brief(for project: LampProject, engine: Engine, session: String?, skills: [String: Skill] = all) -> String {
-        let applying = applying(to: project)
+    @MainActor static func brief(for project: LampProject, engine: Engine, session: String?, skills: [String: Skill] = readable) -> String {
+        let applying = applying(to: project, parts: Store.shared.parts(of: project))
         let now = applying.map { "- \($0.name): \($0.because)" }.joined(separator: "\n")
         let revisions = applying.map { "\($0.name)@\(revision(of: $0.name, in: skills))" }
         let told = note.lastTold(for: project, engine: engine, session: session)

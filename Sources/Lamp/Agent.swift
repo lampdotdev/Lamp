@@ -177,7 +177,7 @@ enum Agent {
     `ask` for anything you need to ask (they click an answer, type their own, or leave it to you); \
     `plan` for what \
     you're building; `progress` for a line on how longer work is going; `offer_setup` for setting up AI; `make_app_for` when they want the app on other devices \
-    (the iPhone or the Mac). When a piece fits, use it instead of writing the same \
+    (the iPhone, the Mac or a TV). When a piece fits, use it instead of writing the same \
     thing out: no questions, options or assumptions listed in a reply. A click comes back as their next \
     message, the same as something typed. If they type something that isn't one of your options, that's their \
     answer: follow it.
@@ -361,7 +361,14 @@ enum Agent {
 
     /// The rules for the app's kind. Most are the same for a Mac app and an iPhone app, and each kind adds the
     /// blocks only it has, so a building block given to one is described to both in one place.
-    static func systemPrompt(for project: LampProject) -> String {
+    /// A wish with other parts gets one rule more, naming them (`Parts.rule`); their own rules are skills, opened when
+    /// the agent works on them. A wish still to be told what it's for gets no kind's rules at all (`undecidedPrompt`).
+    @MainActor static func systemPrompt(for project: LampProject) -> String {
+        if let candidates = project.undecided { return undecidedPrompt(candidates: candidates) }
+        return kindPrompt(for: project) + Parts.rule(for: project, parts: Store.shared.parts(of: project))
+    }
+
+    static func kindPrompt(for project: LampProject) -> String {
         switch project.platform {
         case .mac: systemPrompt
         case .iphone: iPhonePrompt(for: project.family)
@@ -382,7 +389,7 @@ enum Agent {
 
     /// An app for both gets both kinds' rules, each said to be for its half, after one rule on how the halves
     /// share one code: so a block or a design given to one kind is given to the pair in the same place.
-    static func universalPrompt(for family: DeviceFamily) -> String {
+    static func universalPrompt(for family: DeviceFamily, part: String? = nil) -> String {
         func half(_ place: String, _ rule: String) -> String {
             let lines = rule.split(separator: "\n", omittingEmptySubsequences: false)
             guard let first = lines.firstIndex(where: { $0.hasPrefix("- ") }) else { return rule }
@@ -391,15 +398,19 @@ enum Agent {
             return changed.joined(separator: "\n")
         }
         let onMac = "On the Mac", onPhone = "On iPhone and iPad"
-        let rules = [Rules.edit, Rules.ask, Rules.shell, Rules.universal, Rules.universalFrameworks,
+        let wishRules = part == nil
+        var rules = [Rules.edit] + (wishRules ? [Rules.ask, Rules.shell] : []) + [Rules.universal, Rules.universalFrameworks,
                      half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks), half(onMac, BrowserBridge.enabled ? Rules.browserCompanion : ""),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
                      Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
                      half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true), Rules.game2D, Skills.index(Skills.offered(.universal, sidebar: BrowserBridge.enabled)),
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
-                     Rules.icloud, Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
-                     Rules.universalTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
-        return (Rules.universalHeader + "\n\nRules:\n" + rules.joined())
+                     Rules.icloud, Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions]
+        rules += (wishRules ? [Rules.icon, Rules.about, Rules.attachments] : []) + [Rules.logs, Rules.universalTry]
+        rules += wishRules ? [Rules.appMd, Rules.audience, Rules.begin, Rules.finish] : [Rules.partTalk(mac: true)]
+        let header = part.map { Rules.partHeader("an app for the Mac and for iPhone and iPad, one SwiftUI code for both (a Swift Package, Swift 5.9 language mode, macOS 14+ and iOS 17+)", folder: $0) }
+            ?? Rules.universalHeader
+        return (header + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: family.name)
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac or an iPhone")
             .replacingOccurrences(of: "{{IMAGE}}", with: "LampImage")
@@ -408,9 +419,11 @@ enum Agent {
             .replacingOccurrences(of: "{{EXTRA_PERMISSIONS}}", with: "and calendars, reminders, contacts, photos, Bluetooth and Mail")
     }
 
-    private static func prompt(platform: Platform, device: String, sidebar: Bool) -> String {
+    /// `part`: the folder of a wish's other part this is for (`Parts.pack`): the rules of its kind alone, without the
+    /// ones about the wish as a whole (asking, the shell, the icon, how to talk and finish), which the wish's own prompt has.
+    static func prompt(platform: Platform, device: String, sidebar: Bool, part: String? = nil) -> String {
         let mac = platform == .mac
-        var rules = [Rules.edit, Rules.ask, Rules.shell,
+        var rules = [Rules.edit] + (part == nil ? [Rules.ask, Rules.shell] : []) + [
                      mac ? Rules.macFrameworks : Rules.iPhoneFrameworks,
                      mac ? Rules.macBlocks : Rules.iPhoneBlocks]
         if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.macShare, Rules.permissions] }
@@ -420,10 +433,15 @@ enum Agent {
         if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.iPhoneShare, Rules.icloud] }
         rules += [Rules.store, Rules.kinds(mac: mac), Rules.game2D, Skills.index(Skills.offered(platform, sidebar: mac && sidebar))]
         rules += [mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
-                  Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs]
+                  Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions]
+            + (part == nil ? [Rules.icon, Rules.about, Rules.attachments] : []) + [Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
-        rules += [Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
-        return ((mac ? Rules.macHeader : Rules.iPhoneHeader) + "\n\nRules:\n" + rules.joined())
+        if let part { rules.append(Rules.partTalk(mac: mac)) }
+        rules += part == nil ? [Rules.appMd, Rules.audience, Rules.begin, Rules.finish] : []
+        let header = part.map { Rules.partHeader(mac ? "a Mac app (a standalone macOS SwiftUI app, a Swift Package, Swift 5.9 language mode, macOS 14+)"
+                                                     : "an iPhone and iPad app (a SwiftUI app, a Swift Package built for the iOS Simulator, Swift 5.9 language mode, iOS 17+)", folder: $0) }
+            ?? (mac ? Rules.macHeader : Rules.iPhoneHeader)
+        return (header + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: device)
             .replacingOccurrences(of: "{{A_DEVICE}}", with: mac ? "a Mac" : "an iPhone")
             .replacingOccurrences(of: "{{IMAGE}}", with: mac ? "NSImage" : "UIImage")

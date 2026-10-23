@@ -38,8 +38,9 @@ enum Template {
         return slug
     }
 
+    /// Written without following a link on the way (`AppFolder`): `.lamp` is in the app's folder, which the agent writes.
     static func saveMeta(_ project: LampProject) throws {
-        try JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
+        try AppFolder.write(JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
                                              platform: project.platform, family: project.platform.hasIOS ? project.family : nil,
                                              device: project.device, target: project.platform == .universal ? project.chosen : nil,
                                              simulator: project.platform.hasIOS ? project.simulator : nil,
@@ -47,8 +48,10 @@ enum Template {
                                              wish: project.untitled && project.fromWish ? true : nil,
                                              finding: project.untitled && project.finding ? true : nil,
                                              deviceSetup: project.deviceSetup,
-                                             integration: project.platform == .device ? project.integration : nil))
-            .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
+                                             integration: project.platform == .device ? project.integration : nil,
+                                             parts: project.partFolders.isEmpty ? nil : project.partFolders,
+                                             undecided: project.undecided)),
+                            to: project.dir.appendingPathComponent(".lamp/meta.json"), in: project.dir)
     }
 
     /// Writes the scaffold into a draft's folder, as the kind of app it is now.
@@ -13583,6 +13586,188 @@ enum Template {
             score = json["score"] as? Double
             probabilities = json["probabilities"] as? [String: Double] ?? [:]
             confidence = json["confidence"] as? Double
+        }
+    }
+
+    // MARK: - The wish's TV app
+
+    /// Joins the TV app of this app's wish as a player of its `Lamp.controllers`, the way a phone's page does: through
+    /// Lamp on the person's Mac and the home Wi‑Fi, with nothing to pair or set up. Keep it while it's used (a
+    /// @StateObject, or a model's property); it lets go when released.
+    ///
+    ///     @StateObject private var pad = LampController.connect()
+    ///     Button("Next") { pad.press("next") }                  // a tap: held, then let go
+    ///     pad.button("fire", down: true); pad.button("fire", down: false)
+    ///     pad.axis("stick", x: 0.4, y: -1)                      // each from -1 to 1
+    ///     pad.send(["volume": 4])                               // anything small, as JSON
+    ///     pad.onMessage { data in … }                           // what the TV app sent with Lamp.controllers.send
+    ///     pad.state                                             // .connecting, .connected, .waiting (the TV app isn't open), .ended
+    @MainActor final class LampController: ObservableObject {
+        enum State: String { case connecting, connected, waiting, ended, full }
+        @Published private(set) var state: State = .connecting
+        /// The player number the TV app knows this one by (1, 2, …), once it has joined.
+        @Published private(set) var player: Int?
+
+        private final class Link: @unchecked Sendable { var task: URLSessionWebSocketTask? }
+        private let link = Link()
+        private var credential: String?
+        private var address: URL?
+        private var seq = 0
+        private var listeners: [(Any) -> Void] = []
+        private var closed = false
+        private var retry = 0
+        private var heard = Date()
+        private var beat: Timer?
+
+        static func connect() -> LampController {
+            let pad = LampController()
+            pad.open()
+            pad.beat = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak pad] _ in
+                MainActor.assumeIsolated { pad?.tick() }
+            }
+            return pad
+        }
+
+        deinit {
+            link.task?.cancel(with: .goingAway, reason: nil)
+        }
+
+        func press(_ name: String) {
+            button(name, down: true)
+            button(name, down: false)
+        }
+        func button(_ name: String, down: Bool) { post(["t": "button", "name": name, "down": down]) }
+        func axis(_ name: String, x: Double, y: Double) {
+            post(["t": "axis", "name": name, "x": max(-1, min(1, x)), "y": max(-1, min(1, y))])
+        }
+        func send(_ data: Any) { post(["t": "message", "data": data]) }
+        func onMessage(_ handler: @escaping (Any) -> Void) { listeners.append(handler) }
+
+        func close() {
+            closed = true
+            beat?.invalidate()
+            link.task?.cancel(with: .goingAway, reason: nil)
+            link.task = nil
+            state = .ended
+        }
+
+        private func post(_ message: [String: Any]) {
+            guard let task = link.task, state == .connected || state == .waiting else { return }
+            var message = message
+            seq += 1
+            message["seq"] = seq
+            guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
+            task.send(.string(String(decoding: data, as: UTF8.self))) { _ in }
+        }
+
+        // Where to join, from Lamp: the TV app's socket and a link's credential, asked again whenever the one held
+        // has run out (Lamp gives a joined player one of its own, renewed while it stays).
+        private func open() {
+            guard !closed else { return }
+            state = .connecting
+            Task { @MainActor in
+                do {
+                    if credential == nil || address == nil {
+                        let answer: [String: Any]
+                        do {
+                            answer = try await LampAI.post("/app/controller", ["as": "player"], timeout: 20)
+                        } catch {
+                            // Lamp answers but the TV app isn't open: that's waiting, not a fault.
+                            if (error as? LampAI.Failure)?.message.contains("isn't open") == true { state = .waiting; return again(waiting: true) }
+                            throw error
+                        }
+                        guard let socket = (answer["socket"] as? String).flatMap(URL.init(string:)), let join = answer["join"] as? String else {
+                            throw LampAI.Failure(message: answer["error"] as? String ?? "Lamp didn't say where the TV app is.")
+                        }
+                        address = socket
+                        credential = join
+                    }
+                    guard let address, let credential, !closed else { return }
+                    let task = URLSession.shared.webSocketTask(with: address)
+                    link.task = task
+                    task.resume()
+                    heard = Date()
+                    let hello = try JSONSerialization.data(withJSONObject: ["t": "hello", "credential": credential])
+                    try await task.send(.string(String(decoding: hello, as: UTF8.self)))
+                    receive(on: task)
+                } catch {
+                    fputs("LampController: \(error.localizedDescription)\n", stderr)
+                    again()
+                }
+            }
+        }
+
+        private func receive(on task: URLSessionWebSocketTask) {
+            task.receive { [weak self] result in
+                Task { @MainActor in
+                    guard let self, self.link.task === task else { return }
+                    switch result {
+                    case .success(.string(let text)):
+                        self.heard = Date()
+                        self.hear(text)
+                        self.receive(on: task)
+                    case .success:
+                        self.receive(on: task)
+                    case .failure:
+                        self.dropped(task)
+                    }
+                }
+            }
+        }
+
+        private func hear(_ text: String) {
+            guard let m = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] else { return }
+            switch m["t"] as? String {
+            case "welcome":
+                retry = 0
+                seq = 0
+                player = m["player"] as? Int
+                if let kept = m["credential"] as? String { credential = kept }
+                state = m["host"] as? Bool == true ? .connected : .waiting
+            case "credential":
+                if let kept = m["credential"] as? String { credential = kept }
+            case "state":
+                state = m["host"] as? Bool == true ? .connected : .waiting
+            case "message":
+                if let data = m["data"] { for listener in listeners { listener(data) } }
+            case "full":
+                closed = true
+                state = .full
+            default:
+                break
+            }
+        }
+
+        private func dropped(_ task: URLSessionWebSocketTask) {
+            guard link.task === task else { return }
+            let code = task.closeCode.rawValue
+            link.task = nil
+            // Refused, or the game ended: the credential is no use, so a fresh one is asked for. Dropped before it was let
+            // in, the TV app's site may have moved: where it is is asked for again too.
+            if code == 4003 || code == 4005 || player == nil || retry >= 3 { credential = nil; address = nil }
+            again()
+        }
+
+        private func again(waiting: Bool = false) {
+            guard !closed else { return }
+            if !waiting { state = .connecting }
+            retry = min(retry + 1, 6)
+            let wait = Double(retry) * 0.75
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(wait))
+                self?.open()
+            }
+        }
+
+        // A beat both ways: Lamp lets a quiet player go, and one that hears nothing joins again.
+        private func tick() {
+            guard let task = link.task else { return }
+            if Date().timeIntervalSince(heard) > 12 {
+                task.cancel(with: .goingAway, reason: nil)
+                dropped(task)
+                return
+            }
+            task.send(.string(#"{"t":"beat"}"#)) { _ in }
         }
     }
 

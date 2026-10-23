@@ -978,6 +978,40 @@ holds its secrets. The agent gets
 both kinds' rules, each marked for its half, after one rule on sharing the code (`Agent.universalPrompt`). An app
 for both is shared as a `.lampapp` like any other (the file says what it's made for, format 6, and carries `Watch/` when it has one); its widgets and Live Activities are the iPhone half's (below).
 
+## Wishes of more than one app
+
+A wish can be more than one app made to work together: a TV app with an iPhone app that controls it (`Parts`). Its main
+part is the app at its root, as every wish has; each other part is an app of its own kind in a folder of the wish's
+(`iPhone/`, `Mac/`, `Apple/`), with its own `.lamp/meta.json`, build files, bundle id and runtime folder, so it's built,
+opened, looked at and used as any app of its kind is. It's a `LampProject` in `Store.projects` with `partOf` set (id: the
+wish's, a dot, the folder), never on the desk (`Store.wishes`), with no chat, versions or icon of its own: what's logged
+for it goes to its wish's chat (`Store.log`), the wish's history keeps its folder, and its icon is the wish's
+(`Icons.home`). Its `realDir` takes the wish's folder by name too, since the agent can put a link in its place. The
+wish's meta.json lists the parts (`parts`). Which kinds a list of devices makes is `Parts.kinds`: Apple's devices are one
+kind between them, as before, and with a TV they're a part of the TV app's wish; Android and device apps still stand alone.
+
+What the agent knows follows the parts. The wish's prompt is its main kind's, with one rule naming the other parts
+(`Parts.rule`); each kind a part can be has its rules as a skill made from the prompts' own rules (`target-iphone`,
+`target-mac`, `target-apple`, `target-tv`: `Parts.packs`, the kind's rules without those about the wish as a whole), named
+with the request while the wish has that part (`Skills.applying`, so a compacted conversation is told again), and given
+whole in `make_app_for`'s reply when the part is added. So a conversation never carries the rules of a kind its wish
+doesn't have. `look_at_app` and `use_app` take `part` ("iphone", "tv", "mac"; `Parts.pick`), and run under the wish's turn
+(`Store.underTurn`). `make_app_for` takes the whole list: the main kind is changed by `convert` as before, a part is added
+(`Store.addPart`), changed in place, or taken away. The toolbar has one menu for the other part: use or quit it, and Try On.
+
+A new wish that could be for more than one kind and doesn't say which (the naming call's `candidates`) is `undecided`:
+nothing is written, its prompt has no kind's rules (`Agent.undecidedPrompt`), the agent asks "TV, Mac or both?" with
+`ask`, and gives it its kinds with `make_app_for`, whose reply carries the chosen kind's whole prompt. Each engine's
+conversation began with the undecided prompt, so it's ended as that turn ends (`Store.decided`), and the next request
+starts one with the wish's own prompt, told the chat so far (`CatchUp`).
+
+The parts talk through `PhoneControllers`: an iPhone or Mac part joins its wish's TV app as a player, the way a phone's
+page does, with `LampController` in LampSupport. It asks Lamp's gateway (`/app/controller`, with its own token) for the
+TV app's socket and a join credential, which Lamp gives only to a part of the same wish while the TV app is open. A
+socket with no Origin is let in as a player like one from the app's own page: browsers always send one, so none means
+no browser, and anything that isn't a browser could send any origin it liked, so the credential is what lets it in. A TV
+app with a part takes players without a page in `Phone/` (`Store.takesPlayers`), and its site is served while it runs.
+
 ## iCloud
 
 An app with an iPhone half may keep data in iCloud: `{"icloud": true}` in `capabilities.json`

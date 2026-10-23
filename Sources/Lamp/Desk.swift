@@ -39,7 +39,7 @@ struct WishDesk: View {
     /// A wish not yet told is thrown away as the desk comes back (`discardIfUnused`): the rest are on the desk.
     /// They're in the order the person dragged them into (`DeskArrangement`).
     /// A device's setup conversation isn't a wish: it's reached from the device, in Settings → Your Devices.
-    private var wishes: [LampProject] { arrangement.arranged(store.projects.filter { !$0.isDeviceSetup }) }
+    private var wishes: [LampProject] { arrangement.arranged(store.wishes.filter { !$0.isDeviceSetup }) }
 
     var body: some View {
         ZStack {
@@ -82,7 +82,7 @@ struct WishDesk: View {
                     .animation(Self.glide, value: wishes.map(\.id))
                     // Read from the files, so once for each change to the desk rather than at every redraw.
                     // By the wishes there are rather than their order, so dragging one about reads nothing.
-                    .task(id: store.projects.map(\.id)) { missingStarters = Starters.missing(from: store.projects) }
+                    .task(id: store.projects.map(\.id)) { missingStarters = Starters.missing(from: store.wishes) }
                 }
                 .scrollContentBackground(.hidden)
             }
@@ -103,7 +103,7 @@ struct WishDesk: View {
         .environment(\.colorScheme, .light)
         .onAppear {
             hasMicrophone = Dictation.hasMicrophone
-            if ideas.isEmpty { ideas = Ideas.starters(made: store.projects.filter { !$0.untitled }.map(\.name)) }
+            if ideas.isEmpty { ideas = Ideas.starters(made: store.wishes.filter { !$0.untitled }.map(\.name)) }
             if wishes.isEmpty { showingIdeas = true }
             barFocused = true
         }
@@ -1087,7 +1087,7 @@ struct WishDrag: NSViewRepresentable {
             item.setDraggingFrame(CGRect(origin: CGPoint(x: point.x - size.width / 2, y: point.y - size.height / 2), size: size),
                                   contents: store.iconImage(for: project))
             session = beginDraggingSession(with: [item], event: event, source: self)
-            DeskArrangement.shared.begin(project.id, among: DeskArrangement.shared.arranged(store.projects).map(\.id))
+            DeskArrangement.shared.begin(project.id, among: DeskArrangement.shared.arranged(store.wishes).map(\.id))
         }
 
         static let wishType = NSPasteboard.PasteboardType("dev.lamp.wish")
@@ -1128,7 +1128,7 @@ struct WishDrag: NSViewRepresentable {
 
         func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
             payload = nil
-            let trashed = DeskArrangement.shared.end(projects: store.projects)
+            let trashed = DeskArrangement.shared.end(projects: store.wishes)
             guard operation == .delete || trashed, let wish = store.projects.first(where: { $0.id == project.id }) else { return }
             Task { await store.delete(wish) }
         }
