@@ -93,7 +93,7 @@ enum NextStep {
     }
 }
 
-/// Names an app from the first thing its user asked for, and sketches its main parts for the build card
+/// Names an app from the first thing its user asked for, and sketches its main parts for the chat's chapters
 /// while the agent is still thinking. Fails soft: without a name the app stays untitled.
 @MainActor
 enum AppName {

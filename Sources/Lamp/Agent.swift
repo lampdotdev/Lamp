@@ -36,7 +36,7 @@ enum AgentEvent {
     case step(String)      // the model has started on a tool call (its name), or on text ("")
     case stepArgs(String)  // a piece of that call's arguments, as they stream in
     case compacted         // the engine summed up the conversation so far to make room
-    case plan([PlanPart])  // the agent's checklist for the build card
+    case plan([PlanPart])  // the agent's plan, a new app's chapters in the chat
     case finished          // the engine has answered: a message written to it now would start another answer
     case received          // the engine gave the model a message of the person's (the request, or one sent mid-turn)
     /// Codex began (true) or finished (false) something it does on its own (a command, a tool call, an edit, a
@@ -62,7 +62,7 @@ enum Agent {
     }
 
     /// Lamp's own tools for pi (Resources/lamp-tools.ts): `look_at_app` has Lamp build and open the app
-    /// mid-turn and shows the agent the result; `plan` is the checklist on the build card; `delete_file`
+    /// mid-turn and shows the agent the result; `plan` gives a new app's chapters in the chat; `delete_file`
     /// removes a file, which pi's own tools can't; the version tools list, name and restore the app's saved
     /// versions; `make_art` paints a picture for the app; `offer_setup` shows a setup card in the chat; `read_notes` and `save_notes` are Lamp's notes (Memory). Claude Code and Codex get the same tools from Lamp's MCP endpoint (Store.mcpTools).
     static var lampTools: URL? {

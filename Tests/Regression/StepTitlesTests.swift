@@ -227,7 +227,11 @@ final class StepTitlesTests: XCTestCase {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let store = try String(contentsOf: root.appendingPathComponent("Sources/Lamp/Store.swift"), encoding: .utf8)
             .components(separatedBy: "\n")
-        let appends = store.indices.filter { store[$0].contains("logs[project.id, default: []].append(LogLine(kind: .") }
+        // A line is added as it is, or with the part of a first build it goes under (`chaptered`).
+        let appends = store.indices.filter {
+            store[$0].contains("logs[project.id, default: []].append(LogLine(kind: .")
+                || store[$0].contains("logs[project.id, default: []].append(chaptered(LogLine(kind: .")
+        }
         XCTAssertFalse(appends.isEmpty)
         for index in appends {
             let kind = store[index].firstMatch(of: #/kind: \.(\w+)/#).map { String($0.1) } ?? "?"

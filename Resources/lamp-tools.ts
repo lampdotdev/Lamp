@@ -38,7 +38,7 @@
  *   in place of the command (as Claude Code's own Bash has); its edit and write are given a `doing`, which Lamp
  *   shows the same way.
  * - `plan`: the agent's checklist of what it's building, with the files behind each part. Lamp reads the
- *   list from pi's event stream, shows it on the build card, and ticks parts as their files are written,
+ *   list from pi's event stream, shows it as the chat's chapters, and ticks parts as their files are written,
  *   so the tool itself has nothing to do. * - Messages the person sends while the agent works reach it in the same turn: after each of pi's turns (a
  *   reply and the tools it called) this asks Lamp for them and hands them to pi as steering, which pi gives
  *   the model before its next request.
