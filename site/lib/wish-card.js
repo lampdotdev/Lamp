@@ -48,11 +48,12 @@ export function cardElement(wish, { picture, icon, lamp }) {
   const name = (size, lines) => h("div", { display: "block", fontSize: size, fontWeight: 700, lineHeight: 1.08, letterSpacing: "-0.02em", lineClamp: lines }, wish.name);
   const line = (size, lines) => h("div", { display: "block", fontSize: size, lineHeight: 1.3, color: "rgba(255,255,255,0.82)", lineClamp: lines }, words);
 
+  // Lamp's mark goes at the top: X lays the page's title over the bottom left of a large card.
   if (!shot) {
     return h("div", { ...sky, flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "56px 96px", textAlign: "center" }, [
-      img(icon || lamp, { width: 168, height: 168, borderRadius: icon ? 0 : 36 }),
-      h("div", { display: "flex", flexDirection: "column", alignItems: "center", gap: 18, marginTop: 30 }, [name(68, 2), line(32, 3)]),
-      h("div", { display: "flex", marginTop: 40 }, [mark]),
+      h("div", { display: "flex", marginBottom: 36 }, [mark]),
+      img(icon || lamp, { width: 156, height: 156, borderRadius: icon ? 0 : 34 }),
+      h("div", { display: "flex", flexDirection: "column", alignItems: "center", gap: 18, marginTop: 28 }, [name(64, 2), line(30, 2)]),
     ]);
   }
   // The picture as large as fits the right of the card, its whole shape kept.
@@ -60,13 +61,13 @@ export function cardElement(wish, { picture, icon, lamp }) {
   const scale = Math.min(box.width / wish.picture.width, box.height / wish.picture.height);
   const size = { width: Math.round(wish.picture.width * scale), height: Math.round(wish.picture.height * scale) };
   return h("div", { ...sky, padding: "64px 56px 56px 72px", gap: 48, alignItems: "center" }, [
-    h("div", { display: "flex", flexDirection: "column", justifyContent: "space-between", width: 440, height: "100%" }, [
-      h("div", { display: "flex", flexDirection: "column", gap: 20 }, [
-        img(icon || lamp, { width: 112, height: 112, borderRadius: icon ? 0 : 24 }),
-        name(58, 3),
-        line(28, 4),
-      ]),
+    h("div", { display: "flex", flexDirection: "column", width: 440, height: "100%" }, [
       mark,
+      h("div", { display: "flex", flexDirection: "column", gap: 20, marginTop: 36 }, [
+        img(icon || lamp, { width: 112, height: 112, borderRadius: icon ? 0 : 24 }),
+        name(58, 2),
+        line(28, 3),
+      ]),
     ]),
     h("div", { display: "flex", flex: 1, alignItems: "center", justifyContent: "center", height: "100%" }, [
       img(picture, { ...size, borderRadius: 16, boxShadow: "0 30px 60px rgba(0,0,0,0.45)" }),
