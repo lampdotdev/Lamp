@@ -97,6 +97,17 @@ enum Edition {
         guard name.hasPrefix("Lamp Dev ") else { return nil }
         return androidPorts(isDev: true, instance: String(name.dropFirst("Lamp Dev ".count)))
     }
+    /// The ports a TV app's phone page is served on, one app to a port while its page is served (`PhoneSites`), so each
+    /// app's page is an origin of its own in the phone's browser and one app's page can never read what another's
+    /// keeps. Sixteen of each Lamp's own, in a range clear of the others'.
+    static let phonePagePorts = phonePagePorts(isDev: isDev, instance: instance)
+
+    static func phonePagePorts(isDev: Bool, instance: String) -> ClosedRange<UInt16> {
+        guard isDev else { return 47840...47855 }
+        guard !instance.isEmpty else { return 47860...47875 }
+        let start = 50100 + slot(of: instance) * 16
+        return start...(start + 15)
+    }
     static let gatewayPort: UInt16 = firstPort
     static let localModelPort = Int(firstPort) + 1
     static let mlxPort = Int(firstPort) + 2

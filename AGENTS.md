@@ -140,7 +140,7 @@ A capability given to one engine must be given to all of them that can take it, 
   it loads its own skills for coding work; Codex's `skills.bundled.enabled=false` its own. Codex runs outside Lamp's sandbox, and
   it reads the person's own skills in `~/.agents/skills` at every start, which no setting of Codex's turns off): those are for other
   work, and the same file for every engine is one place to keep up to date. When an app's own code
-  shows a skill applies (`Skills.applying`: it imports RealityKit, it uses OpenStreetMap data, it has a Chrome sidebar page), Lamp names it at
+  shows a skill applies (`Skills.applying`: it imports RealityKit, it uses OpenStreetMap data, it has a Chrome sidebar page, a TV app has a page for phones), Lamp names it at
   the end of the request (`Skills.brief`), sent like `AIStatus.brief` through `RequestNote`: once per
   conversation, again when it changes or the conversation was compacted. What's remembered as told carries each
   skill's revision (`Skills.revision`, a hash of its instructions), so a conversation told of a skill before an
@@ -152,7 +152,7 @@ A capability given to one engine must be given to all of them that can take it, 
   Lamp's hook only hands each one back confined, with no decision (`format=claude-confine`), what the classifier asks
   about comes to Lamp's card through `PermissionRequest` with no check or rating of Lamp's, and a command that ran is
   said in the chat from `PostToolUse` and `PostToolUseFailure` (`format=claude-ran`). What the classifier refuses stays
-  refused (the agent is told why, `PermissionDenied`, `format=claude-refused`, and the command's step stays as below). Codex's
+  refused (the agent is told why, `PermissionDenied`, `format=claude-refused`, and the command's step stays as below; no card comes, so `Agent.claudeNote` tells the agent never to say one will). Codex's
   own reviewer (Auto-review: `approval_policy="on-request"`, `approvals_reviewer="auto_review"`) decides its commands the
   same way, with no hook of Lamp's: only a command that needs more than Codex's sandbox gives (below) reaches it, and
   what it refuses stays refused, with nothing coming to Lamp's card. Its policy (`CodexReview`, as `auto_review.policy`)
@@ -844,6 +844,42 @@ input kept open until the TV's answer, since it gives up when its input closes (
 developer-mode session renewed with LG at every install. Play with a TV chosen under Try On (`Store.setTVDevice`, which
 runs that TV's setup first) packages and installs; the preview needs nothing set up. Lamp's Info.plist carries a local
 network description; the first scan brings macOS's firewall and local network questions. TV apps aren't shared yet.
+
+A TV app may have a page for a phone (a controller, a buzzer, a second screen) in `Phone/` (`TVTemplate.phoneFolder`,
+`Rules.tvPhone`, a short pointer: how to build the page, controllers, tilt and second screens are the `phone-controllers`
+skill, which only the TV prompt offers). Lamp serves it, so the agent never starts a server or a login item that would outlive the app: it's
+staged beside `Web/` the same way (links refused) and never packaged, into a folder nothing serves, and put in place of
+the served one in one swap only once it has passed (`TVs.publishPhone`), so a request never reads a copy being made or
+one that failed. It's served by Lamp at a port of the app's own (`PhoneSites`, from `Edition.phonePagePorts`, sixteen
+for each Lamp), so each app's page is an origin of its own in the phone's browser and what one app's page keeps is out
+of another's reach. The sixteen are a pool, not a limit: an app keeps its port while it can, and gives it up to an app
+that needs one once its own page isn't served (or it's gone). A site counts as open only once it's listening
+(`PhoneSites.open`), a port another program took meanwhile is left for the next free one, and a page's address is only
+ever given for the port its site holds (`PhoneSites.ready`), sent to the TV page again when the site moves. The site answers with the app's files (`Store.phonePage`), reached through no link at any step
+(`TVs.phoneFile`), only while the app runs, in the preview or set to open on a TV (`Store.servesPhonePage`), from the
+network by the Mac's name or address and on this Mac by a loopback name, with no token, since a phone following a QR
+code has none; it's opened and closed with the rest of the network listening (`Store.syncLocalNetwork`). The TV page
+reads the address from `Lamp.phonePage(hash)`, which Lamp writes into the staged lamp.js (`TVTemplate.phoneMarker`) and
+which lamp.js asks for again as the page opens and every half minute (`/app/phone-page`), the preview being told at once
+when the site moves; `Lamp.onPhonePage` hears each change, so a QR code follows the page. The address is plain http at the Mac's local address, so a phone's browser won't give the page motion sensors or the camera, which
+need https.
+
+Phones as controllers go through Lamp itself (`PhoneControllers`), over the home network the phone page is already
+served on, so nothing is hosted and nothing leaves the home. The phone page loads `lamp-controller.js`, which Lamp
+serves beside the app's files (`TVTemplate.phoneControllerJS`: `LampController`'s buttons, sticks and messages, and
+tilt asked for from a tap), and opens a WebSocket at `/socket` on the app's own site (`Gateway` hands an upgrade there
+to `Store.phoneSocket`, held to the page's own Host rules; `WebSocketPeer` speaks it). A link just opened always wins
+over a credential the page kept from before. The TV page has
+`Lamp.controllers` in lamp.js (`TVTemplate.controllersJS`): in the preview it is the app's host in Lamp itself, through
+the `lampController` bridge (`TVPreview`); on a TV it asks Lamp's gateway for a host credential (`/app/controller`) and
+opens the same socket, at the app's port, over the Wi‑Fi. The credentials are the controllers' own (`ControllerCredential`, signed with a key kept
+only in Lamp's memory: a host's for the session, a join link's for fifteen minutes, a phone's for two, renewed over its
+socket), never the app's token for its AI, and ending a session (the preview closed with no TV chosen, or the app's page no longer served anywhere, deleted
+included: `PhoneSites.sync`) makes all of them worthless and lets its sockets go. A phone is let in only from the page's own origin; a dropped phone keeps its number while its
+credential lasts. Lamp keeps no message, beats every five seconds, drops a phone's stick or tilt while the TV is behind,
+and tells the host when a phone leaves, when lamp.js lets go of what it held; lamp.js drops movement older than 300 ms.
+The page is plain http, so phones keep their motion sensors from it: buttons and sticks work, and tilt only where the
+person has put https in front of the page themselves (`LampController.canTilt`); Lamp builds nothing for that.
 
 ## Apps for both the Mac and the iPhone
 

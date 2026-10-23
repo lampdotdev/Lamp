@@ -47,10 +47,11 @@ enum Skills {
 
     /// The skills a prompt offers. 3D scenes need a Mac app on a Mac that can run RealityView, and a real place
     /// from map data is built as one. The Chrome sidebar's page is offered where the prompt has the sidebar's rule.
-    /// An Android app's design is offered to its prompt alone.
+    /// An Android app's design is offered to its prompt alone, and a TV app's page for phones to the TV prompt.
     /// `device-integrations` isn't listed: every prompt's rule for devices (`Agent.deviceRules`) names it.
-    static func offered(mac: Bool, sidebar: Bool = false, android: Bool = false) -> [String] {
+    static func offered(mac: Bool, sidebar: Bool = false, android: Bool = false, tv: Bool = false) -> [String] {
         (mac && Agent.Rules.scenes ? ["scene-3d", "maps"] : []) + (sidebar ? ["chrome-sidebar"] : []) + (android ? ["android-design"] : [])
+            + (tv ? ["phone-controllers"] : [])
     }
 
     /// The rule that lists a prompt's skills; empty when it offers none.
@@ -74,11 +75,12 @@ enum Skills {
 
     /// The skills an app's own code shows it uses, each with what showed it, among those its prompt offers.
     static func applying(to project: LampProject) -> [(name: String, because: String)] {
-        let offered = offered(mac: project.platform == .mac, sidebar: BrowserBridge.enabled && project.platform.hasMac)
+        let offered = offered(mac: project.platform == .mac, sidebar: BrowserBridge.enabled && project.platform.hasMac, tv: project.platform == .tv)
         var found: [(name: String, because: String)] = []
         if offered.contains("chrome-sidebar"), Template.hasSidebarPage(project) { found.append(("chrome-sidebar", "it has a sidebar page in Chrome")) }
         if offered.contains("scene-3d"), Template.usesScene(project) { found.append(("scene-3d", "its code uses RealityKit")) }
         if offered.contains("maps"), usesMapData(project) { found.append(("maps", "its code uses OpenStreetMap data")) }
+        if offered.contains("phone-controllers"), let why = phonePageUse(project) { found.append(("phone-controllers", why)) }
         return found
     }
 
@@ -91,6 +93,21 @@ enum Skills {
             file.pathExtension == "swift" && !["LampSupport.swift", Template.sceneSupportFile].contains(file.lastPathComponent)
                 && ((try? String(contentsOf: file, encoding: .utf8))?.range(of: #"OpenStreetMap|overpass-api|overpass\.|/api/interpreter"#, options: [.regularExpression, .caseInsensitive]) != nil)
         }
+    }
+
+    /// What shows a TV app has a page for phones: a Phone/ folder, or its own web code using the phone page's address
+    /// or phones as controllers (Lamp's own lamp.js names both, so it doesn't count).
+    static func phonePageUse(_ project: LampProject) -> String? {
+        let fm = FileManager.default
+        if let page = try? fm.contentsOfDirectory(atPath: project.dir.appendingPathComponent(TVTemplate.phoneFolder).path),
+           !page.isEmpty { return "it has a page for phones in Phone/" }
+        let web = project.dir.appendingPathComponent(TVTemplate.webFolder)
+        let files = fm.enumerator(at: web, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
+        let uses = files.contains { file in
+            ["js", "html"].contains(file.pathExtension) && file.lastPathComponent != "lamp.js"
+                && ((try? String(contentsOf: file, encoding: .utf8))?.range(of: #"Lamp\.(controllers|phonePage|onPhonePage)"#, options: .regularExpression) != nil)
+        }
+        return uses ? "its TV page uses phones as controllers or a second screen" : nil
     }
 
     /// Which version of a skill this is: a change to its instructions in a Lamp update changes it.

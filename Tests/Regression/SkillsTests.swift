@@ -36,7 +36,7 @@ final class SkillsTests: XCTestCase {
     /// Every skill a prompt can offer is in the bundle and reads as an Agent Skills file: a folder named as the
     /// skill, a one-line description within the format's limit, and instructions.
     func testEveryOfferedSkillShipsAndReads() {
-        XCTAssertEqual(Set(shipped.keys), ["scene-3d", "maps", "chrome-sidebar", "device-integrations", "android-design"])
+        XCTAssertEqual(Set(shipped.keys), ["scene-3d", "maps", "chrome-sidebar", "device-integrations", "android-design", "phone-controllers"])
         for (name, skill) in shipped {
             XCTAssertFalse(skill.body.isEmpty, name)
             XCTAssertLessThanOrEqual(skill.description.count, 1024, name)
@@ -45,9 +45,10 @@ final class SkillsTests: XCTestCase {
         if Agent.Rules.scenes {
             // The integrations' skill is named by its own rule, in every prompt, rather than in the list, and Android's
             // design is offered to the Android prompt alone.
-            XCTAssertEqual(Set(Skills.offered(mac: true, sidebar: true)), Set(shipped.keys).subtracting(["device-integrations", "android-design"]))
+            XCTAssertEqual(Set(Skills.offered(mac: true, sidebar: true)), Set(shipped.keys).subtracting(["device-integrations", "android-design", "phone-controllers"]))
         }
         XCTAssertEqual(Skills.offered(mac: false, android: true), ["android-design"])
+        XCTAssertEqual(Skills.offered(mac: false, tv: true), ["phone-controllers"])
         XCTAssertEqual(Skills.offered(mac: false), [])
         // The sidebar's page is offered wherever the prompt has the sidebar's rule, an app for both included.
         XCTAssertEqual(Skills.offered(mac: false, sidebar: true), ["chrome-sidebar"])
@@ -75,6 +76,31 @@ final class SkillsTests: XCTestCase {
         XCTAssertFalse(Agent.iPhonePrompt(for: .iphone).contains("read_skill"))
     }
 
+    /// A TV turn's prompt lists the phone page's skill instead of carrying what it says, and a TV app with a page for
+    /// phones, or a TV page using them, is told the skill applies.
+    func testTVPromptOffersThePhoneSkill() throws {
+        let prompt = Agent.tvPrompt(skills: shipped)
+        XCTAssertTrue(prompt.contains("  • phone-controllers: \(shipped["phone-controllers"]!.description)\n"))
+        XCTAssertTrue(prompt.contains("Open the phone-controllers skill"))
+        XCTAssertFalse(prompt.contains("LampController.connect"), "the phone page's instructions belong in the skill")
+        XCTAssertTrue(shipped["phone-controllers"]!.body.contains("LampController.connect"))
+        XCTAssertTrue(shipped["phone-controllers"]!.body.contains("Lamp.onPhonePage"))
+        XCTAssertFalse(Agent.systemPrompt.contains("phone-controllers"), "only the TV prompt offers it")
+
+        let web = folder.appendingPathComponent("Web")
+        try FileManager.default.createDirectory(at: web, withIntermediateDirectories: true)
+        try "Lamp.controllers.start(); Lamp.phonePage();".write(to: web.appendingPathComponent("lamp.js"), atomically: true, encoding: .utf8)
+        XCTAssertTrue(Skills.applying(to: app(.tv)).isEmpty, "Lamp's own lamp.js doesn't count")
+        try "Lamp.controllers.onButton(function () {});".write(to: web.appendingPathComponent("game.js"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(Skills.applying(to: app(.tv)).map(\.name), ["phone-controllers"])
+        try FileManager.default.removeItem(at: web.appendingPathComponent("game.js"))
+        let phone = folder.appendingPathComponent("Phone")
+        try FileManager.default.createDirectory(at: phone, withIntermediateDirectories: true)
+        try "<p>pad</p>".write(to: phone.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(Skills.applying(to: app(.tv)).map(\.because), ["it has a page for phones in Phone/"])
+        XCTAssertTrue(Skills.applying(to: app(.mac)).filter { $0.name == "phone-controllers" }.isEmpty)
+    }
+
     func testReadingASkill() {
         let (status, answer) = Skills.read(["name": "maps"], from: shipped)
         XCTAssertEqual(status, 200)
@@ -82,7 +108,7 @@ final class SkillsTests: XCTestCase {
 
         let (missing, error) = Skills.read(["name": "3d"], from: shipped)
         XCTAssertEqual(missing, 400)
-        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: android-design, chrome-sidebar, device-integrations, maps, scene-3d.")
+        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: android-design, chrome-sidebar, device-integrations, maps, phone-controllers, scene-3d.")
     }
 
     func testParsing() {

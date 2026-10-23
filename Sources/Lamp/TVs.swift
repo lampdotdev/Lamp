@@ -287,28 +287,118 @@ enum TVs {
 
     /// Copies the app's web files into Lamp's folder, as Devices.stage does for a phone: by a command under the app's
     /// own sandbox, so it reads only the app's folder, links kept as links, then none allowed. What the preview shows and
-    /// what goes on a TV are only the app's own files. Gives back the copy.
+    /// what goes on a TV are only the app's own files. Its phone page, if it has one, is copied beside them the same way
+    /// and never goes in a package. Gives back the copy of the web files.
     static func stage(_ project: LampProject) async throws -> URL {
         let fm = FileManager.default
         let dir = stagingFolder(for: project)
         let files = dir.appendingPathComponent("web")
+        // The phone page is handed out while the app runs, rebuilds included, so the new copy is made where nothing
+        // serves it and only takes the published one's place once it has passed the same checks (`publishPhone`).
+        let incoming = dir.appendingPathComponent(".phone-" + UUID().uuidString)
         try? fm.removeItem(at: files)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        // Left by a staging that never finished: never served, so only cleared away.
+        for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where name.hasPrefix(".phone-") {
+            try? fm.removeItem(at: dir.appendingPathComponent(name))
+        }
+        defer { try? fm.removeItem(at: incoming) }
+        let page = Sandbox.quoted(TVTemplate.phoneFolder)
         let copy = "cd \"$LAMP_FROM\" && /bin/cp -Rp \(Sandbox.quoted(TVTemplate.webFolder)) \"$LAMP_TO\""
+            + " && if [ -e \(page) ] || [ -L \(page) ]; then /bin/cp -Rp \(page) \"$LAMP_PHONE\"; fi"
         guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [dir.path]) else { throw Failure(message: "Lamp couldn't copy the app's files.") }
         var output: [String] = []
-        let status = await Shell.run(confined, cwd: dir, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": files.path], login: false) { output.append($0) }
-        guard status == 0 else { throw Failure(message: "Lamp couldn't copy the app's files.\n\n" + output.suffix(4).joined(separator: "\n")) }
-        let linked = (fm.enumerator(at: files, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? [])
-            .contains { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
-        if linked {
+        let status = await Shell.run(confined, cwd: dir, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": files.path, "LAMP_PHONE": incoming.path],
+                                     login: false) { output.append($0) }
+        guard status == 0 else {
+            try? fm.removeItem(at: files)
+            throw Failure(message: "Lamp couldn't copy the app's files.\n\n" + output.suffix(4).joined(separator: "\n"))
+        }
+        func linked(_ folder: URL) -> Bool {
+            ([folder] + (fm.enumerator(at: folder, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? []))
+                .contains { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
+        }
+        if linked(files) || linked(incoming) {
             try? fm.removeItem(at: files)
             throw Failure(message: "Some of the app's files are shortcuts to other files. Put the files themselves in their place.")
         }
         guard fm.fileExists(atPath: files.appendingPathComponent("index.html").path) else {
             throw Failure(message: "The app has no \(TVTemplate.webFolder)/index.html yet.")
         }
+        let hasPage = fm.fileExists(atPath: incoming.appendingPathComponent("index.html").path)
+        // The TV page learns where its phone page is from Lamp's own script, in the copy only: the address is this
+        // Mac's on the network now, which isn't the app's to keep.
+        let script = files.appendingPathComponent("lamp.js")
+        let address = hasPage ? await phonePage(staging: project) : ""
+        if !address.isEmpty, let text = try? String(contentsOf: script, encoding: .utf8), text.contains(TVTemplate.phoneMarker),
+           let quoted = try? JSONSerialization.data(withJSONObject: [address], options: [.withoutEscapingSlashes]) {
+            let value = String(decoding: quoted, as: UTF8.self).dropFirst().dropLast()
+            try Data(text.replacingOccurrences(of: TVTemplate.phoneMarker, with: "/*LAMP_PHONE*/" + value).utf8).write(to: script)
+        }
+        try publishPhone(hasPage ? incoming : nil, as: phoneFolder(for: project))
         return files
+    }
+
+    /// A file of the published phone page by the names in its path, when it's a plain file there of a size to hand out.
+    /// Each step from the published folder down, the folder itself included, must be no link: the copy was checked for
+    /// links, and this keeps a page from ever leading anywhere else whatever is found there.
+    static func phoneFile(_ names: [String], in root: URL) -> URL? {
+        var steps = [root]
+        for name in names { steps.append(steps[steps.count - 1].appendingPathComponent(name)) }
+        guard steps.allSatisfy({ (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == false }) else { return nil }
+        let file = steps[steps.count - 1]
+        let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values?.isRegularFile == true, (values?.fileSize ?? 0) <= 64 << 20 else { return nil }
+        return file
+    }
+
+    /// Puts a checked copy of the phone page where it's served, in one step: swapped with the one there, which is then
+    /// removed, so a request reads the old page or the new one whole, never a copy still being made. No page takes the
+    /// published one away.
+    static func publishPhone(_ checked: URL?, as published: URL) throws {
+        let fm = FileManager.default
+        guard let checked else {
+            try? fm.removeItem(at: published)
+            return
+        }
+        if renamex_np(checked.path, published.path, UInt32(RENAME_SWAP)) == 0 { return }
+        guard errno == ENOENT, rename(checked.path, published.path) == 0 else {
+            throw Failure(message: "Lamp couldn't put the app's phone page in place.")
+        }
+    }
+
+    // MARK: The phone page
+
+    /// Where an app's phone page is copied (its Phone/ folder), beside its web files.
+    static func phoneFolder(for project: LampProject) -> URL {
+        stagingFolder(for: project).appendingPathComponent("phone")
+    }
+
+    /// Whether the app's last copy has a phone page to hand out.
+    static func hasPhonePage(_ project: LampProject) -> Bool {
+        FileManager.default.fileExists(atPath: phoneFolder(for: project).appendingPathComponent("index.html").path)
+    }
+
+    /// The phone page's address for a phone on the same network as this Mac, by its address there, which a phone
+    /// reaches whether or not it resolves the Mac's Bonjour name, at the app's own port (`PhoneSites`), which gives each
+    /// app's page an origin of its own.
+    @MainActor static func phonePage(for project: LampProject) -> String {
+        let host = Devices.localAddresses.first ?? Devices.macHost
+        guard let port = PhoneSites.port(for: project.id) else { return "" }
+        return "http://\(host):\(port)/"
+    }
+
+    /// The address put into a staged copy: where the site is listening when the app's page is served now, which waits for
+    /// it to open, else the port it will try first. lamp.js asks again as the page opens (`/app/phone-page`), so a site
+    /// that opens elsewhere is still the address it shows.
+    @MainActor static func phonePage(staging project: LampProject) async -> String {
+        if let port = await PhoneSites.ready(project.id) { return phonePage(port: port) }
+        return phonePage(for: project)
+    }
+
+    /// The phone page's address at a port its site is listening on.
+    @MainActor static func phonePage(port: UInt16) -> String {
+        "http://\(Devices.localAddresses.first ?? Devices.macHost):\(port)/"
     }
 }
 

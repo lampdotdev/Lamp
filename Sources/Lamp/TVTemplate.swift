@@ -8,6 +8,11 @@ import Foundation
 enum TVTemplate {
     static let webFolder = "Web"
     static let supportFile = "Web/lamp.js"
+    /// A page for a phone, as a controller or a companion to the TV app, which Lamp hands out from this Mac while the app
+    /// runs (`Store.phonePage`). It never goes on the TV.
+    static let phoneFolder = "Phone"
+    /// Where Lamp writes the phone page's address into the staged copy of lamp.js (`TVs.stage`).
+    static let phoneMarker = "/*LAMP_PHONE*/null"
 
     /// Whether an app's folder is a TV app, read off what every version keeps: Lamp's script in `Web/`. A device app
     /// whose integration takes the web building blocks may keep them at the same path (an Xbox's), so its own marker
@@ -147,7 +152,7 @@ enum TVTemplate {
     /// Lamp's building blocks in every TV app, written before every build: LampAI, LampStore and LampAssets
     /// (`DeviceSupport.webJS`, shared with the web apps integrations declare), then the remote. It runs on Samsung's and
     /// LG's TVs and in the preview, whose browsers are about Chrome 79's age, so it's plain ES5.
-    static var lampJS: String { DeviceSupport.webJS + remoteJS }
+    static var lampJS: String { DeviceSupport.webJS + remoteJS + controllersJS }
 
     static let remoteJS = """
         /* The remote, for a TV app. Written by Lamp before every build; don't edit. LampAI, LampStore and LampAssets
@@ -162,6 +167,10 @@ enum TVTemplate {
          * Lamp.navigation = false                                   turn off moving focus with the arrows (a game)
          * Lamp.store   LampStore, under the name it had first
          * Lamp.platform   "tizen", "webos" or "browser" (the preview on the Mac)
+         * Lamp.phonePage(hash)   the address of the app's Phone/ page for a phone on the Mac's Wi-Fi (for a QR code),
+         *   with "#" + hash after it when given; null when the app has no Phone/index.html
+         * Lamp.onPhonePage(fn)   fn() now when there is an address, and again whenever it changes: draw the QR code there
+         * Lamp.controllers   phones on the same Wi-Fi as controllers: see its comment below
          *
          * The arrows move focus between what can take it (buttons, links, fields, and anything with data-focus),
          * to the nearest in that direction; OK clicks what has it.
@@ -229,6 +238,21 @@ enum TVTemplate {
             } catch (e) {}
           }
           var store = window.LampStore;
+          // Filled in by Lamp in the copy it opens or packages, while the app has a phone page.
+          var phone = \(phoneMarker);
+          var phoneHandlers = [];
+          // Lamp may have to move the page to another port (another program took its own), so the address is asked for
+          // again as the page opens and now and then after, and the preview is told at once.
+          function setPhone(address) {
+            if (!phone || typeof address !== 'string' || !address || address === phone) return;
+            phone = address;
+            for (var i = 0; i < phoneHandlers.length; i++) { try { phoneHandlers[i](); } catch (e) { if (window.console) console.error(e); } }
+          }
+          window.__lampPhonePage = setPhone;
+          function askPhone() {
+            if (phone && window.LampAI && LampAI._post) LampAI._post('/app/phone-page', {}, 20000).then(function (r) { setPhone(r && r.url); }, function () {});
+          }
+          if (phone) { setTimeout(askPhone, 0); setInterval(askPhone, 30000); }
 
           document.addEventListener('keydown', function (event) {
             var name = names[event.keyCode];
@@ -274,7 +298,13 @@ enum TVTemplate {
             focus: function (el) { give(typeof el === 'string' ? document.querySelector(el) : el); },
             focusFirst: function () { var list = focusables(); if (list.length) give(list[0]); },
             move: move,
-            exit: exit
+            exit: exit,
+            phonePage: function (hash) { return phone ? phone + (hash ? '#' + hash : '') : null; },
+            onPhonePage: function (fn) {
+              phoneHandlers.push(fn);
+              if (phone) { try { fn(); } catch (e) { if (window.console) console.error(e); } }
+              return function () { var i = phoneHandlers.indexOf(fn); if (i >= 0) phoneHandlers.splice(i, 1); };
+            }
           };
           document.addEventListener('DOMContentLoaded', function () {
             setTimeout(function () { if (!document.activeElement || document.activeElement === document.body) Lamp.focusFirst(); }, 0);
@@ -284,11 +314,324 @@ enum TVTemplate {
         """
 }
 
+extension TVTemplate {
+    /// Phones as controllers (`PhoneControllers`): the TV page's half. In the preview the page is the app's host in Lamp
+    /// itself (the `lampController` bridge); on a TV it asks Lamp for a credential once and opens a socket to Lamp's
+    /// gateway over the Wi‑Fi. What a phone holds down is let go when it leaves or the link drops, and movement that
+    /// arrives late is dropped.
+    static let controllersJS = #"""
+        /* Phones as controllers. Written by Lamp before every build; don't edit.
+         *
+         * Lamp.controllers.start()                    opens a game for phones on this Wi-Fi; Promise. The phones' page is
+         *                                              Phone/index.html, loading lamp-controller.js (its own comment says how).
+         * Lamp.controllers.onLink(fn(url))             the address phones open (show it as a QR code); it changes every
+         *                                              few minutes, and fn is called each time
+         * Lamp.controllers.onJoin(fn(player)), onLeave(fn(player))      players are numbered 1, 2, ... as phones join
+         * Lamp.controllers.onButton(fn(player, name, down))             a button held (down true) or let go
+         * Lamp.controllers.onAxis(fn(player, name, x, y))               a stick, or the phone's tilt ('tilt'), -1 to 1
+         * Lamp.controllers.onMessage(fn(player, data))                  anything else a phone's page sent
+         * Lamp.controllers.onError(fn(message))                         it couldn't start, or the link was lost
+         * Lamp.controllers.send(player, data)          to one phone, or to every phone with player 0
+         * Lamp.controllers.isHeld(player, name), players()
+         * Lamp.controllers.stop()
+         *
+         * A phone that leaves, or whose link drops, has every button it held let go (onButton with down false) before
+         * onLeave. Movement that arrives late is dropped rather than acted on.
+         */
+        (function () {
+          'use strict';
+          var LATE = 300;   // ms after which a stick or tilt reading is dropped as stale
+          var on = { link: [], join: [], leave: [], button: [], axis: [], message: [], error: [] };
+          var held = {}, seen = {}, joined = {}, offset = null, link = null, transport = null, linkTimer = null, started = false;
+
+          function emit(name, args) {
+            var list = on[name];
+            for (var i = 0; i < list.length; i++) { try { list[i].apply(null, args); } catch (e) { if (window.console) console.error(e); } }
+          }
+          function adder(name) {
+            return function (fn) {
+              on[name].push(fn);
+              if (name === 'link' && link) fn(link);
+              return function () { var i = on[name].indexOf(fn); if (i >= 0) on[name].splice(i, 1); };
+            };
+          }
+          // Each phone counts its messages from 1 on every new link, so what's been seen is forgotten when it leaves.
+          function fresh(m) {
+            var mine = seen[m.player] || (seen[m.player] = {});
+            var key = m.t + ':' + m.name;
+            if (mine[key] !== undefined && m.seq <= mine[key]) return false;
+            mine[key] = m.seq;
+            return true;
+          }
+          function release(player) {
+            var names = held[player] || {};
+            for (var name in names) if (names[name]) emit('button', [player, name, false]);
+            held[player] = {};
+          }
+          function leave(player) {
+            delete seen[player];
+            if (!joined[player]) return;
+            release(player);
+            delete joined[player];
+            emit('leave', [player]);
+          }
+          function join(player) {
+            delete seen[player];
+            if (joined[player]) return;
+            joined[player] = true;
+            held[player] = {};
+            emit('join', [player]);
+          }
+          function leaveAll() { for (var p in joined) leave(+p); seen = {}; }
+
+          function receive(m) {
+            if (!m || typeof m !== 'object') return;
+            if (m.now) offset = m.now - Date.now();
+            if (m.t === 'welcome') {
+              for (var i = 0; i < (m.players || []).length; i++) join(m.players[i]);
+              askLink();
+            } else if (m.t === 'link') {
+              link = m.url;
+              emit('link', [link]);
+            } else if (m.t === 'joined') {
+              leave(m.player);
+              join(m.player);
+            } else if (m.t === 'left') {
+              leave(m.player);
+            } else if (m.t === 'button') {
+              if (!joined[m.player]) join(m.player);
+              if (!fresh(m)) return;
+              held[m.player][m.name] = !!m.down;
+              emit('button', [m.player, m.name, !!m.down]);
+            } else if (m.t === 'axis') {
+              if (!joined[m.player]) join(m.player);
+              if (!fresh(m)) return;
+              if (offset !== null && Date.now() + offset - m.at > LATE) return;
+              emit('axis', [m.player, m.name, m.x, m.y]);
+            } else if (m.t === 'message') {
+              emit('message', [m.player, m.data]);
+            } else if (m.t === 'closed') {
+              leaveAll();
+            }
+          }
+          window.__lampControllers = receive;
+
+          function askLink() {
+            if (transport) transport.send({ t: 'link' });
+            clearInterval(linkTimer);
+            linkTimer = setInterval(function () { if (transport) transport.send({ t: 'link' }); }, 10 * 60 * 1000);
+          }
+
+          // The preview on the Mac: the page is the app's host in Lamp itself.
+          function bridgeTransport(handler) {
+            handler.postMessage({ op: 'start' });
+            return {
+              send: function (message) { handler.postMessage({ op: 'send', message: message }); },
+              stop: function () { handler.postMessage({ op: 'stop' }); }
+            };
+          }
+
+          // On a TV: a socket to Lamp on the Mac, over the Wi-Fi, opened again when it drops.
+          function socketTransport() {
+            var socket = null, beat = null, stopped = false, session = null;
+            function connect() {
+              if (stopped) return;
+              socket = new WebSocket(session.socket);
+              socket.onopen = function () { socket.send(JSON.stringify({ t: 'hello', credential: session.host })); };
+              socket.onmessage = function (event) { var m; try { m = JSON.parse(event.data); } catch (e) { return; } receive(m); };
+              socket.onclose = function () { leaveAll(); if (!stopped) setTimeout(open, 2000); };
+            }
+            function open() {
+              if (stopped) return;
+              LampAI._post('/app/controller', {}, 20000).then(function (answer) {
+                session = answer;
+                connect();
+              }, function (error) {
+                emit('error', [error.message]);
+                if (!stopped) setTimeout(open, 5000);
+              });
+            }
+            open();
+            beat = setInterval(function () { if (socket && socket.readyState === 1) socket.send('{"t":"beat"}'); }, 5000);
+            return {
+              send: function (message) { if (socket && socket.readyState === 1) socket.send(JSON.stringify(message)); },
+              stop: function () { stopped = true; clearInterval(beat); if (socket) socket.close(); }
+            };
+          }
+
+          var api = {
+            start: function () {
+              if (started) return Promise.resolve();
+              started = true;
+              var handlers = window.webkit && window.webkit.messageHandlers;
+              transport = handlers && handlers.lampController ? bridgeTransport(handlers.lampController) : socketTransport();
+              return Promise.resolve();
+            },
+            stop: function () {
+              if (transport) transport.stop();
+              transport = null; started = false; link = null;
+              clearInterval(linkTimer);
+              leaveAll();
+            },
+            send: function (player, data) { if (transport) transport.send({ t: 'send', player: player || 0, data: data }); },
+            isHeld: function (player, name) { return !!(held[player] && held[player][name]); },
+            players: function () { var list = []; for (var p in joined) list.push(+p); return list; },
+            onLink: adder('link'), onJoin: adder('join'), onLeave: adder('leave'), onButton: adder('button'),
+            onAxis: adder('axis'), onMessage: adder('message'), onError: adder('error')
+          };
+          if (window.Lamp) window.Lamp.controllers = api;
+        })();
+
+        """#
+
+    /// Phones as controllers: the phone page's half, served by Lamp beside the app's Phone/ files as lamp-controller.js
+    /// (`Store.phonePage`). Its socket is the page's own address with `socket` in place of the page, so it's the same
+    /// whichever way the page was reached, http on the Wi‑Fi or https the person put in front.
+    static let phoneControllerJS = #"""
+        /* Lamp's phone controller. The page is the app's own; this joins it to the TV app as a player and carries its
+         * buttons, sticks and tilt there, through Lamp on the Mac, over this Wi-Fi.
+         *
+         *   var pad = LampController.connect({
+         *     onPlayer: function (n) { ... },        // the player number this phone was given (1, 2, ...)
+         *     onMessage: function (data) { ... },   // what the TV app sent this phone (or every phone)
+         *     onState: function (state) { ... }     // 'connecting', 'connected', 'waiting' (the TV app isn't there), 'ended', 'full'
+         *   });
+         *   pad.button('a', true); pad.button('a', false);   // a button held, then let go
+         *   pad.axis('stick', x, y);                          // a stick or slider, each from -1 to 1
+         *   pad.send({ ready: true });                        // anything small to the TV app
+         *   LampController.tilt(pad)                          // from a tap (a Start button): asks for the motion sensors,
+         *     .then(function () { ... })                     // then sends the phone's tilt as axis 'tilt' (x: left -1 to
+         *     .catch(function (error) { ... });              // right 1, y: away -1 to toward 1) about 30 times a second.
+         *   LampController.canTilt()                          // false where the browser keeps its sensors from this page:
+         *                                                     // phones give them only to https pages, and this one is http
+         */
+        (function () {
+          'use strict';
+          var base = location.pathname.replace(/[^\/]*$/, '');
+          var keyName = 'lamp-controller:' + base;
+          var socketURL = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + base + 'socket';
+
+          function connect(handlers) {
+            handlers = handlers || {};
+            var socket = null, seq = 0, player = null, closedForGood = false, lastHeard = 0, retry = 0, again = null;
+            // The link's credential is read once and taken out of the address, so it isn't left in the history or shared
+            // by mistake; the phone then keeps the one Lamp gives it, for coming back as the same player.
+            var join = (location.hash || '').replace(/^#/, '');
+            if (join) history.replaceState(null, '', location.pathname + location.search);
+            function state(s) { if (handlers.onState) handlers.onState(s); }
+
+            // A link just opened always wins over a credential kept from before: that one may be for a game that has
+            // ended, or have run out while the page was away, and the link is what the person just chose.
+            function open() {
+              again = null;
+              // A pad closed while a reconnect waited stays closed: it mustn't rejoin beside the one that replaced it.
+              if (closedForGood) return;
+              var credential = join || sessionStorage.getItem(keyName);
+              if (!credential) { state('ended'); return; }
+              state('connecting');
+              socket = new WebSocket(socketURL);
+              socket.onopen = function () {
+                lastHeard = Date.now();
+                socket.send(JSON.stringify({ t: 'hello', credential: credential }));
+              };
+              socket.onmessage = function (event) {
+                lastHeard = Date.now();
+                var m; try { m = JSON.parse(event.data); } catch (e) { return; }
+                if (m.t === 'welcome') {
+                  retry = 0; join = ''; seq = 0;
+                  player = m.player;
+                  sessionStorage.setItem(keyName, m.credential);
+                  if (handlers.onPlayer) handlers.onPlayer(player);
+                  state(m.host ? 'connected' : 'waiting');
+                } else if (m.t === 'credential') {
+                  sessionStorage.setItem(keyName, m.credential);
+                } else if (m.t === 'state') {
+                  state(m.host ? 'connected' : 'waiting');
+                } else if (m.t === 'message') {
+                  if (handlers.onMessage) handlers.onMessage(m.data);
+                } else if (m.t === 'full') {
+                  closedForGood = true; state('full');
+                }
+              };
+              socket.onclose = function (event) {
+                socket = null;
+                if (event.code === 4003 || event.code === 4005) {
+                  sessionStorage.removeItem(keyName);
+                  closedForGood = true; state('ended');
+                }
+                if (closedForGood) return;
+                state('connecting');
+                retry = Math.min(retry + 1, 5);
+                again = setTimeout(open, 500 * retry);
+              };
+            }
+
+            function post(message) {
+              if (!socket || socket.readyState !== 1) return false;
+              message.seq = ++seq;
+              socket.send(JSON.stringify(message));
+              return true;
+            }
+
+            // A beat both ways: Lamp lets a quiet phone go, and a phone that hears nothing opens its link again.
+            var beat = setInterval(function () {
+              if (!socket || socket.readyState !== 1) return;
+              if (Date.now() - lastHeard > 12000) { socket.close(); return; }
+              socket.send(JSON.stringify({ t: 'beat' }));
+            }, 5000);
+            open();
+
+            return {
+              get player() { return player; },
+              button: function (name, down) { return post({ t: 'button', name: name, down: !!down }); },
+              axis: function (name, x, y) { return post({ t: 'axis', name: name, x: x, y: y }); },
+              send: function (data) { return post({ t: 'message', data: data }); },
+              close: function () { closedForGood = true; clearInterval(beat); clearTimeout(again); again = null; if (socket) socket.close(); }
+            };
+          }
+
+          function canTilt() { return !!window.DeviceMotionEvent && window.isSecureContext; }
+
+          // The phone's tilt, from gravity: the same however far it's leaned back, held upright or on its side.
+          function tilt(pad, options) {
+            options = options || {};
+            var range = options.degrees || 40;
+            var D = window.DeviceMotionEvent;
+            if (!D) return Promise.reject(new Error('This phone has no motion sensors.'));
+            if (!window.isSecureContext) return Promise.reject(new Error('This browser only shares tilt with pages opened over https.'));
+            var asked = typeof D.requestPermission === 'function' ? D.requestPermission() : Promise.resolve('granted');
+            return asked.then(function (answer) {
+              if (answer !== 'granted') throw new Error('Motion access was turned down. Allow it in the browser to steer by tilting.');
+              var last = 0;
+              window.addEventListener('devicemotion', function (event) {
+                var g = event.accelerationIncludingGravity;
+                if (!g || g.x === null) return;
+                var turn = typeof screen.orientation === 'object' ? screen.orientation.angle : (window.orientation || 0);
+                var gx = g.x, gy = g.y;
+                if (turn === 90) { gx = -g.y; gy = g.x; } else if (turn === -90 || turn === 270) { gx = g.y; gy = -g.x; } else if (turn === 180) { gx = -g.x; gy = -g.y; }
+                var side = Math.atan2(gx, Math.sqrt(gy * gy + g.z * g.z)) * 180 / Math.PI;
+                var lean = Math.atan2(gy, Math.sqrt(gx * gx + g.z * g.z)) * 180 / Math.PI;
+                var now = Date.now();
+                if (now - last < 33) return;
+                last = now;
+                pad.axis('tilt', Math.max(-1, Math.min(1, side / range)), Math.max(-1, Math.min(1, lean / range)));
+              });
+            });
+          }
+
+          window.LampController = { connect: connect, tilt: tilt, canTilt: canTilt };
+        })();
+
+        """#
+
+}
+
 extension Agent {
-    /// The rules for a TV app, in the same shape as the others' and said for the web on a TV.
-    static func tvPrompt() -> String {
-        let rules = [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.webAI,
-                     Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
+    /// The rules for a TV app, in the same shape as the others' and said for the web on a TV, offering `skills`.
+    static func tvPrompt(skills: [String: Skills.Skill] = Skills.all) -> String {
+        let rules = [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI,
+                     Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience,
+                     Skills.index(Skills.offered(mac: false, tv: true), from: skills), Rules.begin, Rules.finish]
         return (Rules.tvHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "TV")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a TV")
@@ -342,6 +685,11 @@ extension Agent.Rules {
     (put, get, all, delete), JSON kept on the TV. People rely on their data through every change you make, so once \
     something is saved, only ever add to it: a new field gets a default where it's read, and never rename or retype a \
     saved one. The app's own files (pictures, data) come in its package: `LampAssets.url(name)`, `.json(name)`.
+    """
+
+    static let tvPhone = """
+    - A page for phones (controllers, a buzzer, a second screen) goes in Phone/, which Lamp serves while the app \
+    runs: never start a server or anything that keeps running for it. Open the phone-controllers skill first.
     """
 
     /// Lamp's AI in a web app on a device (`DeviceSupport.webJS`): the TV kit's and a declared web kind's.
