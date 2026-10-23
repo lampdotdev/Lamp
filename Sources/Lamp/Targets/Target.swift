@@ -139,6 +139,9 @@ struct Target {
         var refills = false
         /// The integration a folder of this kind was written for.
         var integration: (URL) -> String? = { _ in nil }
+        /// The kind whose files these are, with a mark of this one's own (an Android TV app is an Android app with a TV's
+        /// manifest): a folder is asked whether it's this kind before it's asked whether it's that one.
+        var refines: Platform? = nil
         /// Why it can't be shared as a file yet, or nil.
         let shareRefusal: String?
     }
@@ -204,9 +207,14 @@ enum Targets {
     /// The kind a wish is when nothing says otherwise: a Mac app needs nothing more than Lamp has.
     static var fallback: Target { .mac }
 
-    /// The order a folder or a list of devices is matched in: Lamp's Swift kinds, told apart by their Package.swift,
-    /// once no kind with a mark of its own has claimed it.
-    static var matchOrder: [Target] { all.filter { $0.recipe.language != .swift } + all.filter { $0.recipe.language == .swift } }
+    /// The order a folder or a list of devices is matched in, so each is read as the most particular kind it is: a kind
+    /// made from another's files before that one, then the kinds with a mark of their own, and Lamp's Swift kinds, told
+    /// apart by their Package.swift, once none of those has claimed it.
+    static var matchOrder: [Target] { matchOrder(all) }
+    static func matchOrder(_ kinds: [Target]) -> [Target] {
+        let refining = kinds.filter { $0.recipe.refines != nil }, rest = kinds.filter { $0.recipe.refines == nil }
+        return refining + rest.filter { $0.recipe.language != .swift } + rest.filter { $0.recipe.language == .swift }
+    }
 
     /// The kinds that can be one wish with others, then those that stand alone: the order a sentence lists them in.
     static var listed: [Target] { all.filter { !$0.identity.devices.alone } + all.filter(\.identity.devices.alone) }

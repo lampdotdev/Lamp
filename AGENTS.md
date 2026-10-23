@@ -509,8 +509,9 @@ wish's other apps (folder, family, rules), and its `setup` (what this Mac must h
 line). Kinds of one language change into each other in place; a wish has one part of a family. Code outside
 `Targets/` asks a kind what it can do (`hasMac`, `hasIOS`, `hasTV`, `hasDevice`, `choosesPlace`), never which kind it is,
 except where an Apple kind's own build and signing differ. Lists of kinds go in `Targets.all`'s order, the kinds that
-stand alone after the rest and the Mac's hint last; a folder or a list of devices is matched with the Swift kinds last,
-since a Package.swift says less than another kind's own mark.
+stand alone after the rest and the Mac's hint last; a folder or a list of devices is matched with a kind made from
+another's files (`recipe.refines`) before that one and the Swift kinds last, since a Package.swift says less than another
+kind's own mark.
 
 Where an app opens is its kind's `places`, each a `Destination`: this Mac, iOS, Android, a TV or a device through its
 integration. Building, opening, looking at, using, quitting, Try On, setup checks and the device note go by the
