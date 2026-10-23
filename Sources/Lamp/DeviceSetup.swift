@@ -26,6 +26,8 @@ final class DeviceSetupModel: ObservableObject {
     /// Lets go of a device's setup as it stands in this Lamp, for Forget: its watch stops, a command waiting for the
     /// person's yes is turned down, and what waited for it to be ready isn't run. Found again, it starts afresh.
     static func discard(_ deviceID: String) {
+        // Its window shows this model: closed, so a setup started again opens on a fresh one.
+        DeviceSetupWindow.close(deviceID)
         guard let model = models.removeValue(forKey: deviceID) else { return }
         model.stopWatching()
         if model.approval != nil { model.decide(false) }
@@ -215,6 +217,9 @@ final class DeviceSetupWindow: NSObject, NSWindowDelegate {
         NSApp.activate()
         model.watch()
     }
+
+    /// Closes a device's setup window, for Forget.
+    static func close(_ deviceID: String) { windows[deviceID]?.close() }
 
     func windowWillClose(_ notification: Notification) {
         model.stopWatching()
