@@ -1822,6 +1822,7 @@ final class Store: ObservableObject {
         if let index = projects.firstIndex(where: { $0.id == current.id }) { projects[index] = changed }
         log(changed, .status, "\(changed.name) will open in the \(previewDevice(changed)) preview on your Mac when you press Play.")
         finish(changed)
+        refreshOpenApps()
     }
 
     func setDeviceAppDevice(_ project: LampProject, _ id: String) {
@@ -1834,6 +1835,7 @@ final class Store: ObservableObject {
             if let index = projects.firstIndex(where: { $0.id == current.id }) { projects[index] = changed }
             log(changed, .status, "\(changed.name) will go on \(device.name) when you press Play.")
             finish(changed)
+            refreshOpenApps()
         }
         DeviceSetupWindow.show(device, then: choose)
     }
@@ -6491,7 +6493,9 @@ final class Store: ObservableObject {
             if let device = await Integrations.identify(integration, at: address) { found.append(device) }
         }
         for device in found { devices.removeAll { $0.id == device.id }; devices.append(device) }
-        return DeviceApps.device(for: project, among: devices)
+        // A device known only from its record (set up before, not answering now) is no place to put the app: the caller
+        // says so, or plays it in the preview on this Mac meanwhile.
+        return DeviceApps.device(for: project, among: devices).flatMap { $0.connected ? $0 : nil }
     }
 
     /// Puts a device app on the person's device and opens it there, through its integration's bridge. A device not set
@@ -8424,11 +8428,15 @@ final class Store: ObservableObject {
         // A TV app is open while its preview is, unless a TV is chosen: then Play is for putting it on the TV, which
         // Lamp can't watch, so it always offers Play.
         // A device app's is the same while the preview is where it goes (`DeviceApps.goesToPreview`), and a game's window.
+        // Each counts only while Try On points at it, so moving Try On offers Play for the new place rather than Stop for
+        // the copy left in the other.
+        let inPreview = { [self] (id: String) in projects.first { $0.id == id }.map { $0.platform == .device && DeviceApps.goesToPreview($0) } ?? false }
         let previews = TVPreview.openIDs.filter { id in
             projects.first { $0.id == id }.map { ($0.platform == .tv && $0.device == nil) || ($0.platform == .device && DeviceApps.goesToPreview($0)) } ?? false
-        } + GameKit.Window.openIDs
+        } + GameKit.Window.openIDs.filter(inPreview)
+        let onDevices = deviceRuns.keys.filter { !inPreview($0) }
         // A device app is open while it's the one Lamp last put on its device, so Stop can take the device back.
-        let onIOS = Array(simulatorApps.keys) + Array(deviceApps.keys) + Array(androidApps.keys) + previews + Array(deviceRuns.keys)
+        let onIOS = Array(simulatorApps.keys) + Array(deviceApps.keys) + Array(androidApps.keys) + previews + onDevices
         // A build or icon held for a Mac copy goes in when that copy closes, even with its iPhone copy still open.
         let closedOnMac = openOnMac.subtracting(onMac)
         if Set(onMac) != openOnMac { openOnMac = Set(onMac) }
