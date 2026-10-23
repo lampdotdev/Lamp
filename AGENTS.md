@@ -98,7 +98,7 @@ A capability given to one engine must be given to all of them that can take it, 
   parts, with the agent's answer under it; a build that asked on the way, failed or was stopped stays open. Which
   part a line goes under is decided as it's logged (`TurnProgress.chapter(for:)`) from what Lamp is sure of: the plan,
   the files it lists for each part and the files written. A file listed for a later part moves the build on, and so
-  does something said (a message, a progress line, a question, a new plan) once the part it's on is done; anything
+  does something said (a message, a progress line, a question, a new plan) once the part it's on is done, to the next part; anything
   else (a read, a command, a look, a fix to an earlier part's file) stays with the part the build is on. The part is
   kept on the line (`LogLine.part`) and the plan's parts on the run's summary (`LogLine.plan`), so the chat reads the
   same after the turn and a relaunch; a line with no part (before the plan came) goes with the line before it, the

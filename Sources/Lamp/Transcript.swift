@@ -225,7 +225,7 @@ extension LogLine {
             guard !said.isEmpty else { continue }
             let words = line.failed == true ? said + ChatLook.failedMark : said
             if let last = out.last, last.kind == .status, (last.said ?? last.text) == words { continue }
-            out.append(LogLine(id: line.id, kind: .status, text: words, at: line.at, foldTitle: line.foldTitle, failed: line.failed))
+            out.append(LogLine(id: line.id, kind: .status, text: words, at: line.at, foldTitle: line.foldTitle, failed: line.failed, part: line.part))
         }
         return out
     }

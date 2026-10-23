@@ -109,9 +109,9 @@ struct TurnProgress {
 
     /// Which part of the plan a line being logged goes under, going only by what Lamp is sure of: the agent's plan
     /// (its parts, the files it listed for each, which it says are done) and the files it writes. Writing a file
-    /// listed for a later part, and for none before it, moves the build on to that part; so does the agent saying
-    /// something (a message, a progress line, a question, a new plan) once the part it's on is done, since it begins
-    /// each pass by saying so. Anything else (a read, a command, a look at the app, Lamp's "Building…") stays with the
+    /// listed for a later part, and for none before it, moves the build on to that part; the agent saying something
+    /// (a message, a progress line, a question, a new plan) once the part it's on is done moves it to the next one,
+    /// since it begins each pass by saying so. Anything else (a read, a command, a look at the app, Lamp's "Building…") stays with the
     /// part the build is on: the agent checks and fixes a part after writing it, and which part a read or a command
     /// is for can't be told. Nil when there is no plan yet, or the run is over.
     mutating func chapter(for line: LogLine) -> Int? {
@@ -126,7 +126,9 @@ struct TurnProgress {
                 part = later
             }
         } else if plan[part].done, [.agent, .progress, .ask].contains(line.kind) || call?.action == .plan {
-            part = plan.indices.first { $0 > part && !plan[$0].done } ?? part
+            // The next part in order, even one that looks done already: a listed file is kept by its name alone, so a
+            // later part's Phone/index.html is ticked by the first part's index.html.
+            part = min(part + 1, plan.count - 1)
         }
         reached = part
         return part

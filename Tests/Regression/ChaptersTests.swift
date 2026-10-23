@@ -175,4 +175,30 @@ final class ChaptersTests: XCTestCase {
         guard case .build(let build) = live.last else { return XCTFail() }
         XCTAssertTrue(build.titles.isEmpty)
     }
+
+    /// A real first build (a TV game show, 2026-10-23): the plan listed Phone/index.html for its second part, and Lamp
+    /// keeps a listed file by its name alone, so writing the TV page's index.html ticked that part too. The agent's
+    /// "Now the phone buzzer page." then went past it to the third, and the phone page's part stayed empty.
+    func testTheNextThingSaidGoesToTheNextPartEvenWhenItLooksDone() {
+        var progress = TurnProgress(newApp: true)
+        progress.plan = PlanPart.parts(from: ["parts": [
+            ["title": "Lobby with a code for phones to join", "files": ["index.html", "style.css", "qr.js", "about.json"]],
+            ["title": "Phone buzzer page", "files": ["Phone/index.html"]],
+            ["title": "Question rounds, buzzing and scores", "files": ["questions.js", "app.js"]],
+            ["title": "Winner screen", "files": ["APP.md"]],
+        ]])
+        for file in ["qr.js", "index.html", "style.css", "about.json"] { XCTAssertEqual(log(.tool, "write \(file)", in: &progress), 0) }
+        XCTAssertEqual(log(.agent, "Now the phone buzzer page.", in: &progress), 1)
+        XCTAssertEqual(log(.tool, "write index.html", in: &progress), 1)
+        XCTAssertEqual(log(.tool, "write questions.js", in: &progress), 2)
+    }
+
+    /// Seen in a real first build: the bar said Part 2 of 3 while the chat still drew the first part as the one going
+    /// on. The chat shows a tool call as a step in plain words, a line made anew, and that line had lost its part, so
+    /// every step went under the part of the message before it.
+    func testAStepKeepsItsPartInTheChat() {
+        let steps = LogLine.visible([line(.user, "a kitchen board"), line(.tool, "write BoardView.swift", part: 0),
+                                     line(.tool, "write ShoppingStore.swift", part: 1)], details: false)
+        XCTAssertEqual(steps.map(\.part), [nil, 0, 1])
+    }
 }
