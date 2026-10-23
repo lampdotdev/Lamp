@@ -5,12 +5,12 @@ import { DOWNLOAD_URL } from "../lib/download";
 
 // The page we're on, so its link can say so.
 const here = Astro.url.pathname.replace(/\/$/, "") || "/";
-// On a phone Home is left out: the name beside it goes home too. AI and Features go to the homepage's sections of
-// those names, and only where there's room for them beside the rest.
+// On a phone Home is left out: the name beside it goes home too. Features and AI go to the homepage's sections of
+// those names, in the page's order, and only where there's room for them beside the rest.
 const links = [
   { href: "/", label: "Home", wide: true },
-  { href: "/#ai", label: "AI", wider: true },
   { href: "/#features", label: "Features", wider: true },
+  { href: "/#ai", label: "AI", wider: true },
   { href: "/ideas", label: "Ideas" },
 ];
 ---
