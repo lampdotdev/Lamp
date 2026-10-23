@@ -39,7 +39,9 @@ final class SkillsTests: XCTestCase {
     /// skill, a one-line description within the format's limit, and instructions.
     func testEveryOfferedSkillShipsAndReads() {
         XCTAssertEqual(Set(shipped.keys), ["scene-3d", "maps", "chrome-sidebar", "device-integrations", "android-design", "phone-controllers",
-                                           "app-kinds", "menu-bar", "mac-widgets", "iphone-widgets", "apple-watch", "iphone-hardware"])
+                                           "app-kinds", "menu-bar", "mac-widgets", "iphone-widgets", "apple-watch", "iphone-hardware",
+                                           "building-blocks", "app-ai", "accounts", "app-intents", "share-extension", "finder-files",
+                                           "mac-permissions", "scripting", "games-2d", "change-of-subject", "icloud-sync"])
         for (name, skill) in shipped {
             XCTAssertFalse(skill.body.isEmpty, name)
             XCTAssertLessThanOrEqual(skill.description.count, 1024, name)
@@ -47,7 +49,7 @@ final class SkillsTests: XCTestCase {
         }
         // The integrations' skill is named by its own rule, in every prompt, rather than in the list; every other one
         // is offered to some prompt.
-        let everyOffered = [Platform.mac, .iphone, .universal, .android, .tv, .device].flatMap { Skills.offered($0, sidebar: true) }
+        let everyOffered = [Platform.mac, .iphone, .universal, .android, .tv, .device].flatMap { Skills.offered($0, sidebar: true) + Skills.named($0) }
         if Agent.Rules.scenes { XCTAssertEqual(Set(everyOffered), Set(shipped.keys).subtracting(["device-integrations"])) }
         XCTAssertEqual(Skills.offered(.android), ["android-design"])
         XCTAssertEqual(Skills.offered(.tv), ["phone-controllers"])
@@ -116,6 +118,43 @@ final class SkillsTests: XCTestCase {
         XCTAssertEqual(Set(prompts.flatMap(\.2)).intersection(moved.keys), Set(moved.keys))
     }
 
+    /// What every app might need but most requests don't (the building blocks' calls, AI in the app, the accounts,
+    /// App Intents, share extensions, Finder, the Mac's permissions, scripting, 2D games, a change of subject, iCloud)
+    /// is in skills each prompt names in a one-line rule, not in its list, and the prompts no longer carry it.
+    func testPromptsNameTheSkillsTheirShortRulesStandFor() {
+        let moved: [String: [String]] = [
+            "building-blocks": ["LampFolderWatcher(folder)", "LampSchedule.daily(", "LampWeatherAttribution", "LampSpotlight.index", "lampBackground()", "accessories()"],
+            "app-ai": ["SFSpeechRecognizer", "LampAI.when(", "decideEach", "requiresOnDeviceRecognition", "sanitising"],
+            "accounts": ["LampCalendar.events", "LampMail.inbox", "LampComputer.ask(", "Internet Accounts"],
+            "app-intents": ["AppShortcutsProvider", "applicationName", "EntityQuery"],
+            "share-extension": ["LampShareSheet", "LampShare.onReceive", "Edit Extensions"],
+            "finder-files": ["\"opens\":", "bundlePath"],
+            "mac-permissions": ["LampPermissionGate", "LampPermissionState", "Quit & Reopen"],
+            "scripting": ["sealed context"],
+            "games-2d": ["SKPhysicsBody", "resizeFill"],
+            "change-of-subject": ["Neapolitan", "never plainer"],
+            "icloud-sync": ["LampSync.collection", "reproductive"],
+        ]
+        for (name, phrases) in moved {
+            for phrase in phrases { XCTAssertTrue(shipped[name]!.body.contains(phrase), "\(name) says \(phrase)") }
+        }
+        let prompts: [(String, String, Platform)] = [
+            ("Mac", Agent.systemPrompt, .mac),
+            ("iPhone", Agent.iPhonePrompt(for: .iphone), .iphone),
+            ("Mac and iPhone", Agent.universalPrompt(for: .iphone), .universal),
+        ]
+        for (kind, prompt, platform) in prompts {
+            for name in Skills.named(platform) {
+                XCTAssertNotNil(shipped[name], name)
+                XCTAssertTrue(prompt.contains("the \(name) skill"), "\(kind) names \(name)")
+            }
+            for (name, phrases) in moved {
+                for phrase in phrases { XCTAssertFalse(prompt.contains(phrase), "\(kind) still carries \(name)'s \(phrase)") }
+            }
+        }
+        XCTAssertEqual(Set(prompts.flatMap { Skills.named($0.2) }), Set(moved.keys))
+    }
+
     /// A TV turn's prompt lists the phone page's skill instead of carrying what it says, and a TV app with a page for
     /// phones, or a TV page using them, is told the skill applies.
     func testTVPromptOffersThePhoneSkill() throws {
@@ -148,7 +187,7 @@ final class SkillsTests: XCTestCase {
 
         let (missing, error) = Skills.read(["name": "3d"], from: shipped)
         XCTAssertEqual(missing, 400)
-        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: android-design, app-kinds, apple-watch, chrome-sidebar, device-integrations, iphone-hardware, iphone-widgets, mac-widgets, maps, menu-bar, phone-controllers, scene-3d.")
+        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, building-blocks, change-of-subject, chrome-sidebar, device-integrations, finder-files, games-2d, icloud-sync, iphone-hardware, iphone-widgets, mac-permissions, mac-widgets, maps, menu-bar, phone-controllers, scene-3d, scripting, share-extension.")
     }
 
     func testParsing() {

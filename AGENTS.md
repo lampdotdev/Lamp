@@ -137,19 +137,22 @@ A capability given to one engine must be given to all of them that can take it, 
   prompt, so the prompt keeps what nearly every request uses. A skill is a folder with a `SKILL.md` in the Agent
   Skills format (a one-line `name` and `description` between `---` lines, then the instructions), copied into
   the bundle by build.sh. The prompt lists the skills it offers by name and description (`Skills.index`, offered
-  by `Skills.offered` the way a rule is given only to the prompts it fits), and the agent opens one with
+  by `Skills.offered` the way a rule is given only to the prompts it fits), or names it in the one short rule that
+  stands for it (`Skills.named`: the building blocks' calls, AI in the app, the person's accounts, App Intents, share
+  extensions, Finder, the Mac's permissions, scripting, 2D games, a change of subject, iCloud), which costs the
+  prompt a line instead of a rule and a line; and the agent opens one with
   `read_skill`, a tool like any other, so every engine reads skills the same way. Lamp answers from its own bundle,
   so a skill changed in an update reaches a conversation that began before it. Each engine can load skills of its own,
   and Lamp keeps that off where it can (pi's `--no-skills`; Claude Code's `--disable-slash-commands`, without which
   it loads its own skills for coding work; Codex's `skills.bundled.enabled=false` its own. Codex runs outside Lamp's sandbox, and
   it reads the person's own skills in `~/.agents/skills` at every start, which no setting of Codex's turns off): those are for other
   work, and the same file for every engine is one place to keep up to date. When an app's own code
-  shows a skill applies (`Skills.applying`: it's new and still to be given its kind, it imports RealityKit, it uses OpenStreetMap data, it has a Chrome sidebar page, a menu bar icon, a widget or a watch app, it uses the phone's hardware or Health, a TV app has a page for phones), Lamp names it at
+  shows a skill applies (`Skills.applying`: it's new and still to be given its kind, it imports RealityKit, it uses OpenStreetMap data, it has a Chrome sidebar page, a menu bar icon, a widget or a watch app, it uses the phone's hardware or Health, a TV app has a page for phones, it uses one of those named skills' blocks or frameworks, or has a share extension), Lamp names it at
   the end of the request (`Skills.brief`), sent like `AIStatus.brief` through `RequestNote`: once per
   conversation, again when it changes or the conversation was compacted. What's remembered as told carries each
   skill's revision (`Skills.revision`, a hash of its instructions), so a conversation told of a skill before an
   update changed it is asked to open it again. A new skill is a folder there, its name
-  in `Skills.offered`, and, when an app's code can show it applies, a check in `Skills.applying`.
+  in `Skills.offered` or `Skills.named`, and, when an app's code can show it applies, a check in `Skills.applying`.
   So guidance that only matters for some apps (a game genre, a device feature, 3D design, phone controllers) goes
   in a skill, the way `phone-controllers`, `iphone-hardware` and `apple-watch` did, never into the system prompt:
   every turn of every request reads the prompt, whether its app needs that or not. The prompt keeps at most a
