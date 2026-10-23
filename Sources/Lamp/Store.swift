@@ -3045,7 +3045,7 @@ final class Store: ObservableObject {
                 await applyIconArt(project, spec: spec)
                 release(project)
                 if reloadWhenFree.contains(project.id) { reloadWaiting(project.id) }
-                fixHeldCrash(project)
+                fixHeldCrashes(project)
                 offerHeldDrawing(project)
                 startQueued(project)
                 installHeldIcons(for: [project.id])
@@ -3057,7 +3057,7 @@ final class Store: ObservableObject {
         if iconFallbackWhenFree.remove(project.id) != nil, let spec = Icons.load(project) {
             Task { await artworkWontCome(project, spec: spec, failed: false) }
         }
-        fixHeldCrash(project)
+        fixHeldCrashes(project)
         offerHeldDrawing(project)
         startQueued(project)
         refreshUndoOffer(project)
@@ -3281,7 +3281,7 @@ final class Store: ObservableObject {
         // Only build when something changed: not after a question, and not again when the agent's last
         // look already built and opened exactly this code.
         try? await writeOwnFiles(project, all: false)
-        let changed = Runtime.sourcesChanged(project)
+        var changed = Runtime.sourcesChanged(project)
         if changed, owner.paused {
             // A file written in the moment before Lamp ended the agent: built once, with no run of the agent to fix it
             // (nothing it did could be seen). One that doesn't build is neither saved nor installed, as after any
@@ -3300,21 +3300,40 @@ final class Store: ObservableObject {
         // The wish's other apps as the one at its root: each one the agent changed is built, and its errors go back to
         // the agent the same way, before the version is saved, so the version holds what every app of the wish builds.
         var changedParts: Set<String> = []
-        for part in parts(of: project) {
-            // One the agent took away while fixing another is no longer the wish's.
-            guard let part = current(part) else { continue }
-            guard let built = await asPartOf(project, part, { () async -> Bool in
-                try? await self.writeOwnFiles(part, all: false)
-                guard Runtime.sourcesChanged(part) else { return true }
-                changedParts.insert(part.id)
-                guard owner.paused else { return await self.buildFixingErrors(part) }
-                guard let errors = await self.build(part) else { return true }
-                self.carry("\(self.placeName(part)), in \(part.dir.lastPathComponent)/:\n\(errors)", into: project)
-                self.log(project, .error, ErrorMessages.buildFailed)
-                return false
-            }) else { continue }
-            guard built else { return TurnResult(end: owner.asked ? .replied : .failed, watched: isWatching(project.id)) }
-            project = current(project) ?? project
+        // A fix the agent makes for one app may change another (a message both read), so the apps are looked at again
+        // until every one's files are what it was last built from, and only then is the version saved.
+        for _ in 0..<3 {
+            for part in parts(of: project) {
+                // One the agent took away while fixing another is no longer the wish's.
+                guard let part = current(part) else { continue }
+                guard let built = await asPartOf(project, part, { () async -> Bool in
+                    try? await self.writeOwnFiles(part, all: false)
+                    guard Runtime.sourcesChanged(part) else { return true }
+                    changedParts.insert(part.id)
+                    guard owner.paused else { return await self.buildFixingErrors(part) }
+                    guard let errors = await self.build(part) else { return true }
+                    self.carry("\(self.placeName(part)), in \(part.dir.lastPathComponent)/:\n\(errors)", into: project)
+                    self.log(project, .error, ErrorMessages.buildFailed)
+                    return false
+                }) else { continue }
+                guard built else { return TurnResult(end: owner.asked ? .replied : .failed, watched: isWatching(project.id)) }
+                project = current(project) ?? project
+            }
+            guard Runtime.sourcesChanged(project) else { break }
+            changed = true
+            if owner.paused {
+                if let errors = await build(project) {
+                    carry(errors, into: project)
+                    log(project, .error, ErrorMessages.buildFailed)
+                    return TurnResult(end: .failed, watched: isWatching(project.id))
+                }
+            } else {
+                guard await buildFixingErrors(project) else {
+                    return TurnResult(end: owner.asked ? .replied : .failed, watched: isWatching(project.id))
+                }
+                project = current(project) ?? project
+            }
+            guard parts(of: project).contains(where: Runtime.sourcesChanged) else { break }
         }
         // Opening the app brings it in front of Lamp, so whether the user was watching is decided first.
         let watched = isWatching(project.id)
@@ -4348,6 +4367,8 @@ final class Store: ObservableObject {
         if away.personStopped(project.id) { reloadWhenFree.remove(project.id) }
         turn.cancel()
         setAsideChanges[project.id]?.afterStop = true   // no fix starts by itself after Stop (`fixHeldCrash`)
+        // A part the wish's Undo or restore is rebuilding, under a hold of its own.
+        for part in parts(of: project) where rebuildingFor[part.id] == project.id { stop(part) }
     }
 
     /// Opens the installed app, or brings it to the front if it's running. Only builds when there's
@@ -5561,9 +5582,13 @@ final class Store: ObservableObject {
         for part in parts(of: wish) {
             guard turns[wish.id]?.stopped != true, let part = current(part) else { return }
             if onlyChanged, !Runtime.sourcesChanged(part) { continue }
+            rebuildingFor[part.id] = wish.id
             await run(part)
+            rebuildingFor[part.id] = nil
         }
     }
+    /// The wish each part being rebuilt by `rebuildParts` belongs to, so Stop in the wish's chat reaches it.
+    private var rebuildingFor: [String: String] = [:]
 
     /// Goes back to the version before the current one. Like any restore, this is itself a new version.
     /// `change` is the version Undo Last Change in the chat was offered under: when the app has moved on from it
@@ -7724,8 +7749,17 @@ final class Store: ObservableObject {
             if !fixCrash(project, detail: aside.crash) { setAsideChanges[project.id]?.told = false }
             return
         }
+        // A part's crash is fixed through its wish, so while the wish is held (an Undo rebuilding its parts) it waits
+        // for the wish's own `finish`.
+        if let wish = project.partOf, busy.contains(wish) || turns[wish] != nil, crashesAfterRelease[project.id] != nil { return }
         guard let crash = crashesAfterRelease.removeValue(forKey: project.id) else { return }
-        if !fixCrash(project, detail: crash) { log(project, .error, ErrorMessages.crashAfterLaunch(project.name)) }
+        if !fixCrash(project, detail: crash) { log(project, .error, ErrorMessages.crashAfterLaunch(project.isPart ? placeName(project) : project.name)) }
+    }
+
+    /// `fixHeldCrash` for the app and, for a wish, each of its other apps, whose crashes waited for it.
+    private func fixHeldCrashes(_ project: LampProject) {
+        fixHeldCrash(project)
+        for part in parts(of: project) where turns[part.id] == nil { fixHeldCrash(part) }
     }
 
     /// The crash report each app's last automatic fix answered, so the same crash seen twice (on opening, and as
