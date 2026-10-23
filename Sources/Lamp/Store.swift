@@ -6361,7 +6361,9 @@ final class Store: ObservableObject {
     private func lookOnTV(_ project: LampProject, turn: Turn, changed: Bool, reopen: Bool) async -> (Int, [String: Any]) {
         let device = previewDevice(project)
         var summary = "The app is open in the \(device) preview on this Mac."
-        if changed || !TVPreview.isOpen(project) || reopen {
+        // A device app's preview may show an older build than the last one: a look on the device builds without opening it here.
+        let stale = project.platform == .device && previewBuilt[project.id] != Runtime.builtFingerprint(project)
+        if changed || stale || !TVPreview.isOpen(project) || reopen {
             let problem = await install(project, inFront: false, early: true)
             turn.look.installed = true
             if let problem { return (200, ["text": "The app didn't open in the \(device) preview on this Mac.\n\n\(problem)"]) }
@@ -6473,7 +6475,9 @@ final class Store: ObservableObject {
     private func openDevicePreview(_ project: LampProject, folder: String) async -> String? {
         let device = previewDevice(project)
         do {
+            let built = Runtime.builtFingerprint(project)
             let staged = try await TVs.stage(project, folder: folder)
+            previewBuilt[project.id] = built
             note("Opening \(project.name) in the \(device) preview…", for: project)
             let problem = await TVPreview.show(project, staged: staged, inFront: false, device: device)
             refreshOpenApps()
@@ -6483,6 +6487,9 @@ final class Store: ObservableObject {
             return error.localizedDescription
         }
     }
+
+    /// Which build each device app's preview on this Mac was opened from, as `deviceRunBuilt` is for the device.
+    private var previewBuilt: [String: String] = [:]
 
     /// What a preview on this Mac stands in for, as the person calls it: a TV, or a device app's device ("Xbox").
     private func previewDevice(_ project: LampProject) -> String {
@@ -6567,7 +6574,9 @@ final class Store: ObservableObject {
         if DeviceApps.previewFolder(for: project) != nil, !onDevice { return await lookOnTV(project, turn: turn, changed: changed, reopen: reopen) }
         let name = DeviceApps.integration(for: project)?.name ?? "device"
         var summary: String
-        if changed || deviceRuns[project.id] == nil || reopen {
+        // What the device runs may be older than what was built since: a look in the preview builds without putting it there.
+        let stale = deviceRunBuilt[project.id] != Runtime.builtFingerprint(project)
+        if changed || stale || deviceRuns[project.id] == nil || reopen {
             let problem = await install(project, inFront: false, early: true, onDevice: true)
             turn.look.installed = true
             if let problem {

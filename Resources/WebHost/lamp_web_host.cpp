@@ -7,7 +7,12 @@
 // host itself has to say go to log.txt in the app's own folder, which Device Portal reads back.
 //
 // lamp.js reaches Lamp on the Mac through the host (`http` messages): the page is https and Lamp's gateway plain http
-// on the home network, which Chromium won't let the page call itself. Only Lamp's own paths are passed on.
+// on the home network, which Chromium won't let the page call itself. Only the app's own page may ask, only Lamp's own
+// paths are passed on, and an answer goes only to the page that asked: the app's token and its AI's answers are in
+// them. A link to anywhere else opens in the console's browser, never in this web view.
+//
+// The page is laid out at 1920x1080 CSS pixels, as in Lamp's preview on the Mac and as the rules say: the console's
+// web view would otherwise lay it out at 1280x720 and scale it up, so the host zooms it out to match.
 //
 // Built by scripts/build-web-host.sh; Lamp ships the program it makes (Resources/WebHost/App.exe).
 #define WIN32_LEAN_AND_MEAN
@@ -26,6 +31,7 @@
 #include <winrt/Windows.Web.Http.Filters.h>
 #include <winrt/Windows.Web.Http.Headers.h>
 #include <winrt/Windows.Storage.Streams.h>
+#include <winrt/Windows.System.h>
 #include <winrt/Microsoft.Web.WebView2.Core.h>
 #include <cstdio>
 #include <string>
@@ -38,6 +44,9 @@ using Windows::Data::Json::JsonObject;
 using Windows::Data::Json::JsonValue;
 
 static FILE* g_log = nullptr;
+static const wchar_t* g_origin = L"https://lamp.example/";
+
+static bool is_app_page(std::wstring_view url) { return url.rfind(g_origin, 0) == 0; }
 
 static void say_line(std::wstring_view text);
 
@@ -72,6 +81,8 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
     Windows::UI::Composition::CompositionTarget target{ nullptr };
     Windows::UI::Composition::ContainerVisual root{ nullptr };
     std::wstring installed;
+    // Counts the page's top-level navigations, so an answer to a page that has since gone is dropped.
+    uint64_t page = 0;
 
     IFrameworkView CreateView() { return *this; }
 
@@ -140,7 +151,7 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
             web.WebMessageReceived([this](auto const&, CoreWebView2WebMessageReceivedEventArgs const& args) {
                 JsonObject message{ nullptr };
                 if (JsonObject::TryParse(args.WebMessageAsJson(), message) && message.GetNamedString(L"lamp", L"") == L"http") {
-                    relay(message);
+                    if (is_app_page(args.Source())) relay(message);
                     return;
                 }
                 try { say_line(std::wstring(L"page: ") + std::wstring(args.TryGetWebMessageAsString())); }
@@ -154,11 +165,20 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
             web.ProcessFailed([](auto const&, CoreWebView2ProcessFailedEventArgs const& args) {
                 say(L"Lamp: a WebView2 process stopped (kind %d, reason %d, exit %d).", (int)args.ProcessFailedKind(), (int)args.Reason(), args.ExitCode());
             });
-            // A link the page opens elsewhere stays in this window: the console has no second one to show it in.
-            web.NewWindowRequested([](auto const& sender, CoreWebView2NewWindowRequestedEventArgs const& args) {
-                args.Handled(true);
-                sender.Navigate(args.Uri());
+            // The app's pages stay in this window; anything else opens in the console's browser, so no other site's page
+            // is ever where the app's answers go.
+            web.NavigationStarting([this](auto const&, CoreWebView2NavigationStartingEventArgs const& args) {
+                std::wstring uri(args.Uri());
+                if (is_app_page(uri) || uri == L"about:blank") { page++; return; }
+                args.Cancel(true);
+                elsewhere(uri);
             });
+            web.NewWindowRequested([this](auto const& sender, CoreWebView2NewWindowRequestedEventArgs const& args) {
+                args.Handled(true);
+                std::wstring uri(args.Uri());
+                if (is_app_page(uri)) sender.Navigate(args.Uri()); else elsewhere(uri);
+            });
+            co_await fit_page();
             web.Navigate(L"https://lamp.example/index.html");
             controller.MoveFocus(CoreWebView2MoveFocusReason::Programmatic);
         } catch (hresult_error const& e) {
@@ -207,6 +227,7 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
     fire_and_forget relay(JsonObject message) {
         auto lifetime = get_strong();
         auto dispatcher = window.Dispatcher();
+        uint64_t asked = page;
         double id = message.GetNamedNumber(L"id", 0);
         JsonObject answer;
         answer.SetNamedValue(L"lamp", JsonValue::CreateStringValue(L"http"));
@@ -243,7 +264,39 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
             answer.SetNamedValue(L"error", JsonValue::CreateStringValue(e.message()));
         }
         co_await resume_foreground(dispatcher);
-        if (web) web.PostWebMessageAsJson(answer.Stringify());
+        if (web && page == asked && is_app_page(web.Source())) web.PostWebMessageAsJson(answer.Stringify());
+    }
+
+    // A link out of the app, in the console's own browser.
+    fire_and_forget elsewhere(std::wstring uri) {
+        try {
+            Windows::Foundation::Uri target(uri);
+            if (target.SchemeName() != L"https" && target.SchemeName() != L"http") co_return;
+            co_await Windows::System::Launcher::LaunchUriAsync(target);
+        } catch (...) {}
+    }
+
+    // Opens a blank page first to learn the CSS width the web view gives the window, then zooms so the app's page
+    // is 1920 CSS pixels wide, before the app's page opens.
+    Windows::Foundation::IAsyncAction fit_page() {
+        auto lifetime = get_strong();
+        try {
+            winrt::handle opened{ CreateEventW(nullptr, TRUE, FALSE, nullptr) };
+            auto token = web.NavigationCompleted([&](auto const&, auto const&) { SetEvent(opened.get()); });
+            web.Navigate(L"about:blank");
+            co_await resume_on_signal(opened.get(), std::chrono::seconds(5));
+            co_await resume_foreground(window.Dispatcher());
+            web.NavigationCompleted(token);
+            auto width = co_await web.ExecuteScriptAsync(L"window.innerWidth");
+            double css = _wtof(width.c_str());
+            if (css > 0) {
+                double zoom = controller.ZoomFactor() * css / 1920.0;
+                controller.ZoomFactor(zoom);
+                say(L"Lamp: the page is 1920 CSS pixels wide (the web view gave %.0f, zoomed to %.3f).", css, zoom);
+            }
+        } catch (hresult_error const& e) {
+            say(L"Lamp: the page's size couldn't be set (0x%08x).", (unsigned)e.code());
+        }
     }
 
     void Run() {

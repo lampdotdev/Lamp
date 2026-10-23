@@ -822,7 +822,10 @@ Microsoft's redistributable `Microsoft.Web.WebView2.Core.dll` beside it, and `De
 `Web/` in an x64 package whose manifest registers that library's classes (`MSIX.Start.webHost`): nothing is built on
 the person's Mac, and the browser is the console's own. It hosts WebView2 through composition on its CoreWindow,
 as WinUI's control does (a controller given the CoreWindow itself ends the app on the Xbox), and keeps the
-`CoreWebView2` and its DevTools receivers for the app's life (WebView2 drops the handlers of objects let go). The page
+`CoreWebView2` and its DevTools receivers for the app's life (WebView2 drops the handlers of objects let go). The
+console's web view lays a page out at 1280x720 and scales it up, so the host zooms it to 1920x1080 CSS pixels before the
+app's page opens (`fit_page`), as the preview and the rules have it. Only the app's own page may use the host: a link
+to another site opens in the console's browser, and an answer goes only to the page that asked. The page
 is https at `https://lamp.example/`, so lamp.js reaches Lamp's plain-http gateway through the host (`http` web
 messages, only to Lamp's own paths), and a claim tries the Mac's IPv4 addresses first: the console reaches the
 `.local` name over IPv6, which the claim, opened for the device's IPv4 address, refuses. The page's console, uncaught
