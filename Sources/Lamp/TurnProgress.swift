@@ -134,6 +134,14 @@ struct TurnProgress {
         return part
     }
 
+    /// Whether the run's summary keeps the plan, which makes its lines chapters for good. A run that ended on a question
+    /// asked before there was any plan built nothing, and chapters drawn round that card would move it under the pointer.
+    /// One asked once the plan had come is in a part already, drawn under its heading, so the plan stays or the headings
+    /// above the card would go.
+    static func savesPlan(asked: Bool, in lines: [LogLine]) -> Bool {
+        !asked || lines.last { $0.kind == .ask }?.part != nil
+    }
+
     /// The agent wrote or edited a file.
     mutating func wrote(_ file: String) {
         if files.last != file {

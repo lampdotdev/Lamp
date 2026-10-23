@@ -1068,10 +1068,8 @@ final class Store: ObservableObject {
         guard progress[project.id]?.newApp == true else { return line }
         var line = line
         if line.kind == .summary {
-            // A run that ended on its questions built nothing: a plan given on the way out is no build's, and drawn as
-            // one it would move the card that waits.
             if let plan = progress[project.id]?.plan, !plan.isEmpty, progress[project.id]?.chaptersClosed == false,
-               turns[project.id]?.asked != true {
+               TurnProgress.savesPlan(asked: turns[project.id]?.asked == true, in: logs[project.id] ?? []) {
                 line.plan = plan.map(\.title)
             }
             progress[project.id]?.chaptersClosed = true

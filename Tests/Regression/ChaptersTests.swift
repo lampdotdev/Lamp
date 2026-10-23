@@ -201,4 +201,35 @@ final class ChaptersTests: XCTestCase {
                                      line(.tool, "write ShoppingStore.swift", part: 1)], details: false)
         XCTAssertEqual(steps.map(\.part), [nil, 0, 1])
     }
+
+    /// A question asked once the plan had come is in a part, so the build keeps its plan when the run ends on it: without
+    /// it the chapters round the waiting card would go and the card would move. One asked before any plan keeps none.
+    func testAQuestionAskedInAPartKeepsThePlan() {
+        let before = [line(.user, "a game show"), line(.ask, "TV, Mac or both?")]
+        XCTAssertFalse(TurnProgress.savesPlan(asked: true, in: before))
+        let inPart = [line(.user, "a game show"), line(.tool, "write index.html", part: 0), line(.ask, "How many teams?", part: 0)]
+        XCTAssertTrue(TurnProgress.savesPlan(asked: true, in: inPart))
+        XCTAssertTrue(TurnProgress.savesPlan(asked: false, in: before))
+    }
+
+    /// While Lamp builds and opens the app after the agent's run, what it logs comes after the build's summary and is no
+    /// part's: it's drawn after the chapters, not as a second build with the same plan.
+    func testLampsOwnBuildAfterTheRunIsNoSecondBuild() {
+        var progress = building()
+        progress.chaptersClosed = true
+        let lines = Array(finished.dropLast()) + [line(.status, "Building…")]
+        let segments = Chapters.segments(lines, progress: progress)
+        XCTAssertEqual(segments.count, 3)
+        guard case .build(let build) = segments[1], case .lines(let after) = segments[2] else { return XCTFail("\(segments)") }
+        XCTAssertTrue(build.live)
+        XCTAssertEqual(after.map(\.text), ["Building…"])
+    }
+
+    /// Two steps in the same words are one step, but not across parts: the later part's step would go, and with it the
+    /// only sign in the chat that the build had moved on.
+    func testEqualStepsInTwoPartsAreTwoSteps() {
+        let steps = LogLine.visible([line(.user, "a kitchen board"), line(.tool, "write BoardView.swift", part: 0),
+                                     line(.tool, "write DetailView.swift", part: 1)], details: false)
+        XCTAssertEqual(steps.map(\.part), [nil, 0, 1])
+    }
 }

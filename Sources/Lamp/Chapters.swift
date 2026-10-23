@@ -86,8 +86,10 @@ enum Chapters {
             // The turn going on: no request after this run's.
             let live = going != nil && !lines[end...].contains { $0.kind == .user }
             let unplanned = waiting.map { ask in ask.part == nil && lines[start..<end].contains { $0.id == ask.id } } ?? false
-            let titles = unplanned ? [] : summary.flatMap { lines[$0].plan } ?? (live && summary == nil ? going?.plan.map(\.title) ?? [] : [])
-            guard !titles.isEmpty || live && summary == nil else {
+            let titles = unplanned ? [] : summary.flatMap { lines[$0].plan } ?? (live && summary == nil && going?.chaptersClosed != true ? going?.plan.map(\.title) ?? [] : [])
+            // What's logged after the agent's run (Lamp building and opening the app) is no build of its own: the run's
+            // summary closed its chapters, and it's drawn after them.
+            guard !titles.isEmpty || live && summary == nil && going?.chaptersClosed != true else {
                 plain += lines[start..<end]
                 start = end
                 continue

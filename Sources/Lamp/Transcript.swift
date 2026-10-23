@@ -212,7 +212,7 @@ extension LogLine {
                 // named after it (Claude Code's calls in one message, the command still running): that file work is
                 // part of the command's row too, not the same words once more above it.
                 if line.kind == .status, let said = line.said, ChatLook.ranCommand(in: line.text) != nil,
-                   let last = out.last, last.kind == .status, last.said == nil, last.text == said {
+                   let last = out.last, last.kind == .status, last.said == nil, last.text == said, last.part == line.part {
                     out.removeLast()
                 }
                 out.append(line)
@@ -224,7 +224,9 @@ extension LogLine {
             let said = line.said ?? TurnProgress.activity(for: call)
             guard !said.isEmpty else { continue }
             let words = line.failed == true ? said + ChatLook.failedMark : said
-            if let last = out.last, last.kind == .status, (last.said ?? last.text) == words { continue }
+            // The same words twice are one step, but within one part of a first build: the later part's step is the
+            // only sign in the chat that the build moved on.
+            if let last = out.last, last.kind == .status, (last.said ?? last.text) == words, last.part == line.part { continue }
             out.append(LogLine(id: line.id, kind: .status, text: words, at: line.at, foldTitle: line.foldTitle, failed: line.failed, part: line.part))
         }
         return out
@@ -473,13 +475,13 @@ enum ChatItem: Identifiable {
                 // the one before it said (two looks with a build between them) is that step again.
                 var kept = run.filter { !$0.text.hasSuffix("…") }
                 if line.said == nil, ChatLook.ranCommand(in: line.text) == nil, let last = kept.last, last.said == nil,
-                   last.text == line.text {
+                   last.text == line.text, last.part == line.part {
                     items[items.count - 1] = .statuses(kept)
                     continue
                 }
                 // Commands the agent gave one name to are one step: the name once, their commands under it.
                 // Each command keeps its own "(not run)", whichever came first, and the step whether none of them ran.
-                if let said = line.said, let last = kept.last, last.said == said,
+                if let said = line.said, let last = kept.last, last.said == said, last.part == line.part,
                    let command = ChatLook.ranCommand(in: line.text), let before = ChatLook.ranCommand(in: last.text) {
                     kept[kept.count - 1].text = "Ran: " + before + "\n" + command
                     kept[kept.count - 1].notRun = last.wasNotRun && line.wasNotRun
