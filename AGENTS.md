@@ -1065,9 +1065,11 @@ A wish can be more than one app made to work together: a TV app with an iPhone a
 part is the app at its root, as every wish has; each other part is an app of its own kind in a folder of the wish's
 (`iPhone/`, `Mac/`, `Apple/`), with its own `.lamp/meta.json`, build files, bundle id and runtime folder, so it's built,
 opened, looked at and used as any app of its kind is. It's a `LampProject` in `Store.projects` with `partOf` set (id: the
-wish's, a dot, the folder), never on the desk (`Store.wishes`), with no chat, versions or icon of its own: what's logged
-for it goes to its wish's chat (`Store.log`), the wish's history keeps its folder, and its icon is the wish's
-(`Icons.home`). Its `realDir` takes the wish's folder by name too, since the agent can put a link in its place, and it's
+wish's, a dot, the folder), never on the desk (`Store.wishes`), with no chat or versions of its own: what's logged
+for it goes to its wish's chat (`Store.log`), and the wish's history keeps its folder. No app of a wish comes first
+beyond that: each carries the wish's icon. Its design and artwork are the wish's (`Icons.home`), drawn into each app's
+own `.lamp/` (its build and finishing run in its sandbox, which opens only its folder), and new artwork or a new design
+reaches every app of the wish (`Store.iconToParts`). Its `realDir` takes the wish's folder by name too, since the agent can put a link in its place, and it's
 told where its folder is when it's installed (`folder` in `Template.installValues`, read by `LampInstall.app`), since its
 id is no folder's name. A wish's parts are found from its files (`Parts.folders`: one of Lamp's part folders holding a
 scaffold it can hold, any of Apple's kinds in an Apple folder, since a part made for more devices is changed in place),
