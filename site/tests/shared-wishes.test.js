@@ -99,28 +99,32 @@ test("without its store or quota it answers unavailable rather than sharing", as
   assert.equal((await send(handler, "POST", share)).status, 503);
 });
 
-test("the page shows the wish's own words, escaped, with its preview and Lamp's two ways in", async () => {
+test("the page is the ideas page with the shared wish's card, its words escaped, and its own preview", async () => {
   const store = memoryStore();
   const { id } = await (await send(createShareHandler({ store, limited: false }), "POST", share)).json();
-  const response = await createPageHandler({ store })(new Request(`https://lamp.dev/api/wish-page?id=${id}`));
+  const ideas = `<!DOCTYPE html><html><head><title>Ideas · Lamp</title><meta name="description" content="Ideas"><link rel="canonical" href="https://lamp.dev/ideas"><meta property="og:title" content="Ideas · Lamp"><meta name="twitter:card" content="summary"></head><body><dialog data-wish></dialog></body></html>`;
+  const response = await createPageHandler({ store, template: async () => ideas })(new Request(`https://lamp.dev/api/wish-page?id=${id}`));
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.ok(html.includes("keeps my plants &lt;watered&gt; &amp; tells me &quot;which one&quot;"));
-  assert.ok(!html.includes("<watered>"));
+  assert.ok(html.includes("<dialog data-wish>"), "the ideas page's card");
+  assert.ok(!html.includes("Ideas · Lamp") && !html.includes('content="summary"'), "the ideas page's own preview is gone");
   assert.ok(html.includes(`<meta property="og:image" content="https://lamp.dev/w/${id}/card.png?v=`));
   assert.ok(html.includes(`<meta name="twitter:card" content="summary_large_image">`));
-  assert.ok(html.includes("Open in Lamp") && html.includes("Download Lamp"));
-  const nonce = /script-src 'nonce-([^']+)'/.exec(response.headers.get("content-security-policy"))[1];
-  assert.ok(html.includes(`<script type="module" nonce="${nonce}">`));
+  const card = JSON.parse(/<script type="application\/json" id="shared-wish">(.*?)<\/script>/.exec(html)[1]);
+  assert.equal(card.wish, store.records.get(id).words);
+  assert.equal(card.about, "Reminds me when each plant needs water.");
+  assert.ok(!html.includes("<watered>"), "nothing the sharer wrote can close the script");
   assert.equal(response.headers.get("x-robots-tag"), "noindex");
 
-  const gone = await createPageHandler({ store })(new Request("https://lamp.dev/api/wish-page?id=2345678922"));
+  const gone = await createPageHandler({ store, template: async () => ideas })(new Request("https://lamp.dev/api/wish-page?id=2345678922"));
   assert.equal(gone.status, 404);
 });
 
-test("the page's hand-off is the site's own", () => {
-  const page = readFileSync(new URL("../lib/shared-wish-page.js", import.meta.url), "utf8");
-  assert.ok(page.includes('readFileSync(new URL("./wish.js", import.meta.url)'));
+test("the ideas page the function serves is the one the site builds", () => {
+  const config = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
+  assert.equal(config.functions["api/wish-page.js"].includeFiles, "dist/ideas/index.html");
+  const dialog = readFileSync(new URL("../src/components/WishDialog.astro", import.meta.url), "utf8");
+  assert.ok(dialog.includes('getElementById("shared-wish")'));
 });
 
 test("the card is a 1200×630 PNG, with or without a picture", async () => {

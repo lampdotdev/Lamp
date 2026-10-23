@@ -6,9 +6,12 @@ on lamp.dev and copies `https://lamp.dev/w/<id>`. Only the idea travels: no code
 link makes their own version from the words.
 
 - The page (`/w/<id>`, `lib/shared-wish-page.js`, served by `api/wish-page.js` through a rewrite in `vercel.json`):
-  the picture, icon, name, line and the words in a box to change, and the two ways into Lamp the first-idea section
-  has (FIRST_IDEA.md): on a Mac it tries `lamp://wish?text=…` once as it opens and offers **Open in Lamp**, and
-  **Download Lamp** copies the wish with Lamp's mark. The hand-off code is `lib/wish.js`, sent with the page.
+  the ideas page with the shared wish's card open on it, the same card (`WishDialog.astro`) the homepage's and the
+  ideas page's wishes open in, so it has their Download Lamp (which copies the wish with Lamp's mark, FIRST_IDEA.md)
+  and, on a Mac, their "Already have Lamp? Open it with this wish". On a Mac the card also tries `lamp://wish?text=…`
+  once as the page opens. Closed, it leaves the visitor among more ideas. The function serves the built ideas page
+  (`dist/ideas/index.html`, bundled with it by `includeFiles`) with the wish in `#shared-wish` and its own title,
+  description and preview tags in place of the ideas page's; `npm run dev` gives it its own server's ideas page.
 - The preview card (`/w/<id>/card.png`, `lib/wish-card.js`, `api/wish-card.js`): 1200×630, drawn by `@vercel/og`
   with Geist (`lib/fonts`, SIL Open Font License) on the first-idea section's night sky. The page names it in
   `og:image` and `twitter:image` with Twitter's large card.
@@ -41,8 +44,8 @@ Without either, sharing answers 503 and Lamp says it couldn't share; links alrea
 - `QUOTAS` in `lib/shared-wishes.js`: 10 shares or changes an hour per address, 200 an hour and 1,000 a day overall;
   60 takedowns an hour per address. As for bug reports, only expiring counters and a keyed hash of the address are
   kept. Nothing a request holds is logged.
-- Only the hash of each secret is kept. The page is `noindex` and carries a content security policy that allows only
-  its own script and pictures from here and the Blob store.
+- Only the hash of each secret is kept. The page is `noindex`; what the sharer wrote reaches it only as JSON in a
+  script that isn't run, which the card reads as text.
 - The page is cached a minute and the card a day; a change or takedown purges both by their cache tag
   (`wish-<id>`). A record stays until the sharer takes it down.
 - To take a link down for someone (it shows what it mustn't): `scripts/take-down-wish.js`.

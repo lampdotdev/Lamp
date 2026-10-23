@@ -22,7 +22,8 @@ function localAPI() {
       const { createCardHandler } = await import("./lib/wish-card.js");
       const store = memoryStore();
       const share = createShareHandler({ store, limited: false });
-      const page = createPageHandler({ store });
+      // The shared wish's page is the ideas page with its card open, which this server draws as you work on it.
+      const page = createPageHandler({ store, template: async (origin) => (await fetch(`${origin}/ideas`)).text() });
       const card = createCardHandler({ store });
       server.middlewares.use(async (req, res, next) => {
         if (req.url === "/api/idea-event") { res.statusCode = 204; return res.end(); }
