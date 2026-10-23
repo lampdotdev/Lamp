@@ -304,6 +304,19 @@ enum ChatItem: Identifiable {
         return result + items(stretch)
     }
 
+    /// A part of a new app's first build that the build has moved on from, or one of a build that's over (`Chapters`):
+    /// as in the run going on, each stretch of its steps folds to how many steps it was, and so does its last one,
+    /// which nothing more will follow. While a question in it waits for its answer nothing is folded, as in a run
+    /// (`items(_:gather:)`): nothing above the card may change height. `waiting` is the card still waiting in the
+    /// whole chat, which a part alone can't tell, its answer being in a later one.
+    static func chapter(_ lines: [LogLine], waiting: UUID?) -> [ChatItem] {
+        if lines.contains(where: { $0.id == waiting }) { return items(lines) }
+        let trailing = lines.reversed().prefix(while: isStep).count
+        guard trailing > 1 else { return closing(lines) }
+        let stretch = Array(lines.suffix(trailing))
+        return closing(Array(lines.dropLast(trailing))) + [.work(id: stretch[0].id, title: "\(stretch.count) steps", steps: stretch)]
+    }
+
     /// What a turn did, as against what it said: the lines that go into its one line ("Worked for…", and while it
     /// goes on the live line) rather than being shown in the chat.
     static func isStep(_ line: LogLine) -> Bool {
@@ -506,7 +519,7 @@ struct Transcript: View {
     let lines: [LogLine]
     let dir: URL
     let busy: Bool
-    /// The turn's progress line or build card is on screen. It's the one spinner, and the one place that
+    /// The turn's progress line is on screen. It's the one spinner, and the one place that
     /// says what's happening now, so nothing here repeats it.
     var progressShown = false
     /// Goes back to the version a request made, or (true) to the one before it.
@@ -517,6 +530,9 @@ struct Transcript: View {
     var retryPhone: ((String) -> Void)?
     /// The request just sent from the chat, which it holds at the top while the answer comes in below.
     var pinned: UUID?
+    /// These lines are a part of a new app's first build that's done with (`ChatItem.chapter`), in `chat`, the whole
+    /// chat, which says whether a question among them still waits.
+    var chapterOf: [LogLine]?
     /// Read so the chat follows the choice of what draws icons: it decides whether a "Draw Icon…" line shows.
     @AppStorage("iconModel") private var iconChoice = ""
     /// With Agent Details on every step is its own line; without, a finished turn's steps are gathered up.
@@ -527,12 +543,13 @@ struct Transcript: View {
         let lines = Self.withoutSpentOffers(lines, dir: dir)
         let finalAnswers = Self.finalAnswers(in: lines, busy: busy)
         let latestRequest = lines.last { $0.kind == .user }?.id
-        let openAsk = Talk.open(in: lines)?.id
+        let openAsk = Talk.open(in: chapterOf ?? lines)?.id
         // Answers clicked on a card are shown by the card, folded where it was: not again as a message.
         let shown = lines
         // While the turn goes on, its steps since it last said something are in the one line that says what it's doing.
-        let items = ChatItem.items(progressShown ? (details ? Self.withoutStepInProgress(shown) : ChatItem.live(shown, dir: dir).shown) : shown,
-                                   gather: !details)
+        let items = chapterOf != nil && !details ? ChatItem.chapter(shown, waiting: openAsk)
+            : ChatItem.items(progressShown ? (details ? Self.withoutStepInProgress(shown) : ChatItem.live(shown, dir: dir).shown) : shown,
+                             gather: !details)
         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
             let isLast = index == items.count - 1
             let gap = ChatItem.gap(after: index > 0 ? items[index - 1] : nil, before: item,

@@ -88,10 +88,22 @@ A capability given to one engine must be given to all of them that can take it, 
   forward at the agent's first look. When no chat comes back beside the app after a pass reopens it (the reopen
   failed, it crashed, or the pass made it an app with no window), the chat goes back to Lamp's window
   (`MagicPanel.keepChatInSight`). The early build is settled before the turn lets go of the app, however it ends.
-  Result cards saved by an earlier Lamp still read and aren't shown (`LogLine.visible`). A new app's first turn has the build card in
-  the live line's place: the agent's plan with ticks, and under it the turn's steps so far behind one line
-  (`BuildCardView.steps`, "4 steps so far"), folded, so a long first build reads without Agent Details. The card folds
-  to its first line (its name, Ready) once the turn is over, with no picture of the app. What each piece
+  Result cards saved by an earlier Lamp still read and aren't shown (`LogLine.visible`). A new app's first build is drawn as the
+  chat's chapters (`Chapters`, `BuildChapters`), not as a card over it: each part of the agent's plan is a heading with
+  its tick and how long it took, with what the agent said during it and its steps, folded, under it; the part going
+  on has its steps so far and the live line, as any turn has; the parts still to come wait greyed below, with Lamp's
+  own last one, building and opening it; and a question card comes where it was asked, in its part. A bar above the
+  chat (`ChapterBar`) says where the build is ("Part 3 of 3", a dot for each part), that it waits for an answer, or
+  Ready. Once the app is made the build folds to one line ("Built it in 3 parts · 4 min 29 s") that opens to the
+  parts, with the agent's answer under it; a build that asked on the way, failed or was stopped stays open. Which
+  part a line goes under is decided as it's logged (`TurnProgress.chapter(for:)`) from what Lamp is sure of: the plan,
+  the files it lists for each part and the files written. A file listed for a later part moves the build on, and so
+  does something said (a message, a progress line, a question, a new plan) once the part it's on is done; anything
+  else (a read, a command, a look, a fix to an earlier part's file) stays with the part the build is on. The part is
+  kept on the line (`LogLine.part`) and the plan's parts on the run's summary (`LogLine.plan`), so the chat reads the
+  same after the turn and a relaunch; a line with no part (before the plan came) goes with the line before it, the
+  first part at the start. Agent Details shows the lines as they came, with no chapters. The chat beside the app
+  has the live line only. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
   tool waits for the person: it returns at once, the agent ends its reply, and a click is sent as the
   person's next message (`Store.answer`), so a click and a typed answer reach every engine the same way and
@@ -286,10 +298,10 @@ A capability given to one engine must be given to all of them that can take it, 
   before Codex has saved the request). A run that hasn't gone 20 seconds after the interrupt is ended as Stop would
   end it. What the model was thinking or writing at that moment is lost; a message is the turn's once the resumed
   run's model is heard from.
-- **What Lamp shows the user** (`BuildCard.activity`, `ToolCall`): tool names must be recognised in every
+- **What Lamp shows the user** (`TurnProgress.activity`, `ToolCall`): tool names must be recognised in every
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items. A turn has one activity (`TurnProgress.activity`, and since when,
-  `activitySince`), and every place that shows it draws it with `ChatLook.ActivityText`: the build card, the line
+  `activitySince`), and every place that shows it draws it with `ChatLook.ActivityText`: a first build's last part, the line
   under a change and the chat beside the app (`SidebarState.workingActivitySince`). How it reads as the wait goes on is `Activity.words`, in one place: while the model thinks, its
   phrases (never a bare "Thinking"; each think opens on one picked by when it began) turn over every 3.5
   seconds and grow more reassuring the longer it goes; a build says "Still building…"
@@ -320,7 +332,7 @@ A capability given to one engine must be given to all of them that can take it, 
   engine's output says (its tool call starting, a streamed reply) doesn't change the activity (`Store.noteAgent`):
   every engine reports the call a moment after the look began, and its fixed word would cover each stage after it
   (building, installing, opening, looking at the app, watching it move); when the look ends it's "Thinking". No clock
-  is shown beside the activity, in the chat or the build card: the turn's whole time is its "Worked for…".
+  is shown beside the activity, in the chat or a first build's chapters: the turn's whole time is its "Worked for…".
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
   Lamp's providers are Claude Code, ChatGPT Codex, OpenRouter (pi builds through it; its key is the only one
   Lamp keeps, `Provider.keyProviders`) and Native Mac AI (`LocalModels`: Lamp's own model servers, never another

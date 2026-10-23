@@ -3,7 +3,7 @@ import LampSidebarKit
 
 /// Offers a way to set up a kind of AI where it's first wanted: in the chat of the app that wanted it, put
 /// there by Lamp when an app hit something nothing here can do, or by the agent with `offer_setup`. Built
-/// like the build card above it in the chat (an icon, a headline and a status line, then rows), and
+/// as a card (an icon, a headline and a status line, then rows), and
 /// what it offers comes from `AppAI.resolve`, as Settings' does, so the two always agree. Once that capability
 /// is set up (here or in Settings) it folds down to its header, saying what answers now.
 struct SetupCard: View {
@@ -79,7 +79,7 @@ struct SetupCard: View {
         .onReceive(Store.shared.$icons) { _ in revision += 1 }
     }
 
-    /// What's being offered, on a tile the size of the build card's app icon. Not the app's own icon: it's
+    /// What's being offered, on a tile the size of an app icon. Not the app's own icon: it's
     /// Lamp asking, not the app.
     static func symbol(_ offer: SetupOffer) -> String {
         offer.context == .phoneAway ? "iphone.radiowaves.left.and.right" : offer.capability.symbol

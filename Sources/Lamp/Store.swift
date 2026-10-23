@@ -198,6 +198,8 @@ struct LogLine: Identifiable, Codable, Equatable {
     var failed: Bool? = nil           // for a step: it was tried and didn't work (`AgentEvent.ended`)
     var call: String? = nil           // for a command's row: the engine's id for its call, which its outcome comes back by
     var notRun: Bool? = nil           // for commands of one name gathered as one row (`ChatItem.items`): none of them ran
+    var part: Int? = nil              // in a new app's first build: the part of the agent's plan it came in (`TurnProgress.chapter(for:)`)
+    var plan: [String]? = nil         // for that build's summary: the plan's parts, which its chapters are named by (`Chapters`)
 
     /// A command's row stopped before it ran: by its own words, or, for commands gathered as one row, every one of them.
     var wasNotRun: Bool { notRun ?? text.hasPrefix(ChatLook.notRun) }
@@ -413,8 +415,8 @@ final class Store: ObservableObject {
     @Published var logs: [String: [LogLine]] = [:]
     @Published var busy: Set<String> = []
     @Published var queued: [String: [QueuedMessage]] = [:]
-    /// The turn in progress for each app. A new app's first turn stays here after it finishes, so its
-    /// build card can show the result until the next message.
+    /// The turn in progress for each app. A new app's first turn stays here after it finishes, so the bar
+    /// above its chat can show the result until the next message (`ChapterBar`).
     @Published var progress: [String: TurnProgress] = [:]
     /// Apps that are open right now, however they were started, so Lamp can offer to quit them.
     @Published var openApps: Set<String> = []
@@ -1051,12 +1053,32 @@ final class Store: ObservableObject {
             }
             return
         }
-        logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone,
-                                                    offer: offer, noted: noted, said: said, at: Date(), failed: failed ? true : nil,
-                                                    call: call))
+        logs[project.id, default: []].append(chaptered(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone,
+                                                               offer: offer, noted: noted, said: said, at: Date(), failed: failed ? true : nil,
+                                                               call: call), in: project))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
         if kind != .detail, kind != .summary, kind != .status, kind != .tool { closeSteps(project) }
         saveChat(project)
+    }
+
+    /// A line of a new app's first build, with the part of the plan it goes under in the chat (`Chapters`). The
+    /// build's summary carries the plan's parts, so the chapters read the same once the turn is over and after a
+    /// relaunch; what's logged after it (Lamp's own build and opening, a run to fix it) belongs to no part.
+    private func chaptered(_ line: LogLine, in project: LampProject) -> LogLine {
+        guard progress[project.id]?.newApp == true else { return line }
+        var line = line
+        if line.kind == .summary {
+            // A run that ended on its questions built nothing: a plan given on the way out is no build's, and drawn as
+            // one it would move the card that waits.
+            if let plan = progress[project.id]?.plan, !plan.isEmpty, progress[project.id]?.chaptersClosed == false,
+               turns[project.id]?.asked != true {
+                line.plan = plan.map(\.title)
+            }
+            progress[project.id]?.chaptersClosed = true
+        } else {
+            line.part = progress[project.id]?.chapter(for: line)
+        }
+        return line
     }
 
     /// A tool call's step in the agent's own words: what it gave this call, else, for Codex, the heading of its
@@ -1180,7 +1202,7 @@ final class Store: ObservableObject {
         guard let turn = turns[project.id] else { return }
         guard turn.writing != nil else {
             guard !piece.trimmed.isEmpty else { return }
-            let line = LogLine(kind: .agent, text: String(piece.drop(while: \.isWhitespace)), at: Date())
+            let line = chaptered(LogLine(kind: .agent, text: String(piece.drop(while: \.isWhitespace)), at: Date()), in: project)
             logs[project.id, default: []].append(line)
             turn.writing = (line.id, "")
             closeSteps(project)
@@ -1236,7 +1258,7 @@ final class Store: ObservableObject {
         turn.writing?.unshown = ""
     }
 
-    /// Updates what the app's turn is doing right now, for the build card and the activity line.
+    /// Updates what the app's turn is doing right now, for the activity line.
     /// `file` is the file being written or edited, when that's the step.
     private func note(_ activity: String, file: String? = nil, for project: LampProject) {
         // A step that changes nothing about what's being done (the agent's progress line).
@@ -2891,7 +2913,7 @@ final class Store: ObservableObject {
         let first = names
         let stillFinding = project.makesNoApp && !names
         // Still a new app until a request has made its first version: after the agent only asked questions,
-        // the answers start the build and get the build card. An imported app has already been built. Not
+        // the answers start the build and get its chapters. An imported app has already been built. Not
         // while a wish is being found: there's nothing to build yet.
         let newApp = Template.isScaffold(project) && !hasVersions(project) && (!project.makesNoApp || names)
         progress[project.id] = TurnProgress(newApp: newApp)
@@ -2927,8 +2949,8 @@ final class Store: ObservableObject {
             var worked = false
             var result = TurnResult(end: .failed, watched: true)
             defer {
-                // A new app's card stays, showing the result; a later turn's activity line goes away. So does a
-                // new app's card when the agent only asked questions: nothing was built, and the answers bring it back.
+                // A new app's bar stays, showing the result; a later turn's activity line goes away. So does a
+                // new app's bar when the agent only asked questions: nothing was built, and the answers bring it back.
                 if newApp {
                     let seconds = Int(Date().timeIntervalSince(started))
                     switch result.end {
@@ -2942,8 +2964,8 @@ final class Store: ObservableObject {
                 if newApp && result.end != .replied {
                     progress[project.id]?.finish(worked: worked && turns[project.id]?.phoneReady != false, opened: !owner.didNotOpen)
                 } else if newApp, Talk.open(in: logs[project.id] ?? []) != nil {
-                    // The agent asked through its card: the app's card stays where it is while the person
-                    // answers, so the build that follows starts on it and nothing in the chat moves.
+                    // The agent asked through its card: the app's bar says it's waiting while the person
+                    // answers, and the build that follows starts on it.
                     progress[project.id]?.wait()
                 } else {
                     progress[project.id] = nil
@@ -4709,7 +4731,7 @@ final class Store: ObservableObject {
             case "use_app":
                 (status, answer) = await useCall(arguments, for: project)
             case "plan":
-                // pi's plan reaches the build card through its event stream (Agent.parseLine); here it's set directly.
+                // pi's plan reaches the chat's chapters through its event stream (Agent.parseLine); here it's set directly.
                 progress[project.id]?.plan = PlanPart.parts(from: arguments)
                 progress[project.id]?.tickWrittenParts()
                 (status, answer) = (200, ["text": "The user can see the plan."])
@@ -4822,10 +4844,10 @@ final class Store: ObservableObject {
                 // The same once the first was answered in words while this turn was still ending: the
                 // agent hasn't had that answer yet, and a new card would be asking over it.
                 if turn.asked || Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
-                logs[project.id, default: []].append(LogLine(kind: .ask, text: ask.text, ask: ask, at: Date()))
+                logs[project.id, default: []].append(chaptered(LogLine(kind: .ask, text: ask.text, ask: ask, at: Date()), in: project))
                 closeSteps(project)
-                // A new app's card gives up its checklist in the same moment the questions arrive, not when
-                // the turn ends a little later: once there's something to click, nothing above it moves.
+                // A new app's bar says it waits for an answer in the same moment the questions arrive, not when
+                // the turn ends a little later.
                 if progress[project.id]?.newApp == true { progress[project.id]?.asking = true }
                 turn.asked = true
                 away.questionAsked(project.id)   // no carry-on of Lamp's over a card waiting for its answer
@@ -4837,7 +4859,7 @@ final class Store: ObservableObject {
             case .failure(let trouble): return (400, ["error": trouble.text])
             case .success(nil): return (200, ["text": Talk.saidAlready])
             case .success(let text?):
-                logs[project.id, default: []].append(LogLine(kind: .progress, text: text, at: Date()))
+                logs[project.id, default: []].append(chaptered(LogLine(kind: .progress, text: text, at: Date()), in: project))
                 closeSteps(project)
                 // A new phase: the file work after it isn't what the last command or heading was for.
                 turns[project.id]?.naming = nil
@@ -5573,7 +5595,7 @@ final class Store: ObservableObject {
                                    kept: own.map(\.lastPathComponent), replaces: replaces, tookBack: gone, pointed: pointed))
         logs[project.id] = Array(chat[..<first])
         saveChat(project)
-        progress[project.id] = nil   // a new app's build card belongs to the request that's gone
+        progress[project.id] = nil   // a new app's chapters belong to the request that's gone
         if let replaces { Versions.remember(project, tookBack: replaces) }
         queued[project.id, default: []].insert(contentsOf: again, at: 0)
         return true
@@ -5882,7 +5904,7 @@ final class Store: ObservableObject {
         await Sandbox.run(Shell.compatibleSDK + command, for: project, env: env, started: started, onLine: onLine)
     }
 
-    /// A new app's card that has already said how its turn ended follows what happens to the app afterwards
+    /// A new app's bar that has already said how its turn ended follows what happens to the app afterwards
     /// (Play, a rebuild, opening the copy that's installed), as it does for a phone: it never goes on saying
     /// the app didn't open beside one that has, or the reverse.
     private func noteOpened(_ opened: Bool, for project: LampProject) {

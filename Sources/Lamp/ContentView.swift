@@ -347,18 +347,9 @@ struct ProjectView: View {
     /// How much of its latest message the agent has written so far: a message being written grows without
     /// adding a line, and the chat follows it down.
     private func written(_ lines: [LogLine]) -> Int { busy ? lines.last?.text.count ?? 0 : 0 }
-    /// The chat area has to be about twice the build card's height before the card is pinned.
-    private static let roomToPinCard: CGFloat = 560
-    /// The build card's steps are open: the card is as tall as they make it, so it isn't pinned, or the ones past
-    /// the window's height could never be reached and the card would cover the chat under it.
-    @State private var cardStepsOpen = false
     /// Space above a request held at the top of the chat.
     private static let pinMargin: CGFloat = 16
 
-    /// The first turn of a new app, while it's still running.
-    private var building: TurnProgress? {
-        store.progress[project.id].flatMap { $0.newApp && $0.finished == nil ? $0 : nil }
-    }
     private var queued: [QueuedMessage] { store.queued[project.id] ?? [] }
     /// The finished agent turn a suggestion follows up on. Nil while working, so none shows mid-turn.
     private var suggestionTurn: UUID? { busy ? nil : NextStep.turn(in: store.logs[project.id] ?? []) }
@@ -439,10 +430,7 @@ struct ProjectView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.bottom, 24)
                 }
-                // While a new app is being built, its card stays in view above the steps, if there's
-                // room: in a short window a pinned card would fill the chat and hide everything else.
-                chatRows(shown, pin: pin, height: area.size.height,
-                         cardPinned: building != nil && !cardStepsOpen && area.size.height >= Self.roomToPinCard)
+                chatRows(shown, pin: pin, height: area.size.height)
                 // Room for the answer to a request just sent. The answer fills it as it comes; once
                 // there's more, the chat follows it down as ever.
                 Color.clear.id("bottom").layoutValue(key: ChatStack.Room.self, value: true)
@@ -522,40 +510,37 @@ struct ProjectView: View {
         reach = LogLine.reach(in: lines, from: start) + LogLine.recentCount
     }
 
-    /// The chat's rows: the intro for a new app, the transcript with its build card or activity, and the
-    /// messages waiting their turn.
+    /// The chat's rows: the intro for a new app, the transcript with a first build's chapters and the activity of
+    /// the turn going on, and the messages waiting their turn.
     @ViewBuilder
-    private func chatRows(_ lines: [LogLine], pin: UUID?, height: CGFloat, cardPinned: Bool) -> some View {
+    private func chatRows(_ lines: [LogLine], pin: UUID?, height: CGFloat) -> some View {
         if lines.isEmpty && queued.isEmpty {
             // In the middle of the chat area: less the scroll view's own padding.
             NewAppIntro(project: project, draft: draftBinding)
                 .frame(minHeight: height - 32)
         }
-        if let card = store.progress[project.id], card.newApp,
-           let request = lines.firstIndex(where: { $0.kind == .user }) {
-            // The build card goes straight after the request that began the app, and stays there through
-            // the agent's questions and their answers; what the agent says and does follows it.
-            transcript(Array(lines[...request]), busy: false, pin: pin)
-            BuildCard(project: project, progress: card, lines: Array(lines[(request + 1)...]), stepsOpen: $cardStepsOpen)
-                .padding(.top, 16).padding(.bottom, 12)
-                .background(ChatLook.paper)
-                // Pinned: once it reaches the top of the chat it stays there, over the steps going by.
-                .visualEffect { content, geometry in
-                    content.offset(y: cardPinned ? max(0, -geometry.frame(in: .scrollView).minY) : 0)
+        // Agent Details shows every line as it came, with no chapters.
+        let segments = showDetails ? [.lines(lines)] : Chapters.segments(lines, progress: store.progress[project.id])
+        ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+            switch segment {
+            case .build(let build):
+                BuildChapters(build: build, progress: build.live ? store.progress[project.id] : nil) { part, now in
+                    chapter(build.parts[part], of: lines, now: now)
                 }
-                .zIndex(1)
-            // While its questions wait, the steps above them stay as they are: hidden in the card's line and then shown
-            // when the turn's summary arrives would move the answers under the pointer.
-            transcript(Array(lines[(request + 1)...]), busy: busy, progressShown: busy && Talk.open(in: lines) == nil, pin: pin)
-        } else {
-            // No line of activity under the agent's questions: it would go away when the turn ends a moment
-            // later, and the card above it would move.
-            // Nor until the request it's working on is in: the turn starts a moment before, and the line would
-            // show up under the last answer and then jump below the request.
-            let awaited = pinWanted && lines.last { $0.kind == .user }?.id == pinAfter
-            let progress = busy && !awaited && Talk.open(in: lines) == nil ? store.progress[project.id] : nil
-            transcript(lines, busy: busy, progressShown: progress != nil, pin: pin)
-            if let progress { ActivityRow(progress: progress, lines: lines, dir: project.dir).padding(.top, 12) }
+            case .lines(let shown) where index == segments.count - 1:
+                // No line of activity under the agent's questions: it would go away when the turn ends a moment
+                // later, and the card above it would move.
+                // Nor until the request it's working on is in: the turn starts a moment before, and the line would
+                // show up under the last answer and then jump below the request.
+                // A new app's first turn has its live line in the part being built.
+                let awaited = pinWanted && lines.last { $0.kind == .user }?.id == pinAfter
+                let progress = busy && !awaited && Talk.open(in: lines) == nil ? store.progress[project.id] : nil
+                let building = progress?.newApp == true && segments.contains { if case .build = $0 { true } else { false } }
+                transcript(shown, busy: busy, progressShown: progress != nil, pin: pin)
+                if let progress, !building { ActivityRow(progress: progress, lines: shown, dir: project.dir).padding(.top, 12) }
+            case .lines(let shown):
+                transcript(shown, busy: false, pin: pin)
+            }
         }
         if let change = undoChange {
             ChatLook.UndoChange { Task { await store.undo(project, change: change) } }.padding(.top, 12)
@@ -653,6 +638,10 @@ struct ProjectView: View {
 
     private func chrome(_ lines: [LogLine]) -> some View {
         VStack(spacing: 0) {
+            // A new app's first build says where it is, above the chat, whatever is scrolled into view.
+            if !showDetails, let progress = store.progress[project.id], progress.newApp {
+                ChapterBar(title: project.title, progress: progress) { AppIcon(project: project, size: 20) }
+            }
             chat(lines)
             if let approval = store.approvals[project.id] {
                 ChatLook.ApprovalCard(title: approval.title, command: approval.command, explanation: approval.explanation?.look,
@@ -755,12 +744,26 @@ struct ProjectView: View {
         }
     }
 
-    private func transcript(_ lines: [LogLine], busy: Bool, progressShown: Bool = false, pin: UUID? = nil) -> some View {
+    private func transcript(_ lines: [LogLine], busy: Bool, progressShown: Bool = false, pin: UUID? = nil,
+                            chapterOf chat: [LogLine]? = nil) -> some View {
         Transcript(lines: lines, dir: project.dir, busy: busy, progressShown: progressShown, goBack: { line, before in
             Task { await store.restore(project, toVersionOf: line, before: before) }
         }, sendAgain: self.busy || submissionPending ? nil : takeBack, retryPhone: project.device != nil ? { udid in
             Task { await store.retryPhone(project, udid: udid) }
-        } : nil, pinned: pin)
+        } : nil, pinned: pin, chapterOf: chat)
+    }
+
+    /// What's under a part of a first build: what the agent said and did in it, its steps folded once the build has
+    /// moved on, and for the part going on now its steps so far under the turn's live line, as any turn has them.
+    @ViewBuilder
+    private func chapter(_ part: [LogLine], of lines: [LogLine], now: Bool) -> some View {
+        let live = now && busy && Talk.open(in: lines) == nil ? store.progress[project.id] : nil
+        if now {
+            transcript(part, busy: busy, progressShown: live != nil)
+            if let live { ActivityRow(progress: live, lines: part, dir: project.dir).padding(.top, part.isEmpty ? 2 : 10) }
+        } else {
+            transcript(part, busy: false, chapterOf: lines)
+        }
     }
 
     /// Persist writes synchronously so a check finishing in this event cycle sees the newest input,
