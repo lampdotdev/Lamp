@@ -3228,6 +3228,7 @@ enum Template {
     #else
     import UIKit
     import BackgroundTasks
+    import Network
     import HomeKit
     import WidgetKit
     import CoreMotion
@@ -13564,45 +13565,91 @@ enum Template {
 
     // MARK: - The wish's TV app
 
-    /// Joins the TV app of this app's wish as a player of its `Lamp.controllers`, the way a phone's page does: through
-    /// Lamp on the person's Mac and the home Wi‑Fi, with nothing to pair or set up. Keep it while it's used (a
-    /// @StateObject, or a model's property); it lets go when released.
+    /// Joins the TV app of this app's wish as a player of its `Lamp.controllers`, the way a phone's page does, over the
+    /// home Wi‑Fi with nothing to pair or set up. On an iPhone the app listens for the TV app itself, and Lamp on the
+    /// person's Mac only tells the TV app where: the two then talk directly. Elsewhere (a Mac app), or when it can't
+    /// listen, it joins through Lamp's relay on the Mac. Keep it while it's used (a @StateObject, or a model's property);
+    /// it lets go when released.
     ///
     ///     @StateObject private var pad = LampController.connect()
     ///     Button("Next") { pad.press("next") }                  // a tap: held, then let go
     ///     pad.button("fire", down: true); pad.button("fire", down: false)
     ///     pad.axis("stick", x: 0.4, y: -1)                      // each from -1 to 1
-    ///     pad.send(["volume": 4])                               // anything small, as JSON; false when it wasn't sent
+    ///     pad.send(["volume": 4])                               // JSON; false when it wasn't sent
+    ///     let sending = pad.sendFile(data, name: "game.nes")    // up to 64 MB: sending.sent, .progress, .state, .cancel()
     ///     pad.onMessage { data in … }                           // what the TV app sent with Lamp.controllers.send
+    ///     pad.onFile { file in … }                              // a file it sent with sendFile: file.name, .type, .data
     ///     pad.state                                             // .connecting, .connected, .waiting (the TV app isn't open), .ended
     ///
-    /// Each message, as the JSON that goes out, is at most `messageLimit` (1,024) bytes, the most Lamp passes between
-    /// devices. A bigger one isn't sent: `send` returns false and says why in the app's log, and the TV app's log says
-    /// so too. Send something big (a file, a picture) in pieces of at most 700 characters of base64, each with its
-    /// number, and the next only once the TV app has answered the last; the phone-controllers skill shows how.
+    /// Each message, as the JSON that goes out, is at most `messageLimit` (16 KB). A bigger one isn't sent: `send`
+    /// returns false and says why in the app's log, and the TV app's log says so too. Send something big (a file, a
+    /// picture) with `sendFile`.
     @MainActor final class LampController: ObservableObject {
         enum State: String { case connecting, connected, waiting, ended, full }
-        /// The most bytes one message may take as JSON, Lamp's own wrapping included (`PhoneControllers.Limits.message`).
-        static let messageLimit = 1024
+        /// The most bytes one message may take as JSON, its wrapping included (`ControllerWire.message` in Lamp).
+        static let messageLimit = 16 * 1024
         @Published private(set) var state: State = .connecting { didSet { if state == .connected { saidAway = false } } }
-        /// The player number the TV app knows this one by (1, 2, …), once it has joined.
+        /// The player number the TV app knows this one by (1, 2, …), once it has given one.
         @Published private(set) var player: Int?
 
-        private final class Link: @unchecked Sendable { var task: URLSessionWebSocketTask? }
+        nonisolated fileprivate static let message = 16 * 1024
+        nonisolated fileprivate static let chunk = 64 * 1024
+        nonisolated fileprivate static let window = 512 * 1024
+        nonisolated fileprivate static let largest = 64 * 1024 * 1024
+
+        // Through Lamp's relay, or listening for the TV app's page: kept where `deinit` can let go of them.
+        private final class Link: @unchecked Sendable {
+            var task: URLSessionWebSocketTask?
+            var listening: Listening?
+            /// Telling Lamp where the phone listens, again every little while, for as long as the controller is held.
+            var renewal: Task<Void, Never>?
+        }
         private let link = Link()
         private var credential: String?
         private var address: URL?
+        private var app: String?
+        /// Listening for the TV app's page (an iPhone).
+        private var listening: Listening? {
+            get { link.listening }
+            set { link.listening = newValue }
+        }
         private var seq = 0
         private var listeners: [(Any) -> Void] = []
+        private var fileListeners: [(LampFile) -> Void] = []
         private var closed = false
         private var retry = 0
         private var heard = Date()
         private var beat: Timer?
+        private var nextFile = 1
+        private var outgoing: [Int: Outgoing] = [:]
+        private var incoming: [Int: Incoming] = [:]
         private var saidAway = false
+
+        private final class Outgoing {
+            let transfer: LampTransfer
+            let bytes: Data
+            var offset = 0
+            var acknowledged = 0
+            var sending = false
+            /// When the TV app last acknowledged some of it: a file it stops taking ends, as the web libraries' do.
+            var moved = Date()
+            init(transfer: LampTransfer, bytes: Data) { self.transfer = transfer; self.bytes = bytes }
+        }
+        private final class Incoming {
+            let name: String
+            let type: String
+            let size: Int
+            var data = Data()
+            init(name: String, type: String, size: Int) { self.name = name; self.type = type; self.size = size }
+        }
 
         static func connect() -> LampController {
             let pad = LampController()
+            #if os(iOS)
+            pad.listen()
+            #else
             pad.open()
+            #endif
             pad.beat = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak pad] _ in
                 MainActor.assumeIsolated { pad?.tick() }
             }
@@ -13611,6 +13658,8 @@ enum Template {
 
         deinit {
             link.task?.cancel(with: .goingAway, reason: nil)
+            link.renewal?.cancel()
+            link.listening?.stop()
         }
 
         func press(_ name: String) {
@@ -13621,15 +13670,46 @@ enum Template {
         @discardableResult func axis(_ name: String, x: Double, y: Double) -> Bool {
             post(["t": "axis", "name": name, "x": max(-1, min(1, x)), "y": max(-1, min(1, y))])
         }
-        /// Sends `data` (anything JSON can hold) to the TV app; false, with the reason in the app's log, when it wasn't.
+        /// Sends `data` (anything JSON can hold) to the TV app's `onMessage`; false, with the reason in the app's log, when
+        /// it wasn't. Anything over `messageLimit` goes with `sendFile`.
         @discardableResult func send(_ data: Any) -> Bool { post(["t": "message", "data": data]) }
         func onMessage(_ handler: @escaping (Any) -> Void) { listeners.append(handler) }
+        /// Files the TV app sends this one with `Lamp.controllers.sendFile`, whole.
+        func onFile(_ handler: @escaping (LampFile) -> Void) { fileListeners.append(handler) }
+
+        /// Sends a file to the TV app's `onFile`, up to 64 MB, in pieces; the transfer says how far it's got.
+        @discardableResult
+        func sendFile(_ data: Data, name: String, type: String = "application/octet-stream") -> LampTransfer {
+            let id = nextFile
+            nextFile = nextFile >= Int(Int32.max) - 1 ? 1 : nextFile + 1
+            let transfer = LampTransfer(id: id, name: name, size: data.count)
+            transfer.cancelling = { [weak self] in
+                guard let self, self.outgoing.removeValue(forKey: id) != nil else { return }
+                self.sendText(["t": "file-cancel", "id": id])
+                transfer.end(.failed("The file was cancelled."))
+            }
+            guard data.count <= Self.largest else {
+                transfer.end(.failed("The file is too big to send: 64 MB at most."))
+                return transfer
+            }
+            guard sendText(["t": "file", "id": id, "name": String(name.prefix(200)), "type": String(type.prefix(100)), "size": data.count]) else {
+                transfer.end(.failed("The TV app isn't connected."))
+                return transfer
+            }
+            outgoing[id] = Outgoing(transfer: transfer, bytes: data)
+            pump(id)
+            return transfer
+        }
 
         func close() {
             closed = true
             beat?.invalidate()
             link.task?.cancel(with: .goingAway, reason: nil)
             link.task = nil
+            link.renewal?.cancel()
+            listening?.stop()
+            listening = nil
+            dropFiles("The controller was closed.")
             state = .ended
         }
 
@@ -13637,35 +13717,166 @@ enum Template {
         // never heard it. Being away from the TV app is said once until it's back, not for every message meanwhile.
         private func post(_ message: [String: Any]) -> Bool {
             let what = message["t"] as? String == "message" ? "A message" : "'\(message["name"] as? String ?? "")'"
-            // While the TV app isn't open (.waiting) Lamp has no one to give it to.
-            guard let task = link.task, state == .connected else {
+            // While the TV app isn't open (.waiting) there's no one to give it to.
+            guard state == .connected else {
                 if !saidAway { saidAway = true; fputs("LampController: \(what) wasn't sent: not connected to the TV app (\(state.rawValue)). Check pad.state before sending.\n", stderr) }
                 return false
             }
             var message = message
             message["seq"] = seq + 1
+            message["at"] = Int(Date().timeIntervalSince1970 * 1000)
             guard JSONSerialization.isValidJSONObject(message), let data = try? JSONSerialization.data(withJSONObject: message) else {
                 fputs("LampController: \(what) wasn't sent: it holds something JSON can't (only text, numbers, true/false, arrays and dictionaries).\n", stderr)
                 return false
             }
             guard data.count <= Self.messageLimit else {
-                fputs("LampController: \(what) of \(data.count) bytes wasn't sent: a message between devices is at most \(Self.messageLimit) bytes as JSON. Send something big in numbered pieces of at most 700 characters, each after the TV app has answered the last.\n", stderr)
-                tell(task, "{\"t\":\"too-big\",\"bytes\":\(data.count)}")
+                fputs("LampController: \(what) of \(data.count) bytes wasn't sent: a message between devices is at most \(Self.messageLimit) bytes as JSON. Send something big with sendFile.\n", stderr)
+                sendText(["t": "too-big", "bytes": data.count])
                 return false
             }
             seq += 1
-            tell(task, String(decoding: data, as: UTF8.self))
+            return sendRaw(data)
+        }
+
+        /// Sends a message on whichever link this one has: the TV app's socket to it, or its own to the relay.
+        @discardableResult
+        private func sendText(_ message: [String: Any]) -> Bool {
+            guard let data = try? JSONSerialization.data(withJSONObject: message) else { return false }
+            return sendRaw(data)
+        }
+
+        private func sendRaw(_ data: Data) -> Bool {
+            if let listening {
+                guard let host = listening.host else { return false }
+                Listening.send(data, opcode: .text, on: host)
+                return true
+            }
+            guard let task = link.task else { return false }
+            task.send(.string(String(decoding: data, as: UTF8.self))) { error in
+                if let error { fputs("LampController: a message didn't reach the TV app: \(error.localizedDescription)\n", stderr) }
+            }
             return true
         }
 
-        private func tell(_ task: URLSessionWebSocketTask, _ text: String) {
-            task.send(.string(text)) { error in
-                if let error { fputs("LampController: a message didn't reach Lamp: \(error.localizedDescription)\n", stderr) }
+        /// A file's next pieces, one handed over at a time and never more than a window past what the TV app has
+        /// acknowledged, so a button pressed meanwhile waits behind one piece at most.
+        private func pump(_ id: Int) {
+            guard let file = outgoing[id], !file.sending, file.offset < file.bytes.count,
+                  file.offset - file.acknowledged < Self.window else { return }
+            let count = min(Self.chunk, file.bytes.count - file.offset)
+            var piece = Data([1, 0, 0, 0, UInt8(id >> 24 & 0xff), UInt8(id >> 16 & 0xff), UInt8(id >> 8 & 0xff), UInt8(id & 0xff)])
+            piece.append(file.bytes.subdata(in: file.offset..<(file.offset + count)))
+            file.offset += count
+            file.sending = true
+            let sent: @Sendable () -> Void = { [weak self] in
+                Task { @MainActor in
+                    file.sending = false
+                    self?.pump(id)
+                }
+            }
+            if let listening, let host = listening.host {
+                Listening.send(piece, opcode: .binary, on: host, then: sent)
+            } else if let task = link.task {
+                task.send(.data(piece)) { _ in sent() }
+            } else {
+                outgoing[id] = nil
+                file.transfer.end(.failed("The link was lost."))
             }
         }
 
-        // Where to join, from Lamp: the TV app's socket and a link's credential, asked again whenever the one held
-        // has run out (Lamp gives a joined player one of its own, renewed while it stays).
+        private func hearFile(_ m: [String: Any]) -> Bool {
+            guard let kind = m["t"] as? String, kind.hasPrefix("file"), let id = m["id"] as? Int else { return false }
+            switch kind {
+            case "file":
+                // Two at a time, as the relay allows: what's coming in is held whole until it's all here.
+                guard let size = m["size"] as? Int, size >= 0, size <= Self.largest, incoming[id] == nil, incoming.count < 2 else {
+                    sendText(["t": "file-refuse", "id": id, "reason": "The file is too big to take."])
+                    return true
+                }
+                let file = Incoming(name: m["name"] as? String ?? "file", type: m["type"] as? String ?? "", size: size)
+                incoming[id] = file
+                if size == 0 { finishIncoming(id, file) }
+            case "file-ack":
+                guard let file = outgoing[id], let got = m["got"] as? Int, got >= file.acknowledged, got <= file.offset else { return true }
+                file.acknowledged = got
+                file.moved = Date()
+                file.transfer.sent = got
+                if got == file.bytes.count {
+                    outgoing[id] = nil
+                    file.transfer.end(.done)
+                } else {
+                    pump(id)
+                }
+            case "file-refuse":
+                guard let file = outgoing.removeValue(forKey: id) else { return true }
+                file.transfer.end(.failed(m["reason"] as? String ?? "The TV app turned the file down."))
+            case "file-cancel":
+                incoming[id] = nil
+            default:
+                break
+            }
+            return true
+        }
+
+        private func hearPiece(_ data: Data) {
+            guard data.count > 8, data[data.startIndex] == 1 else { return }
+            let id = data.dropFirst(4).prefix(4).reduce(0) { $0 << 8 | Int($1) }
+            guard let file = incoming[id] else { return }
+            let bytes = data.dropFirst(8)
+            guard file.data.count + bytes.count <= file.size else {
+                incoming[id] = nil
+                sendText(["t": "file-refuse", "id": id, "reason": "The file was bigger than it said."])
+                return
+            }
+            file.data.append(bytes)
+            sendText(["t": "file-ack", "id": id, "got": file.data.count])
+            if file.data.count == file.size { finishIncoming(id, file) }
+        }
+
+        private func finishIncoming(_ id: Int, _ file: Incoming) {
+            incoming[id] = nil
+            if file.size == 0 { sendText(["t": "file-ack", "id": id, "got": 0]) }
+            let done = LampFile(name: file.name, type: file.type, data: file.data)
+            for listener in fileListeners { listener(done) }
+        }
+
+        private func dropFiles(_ reason: String) {
+            for file in outgoing.values { file.transfer.end(.failed(reason)) }
+            outgoing = [:]
+            incoming = [:]
+        }
+
+        /// A message from the TV app's page, whichever way it came.
+        private func hear(_ text: String) {
+            guard let m = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] else { return }
+            if hearFile(m) { return }
+            switch m["t"] as? String {
+            case "welcome":
+                retry = 0
+                seq = 0
+                if let kept = m["credential"] as? String { credential = kept }
+                state = m["host"] as? Bool == true ? .connected : .waiting
+            case "player":
+                if let number = m["number"] as? Int { player = number }
+            case "credential":
+                if let kept = m["credential"] as? String { credential = kept }
+            case "state":
+                if m["host"] as? Bool != true { dropFiles("The TV app left.") }
+                state = m["host"] as? Bool == true ? .connected : .waiting
+            case "message":
+                if let data = m["data"] { for listener in listeners { listener(data) } }
+            case "full":
+                closed = true
+                state = .full
+            default:
+                break
+            }
+        }
+
+        // MARK: Through the relay
+
+        // Where to join, from Lamp: the relay's socket and a link's credential, asked again whenever the one held
+        // has run out (the relay gives a joined player one of its own, renewed while it stays).
         private func open() {
             guard !closed else { return }
             state = .connecting
@@ -13685,13 +13896,15 @@ enum Template {
                         }
                         address = socket
                         credential = join
+                        app = answer["app"] as? String
                     }
                     guard let address, let credential, !closed else { return }
                     let task = URLSession.shared.webSocketTask(with: address)
+                    task.maximumMessageSize = Self.chunk + 64
                     link.task = task
                     task.resume()
                     heard = Date()
-                    let hello = try JSONSerialization.data(withJSONObject: ["t": "hello", "credential": credential])
+                    let hello = try JSONSerialization.data(withJSONObject: ["t": "hello", "app": app ?? "", "credential": credential])
                     try await task.send(.string(String(decoding: hello, as: UTF8.self)))
                     receive(on: task)
                 } catch {
@@ -13710,6 +13923,10 @@ enum Template {
                         self.heard = Date()
                         self.hear(text)
                         self.receive(on: task)
+                    case .success(.data(let data)):
+                        self.heard = Date()
+                        self.hearPiece(data)
+                        self.receive(on: task)
                     case .success:
                         self.receive(on: task)
                     case .failure:
@@ -13719,37 +13936,14 @@ enum Template {
             }
         }
 
-        private func hear(_ text: String) {
-            guard let m = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] else { return }
-            switch m["t"] as? String {
-            case "welcome":
-                retry = 0
-                seq = 0
-                // The state first, so code that sends as soon as it sees its player number is heard.
-                state = m["host"] as? Bool == true ? .connected : .waiting
-                if let kept = m["credential"] as? String { credential = kept }
-                player = m["player"] as? Int
-            case "credential":
-                if let kept = m["credential"] as? String { credential = kept }
-            case "state":
-                state = m["host"] as? Bool == true ? .connected : .waiting
-            case "message":
-                if let data = m["data"] { for listener in listeners { listener(data) } }
-            case "full":
-                closed = true
-                state = .full
-            default:
-                break
-            }
-        }
-
         private func dropped(_ task: URLSessionWebSocketTask) {
             guard link.task === task else { return }
             let code = task.closeCode.rawValue
             link.task = nil
+            dropFiles("The link was lost.")
             // Refused, or the game ended: the credential is no use, so a fresh one is asked for. Dropped before it was let
-            // in, the TV app's site may have moved: where it is is asked for again too.
-            if code == 4003 || code == 4005 || player == nil || retry >= 3 { credential = nil; address = nil }
+            // in, the relay may have moved: where it is is asked for again too.
+            if code == 4003 || code == 4005 || state == .connecting || retry >= 3 { credential = nil; address = nil }
             again()
         }
 
@@ -13764,8 +13958,19 @@ enum Template {
             }
         }
 
-        // A beat both ways: Lamp lets a quiet player go, and one that hears nothing joins again.
+        // A beat both ways: whoever hears nothing for a while lets the other go.
         private func tick() {
+            for (id, file) in outgoing where Date().timeIntervalSince(file.moved) > 20 {
+                outgoing[id] = nil
+                sendText(["t": "file-cancel", "id": id])
+                file.transfer.end(.failed("The file stopped moving."))
+            }
+            if let listening {
+                guard let host = listening.host else { return }
+                if Date().timeIntervalSince(listening.heard) > 15 { return listening.drop(host) }
+                sendText(["t": "beat", "now": Int(Date().timeIntervalSince1970 * 1000)])
+                return
+            }
             guard let task = link.task else { return }
             if Date().timeIntervalSince(heard) > 12 {
                 task.cancel(with: .goingAway, reason: nil)
@@ -13774,6 +13979,299 @@ enum Template {
             }
             task.send(.string(#"{"t":"beat"}"#)) { _ in }
         }
+
+        // MARK: Listening (an iPhone)
+
+        /// The phone listens on the home network for the TV app's page, and tells Lamp on the Mac where it is; Lamp gives
+        /// it a key, and the page a ticket signed with it, so only a page Lamp sent gets in. When it can't listen, it
+        /// joins through the relay instead.
+        private func listen() {
+            let listening = Listening(device: Self.device)
+            self.listening = listening
+            listening.onReady = { [weak self] in self?.register() }
+            listening.onFailed = { [weak self] in
+                guard let self, !self.closed, self.listening === listening else { return }
+                self.listening = nil
+                self.open()
+            }
+            listening.onHost = { [weak self] in
+                guard let self else { return }
+                self.retry = 0
+                self.seq = 0
+                self.state = .connected
+            }
+            listening.onText = { [weak self] text in self?.hear(text) }
+            listening.onPiece = { [weak self] data in self?.hearPiece(data) }
+            listening.onHostLeft = { [weak self] in
+                guard let self, !self.closed else { return }
+                self.dropFiles("The TV app left.")
+                if self.state == .connected { self.state = .waiting }
+            }
+            listening.start()
+        }
+
+        /// Says where the phone is listening, now and every little while, and takes the key Lamp signs its tickets with.
+        /// The controller isn't held across the wait between two renewals, so letting it go ends them and its listener.
+        private func register() {
+            guard let listening, !closed else { return }
+            link.renewal?.cancel()
+            link.renewal = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    guard let renew = await self?.registerOnce(listening) else { return }
+                    try? await Task.sleep(for: .seconds(renew))
+                }
+            }
+        }
+
+        /// One renewal: how long until the next, nil once this listener is no longer the controller's.
+        private func registerOnce(_ listening: Listening) async -> Double? {
+            guard self.listening === listening, let port = listening.port, !closed else { return nil }
+            do {
+                let answer = try await LampAI.post("/app/controller", ["as": "listener", "port": Int(port), "listener": listening.id,
+                                                                       "device": listening.device], timeout: 20)
+                if let key = (answer["key"] as? String).flatMap({ Data(base64Encoded: $0) }), key.count == 32 {
+                    listening.key = SymmetricKey(data: key)
+                }
+                if listening.host == nil, state == .connecting { state = .waiting }
+                return answer["renew"] as? Double ?? 20
+            } catch {
+                fputs("LampController: \(error.localizedDescription)\n", stderr)
+                return 5
+            }
+        }
+
+        /// This phone, the same each time the app opens, so the TV app knows it when it comes back.
+        private static var device: String {
+            if let kept = UserDefaults.standard.string(forKey: "lamp.controller.device") { return kept }
+            let made = UUID().uuidString
+            UserDefaults.standard.set(made, forKey: "lamp.controller.device")
+            return made
+        }
+
+        /// The phone's listener for the TV app's page: a WebSocket on the home network that lets in only a page with a
+        /// ticket signed with the key Lamp gave it, one page at a time. Everything it does is on the main queue.
+        private final class Listening: @unchecked Sendable {
+            let id = UUID().uuidString
+            let device: String
+            var key: SymmetricKey?
+            private(set) var port: UInt16?
+            private(set) var host: NWConnection?
+            private var hostIsPreview = false
+            /// Tickets already used, until they'd have run out anyway: each lets a page in once.
+            private var used: [String: Date] = [:]
+            private(set) var heard = Date()
+            private var listener: NWListener?
+            var onReady: @MainActor () -> Void = {}
+            var onFailed: @MainActor () -> Void = {}
+            var onHost: @MainActor () -> Void = {}
+            var onHostLeft: @MainActor () -> Void = {}
+            var onText: @MainActor (String) -> Void = { _ in }
+            var onPiece: @MainActor (Data) -> Void = { _ in }
+
+            init(device: String) { self.device = device }
+
+            func start() {
+                let socket = NWProtocolWebSocket.Options()
+                socket.autoReplyPing = true
+                socket.maximumMessageSize = LampController.chunk + 64
+                let parameters = NWParameters.tcp
+                parameters.defaultProtocolStack.applicationProtocols.insert(socket, at: 0)
+                guard let listener = try? NWListener(using: parameters) else {
+                    return DispatchQueue.main.async { MainActor.assumeIsolated { self.onFailed() } }
+                }
+                self.listener = listener
+                listener.newConnectionHandler = { [weak self] connection in
+                    MainActor.assumeIsolated { self?.greet(connection) }
+                }
+                listener.stateUpdateHandler = { [weak self] state in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        switch state {
+                        case .ready:
+                            self.port = self.listener?.port?.rawValue
+                            self.onReady()
+                        case .failed:
+                            self.stop()
+                            self.onFailed()
+                        default:
+                            break
+                        }
+                    }
+                }
+                listener.start(queue: .main)
+            }
+
+            func stop() {
+                listener?.cancel()
+                listener = nil
+                host?.cancel()
+                host = nil
+            }
+
+            /// A page's first message must be its hello, with a ticket, within a few seconds.
+            private func greet(_ connection: NWConnection) {
+                connection.start(queue: .main)
+                var greeted = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { if !greeted { connection.cancel() } }
+                connection.receiveMessage { [weak self] content, context, _, error in
+                    MainActor.assumeIsolated {
+                        greeted = true
+                        guard let self, error == nil, let content, Self.opcode(context) == .text,
+                              let hello = (try? JSONSerialization.jsonObject(with: content)) as? [String: Any], hello["t"] as? String == "hello",
+                              let key = self.key, let ticket = Self.check(hello["credential"] as? String, listener: self.id, key: key)
+                        else { return Self.close(connection, 4003) }
+                        self.used = self.used.filter { $0.value > Date() }
+                        guard self.used[ticket.nonce] == nil else { return Self.close(connection, 4003) }
+                        self.used[ticket.nonce] = ticket.expires
+                        let preview = ticket.preview
+                        if let old = self.host {
+                            // The preview is the app's host on the Mac: a TV running the same app meanwhile waits for it.
+                            if self.hostIsPreview && !preview { return Self.close(connection, 4009) }
+                            self.host = nil
+                            Self.close(old, 4000)
+                            self.onHostLeft()
+                        }
+                        self.host = connection
+                        self.hostIsPreview = preview
+                        self.heard = Date()
+                        let joined = ObjectIdentifier(connection)
+                        connection.stateUpdateHandler = { [weak self] state in
+                            MainActor.assumeIsolated {
+                                guard let self, let host = self.host, ObjectIdentifier(host) == joined else { return }
+                                switch state {
+                                case .failed, .cancelled: self.lost(host)
+                                default: break
+                                }
+                            }
+                        }
+                        if let welcome = try? JSONSerialization.data(withJSONObject: ["t": "welcome", "role": "controller", "device": self.device,
+                                                                                       "now": Int(Date().timeIntervalSince1970 * 1000)]) {
+                            Self.send(welcome, opcode: .text, on: connection)
+                        }
+                        self.onHost()
+                        self.receive(on: connection)
+                    }
+                }
+            }
+
+            private func receive(on connection: NWConnection) {
+                connection.receiveMessage { [weak self] content, context, _, error in
+                    MainActor.assumeIsolated {
+                        guard let self, self.host === connection else { return }
+                        guard error == nil else { return self.lost(connection) }
+                        self.heard = Date()
+                        switch Self.opcode(context) {
+                        case .text?:
+                            if let content, content.count <= LampController.message { self.onText(String(decoding: content, as: UTF8.self)) }
+                        case .binary?:
+                            if let content { self.onPiece(content) }
+                        case .close?:
+                            return self.lost(connection)
+                        default:
+                            break
+                        }
+                        self.receive(on: connection)
+                    }
+                }
+            }
+
+            @MainActor func drop(_ connection: NWConnection) {
+                Self.close(connection, 4002)
+                lost(connection)
+            }
+
+            @MainActor private func lost(_ connection: NWConnection) {
+                guard host === connection else { return }
+                host = nil
+                hostIsPreview = false
+                connection.cancel()
+                onHostLeft()
+            }
+
+            static func send(_ data: Data, opcode: NWProtocolWebSocket.Opcode, on connection: NWConnection, then: (@Sendable () -> Void)? = nil) {
+                let context = NWConnection.ContentContext(identifier: "lamp", metadata: [NWProtocolWebSocket.Metadata(opcode: opcode)])
+                connection.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { _ in then?() })
+            }
+
+            private static func close(_ connection: NWConnection, _ code: UInt16) {
+                let metadata = NWProtocolWebSocket.Metadata(opcode: .close)
+                metadata.closeCode = .privateCode(code)
+                let context = NWConnection.ContentContext(identifier: "close", metadata: [metadata])
+                connection.send(content: nil, contentContext: context, isComplete: true, completion: .contentProcessed { _ in connection.cancel() })
+            }
+
+            private static func opcode(_ context: NWConnection.ContentContext?) -> NWProtocolWebSocket.Opcode? {
+                (context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata)?.opcode
+            }
+
+            /// What a ticket says (whether it's the preview's, its nonce and when it runs out), when it's one Lamp signed
+            /// with this listener's key, for this listener, and it hasn't run out; nil otherwise. The same form as Lamp's
+            /// other controller credentials: a JSON body and its HMAC, each base64url.
+            static func check(_ ticket: String?, listener: String, key: SymmetricKey) -> (preview: Bool, nonce: String, expires: Date)? {
+                guard let ticket, ticket.utf8.count <= 1024 else { return nil }
+                let parts = ticket.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+                func decoded(_ text: String) -> Data? {
+                    guard text.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else { return nil }
+                    var plain = text.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+                    plain += String(repeating: "=", count: (4 - plain.count % 4) % 4)
+                    return Data(base64Encoded: plain)
+                }
+                guard parts.count == 2, let signature = decoded(parts[1]),
+                      HMAC<SHA256>.isValidAuthenticationCode(signature, authenticating: Data(parts[0].utf8), using: key),
+                      let body = decoded(parts[0]), let payload = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+                      payload["k"] as? String == "host", payload["a"] as? String == listener, let nonce = payload["n"] as? String,
+                      let expires = payload["e"] as? Int, Double(expires) > Date().timeIntervalSince1970 else { return nil }
+                return (payload["v"] as? Int == 1, nonce, Date(timeIntervalSince1970: Double(expires)))
+            }
+        }
+    }
+
+    /// A file on its way to the TV app (`LampController.sendFile`).
+    @MainActor final class LampTransfer: ObservableObject, Identifiable {
+        enum State: Equatable { case sending, done, failed(String) }
+        let id: Int
+        let name: String
+        /// Its size in bytes, and how many of them the TV app has.
+        let size: Int
+        @Published fileprivate(set) var sent = 0
+        @Published fileprivate(set) var state: State = .sending
+        var progress: Double { size == 0 ? 1 : Double(sent) / Double(size) }
+        fileprivate var cancelling: () -> Void = {}
+        private var waiting: [CheckedContinuation<Void, Error>] = []
+
+        fileprivate init(id: Int, name: String, size: Int) {
+            self.id = id
+            self.name = name
+            self.size = size
+        }
+
+        func cancel() { if state == .sending { cancelling() } }
+
+        /// Waits until the TV app has all of it; throws when it didn't get there.
+        func finished() async throws {
+            switch state {
+            case .done: return
+            case .failed(let reason): throw LampAI.Failure(message: reason)
+            case .sending: try await withCheckedThrowingContinuation { waiting.append($0) }
+            }
+        }
+
+        fileprivate func end(_ result: State) {
+            guard state == .sending else { return }
+            if result == .done { sent = size }
+            state = result
+            for waiter in waiting {
+                if case .failed(let reason) = result { waiter.resume(throwing: LampAI.Failure(message: reason)) } else { waiter.resume() }
+            }
+            waiting = []
+        }
+    }
+
+    /// A file the TV app sent with `Lamp.controllers.sendFile`.
+    struct LampFile {
+        let name: String
+        let type: String
+        let data: Data
     }
 
     // MARK: - Mac building blocks

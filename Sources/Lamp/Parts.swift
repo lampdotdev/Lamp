@@ -166,14 +166,16 @@ extension Agent.Rules {
         """
 
         - When the wish has a TV app, this app talks to it with `LampController` from LampSupport.swift: \
-        `let pad = LampController.connect()` joins the TV app as a player, as a phone's page would, through Lamp on \
-        the person's Mac and the home Wi‑Fi, with nothing to pair or set up. `pad.press("next")` taps a button, \
-        `pad.button("fire", down: true)` and `down: false` hold and let go, `pad.axis("stick", x: 0.5, y: 0)` moves \
-        a stick (-1 to 1), and `pad.send(["volume": 4])` sends anything small (at most 1,024 bytes as JSON; a file goes in pieces, as the \
-        phone-controllers skill shows); the TV app hears them in \
-        `Lamp.controllers`' onButton, onAxis and onMessage. `pad.onMessage { data in … }` hears what it sends back. \
-        `pad` is observable: show `pad.state` plainly (`.waiting` means the TV app isn't open: "Open it on the TV"), \
-        and keep every control usable while it connects. \(mac ? "" : "In the simulator it reaches the TV preview on this Mac.")
+        `let pad = LampController.connect()` joins the TV app as a player, as a phone's page would, over the home \
+        Wi‑Fi, with nothing to pair or set up\(mac ? "" : ": the TV app connects straight to the phone, and Lamp on the Mac only introduces them"). \
+        `pad.press("next")` taps a button, `pad.button("fire", down: true)` and `down: false` hold and let go, \
+        `pad.axis("stick", x: 0.5, y: 0)` moves a stick (-1 to 1), and `pad.send(["volume": 4])` sends JSON of \
+        16 KB at most; the TV app hears them in `Lamp.controllers`' onButton, onAxis and onMessage. Anything bigger \
+        (a photo, a game, a song) goes with `pad.sendFile(data, name: "game.nes")`, up to 64 MB, which the TV app \
+        gets in onFile; the transfer it returns is observable (`sent`, `progress`, `state`) and has `cancel()`, so \
+        show its progress. `pad.onMessage { data in … }` and `pad.onFile { file in … }` hear what the TV app sends \
+        back. `pad` is observable: show `pad.state` plainly (`.waiting` means the TV app isn't open: "Open it on the \
+        TV"), and keep every control usable while it connects. \(mac ? "" : "In the simulator it reaches the TV preview on this Mac.")
         """
     }
 }

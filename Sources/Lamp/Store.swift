@@ -8828,10 +8828,7 @@ final class Store: ObservableObject {
 
     private func startGateway() {
         let gateway = Gateway(handler: { request in await Store.shared.handleAI(request) },
-                              pages: { request in await Store.shared.phonePage(request) },
-                              sockets: { request, connection, leftover in
-                                  Task { @MainActor in Store.shared.phoneSocket(request, connection: connection, leftover: leftover) }
-                              })
+                              pages: { request in await Store.shared.phonePage(request) })
         do {
             try gateway.start()
             self.gateway = gateway
@@ -8863,7 +8860,7 @@ final class Store: ObservableObject {
     /// network by this Mac's name or address, or on this Mac by a loopback name, like the rest of the gateway. No token:
     /// a browser opening a QR code's link has none, so the page is only ever the app's own files, which the agent is
     /// told anyone on the network can read while the app runs.
-    func phonePage(_ request: Gateway.Request) -> Gateway.Page {
+    func phonePage(_ request: Gateway.Request) async -> Gateway.Page {
         let missing = Gateway.Page(status: 404, body: Data("Nothing here. Open the app on the TV first.".utf8))
         let host = request.headers["host"]
         guard request.fromNetwork ? Self.isMacHost(host) : Self.isLocalHost(host) else {
@@ -8879,6 +8876,15 @@ final class Store: ObservableObject {
         // Lamp's own library for a controller page, served beside the app's files as if it were one of them.
         if names == ["lamp-controller.js"] {
             return Gateway.Page(status: 200, type: Self.pageType("js"), body: Data(TVTemplate.phoneControllerJS.utf8))
+        }
+        // Where lamp-controller.js opens its socket: the controllers' relay, on this Mac by the name the page was reached
+        // at, asked before each try, since the relay may have started again elsewhere.
+        if names == ["lamp-relay.json"] {
+            guard let port = await ControllerRelay.ready(),
+                  let body = try? JSONSerialization.data(withJSONObject: ["port": Int(port), "app": project.id]) else {
+                return Gateway.Page(status: 503, body: Data("Lamp couldn't start the link for controllers.".utf8))
+            }
+            return Gateway.Page(status: 200, type: Self.pageType("json"), body: body)
         }
         // Only the staged copy's own files: no step up, nothing hidden, no empty name, nothing that isn't a plain file.
         guard names.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") && !$0.contains("/") && !$0.contains("\0") }) else { return missing }
@@ -8988,28 +8994,51 @@ final class Store: ObservableObject {
         return await appRequest(request, for: project)
     }
 
-    /// A TV app on a TV opening a game for phone controllers (`Lamp.controllers` in lamp.js): a credential for its socket
-    /// on this same gateway, by the address the TV reached it at, never anything of Lamp's. The preview joins through its
-    /// bridge instead (`TVPreview`).
+    /// Who a TV app's game is with (`Lamp.controllers` in lamp.js), asked by its page in the preview or on a TV, and by the
+    /// wish's other apps (`LampController`). Lamp only introduces them; what they say to each other never comes here:
+    ///
+    /// - The TV app's page gets its links: the relay (`ControllerRelay`), by the address the page reached Lamp at, with a
+    ///   host's credential, and each of the wish's iPhone apps listening now, with a ticket for it.
+    /// - A wish's iPhone app says where it's listening (`as: listener`) and gets the key its tickets are signed with.
+    /// - A wish's Mac app, or an iPhone app that can't listen, joins at the relay as a player (`as: player`), with a link's
+    ///   credential, as a phone following the TV's QR code has.
+    ///
+    /// Only a part of the same wish is answered for a wish, and none of it is anything of Lamp's.
     private func controllerSession(_ request: Gateway.Request, for project: LampProject) async -> (Int, [String: Any]) {
-        // By the name or address the app reached Lamp at, at the TV app's own port.
+        // By the name or address the app reached Lamp at, at the relay's port.
         let host = (request.headers["host"] ?? "127.0.0.1").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
-        // The wish's own iPhone or Mac app, joining its TV app as a player (`LampController`): a link's credential, as a
-        // phone following the TV's QR code has, for the TV app's socket. Only a part of the same wish is answered.
+        let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
         if project.isPart {
             let wish = wish(of: project)
             guard wish.platform.hasTV, wish.id != project.id else { return (403, ["error": "This app's wish has no TV app."]) }
-            syncLocalNetwork()
-            guard Self.servesPhonePage(wish), let port = await PhoneSites.ready(wish.id) else {
-                return (409, ["error": "The TV app isn't open: open it in the TV preview or on the TV."])
+            if body["as"] as? String == "listener" {
+                let token = "^[A-Za-z0-9_-]{8,64}$"
+                guard let port = (body["port"] as? Int).flatMap({ UInt16(exactly: $0) }), port > 0,
+                      let listener = body["listener"] as? String, listener.range(of: token, options: .regularExpression) != nil,
+                      let device = body["device"] as? String, device.range(of: token, options: .regularExpression) != nil else {
+                    return (400, ["error": "Say where the app is listening."])
+                }
+                guard let key = PhoneControllers.shared.register(listener: listener, wish: wish.id, device: device,
+                                                                 address: request.peerAddress ?? "127.0.0.1", port: port) else {
+                    return (409, ["error": "Another app is listening under that name."])
+                }
+                return (200, ["key": key.withUnsafeBytes { Data($0) }.base64EncodedString(), "renew": 20])
             }
-            return (200, ["socket": "ws://\(host):\(port)/socket", "join": ControllerCredential.issue(kind: .join, app: wish.id)])
+            syncLocalNetwork()
+            guard Self.servesPhonePage(wish) else { return (409, ["error": "The TV app isn't open: open it in the TV preview or on the TV."]) }
+            guard let port = await ControllerRelay.ready() else { return (503, ["error": "Lamp couldn't start the link for controllers."]) }
+            return (200, ["socket": "ws://\(host):\(port)/", "app": wish.id, "join": ControllerCredential.issue(kind: .join, app: wish.id)])
         }
         guard project.platform.hasTV else { return (403, ["error": "Only TV apps take phone controllers."]) }
         guard Self.takesPlayers(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
         syncLocalNetwork()
-        guard let port = await PhoneSites.ready(project.id) else { return (503, ["error": "Lamp couldn't open the phone page."]) }
-        return (200, ["socket": "ws://\(host):\(port)/socket", "host": PhoneControllers.shared.hostCredential(for: project)])
+        guard Self.servesPhonePage(project) else { return (409, ["error": "The app isn't open in the TV preview or set to open on a TV."]) }
+        guard let port = await ControllerRelay.ready() else { return (503, ["error": "Lamp couldn't start the link for controllers."]) }
+        let relay: [String: Any] = ["kind": "relay", "socket": "ws://\(host):\(port)/", "app": project.id,
+                                    "credential": PhoneControllers.shared.hostCredential(for: project, preview: request.fromPreview)]
+        let direct = PhoneControllers.shared.directLinks(for: project.id, preview: request.fromPreview,
+                                                         from: request.fromPreview ? nil : request.peerAddress)
+        return (200, ["links": [relay] + direct, "renew": 15])
     }
 
     /// A TV app that phones or the wish's other apps join as players: one with a page for phones, or with an iPhone or
@@ -9028,22 +9057,6 @@ final class Store: ObservableObject {
         syncLocalNetwork()
         guard let port = await PhoneSites.ready(project.id) else { return (503, ["error": "Lamp couldn't open the phone page."]) }
         return (200, ["url": TVs.phonePage(port: port)])
-    }
-
-    /// A socket at `/phone/<app>/socket`, from a phone's page or a TV app: addressed to this Mac like the page itself.
-    /// A phone's page is let in only from this gateway's own origin, by the Host it was asked for.
-    func phoneSocket(_ request: Gateway.Request, connection: NWConnection, leftover: Data) {
-        let host = request.headers["host"]
-        let parts = request.path.split(separator: "?", maxSplits: 1).first.map(String.init)?.split(separator: "/").map(String.init) ?? []
-        guard request.fromNetwork ? Self.isMacHost(host) : Self.isLocalHost(host), let host,
-              parts.count == 3, parts[0] == "phone", parts[2] == "socket", let key = request.headers["sec-websocket-key"],
-              projects.contains(where: { $0.id == parts[1] && $0.platform.hasTV }) else {
-            connection.send(content: Data("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8),
-                            completion: .contentProcessed { _ in connection.cancel() })
-            return
-        }
-        let peer = WebSocketPeer(connection: connection, key: key, leftover: leftover)
-        PhoneControllers.shared.accept(peer, app: parts[1], pageOrigins: ["http://\(host)", "https://\(host)"], origin: request.headers["origin"])
     }
 
     /// File ▸ Share… in a Mac app (`LampShareApp`): the app as a file to open with Lamp, the same one Lamp's own Share…

@@ -11,10 +11,14 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Lamp",
-            dependencies: [.product(name: "Sparkle", package: "Sparkle"), "LampSidebarKit", "LampFileLook"],
+            dependencies: [.product(name: "Sparkle", package: "Sparkle"), "LampSidebarKit", "LampFileLook", "LampRelayKit"],
             path: "Sources/Lamp",
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
         ),
+        // Phones and TVs talking to each other through a process of its own, never through Lamp's: the relay a TV app's
+        // phone pages and its players join (`LampRelay`, in Lamp's Helpers), and the credentials Lamp hands out for it.
+        .target(name: "LampRelayKit", path: "Sources/LampRelayKit"),
+        .executableTarget(name: "LampRelay", dependencies: ["LampRelayKit"], path: "Sources/LampRelay"),
         // What Lamp and the chat inside an app's window say to each other.
         .target(name: "LampSidebarKit", path: "Sources/LampSidebarKit"),
         // That chat: an extension Lamp puts in every Mac app it builds. It starts as Apple's own extensions do,
@@ -43,6 +47,6 @@ let package = Package(
             swiftSettings: [.unsafeFlags(["-application-extension"])],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain", "-Xlinker", "-application_extension"])]
         ),
-        .testTarget(name: "LampTests", dependencies: ["Lamp", "LampFileLook"], path: "Tests/Regression"),
+        .testTarget(name: "LampTests", dependencies: ["Lamp", "LampFileLook", "LampRelayKit"], path: "Tests/Regression"),
     ]
 )
