@@ -132,11 +132,21 @@ struct PanelView: View {
             Group {
                 if watcher.isLoading {
                     ProgressView().controlSize(.mini)
+                } else if let error = watcher.error {
+                    // Before the time of the last check: the games listed may be from then, and are no longer updating.
+                    Group {
+                        if let updated = watcher.lastUpdated {
+                            Text("Offline · \(updated, style: .relative) ago")
+                        } else {
+                            Text("Offline")
+                        }
+                    }
+                    .monospacedDigit()
+                    .foregroundStyle(.red)
+                    .help(error)
                 } else if let updated = watcher.lastUpdated {
                     Text("\(updated, style: .relative) ago")
                         .monospacedDigit()
-                } else if watcher.error != nil {
-                    Text("Offline")
                 }
             }
             .font(.caption)
