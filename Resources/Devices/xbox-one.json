@@ -298,5 +298,6 @@
       "lamp": "native-game",
       "purpose": "only a heavy 3D game the wish says needs the console's full power (a big world, many things moving at once, fast action) or native code; it needs a 2 GB download first"
     }
-  }
+  },
+  "certificateRoot": "/config/rootcertificate"
 }

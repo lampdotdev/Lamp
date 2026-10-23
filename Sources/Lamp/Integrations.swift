@@ -399,6 +399,19 @@ struct IntegrationRunner {
         if needsSSHKey, DeviceSSH.publicKey == nil { _ = try? await DeviceSSH.ensureKey() }
     }
 
+    /// The first time the device's certificate is kept for a port, the root the integration says signs it is read from
+    /// the device over that same connection and kept with it (`DeviceTLS.Pins.keepRoot`), so a certificate the device
+    /// makes later is still known as its own.
+    func learnRoot(_ request: Request, _ answer: DeviceHTTP.Answer) async {
+        guard request.https == true, let path = integration.certificateRoot, let leaf = answer.certificate else { return }
+        let pins = DeviceTLS.Pins(deviceID: device.id)
+        guard pins.root(port: request.port) == nil, let address = try? address else { return }
+        let fetch = Request(port: request.port, path: path, https: true)
+        guard let got = try? await DeviceHTTP.send(fetch, to: address, values: [:], pins: pins), got.ok,
+              let root = DeviceTLS.certificate(from: got.body) else { return }
+        pins.keepRoot(root, signing: leaf, port: request.port)
+    }
+
     /// Runs a sequence in order, stopping at the first failure.
     func run(_ sequence: [IntegrationAction], extra: [String: String] = [:], files: [String: URL] = [:]) async throws -> Outcome {
         await prepare()
@@ -420,6 +433,7 @@ struct IntegrationRunner {
                     if answer.status == 204 { throw Failure(message: "\(device.name) was still working on \(request.path) after \(poll) seconds.") }
                 }
                 cookies.merge(answer.cookies) { $1 }
+                if answer.ok { await learnRoot(request, answer) }
                 guard answer.ok else {
                     let said = DeviceApps.plain(answer.text)
                     throw Failure(message: "\(device.name) answered \(answer.status) to \(request.path)" + (said.isEmpty ? "." : ": " + said))
@@ -501,6 +515,7 @@ struct IntegrationRunner {
                 let answer: DeviceHTTP.Answer?
                 do {
                     answer = try await send(request, try address, values, DeviceTLS.Pins(deviceID: device.id))
+                    if let answer, answer.ok { await learnRoot(request, answer) }
                 } catch let refusal as DeviceTLS.Refusal {
                     return (false, refusal.localizedDescription, nil, true)
                 } catch {

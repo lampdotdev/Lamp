@@ -23,6 +23,10 @@ struct Integration: Codable, Hashable {
     /// naming call as "<id>:<name>" with its `purpose`, and an app made as one keeps that in `LampProject.integration`.
     /// Only Lamp's own kinds, in the integrations Lamp ships: the Xbox's native games (`GameKit`).
     var kinds: [String: AppKind]?
+    /// Where a device that serves its own HTTPS certificate serves the root that signs it ("/config/rootcertificate"
+    /// for Xbox's Device Portal, which makes itself a new certificate each time it starts): Lamp reads it once, over
+    /// the connection it keeps the device's first certificate on, and from then on takes any certificate it signed.
+    var certificateRoot: String?
     /// Where what this says was read: the vendor's documentation, a guide.
     var sources: [String]?
 
@@ -457,7 +461,7 @@ enum IntegrationCheck {
             "bridge": .object(["install": .array(action), "launch": .array(action), "look": .array(action),
                                "use": .array(action), "logs": .array(action), "stop": .array(action), "log": .array(action), "remove": .array(action), "keys": .map]),
             "app": appKind,
-            "kinds": .map,
+            "kinds": .map, "certificateRoot": .leaf,
         ])
     }
 
@@ -638,6 +642,9 @@ enum IntegrationCheck {
             if kind.lamp != "native-game" || kind.declared != nil { say("kinds.\(name) must be one of Lamp's own: {\"lamp\": \"native-game\"}.") }
             if kind.purpose?.trimmed.isEmpty != false { say("kinds.\(name).purpose says what it's for, beside app's.") }
             if integration.app?.declared?.wrap != "msix" { say("kinds.\(name): a native game is a Windows package, so app.declared.wrap must be \"msix\" and the bridge must install one.") }
+        }
+        if let root = integration.certificateRoot, !root.hasPrefix("/") || root.contains("{") || root.contains("..") {
+            say("certificateRoot is the path the device serves its root certificate at, over HTTPS on the port the bridge uses: \"/config/rootcertificate\".")
         }
         for source in integration.sources ?? [] where !isWebPage(source) { say("sources: \"\(source)\" isn't an https page.") }
         return problems

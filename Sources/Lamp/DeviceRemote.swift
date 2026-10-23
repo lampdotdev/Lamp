@@ -54,7 +54,34 @@ enum DeviceTLS {
         }
     }
 
-    /// One device's kept certificates.
+    /// Whether `root` signed `leaf`: the leaf checked against that root alone (no system roots, no name), as a device
+    /// that makes itself a new certificate from a root of its own (Xbox's Device Portal, at each start) is held to it.
+    static func signs(_ root: Data, _ leaf: Data) -> Bool {
+        guard let rootCertificate = SecCertificateCreateWithData(nil, root as CFData),
+              let leafCertificate = SecCertificateCreateWithData(nil, leaf as CFData) else { return false }
+        var trust: SecTrust?
+        guard SecTrustCreateWithCertificates(leafCertificate, SecPolicyCreateBasicX509(), &trust) == errSecSuccess, let trust,
+              SecTrustSetAnchorCertificates(trust, [rootCertificate] as CFArray) == errSecSuccess,
+              SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess else { return false }
+        return SecTrustEvaluateWithError(trust, nil)
+    }
+
+    /// A certificate as a device serves it, PEM or DER, as DER; nil when it isn't one.
+    static func certificate(from data: Data) -> Data? {
+        var der = data
+        let text = String(decoding: data, as: UTF8.self)
+        if text.contains("-----BEGIN CERTIFICATE-----") {
+            let body = text.components(separatedBy: "-----BEGIN CERTIFICATE-----").dropFirst().first?
+                .components(separatedBy: "-----END CERTIFICATE-----").first ?? ""
+            guard let decoded = Data(base64Encoded: body.filter { !$0.isWhitespace }) else { return nil }
+            der = decoded
+        }
+        return SecCertificateCreateWithData(nil, der as CFData) == nil ? nil : der
+    }
+
+    /// One device's kept certificates: the one it showed first, by port, and for a device whose integration says where
+    /// its root is (`Integration.certificateRoot`), that root, under "root:<port>". A certificate other than the kept one
+    /// is taken only when the kept root signed it, and is kept in its place.
     struct Pins: Sendable {
         private static let lock = NSLock()
         private let file: URL
@@ -69,7 +96,7 @@ enum DeviceTLS {
         /// Whether a certificate is taken, decided and kept under one lock, so two first requests at once can't each
         /// keep their own: the second is judged against what the first kept. It fails closed: a store that's there
         /// but can't be read, or a first certificate that can't be saved, takes nothing.
-        func admit(_ fingerprint: String, port: Int) -> Refusal? {
+        func admit(_ fingerprint: String, port: Int, certificate: Data? = nil) -> Refusal? {
             Self.lock.lock(); defer { Self.lock.unlock() }
             var pins: [String: String] = [:]
             if FileManager.default.fileExists(atPath: file.path) {
@@ -80,12 +107,39 @@ enum DeviceTLS {
             }
             switch judge(fingerprint, kept: pins[String(port)], keeping: true) {
             case .trust: return nil
-            case .refuse: return .changed
+            case .refuse:
+                // The device's own root vouches for a certificate it made since: it's the same device.
+                guard let certificate, let root = pins["root:\(port)"].flatMap({ Data(base64Encoded: $0) }), DeviceTLS.signs(root, certificate) else {
+                    return .changed
+                }
+                pins[String(port)] = fingerprint
+                do { try JSONEncoder().encode(pins).write(to: file, options: .atomic) } catch { return .unsaved }
+                return nil
             case .keep:
                 pins[String(port)] = fingerprint
                 do { try JSONEncoder().encode(pins).write(to: file, options: .atomic) } catch { return .unsaved }
                 return nil
             }
+        }
+
+        /// The device's root kept for a port, when one is.
+        func root(port: Int) -> Data? {
+            Self.lock.lock(); defer { Self.lock.unlock() }
+            return (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) }?["root:\(port)"]
+                .flatMap { Data(base64Encoded: $0) }
+        }
+
+        /// Keeps the device's root for a port, only when it signed the certificate kept there (`leaf`, the one just
+        /// shown, whose fingerprint must be the kept one), so the root is the device's own, read over a connection
+        /// already held to it.
+        @discardableResult
+        func keepRoot(_ root: Data, signing leaf: Data, port: Int) -> Bool {
+            Self.lock.lock(); defer { Self.lock.unlock() }
+            guard DeviceTLS.signs(root, leaf), let data = try? Data(contentsOf: file),
+                  var pins = try? JSONDecoder().decode([String: String].self, from: data),
+                  pins[String(port)] == DeviceTLS.fingerprint(leaf), pins["root:\(port)"] == nil else { return false }
+            pins["root:\(port)"] = root.base64EncodedString()
+            return (try? JSONEncoder().encode(pins).write(to: file, options: .atomic)) != nil
         }
 
         /// Lets go of every certificate kept for the device, for the person's Reconnect: the next request keeps the one the
