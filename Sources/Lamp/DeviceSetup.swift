@@ -1,3 +1,4 @@
+import Combine
 import AppKit
 import SwiftUI
 import LampSidebarKit
@@ -187,6 +188,7 @@ final class DeviceSetupWindow: NSObject, NSWindowDelegate {
     private static var windows: [String: NSWindow] = [:]
     private static var delegates: [String: DeviceSetupWindow] = [:]
     private let model: DeviceSetupModel
+    private var resizing: AnyCancellable?
 
     private init(model: DeviceSetupModel) { self.model = model }
 
@@ -201,12 +203,9 @@ final class DeviceSetupWindow: NSObject, NSWindowDelegate {
     static func show(_ model: DeviceSetupModel) {
         let id = model.device.id
         if windows[id] == nil {
-            let content = NSHostingController(rootView: DeviceSetupView(model: model))
-            content.sizingOptions = [.preferredContentSize]
-            let window = NSWindow(contentViewController: content)
-            window.styleMask = [.titled, .closable]
-            window.isReleasedWhenClosed = false
+            let (window, resizing) = FittedWindow.make(DeviceSetupView(model: model), following: model.objectWillChange)
             let delegate = DeviceSetupWindow(model: model)
+            delegate.resizing = resizing
             window.delegate = delegate
             delegates[id] = delegate
             window.center()

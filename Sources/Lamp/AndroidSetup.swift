@@ -1,3 +1,4 @@
+import Combine
 import AppKit
 import SwiftUI
 
@@ -25,6 +26,7 @@ final class AndroidSetup: NSObject, ObservableObject, NSWindowDelegate {
     private var presented = false
     private var closingInternally = false
     private var window: NSWindow?
+    private var resizing: AnyCancellable?
 
     /// Shows the window for a look, nothing waiting on it.
     func show(device: String? = nil) {
@@ -122,13 +124,10 @@ final class AndroidSetup: NSObject, ObservableObject, NSWindowDelegate {
     private func present() {
         presented = true
         if window == nil {
-            let content = NSHostingController(rootView: AndroidSetupView(model: self))
-            content.sizingOptions = [.preferredContentSize]
-            let window = NSWindow(contentViewController: content)
-            window.styleMask = [.titled, .closable]
+            let (window, resizing) = FittedWindow.make(AndroidSetupView(model: self), following: objectWillChange)
+            self.resizing = resizing
             window.delegate = self
             window.title = "Android Setup"
-            window.isReleasedWhenClosed = false
             window.center()
             self.window = window
         }
