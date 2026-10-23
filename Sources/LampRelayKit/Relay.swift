@@ -86,8 +86,8 @@ public final class Relay: @unchecked Sendable {
     /// device can take many there): a phone or a TV opens one at a time.
     static let greetingLimit = (all: 64, each: 8)
     /// Text waiting to go to the host past which phones' messages to it are dropped, well before the host is let go
-    /// for falling behind (`RelayPeer.textLimit`).
-    static let hostBehind = 128
+    /// for falling behind (`RelayPeer.textLimit`). Changed only by tests, which make a host count as behind.
+    nonisolated(unsafe) static var hostBehind = 128
     private var ticker: DispatchSourceTimer?
 
     public init(key: SymmetricKey) {
@@ -244,6 +244,9 @@ public final class Relay: @unchecked Sendable {
             old.onClose = {}
             old.close(code: 4000)
             dropTransfers(game)
+            // The files on their way to or from the old host end with it, and each phone hears so, as when a host just
+            // leaves, before it hears the new one is there.
+            for player in game.players.values { player.peer?.send(#"{"t":"state","host":false}"#) }
         }
         game.host = peer
         game.hostIsPreview = preview
@@ -323,8 +326,9 @@ public final class Relay: @unchecked Sendable {
             return
         }
         // A TV that's behind isn't let go for what phones send it: what they send meanwhile is dropped instead, all but
-        // what keeps a file moving.
-        if host.pendingText > Self.hostBehind, !["file-ack", "file-cancel", "file-refuse"].contains(kind) {
+        // what keeps a file moving, and buttons, whose letting go the TV must never miss (a button it thinks is still
+        // held stays held). They're small, and the rate a phone may send at bounds them.
+        if host.pendingText > Self.hostBehind, !["file-ack", "file-cancel", "file-refuse", "button"].contains(kind) {
             if kind == "file", let id = ControllerWire.isID(message["id"]) { refuse(player, id: id, "The TV app is busy; try again.") }
             return
         }

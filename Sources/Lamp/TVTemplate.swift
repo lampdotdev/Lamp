@@ -323,6 +323,7 @@ extension TVTemplate {
           function lampFiles(onIncoming) {
             var CHUNK = 65536, HEADER = 8, WINDOW = 524288, LIMIT = 67108864, STALL = 20000;
             var TAKING = 134217728;   // bytes of files coming in at once, from everyone: a TV's memory is small
+            var TOO_BIG = 'The file is too big to send: 64 MB at most.';
             var nextID = 1, outgoing = {}, incoming = {}, taking = 0;
             function noop() {}
             function key(route, id) { return route.key + ':' + id; }
@@ -335,6 +336,8 @@ extension TVTemplate {
                 return Promise.resolve(new Uint8Array(data.buffer, data.byteOffset || 0, data.byteLength));
               }
               if (typeof Blob !== 'undefined' && data instanceof Blob) {
+                // Refused by its size before it's read: reading a whole video into memory could end the page first.
+                if (data.size > LIMIT) return Promise.reject(new Error(TOO_BIG));
                 return new Promise(function (resolve, reject) {
                   var reader = new FileReader();
                   reader.onload = function () { resolve(new Uint8Array(reader.result)); };
@@ -386,7 +389,7 @@ extension TVTemplate {
               }
               bytesOf(data).then(function (read) {
                 if (settled) return;
-                if (read.length > LIMIT) return fail('The file is too big to send: 64 MB at most.');
+                if (read.length > LIMIT) return fail(TOO_BIG);
                 bytes = read;
                 transfer.size = read.length;
                 outgoing[key(route, id)] = {

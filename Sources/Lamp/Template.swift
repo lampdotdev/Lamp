@@ -13601,6 +13601,8 @@ enum Template {
         private final class Link: @unchecked Sendable {
             var task: URLSessionWebSocketTask?
             var listening: Listening?
+            /// Telling Lamp where the phone listens, again every little while, for as long as the controller is held.
+            var renewal: Task<Void, Never>?
         }
         private let link = Link()
         private var credential: String?
@@ -13629,6 +13631,8 @@ enum Template {
             var offset = 0
             var acknowledged = 0
             var sending = false
+            /// When the TV app last acknowledged some of it: a file it stops taking ends, as the web libraries' do.
+            var moved = Date()
             init(transfer: LampTransfer, bytes: Data) { self.transfer = transfer; self.bytes = bytes }
         }
         private final class Incoming {
@@ -13654,6 +13658,7 @@ enum Template {
 
         deinit {
             link.task?.cancel(with: .goingAway, reason: nil)
+            link.renewal?.cancel()
             link.listening?.stop()
         }
 
@@ -13701,6 +13706,7 @@ enum Template {
             beat?.invalidate()
             link.task?.cancel(with: .goingAway, reason: nil)
             link.task = nil
+            link.renewal?.cancel()
             listening?.stop()
             listening = nil
             dropFiles("The controller was closed.")
@@ -13793,6 +13799,7 @@ enum Template {
             case "file-ack":
                 guard let file = outgoing[id], let got = m["got"] as? Int, got >= file.acknowledged, got <= file.offset else { return true }
                 file.acknowledged = got
+                file.moved = Date()
                 file.transfer.sent = got
                 if got == file.bytes.count {
                     outgoing[id] = nil
@@ -13953,6 +13960,11 @@ enum Template {
 
         // A beat both ways: whoever hears nothing for a while lets the other go.
         private func tick() {
+            for (id, file) in outgoing where Date().timeIntervalSince(file.moved) > 20 {
+                outgoing[id] = nil
+                sendText(["t": "file-cancel", "id": id])
+                file.transfer.end(.failed("The file stopped moving."))
+            }
             if let listening {
                 guard let host = listening.host else { return }
                 if Date().timeIntervalSince(listening.heard) > 15 { return listening.drop(host) }
@@ -13999,25 +14011,32 @@ enum Template {
         }
 
         /// Says where the phone is listening, now and every little while, and takes the key Lamp signs its tickets with.
+        /// The controller isn't held across the wait between two renewals, so letting it go ends them and its listener.
         private func register() {
-            guard let listening, let port = listening.port, !closed else { return }
-            Task { @MainActor in
-                var renew = 20.0
-                do {
-                    let answer = try await LampAI.post("/app/controller", ["as": "listener", "port": Int(port), "listener": listening.id,
-                                                                           "device": listening.device], timeout: 20)
-                    if let key = (answer["key"] as? String).flatMap({ Data(base64Encoded: $0) }), key.count == 32 {
-                        listening.key = SymmetricKey(data: key)
-                    }
-                    renew = answer["renew"] as? Double ?? renew
-                    if listening.host == nil, state == .connecting { state = .waiting }
-                } catch {
-                    fputs("LampController: \(error.localizedDescription)\n", stderr)
-                    renew = 5
+            guard let listening, !closed else { return }
+            link.renewal?.cancel()
+            link.renewal = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    guard let renew = await self?.registerOnce(listening) else { return }
+                    try? await Task.sleep(for: .seconds(renew))
                 }
-                try? await Task.sleep(for: .seconds(renew))
-                guard self.listening === listening else { return }
-                self.register()
+            }
+        }
+
+        /// One renewal: how long until the next, nil once this listener is no longer the controller's.
+        private func registerOnce(_ listening: Listening) async -> Double? {
+            guard self.listening === listening, let port = listening.port, !closed else { return nil }
+            do {
+                let answer = try await LampAI.post("/app/controller", ["as": "listener", "port": Int(port), "listener": listening.id,
+                                                                       "device": listening.device], timeout: 20)
+                if let key = (answer["key"] as? String).flatMap({ Data(base64Encoded: $0) }), key.count == 32 {
+                    listening.key = SymmetricKey(data: key)
+                }
+                if listening.host == nil, state == .connecting { state = .waiting }
+                return answer["renew"] as? Double ?? 20
+            } catch {
+                fputs("LampController: \(error.localizedDescription)\n", stderr)
+                return 5
             }
         }
 
