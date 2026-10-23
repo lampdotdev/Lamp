@@ -627,10 +627,11 @@ extension TVTemplate {
 }
 
 extension Agent {
-    /// The rules for a TV app, in the same shape as the others' and said for the web on a TV.
-    static func tvPrompt() -> String {
+    /// The rules for a TV app, in the same shape as the others' and said for the web on a TV, offering `skills`.
+    static func tvPrompt(skills: [String: Skills.Skill] = Skills.all) -> String {
         let rules = [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI,
-                     Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
+                     Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience,
+                     Skills.index(Skills.offered(mac: false, tv: true), from: skills), Rules.begin, Rules.finish]
         return (Rules.tvHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "TV")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a TV")
@@ -687,19 +688,8 @@ extension Agent.Rules {
     """
 
     static let tvPhone = """
-    - When the app wants phones as controllers (a wheel, buttons, a buzzer) or a second screen, the phone's page goes \
-    in Phone/: index.html and the files beside it, loaded with relative paths, for the phone's own modern browser. \
-    For controls it loads `lamp-controller.js` (Lamp serves it beside the page; don't write one): \
-    `var pad = LampController.connect({onPlayer, onMessage, onState})`, then `pad.button(name, down)`, \
-    `pad.axis(name, x, y)` (-1 to 1) and `pad.send(data)`. In Web/, `Lamp.controllers` (lamp.js's comment) \
-    starts a game, gives the address phones open, to show as a QR code (it changes every few minutes), and hands you \
-    each player's input; for a second screen with no controllers, draw its QR code from `Lamp.phonePage()` inside \
-    `Lamp.onPhonePage(fn)`, which calls again when the address moves. Lamp serves the page and carries the input \
-    itself, over the home Wi‑Fi, while the app runs: \
-    never start a server, a login item or anything else that keeps running for it, and never publish the page \
-    another way. The page is plain http, which phones don't give their motion sensors: make buttons and sticks the \
-    controls, and offer tilt (`LampController.tilt`, from a Start button) only where `LampController.canTilt()` says \
-    so. Nothing secret goes in Phone/.
+    - A page for phones (controllers, a buzzer, a second screen) goes in Phone/, which Lamp serves while the app \
+    runs: never start a server or anything that keeps running for it. Open the phone-controllers skill first.
     """
 
     /// Lamp's AI in a web app on a device (`DeviceSupport.webJS`): the TV kit's and a declared web kind's.
