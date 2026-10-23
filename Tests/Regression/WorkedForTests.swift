@@ -115,6 +115,10 @@ final class WorkedForTests: XCTestCase {
         XCTAssertFalse(live.steps.contains { $0.text.contains(".swift") || $0.text.contains(".md") })
         // Agent Details still shows the calls themselves.
         XCTAssertEqual(LogLine.visible(lines, details: true).filter { $0.kind == .tool }.count, 8)
+        // Not a command's call, though: its "Ran: …" row says it, by its name.
+        let command = [LogLine(kind: .tool, text: "bash swift build", said: "Checking it builds"),
+                       LogLine(kind: .status, text: "Ran: swift build", said: "Checking it builds")]
+        XCTAssertEqual(LogLine.visible(command, details: true).map(\.text), ["Ran: swift build"])
         // Over, the same steps are what "Worked for…" opens to, the ones before the message still before it.
         let done = visible + LogLine.visible([LogLine(kind: .agent, text: "Done."), LogLine(kind: .summary, text: "Worked for 3m 56s · $0.18")], details: false)
         guard let steps = worked(ChatItem.items(done, gather: true)) else { return XCTFail("no Worked for") }

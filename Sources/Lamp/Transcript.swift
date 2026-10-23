@@ -156,7 +156,7 @@ extension LogLine {
     /// The chat as most people read it: what they asked, what the agent says and what happened to the app. The
     /// agent's steps are left out, which is where the file names and code are; the progress line stands in for
     /// them. What it says between them shows as it's said, so the person follows the work as it goes, and is
-    /// gathered with the steps once the turn is over (`ChatItem.items`). Agent Details shows everything.
+    /// gathered with the steps once the turn is over (`ChatItem.items`). Agent Details shows everything but a command's call.
     static func visible(_ lines: [LogLine], details: Bool) -> [LogLine] {
         // What a card shows isn't said again as a message: decided from the whole chat, since which card a clicked
         // message came from decides it, and left out only at the end, since a clicked answer still ends the
@@ -164,7 +164,9 @@ extension LogLine {
         // A request Lamp sent itself to fix a crash isn't the person's to see as theirs: the line before it says
         // what Lamp is doing.
         let hidden = Talk.cardMessages(in: lines).union(lines.filter { $0.byLamp == true }.map(\.id))
-        if details { return lines.filter { !hidden.contains($0.id) }.map(\.withOutcome) }
+        // A command's call isn't a row in either view: its own row ("Ran: …", by the name the agent gave it, opening
+        // to the command) is, and under Agent Details the call showed above it saying the same thing twice.
+        if details { return lines.filter { !hidden.contains($0.id) && !isCommandCall($0) }.map(\.withOutcome) }
         // After the agent's questions its card is the answer: whatever it says on the way out ("Waiting for
         // your answers.") would sit under the card saying the same.
         var afterAsk: Set<UUID> = []
@@ -204,6 +206,8 @@ extension LogLine {
     /// already is, and commands under one name are gathered there. For Codex the file work after a command is named
     /// after it too (`Store`, the heading of its reasoning), so it's part of that row, not the same words again under
     /// it. Without this a turn that only read and edited files had nothing under its open line.
+    private static func isCommandCall(_ line: LogLine) -> Bool { line.kind == .tool && ToolCall(line.text).action == .run }
+
     private static func said(_ lines: [LogLine]) -> [LogLine] {
         var out: [LogLine] = []
         for line in lines {
@@ -218,8 +222,8 @@ extension LogLine {
                 out.append(line)
                 continue
             }
+            guard !isCommandCall(line) else { continue }
             let call = ToolCall(line.text)
-            guard call.action != .run else { continue }
             // The agent's own words for the step when it gave some, else what the live line said.
             let said = line.said ?? TurnProgress.activity(for: call)
             guard !said.isEmpty else { continue }
