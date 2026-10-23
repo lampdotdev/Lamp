@@ -11,6 +11,11 @@ struct WishDesk: View {
     @StateObject private var dictation = Dictation()
     @State private var hasMicrophone = true
     @FocusState private var barFocused: Bool
+    /// Whether the person put the bar to use (clicked into it, chose an idea), rather than Lamp focusing it as the
+    /// desk opened so typing starts at once: only then do the wishes recede behind it.
+    @State private var barEngaged = false
+    /// Set while Lamp itself moves the focus to the bar, so that move doesn't count as the person's.
+    @State private var lampFocusing = false
     /// Drawn once, so they don't change under the reader.
     @State private var ideas: [Idea] = []
     /// The ideas under the bar, opened by "Not sure?", and open from the start on an empty desk.
@@ -51,9 +56,18 @@ struct WishDesk: View {
                     // The wishes come first: using one and changing it is where most wishes start, and a new
                     // one is the way on from there.
                     VStack(spacing: 0) {
-                        headline
-                        if !wishes.isEmpty || !missingStarters.isEmpty {
-                            grid.padding(.top, 28)
+                        // With the ideas open, the desk steps away and leaves the bar and the ideas on their own.
+                        if !hidesDesk {
+                            VStack(spacing: 0) {
+                                headline
+                                if !wishes.isEmpty || !missingStarters.isEmpty {
+                                    grid.padding(.top, 28)
+                                        .modifier(receding ? Recede.behind : Recede.present)
+                                        .animation(.easeOut(duration: 0.3), value: receding)
+                                }
+                            }
+                            .padding(.bottom, wishes.isEmpty ? 18 : 32)
+                            .transition(.modifier(active: Recede.gone, identity: Recede.present))
                         }
                         // While the pointer is on a wish, what it is takes this place: making a new one and
                         // looking at one aren't done at once.
@@ -70,7 +84,6 @@ struct WishDesk: View {
                         .blur(radius: shown == nil ? 0 : 10)
                         .opacity(shown == nil ? 1 : 0)
                         .overlay(alignment: .top) { stage }
-                        .padding(.top, wishes.isEmpty ? 18 : 32)
                     }
                     .padding(.top, 16).padding(.bottom, 40)
                     .animation(.spring(response: 0.4, dampingFraction: 0.85), value: shown?.id)
@@ -79,6 +92,8 @@ struct WishDesk: View {
                     // open, the desk would otherwise move sideways by its width.
                     .frame(width: max(0, area.size.width - scrollerWidth))
                     .frame(maxWidth: .infinity, minHeight: area.size.height, alignment: .leading)
+                    // A click on the desk itself leaves the bar, and the wishes come forward again.
+                    .background { Color.clear.contentShape(Rectangle()).onTapGesture { barFocused = false } }
                     .animation(Self.glide, value: wishes.map(\.id))
                     // Read from the files, so once for each change to the desk rather than at every redraw.
                     // By the wishes there are rather than their order, so dragging one about reads nothing.
@@ -105,7 +120,18 @@ struct WishDesk: View {
             hasMicrophone = Dictation.hasMicrophone
             if ideas.isEmpty { ideas = Ideas.starters(made: store.projects.filter { !$0.untitled }.map(\.name)) }
             if wishes.isEmpty { showingIdeas = true }
-            barFocused = true
+            focusQuietly()
+        }
+        .onChange(of: barFocused) {
+            barEngaged = barFocused && !lampFocusing
+            lampFocusing = false
+        }
+        // Wishes that stepped away for the ideas can't be pointed at.
+        .onChange(of: hidesDesk) {
+            if hidesDesk {
+                pointedAt = nil
+                staged = nil
+            }
         }
         // A wish being dragged isn't being looked at.
         .onChange(of: arrangement.dragging) {
@@ -117,7 +143,8 @@ struct WishDesk: View {
         .onChange(of: store.deskFocusRequest) {
             pointedAt = nil
             staged = nil
-            barFocused = true
+            barEngaged = false
+            focusQuietly()
         }
         // Plugging in a mouse, or changing Show Scroll Bars, changes it.
         .onReceive(NotificationCenter.default.publisher(for: NSScroller.preferredScrollerStyleDidChangeNotification)) { _ in
@@ -143,6 +170,23 @@ struct WishDesk: View {
     /// What's on the stage: nothing while a new wish is being typed or said, which the stage would hide.
     private var shown: Staged? {
         store.deskDraft.trimmed.isEmpty && !dictation.isListening ? staged : nil
+    }
+
+    /// The headline and the wishes step away while the ideas are open, leaving the bar and the ideas. An empty desk
+    /// opens on its ideas and keeps its headline, the only question on it.
+    private var hidesDesk: Bool { showingIdeas && !wishes.isEmpty }
+
+    /// The wishes recede behind the bar while the person is writing one, and come back while one is pointed at.
+    private var receding: Bool {
+        barFocused && (barEngaged || !store.deskDraft.trimmed.isEmpty || dictation.isListening)
+            && pointedAt == nil && arrangement.dragging == nil
+    }
+
+    /// Focuses the bar so typing starts at once, without the wishes receding as they do when the person clicks into it.
+    private func focusQuietly() {
+        guard !barFocused else { return }
+        lampFocusing = true
+        barFocused = true
     }
 
     private var headline: some View {
@@ -265,6 +309,8 @@ struct WishDesk: View {
         .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous)
             .strokeBorder(Color.primary.opacity(barFocused ? 0.18 : 0.1), lineWidth: 1))
         .shadow(color: .black.opacity(0.08), radius: 16, y: 6)
+        // A click into a bar Lamp already focused is the person's too.
+        .simultaneousGesture(TapGesture().onEnded { barEngaged = true })
     }
 
     private var grid: some View {
@@ -291,6 +337,7 @@ struct WishDesk: View {
         store.deskDraft = wish
         withAnimation(Self.glide) { showingIdeas = false }
         barFocused = true
+        barEngaged = true
     }
 
     /// The words heard go in the bar, after whatever was typed; the person sends them when they look right.
@@ -360,6 +407,62 @@ struct DeskRows: Layout {
     }
 }
 
+/// The ideas in as many equal columns of at least `minimum` as fit, each row as tall as its tallest tile, every
+/// tile stretched to it so a row's cards line up.
+struct IdeaColumns: Layout {
+    var minimum: CGFloat
+    var spacing: CGFloat
+
+    private func grid(_ subviews: Subviews, width: CGFloat?) -> (columns: Int, column: CGFloat, heights: [CGFloat]) {
+        let available = width.flatMap { $0.isFinite ? $0 : nil } ?? 3 * minimum + 2 * spacing
+        let columns = max(1, min(subviews.count, Int((available + spacing) / (minimum + spacing))))
+        let column = (available - CGFloat(columns - 1) * spacing) / CGFloat(columns)
+        let heights = stride(from: 0, to: subviews.count, by: columns).map { start in
+            subviews[start..<min(start + columns, subviews.count)]
+                .map { $0.sizeThatFits(ProposedViewSize(width: column, height: nil)).height }.max() ?? 0
+        }
+        return (columns, column, heights)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let (columns, column, heights) = grid(subviews, width: proposal.width)
+        return CGSize(width: CGFloat(columns) * column + CGFloat(columns - 1) * spacing,
+                      height: heights.reduce(0, +) + CGFloat(max(0, heights.count - 1)) * spacing)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let (columns, column, heights) = grid(subviews, width: bounds.width)
+        var y = bounds.minY
+        for (row, height) in heights.enumerated() {
+            for index in row * columns..<min((row + 1) * columns, subviews.count) {
+                let x = bounds.minX + CGFloat(index - row * columns) * (column + spacing)
+                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(width: column, height: height))
+            }
+            y += height + spacing
+        }
+    }
+}
+
+/// How far the desk's wishes stand back: smaller, softer and fainter, as if further away.
+private struct Recede: ViewModifier {
+    var scale: CGFloat
+    var blur: CGFloat
+    var opacity: Double
+
+    static let present = Recede(scale: 1, blur: 0, opacity: 1)
+    /// Behind the bar while a wish is written.
+    static let behind = Recede(scale: 0.95, blur: 2.5, opacity: 0.45)
+    /// Out of the way while the ideas are open.
+    static let gone = Recede(scale: 0.9, blur: 12, opacity: 0)
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(scale)
+            .blur(radius: blur)
+            .opacity(opacity)
+    }
+}
+
 /// The ideas open from their middle outward, their edges feathered as they go, rather than sliding in from
 /// somewhere: a band across the middle that widens until it holds them all, and narrows again as they close.
 private struct MiddleOut: ViewModifier, Animatable {
@@ -412,17 +515,19 @@ struct DeskIdeas: View {
                     Image(systemName: IdeaDeck.moreSymbol)
                     Text("Show me others")
                 }
-                .font(.callout.weight(.medium))
+                .font(.body.weight(.medium))
                 .foregroundStyle(.secondary)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 10)], spacing: 10) {
+            // Laid out at once rather than lazily: a lazy grid makes its tiles after placing them, and as the ideas
+            // open they slid in from the left edge.
+            IdeaColumns(minimum: 230, spacing: 12) {
                 ForEach(Array(deck.ideas.prefix(Self.shown).enumerated()), id: \.element.id) { index, idea in
                     Button { choose(idea.blurb) } label: {
                         card(lit: hovered == idea.title) {
-                            IdeaIcon(symbol: idea.symbol, hue: idea.hue, size: 26)
-                            Text(idea.blurb).font(.subheadline)
+                            IdeaIcon(symbol: idea.symbol, hue: idea.hue, size: 32)
+                            Text(idea.blurb).font(.title3)
                                 .lineLimit(4, reservesSpace: true)
                                 .multilineTextAlignment(.leading)
                         }
@@ -437,11 +542,11 @@ struct DeskIdeas: View {
                 Button(action: find) {
                     card(lit: hovered == Self.finder, accent: true) {
                         Image(systemName: "sparkle.magnifyingglass")
-                            .font(.system(size: 20, weight: .medium))
+                            .font(.system(size: 24, weight: .medium))
                             .foregroundStyle(Color.accentColor)
-                            .frame(width: 26, height: 26)
+                            .frame(width: 32, height: 32)
                         Text("Help me find my wish")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.title3.weight(.semibold))
                             .lineLimit(4, reservesSpace: true)
                     }
                 }
@@ -450,13 +555,13 @@ struct DeskIdeas: View {
                 .help("Lamp asks a few questions about your days and writes a wish with you")
             }
         }
-        .frame(maxWidth: 640)
+        .frame(maxWidth: 760)
         .onAppear { deck.prefetch() }
     }
 
     private func card(lit: Bool, accent: Bool = false, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 10) { content() }
-            .padding(12)
+        VStack(alignment: .leading, spacing: 12) { content() }
+            .padding(16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(accent ? Color.accentColor.opacity(0.1) : Color(nsColor: .textBackgroundColor).opacity(0.7),
                         in: RoundedRectangle(cornerRadius: 14, style: .continuous))
