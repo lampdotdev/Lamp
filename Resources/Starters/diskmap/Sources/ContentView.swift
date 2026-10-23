@@ -93,35 +93,45 @@ struct SidebarView: View {
     @EnvironmentObject var model: DiskModel
     @Binding var hovered: (outer: Node, inner: Node?)?
 
+    /// How tall the locations are, and the pane they're in: past a share of the pane they scroll, so the
+    /// folder's contents below always keep their room however many folders and volumes there are.
+    @State private var locationsHeight: CGFloat = 0
+    @State private var paneHeight: CGFloat = 0
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 1) {
-                header("Locations")
-                ForEach(model.places) { LocationRow(location: $0) }
-                if !model.volumes.isEmpty {
-                    header("Volumes")
-                    ForEach(model.volumes) { LocationRow(location: $0) }
-                }
-                header("Folders")
-                ForEach(model.folders) { loc in
-                    LocationRow(location: loc).contextMenu {
-                        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: loc.path)]) }
-                        Divider()
-                        Button("Remove from Sidebar") { model.removeFolder(loc) }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 1) {
+                    header("Locations")
+                    ForEach(model.places) { LocationRow(location: $0) }
+                    if !model.volumes.isEmpty {
+                        header("Volumes")
+                        ForEach(model.volumes) { LocationRow(location: $0) }
                     }
+                    header("Folders")
+                    ForEach(model.folders) { loc in
+                        LocationRow(location: loc).contextMenu {
+                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: loc.path)]) }
+                            Divider()
+                            Button("Remove from Sidebar") { model.removeFolder(loc) }
+                        }
+                    }
+                    Button { model.addFolder() } label: {
+                        Label("Add Folder…", systemImage: "plus")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
                 }
-                Button { model.addFolder() } label: {
-                    Label("Add Folder…", systemImage: "plus")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 8)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { locationsHeight = $0 }
             }
-            .padding(.horizontal, 10)
-            .padding(.bottom, 8)
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(height: min(locationsHeight, max(160, paneHeight * 0.45)))
             .lampDropFiles { urls in
                 for url in urls where (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
                     model.addFolder(url)
@@ -155,6 +165,7 @@ struct SidebarView: View {
             }
         }
         .background(.background.secondary)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { paneHeight = $0 }
         .onAppear { model.refreshVolumes() }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didMountNotification)) { _ in model.refreshVolumes() }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didUnmountNotification)) { _ in model.refreshVolumes() }

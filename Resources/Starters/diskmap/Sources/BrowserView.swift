@@ -48,7 +48,7 @@ struct BrowserView: View {
 
     private var chartView: some View {
         SunburstView(folder: folder, revision: model.revision, pending: model.pendingSize(in: folder),
-                     free: model.diskUsage?.free ?? 0, freeAmount: showsFree && canShowFree ? 1 : 0,
+                     free: model.locationUsage?.free ?? 0, freeAmount: showsFree && canShowFree ? 1 : 0,
                      selection: $model.selection, hovered: $hovered) { node in
             if node.kind == .folder && !node.children.isEmpty { model.open(node) } else { model.reveal(node) }
         } onUp: {

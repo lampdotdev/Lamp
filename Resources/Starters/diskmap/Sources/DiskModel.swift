@@ -48,7 +48,10 @@ final class DiskModel: ObservableObject {
     @Published var scannedBytes: Int64 = 0
     @Published var scanningFolder = ""
     @Published var unreadableCount = 0
+    /// The startup disk's space, shown at the foot of the left pane.
     @Published var diskUsage: VolumeUsage?
+    /// The space of the disk or volume being shown, whose free space the chart can add; nil for Home and folders.
+    @Published var locationUsage: VolumeUsage?
     @Published var errorMessage: String?
 
     @Published var isPartial = false
@@ -104,10 +107,14 @@ final class DiskModel: ObservableObject {
     }
 
     func refreshUsage() {
-        let values = try? URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeTotalCapacityKey, .volumeAvailableCapacityKey])
-        if let total = values?.volumeTotalCapacity, let free = values?.volumeAvailableCapacity {
-            diskUsage = VolumeUsage(total: Int64(total), free: Int64(free))
-        }
+        diskUsage = Self.usage(of: "/")
+        locationUsage = location.flatMap { $0.kind == .disk || $0.kind == .volume ? Self.usage(of: $0.path) : nil }
+    }
+
+    private static func usage(of path: String) -> VolumeUsage? {
+        let values = try? URL(fileURLWithPath: path).resourceValues(forKeys: [.volumeTotalCapacityKey, .volumeAvailableCapacityKey])
+        guard let total = values?.volumeTotalCapacity, let free = values?.volumeAvailableCapacity else { return nil }
+        return VolumeUsage(total: Int64(total), free: Int64(free))
     }
 
     func addFolder() {
@@ -148,6 +155,7 @@ final class DiskModel: ObservableObject {
             isPartial = result.partial
             notAsked = result.notAsked
             selection = []
+            refreshUsage()
         } else {
             scan()
         }
@@ -362,6 +370,9 @@ final class DiskModel: ObservableObject {
                 try FileManager.default.trashItem(at: node.url, resultingItemURL: nil)
                 forgetOverlapping(node.path)
                 if let current, node.contains(current) { self.current = node.parent }
+                // Back and Forward mustn't lead into what's gone.
+                backStack.removeAll { node.contains($0) }
+                forwardStack.removeAll { node.contains($0) }
                 selection.remove(node.id)
                 node.detach()
             } catch {
