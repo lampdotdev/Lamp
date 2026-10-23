@@ -17,8 +17,10 @@ import AppKit
 /// device's address, within half an hour. It keeps it in its own storage on the device from then on.
 enum DeviceSupport {
     /// The libraries a declared app kind may ask for, and what each one is put in: a file, or a folder of files.
+    /// `babylon` is Babylon.js, the 3D engine (Apache-2.0, in Lamp's bundle with its licence, `WebLibraries/babylon`):
+    /// a web app's page loads it from its own folder, since these apps load nothing from the network.
     enum Library: String, CaseIterable {
-        case web, brightscript
+        case web, brightscript, babylon
 
         /// The files Lamp writes, by path under the declared one (empty for a single file).
         var files: [(name: String, contents: String)] {
@@ -26,9 +28,14 @@ enum DeviceSupport {
             case .web: [("", DeviceSupport.webJS)]
             case .brightscript: [("Lamp.brs", DeviceSupport.brightScript), ("LampAITask.xml", DeviceSupport.brightScriptTaskXML),
                                  ("LampAITask.brs", DeviceSupport.brightScriptTask)]
+            case .babylon: DeviceSupport.babylonJS.map { [("", $0)] } ?? []
             }
         }
     }
+
+    /// Babylon.js as Lamp ships it, read once; nil in a build without it, which then writes nothing for it.
+    static let babylonJS: String? = Bundle.main.url(forResource: "babylon", withExtension: "js", subdirectory: "WebLibraries/babylon")
+        .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
 
     /// The support a declared kind asks for, checked: a known library at a plain path in the app's folder.
     static func libraries(for project: LampProject) -> [(library: Library, path: String)] {
