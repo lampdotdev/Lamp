@@ -180,7 +180,7 @@ cp scripts/signing-identity.sh "$APP/Contents/Resources/"   # gives the apps Lam
 cp -R Resources/ProviderLogos "$APP/Contents/Resources/"
 cp -R Resources/Onboarding "$APP/Contents/Resources/"
 cp -R Resources/Starters "$APP/Contents/Resources/"   # the wishes Lamp comes with (Starters.swift)
-rm -rf "$APP/Contents/Resources/WebLibraries" && cp -R Resources/WebLibraries "$APP/Contents/Resources/"   # libraries device apps may take, such as Babylon.js (DeviceSupport.Library)
+rm -rf "$APP/Contents/Resources/WebLibraries" && cp -R Resources/WebLibraries "$APP/Contents/Resources/"   # libraries device apps may take, such as three.js (DeviceSupport.Library)
 cp -R Resources/TVCertificates "$APP/Contents/Resources/"   # Samsung's public certificate authorities a TV app's signatures end in (TizenSigning)
 rm -rf "$APP/Contents/Resources/GameKit" && cp -R Resources/GameKit "$APP/Contents/Resources/GameKit"   # what an Xbox game is written against (GameKit.swift)
 rm -rf "$APP/Contents/Resources/WebHost" && cp -R Resources/WebHost "$APP/Contents/Resources/WebHost"   # the program that shows an Xbox web app in WebView2 (WebHost.swift)

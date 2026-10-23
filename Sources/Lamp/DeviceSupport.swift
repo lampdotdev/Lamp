@@ -17,10 +17,11 @@ import AppKit
 /// device's address, within half an hour. It keeps it in its own storage on the device from then on.
 enum DeviceSupport {
     /// The libraries a declared app kind may ask for, and what each one is put in: a file, or a folder of files.
-    /// `babylon` is Babylon.js, the 3D engine (Apache-2.0, in Lamp's bundle with its licence, `WebLibraries/babylon`):
-    /// a web app's page loads it from its own folder, since these apps load nothing from the network.
+    /// `three` is three.js, the 3D library (MIT, in Lamp's bundle with its licence, `WebLibraries/three`, put there by
+    /// scripts/update-three.sh): its WebGL build and the light addons as a folder, which a web app's page loads from its
+    /// own folder through an import map, since these apps load nothing from the network.
     enum Library: String, CaseIterable {
-        case web, brightscript, babylon
+        case web, brightscript, three
 
         /// The files Lamp writes, by path under the declared one (empty for a single file).
         var files: [(name: String, contents: String)] {
@@ -28,14 +29,37 @@ enum DeviceSupport {
             case .web: [("", DeviceSupport.webJS)]
             case .brightscript: [("Lamp.brs", DeviceSupport.brightScript), ("LampAITask.xml", DeviceSupport.brightScriptTaskXML),
                                  ("LampAITask.brs", DeviceSupport.brightScriptTask)]
-            case .babylon: DeviceSupport.babylonJS.map { [("", $0)] } ?? []
+            case .three: DeviceSupport.threeFiles
             }
         }
     }
 
-    /// Babylon.js as Lamp ships it, read once; nil in a build without it, which then writes nothing for it.
-    static let babylonJS: String? = Bundle.main.url(forResource: "babylon", withExtension: "js", subdirectory: "WebLibraries/babylon")
-        .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+    /// three.js as Lamp ships it, every file by its path in the folder, read once; empty in a build without it, which
+    /// then writes nothing for it.
+    /// A support path as the page in `page` (the web app's folder, holding index.html) reaches it: "Web/vendor/three" is
+    /// "vendor/three" from "Web". Without a page folder, the path from the app's folder.
+    static func pagePath(_ path: String, page: String?) -> String {
+        guard let page, path.hasPrefix(page + "/") else { return path }
+        return String(path.dropFirst(page.count + 1))
+    }
+
+    /// three.js's revision, from the copy Lamp ships, for the rules ("186").
+    static var threeRevision: String {
+        let core = threeFiles.first { $0.name == "three.core.js" }?.contents ?? ""
+        guard let range = core.range(of: #"REVISION\s*=\s*['"](\d+)['"]"#, options: .regularExpression) else { return "" }
+        return String(core[range].filter(\.isNumber))
+    }
+
+    static let threeFiles: [(name: String, contents: String)] = {
+        guard let folder = Bundle.main.resourceURL?.appendingPathComponent("WebLibraries/three"),
+              let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return [] }
+        let base = folder.resolvingSymlinksInPath().path + "/"
+        return walk.compactMap { item -> (String, String)? in
+            guard let url = item as? URL, (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
+                  let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+            return (String(url.resolvingSymlinksInPath().path.dropFirst(base.count)), text)
+        }.sorted { $0.0 < $1.0 }
+    }()
 
     /// The support a declared kind asks for, checked: a known library at a plain path in the app's folder.
     static func libraries(for project: LampProject) -> [(library: Library, path: String)] {
