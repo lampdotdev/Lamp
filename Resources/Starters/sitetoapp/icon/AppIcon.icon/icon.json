@@ -1,0 +1,79 @@
+{
+  "fill" : {
+    "automatic-gradient" : "srgb:0.03922,0.42353,1.00000,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "fill" : {
+            "automatic-gradient" : "srgb:1.00000,1.00000,1.00000,1.00000"
+          },
+          "glass" : true,
+          "image-name" : "layer-2.svg",
+          "name" : "Address bar",
+          "opacity" : 0.94999999999999996
+        }
+      ],
+      "lighting" : "individual",
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.40000000000000002
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.55000000000000004
+      }
+    },
+    {
+      "blur-material" : 0.69999999999999996,
+      "layers" : [
+        {
+          "fill" : {
+            "automatic-gradient" : "srgb:0.91765,0.95294,1.00000,1.00000"
+          },
+          "glass" : true,
+          "image-name" : "layer-1.svg",
+          "name" : "Frosted browser window with dot cut-outs",
+          "opacity" : 0.71999999999999997
+        }
+      ],
+      "lighting" : "individual",
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.40000000000000002
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.45000000000000001
+      }
+    },
+    {
+      "layers" : [
+        {
+          "glass" : true,
+          "image-name" : "layer-0.svg",
+          "name" : "Glossy app tile",
+          "opacity" : 1
+        }
+      ],
+      "lighting" : "individual",
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.40000000000000002
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : [
+      "macOS"
+    ]
+  }
+}
