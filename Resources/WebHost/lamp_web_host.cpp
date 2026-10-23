@@ -11,6 +11,9 @@
 // paths are passed on, and an answer goes only to the page that asked: the app's token and its AI's answers are in
 // them. A link to anywhere else opens in the console's browser, never in this web view.
 //
+// Chromium's web view never shakes the controller, so lamp.js sends a page's vibrationActuator calls here (`rumble`
+// messages), and the host plays them with Windows.Gaming.Input, as a native game's lamp_rumble does.
+//
 // The page is laid out at 1920x1080 CSS pixels, as in Lamp's preview on the Mac and as the rules say: the console's
 // web view would otherwise lay it out at 1280x720 and scale it up, so the host zooms it out to match.
 //
@@ -32,7 +35,11 @@
 #include <winrt/Windows.Web.Http.Headers.h>
 #include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.System.h>
+#include <winrt/Windows.System.Threading.h>
+#include <winrt/Windows.Gaming.Input.h>
 #include <winrt/Microsoft.Web.WebView2.Core.h>
+#include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <string>
 
@@ -81,6 +88,14 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
     Windows::UI::Composition::CompositionTarget target{ nullptr };
     Windows::UI::Composition::ContainerVisual root{ nullptr };
     std::wstring installed;
+    // One effect at a time on each controller: a new one, or a reset, takes the place of what was playing.
+    // Each of the page's gamepads by its index: the controller it was found to be, and what's playing on it.
+    struct Rumble {
+        Windows::Gaming::Input::Gamepad pad{ nullptr };
+        std::atomic<uint64_t> effect{ 0 };
+        Windows::System::Threading::ThreadPoolTimer start{ nullptr }, stop{ nullptr };
+    };
+    Rumble rumbles[4];
     // Counts the page's top-level navigations, so an answer to a page that has since gone is dropped.
     uint64_t page = 0;
 
@@ -88,7 +103,10 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
 
     void Initialize(CoreApplicationView const&) {
         installed = std::wstring(Windows::ApplicationModel::Package::Current().InstalledLocation().Path());
-        CoreApplication::Suspending([](auto const&, auto const&) { say_line(L"Lamp: the console set the app aside."); });
+        CoreApplication::Suspending([this](auto const&, auto const&) {
+            say_line(L"Lamp: the console set the app aside.");
+            for (int i = 0; i < 4; i++) still(i);
+        });
         CoreApplication::Resuming([](auto const&, auto const&) { say_line(L"Lamp: the app came back."); });
     }
 
@@ -104,8 +122,15 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
         // as Back and leaves the app.
         SystemNavigationManager::GetForCurrentView().BackRequested([](auto const&, BackRequestedEventArgs const& args) { args.Handled(true); });
         window.SizeChanged([this](auto const&, auto const&) { fit(); });
+        // Windows lists controllers only once something listens for them: listening from the start, the first effect
+        // finds them there.
+        Windows::Gaming::Input::Gamepad::GamepadAdded([](auto const&, auto const&) {
+            say(L"Lamp: %u controllers connected.", Windows::Gaming::Input::Gamepad::Gamepads().Size());
+        });
         window.VisibilityChanged([this](auto const&, VisibilityChangedEventArgs const& args) {
             if (controller) controller.IsVisible(args.Visible());
+            // A game set aside mid-effect doesn't leave the controller shaking in the person's hands.
+            if (!args.Visible()) for (int i = 0; i < 4; i++) still(i);
         });
     }
 
@@ -152,6 +177,10 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
                 JsonObject message{ nullptr };
                 if (JsonObject::TryParse(args.WebMessageAsJson(), message) && message.GetNamedString(L"lamp", L"") == L"http") {
                     if (is_app_page(args.Source())) relay(message);
+                    return;
+                }
+                if (message && message.GetNamedString(L"lamp", L"") == L"rumble") {
+                    if (is_app_page(args.Source())) rumble(message);
                     return;
                 }
                 try { say_line(std::wstring(L"page: ") + std::wstring(args.TryGetWebMessageAsString())); }
@@ -265,6 +294,94 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
         }
         co_await resume_foreground(dispatcher);
         if (web && page == asked && is_app_page(web.Source())) web.PostWebMessageAsJson(answer.Stringify());
+    }
+
+    // How far a controller's reading is from what the page showed on its gamepad, in the standard mapping: the sum of
+    // the differences of its buttons and sticks.
+    static double distance(Windows::Gaming::Input::GamepadReading const& r, JsonObject const& m) {
+        using Windows::Gaming::Input::GamepadButtons;
+        static const GamepadButtons order[] = { GamepadButtons::A, GamepadButtons::B, GamepadButtons::X, GamepadButtons::Y,
+            GamepadButtons::LeftShoulder, GamepadButtons::RightShoulder, GamepadButtons::None, GamepadButtons::None,
+            GamepadButtons::View, GamepadButtons::Menu, GamepadButtons::LeftThumbstick, GamepadButtons::RightThumbstick,
+            GamepadButtons::DPadUp, GamepadButtons::DPadDown, GamepadButtons::DPadLeft, GamepadButtons::DPadRight };
+        auto buttons = m.GetNamedArray(L"buttons", Windows::Data::Json::JsonArray());
+        auto axes = m.GetNamedArray(L"axes", Windows::Data::Json::JsonArray());
+        double sum = 0;
+        for (uint32_t i = 0; i < buttons.Size() && i < 16; i++) {
+            double mine = i == 6 ? r.LeftTrigger : i == 7 ? r.RightTrigger : (r.Buttons & order[i]) == order[i] ? 1.0 : 0.0;
+            sum += std::abs(buttons.GetNumberAt(i) - mine);
+        }
+        // The page's sticks point down where the controller's point up.
+        const double sticks[] = { r.LeftThumbstickX, -r.LeftThumbstickY, r.RightThumbstickX, -r.RightThumbstickY };
+        for (uint32_t i = 0; i < axes.Size() && i < 4; i++) sum += std::abs(axes.GetNumberAt(i) - sticks[i]);
+        return sum;
+    }
+
+    // The controller the page knows by this index. The page's web view numbers controllers in its own order, so the one
+    // whose reading matches what the page showed is it, kept for later effects asked while nothing tells two apart (no
+    // button held, sticks at rest). Until one is found: the only controller, or the same place in the console's list.
+    Windows::Gaming::Input::Gamepad pad(int index, JsonObject const& m) {
+        auto list = Windows::Gaming::Input::Gamepad::Gamepads();
+        auto& known = rumbles[index].pad;
+        bool there = false;
+        for (auto const& p : list) there = there || p == known;
+        if (!there) known = nullptr;
+        if (list.Size() > 1) {
+            double best = 1e9, next = 1e9;
+            Windows::Gaming::Input::Gamepad found{ nullptr };
+            for (auto const& p : list) {
+                double d = distance(p.GetCurrentReading(), m);
+                if (d < best) { next = best; best = d; found = p; } else if (d < next) next = d;
+            }
+            if (found && best < 0.5 && next - best > 0.5) {
+                uint32_t at = 0;
+                if (found != known && list.IndexOf(found, at)) say(L"Lamp: the page's controller %d is the console's %u.", index, at);
+                known = found;
+                for (int i = 0; i < 4; i++) if (i != index && rumbles[i].pad == found) rumbles[i].pad = nullptr;
+            }
+        }
+        if (known) return known;
+        if (list.Size() == 1) return list.GetAt(0);
+        return (uint32_t)index < list.Size() ? list.GetAt(index) : nullptr;
+    }
+
+    // Ends what's playing for the page's controller, now.
+    void still(int index) {
+        auto& r = rumbles[index];
+        r.effect++;
+        if (r.start) r.start.Cancel();
+        if (r.stop) r.stop.Cancel();
+        if (r.pad) r.pad.Vibration({});
+    }
+
+    // One of the page's effects: its motors and triggers at the strengths asked, after its delay, for its duration.
+    void rumble(JsonObject const& m) {
+        int index = (int)m.GetNamedNumber(L"pad", 0);
+        if (index < 0 || index > 3) return;
+        auto amount = [&](const wchar_t* key) { return (double)std::clamp(m.GetNamedNumber(key, 0), 0.0, 1.0); };
+        auto ms = [&](const wchar_t* key) { return std::chrono::milliseconds((int64_t)std::clamp(m.GetNamedNumber(key, 0), 0.0, 5000.0)); };
+        Windows::Gaming::Input::GamepadVibration shake{};
+        shake.LeftMotor = amount(L"strong");
+        shake.RightMotor = amount(L"weak");
+        shake.LeftTrigger = amount(L"leftTrigger");
+        shake.RightTrigger = amount(L"rightTrigger");
+        auto delay = ms(L"delay"), duration = ms(L"duration");
+        still(index);
+        auto& r = rumbles[index];
+        auto target = pad(index, m);
+        // Kept as the one playing even before it's matched, so a reset stops what was started on it.
+        if (!r.pad) r.pad = target;
+        if (duration.count() == 0) return;
+        if (!target) { say(L"Lamp: the page asked to shake controller %d, and none is connected.", index); return; }
+        uint64_t effect = r.effect;
+        using Windows::System::Threading::ThreadPoolTimer;
+        // The timers' work is skipped once another effect has taken this one's place.
+        auto set = [this, index, effect, target](Windows::Gaming::Input::GamepadVibration v) {
+            if (rumbles[index].effect == effect) target.Vibration(v);
+        };
+        if (delay.count() == 0) set(shake);
+        else r.start = ThreadPoolTimer::CreateTimer([set, shake](auto const&) { set(shake); }, delay);
+        r.stop = ThreadPoolTimer::CreateTimer([set](auto const&) { set({}); }, delay + duration);
     }
 
     // A link out of the app, in the console's own browser.
