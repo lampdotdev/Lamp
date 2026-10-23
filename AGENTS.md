@@ -139,7 +139,7 @@ A capability given to one engine must be given to all of them that can take it, 
   the bundle by build.sh. The prompt lists the skills it offers by name and description (`Skills.index`, offered
   by `Skills.offered` the way a rule is given only to the prompts it fits), or names it in the one short rule that
   stands for it (`Skills.named`: the building blocks' calls, AI in the app, the person's accounts, App Intents, share
-  extensions, Finder, the Mac's permissions, scripting, 2D games, a change of subject, iCloud), which costs the
+  extensions, Finder, scripting, 2D games, iCloud), which costs the
   prompt a line instead of a rule and a line; and the agent opens one with
   `read_skill`, a tool like any other, so every engine reads skills the same way. Lamp answers from its own bundle,
   so a skill changed in an update reaches a conversation that began before it. Each engine can load skills of its own,

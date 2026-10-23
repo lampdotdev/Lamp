@@ -41,7 +41,7 @@ final class SkillsTests: XCTestCase {
         XCTAssertEqual(Set(shipped.keys), ["scene-3d", "maps", "chrome-sidebar", "device-integrations", "android-design", "phone-controllers",
                                            "app-kinds", "menu-bar", "mac-widgets", "iphone-widgets", "apple-watch", "iphone-hardware",
                                            "building-blocks", "app-ai", "accounts", "app-intents", "share-extension", "finder-files",
-                                           "mac-permissions", "scripting", "games-2d", "change-of-subject", "icloud-sync"])
+                                           "scripting", "games-2d", "icloud-sync"])
         for (name, skill) in shipped {
             XCTAssertFalse(skill.body.isEmpty, name)
             XCTAssertLessThanOrEqual(skill.description.count, 1024, name)
@@ -119,7 +119,7 @@ final class SkillsTests: XCTestCase {
     }
 
     /// What every app might need but most requests don't (the building blocks' calls, AI in the app, the accounts,
-    /// App Intents, share extensions, Finder, the Mac's permissions, scripting, 2D games, a change of subject, iCloud)
+    /// App Intents, share extensions, Finder, scripting, 2D games, iCloud)
     /// is in skills each prompt names in a one-line rule, not in its list, and the prompts no longer carry it.
     func testPromptsNameTheSkillsTheirShortRulesStandFor() {
         let moved: [String: [String]] = [
@@ -129,10 +129,8 @@ final class SkillsTests: XCTestCase {
             "app-intents": ["AppShortcutsProvider", "applicationName", "EntityQuery"],
             "share-extension": ["LampShareSheet", "LampShare.onReceive", "Edit Extensions"],
             "finder-files": ["\"opens\":", "bundlePath"],
-            "mac-permissions": ["LampPermissionGate", "LampPermissionState", "Quit & Reopen"],
             "scripting": ["sealed context"],
             "games-2d": ["SKPhysicsBody", "resizeFill"],
-            "change-of-subject": ["Neapolitan", "never plainer"],
             "icloud-sync": ["LampSync.collection", "reproductive"],
         ]
         for (name, phrases) in moved {
@@ -153,6 +151,12 @@ final class SkillsTests: XCTestCase {
             }
         }
         XCTAssertEqual(Set(prompts.flatMap { Skills.named($0.2) }), Set(moved.keys))
+        // The Mac's permission rule and the theme rule stay whole in the prompt: they're policy the agent keeps
+        // without first deciding that a skill applies.
+        for (kind, prompt, platform) in prompts {
+            XCTAssertTrue(prompt.contains("The theme follows the subject."), "\(kind) keeps the theme rule")
+            if platform.hasMac { XCTAssertTrue(prompt.contains("`LampPermissionGate(.fullDiskAccess"), "\(kind) keeps the permission rule") }
+        }
     }
 
     /// A TV turn's prompt lists the phone page's skill instead of carrying what it says, and a TV app with a page for
@@ -187,7 +191,7 @@ final class SkillsTests: XCTestCase {
 
         let (missing, error) = Skills.read(["name": "3d"], from: shipped)
         XCTAssertEqual(missing, 400)
-        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, building-blocks, change-of-subject, chrome-sidebar, device-integrations, finder-files, games-2d, icloud-sync, iphone-hardware, iphone-widgets, mac-permissions, mac-widgets, maps, menu-bar, phone-controllers, scene-3d, scripting, share-extension.")
+        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, building-blocks, chrome-sidebar, device-integrations, finder-files, games-2d, icloud-sync, iphone-hardware, iphone-widgets, mac-widgets, maps, menu-bar, phone-controllers, scene-3d, scripting, share-extension.")
     }
 
     func testParsing() {

@@ -70,14 +70,15 @@ enum Skills {
 
     /// The skills a prompt names in its own short rules rather than in its list, so each costs the prompt one rule
     /// and not a rule and a line: the building blocks, AI in the app, the person's accounts, App Intents, share
-    /// extensions, scripting, 2D games and a change of subject, for both kinds; Finder and the Mac's permissions for
-    /// apps with a Mac half; iCloud for apps with an iPhone half (a Mac app's prompt has no iCloud rule).
+    /// extensions, scripting and 2D games, for both kinds; Finder for apps with a Mac half; iCloud for apps with an
+    /// iPhone half (a Mac app's prompt has no iCloud rule). The Mac's permissions and a change of subject stay whole
+    /// in the prompt: their rules are policy the agent must keep without first deciding a skill applies.
     static func named(_ platform: Platform) -> [String] {
-        let both = ["building-blocks", "app-ai", "accounts", "app-intents", "share-extension", "scripting", "games-2d", "change-of-subject"]
+        let both = ["building-blocks", "app-ai", "accounts", "app-intents", "share-extension", "scripting", "games-2d"]
         return switch platform {
-        case .mac: both + ["finder-files", "mac-permissions"]
+        case .mac: both + ["finder-files"]
         case .iphone: both + ["icloud-sync"]
-        case .universal: both + ["finder-files", "mac-permissions", "icloud-sync"]
+        case .universal: both + ["finder-files", "icloud-sync"]
         case .android, .tv, .device: []
         }
     }
@@ -124,7 +125,6 @@ enum Skills {
         if offered.contains("accounts"), appSwift(of: project, matches: #"\b(LampCalendar|LampReminders|LampContacts|LampMail|LampComputer)\b|LampFolders\.synced"#) { found.append(("accounts", "its code reaches the person's accounts or other apps")) }
         if offered.contains("app-intents"), appSwift(of: project, matches: #"\bimport AppIntents\b"#) { found.append(("app-intents", "it has App Intents")) }
         if offered.contains("share-extension"), Template.hasShare(project) { found.append(("share-extension", "it has a share extension in Share/")) }
-        if offered.contains("mac-permissions"), appSwift(of: project, matches: #"\bLampPermission"#) { found.append(("mac-permissions", "its code uses LampPermissions")) }
         if offered.contains("scripting"), appSwift(of: project, matches: #"\bLampScript\b"#) { found.append(("scripting", "its code uses LampScript")) }
         if offered.contains("games-2d"), appSwift(of: project, matches: #"\bimport SpriteKit\b"#) { found.append(("games-2d", "it's a SpriteKit game")) }
         if offered.contains("icloud-sync"), appSwift(of: project, matches: #"\bLampSync\b"#) { found.append(("icloud-sync", "its code uses LampSync")) }

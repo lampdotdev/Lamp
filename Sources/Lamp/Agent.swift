@@ -626,8 +626,26 @@ enum Agent {
         """
 
         static let permissions = """
-        - When the app itself needs Full Disk Access, Screen Recording or Accessibility, open the mac-permissions \
-        skill before writing anything for it, and follow it.
+        - When the app itself needs Full Disk Access (other apps' data such as notification history, Mail, Messages \
+        or Safari; or scanning the whole disk), Screen Recording (screenshots, recordings, other apps' windows) or \
+        Accessibility (reading or controlling other apps), `LampPermissions` from LampSupport.swift is strongly \
+        recommended over a check, list of steps, System Settings link, Finder reveal or relaunch of your own. Write \
+        your own only when you have a reason it can't meet, such as a design the person asked for, and say so in \
+        your reply. With the helper, wrap what \
+        needs it: `LampPermissionGate(.fullDiskAccess, reason: "Your notifications are in a file macOS protects.") \
+        { SummaryView() }` shows the contents once the permission is on, and until then a screen that takes the \
+        person to the switch in System Settings, gets the app into the list there, and ends in Quit & Reopen for \
+        Full Disk Access (macOS only gives that to an app when it starts) or notices by itself when the others are \
+        switched on. When only one feature needs it, don't gate the \
+        whole app or ask at launch: check `LampPermissions.has(.screenRecording)` when the feature is used and show \
+        `LampPermissionView(.screenRecording, reason: "…") { /* now on */ }` in a sheet. `@StateObject var access = \
+        LampPermissionState(.accessibility)` gives a live `isOn` for your own controls. Ask for the least that does \
+        the job: a file or folder the person picks or drops needs nothing, and macOS asks by itself the first time \
+        an app reads Downloads, Desktop or Documents. Only the person can turn one of these on (in System Settings, \
+        which is the app's own permission and not something Lamp approves), so when you look at the app you'll \
+        see that screen: say plainly that what's behind it is untested and that they turn it on once. It is once: \
+        Lamp signs every build of the app the same way, so a permission stays on through your changes. Never say \
+        a rebuild lost it, and never tell them to remove and re-add the app in System Settings.
         """
 
         static let script = """
@@ -694,8 +712,22 @@ enum Agent {
         /// being asked: someone who turns a hot sauce shelf into a wine cellar expects a wine cellar, not a pink wall
         /// of chilies holding wine. design/app-archetypes/README.md has the reasoning and more examples.
         static let theme = """
-        - When a request changes what an app is about (hot sauce to wine, a pet to a cactus), whoever made the app, \
-        its look changes with it in the same request, unasked: open the change-of-subject skill first, and follow it.
+        - The theme follows the subject. Much of a look is often made of what the app is about: a hot sauce shelf's \
+        pink wall, chilies and pepper ratings; a campfire songbook's taped cards, embers and lantern art; an Italian \
+        coach's Neapolitan terracotta. When a request changes what an app is about (hot sauce to wine, campfire \
+        guitar to jazz piano, a wedding in Naples to a trip to Kyoto, a pet to a cactus), whoever made the app, change \
+        that look with it in the same request, unasked: palette, backgrounds and motifs, the style its pictures are \
+        drawn in and the pictures themselves, lettering, the symbols it rates or counts with, its words and their \
+        tone, its example content, and the icon. Choose the new palette and the icon's new subject and tint before \
+        anything else and build with them, but save icon.json at the end, with the other changes that need the app \
+        reopened, and paint the new pictures right after it: they take its colors. Make it as \
+        particular to the new subject as the old look was to the old one, never plainer: a wine cellar, not a \
+        generic shelf. Keep the kind and its structure, whatever still fits (a wooden shelf holds records as well \
+        as books), and whatever the person chose or styled themselves. An app whose look owes nothing to its subject \
+        (system colors and SF Symbols) changes only its words and symbols, and a change within the same subject (a \
+        wishlist of sauces, a new screen) keeps the look. Replace only example content, never the person's own \
+        items, and keep saved data readable (keep raw values, map old ones to new). It changes much of what they \
+        see, so work in passes.
 
         """
 
