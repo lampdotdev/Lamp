@@ -6,11 +6,8 @@ import DownloadButton from "../components/DownloadButton.astro";
 import QuickLook from "../components/QuickLook.astro";
 import FirstIdea from "../components/FirstIdea.astro";
 import Bento, { type Point } from "../components/Bento.astro";
+import AICards from "../components/AICards.astro";
 import { together } from "../lib/text";
-import MakesTheCall from "../components/visuals/MakesTheCall.astro";
-import DrawsOnDemand from "../components/visuals/DrawsOnDemand.astro";
-import MakesSense from "../components/visuals/MakesSense.astro";
-import FindsTheWords from "../components/visuals/FindsTheWords.astro";
 import UsesYourMac from "../components/visuals/UsesYourMac.astro";
 import BeautifulByDefault from "../components/visuals/BeautifulByDefault.astro";
 import WorksWithYourMac from "../components/visuals/WorksWithYourMac.astro";
@@ -38,37 +35,6 @@ const shelf = [
   "mine-1", "mine-6", "trip-tab", "mine-3", "mine-8", "habit-streaks", "mine-2", "palette-studio", "trail-log",
   "mine-4", "neon-bricks", "mine-10", "meal-planner", "mine-9", "mine-5", "reading-queue",
 ].flatMap((name) => icons[`../assets/icons/${name}.png`] ?? []);
-
-// AI as part of what an app does, not only how Lamp builds it: four things it can do inside an app, in two rows
-// split 4/6 and 6/4, each with AI as its subject. Making sense of things leads, as the most everyday; judgment, the
-// one people don't expect, closes. No providers, models or technical words here: which AI answers is the section
-// further down.
-const smarts: Point[] = [
-  {
-    title: "AI makes sense of anything.",
-    text: "It sums up the long thread, explains the small print, finds what matters in a pile of PDFs.",
-    tile: "bento:col-span-4 bg-linear-to-b from-teal-from to-teal-to text-white",
-    visual: MakesSense,
-  },
-  {
-    title: "AI draws on demand.",
-    text: "It makes pictures for a bedtime story, characters for a game, art for anything.",
-    tile: "bento:col-span-6 bg-linear-to-b from-coral-from to-coral-to text-white",
-    visual: DrawsOnDemand,
-  },
-  {
-    title: "AI finds the words.",
-    text: "It drafts the reply, names the thing, makes it friendlier.",
-    tile: "bento:col-span-6 bg-linear-to-br from-butter-from to-butter-to",
-    visual: FindsTheWords,
-  },
-  {
-    title: "AI makes the call.",
-    text: "It makes quick judgments all day long: which app is slowing your Mac down, and the setting that fixes it.",
-    tile: "bento:col-span-4 bg-linear-to-b from-indigo-from to-indigo-to text-white",
-    visual: MakesTheCall,
-  },
-];
 
 // The rest of the features as a bento box, rows split 6/4, 5/5, 4/6, telling a story: what you get (row one),
 // what it can do (row two, the two dark tiles), and living with it (row three). Each tile has a strong colour of
@@ -103,7 +69,7 @@ const points: Point[] = [
   {
     title: "Selfish, not stingy.",
     // A line break in the text starts a new line on the tile.
-    text: "Made for you, but happy to share.\nSend a Mac app by AirDrop, message, email, even Slack. Your friend gets their own copy, and Lamp shows them what it does.",
+    text: "Made for you, but happy to share.\nSend any app by AirDrop, message, email, even Slack. Your friend gets their own copy, and Lamp shows them what it does.",
     tile: "bento:col-span-6 bg-linear-to-b from-lilac-from to-lilac-to text-white",
     visual: ShareWithAnyone,
   },
@@ -335,10 +301,10 @@ const buts = [
     <section id="ai">
       <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
       <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Made with AI&nbsp;inside.</h2>
-      <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
-        {together("AI doesn't just make your software.")}<br />{together("It can be part of what it does.")}
+      <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-balance text-muted">
+        {together("AI doesn't just make your software. It can be part of what it does.")}
       </p>
-      <div class="mt-10"><Bento points={smarts} /></div>
+      <div class="mt-10"><AICards /></div>
       </div>
     </section>
 
