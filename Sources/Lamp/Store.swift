@@ -3023,8 +3023,9 @@ final class Store: ObservableObject {
         // Artwork that arrived during the turn, for an icon that was installed without it: applied now, still
         // owning the app, so nothing else builds or installs meanwhile. With more work queued, the next
         // install picks the artwork up itself.
-        if pendingIconArt.contains(project.id), (queued[project.id] ?? []).isEmpty,
-           let spec = Icons.load(project), artApplied[project.id] != spec {
+        // Its other apps too: the wish's own look may have drawn the artwork already while a part still shows the blueprint.
+        if pendingIconArt.contains(project.id), (queued[project.id] ?? []).isEmpty, let spec = Icons.load(project),
+           artApplied[project.id] != spec || parts(of: project).contains(where: { artApplied[$0.id] != spec }) {
             pendingIconArt.remove(project.id)
             Task {
                 await applyIconArt(project, spec: spec)
@@ -3063,8 +3064,8 @@ final class Store: ObservableObject {
     /// otherwise the artwork waits in the cache for the first successful build.
     private func applyIconArt(_ project: LampProject, spec: IconSpec) async {
         await renderIcon(project, spec: spec)
-        let executable = project.builtURL.appendingPathComponent("Contents/MacOS/\(project.exe)")
-        guard FileManager.default.isExecutableFile(atPath: executable.path) else { return }
+        await iconToParts(of: project, spec: spec)
+        guard hasMacBuild(project) else { return }
         log(project, .status, await installIcon(project) ? "New icon artwork is in."
             : "New icon artwork is in. \(project.name) gets it the next time it closes.")
     }
@@ -8064,7 +8065,8 @@ final class Store: ObservableObject {
     }
 
     private func drawIcon(_ project: LampProject) async {
-        await iconDesigns[project.id]?.value
+        // A part's design is its wish's, which may still be on its way.
+        await iconDesigns[wish(of: project).id]?.value
         var spec = Icons.load(project)
         if spec == nil && project.untitled { return }   // keeps its placeholder until the first message
         if project.isDeviceSetup { return }   // a device's setup is shown with the device's own symbol, not an app's icon
@@ -8127,8 +8129,36 @@ final class Store: ObservableObject {
             return
         }
         await renderIcon(project, spec: spec)
-        if FileManager.default.fileExists(atPath: project.builtURL.path) { await installIcon(project) }
+        if hasMacBuild(project) { await installIcon(project) }
+        await iconToParts(of: project, spec: spec)
         finish(project)
+    }
+
+    /// A wish has one icon, and each of its apps carries it: what the app at its root was just given (artwork, a new
+    /// design, its symbol in place of artwork that won't come), its other apps are given too, drawn into their own
+    /// folders and put on any Mac app among them that's built. An iPhone app takes it when it next opens, as one on
+    /// its own does. One busy now draws it at its next install (`prepareIcon`), from the design as it is then.
+    private func iconToParts(of project: LampProject, spec: IconSpec) async {
+        guard !project.isPart else { return }
+        for part in parts(of: project) {
+            // A part busy on its own (opened from its menu) takes it when it's given back (`finish`). What it last drew
+            // is forgotten, since a picture chosen in its place keeps the same design and would otherwise pass for it.
+            guard begin(part) != nil else {
+                artApplied[part.id] = nil
+                pendingIconArt.insert(part.id)
+                continue
+            }
+            await renderIcon(part, spec: spec)
+            if hasMacBuild(part) { await installIcon(part) }
+            release(part)
+            installHeldIcons(for: [part.id])
+        }
+    }
+
+    /// Whether the app has a Mac build an icon can be installed into: an iPhone or TV app's build is no Mac app, and
+    /// takes its icon when it opens.
+    private func hasMacBuild(_ project: LampProject) -> Bool {
+        FileManager.default.isExecutableFile(atPath: project.builtURL.appendingPathComponent("Contents/MacOS/\(project.exe)").path)
     }
 
     /// What `Icons.waitingURL` says: the icon drawn is the blueprint, or the icon that replaces it, drawn but not yet
@@ -8148,10 +8178,15 @@ final class Store: ObservableObject {
         for project in projects where FileManager.default.fileExists(atPath: Icons.waitingURL(project).path) {
             guard let spec = Icons.load(project) else { continue }
             if (try? String(contentsOf: Icons.waitingURL(project), encoding: .utf8)) == Self.iconReady {
-                // Drawn already, and only the install is missing: the app takes it now, or when it next closes.
+                // Drawn already, and only the install is missing: the app takes it now, or when it next closes. An app
+                // that isn't installed on this Mac (an iPhone app, a TV app) took it when it last opened, or does next time.
+                guard hasMacBuild(project) else {
+                    try? FileManager.default.removeItem(at: Icons.waitingURL(project))
+                    continue
+                }
                 Task {
                     guard begin(project) != nil else { return }
-                    if FileManager.default.fileExists(atPath: project.builtURL.path) { await installIcon(project) }
+                    await installIcon(project)
                     finish(project)
                 }
             } else if Icons.artwork(project, spec: spec) != nil {
@@ -8231,6 +8266,8 @@ final class Store: ObservableObject {
     /// when ready: layers of glass where the model that draws them can be reached, else a painting with whatever
     /// can make pictures, and always a painting for a game. With nothing, the first app asks for a key instead.
     private func upgradeIconArt(_ project: LampProject) {
+        // A part's artwork is its wish's: drawn once, for the wish, and given to each of its apps (`iconToParts`).
+        let project = wish(of: project)
         guard !Starters.isStarter(project), let spec = Icons.load(project), !spec.subject.trimmed.isEmpty,
               Icons.artwork(project, spec: spec) == nil else { return }
         // The person chose to draw icons themselves: Lamp draws nothing, key or no key, and asks for no key.
@@ -8333,6 +8370,7 @@ final class Store: ObservableObject {
         if FileManager.default.fileExists(atPath: project.builtURL.path) {
             waits = await !installIcon(project)
         }
+        await iconToParts(of: project, spec: spec)
         let applied = waits ? "New icon made. \(project.name) gets it the next time it closes." : "New icon applied."
         // Drawn by hand, the new design's artwork is the person's to make: the sheet opens for it now.
         guard !AppAI.iconsByHand else {
@@ -8379,7 +8417,8 @@ final class Store: ObservableObject {
             try png.write(to: url)
             // The person's picture takes the place of a glass design drawn for the same icon.
             try? FileManager.default.removeItem(at: Icons.glassURL(project, spec: spec))
-            artApplied[project.id] = nil   // the icon on show was made with other artwork, or none
+            // The icon on show was made with other artwork, or none, on the wish's other apps too.
+            for app in [project] + parts(of: project) { artApplied[app.id] = nil }
             // As with generated artwork: a turn that has the app installs the picture when it ends. The chat
             // shows it at once and says so, or picking it would look like nothing happened.
             guard begin(project) != nil else {
