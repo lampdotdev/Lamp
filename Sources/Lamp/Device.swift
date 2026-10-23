@@ -130,6 +130,12 @@ struct Device: Identifiable, Hashable {
     static let macID = "this-mac"
 
     var udid: String { id }
+    /// A TV or other device Lamp reaches over the network that didn't answer the last look: off, or on another network
+    /// (a home elsewhere). Its setup is kept as it was, but nothing can be put on it, or set up, until it's found
+    /// again. Not a phone: Xcode opens a phone's connection only when it's needed, so its `connected` says little.
+    var isAway: Bool { (kind.isTV || kind == .other) && reach == .network && !connected }
+    /// Where it stands for a list: "Not on this network" while it's away, else its setup's words.
+    var status: String { isAway ? "Not on this network" : setup().words }
     var family: DeviceFamily? { kind == .ipad ? .ipad : kind == .iphone ? .iphone : nil }
     var osMajor: String { String(osVersion.split(separator: ".").first ?? Substring(osVersion)) }
 
@@ -305,7 +311,8 @@ enum DeviceNote {
             return mine.map { device in
                 let state = device.setup() == .ready ? "set up for apps" : "not set up yet (next: \(device.setup().words.lowercased()))"
                 let chosen = device.id == project.device || (project.device == nil && mine.count == 1)
-                return "\(chosen ? "The app goes on" : "Also on the network:") the person's \(device.name) (\(device.forAgent)), \(state)."
+                let place = device.isAway ? " Lamp doesn't find it on the network now, so nothing can be put on it until it's back." : ""
+                return "\(chosen ? "The app goes on" : "Also known:") the person's \(device.name) (\(device.forAgent)), \(state).\(place)"
             }.joined(separator: " ")
         }
         if project.onTV {

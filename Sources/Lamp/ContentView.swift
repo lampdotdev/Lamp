@@ -1748,7 +1748,7 @@ private struct TryOnChoices: View {
         .pickerStyle(.inline)
         Picker("Your TVs", selection: Binding(get: { project.device }, set: { if let id = $0 { store.setTVDevice(project, id) } })) {
             ForEach(tvs) { tv in
-                let step = tv.setup() == .ready ? "" : " (\(tv.setup().words))"
+                let step = tv.setup() == .ready && !tv.isAway ? "" : " (\(tv.status))"
                 let model = "\(tv.maker) \(tv.model)"
                 Label((tv.name == model ? tv.name : "\(tv.name) · \(model)") + step, systemImage: "tv").tag(Optional(tv.udid))
             }
@@ -1761,7 +1761,7 @@ private struct TryOnChoices: View {
             Text("No Samsung or LG TV found on this network. Turn one on, then look again.")
         }
         Divider()
-        ForEach(tvs.filter { $0.setup() != .ready }) { tv in
+        ForEach(tvs.filter { $0.setup() != .ready && !$0.isAway }) { tv in
             Button("Set Up \(tv.name)…") { TVSetup.shared.show(tv.udid) }
         }
         Button("All Your Devices…") { settingsTab = "building"; openSettings() }
@@ -1776,7 +1776,7 @@ private struct TryOnChoices: View {
         let mine = store.devices.filter { $0.integration != nil && $0.integration == project.deviceIntegration }
         Picker("Your \(name)s", selection: Binding(get: { project.device }, set: { if let id = $0 { store.setDeviceAppDevice(project, id) } })) {
             ForEach(mine) { device in
-                let step = device.setup() == .ready ? "" : " (\(device.setup().words))"
+                let step = device.setup() == .ready && !device.isAway ? "" : " (\(device.status))"
                 Label((device.name == device.model ? device.name : "\(device.name) · \(device.model)") + step, systemImage: device.kind.symbol)
                     .tag(Optional(device.id))
             }
@@ -1789,7 +1789,7 @@ private struct TryOnChoices: View {
             Text("No \(name) found on this network. Turn one on, then look again.")
         }
         Divider()
-        ForEach(mine.filter { $0.setup() != .ready }) { device in
+        ForEach(mine.filter { $0.setup() != .ready && !$0.isAway }) { device in
             Button("Set Up \(device.name)…") { DeviceSetupWindow.show(device) }
         }
         if GameKit.isGame(project) {
@@ -1809,7 +1809,7 @@ private struct TryOnChoices: View {
         .pickerStyle(.inline)
         Picker("Your Devices", selection: Binding(get: { project.device }, set: { if let serial = $0 { store.setAndroidDevice(project, serial) } })) {
             ForEach(devices) { device in
-                let step = device.setup() == .ready ? "" : " (\(device.setup().words))"
+                let step = device.setup() == .ready && !device.isAway ? "" : " (\(device.status))"
                 Label("\(device.name)\(step)", systemImage: "smartphone").tag(Optional(device.udid))
             }
             if let chosen = project.device, !devices.contains(where: { $0.udid == chosen }) {
@@ -1866,7 +1866,7 @@ private struct TryOnChoices: View {
                 store.choosePreparedDevice(project, chosen)
             })) {
                 ForEach(paired) { device in
-                    let step = device.setup() == .ready ? "" : " (\(device.setup().words))"
+                    let step = device.setup() == .ready && !device.isAway ? "" : " (\(device.status))"
                     Label("\(device.name) · \(device.model)\(step)", systemImage: device.kind.symbol)
                         .tag(Optional(device.udid))
                 }

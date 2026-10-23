@@ -978,6 +978,9 @@ struct DevicesSection: View {
             }
             Spacer()
             switch setup {
+            case _ where device.isAway:
+                Text(device.status).foregroundStyle(.secondary)
+                    .help("Lamp didn't find it on this network just now. It may be off, or somewhere else.")
             case .ready:
                 Label("Ready", systemImage: "checkmark.circle.fill").foregroundStyle(.green).labelStyle(.titleAndIcon)
             case .needs(let step) where device.kind == .other && device.integration == nil:
