@@ -15,6 +15,7 @@ struct MainApp: SwiftUI.App {
         Settings {
             SettingsView().environmentObject(watcher)
         }
+        .windowResizability(.contentMinSize)
     }
 }
 
