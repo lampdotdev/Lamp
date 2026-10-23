@@ -23,6 +23,15 @@ final class DeviceSetupModel: ObservableObject {
 
     static func existing(_ deviceID: String) -> DeviceSetupModel? { models[deviceID] }
 
+    /// Lets go of a device's setup as it stands in this Lamp, for Forget: its watch stops, a command waiting for the
+    /// person's yes is turned down, and what waited for it to be ready isn't run. Found again, it starts afresh.
+    static func discard(_ deviceID: String) {
+        guard let model = models.removeValue(forKey: deviceID) else { return }
+        model.stopWatching()
+        if model.approval != nil { model.decide(false) }
+        model.then = nil
+    }
+
     @Published var device: Device
     @Published private(set) var passed: [String] = []
     @Published var typed = ""
@@ -142,6 +151,8 @@ final class DeviceSetupModel: ObservableObject {
     /// click does this; a changed certificate never makes Lamp trust the new one by itself.
     func reconnect() {
         DeviceTLS.Pins(deviceID: device.id).forget()
+        // Its SSH host key too, which a reset device changes as it does its certificate.
+        try? FileManager.default.removeItem(at: DeviceFolder.of(device.id).appendingPathComponent("known_hosts"))
         Integrations.startOver(device.id)
         passed = []
         typed = ""

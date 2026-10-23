@@ -948,6 +948,8 @@ struct DevicesSection: View {
     /// certificate let go, so a reset device or one whose developer mode was turned on again is trusted afresh.
     private func reconnect(_ device: Device) {
         if device.kind.isTV {
+            TVs.reconnect(device.id)
+            store.refreshDevices()
             TVSetup.shared.show(device.udid)
         } else {
             DeviceSetupModel.for(device).reconnect()
@@ -956,7 +958,12 @@ struct DevicesSection: View {
     }
 
     private func forget(_ device: Device) {
-        if device.kind.isTV { TVs.forget(device.id) } else { Integrations.forget(device.id) }
+        if device.kind.isTV {
+            TVs.forget(device.id)
+        } else {
+            DeviceSetupModel.discard(device.id)
+            Integrations.forget(device.id)
+        }
         forgetting = nil
         store.refreshDevices()
     }
