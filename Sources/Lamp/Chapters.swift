@@ -286,7 +286,8 @@ struct ChapterBar<Icon: View>: View {
             case .didNotOpen: Text("Built, but it didn't open")
             }
         } else if progress.plan.isEmpty {
-            Text(progress.naming ? "Naming your app" : "Working out a plan")
+            // The agent may build without a plan; until one comes the bar says only that it's being built.
+            Text(progress.naming ? "Naming your app" : "Building it")
         } else if progress.chaptersClosed {
             Text("Building and opening it")
         } else {
