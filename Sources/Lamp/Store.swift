@@ -2223,6 +2223,7 @@ final class Store: ObservableObject {
         showChat(copy.id)
         log(copy, .status, "A copy of \(project.name). Building it now…")
         await run(copy)
+        await rebuildParts(of: current(copy) ?? copy)
     }
 
     /// A background for a copy's icon: not the one it was copied from, as light or dark as that one so the
@@ -3061,8 +3062,9 @@ final class Store: ObservableObject {
         startQueued(project)
         refreshUndoOffer(project)
         // An icon that was waiting for the app to close, when the app closed while this had it: the moment
-        // it closed came and went with the app taken, so it's looked at again now the app is free.
-        installHeldIcons(for: [project.id])
+        // it closed came and went with the app taken, so it's looked at again now the app is free. A wish's turn held
+        // its other apps too.
+        installHeldIcons(for: Set([project.id] + parts(of: project).map(\.id)))
     }
 
     /// The offer to draw the icon that was wanted while the turn had the app, made now it's over: the last
@@ -3299,6 +3301,8 @@ final class Store: ObservableObject {
         // the agent the same way, before the version is saved, so the version holds what every app of the wish builds.
         var changedParts: Set<String> = []
         for part in parts(of: project) {
+            // One the agent took away while fixing another is no longer the wish's.
+            guard let part = current(part) else { continue }
             guard let built = await asPartOf(project, part, { () async -> Bool in
                 try? await self.writeOwnFiles(part, all: false)
                 guard Runtime.sourcesChanged(part) else { return true }
@@ -3326,21 +3330,25 @@ final class Store: ObservableObject {
         var crashes: [String: String] = [:]
         crashes[project.id] = await settle(project, changed: changed, owner: owner)
         for part in parts(of: project) {
+            guard let part = current(part) else { continue }
             if let crash = await asPartOf(project, part, { await self.settle(part, changed: changedParts.contains(part.id), owner: owner) }) ?? nil {
                 crashes[part.id] = crash
             }
         }
         // Like build errors, a crash on launch goes back to the agent. The fix joins this turn's commit,
         // so Undo still reverts the whole change.
-        for _ in 0..<2 where !crashes.isEmpty {
+        for _ in 0..<2 where !crashes.isEmpty && !owner.stopped {
             log(project, .status, "Fixing the crash…")
             let crashed = ([project] + parts(of: project)).filter { crashes[$0.id] != nil }
             guard await runAgent(crashRequest(crashed, crashes), on: project) else { return TurnResult(end: .failed, watched: watched) }
             project = current(project) ?? project
             // It asked instead of fixing: the turn waits for the answer here, as it does after any question.
             if owner.asked { return TurnResult(end: .replied, watched: watched) }
-            for app in crashed {
-                let app = current(app) ?? app
+            // What the fix changed is built and opened, whichever app it's in (a shared type, say), with the apps that
+            // crashed; a part the fix took away is gone from the list.
+            let fixing = ([project] + parts(of: project)).filter { crashes[$0.id] != nil || Runtime.sourcesChanged($0) }
+            for app in fixing {
+                guard let app = current(app) else { continue }
                 guard await asPartOf(project, app, { await self.buildFixingErrors(app) }) ?? true else {
                     return TurnResult(end: owner.asked ? .replied : .failed, watched: watched)
                 }
@@ -3353,8 +3361,8 @@ final class Store: ObservableObject {
             case .nothingToSave: break
             }
             crashes = [:]
-            for app in crashed {
-                let app = current(app) ?? app
+            for app in fixing {
+                guard let app = current(app), !owner.stopped else { continue }
                 if let crash = await asPartOf(project, app, { await self.install(app) }) ?? nil { crashes[app.id] = crash }
             }
         }
@@ -3390,12 +3398,14 @@ final class Store: ObservableObject {
     /// is shown (or put on the device chosen for it), unless it died in its first seconds. What's known of a crash on
     /// launch, or nil.
     private func settle(_ project: LampProject, changed: Bool, owner: Turn) async -> String? {
+        // After Stop nothing more is opened, and an install Stop cut short is no crash for the agent to fix.
+        guard !owner.stopped else { return nil }
         let name = project.isPart ? placeName(project) : project.name
         if changed {
             let crash = await install(project)
             // A device app that couldn't go on its device (not set up, not on the network) didn't crash: the chat
             // already says why, with the step that fixes it, and there's nothing in the code to fix.
-            return project.onDevice ? nil : crash
+            return project.onDevice || owner.stopped ? nil : crash
         }
         guard let turn = turns[project.id], turn.look.installed[project.id] == true else { return nil }
         // The look went on once the app showed: a death in its first seconds is known by now, or in a moment. One the
@@ -3421,7 +3431,7 @@ final class Store: ObservableObject {
             log(project, .status, "\(name) is open on \(run.device.name).")
         } else if !isOnChosenPhone(project) {
             let crash = await install(project)
-            return project.onDevice ? nil : crash
+            return project.onDevice || owner.stopped ? nil : crash
         }
         return nil
     }
@@ -3444,8 +3454,10 @@ final class Store: ObservableObject {
     private func asPartOf<T>(_ wish: LampProject, _ app: LampProject, _ work: () async -> T) async -> T? {
         guard app.id != wish.id, let turn = turns[wish.id] else { return await work() }
         guard turns[app.id] == nil || turns[app.id] === turn else { return nil }
+        // Held already (a look within, or an outer hold): left as it was found.
+        let before = turns[app.id]
         turns[app.id] = turn
-        defer { if turns[app.id] === turn { turns[app.id] = nil } }
+        defer { if turns[app.id] === turn { turns[app.id] = before } }
         return await work()
     }
 
@@ -5539,19 +5551,17 @@ final class Store: ObservableObject {
         } else if errors != macMembershipProblem(project) {
             log(project, .error, ErrorMessages.appDoesNotBuild)
         }
-        await rebuildParts(of: project)
     }
 
-    /// The wish's other apps after its own, each built and opened as `run` does it: Rebuild & Open, a copy's first build,
-    /// Undo and every restore change or rebuild the whole wish, and no app of it comes first. One busy with a turn of its
-    /// own (opened from its menu) is left to it.
-    private func rebuildParts(of wish: LampProject) async {
+    /// The wish's other apps after its own, each built and opened as `run` does it, under a hold of its own so a crash
+    /// on launch is fixed as that app's (`fixHeldCrash`, through its wish): a copy's first build, Undo and every restore
+    /// change the whole wish, and no app of it comes first. `onlyChanged` leaves out a part whose files are what its
+    /// last build was made from. One busy with a turn of its own, and every part after a Stop, are left alone.
+    private func rebuildParts(of wish: LampProject, onlyChanged: Bool = false) async {
         for part in parts(of: wish) {
-            _ = await asPartOf(wish, part) { () async -> Void in
-                let errors = await self.build(part)
-                if errors == nil { await self.installReportingCrash(part) }
-                else if errors != self.macMembershipProblem(part) { self.log(part, .error, ErrorMessages.appDoesNotBuild) }
-            }
+            guard turns[wish.id]?.stopped != true, let part = current(part) else { return }
+            if onlyChanged, !Runtime.sourcesChanged(part) { continue }
+            await run(part)
         }
     }
 
@@ -5574,7 +5584,7 @@ final class Store: ObservableObject {
             let restored = await followRestored(project)
             log(restored, .status, "Discarded the unfinished change")
             if await build(restored) == nil { await installReportingCrash(restored) }
-            await rebuildParts(of: restored)
+            await rebuildParts(of: restored, onlyChanged: true)
             return
         }
         let undo = Versions.undoTarget(in: versions)
@@ -5695,7 +5705,7 @@ final class Store: ObservableObject {
             await installReportingCrash(project)
             keepPicture(of: project, version: head)
         }
-        await rebuildParts(of: project)
+        await rebuildParts(of: project, onlyChanged: true)
     }
 
     /// Chats from before requests were linked to versions: matches each request to the version whose
@@ -9621,8 +9631,10 @@ final class Store: ObservableObject {
     private func underTurn(of wish: LampProject, _ app: LampProject, _ work: () async -> (Int, [String: Any])) async -> (Int, [String: Any]) {
         guard app.id != wish.id, let turn = turns[wish.id] else { return await work() }
         guard turns[app.id] == nil || turns[app.id] === turn else { return (409, ["error": "Lamp is busy with that part right now."]) }
+        // A look inside the turn's end, which holds the part already (`asPartOf`), leaves it held.
+        let before = turns[app.id]
         turns[app.id] = turn
-        defer { if turns[app.id] === turn { turns[app.id] = nil } }
+        defer { if turns[app.id] === turn { turns[app.id] = before } }
         return await work()
     }
 
