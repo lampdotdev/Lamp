@@ -633,7 +633,9 @@ enum AppAI {
                 try? await Task.sleep(for: .seconds(timeLimit))
                 guard process.isRunning else { return }
                 deadline.passed = true
-                process.terminate()
+                // The whole tree, killed if it won't stop: a child left holding the output, or an engine that
+                // ignores the signal, would keep the call waiting past its limit all the same.
+                Subprocess.terminateTree(process)
             }
         }) { line in
             for event in Agent.parse(line, engine: engine) {

@@ -192,7 +192,7 @@ final class StepTitlesTests: XCTestCase {
     }
 
     /// A title asked of Claude Code or Codex that doesn't come is given up at its time limit, its engine ended,
-    /// rather than held on to for good.
+    /// rather than held on to for good: even one that ignores being asked to stop and leaves a child holding its output.
     @MainActor func testATitleCallThroughAnEngineEndsAtItsTimeLimit() async throws {
         let savedFolder = EngineInstall.folder, savedFinder = EngineInstall.finder
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-titles-\(UUID().uuidString)")
@@ -204,7 +204,7 @@ final class StepTitlesTests: XCTestCase {
         }
         let stuck = root.appendingPathComponent("claude")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: stuck.path, contents: Data("#!/bin/sh\nexec sleep 60\n".utf8),
+        FileManager.default.createFile(atPath: stuck.path, contents: Data("#!/bin/sh\ntrap '' TERM\nsleep 60 &\nsleep 60\n".utf8),
                                        attributes: [.posixPermissions: 0o755])
         EngineInstall.folder = root
         EngineInstall.finder = { $0 == .claude ? stuck.path : nil }
